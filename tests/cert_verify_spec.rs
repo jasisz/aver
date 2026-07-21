@@ -4514,7 +4514,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
     lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
     lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");
@@ -6096,5 +6096,127 @@ fn int_dispatch_kernel_guards_are_isolating() {
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// End-to-end acceptance and fail-closed tamper coverage for the fused
+/// `Option.withDefault(Vector.get(vec, idx), d)` face: a `cellAt`-shaped
+/// export reaches CERTIFIED, and each of the three template holes an attacker
+/// could try to move — the literal default, the array type index, and the
+/// to-index/box helper wiring — is pinned by the byte-equality gate (with the
+/// audited encoder equality and the nominal type gate behind it), so a
+/// consistent rewrite of the attacker-editable plan data is DECLINED, never
+/// re-credited.
+#[test]
+fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping fused vector-read verify test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-fused-vector-read");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/cell_at.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify cell_at failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = out_dir.join("cell_at.wasm");
+    let cert = out_dir.join("cert");
+
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "fused vector read must verify CERTIFIED:\n{report}");
+    assert!(
+        report.contains("CERTIFIED") && report.contains("cellAt"),
+        "verdict must credit cellAt:\n{report}"
+    );
+
+    // Recover the emitted template holes from the public plan data so the
+    // tampers stay robust to shifting module indices.
+    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let marker = ".vectorGetOrDefault ";
+    let at = plans_text
+        .find(marker)
+        .expect("Plans.lean carries the fused vector-read node");
+    let tail = &plans_text[at + marker.len()..];
+    let mut holes = tail.split_whitespace();
+    let arr_ty: u32 = holes.next().unwrap().parse().expect("arrTy hole");
+    let to_index_idx: u32 = holes.next().unwrap().parse().expect("toIndex hole");
+    let box_idx: u32 = holes.next().unwrap().parse().expect("box hole");
+    assert_ne!(to_index_idx, box_idx, "helper roles must be distinct");
+
+    let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
+        let dir = temp_dir(&format!("cert-fused-vector-read-{name}"));
+        copy_dir(&out_dir, &dir);
+        let plans = dir.join("cert").join("Plans.lean");
+        let text = std::fs::read_to_string(&plans).unwrap();
+        let edited = edit(&text);
+        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
+        std::fs::write(&plans, edited).unwrap();
+        let (ok, out) = aver_verify(&dir.join("cell_at.wasm"), &dir.join("cert"));
+        assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
+        assert!(
+            out.contains("DECLINED"),
+            "tamper `{name}` must report a decline verdict, not an error:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "tamper `{name}` must never re-credit the export:\n{out}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    };
+
+    // (1) Flip the literal default consistently in the source AND encoded
+    //     plans: the encoder equality still holds, but the rendered bytes
+    //     (`i64.const 1`) no longer match the module (`i64.const 0`).
+    tamper("default-literal", &|text| {
+        text.replace(
+            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx} (0 : Int)"),
+            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx} (1 : Int)"),
+        )
+        .replace(
+            ".vectorGetOrDefault \"Vector<Int>\" (0 : Int)",
+            ".vectorGetOrDefault \"Vector<Int>\" (1 : Int)",
+        )
+    });
+
+    // (2) Flip the array type index (plan node + struct table): the rendered
+    //     `array.get` immediate and the nominal array-element gate both break.
+    tamper("array-type", &|text| {
+        text.replace(
+            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx}"),
+            &format!(
+                ".vectorGetOrDefault {} {to_index_idx} {box_idx}",
+                arr_ty + 1
+            ),
+        )
+        .replace(
+            &format!("(\"Vector<Int>\", {arr_ty})"),
+            &format!("(\"Vector<Int>\", {})", arr_ty + 1),
+        )
+    });
+
+    // (3) Swap the to-index and box helper indices in the encoded plan: the
+    //     audited encoder (driven by the byte-derived role table) can no
+    //     longer reproduce the claimed representation plan.
+    tamper("helper-swap", &|text| {
+        text.replace(
+            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx}"),
+            &format!(".vectorGetOrDefault {arr_ty} {box_idx} {to_index_idx}"),
+        )
+    });
+
     let _ = std::fs::remove_dir_all(&out_dir);
 }

@@ -2763,25 +2763,23 @@ pub(super) fn emit_module_with(
         let ty = registry.record_field_type(record, field)?.to_string();
         Some((idx, ty))
     };
-    let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> = if registry
-        .aint_struct_idx
-        .is_some()
-    {
-        mir_fn_for
-            .iter()
-            .map(|mir_fn| {
-                mir_fn.and_then(|mir_fn| {
-                    crate::codegen::cert::fragment_plan_from_mir_fn(
-                        mir_fn,
-                        &record_field_lookup,
-                        &mir_program.builtins,
-                    )
+    let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> =
+        if registry.aint_struct_idx.is_some() {
+            mir_fn_for
+                .iter()
+                .map(|mir_fn| {
+                    mir_fn.and_then(|mir_fn| {
+                        crate::codegen::cert::fragment_plan_from_mir_fn(
+                            mir_fn,
+                            &record_field_lookup,
+                            &mir_program.builtins,
+                        )
+                    })
                 })
-            })
-            .collect()
-    } else {
-        vec![None; fn_defs.len()]
-    };
+                .collect()
+        } else {
+            vec![None; fn_defs.len()]
+        };
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
 
     // Pre-pass over user fn bodies — populates `caller_fn_collector`

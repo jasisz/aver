@@ -407,8 +407,12 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    let to_index = match to_index_idx {
+        Some(index) => format!("some {index}"),
+        None => "none".to_string(),
+    };
     let (box_idx, add_idx, mul_idx, sub_idx) = (
         box_idx.expect("json box role"),
         add_idx.expect("json add role"),
@@ -444,7 +448,8 @@ def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
 
 -- Same bytes and claims; only the manifest's add index is hostile.
 def hostileRoleTable : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx} }}
+  {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
+     toIndex := {to_index} }}
 def hostileManifest : Manifest :=
   {{ manifest with subject :=
       {{ manifest.subject with hostRoleTable := some hostileRoleTable }} }}
@@ -593,7 +598,7 @@ fn poisoned_role_scan_is_rejected_at_the_host_role_table_pin() {
 
     // Healthy control: the identical module without the unscannable function
     // resolves its box and add roles.
-    let (box_idx, add_idx, mul_idx, sub_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&healthy)
             .expect("the healthy control must classify");
     let (box_idx, add_idx) = (
@@ -657,7 +662,8 @@ def healthyLen : Nat := {healthy_len}
 
 -- Control: the healthy sibling decodes to the full table.
 example : CertDecode.AddSub.roleTableStrict healthyBytes healthyLen =
-    some (some {{ box := some {box_idx}, add := some {add_idx}, mul := none, sub := none }}) := rfl
+    some (some {{ box := some {box_idx}, add := some {add_idx}, mul := none, sub := none,
+                  toIndex := none }}) := rfl
 
 -- The poisoned module decodes to the closed scan-failure state.
 theorem poisonedStrict :

@@ -1,0 +1,13 @@
+module CellAtProbe
+    intent =
+        "Fused Vector.get-or-default certification fixture."
+    exposes [cellAt]
+    effects []
+
+fn cellAt(grid: Vector<Int>, idx: Int) -> Int
+    ? "Cell value at index; 0 outside the vector."
+    Option.withDefault(Vector.get(grid, idx), 0)
+
+verify cellAt
+    cellAt(Vector.new(4, 7), 2) => 7
+    cellAt(Vector.new(4, 7), 9) => 0

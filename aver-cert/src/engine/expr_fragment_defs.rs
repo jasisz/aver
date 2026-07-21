@@ -217,9 +217,15 @@ pub struct FragHostTable {
     pub umag_cmp_idx: Option<u32>,
 }
 
-/// Public differential surface for the four strict module-level roles, in
-/// fixed `(box, add, mul, sub)` order.
-pub type FragHostRoleIndices = (Option<u32>, Option<u32>, Option<u32>, Option<u32>);
+/// Public differential surface for the five module-level roles, in fixed
+/// `(box, add, mul, sub, toIndex)` order.
+pub type FragHostRoleIndices = (
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+);
 
 impl FragHostTable {
     pub fn lookup(&self, role: FragHostRole) -> Option<u32> {

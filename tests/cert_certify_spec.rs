@@ -288,8 +288,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        15,
-        "all 36 module exports must be certified or explicitly declared"
+        16,
+        "all 37 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {
@@ -377,11 +377,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             }
         }
     }
-    let (box_idx, add_idx, mul_idx, sub_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
     assert_eq!(
         manifest["hostRoleTable"],
-        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx}),
+        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx, "toIndex": to_index_idx}),
         "manifest hostRoleTable must come from the Rust classifier over the emitted bytes"
     );
     let string_roles = aver::codegen::cert::byte_derived_string_host_roles(&wasm).unwrap();
@@ -3125,11 +3125,15 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     // The host-role table stays the exact byte-derived OBJECT — never `null`
     // — and every role is bound for the full Int runtime.
     let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
-    let (box_idx, add_idx, mul_idx, sub_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
     assert!(
-        box_idx.is_some() && add_idx.is_some() && mul_idx.is_some() && sub_idx.is_some(),
-        "add_one carries the full Int runtime; every strict role must bind"
+        box_idx.is_some()
+            && add_idx.is_some()
+            && mul_idx.is_some()
+            && sub_idx.is_some()
+            && to_index_idx.is_some(),
+        "add_one carries the full Int runtime; every role must bind"
     );
     assert!(
         manifest["carrier_type_index"].is_u64(),
@@ -3137,7 +3141,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     );
     assert_eq!(
         manifest["hostRoleTable"],
-        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx}),
+        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx, "toIndex": to_index_idx}),
         "a module with the Int helper must keep the concrete host-role table"
     );
 
@@ -3146,11 +3150,12 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     let expected_roles = format!(
-        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {} }} : CertDecode.AddSub.Roles),",
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {} }} : CertDecode.AddSub.Roles),",
         box_idx.unwrap(),
         add_idx.unwrap(),
         mul_idx.unwrap(),
         sub_idx.unwrap(),
+        to_index_idx.unwrap(),
     );
     assert!(
         manifest_lean.contains(&expected_roles),

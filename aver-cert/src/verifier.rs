@@ -111,7 +111,13 @@ enum StringHostRole {
     Concat,
 }
 
-type HostRoleTable = (Option<u32>, Option<u32>, Option<u32>, Option<u32>, Option<u32>);
+type HostRoleTable = (
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+);
 
 struct Candidates {
     certified: Vec<CertifiedCandidate>,

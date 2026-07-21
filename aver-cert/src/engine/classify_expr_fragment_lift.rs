@@ -54,6 +54,7 @@ pub fn byte_derived_frag_host_role_indices(
         host_table.add_idx,
         host_table.mul_idx,
         host_table.sub_idx,
+        host_table.to_index_idx,
     ))
 }
 
