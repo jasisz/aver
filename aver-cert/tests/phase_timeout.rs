@@ -56,7 +56,7 @@ fn minimal_fixture() -> Fixture {
   "declaredUncertified": [],
   "capabilities": [],
   "start": {{ "present": false, "function_index": null }},
-  "hostRoleTable": {{ "box": null, "add": null, "mul": null, "sub": null }},
+  "hostRoleTable": {{ "box": null, "add": null, "mul": null, "sub": null, "toIndex": null }},
   "stringHostRoles": []
 }}
 "#,
