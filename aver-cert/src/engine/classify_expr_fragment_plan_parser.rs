@@ -223,6 +223,29 @@ impl<'a> FragPlanParser<'a> {
                     args,
                 }
             }
+            "vector.get_or_default" => {
+                let arr_ty = plan_attr_u32(id, &attrs, "arr_ty")?;
+                let to_index_idx = plan_attr_u32(id, &attrs, "to_index")?;
+                let box_idx = plan_attr_u32(id, &attrs, "box")?;
+                let default = plan_attr_i64(id, &attrs, "default")?;
+                // The monolithic template hard-references locals 0 (vector)
+                // and 1 (index), mirroring the Lean typing rule.
+                if self.params.first().copied() != Some(FragTy::AdtRef)
+                    || self.params.get(1).copied() != Some(FragTy::IntCarrier)
+                {
+                    return Err(format!(
+                        "plan fused vector read v{} requires (adt-ref, int-carrier) params",
+                        id.0
+                    ));
+                }
+                require_plan_ty(id, ty, FragTy::IntCarrier)?;
+                FragNodeKind::VectorGetOrDefault {
+                    arr_ty,
+                    to_index_idx,
+                    box_idx,
+                    default,
+                }
+            }
             "if" => {
                 let cond = plan_attr_value(id, &attrs, "cond")?;
                 require_plan_node_ty(nodes, cond, FragTy::BoolI32)?;
@@ -409,6 +432,7 @@ fn reject_extra_plan_attrs(
         "ref.is_null" => &["value"],
         "prim" => &["op", "args"],
         "hostcall" => &["role", "func", "args"],
+        "vector.get_or_default" => &["arr_ty", "to_index", "box", "default"],
         "if" => &["cond"],
         _ => &[],
     };

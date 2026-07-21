@@ -54,6 +54,7 @@ pub fn byte_derived_frag_host_role_indices(
         host_table.add_idx,
         host_table.mul_idx,
         host_table.sub_idx,
+        host_table.to_index_idx,
     ))
 }
 
@@ -86,6 +87,7 @@ fn frag_calls_resolvable(calls: &[u32], table: &FragHostTable) -> bool {
                 || Some(*idx) == table.add_idx
                 || Some(*idx) == table.mul_idx
                 || Some(*idx) == table.sub_idx
+                || Some(*idx) == table.to_index_idx
         })
 }
 
@@ -107,6 +109,24 @@ fn check_plan_host_calls(block: &FragBlock, table: &FragHostTable) -> Result<(),
                 ));
             }
             FragNodeKind::HostCall { .. } => {}
+            FragNodeKind::VectorGetOrDefault {
+                to_index_idx,
+                box_idx,
+                ..
+            } => {
+                if table.to_index_idx != Some(*to_index_idx) {
+                    return Err(format!(
+                        "plan fused vector read v{} cites function {} for role `to_index`,                          but the byte-derived host-role table resolves it to {:?}",
+                        node.id.0, to_index_idx, table.to_index_idx
+                    ));
+                }
+                if table.box_idx != Some(*box_idx) {
+                    return Err(format!(
+                        "plan fused vector read v{} cites function {} for role `box`,                          but the byte-derived host-role table resolves it to {:?}",
+                        node.id.0, box_idx, table.box_idx
+                    ));
+                }
+            }
             FragNodeKind::If {
                 then_block,
                 else_block,
@@ -169,6 +189,12 @@ fn check_plan_struct_gets(
                         node.id.0, field, ty_idx, count
                     ));
                 }
+            }
+            FragNodeKind::VectorGetOrDefault { arr_ty, .. } if *arr_ty == carrier => {
+                return Err(format!(
+                    "plan fused vector read v{} cites the Int carrier type {} as its array",
+                    node.id.0, arr_ty
+                ));
             }
             FragNodeKind::If {
                 then_block,
@@ -298,11 +324,15 @@ fn byte_derived_frag_struct_table(
             names.len()
         ));
     };
+    // The fused vector read binds its one type name to the body's own
+    // `array.get` type; every struct-shaped face binds a `struct.get` type.
+    let uses_vector_get = sym_plan_has_vector_get(sym_plan);
     let mut tys = f
         .ops
         .iter()
         .filter_map(|op| match op {
-            Op::StructGet(t, _) if *t != carrier => Some(*t),
+            Op::StructGet(t, _) if !uses_vector_get && *t != carrier => Some(*t),
+            Op::ArrayGet(t) if uses_vector_get && *t != carrier => Some(*t),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -310,11 +340,16 @@ fn byte_derived_frag_struct_table(
     tys.dedup();
     let [ty_idx] = tys.as_slice() else {
         return Err(format!(
-            "export body must contain exactly one non-carrier struct.get type to bind `{name}`, found {}",
+            "export body must contain exactly one non-carrier {} type to bind `{name}`, found {}",
+            if uses_vector_get {
+                "array.get"
+            } else {
+                "struct.get"
+            },
             tys.len()
         ));
     };
-    if !struct_field_counts.contains_key(ty_idx) {
+    if !uses_vector_get && !struct_field_counts.contains_key(ty_idx) {
         return Err(format!(
             "byte-derived struct.get type {ty_idx} is not a module struct type"
         ));
@@ -322,4 +357,12 @@ fn byte_derived_frag_struct_table(
     let mut table = FragStructTable::default();
     table.insert(name, *ty_idx);
     Ok(table)
+}
+
+/// Whether a source plan contains the monolithic fused vector-read node.
+fn sym_plan_has_vector_get(plan: &SymPlan) -> bool {
+    plan.body
+        .nodes
+        .iter()
+        .any(|node| matches!(node.kind, SymNodeKind::VectorGetOrDefault { .. }))
 }

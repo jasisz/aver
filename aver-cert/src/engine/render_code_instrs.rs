@@ -69,6 +69,11 @@ fn render_simple_op(op: &Op) -> Option<String> {
         Op::I32Eq => ".i32Eq".to_string(),
         Op::I32LtS => ".i32LtS".to_string(),
         Op::I32GtS => ".i32GtS".to_string(),
+        Op::I32LtU => ".i32LtU".to_string(),
+        Op::I32GeS => ".i32GeS".to_string(),
+        Op::I32And => ".i32And".to_string(),
+        Op::ArrayLen => ".arrayLen".to_string(),
+        Op::ArrayGet(t) => format!(".arrayGet {t}"),
         Op::Call(f) => format!(".call {f}"),
         Op::ReturnCall(f) => format!(".returnCall {f}"),
         Op::ArrayNewDataUnresolved { .. } | Op::If | Op::Else | Op::End | Op::Other => {

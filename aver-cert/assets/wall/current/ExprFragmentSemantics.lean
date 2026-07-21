@@ -91,6 +91,10 @@ mutual
             | none => none
             | some symStack' =>
                 step symStack' (if tail then .returnCall funcIdx else .call funcIdx)
+        -- The monolithic fused vector read has no symbolic-generic
+        -- semantics: its face discharges through the audited template
+        -- theorem, never through this evaluator (fail-closed here).
+        | .vectorGetOrDefault _ _ _ _ => none
         | .ifElse cond thenBlock elseBlock =>
             match popExpected symStack cond, stack with
             | some [], .i32v c :: [] =>

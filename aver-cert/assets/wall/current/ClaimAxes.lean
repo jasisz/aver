@@ -88,6 +88,7 @@ structure ContractUse where
   mul : Bool := false
   stringEq : Bool := false
   stringConcat : Bool := false
+  toIndex : Bool := false
   addTotal : Bool := false
   subTotal : Bool := false
   mulTotal : Bool := false
@@ -100,6 +101,7 @@ def ContractUse.merge (left right : ContractUse) : ContractUse :=
     mul := left.mul || right.mul
     stringEq := left.stringEq || right.stringEq
     stringConcat := left.stringConcat || right.stringConcat
+    toIndex := left.toIndex || right.toIndex
     addTotal := left.addTotal || right.addTotal
     subTotal := left.subTotal || right.subTotal
     mulTotal := left.mulTotal || right.mulTotal }
@@ -109,6 +111,7 @@ def useHostRole : HostRole → ContractUse
   | .add => { add := true }
   | .sub => { sub := true }
   | .mul => { mul := true }
+  | .toIndex => { toIndex := true }
 
 def useFragBlockFuel : Nat → FragBlock → ContractUse
   | 0, _ => {}
@@ -119,6 +122,8 @@ def useFragBlockFuel : Nat → FragBlock → ContractUse
           | .ifElse _ thenBlock elseBlock =>
               (useFragBlockFuel fuel thenBlock).merge
                 (useFragBlockFuel fuel elseBlock)
+          -- The fused vector read calls both the to-index and box helpers.
+          | .vectorGetOrDefault _ _ _ _ => { box := true, toIndex := true }
           | _ => {}
         used.merge here) {}
 
@@ -206,6 +211,8 @@ def stringEqContract : String :=
   "String.eq (WVal byte-array equality; non-arrays compare false)"
 def stringConcatContract : String :=
   "String.concat (container-of-string-arrays -> byte-concatenated array)"
+def toIndexContract : String :=
+  "__aint_to_index (carrier -> i32 array index; [0, 2^31) passes, else -1)"
 def addTotalContract : String :=
   "Int.add (carrier add = exact integer addition on represented values); total on represented values"
 def subTotalContract : String :=
@@ -220,6 +227,7 @@ def ContractUse.contracts (use : ContractUse) : List String :=
   (if use.mul then [mulContract] else []) ++
   (if use.stringEq then [stringEqContract] else []) ++
   (if use.stringConcat then [stringConcatContract] else []) ++
+  (if use.toIndex then [toIndexContract] else []) ++
   (if use.addTotal then [addTotalContract] else []) ++
   (if use.subTotal then [subTotalContract] else []) ++
   (if use.mulTotal then [mulTotalContract] else [])

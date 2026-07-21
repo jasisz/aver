@@ -280,6 +280,13 @@ impl<'a> SymPlanParser<'a> {
                     miss: Box::new(miss),
                 }
             }
+            "vector.get_or_default" => {
+                let type_name = plan_attr(FragValueId(id.0), &attrs, "type")?.to_string();
+                require_sym_plan_token(id, "type", &type_name)?;
+                let default = plan_attr_i64(FragValueId(id.0), &attrs, "default")?;
+                require_sym_plan_ty(id, &ty, &SymTy::Int)?;
+                SymNodeKind::VectorGetOrDefault { type_name, default }
+            }
             "if" => {
                 let cond = sym_plan_attr_value(id, &attrs, "cond")?;
                 require_sym_plan_node_ty(nodes, cond, &SymTy::Bool)?;
@@ -428,6 +435,7 @@ fn reject_extra_sym_plan_attrs(
         "project.field" => &["type", "field", "value"],
         "int.const-cmp" => &["op", "value", "constant"],
         "tag.match" => &["type", "scrutinee", "tag"],
+        "vector.get_or_default" => &["type", "default"],
         "if" => &["cond"],
         _ => &[],
     };

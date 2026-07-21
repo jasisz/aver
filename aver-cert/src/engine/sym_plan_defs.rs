@@ -151,6 +151,15 @@ pub enum SymNodeKind {
         then_block: Box<SymBlock>,
         else_block: Box<SymBlock>,
     },
+    /// Monolithic fused `Option.withDefault(Vector.get(p0, p1), default)`:
+    /// read the `type_name` vector in param 0 at the Int index in param 1,
+    /// yielding the element in bounds and the literal `default` otherwise.
+    /// The vector and index are pinned to params 0 and 1. Twin of
+    /// `SymNodeKind.vectorGetOrDefault`.
+    VectorGetOrDefault {
+        type_name: String,
+        default: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -463,6 +472,7 @@ fn sym_block_struct_names_in_order(block: &SymBlock, out: &mut Vec<String>) {
     for node in &block.nodes {
         match &node.kind {
             SymNodeKind::ProjectField { type_name, .. } => out.push(type_name.clone()),
+            SymNodeKind::VectorGetOrDefault { type_name, .. } => out.push(type_name.clone()),
             SymNodeKind::TagMatch {
                 type_name,
                 hit,
@@ -505,6 +515,7 @@ fn frag_block_struct_get_user_tys_in_order(block: &FragBlock, out: &mut Vec<u32>
     for node in &block.nodes {
         match &node.kind {
             FragNodeKind::StructGetUser { ty_idx, .. } => out.push(*ty_idx),
+            FragNodeKind::VectorGetOrDefault { arr_ty, .. } => out.push(*arr_ty),
             FragNodeKind::If {
                 then_block,
                 else_block,
@@ -585,6 +596,13 @@ fn sym_block_struct_bindings(block: &SymBlock, out: &mut Vec<(String, SymTy)>) -
                 sym_block_struct_bindings(hit, out)?;
                 sym_block_struct_bindings(miss, out)?;
             }
+            SymNodeKind::VectorGetOrDefault { type_name, .. } => {
+                // The fused read is pinned to the `Vector<Int>` in param 0.
+                out.push((
+                    type_name.clone(),
+                    SymTy::App("Vector".to_string(), vec![SymTy::Int]),
+                ));
+            }
             SymNodeKind::If {
                 then_block,
                 else_block,
@@ -648,6 +666,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
             },
             args: args.iter().map(|id| SymValueId(id.0)).collect(),
         },
+        FragNodeKind::VectorGetOrDefault { .. } => return None,
         FragNodeKind::If {
             cond,
             then_block,

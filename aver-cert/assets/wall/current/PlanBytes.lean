@@ -217,6 +217,25 @@ mutual
                         [node.id])
                   | _, _, _ => none
               | _ => none
+          | .vectorGetOrDefault arrTy toIndexIdx boxIdx default =>
+              -- Byte twin of `PlanLower.vectorGetOrDefaultTemplate`, including
+              -- the `(ref null carrier)` if block type the emitter declares.
+              match stack with
+              | [] =>
+                  match uleb32 toIndexIdx, uleb32 boxIdx, uleb32 arrTy,
+                        s33HeapIdx carrier, sleb64 default with
+                  | some toIndexB, some boxB, some arrB, some carrierB, some dB =>
+                      some (
+                        [0x20, 0x01, 0x10] ++ toIndexB ++ [0x41, 0x00, 0x4e] ++
+                        [0x20, 0x01, 0x10] ++ toIndexB ++
+                        [0x20, 0x00, 0xfb, 0x0f, 0x49, 0x71] ++
+                        [0x04, 0x63] ++ carrierB ++
+                        [0x20, 0x00, 0x20, 0x01, 0x10] ++ toIndexB ++
+                        [0xfb, 0x0b] ++ arrB ++
+                        [0x05, 0x42] ++ dB ++ [0x10] ++ boxB ++ [0x0b],
+                        [node.id])
+                  | _, _, _, _, _ => none
+              | _ => none
         match lowered? with
         | some (bytes, stack') =>
             match lowerNodesBytesFuel fuel carrier rest stack' with

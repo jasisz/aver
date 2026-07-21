@@ -220,6 +220,11 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
             sym_block_lean_value(hit),
             sym_block_lean_value(miss)
         ),
+        SymNodeKind::VectorGetOrDefault { type_name, default } => format!(
+            ".vectorGetOrDefault {} ({} : Int)",
+            lean_str(type_name),
+            default
+        ),
         SymNodeKind::If {
             cond,
             then_block,
@@ -324,6 +329,11 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
             out.push_str(&format!("{pad}miss\n"));
             render_sym_block_plan(miss, indent + 1, out);
             out.push_str(&format!("{pad}endtag\n"));
+        }
+        SymNodeKind::VectorGetOrDefault { type_name, default } => {
+            out.push_str(&format!(
+                "vector.get_or_default type={type_name} default={default}\n"
+            ));
         }
         SymNodeKind::If {
             cond,

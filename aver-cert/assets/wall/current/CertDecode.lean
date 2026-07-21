@@ -1064,11 +1064,21 @@ def boxIdx (n len : Nat) : Option Nat :=
   | none => none
   | some es => (es.find? (fun e => e.1 == "__rt_aint_from_i64")).map Prod.snd
 
+/-- The `__aint_to_index` helper role, bound exactly like `box`: by its named
+    runtime export. The helper's semantics stay an assumed runtime contract
+    (`toIndexW` in the obligation denotation); the byte-derived index only
+    prevents a claim from wiring the contract to an arbitrary function. -/
+def toIndexIdx (n len : Nat) : Option Nat :=
+  match decodeExports n len with
+  | none => none
+  | some es => (es.find? (fun e => e.1 == "__aint_to_index")).map Prod.snd
+
 structure Roles where
   box : Option Nat
   add : Option Nat
   mul : Option Nat
   sub : Option Nat
+  toIndex : Option Nat
   deriving DecidableEq, Repr
 
 /-- Carrier-binop candidates from one type pass, one function-section pass,
@@ -1090,7 +1100,8 @@ def roleTable (n len : Nat) : Option Roles :=
       some { box := boxIdx n len
            , add := uniqueC (candFor Arith.add fns)
            , mul := uniqueC (candFor Arith.mul fns)
-           , sub := uniqueC (candFor Arith.sub fns) }
+           , sub := uniqueC (candFor Arith.sub fns)
+           , toIndex := toIndexIdx n len }
 
 /-- Byte-derived proof that the module carries no Int-carrier box helper: the
     export section decodes strictly and no function export is named

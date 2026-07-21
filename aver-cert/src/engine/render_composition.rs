@@ -332,8 +332,8 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          AverCert.AcceptedArtifact.ArtifactData)\n      \
          {name}CompositionClaim {callees_lean} := by\n  \
          refine ⟨rfl, ?_⟩\n  \
-         intro S add sub mul stringEq stringConcat\n    \
-         hAdd hSub hMul hStringEq hStringConcat ns vs hDom\n  \
+         intro S add sub mul stringEq stringConcat toIndex\n    \
+         hAdd hSub hMul hStringEq hStringConcat _hToIndex ns vs hDom\n  \
          dsimp [{name}CompositionClaim, AverCert.{name}Ob] at ns vs hDom ⊢\n  \
          rcases hDom with ⟨hRepr, hLen⟩\n  \
          cases hRepr with\n  \

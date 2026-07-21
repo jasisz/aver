@@ -82,6 +82,44 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 });
                 stack.push(node.id);
             }
+            FragNodeKind::VectorGetOrDefault {
+                arr_ty,
+                to_index_idx,
+                box_idx,
+                default,
+            } => {
+                // Monolithic template over pinned locals 0/1; consumes no
+                // operand stack values, so it is canonical only as the sole
+                // value (twin of `PlanLower.vectorGetOrDefaultTemplate`).
+                if !stack.is_empty() {
+                    return Err(format!(
+                        "fused vector read v{} requires an empty stack",
+                        node.id.0
+                    ));
+                }
+                ops.extend([
+                    Op::LocalGet(1),
+                    Op::Call(*to_index_idx),
+                    Op::I32Const(0),
+                    Op::I32GeS,
+                    Op::LocalGet(1),
+                    Op::Call(*to_index_idx),
+                    Op::LocalGet(0),
+                    Op::ArrayLen,
+                    Op::I32LtU,
+                    Op::I32And,
+                    Op::If,
+                    Op::LocalGet(0),
+                    Op::LocalGet(1),
+                    Op::Call(*to_index_idx),
+                    Op::ArrayGet(*arr_ty),
+                    Op::Else,
+                    Op::I64Const(*default),
+                    Op::Call(*box_idx),
+                    Op::End,
+                ]);
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,

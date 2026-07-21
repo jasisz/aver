@@ -16,7 +16,10 @@ import subprocess
 import sys
 
 RUNTIME_PREFIXES = ("__rt_", "__caller")
-RUNTIME_EXACT = {"_start", "memory"}
+# `__aint_to_index` is the named host-role export the fused vector-read
+# contract binds (mirror of `__rt_aint_from_i64` for box) — a runtime helper,
+# never certified as user code.
+RUNTIME_EXACT = {"_start", "memory", "__aint_to_index"}
 
 
 def wat_of(wasm_path):

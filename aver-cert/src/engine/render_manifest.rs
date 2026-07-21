@@ -36,6 +36,25 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             else_c = lean_int_lit(face.else_c),
         );
     }
+    // The fused vector-read face: the wall's face terms verbatim (domain is
+    // the represented vector with its in-relation length bound, model is the
+    // in-bounds read or the literal default).
+    if let Some(face) = c.vector_get_face() {
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := List Int × Int, Cod := Int,\n    \
+             domRepr := AverCert.StandardFace.vecDomRepr {carrier} {arr_ty},\n    \
+             codRepr := fun S n w => intRepr S n w,\n    \
+             model := AverCert.StandardFace.vecModel ({d} : Int) }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            arr_ty = face.arr_ty,
+            d = face.default,
+        );
+    }
     // An ADT-ref expr fragment with the field-projection face states the SAME
     // verbatim projection obligation the legacy field-projection class ships:
     // a two-field struct in, the projected field out unchanged.
@@ -636,11 +655,12 @@ fn render_manifest(
     // otherwise.
     if analysis.frag_host_table.box_idx.is_some() {
         s.push_str(&format!(
-            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}}},\n",
+            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}, \"toIndex\": {}}},\n",
             json_role(analysis.frag_host_table.box_idx),
             json_role(analysis.frag_host_table.add_idx),
             json_role(analysis.frag_host_table.mul_idx),
             json_role(analysis.frag_host_table.sub_idx),
+            json_role(analysis.frag_host_table.to_index_idx),
         ));
     } else {
         s.push_str("  \"hostRoleTable\": null,\n");
@@ -692,6 +712,8 @@ fn render_manifest(
             "AcceptanceSoundness.composition_claim_discharges_with_bridge".to_string()
         } else if expr_fragment_uses_audited_generic(c) {
             "AcceptanceSoundness.exprFragment_claim_discharges".to_string()
+        } else if c.vector_get_face().is_some() {
+            "AverCert.StandardFace.vectorGetOrDefault_simulates_model".to_string()
         } else if c.project_face().is_some() {
             "AcceptanceSoundness.fieldProjection_direct_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {

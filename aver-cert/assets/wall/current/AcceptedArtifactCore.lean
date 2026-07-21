@@ -111,15 +111,17 @@ def stringConcatNLocals (_plan : StringConcatRawPlan) : Nat := 1
 def stringEqCanonicalHost (funcIdx : Nat) :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) → HostTbl :=
-  fun _add _sub _mul stringEq _stringConcat fn =>
+    (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) → HostTbl :=
+  fun _add _sub _mul stringEq _stringConcat _toIndex fn =>
     if fn = funcIdx then some (2, stringEq) else none
 
 def stringConcatCanonicalHost (funcIdx resultTy : Nat) :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) → HostTbl :=
-  fun _add _sub _mul _stringEq stringConcat fn =>
+    (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) → HostTbl :=
+  fun _add _sub _mul _stringEq stringConcat _toIndex fn =>
     if fn = funcIdx then some (1, stringConcat resultTy) else none
 
 /-- Artifact-level acceptance for one String.concat export. The raw plan carries
@@ -673,7 +675,10 @@ def intDispatchCanonicalSlots
           | .box => ((1 : Nat), boxRef carrier)
           | .add => ((2 : Nat), add)
           | .mul => ((2 : Nat), mul)
-          | .sub => ((2 : Nat), sub))
+          | .sub => ((2 : Nat), sub)
+          -- The Int-face dispatch grammar never cites the to-index role; a
+          -- table entry for it wires a slot that always fails (trap-only).
+          | .toIndex => ((1 : Nat), fun _ => none))
       else intDispatchCanonicalSlots carrier add sub mul rest fn
 
 /-- The canonical Int-face host BUILDER for a byte-derived role table: the
@@ -692,8 +697,9 @@ def intDispatchCanonicalHost
     (carrier : Nat) (hostTable : List (HostRole × Nat)) :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) → HostTbl :=
-  fun add sub mul _stringEq _stringConcat =>
+    (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) → HostTbl :=
+  fun add sub mul _stringEq _stringConcat _toIndex =>
     intDispatchCanonicalSlots carrier add sub mul hostTable
 
 /-- Artifact-level acceptance for one Int-face `ref.test`-dispatch export. The

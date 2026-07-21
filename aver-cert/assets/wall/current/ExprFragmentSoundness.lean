@@ -383,6 +383,10 @@ theorem mutualCorrectStep :
                                                         restInstrs fin hcallsRest hrest locals
                                                         [.i32v c] out
                                                       simpa [hstep] using hrun
+            next _arrTy _toIndexIdx _boxIdx _default =>
+              -- The monolithic fused vector read never runs through the
+              -- symbolic evaluator, so a successful run is contradictory.
+              simp at hrun
       · intro host ar callee carrier block instrs hcalls hlow locals out hrun
         simp only [lowerBlockFuel] at hlow
         cases hn : lowerNodesFuel fuel carrier block.nodes [] with

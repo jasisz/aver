@@ -140,6 +140,58 @@ fn lower_expr_fragment_block_bytes(
                 push_u32_leb(out, *func_idx);
                 stack.push(node.id);
             }
+            FragNodeKind::VectorGetOrDefault {
+                arr_ty,
+                to_index_idx,
+                box_idx,
+                default,
+            } => {
+                // Monolithic fused template over pinned locals 0/1 (byte twin
+                // of `PlanBytes`' arm). Consumes no operand stack values.
+                if !stack.is_empty() {
+                    return Err(format!(
+                        "canonical byte lowering for fused vector read v{} \
+                         requires an empty stack",
+                        node.id.0
+                    ));
+                }
+                out.push(0x20);
+                push_u32_leb(out, 1);
+                out.push(0x10);
+                push_u32_leb(out, *to_index_idx);
+                out.push(0x41);
+                push_i32_leb(out, 0);
+                out.push(0x4e);
+                out.push(0x20);
+                push_u32_leb(out, 1);
+                out.push(0x10);
+                push_u32_leb(out, *to_index_idx);
+                out.push(0x20);
+                push_u32_leb(out, 0);
+                out.push(0xfb);
+                push_u32_leb(out, 0x0f);
+                out.push(0x49);
+                out.push(0x71);
+                out.push(0x04);
+                out.push(0x63);
+                push_s33_heap_idx(out, carrier);
+                out.push(0x20);
+                push_u32_leb(out, 0);
+                out.push(0x20);
+                push_u32_leb(out, 1);
+                out.push(0x10);
+                push_u32_leb(out, *to_index_idx);
+                out.push(0xfb);
+                push_u32_leb(out, 0x0b);
+                push_u32_leb(out, *arr_ty);
+                out.push(0x05);
+                out.push(0x42);
+                push_i64_leb(out, *default);
+                out.push(0x10);
+                push_u32_leb(out, *box_idx);
+                out.push(0x0b);
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,

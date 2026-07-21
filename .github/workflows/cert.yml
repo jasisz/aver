@@ -38,6 +38,9 @@ jobs:
           - suite: cert_decode_spec
             lane: ''
             mode: cargo
+          - suite: cert_toindex_differential
+            lane: ''
+            mode: cargo
           - suite: cert_whole_module_guard_iso
             lane: ''
             mode: cargo

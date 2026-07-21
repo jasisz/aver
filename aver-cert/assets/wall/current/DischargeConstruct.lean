@@ -141,7 +141,8 @@ theorem construct_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
-      (Nat → List WVal → Option WVal) → HostTbl)
+      (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) → HostTbl)
     (Dom Cod : Type)
     (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
     (codRepr : CarrierSpec carrier → Cod → WVal → Prop)
@@ -170,17 +171,17 @@ theorem construct_canonical_discharges
          domRepr := domRepr
          codRepr := codRepr
          model := model } : Obligation) := by
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x args w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x args w hDom hRun
   rcases hSemantic S x args hDom with ⟨hLen, hCod⟩
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := ConstructVerbatimSoundness.generic_construct_certified
-        structIdx plan code (host add sub mul stringEq stringConcat) self 1
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self 1
         hCheck body hLow hCode args hLen
       have hFuel := construct_run_succ_eq_one
-        structIdx plan code (host add sub mul stringEq stringConcat) self
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self
         hCheck body hLow hCode fuel args hLen
       rw [hFuel, hCall] at hRun
       have hw :
@@ -199,7 +200,8 @@ theorem constructUnary_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
-      (Nat → List WVal → Option WVal) → HostTbl)
+      (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) → HostTbl)
     (hArity : plan.arity = 1)
     (hCheck : AverCert.PlanCheck.checkConstructRawPlan plan = true)
     {body : List WInstr}
@@ -220,18 +222,18 @@ theorem constructUnary_canonical_discharges
          model := fun p => .structv structIdx
            (ConstructVerbatimSoundness.constructModelFields
              ([p] ++ List.replicate 1 .null) plan.fields) } : Obligation) := by
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p args w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel p args w hDom hRun
   subst args
   have hLen : [p].length = plan.arity := by simp [hArity]
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := ConstructVerbatimSoundness.generic_construct_certified
-        structIdx plan code (host add sub mul stringEq stringConcat) self 1
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self 1
         hCheck body hLow hCode [p] hLen
       have hFuel := construct_run_succ_eq_one
-        structIdx plan code (host add sub mul stringEq stringConcat) self
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self
         hCheck body hLow hCode fuel [p] hLen
       rw [hFuel, hCall] at hRun
       exact (Option.some.inj hRun).symm
@@ -245,7 +247,8 @@ theorem constructBinary_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
-      (Nat → List WVal → Option WVal) → HostTbl)
+      (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) → HostTbl)
     (hArity : plan.arity = 2)
     (hCheck : AverCert.PlanCheck.checkConstructRawPlan plan = true)
     {body : List WInstr}
@@ -266,18 +269,18 @@ theorem constructBinary_canonical_discharges
          model := fun p => .structv structIdx
            (ConstructVerbatimSoundness.constructModelFields
              ([p.1, p.2] ++ List.replicate 1 .null) plan.fields) } : Obligation) := by
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel p args w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel p args w hDom hRun
   subst args
   have hLen : [p.1, p.2].length = plan.arity := by simp [hArity]
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := ConstructVerbatimSoundness.generic_construct_certified
-        structIdx plan code (host add sub mul stringEq stringConcat) self 1
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self 1
         hCheck body hLow hCode [p.1, p.2] hLen
       have hFuel := construct_run_succ_eq_one
-        structIdx plan code (host add sub mul stringEq stringConcat) self
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self
         hCheck body hLow hCode fuel [p.1, p.2] hLen
       rw [hFuel, hCall] at hRun
       exact (Option.some.inj hRun).symm
@@ -296,14 +299,14 @@ theorem construct_claim_discharges
     ⟨plan, hPlan, hCall⟩
   rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
-  intro S add sub mul stringEq stringConcat
-    _hAdd _hSub _hMul _hStringEq _hStringConcat fuel x args w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x args w hDom hRun
   rcases hSemantic S x args hDom with ⟨hLen, hCod⟩
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hResult := hCall
-        (claim.obligation.host add sub mul stringEq stringConcat)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
         fuel args hLen
       rw [hResult] at hRun
       have hw :
