@@ -138,6 +138,9 @@ def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
   | .sub =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  -- `__aint_to_index` is consumed only inside the monolithic fused
+  -- vector-read node; a standalone host call to it has no admitted face.
+  | .toIndex => none
 
 /-- All arguments of a self-call must be Int carriers; the recursion class only
     threads Int values through its recursive descent. -/
@@ -220,6 +223,12 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
               | some t, some e => if t.ty = e.ty then some t.ty else none
               | _, _ => none
             else none
+        -- The monolithic fused vector read hard-references locals 0 (vector)
+        -- and 1 (index), so it types only under exactly that param prefix.
+        | .vectorGetOrDefault _arrTy _toIndexIdx _boxIdx _default =>
+            if params[0]? = some .adtRef && params[1]? = some .intCarrier then
+              some .intCarrier
+            else none
       let rec checkNodes (checked : List FragNode) : List FragNode → Bool
         | [] => true
         | node :: rest =>
@@ -293,6 +302,14 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
               | some t, some e => if t.ty = e.ty then some t.ty else none
               | _, _ => none
             else none
+        -- The fused vector read is pinned to `Vector<Int>` in param 0 and an
+        -- `Int` index in param 1; its value is the read (or default) `Int`.
+        | .vectorGetOrDefault typeName _default =>
+            if typeName = "Vector<Int>" &&
+               params[0]? = some (.app1 "Vector" .int) &&
+               params[1]? = some .int then
+              some .int
+            else none
       let rec checkNodes (checked : List SymNode) : List SymNode → Bool
         | [] => true
         | node :: rest =>
@@ -352,6 +369,7 @@ def blockNeedsRelationalFloatResultFuel : Nat → FragBlock → Bool
         | .refIsNull _ => false
         | .hostCall _ _ _ => false
         | .selfCall _ _ _ => false
+        | .vectorGetOrDefault _ _ _ _ => false
 
 def exactBitFloatResultAllowed (plan : ExprFragmentRawPlan) : Bool :=
   match plan.result with
@@ -892,6 +910,16 @@ def encodeSymBlockFuel :
               let thenFrag ← encodeSymBlockFuel fuel hostTable structTable thenBlock
               let elseFrag ← encodeSymBlockFuel fuel hostTable structTable elseBlock
               let (st, id) := pushEncodedNode st fragTy (.ifElse cond thenFrag elseFrag)
+              some { st with symToFrag := st.symToFrag ++ [id] }
+          | .vectorGetOrDefault typeName default =>
+              -- The monolithic fused read: resolve the vector's array type
+              -- through the byte-derived struct table and both helpers through
+              -- the byte-derived role table; a missing binding fail-closes.
+              let arrTy ← structTyIdx? structTable typeName
+              let toIndexIdx ← hostRoleIdx? hostTable .toIndex
+              let boxIdx ← hostRoleIdx? hostTable .box
+              let (st, id) := pushEncodedNode st fragTy
+                (.vectorGetOrDefault arrTy toIndexIdx boxIdx default)
               some { st with symToFrag := st.symToFrag ++ [id] }
         else
           none

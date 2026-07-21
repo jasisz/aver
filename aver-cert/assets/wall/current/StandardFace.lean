@@ -34,6 +34,7 @@ def decodedRoleIdx (roles : CertDecode.AddSub.Roles) : HostRole → Option Nat
   | .add => roles.add
   | .mul => roles.mul
   | .sub => roles.sub
+  | .toIndex => roles.toIndex
 
 /-- Every role/index pair used by a claim must agree with the unique table
     decoded from the module. Family checkers already require every role their
@@ -296,6 +297,94 @@ def classifyTagDispatch (plan : ExprFragmentRawPlan) : Option TagDispatchFace :=
         | _, _, _, _, _ => none
     | _ => none
   else none
+/-! ### Fused vector-read face (`Option.withDefault(Vector.get(vec, idx), d)`)
+
+The wasm-gc emitter fuses this call pair into one fixed bounds-checked
+`array.get` template (`PlanLower.vectorGetOrDefaultTemplate`): extract the
+index through the `__aint_to_index` host helper, test `idx >= 0 (signed) AND
+idx < len (unsigned)`, read the element on hit, box the literal default on
+miss. The helper is bound only by its relational `toIndexW` contract (the
+sixth host-contract slot), mirroring the add/sub/mul host contracts.
+
+SOUNDNESS-CRITICAL BOUND: the representation relation requires
+`elems.length < 2^31`. Without it, a state with a `>= 2^31`-element array
+would "represent" a vector for which the model reads `v[i]` at
+`i in [2^31, len)` while the machine's `to_index` collapses `i` to the `-1`
+sentinel and returns the default. The bound lives INSIDE `vecDomRepr` — a
+state carrying a larger array simply represents no `(v, i)` at all — never as
+an asserted premise. It is also true of the actual runtime: no engine array
+spans `2^31` entries (`wat/to_index.wat`). -/
+
+structure VectorGetOrDefaultFace where
+  arrTy      : Nat
+  toIndexIdx : Nat
+  boxIdx     : Nat
+  d          : Int
+deriving Repr, DecidableEq
+
+/-- Host slots of the fused template: the abstract `__aint_to_index` contract
+    slot and the audited box reference face. -/
+def vectorGetOrDefaultHostSlots
+    (carrier toIndexIdx boxIdx : Nat)
+    (toIndex : List WVal → Option WVal) : HostTbl :=
+  fun fn =>
+    if fn = toIndexIdx then some (1, toIndex)
+    else if fn = boxIdx then some (1, boxRef carrier) else none
+
+def vectorGetOrDefaultHost
+    (carrier : Nat) (face : VectorGetOrDefaultFace) : HostBuilder :=
+  fun _add _sub _mul _stringEq _stringConcat toIndex =>
+    vectorGetOrDefaultHostSlots carrier face.toIndexIdx face.boxIdx toIndex
+
+/-- Domain representation of the fused-read face: the machine state is exactly
+    `[vector array, boxed index]`, the array has one represented element per
+    model element, and — soundness-critical, see the section header — fewer
+    than `2^31` elements. All witnesses live INSIDE the relation. -/
+def vecDomRepr (carrier arrTy : Nat) (S : CarrierSpec carrier)
+    (p : List Int × Int) (vs : List WVal) : Prop :=
+  ∃ elems wi,
+    vs = [.arr arrTy elems, wi] ∧
+    elems.length = p.1.length ∧
+    elems.length < 2147483648 ∧
+    (∀ k, k < p.1.length → ∃ w, elems[k]? = some w ∧ intRepr S (p.1[k]!) w) ∧
+    intRepr S p.2 wi
+
+/-- The source model: in-bounds read, else the literal default. -/
+def vecModel (d : Int) (p : List Int × Int) : Int :=
+  if 0 ≤ p.2 ∧ p.2 < (p.1.length : Int) then p.1[p.2.toNat]! else d
+
+/-- The complete face of the fused vector-read shape: the four template holes
+    are the face data; domain, codomain, representations, and model are fixed
+    by the family. -/
+def vectorGetOrDefault
+    (carrier : Nat) (face : VectorGetOrDefaultFace) : FaceSpec where
+  carrier := carrier
+  Dom := List Int × Int
+  Cod := Int
+  domRepr := vecDomRepr carrier face.arrTy
+  codRepr := intRepr
+  host := vectorGetOrDefaultHost carrier face
+  model? := some (vecModel face.d)
+
+/-- Exact fused vector-read classifier: the plan is the single monolithic
+    template node over the pinned `(vector, index)` params. The helper indices
+    must be distinct, or the host builder could not present both slots. -/
+def classifyVectorGetOrDefault
+    (plan : ExprFragmentRawPlan) : Option VectorGetOrDefaultFace :=
+  if plan.params = [.adtRef, .intCarrier] && plan.result = .intCarrier &&
+      plan.body.result = 0 then
+    match plan.body.nodes with
+    | [n0] =>
+        match n0.kind with
+        | .vectorGetOrDefault arrTy toIndexIdx boxIdx d =>
+            if n0.ty = .intCarrier && toIndexIdx != boxIdx then
+              some { arrTy := arrTy, toIndexIdx := toIndexIdx,
+                     boxIdx := boxIdx, d := d }
+            else none
+        | _ => none
+    | _ => none
+  else none
+
 def genericFragmentAllowedFuel : Nat → FragBlock → Bool
   | 0, _ => false
   | fuel + 1, block =>
@@ -307,6 +396,7 @@ def genericFragmentAllowedFuel : Nat → FragBlock → Bool
             genericFragmentAllowedFuel fuel thenBlock &&
               genericFragmentAllowedFuel fuel elseBlock
         | .selfCall _ _ _ => false
+        | .vectorGetOrDefault _ _ _ _ => false
         | .local _ | .constBool _ | .constI64 _ | .constI32 _ |
           .constF64Bits _ | .structGet _ _ | .refIsNull _ |
           .prim _ _ => true
@@ -334,9 +424,13 @@ noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFa
               match classifyTagDispatch plan with
               | some face => some (.known (tagDispatch claim.carrier face))
               | none =>
-                  if genericFragmentAllowed plan then
-                    some (.known (fragment claim.carrier plan.params plan.result))
-                  else none
+                  match classifyVectorGetOrDefault plan with
+                  | some face =>
+                      some (.known (vectorGetOrDefault claim.carrier face))
+                  | none =>
+                      if genericFragmentAllowed plan then
+                        some (.known (fragment claim.carrier plan.params plan.result))
+                      else none
 
 def symFragmentMatches
     (roles : CertDecode.AddSub.Roles) (claim : SymFragmentClaim) : Prop :=
@@ -585,5 +679,108 @@ def checkedFaces (artifact : ArtifactData) : Prop :=
   allClaims (fieldProjectionMatches artifact.manifest) artifact.fieldProjectionClaims ∧
   allClaims (compositionMatches artifact.compositionMembers
     artifact.manifest.subject.hostRoles) artifact.compositionClaims
+
+/-! ### The fused vector-read template-implies-model theorem
+
+Generic over every template hole, the code table (pinned only at the self
+entry, exactly what byte acceptance certifies), and any `toIndex` helper
+obeying the relational `__aint_to_index` contract: running the fused template
+on a represented `(vector, index)` yields a represented `vecModel`. Partial
+correctness — vacuous on trap or fuel exhaustion, like `Obligation.holds`.
+The generated certificate's fused-read side condition discharges through this
+theorem; the semantics is proven by the audited interpreter clauses, never by
+a byte-pin of the claim body. -/
+set_option maxRecDepth 100000 in
+set_option maxHeartbeats 4000000 in
+theorem vectorGetOrDefault_simulates_model
+    (carrier toIndexIdx boxIdx arrTy : Nat) (d : Int)
+    (hIdx : toIndexIdx ≠ boxIdx)
+    (S : CarrierSpec carrier)
+    (toIndex : List WVal → Option WVal)
+    (hToIndex : ∀ n w r, intRepr S n w → toIndex [w] = some r →
+      r = .i32v (toIndexW n))
+    (code : CodeTbl) (self : Nat)
+    (hCode : code self = some
+      ⟨2, 1, AverCert.PlanLower.vectorGetOrDefaultTemplate toIndexIdx boxIdx arrTy d⟩)
+    (fuel : Nat) (v : List Int) (i : Int) (vs : List WVal) (w : WVal)
+    (hDom : vecDomRepr carrier arrTy S (v, i) vs)
+    (hRun : wFuncN code
+      (vectorGetOrDefaultHostSlots carrier toIndexIdx boxIdx toIndex)
+      fuel self vs = some w) :
+    intRepr S (vecModel d (v, i)) w := by
+  obtain ⟨elems, wi, rfl, hlen0, hbound, hall0, hwi0⟩ := hDom
+  -- Re-state the relation components with `(v, i).fst/.snd` projected away so
+  -- `omega` sees one atom per length.
+  have hlen : elems.length = v.length := hlen0
+  have hall : ∀ k, k < v.length → ∃ w, elems[k]? = some w ∧
+      intRepr S (v[k]!) w := hall0
+  have hwi : intRepr S i wi := hwi0
+  have hbox : ¬(boxIdx = toIndexIdx) := fun h => hIdx h.symm
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      cases htix : toIndex [wi] with
+      | none =>
+          simp [wFuncN, hCode, AverCert.PlanLower.vectorGetOrDefaultTemplate,
+            vectorGetOrDefaultHostSlots, initLocals, wRunF, popArgs, htix] at hRun
+      | some r =>
+          have hr := hToIndex i wi r hwi htix
+          subst hr
+          by_cases hin : 0 ≤ i ∧ i < (v.length : Int)
+          · -- In bounds: the hit arm reads the represented element.
+            have hlt31 : i < 2147483648 := by omega
+            have ht : toIndexW i = i := by
+              simp [toIndexW, hin.1, hlt31]
+            rw [ht] at htix
+            have hkn : i.toNat < v.length := by omega
+            obtain ⟨wv, hw, hwr⟩ := hall i.toNat hkn
+            have hidx : i.toNat < elems.length := by omega
+            have hwv : elems[i.toNat] = wv := by
+              simpa [List.getElem?_eq_getElem hidx] using hw
+            have hemodI : i.emod 4294967296 = i := by
+              show i % 4294967296 = i
+              omega
+            have hemodL : ((elems.length : Int)).emod 4294967296 =
+                (elems.length : Int) := by
+              show (elems.length : Int) % 4294967296 = (elems.length : Int)
+              omega
+            have hilen : i < (elems.length : Int) := by omega
+            simp [wFuncN, hCode, AverCert.PlanLower.vectorGetOrDefaultTemplate,
+              vectorGetOrDefaultHostSlots, initLocals, wRunF, popArgs, b32,
+              htix, ht, hin.1, hemodI, hemodL, hilen, hbox, hw] at hRun
+            subst hRun
+            simpa [vecModel, hin, hwv] using hwr
+          · -- Out of bounds: the miss arm boxes the literal default.
+            have hmodel : vecModel d (v, i) = d := by
+              simp only [vecModel]
+              exact if_neg hin
+            rw [hmodel]
+            by_cases hsmall : 0 ≤ i ∧ i < 2147483648
+            · -- The extracted index is `i` itself but fails the unsigned
+              -- length test (`i >= len`).
+              have ht : toIndexW i = i := by simp [toIndexW, hsmall]
+              rw [ht] at htix
+              have hemodI : i.emod 4294967296 = i := by
+                show i % 4294967296 = i
+                omega
+              have hemodL : ((elems.length : Int)).emod 4294967296 =
+                  (elems.length : Int) := by
+                show (elems.length : Int) % 4294967296 = (elems.length : Int)
+                omega
+              have hnlt : ¬(i < (elems.length : Int)) := by omega
+              simp [wFuncN, hCode, AverCert.PlanLower.vectorGetOrDefaultTemplate,
+                vectorGetOrDefaultHostSlots, initLocals, wRunF, popArgs, b32,
+                htix, ht, hsmall.1, hemodI, hemodL, hnlt, hbox, boxRef] at hRun
+              subst hRun
+              exact S.smallIntro d
+            · -- The helper collapses the index to the sentinel `-1`, which
+              -- fails the signed lower-bound test.
+              have ht : toIndexW i = -1 := by simp [toIndexW, hsmall]
+              rw [ht] at htix
+              simp [wFuncN, hCode, AverCert.PlanLower.vectorGetOrDefaultTemplate,
+                vectorGetOrDefaultHostSlots, initLocals, wRunF, popArgs, b32,
+                htix, ht, hbox, boxRef] at hRun
+              subst hRun
+              exact S.smallIntro d
 
 end AverCert.StandardFace

@@ -675,7 +675,10 @@ def intDispatchCanonicalSlots
           | .box => ((1 : Nat), boxRef carrier)
           | .add => ((2 : Nat), add)
           | .mul => ((2 : Nat), mul)
-          | .sub => ((2 : Nat), sub))
+          | .sub => ((2 : Nat), sub)
+          -- The Int-face dispatch grammar never cites the to-index role; a
+          -- table entry for it wires a slot that always fails (trap-only).
+          | .toIndex => ((1 : Nat), fun _ => none))
       else intDispatchCanonicalSlots carrier add sub mul rest fn
 
 /-- The canonical Int-face host BUILDER for a byte-derived role table: the

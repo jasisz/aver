@@ -276,10 +276,56 @@ def exprTagDispatchTypesMatch (modBytes modLen carrier structIdx : Nat) : Bool :
       | none => false
   | none => false
 
-/-- Opaque references fail closed unless the plan has one of the two admitted
+/-- Byte-level recognizer of the monolithic fused vector-read shape (mirror of
+    the representation plan). Returns the vector's array type index. -/
+def exprVectorGetOrDefaultArrTy?
+    (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
+  if plan.params = [.adtRef, .intCarrier] && plan.result = .intCarrier &&
+      plan.body.result = 0 then
+    match plan.body.nodes with
+    | [n0] =>
+        match n0.kind with
+        | .vectorGetOrDefault arrTy _toIndexIdx _boxIdx _default =>
+            if n0.ty = .intCarrier then some arrTy else none
+        | _ => none
+    | _ => none
+  else none
+
+/-- The fused vector read is nominally bound on both ends: the function must
+    take exactly the declared vector array plus one Int carrier and return the
+    carrier, and the declared array type's element storage must be the nullable
+    carrier reference — so the elements a `domRepr` state carries really are
+    Int-carrier representations. The carrier is never the array itself. -/
+def checkVectorGetTypes
+    (carrier arrTy : Nat)
+    (funcEntry arrEntry : CertDecode.TypeEntry) : Bool :=
+  if arrTy == carrier then false else
+    match funcEntry.form, funcEntry.composite,
+        arrEntry.form, arrEntry.composite with
+    | .plain, .funcType [vecParam, idxParam] [result], .plain, .arrayType field =>
+        decide (vecParam = nullableRefType arrTy) &&
+          decide (idxParam = nullableRefType carrier) &&
+          decide (result = nullableRefType carrier) &&
+          (match field.storage with
+           | .val elemTy => decide (elemTy = nullableRefType carrier)
+           | .packed _ => false)
+    | _, _, _, _ => false
+
+def exprVectorGetTypesMatch
+    (modBytes modLen typeIdx carrier arrTy : Nat) : Bool :=
+  match CertDecode.decodeTypes modBytes modLen with
+  | some info =>
+      match info.entryIndex[typeIdx]?, info.entryIndex[arrTy]? with
+      | some funcEntry, some arrEntry =>
+          checkVectorGetTypes carrier arrTy funcEntry arrEntry
+      | _, _ => false
+  | none => false
+
+/-- Opaque references fail closed unless the plan has one of the three admitted
     faces: the field-projection face (whose nominal signature and field type are
-    decoded above) or the tag-dispatch face (whose i32 tag field is decoded
-    below). -/
+    decoded above), the tag-dispatch face (whose i32 tag field is decoded
+    below), or the fused vector-read face (whose array element type is decoded
+    above). -/
 def exprFragmentNominalTypesMatch
     (modBytes modLen typeIdx carrier : Nat)
     (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
@@ -291,7 +337,10 @@ def exprFragmentNominalTypesMatch
     | none =>
         match exprTagDispatchStructIdx? plan with
         | some structIdx => exprTagDispatchTypesMatch modBytes modLen carrier structIdx
-        | none => false
+        | none =>
+            match exprVectorGetOrDefaultArrTy? plan with
+            | some arrTy => exprVectorGetTypesMatch modBytes modLen typeIdx carrier arrTy
+            | none => false
   else true
 
 def isNonnegativeNullableRef : CertDecode.ValType → Bool

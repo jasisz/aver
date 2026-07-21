@@ -119,7 +119,8 @@ structure Subject where
 def Subject.hostRoles (s : Subject) : CertDecode.AddSub.Roles :=
   match s.hostRoleTable with
   | some roles => roles
-  | none => { box := none, add := none, mul := none, sub := none }
+  | none => { box := none, add := none, mul := none, sub := none,
+              toIndex := none }
 
 /-- The certification policy attached to a certified export. Partial simulation
     remains the default; the total preset additionally promises return at the
@@ -249,6 +250,13 @@ mutual
         gate confirms field 0 is the i32 tag. -/
     | tagMatch (typeName : String) (scrutinee : Nat) (tag : Int) (hit miss : SymBlock)
     | ifElse (cond : Nat) (thenBlock elseBlock : SymBlock)
+    /-- Monolithic fused `Option.withDefault(Vector.get(p0, p1), default)`:
+        read the `typeName` vector in param 0 at the Int index in param 1,
+        yielding the element in bounds and the literal `default` otherwise.
+        The whole bounds-checked template is ONE node (mirroring the emitter's
+        single fused shape); the vector and index are pinned to params 0 and 1,
+        never chosen by the plan. -/
+    | vectorGetOrDefault (typeName : String) (default : Int)
   deriving Repr
 
   structure SymNode where
@@ -296,6 +304,11 @@ inductive HostRole where
   | add
   | mul
   | sub
+  /-- `__aint_to_index`: extract a wasm array index from a represented integer
+      (`[0, 2^31)` passes through; anything else, including every big value,
+      collapses to the `-1` out-of-bounds sentinel). Consumed only by the
+      monolithic fused vector-read node, never as a standalone `hostCall`. -/
+  | toIndex
 deriving Repr, DecidableEq
 
 mutual
@@ -323,6 +336,14 @@ mutual
         `hostCall` binds its resolved index. The plan never invents it. -/
     | selfCall (tail : Bool) (funcIdx : Nat) (args : List Nat)
     | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
+    /-- Monolithic fused bounds-checked vector read: the exact emitter template
+        `to_index/ge_s // to_index/len/lt_u // and // if (array.get) (box d)`
+        over locals 0 (vector) and 1 (index). `arrTy` is the vector's wasm
+        array type index; `toIndexIdx`/`boxIdx` are the resolved
+        `__aint_to_index` / box helper indices, bound to the module bytes by
+        the byte-exact gate and to the byte-derived role table by acceptance.
+        The node reads locals directly and consumes no operand stack values. -/
+    | vectorGetOrDefault (arrTy toIndexIdx boxIdx : Nat) (default : Int)
   deriving Repr
 
   /-- A typed value definition. `id` must match its position in the containing

@@ -42,6 +42,23 @@ def popExpectedAll : List Nat → List Nat → Option (List Nat)
 /-- Semantic lowering uses the checker's one canonical recursive-plan budget. -/
 abbrev maxFuel : Nat := AverCert.PlanCheck.maxFuel
 
+/-- The fused `Option.withDefault(Vector.get(vec, idx), d)` template exactly as
+    the wasm-gc emitter produces it (`from_mir/builtins.rs`): extract the index
+    through `__aint_to_index`, test `idx >= 0 (signed) AND idx < len
+    (unsigned)`, read the element on hit, box the literal default on miss.
+    Holes: `toIndexIdx` (the `__aint_to_index` function index), `boxIdx` (the
+    `__rt_aint_from_i64` function index), `arrTy` (the vector's array type
+    index), `d` (the literal default). Locals pinned: vec = 0, idx = 1. -/
+def vectorGetOrDefaultTemplate
+    (toIndexIdx boxIdx arrTy : Nat) (d : Int) : List WInstr :=
+  [ .localGet 1, .call toIndexIdx, .i32Const 0, .i32GeS,
+    .localGet 1, .call toIndexIdx,
+    .localGet 0, .arrayLen, .i32LtU,
+    .i32And,
+    .ifElse
+      [.localGet 0, .localGet 1, .call toIndexIdx, .arrayGet arrTy]
+      [.i64Const d, .call boxIdx] ]
+
 mutual
   def lowerNodesFuel :
       Nat → Nat → List FragNode → List Nat → Option (List WInstr × List Nat)
@@ -94,6 +111,14 @@ mutual
                   | some thenInstrs, some elseInstrs =>
                       some ([.ifElse thenInstrs elseInstrs], [node.id])
                   | _, _ => none
+              | _ => none
+          | .vectorGetOrDefault arrTy toIndexIdx boxIdx default =>
+              -- Monolithic template over pinned locals 0/1; it consumes no
+              -- stack operands, so it is canonical only as the sole value.
+              match stack with
+              | [] =>
+                  some (vectorGetOrDefaultTemplate toIndexIdx boxIdx arrTy default,
+                    [node.id])
               | _ => none
         match lowered? with
         | some (instrs, stack') =>

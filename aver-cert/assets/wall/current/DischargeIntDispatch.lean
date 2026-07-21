@@ -48,6 +48,7 @@ private def intDispatchExpectedSlot
   | .add => (2, add)
   | .mul => (2, mul)
   | .sub => (2, sub)
+  | .toIndex => (1, fun _ => none)
 
 private theorem canonicalSlot_of_lookup
     (C : Nat) (add sub mul : List WVal → Option WVal)

@@ -104,9 +104,26 @@ def exprFragmentIsTagDispatch (claim : SymFragmentClaim) : Bool :=
         | _ => false)
   | none => false
 
+/-- Fused vector-read fragments (`Option.withDefault(Vector.get(p0, p1), d)`)
+discharge through the audited template theorem
+(`StandardFace.vectorGetOrDefault_simulates_model`), not through the symbolic
+generic: their operational content is the monolithic bounds-checked template,
+whose semantics the interpreter clauses prove once, generically over every
+hole. The gate is the encoded representation shape: exactly the single
+monolithic node. -/
+def exprFragmentIsVectorGetOrDefault (claim : SymFragmentClaim) : Bool :=
+  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan with
+  | some plan =>
+      match AverCert.WasmSlice.exprVectorGetOrDefaultArrTy? plan with
+      | some _ => true
+      | none => false
+  | none => false
+
 /-- Side condition for one source expression claim.  In-model claims must use
 the symbolic generic. Projection claims may use the audited projection
-generic. Only float-boundary claims may use a bespoke direct discharge. -/
+generic. Fused vector-read claims discharge through the audited template
+theorem. Only float-boundary claims may use a bespoke direct discharge. -/
 def exprFragmentSideCondition (claim : SymFragmentClaim) : Prop :=
   (exprFragmentUsesAuditedGeneric claim = true ∧
     ∀ plan,
@@ -118,6 +135,8 @@ def exprFragmentSideCondition (claim : SymFragmentClaim) : Prop :=
       AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
           claim.hostTable claim.structTable claim.plan = some plan →
         exprFragmentSemanticBridge claim plan) ∨
+  (exprFragmentIsVectorGetOrDefault claim = true ∧
+    obligationHolds claim.obligation) ∨
   (exprFragmentHasFieldProjection claim = true ∧
     obligationHolds claim.obligation) ∨
   (exprFragmentHasFloatBoundary claim = true ∧
@@ -189,9 +208,10 @@ theorem exprFragment_claim_discharges
     (hMem : claim ∈ artifact.symFragmentClaims)
     (hSide : exprFragmentSideCondition claim) :
     obligationHolds claim.obligation := by
-  rcases hSide with hGeneric | hTagDispatch | hProjection | hFloat
+  rcases hSide with hGeneric | hTagDispatch | hVectorGet | hProjection | hFloat
   · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hGeneric.2
   · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hTagDispatch.2
+  · exact hVectorGet.2
   · exact hProjection.2
   · exact hFloat.2
 
