@@ -3367,18 +3367,19 @@ example : weakLocals ((AverCert.quadOb.code 1).map (fun c => c.nlocals)) = true 
 example : AverCert.quadOb.host = AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts := rfl
 def badHost : (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) → HostTbl := fun _ _ _ _ _ _ => none
+    (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) → HostTbl := fun _ _ _ _ _ _ _ => none
 def addProbe : List WVal → Option WVal := fun _ => some .null
-example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none)) 9 ≠
+example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe) 9 ≠
     (AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
-      addProbe addProbe addProbe addProbe (fun _ _ => none)) 9 := by
+      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe) 9 := by
   simp [badHost, addProbe, hosts, AverCert.AcceptedArtifact.intDispatchCanonicalHost,
     AverCert.AcceptedArtifact.intDispatchCanonicalSlots]
 def weakHostEquality (_ _ : HostTbl) : Bool := true
 example : weakHostEquality
-    ((badHost addProbe addProbe addProbe addProbe (fun _ _ => none)))
+    ((badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe))
     ((AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
-      addProbe addProbe addProbe addProbe (fun _ _ => none))) = true := rfl
+      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe)) = true := rfl
 
 -- Manifest/claim plan-pair equality guard.
 def relabeledMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim :=
@@ -4238,8 +4239,8 @@ fn cert_verify_declines_tampered_mutual_plan() {
         copy_dir(&out_dir, &dir);
         let manifest = dir.join("cert/Manifest.lean");
         let source = std::fs::read_to_string(&manifest).unwrap();
-        let honest = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ => CertModule.isEvenHost sub, self := 1,";
-        let hostile = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ => CertModule.isEvenHost sub, self := 5,";
+        let honest = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ => CertModule.isEvenHost sub, self := 1,";
+        let hostile = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ => CertModule.isEvenHost sub, self := 5,";
         let edited = source.replacen(honest, hostile, 1);
         assert_ne!(source, edited, "isEven obligation self field changed");
         std::fs::write(&manifest, edited).unwrap();
@@ -5988,9 +5989,10 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "def hostBuilderProbe\n",
         "    (h : (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "         (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "         (Nat → List WVal → Option WVal) → CertPrelude.HostTbl)\n",
+        "         (Nat → List WVal → Option WVal) →\n",
+        "         (List WVal → Option WVal) → CertPrelude.HostTbl)\n",
         "    (idx : Nat) (args : List WVal) : Option Int :=\n",
-        "  match h (fun _ => some (.i64v 1)) (fun _ => some (.i64v 2)) (fun _ => some (.i64v 3)) (fun _ => some (.i64v 4)) (fun _ _ => some (.i64v 5)) idx with\n",
+        "  match h (fun _ => some (.i64v 1)) (fun _ => some (.i64v 2)) (fun _ => some (.i64v 3)) (fun _ => some (.i64v 4)) (fun _ _ => some (.i64v 5)) (fun _ => some (.i64v 6)) idx with\n",
         "  | some (_, f) =>\n",
         "      match f args with\n",
         "      | some (.i64v k) => some k\n",
@@ -6028,7 +6030,8 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "def sneakyBoxHost :\n",
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "    (Nat → List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
+        "    (Nat → List WVal → Option WVal) →\n",
+        "    (List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
         "  fun _ _ _ _ _ _ => fun fn =>\n",
         "    if fn = 7 then\n",
         "      some (1, fun args => match args with\n",
