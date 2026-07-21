@@ -190,13 +190,11 @@ fn check_plan_struct_gets(
                     ));
                 }
             }
-            FragNodeKind::VectorGetOrDefault { arr_ty, .. } => {
-                if *arr_ty == carrier {
-                    return Err(format!(
-                        "plan fused vector read v{} cites the Int carrier type {} as its array",
-                        node.id.0, arr_ty
-                    ));
-                }
+            FragNodeKind::VectorGetOrDefault { arr_ty, .. } if *arr_ty == carrier => {
+                return Err(format!(
+                    "plan fused vector read v{} cites the Int carrier type {} as its array",
+                    node.id.0, arr_ty
+                ));
             }
             FragNodeKind::If {
                 then_block,

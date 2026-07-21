@@ -818,15 +818,16 @@ def deadConcat : Nat → List WVal → Option WVal := fun _ _ => none
 def nerfedStringHost :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) → HostTbl :=
-  fun _ _ _ _ _ _ => none
+    (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) → HostTbl :=
+  fun _ _ _ _ _ _ _ => none
 example : quoteOrSelfOb.host =
     AcceptedArtifact.stringEqCanonicalHost {eq_idx} := rfl
 example : nerfedStringHost ≠
     AcceptedArtifact.stringEqCanonicalHost {eq_idx} := by
   intro h
-  have bad := congrFun (congrFun (congrFun (congrFun (congrFun (congrFun h
-    deadHost) deadHost) deadHost) deadHost) deadConcat) {eq_idx}
+  have bad := congrFun (congrFun (congrFun (congrFun (congrFun (congrFun (congrFun h
+    deadHost) deadHost) deadHost) deadHost) deadConcat) deadHost) {eq_idx}
   simp [nerfedStringHost, AcceptedArtifact.stringEqCanonicalHost] at bad
 
 -- Every sibling decode accepts the hostile manifest.
