@@ -357,8 +357,149 @@ pub fn render_artifact_bytes(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
+mod byte_binding_lint;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wall as the lint consumes it: `(filename, source text)`.
+    fn wall_sources() -> Vec<(&'static str, &'static str)> {
+        SOURCES
+            .iter()
+            .map(|source| (source.name, source.contents))
+            .collect()
+    }
+
+    const FORMAT_DOC: &str = include_str!("../../docs/certificate-format.md");
+
+    /// Every value the producer declares must be constrained against the module
+    /// bytes by some conjunct of `AverCert.AcceptedArtifact.accepted`, or carry
+    /// an explicit, reasoned exception.
+    ///
+    /// This is the mechanised form of a failure that has recurred six times: a
+    /// declared value consumed by a proof while nothing pinned it to the bytes.
+    /// The most recent was `hostRoleTable.toIndex`, where the byte-derived
+    /// binding existed, its comment described exactly the attack it prevented,
+    /// and its only consumer had silently left the acceptance path. Reviewers
+    /// reading documentation saw a pin that was not there; this test reads the
+    /// wall instead.
+    #[test]
+    fn producer_declared_values_are_bound_to_the_module_bytes() {
+        match byte_binding_lint::check(&wall_sources(), FORMAT_DOC) {
+            Ok(report) => println!("{report}"),
+            Err(failure) => panic!("{failure}"),
+        }
+    }
+
+    /// The lint must still be able to SEE the historical gap.
+    ///
+    /// Deleting the one conjunct that commit fd455ade added — the equality
+    /// pinning `roles.toIndex` to `CertDecode.AddSub.toIndexIdx` — reproduces
+    /// the pre-fix acceptance predicate for that field, and the lint must flag
+    /// it. `box` is the control: a sibling field of the SAME structure,
+    /// projected in the SAME function on an ADJACENT line, which must stay
+    /// bound. Without that control the test would pass for a lint that had
+    /// stopped discriminating and simply flags everything.
+    ///
+    /// This test is the guard on every future precision refinement. Two
+    /// plausible generalisations (transitive byte taint, and unrestricted
+    /// whole-value propagation through call arguments) each looked like clean
+    /// wins and each silently re-bound `toIndex`; this is what caught them.
+    #[test]
+    fn lint_still_flags_the_historical_index_helper_gap() {
+        const PIN: &str = "(roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&";
+        let core = CERT_ACCEPTED_ARTIFACT_CORE;
+        assert!(
+            core.contains(PIN),
+            "the `toIndex` pin has moved; this regression test must be re-aimed \
+             rather than deleted"
+        );
+        let without_pin = core.replace(PIN, "");
+
+        let sources: Vec<(&str, &str)> = wall_sources()
+            .into_iter()
+            .map(|(name, text)| {
+                if name == "AcceptedArtifactCore.lean" {
+                    (name, without_pin.as_str())
+                } else {
+                    (name, text)
+                }
+            })
+            .collect();
+
+        let report = byte_binding_lint::analyse(&sources);
+        assert!(
+            report.is_flagged("AddSub.Roles", "toIndex"),
+            "the lint no longer detects the historical index-helper gap: with the \
+             `toIndex` pin removed, `Roles.toIndex` was still considered bound. A \
+             precision refinement has blunted the lint past the point of usefulness."
+        );
+        assert!(
+            report.is_bound("AddSub.Roles", "box"),
+            "control failed: sibling field `Roles.box` is pinned by its own export \
+             name on an adjacent line and must remain bound. The lint is flagging \
+             indiscriminately rather than discriminating."
+        );
+
+        // and with the pin present, the field is bound
+        let clean = byte_binding_lint::analyse(&wall_sources());
+        assert!(
+            clean.is_bound("AddSub.Roles", "toIndex"),
+            "`Roles.toIndex` is not bound on the current wall"
+        );
+    }
+
+    /// Point the lint at an external directory of `.lean` sources, for auditing a
+    /// historical or candidate wall. Ignored by default because it needs a tree
+    /// that is not in the repository:
+    ///
+    /// ```text
+    /// git archive fd455ade^ aver-cert/assets/wall/current | tar -x -C /tmp/prefix
+    /// AVER_WALL_LINT_DIR=/tmp/prefix/aver-cert/assets/wall/current \
+    ///   cargo test -p aver-cert --lib external_wall_directory -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires AVER_WALL_LINT_DIR pointing at a directory of wall sources"]
+    fn external_wall_directory() {
+        let dir = std::env::var("AVER_WALL_LINT_DIR")
+            .expect("set AVER_WALL_LINT_DIR to a directory of .lean wall sources");
+        let mut texts: Vec<(String, String)> = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("readable wall directory") {
+            let path = entry.expect("readable entry").path();
+            if path.extension().and_then(|e| e.to_str()) == Some("lean") {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .expect("utf-8 filename")
+                    .to_string();
+                texts.push((
+                    name,
+                    std::fs::read_to_string(&path).expect("readable source"),
+                ));
+            }
+        }
+        let sources: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        let report = byte_binding_lint::analyse(&sources);
+        println!(
+            "{dir}: {} slots, {} bound, {} flagged",
+            report.slots.len(),
+            report.bound.len(),
+            report.flagged.len()
+        );
+        for (s, f) in &report.flagged {
+            println!("  FLAG {s}.{f}");
+        }
+        // Run the real gate too, so this answers "would CI go red on that wall?"
+        // rather than merely listing flags.
+        match byte_binding_lint::check(&sources, FORMAT_DOC) {
+            Ok(_) => println!("\nGATE: PASS (every flagged field has an Allowance)"),
+            Err(failure) => println!("\nGATE: FAIL\n{failure}"),
+        }
+    }
 
     #[test]
     fn wall_sources_have_unique_plain_filenames() {
