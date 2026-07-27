@@ -508,6 +508,28 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileToIndexArtifact := by
       (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := h.1
   exact absurd bad (by decide +kernel)
 
+-- Attribution, one conjunct deep: a literal copy of `arithTableCheck` with ONLY
+-- the toIndex equality removed ACCEPTS the same hostile table. So the rejection
+-- above is caused by that conjunct alone, not by a sibling check that happens to
+-- dislike the hostile manifest for an unrelated reason.
+def arithTableCheckWithoutToIndex (n len : Nat)
+    (roles? : Option CertDecode.AddSub.Roles)
+    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
+  match roles?, params? with
+  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
+  | some roles, some p =>
+      !CertDecode.AddSub.carrierHelperAbsent n len &&
+      (roles.box == CertDecode.AddSub.boxIdx n len) &&
+      ArithTemplateDerisk.checkArithHostParams p &&
+      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
+      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
+      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
+  | _, _ => false
+
+example : arithTableCheckWithoutToIndex ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
+  decide +kernel
+
 -- A carriered artifact cannot declare the table absent either: the byte-derived
 -- box export is present, so the carrierless `none`/`none` pin never closes.
 def absentTableManifest : Manifest :=
