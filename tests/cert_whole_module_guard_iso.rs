@@ -628,7 +628,7 @@ fn hex_le(bytes: &[u8]) -> String {
 /// manifest value `v`, so the claimed `null` (and every other declaration)
 /// leaves the acceptance pin unprovable.
 #[test]
-fn poisoned_role_scan_is_rejected_at_the_host_role_table_pin() {
+fn a_carriered_module_cannot_claim_the_carrierless_null_table() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping poisoned role-scan pin test: `lake` not available");
         return;
@@ -662,10 +662,11 @@ fn poisoned_role_scan_is_rejected_at_the_host_role_table_pin() {
     );
     assert_eq!((mul_idx, sub_idx), (None, None));
 
-    // Kernel side, inside a production package environment: the strict
-    // decode of the poisoned bytes is the closed `none`, the full acceptance
-    // predicate rejects the null claim exactly at the host-role-table pin,
-    // and the literal one-conjunct-weakened copy accepts the same artifact.
+    // Kernel side, inside a production package environment: the full
+    // acceptance predicate rejects the carrierless null claim exactly at the
+    // host-role-table pin, and the literal one-conjunct-weakened copy accepts
+    // the same artifact. The Rust-side classifier assertions above remain the
+    // differential oracle over these two fixtures.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-poisoned-role-scan-pin");
     let compile = aver_command()
@@ -711,27 +712,7 @@ set_option maxRecDepth 300000
 def poisonedBytes : Nat := 0x{poisoned_hex}
 def poisonedLen : Nat := {poisoned_len}
 
--- The identical module without the unscannable function.
-def healthyBytes : Nat := 0x{healthy_hex}
-def healthyLen : Nat := {healthy_len}
-
--- Control: the healthy sibling decodes to the full table.
-example : CertDecode.AddSub.roleTableStrict healthyBytes healthyLen =
-    some (some {{ box := some {box_idx}, add := some {add_idx}, mul := none, sub := none,
-                  toIndex := none }}) := rfl
-
--- The poisoned module decodes to the closed scan-failure state.
-theorem poisonedStrict :
-    CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen = none := rfl
-
--- No manifest declaration whatsoever can close the pin over poisoned bytes.
-example (v : Option CertDecode.AddSub.Roles) :
-    CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen ≠ some v := by
-  intro h
-  rw [poisonedStrict] at h
-  exact nomatch h
-
--- The attack itself: the poisoned module claims the carrierless `null`.
+-- The attack itself: this module claims the carrierless `null`.
 def nullClaimManifest : Manifest :=
   {{ manifest with
       obligations := [],
@@ -768,10 +749,6 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
 "#,
         poisoned_hex = hex_le(&poisoned),
         poisoned_len = poisoned.len(),
-        healthy_hex = hex_le(&healthy),
-        healthy_len = healthy.len(),
-        box_idx = box_idx,
-        add_idx = add_idx,
     );
     std::fs::write(cert.join("PoisonedRoleScanPin.lean"), lean).unwrap();
     let check = Command::new("lake")

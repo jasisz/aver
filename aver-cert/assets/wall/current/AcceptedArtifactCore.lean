@@ -1540,8 +1540,9 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     add/sub/mul index pinned to its canonical helper body by template equality.
     The three-state consistency between presence of the helper export and
     presence of the declaration is preserved: mixing `some`/`none` across the
-    table and params fails closed. `firstArithScan`/`scanFns`/`candFor`/`uniqueC`
-    no longer participate here; they remain producer-side classifiers only.
+    table and params fails closed. No byte scan DISCOVERS a role here: the
+    module-wide arith scanner that predated this pin has been deleted from the
+    wall rather than left in place as an unreachable decoder.
 
     The `toIndex` conjunct is load-bearing, not decorative: the fused vector-read
     face wires an ABSTRACT contract function at the declared index and never

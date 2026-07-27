@@ -34,9 +34,11 @@ pub fn byte_derived_frag_host_table_lean(wasm_bytes: &[u8]) -> Result<String, St
 }
 
 /// Raw Rust-classifier result used by the permanent kernel differential. The
-/// production trust path is the `CertDecode.AddSub.roleTable` equality; this
-/// helper keeps the pre-existing Rust classifier available as an independent
-/// transition oracle over the full fixture corpus.
+/// production trust path is `AcceptedArtifact.arithTableCheck`: `box` and
+/// `toIndex` are bound by their runtime export names and each declared
+/// add/sub/mul index is pinned to its synthesized helper body. This helper
+/// keeps the Rust classifier available as an independent transition oracle
+/// over the full fixture corpus; it is not what the certificate trusts.
 pub fn byte_derived_frag_host_role_indices(
     wasm_bytes: &[u8],
 ) -> Result<FragHostRoleIndices, String> {

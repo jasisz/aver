@@ -922,142 +922,6 @@ def decodeCode (n len funcidx : Nat) : Option WCode :=
 
 namespace AddSub
 
-/-- Per parameter/result: `some idx` for a concrete `(ref [null] idx)`, and
-    `none` for scalar or abstract-heap value types. -/
-abbrev Sig := List (Option Nat) × List (Option Nat)
-
-/-- Both concrete-reference tags retain their nonnegative heap type index;
-    scalars, abstract shorthands, and negative abstract heaps project to none. -/
-def valTarget : ValType → Option Nat
-  | .ref _ heap => if heap ≥ 0 then some heap.toNat else none
-  | _ => none
-
-def decodeTypeSig (entry : TypeEntry) : Option Sig :=
-  match entry.composite with
-  | .funcType params results => some (params.map valTarget, results.map valTarget)
-  | _ => none
-
-/-- Function-signature and carrier projections of the canonical type parse. -/
-def decodeTypeSigsC (n len : Nat) : Option (Array (Option Sig) × Option Nat) :=
-  (decodeTypes n len).map (fun info =>
-    ((info.entries.map decodeTypeSig).toArray, info.carrier))
-
-def isCarrierBinop (carrier : Nat) : Option Sig → Bool
-  | some (ptgts, rtgts) =>
-      (ptgts == [some carrier, some carrier]) && (rtgts == [some carrier])
-  | none => false
-
-inductive Arith | add | sub | mul
-  deriving DecidableEq, Repr, BEq
-
-/-- Walk instruction boundaries linearly, skipping structured-control and
-    other immediates without interpreting control flow. The first `i64.add`,
-    `i64.sub`, or `i64.mul` determines the arithmetic marker. Unknown encodings
-    fail closed. Numeric/comparison/conversion opcodes `0x45..0xc4` are all
-    single-byte instructions. -/
-def firstArithScan : Nat → Nat → Nat → Option (Option Arith)
-  | 0,      _, _   => none
-  | fuel+1, n, len =>
-      if len == 0 then some none else
-        let op := n &&& 0xff
-        let n1 := n >>> 8
-        let len1 := len - 1
-        if op == 0x7c then some (some Arith.add)
-        else if op == 0x7d then some (some Arith.sub)
-        else if op == 0x7e then some (some Arith.mul)
-        else if decide (0x45 ≤ op ∧ op ≤ 0xc4) then firstArithScan fuel n1 len1
-        else if op == 0x0b || op == 0x05 || op == 0x0f || op == 0x00 || op == 0x01
-             || op == 0x1a || op == 0x1b || op == 0xd1 then firstArithScan fuel n1 len1
-        else if op == 0x20 || op == 0x21 || op == 0x22 || op == 0x23 || op == 0x24
-             || op == 0x0c || op == 0x0d || op == 0x10 || op == 0x12 then
-          match readU n1 len1 with
-          | none => none
-          | some (_, n2, len2) => firstArithScan fuel n2 len2
-        else if op == 0x0e then
-          match readU n1 len1 with
-          | none => none
-          | some (cnt, n2, len2) =>
-              match skipUlebs (cnt+1) n2 len2 with
-              | none => none
-              | some (n3, len3) => firstArithScan fuel n3 len3
-        else if op == 0x11 then
-          match readU n1 len1 with
-          | none => none
-          | some (_, n2, len2) =>
-              match readU n2 len2 with
-              | none => none
-              | some (_, n3, len3) => firstArithScan fuel n3 len3
-        else if op == 0x02 || op == 0x03 || op == 0x04 then
-          match skipBlockType n1 len1 with
-          | none => none
-          | some (n2, len2) => firstArithScan fuel n2 len2
-        else if op == 0x41 || op == 0x42 then
-          match readS n1 len1 with
-          | none => none
-          | some (_, n2, len2) => firstArithScan fuel n2 len2
-        else if op == 0x43 then
-          if len1 < 4 then none else firstArithScan fuel (n1 >>> 32) (len1 - 4)
-        else if op == 0x44 then
-          if len1 < 8 then none else firstArithScan fuel (n1 >>> 64) (len1 - 8)
-        else if op == 0xd0 then
-          match readS n1 len1 with
-          | none => none
-          | some (_, n2, len2) => firstArithScan fuel n2 len2
-        else if op == 0xd2 then
-          match readU n1 len1 with
-          | none => none
-          | some (_, n2, len2) => firstArithScan fuel n2 len2
-        else if op == 0xfb then
-          match readU n1 len1 with
-          | none => none
-          | some (sub, n2, len2) =>
-              if sub == 0x00 || sub == 0x01 || sub == 0x06 || sub == 0x07
-                 || sub == 0x0b || sub == 0x0c || sub == 0x0d || sub == 0x0e then
-                match readU n2 len2 with
-                | none => none
-                | some (_, n3, len3) => firstArithScan fuel n3 len3
-              else if sub == 0x02 || sub == 0x05 || sub == 0x08 || sub == 0x09 then
-                match readU n2 len2 with
-                | none => none
-                | some (_, n3, len3) =>
-                    match readU n3 len3 with
-                    | none => none
-                    | some (_, n4, len4) => firstArithScan fuel n4 len4
-              else if sub == 0x0f then firstArithScan fuel n2 len2
-              else if sub == 0x14 || sub == 0x15 || sub == 0x16 || sub == 0x17 then
-                match readS n2 len2 with
-                | none => none
-                | some (_, n3, len3) => firstArithScan fuel n3 len3
-              else none
-        else none
-
-def bodyLocs (n len : Nat) : Option (List (Nat × Nat)) :=
-  (CertDecode.codeLocs n len).map (fun locs =>
-    locs.toList.map (fun loc => (loc.bodyN, loc.bodyLen)))
-
-/-- Scan defined functions in index order, retaining the first arithmetic
-    marker only for functions with the exact carrier-binop signature. -/
-def scanFns (carrier : Nat) (tsigs : Array (Option Sig)) (nimp : Nat) :
-    Nat → List Nat → List (Nat × Nat) → Option (List (Nat × Option Arith))
-  | _,       [],         [] => some []
-  | def_idx, ty :: rest, (bodyN, bodyByteLen) :: locs =>
-      let sig := (tsigs[ty]?).getD none
-      if isCarrierBinop carrier sig then
-        match firstArithScan (bodyByteLen + 1) bodyN bodyByteLen with
-        | none => none
-        | some fa =>
-            match scanFns carrier tsigs nimp (def_idx+1) rest locs with
-            | none => none
-            | some tl => some ((nimp + def_idx, fa) :: tl)
-      else scanFns carrier tsigs nimp (def_idx+1) rest locs
-  | _, _, _ => none
-
-def candFor (a : Arith) (l : List (Nat × Option Arith)) : List Nat :=
-  (l.filter (fun p => p.2 == some a)).map Prod.fst
-
-def uniqueC : List Nat → Option Nat
-  | [x] => some x
-  | _   => none
 
 def boxIdx (n len : Nat) : Option Nat :=
   match decodeExports n len with
@@ -1081,28 +945,6 @@ structure Roles where
   toIndex : Option Nat
   deriving DecidableEq, Repr
 
-/-- Carrier-binop candidates from one type pass, one function-section pass,
-    and one code-section pass. -/
-def carrierBinopFns (n len : Nat) : Option (List (Nat × Option Arith)) :=
-  match decodeTypeSigsC n len, decodeFuncTypes n len,
-        funcImportBase n len, bodyLocs n len with
-  | some (tsigs, some carrier), some ftys, some nimp, some locs =>
-      scanFns carrier tsigs nimp 0 ftys locs
-  | _, _, _, _ => none
-
-/-- The module-wide plan-first host-role table. `add`, `mul`, and `sub` are admitted
-    only for unique carrier-binop candidates; ambiguity or absence declines the
-    individual role to `none`. `box` is the named runtime export. -/
-def roleTable (n len : Nat) : Option Roles :=
-  match carrierBinopFns n len with
-  | none => none
-  | some fns =>
-      some { box := boxIdx n len
-           , add := uniqueC (candFor Arith.add fns)
-           , mul := uniqueC (candFor Arith.mul fns)
-           , sub := uniqueC (candFor Arith.sub fns)
-           , toIndex := toIndexIdx n len }
-
 /-- Byte-derived proof that the module carries no Int-carrier box helper: the
     export section decodes strictly and no function export is named
     `__rt_aint_from_i64` — the same name the disassembler binds as the `box`
@@ -1111,35 +953,6 @@ def carrierHelperAbsent (n len : Nat) : Bool :=
   match decodeExports n len with
   | none => false
   | some es => es.all (fun e => e.1 != "__rt_aint_from_i64")
-
-/-- Three-state module host-role decode.
-
-    NOT ON THE ACCEPTANCE PATH. Acceptance pins the declared table with
-    `AcceptedArtifact.arithTableCheck` (declare-and-confirm: `box`/`toIndex`
-    bound by export name, `add`/`sub`/`mul` by synthesized-template equality).
-    This decoder and `roleTable` below it remain producer-side classifiers and
-    test material only. Adding a field to `Roles` therefore does NOT pin it —
-    the pin has to be added to `arithTableCheck` as its own conjunct.
-
-    Were it on the acceptance path, exactly one unconditional equality on this
-    value would distinguish every module class:
-    * `some none`     — the module is definitely carrierless (the
-                        `__rt_aint_from_i64` helper export is byte-provably
-                        absent); the manifest must declare no table.
-    * `some (some t)` — the helper is present and the module-wide role scan
-                        succeeded with exactly `t`; the manifest must declare
-                        exactly `t`.
-    * `none`          — the helper is present but the role scan failed. This
-                        poisoned state equals `some v` for NO `v`, so no
-                        manifest value can close the acceptance pin — in
-                        particular a carriered module whose scan fails cannot
-                        claim the carrierless `none`. -/
-def roleTableStrict (n len : Nat) : Option (Option Roles) :=
-  if carrierHelperAbsent n len then some none
-  else
-    match roleTable n len with
-    | none => none
-    | some t => some (some t)
 
 end AddSub
 
