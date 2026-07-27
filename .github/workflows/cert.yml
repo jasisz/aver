@@ -20,20 +20,24 @@ jobs:
     # suite is selected exactly once: no overlap (which would double the kernel
     # work) and no gap (which would silently stop running a soundness gate).
     #
-    # Three families are prefix-selected onto dedicated runners because their
+    # Four families are prefix-selected onto dedicated runners because their
     # members are long kernel runs:
     #   * `cert_hostile_model_` (certify) — the hostile obligation-model gates;
     #   * `cert_adt_witness_`   (certify) — one `lake build` of an emitted
     #     certificate per non-recursive ADT fixture, ten of them;
     #   * `cert_plans_authority_` (verify) — the Plans.lean-authority gates,
-    #     one full certificate verification each.
+    #     one full certificate verification each;
+    #   * `cert_tripwire_` (verify) — the tampering classes of `aver cert
+    #     verify`, one gate per test. Twenty-three of them pay a full artifact
+    #     DATA build (a tamper of Lean source inside the certificate, or a gate
+    #     that must be ACCEPTED); the other nine are decided by the Rust
+    #     verifier before any Lean process starts and cost milliseconds. Slice
+    #     partitioning is round-robin over the sorted names, which spreads the
+    #     expensive ones four or five to a lane.
     # The `rest` lane of each suite excludes exactly those prefixes. Prefix in,
     # prefix out. A model or fixture added to the lists inside a suite lands in
     # an existing shard test, so these lanes never need editing for coverage —
     # only to add throughput.
-    #
-    # The remaining verify monster test, `cert_verify_accepts_and_tripwires_
-    # fail_closed`, still gets a dedicated runner by exact name.
     name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -101,10 +105,30 @@ jobs:
             lane: ''
             mode: cargo
           - suite: cert_verify_spec
-            lane: tripwires
+            lane: tripwires-1/5
             mode: nextest
-            filter: 'test(=cert_verify_accepts_and_tripwires_fail_closed)'
-            partition: 1/1
+            filter: 'test(/^cert_tripwire_/)'
+            partition: 1/5
+          - suite: cert_verify_spec
+            lane: tripwires-2/5
+            mode: nextest
+            filter: 'test(/^cert_tripwire_/)'
+            partition: 2/5
+          - suite: cert_verify_spec
+            lane: tripwires-3/5
+            mode: nextest
+            filter: 'test(/^cert_tripwire_/)'
+            partition: 3/5
+          - suite: cert_verify_spec
+            lane: tripwires-4/5
+            mode: nextest
+            filter: 'test(/^cert_tripwire_/)'
+            partition: 4/5
+          - suite: cert_verify_spec
+            lane: tripwires-5/5
+            mode: nextest
+            filter: 'test(/^cert_tripwire_/)'
+            partition: 5/5
           - suite: cert_verify_spec
             lane: plans-authority-1/3
             mode: nextest
@@ -123,42 +147,42 @@ jobs:
           - suite: cert_verify_spec
             lane: rest-1/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 1/8
           - suite: cert_verify_spec
             lane: rest-2/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 2/8
           - suite: cert_verify_spec
             lane: rest-3/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 3/8
           - suite: cert_verify_spec
             lane: rest-4/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 4/8
           - suite: cert_verify_spec
             lane: rest-5/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 5/8
           - suite: cert_verify_spec
             lane: rest-6/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 6/8
           - suite: cert_verify_spec
             lane: rest-7/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 7/8
           - suite: cert_verify_spec
             lane: rest-8/8
             mode: nextest
-            filter: 'not (test(=cert_verify_accepts_and_tripwires_fail_closed) or test(/^cert_plans_authority_/))'
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
             partition: 8/8
     env:
       CARGO_BUILD_JOBS: '2'
@@ -239,8 +263,8 @@ jobs:
         run: cargo test -p aver-lang --features wasm --test ${{ matrix.suite }}
 
       - name: Run certification suite lane
-        # Filtering happens before slice partitioning. Each monster-test filter
-        # (exact name, or one of the `cert_hostile_model_`, `cert_adt_witness_`
+        # Filtering happens before slice partitioning. Each family filter (one
+        # of the `cert_hostile_model_`, `cert_adt_witness_`, `cert_tripwire_`
         # and `cert_plans_authority_` prefixes) and its suite-specific
         # complement are disjoint and exhaustive.
         if: matrix.mode == 'nextest'
