@@ -540,37 +540,24 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
         let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
             aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
                 .unwrap_or_else(|error| panic!("{name}: Rust role classifier failed: {error}"));
-        // The production acceptance pin consumes the strict three-state
-        // decode: a module with the box helper resolves the full table, a
-        // module without it resolves the byte-proven absence.
-        let strict_expected = if box_idx.is_some() {
-            format!(
-                "some (some {{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {} }})",
-                option_nat(box_idx),
-                option_nat(add_idx),
-                option_nat(mul_idx),
-                option_nat(sub_idx),
-                option_nat(to_index_idx),
-            )
-        } else {
-            "some (none : Option CertDecode.AddSub.Roles)".to_string()
-        };
+        // The production acceptance pin binds exactly the two name-derived
+        // roles plus the carrierless proof; `add`/`mul`/`sub` are no longer
+        // discovered from bytes at all (they are declared and confirmed
+        // against a synthesized helper body), so only these three decoders
+        // are on the trusted path and worth a differential.
+        let helper_absent = if box_idx.is_some() { "false" } else { "true" };
         let src = format!(
             "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
              def bytesN : Nat := 0x{}\n\
              def bytesLen : Nat := {}\n\n\
-             example : CertDecode.AddSub.roleTable bytesN bytesLen =\n\
-                 some {{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {} }} := rfl\n\
-             example : CertDecode.AddSub.roleTableStrict bytesN bytesLen =\n\
-                 {} := rfl\n",
+             example : CertDecode.AddSub.boxIdx bytesN bytesLen = {} := rfl\n\
+             example : CertDecode.AddSub.toIndexIdx bytesN bytesLen = {} := rfl\n\
+             example : CertDecode.AddSub.carrierHelperAbsent bytesN bytesLen = {} := rfl\n",
             hex_le(&bytes),
             bytes.len(),
             option_nat(box_idx),
-            option_nat(add_idx),
-            option_nat(mul_idx),
-            option_nat(sub_idx),
             option_nat(to_index_idx),
-            strict_expected,
+            helper_absent,
         );
         let (ok, report) = run_lean(&prelude, &src);
         assert!(
@@ -704,82 +691,6 @@ fn first_i64_arith_offsets(bytes: &[u8], targets: &[u32]) -> Vec<(u32, usize, u8
 /// Spike controls ported to the audited kernel path: changing add's first
 /// arithmetic byte to sub removes add and makes sub ambiguous; changing sub's
 /// byte to add creates two add candidates. Both classifiers must decline.
-#[test]
-fn s3_role_table_negative_controls_decline_empty_and_ambiguous_candidates() {
-    if !lake_available() {
-        eprintln!("skipping S3 role-table controls: `lake` not available");
-        return;
-    }
-
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let prelude = build_prelude();
-    let out = temp_dir("cdec-s3-role-controls");
-    std::fs::create_dir_all(&out).unwrap();
-    let bytes = compile_wasm_at(&repo, &repo.join("examples/data/json.av"), "json", &out);
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx) = (
-        box_idx.expect("json box role"),
-        add_idx.expect("json unique add role"),
-        mul_idx.expect("json unique mul role"),
-        sub_idx.expect("json unique sub role"),
-    );
-    let offsets = first_i64_arith_offsets(&bytes, &[add_idx, sub_idx]);
-    let (_, add_offset, add_opcode) = offsets
-        .iter()
-        .copied()
-        .find(|entry| entry.0 == add_idx)
-        .expect("add helper first arithmetic");
-    let (_, sub_offset, sub_opcode) = offsets
-        .iter()
-        .copied()
-        .find(|entry| entry.0 == sub_idx)
-        .expect("sub helper first arithmetic");
-    assert_eq!(add_opcode, 0x7c);
-    assert_eq!(sub_opcode, 0x7d);
-
-    let mut changed_add = bytes.clone();
-    changed_add[add_offset] = 0x7d;
-    let mut ambiguous_add = bytes.clone();
-    ambiguous_add[sub_offset] = 0x7c;
-    assert_eq!(
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&changed_add).unwrap(),
-        (Some(box_idx), None, Some(mul_idx), None, to_index_idx),
-        "Rust negative control A must lose add and decline ambiguous sub"
-    );
-    assert_eq!(
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&ambiguous_add).unwrap(),
-        (Some(box_idx), None, Some(mul_idx), None, to_index_idx),
-        "Rust negative control B must decline two add candidates"
-    );
-
-    let src = format!(
-        "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
-         def changedAdd : Nat := 0x{}\n\
-         def ambiguousAdd : Nat := 0x{}\n\
-         def bytesLen : Nat := {}\n\n\
-         example : CertDecode.AddSub.roleTable changedAdd bytesLen =\n\
-             some {{ box := some {box_idx}, add := none, mul := some {mul_idx}, sub := none,
-                     toIndex := {to_index} }} := rfl\n\
-         example : Option.map (CertDecode.AddSub.candFor .add) (CertDecode.AddSub.carrierBinopFns changedAdd bytesLen) = some [] := rfl\n\
-         example : Option.map (CertDecode.AddSub.candFor .sub) (CertDecode.AddSub.carrierBinopFns changedAdd bytesLen) = some [{add_idx}, {sub_idx}] := rfl\n\n\
-         example : CertDecode.AddSub.roleTable ambiguousAdd bytesLen =\n\
-             some {{ box := some {box_idx}, add := none, mul := some {mul_idx}, sub := none,
-                     toIndex := {to_index} }} := rfl\n\
-         example : Option.map (CertDecode.AddSub.candFor .add) (CertDecode.AddSub.carrierBinopFns ambiguousAdd bytesLen) = some [{add_idx}, {sub_idx}] := rfl\n\
-         example : Option.map (CertDecode.AddSub.candFor .sub) (CertDecode.AddSub.carrierBinopFns ambiguousAdd bytesLen) = some [] := rfl\n",
-        hex_le(&changed_add),
-        hex_le(&ambiguous_add),
-        bytes.len(),
-        to_index = option_nat(to_index_idx),
-    );
-    let (ok, report) = run_lean(&prelude, &src);
-    assert!(ok, "S3 kernel negative controls failed:\n{report}");
-
-    let _ = std::fs::remove_dir_all(out);
-    let _ = std::fs::remove_dir_all(prelude);
-}
-
 fn function_opcode_offsets(bytes: &[u8], target: u32) -> (u32, Vec<(usize, u8)>) {
     let mut imported = 0u32;
     let mut defined = 0u32;

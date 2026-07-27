@@ -421,6 +421,13 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
     );
     let wrong_add_idx = add_idx + 1;
     assert_ne!(wrong_add_idx, add_idx);
+    // A hostile `toIndex` declaration: any index other than the one the export
+    // section binds. When the module exports no helper at all, declaring one is
+    // itself the attack (the fused read's contract slot would become wirable).
+    let hostile_to_index = match to_index_idx {
+        Some(index) => format!("some {}", index + 1),
+        None => "some 0".to_string(),
+    };
 
     let cert = out_dir.join("cert");
     materialize_wall(&cert);
@@ -474,6 +481,54 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
   have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
       (some hostileRoleTable) Artifact.data.manifest.subject.arithParams = true := h.1
   exact absurd bad (by decide +kernel)
+
+-- Same bytes and claims; only the manifest's toIndex index is hostile. The
+-- fused vector-read face wires an ABSTRACT contract function at the declared
+-- index and never interprets its body, so this index must be byte-bound to the
+-- `__aint_to_index` export or the contract could be wired to any function.
+def hostileToIndexTable : CertDecode.AddSub.Roles :=
+  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
+     toIndex := {hostile_to_index} }}
+def hostileToIndexManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with hostRoleTable := some hostileToIndexTable }} }}
+def hostileToIndexArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := hostileToIndexManifest }}
+
+-- Isolation: every sibling decoded fact still accepts the hostile toIndex.
+example : withoutHostRoleTable hostileToIndexArtifact := by
+  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
+    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
+  exact honestDecoded.2
+
+-- The full predicate fails exactly at the omitted export-name binding.
+example : ¬ AcceptedArtifact.decodedNonExprFacts hostileToIndexArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := h.1
+  exact absurd bad (by decide +kernel)
+
+-- Attribution, one conjunct deep: a literal copy of `arithTableCheck` with ONLY
+-- the toIndex equality removed ACCEPTS the same hostile table. So the rejection
+-- above is caused by that conjunct alone, not by a sibling check that happens to
+-- dislike the hostile manifest for an unrelated reason.
+def arithTableCheckWithoutToIndex (n len : Nat)
+    (roles? : Option CertDecode.AddSub.Roles)
+    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
+  match roles?, params? with
+  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
+  | some roles, some p =>
+      !CertDecode.AddSub.carrierHelperAbsent n len &&
+      (roles.box == CertDecode.AddSub.boxIdx n len) &&
+      ArithTemplateDerisk.checkArithHostParams p &&
+      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
+      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
+      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
+  | _, _ => false
+
+example : arithTableCheckWithoutToIndex ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
+  decide +kernel
 
 -- A carriered artifact cannot declare the table absent either: the byte-derived
 -- box export is present, so the carrierless `none`/`none` pin never closes.
@@ -573,7 +628,7 @@ fn hex_le(bytes: &[u8]) -> String {
 /// manifest value `v`, so the claimed `null` (and every other declaration)
 /// leaves the acceptance pin unprovable.
 #[test]
-fn poisoned_role_scan_is_rejected_at_the_host_role_table_pin() {
+fn a_carriered_module_cannot_claim_the_carrierless_null_table() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping poisoned role-scan pin test: `lake` not available");
         return;
@@ -607,10 +662,11 @@ fn poisoned_role_scan_is_rejected_at_the_host_role_table_pin() {
     );
     assert_eq!((mul_idx, sub_idx), (None, None));
 
-    // Kernel side, inside a production package environment: the strict
-    // decode of the poisoned bytes is the closed `none`, the full acceptance
-    // predicate rejects the null claim exactly at the host-role-table pin,
-    // and the literal one-conjunct-weakened copy accepts the same artifact.
+    // Kernel side, inside a production package environment: the full
+    // acceptance predicate rejects the carrierless null claim exactly at the
+    // host-role-table pin, and the literal one-conjunct-weakened copy accepts
+    // the same artifact. The Rust-side classifier assertions above remain the
+    // differential oracle over these two fixtures.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("cert-poisoned-role-scan-pin");
     let compile = aver_command()
@@ -656,27 +712,7 @@ set_option maxRecDepth 300000
 def poisonedBytes : Nat := 0x{poisoned_hex}
 def poisonedLen : Nat := {poisoned_len}
 
--- The identical module without the unscannable function.
-def healthyBytes : Nat := 0x{healthy_hex}
-def healthyLen : Nat := {healthy_len}
-
--- Control: the healthy sibling decodes to the full table.
-example : CertDecode.AddSub.roleTableStrict healthyBytes healthyLen =
-    some (some {{ box := some {box_idx}, add := some {add_idx}, mul := none, sub := none,
-                  toIndex := none }}) := rfl
-
--- The poisoned module decodes to the closed scan-failure state.
-theorem poisonedStrict :
-    CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen = none := rfl
-
--- No manifest declaration whatsoever can close the pin over poisoned bytes.
-example (v : Option CertDecode.AddSub.Roles) :
-    CertDecode.AddSub.roleTableStrict poisonedBytes poisonedLen ≠ some v := by
-  intro h
-  rw [poisonedStrict] at h
-  exact nomatch h
-
--- The attack itself: the poisoned module claims the carrierless `null`.
+-- The attack itself: this module claims the carrierless `null`.
 def nullClaimManifest : Manifest :=
   {{ manifest with
       obligations := [],
@@ -713,10 +749,6 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
 "#,
         poisoned_hex = hex_le(&poisoned),
         poisoned_len = poisoned.len(),
-        healthy_hex = hex_le(&healthy),
-        healthy_len = healthy.len(),
-        box_idx = box_idx,
-        add_idx = add_idx,
     );
     std::fs::write(cert.join("PoisonedRoleScanPin.lean"), lean).unwrap();
     let check = Command::new("lake")

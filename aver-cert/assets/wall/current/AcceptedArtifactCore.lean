@@ -1535,12 +1535,22 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     A byte-provably carrierless module (`__rt_aint_from_i64` export absent)
     declares no table and no params. A carriered module declares both, with the
     `box` role bound by the runtime export name exactly as before (#736), the
+    `toIndex` role bound by its own runtime export name the same way, the
     declared indices inside the single-byte-LEB regime, and each declared
     add/sub/mul index pinned to its canonical helper body by template equality.
     The three-state consistency between presence of the helper export and
     presence of the declaration is preserved: mixing `some`/`none` across the
-    table and params fails closed. `firstArithScan`/`scanFns`/`candFor`/`uniqueC`
-    no longer participate here; they remain producer-side classifiers only. -/
+    table and params fails closed. No byte scan DISCOVERS a role here: the
+    module-wide arith scanner that predated this pin has been deleted from the
+    wall rather than left in place as an unreachable decoder.
+
+    The `toIndex` conjunct is load-bearing, not decorative: the fused vector-read
+    face wires an ABSTRACT contract function at the declared index and never
+    interprets that function's body, so without this equality a package could
+    declare any same-signature function as the index helper and certify a law the
+    bytes do not satisfy. `none` on both sides is the honest reading for a
+    carriered module that exports no `__aint_to_index`; a claim citing the role
+    then fails to match, because `Subject.hostRoles` binds it to `none`. -/
 def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
     (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
   match roles?, params? with
@@ -1548,6 +1558,7 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
   | some roles, some p =>
       !CertDecode.AddSub.carrierHelperAbsent n len &&
       (roles.box == CertDecode.AddSub.boxIdx n len) &&
+      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
       ArithTemplateDerisk.checkArithHostParams p &&
       arithRoleCheck n len .add roles.add p &&
       arithRoleCheck n len .sub roles.sub p &&
