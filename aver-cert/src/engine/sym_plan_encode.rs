@@ -4,6 +4,10 @@ impl SymPrim {
             SymPrim::FloatAdd => Some(FragPrim::F64Add),
             SymPrim::FloatMul => Some(FragPrim::F64Mul),
             SymPrim::FloatLe => Some(FragPrim::F64Le),
+            SymPrim::FloatGe => Some(FragPrim::F64Ge),
+            SymPrim::FloatLt => Some(FragPrim::F64Lt),
+            SymPrim::FloatGt => Some(FragPrim::F64Gt),
+            SymPrim::FloatEq => Some(FragPrim::F64Eq),
             // `IntAdd` has no representation-level primitive: the encoder
             // binds it to a `hostCall add` node through the role table.
             SymPrim::IntAdd => None,
@@ -343,6 +347,7 @@ fn sym_int_small_const_cmp_prim(op: SymIntCmp) -> Option<FragPrim> {
         SymIntCmp::Lt => Some(FragPrim::I64LtS),
         SymIntCmp::Le => Some(FragPrim::I64LeS),
         SymIntCmp::Ge => Some(FragPrim::I64GeS),
+        SymIntCmp::Gt => Some(FragPrim::I64GtS),
     }
 }
 
@@ -350,6 +355,9 @@ fn sym_int_big_const_cmp_kind(op: SymIntCmp) -> Option<SymBigIntConstCmpKind> {
     match op {
         SymIntCmp::Eq => Some(SymBigIntConstCmpKind::Always(false)),
         SymIntCmp::Lt | SymIntCmp::Le => Some(SymBigIntConstCmpKind::SignLtZero),
-        SymIntCmp::Ge => Some(SymBigIntConstCmpKind::SignGtZero),
+        // A Big carrier lies strictly outside the i64 range, so `> k` and
+        // `>= k` are both decided by the sign limb alone (a Big never equals
+        // an i64 literal) — the mirror of `Lt | Le` sharing `SignLtZero`.
+        SymIntCmp::Ge | SymIntCmp::Gt => Some(SymBigIntConstCmpKind::SignGtZero),
     }
 }

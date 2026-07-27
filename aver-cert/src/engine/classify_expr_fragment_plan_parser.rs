@@ -450,10 +450,15 @@ fn plan_prim_from_tag(tag: &str) -> Option<FragPrim> {
         "f64.add" => Some(FragPrim::F64Add),
         "f64.mul" => Some(FragPrim::F64Mul),
         "f64.le" => Some(FragPrim::F64Le),
+        "f64.ge" => Some(FragPrim::F64Ge),
+        "f64.lt" => Some(FragPrim::F64Lt),
+        "f64.gt" => Some(FragPrim::F64Gt),
+        "f64.eq" => Some(FragPrim::F64Eq),
         "i64.eq" => Some(FragPrim::I64Eq),
         "i64.le_s" => Some(FragPrim::I64LeS),
         "i64.lt_s" => Some(FragPrim::I64LtS),
         "i64.ge_s" => Some(FragPrim::I64GeS),
+        "i64.gt_s" => Some(FragPrim::I64GtS),
         "i32.eq" => Some(FragPrim::I32Eq),
         "i32.lt_s" => Some(FragPrim::I32LtS),
         "i32.gt_s" => Some(FragPrim::I32GtS),
@@ -468,10 +473,18 @@ fn check_plan_prim_args(
     nodes: &[FragNode],
 ) -> Result<FragTy, String> {
     let expected_args: &[FragTy] = match op {
-        FragPrim::F64Add | FragPrim::F64Mul | FragPrim::F64Le => &[FragTy::F64, FragTy::F64],
-        FragPrim::I64Eq | FragPrim::I64LeS | FragPrim::I64LtS | FragPrim::I64GeS => {
-            &[FragTy::I64, FragTy::I64]
-        }
+        FragPrim::F64Add
+        | FragPrim::F64Mul
+        | FragPrim::F64Le
+        | FragPrim::F64Ge
+        | FragPrim::F64Lt
+        | FragPrim::F64Gt
+        | FragPrim::F64Eq => &[FragTy::F64, FragTy::F64],
+        FragPrim::I64Eq
+        | FragPrim::I64LeS
+        | FragPrim::I64LtS
+        | FragPrim::I64GeS
+        | FragPrim::I64GtS => &[FragTy::I64, FragTy::I64],
         FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS => {
             &[FragTy::RawI32, FragTy::RawI32]
         }
@@ -505,10 +518,15 @@ fn check_plan_prim_args(
     Ok(match op {
         FragPrim::F64Add | FragPrim::F64Mul => FragTy::F64,
         FragPrim::F64Le
+        | FragPrim::F64Ge
+        | FragPrim::F64Lt
+        | FragPrim::F64Gt
+        | FragPrim::F64Eq
         | FragPrim::I64Eq
         | FragPrim::I64LeS
         | FragPrim::I64LtS
         | FragPrim::I64GeS
+        | FragPrim::I64GtS
         | FragPrim::I32Eq
         | FragPrim::I32LtS
         | FragPrim::I32GtS => FragTy::BoolI32,

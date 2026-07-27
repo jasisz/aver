@@ -473,7 +473,13 @@ fn check_sym_plan_prim_args(
     nodes: &[SymNode],
 ) -> Result<SymTy, String> {
     let expected_args: Vec<SymTy> = match op {
-        SymPrim::FloatAdd | SymPrim::FloatMul | SymPrim::FloatLe => {
+        SymPrim::FloatAdd
+        | SymPrim::FloatMul
+        | SymPrim::FloatLe
+        | SymPrim::FloatGe
+        | SymPrim::FloatLt
+        | SymPrim::FloatGt
+        | SymPrim::FloatEq => {
             vec![SymTy::Float, SymTy::Float]
         }
         SymPrim::IntAdd => vec![SymTy::Int, SymTy::Int],
@@ -503,7 +509,11 @@ fn check_sym_plan_prim_args(
     Ok(match op {
         SymPrim::FloatAdd | SymPrim::FloatMul => SymTy::Float,
         SymPrim::IntAdd => SymTy::Int,
-        SymPrim::FloatLe => SymTy::Bool,
+        SymPrim::FloatLe
+        | SymPrim::FloatGe
+        | SymPrim::FloatLt
+        | SymPrim::FloatGt
+        | SymPrim::FloatEq => SymTy::Bool,
         SymPrim::StringEq => SymTy::Bool,
         SymPrim::StringConcat => unreachable!(),
     })

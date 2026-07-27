@@ -90,6 +90,10 @@ pub enum SymPrim {
     FloatAdd,
     FloatMul,
     FloatLe,
+    FloatGe,
+    FloatLt,
+    FloatGt,
+    FloatEq,
     IntAdd,
     StringEq,
     StringConcat,
@@ -101,6 +105,7 @@ pub enum SymIntCmp {
     Lt,
     Le,
     Ge,
+    Gt,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -656,10 +661,15 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
                 FragPrim::F64Add => SymPrim::FloatAdd,
                 FragPrim::F64Mul => SymPrim::FloatMul,
                 FragPrim::F64Le => SymPrim::FloatLe,
+                FragPrim::F64Ge => SymPrim::FloatGe,
+                FragPrim::F64Lt => SymPrim::FloatLt,
+                FragPrim::F64Gt => SymPrim::FloatGt,
+                FragPrim::F64Eq => SymPrim::FloatEq,
                 FragPrim::I64Eq
                 | FragPrim::I64LeS
                 | FragPrim::I64LtS
                 | FragPrim::I64GeS
+                | FragPrim::I64GtS
                 | FragPrim::I32Eq
                 | FragPrim::I32LtS
                 | FragPrim::I32GtS => return None,

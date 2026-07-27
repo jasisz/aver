@@ -3,7 +3,7 @@ module CertGoals
         "Certification goal matrix. This fixture is the primary progress"
         "dashboard for artifact-level certificates; larger examples such as JSON"
         "remain integration side-effects."
-    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, idGoal, listHeadGoal, sumListGoal]
+    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, floatGeGoal, floatLtGoal, floatGtGoal, floatEqGoal, idGoal, listHeadGoal, sumListGoal]
 
 type Op
   Add(Int)
@@ -164,6 +164,30 @@ fn floatLeGoal(a: Float, b: Float) -> Bool
     true -> true
     false -> false
 
+fn floatGeGoal(a: Float, b: Float) -> Bool
+  ? "Ordered float comparison goal: a >= b."
+  match a >= b
+    true -> true
+    false -> false
+
+fn floatLtGoal(a: Float, b: Float) -> Bool
+  ? "Ordered float comparison goal: a < b."
+  match a < b
+    true -> true
+    false -> false
+
+fn floatGtGoal(a: Float, b: Float) -> Bool
+  ? "Ordered float comparison goal: a > b."
+  match a > b
+    true -> true
+    false -> false
+
+fn floatEqGoal(a: Float, b: Float) -> Bool
+  ? "Ordered float comparison goal: a == b (false on NaN, true for -0.0 == 0.0)."
+  match a == b
+    true -> true
+    false -> false
+
 fn idGoal(x: Int) -> Int
   ? "BACKLOG: bare Int passthrough. The carrier identity has no rendered proof face yet (Int-carrier results are certified only through the straight-line integer face), so this stays source-level-only fail-closed."
   x
@@ -244,6 +268,22 @@ verify floatMulAddGoal
 verify floatLeGoal
   floatLeGoal(1.0, 2.0) => true
   floatLeGoal(3.0, 2.0) => false
+
+verify floatGeGoal
+  floatGeGoal(3.0, 2.0) => true
+  floatGeGoal(1.0, 2.0) => false
+
+verify floatLtGoal
+  floatLtGoal(1.0, 2.0) => true
+  floatLtGoal(2.0, 2.0) => false
+
+verify floatGtGoal
+  floatGtGoal(3.0, 2.0) => true
+  floatGtGoal(2.0, 2.0) => false
+
+verify floatEqGoal
+  floatEqGoal(2.0, 2.0) => true
+  floatEqGoal(1.0, 2.0) => false
 
 verify idGoal
   idGoal(7) => 7

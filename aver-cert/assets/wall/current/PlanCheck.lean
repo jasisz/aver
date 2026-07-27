@@ -101,6 +101,14 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       if argsHaveTys nodes args [.f64, .f64] then some .f64 else none
   | .f64Le =>
       if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Ge =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Lt =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Gt =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Eq =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
   | .i64Eq =>
       if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
   | .i64LeS =>
@@ -108,6 +116,8 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
   | .i64LtS =>
       if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
   | .i64GeS =>
+      if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i64GtS =>
       if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
   | .i32Eq =>
       match args with
@@ -156,6 +166,14 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
   | .floatMul =>
       if symArgsHaveTys nodes args [.float, .float] then some .float else none
   | .floatLe =>
+      if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .floatGe =>
+      if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .floatLt =>
+      if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .floatGt =>
+      if symArgsHaveTys nodes args [.float, .float] then some .bool else none
+  | .floatEq =>
       if symArgsHaveTys nodes args [.float, .float] then some .bool else none
   | .intAdd =>
       if symArgsHaveTys nodes args [.int, .int] then some .int else none
@@ -331,10 +349,15 @@ def primNeedsRelationalFloatResult : FragPrim → Bool
   | .f64Add => true
   | .f64Mul => true
   | .f64Le => false
+  | .f64Ge => false
+  | .f64Lt => false
+  | .f64Gt => false
+  | .f64Eq => false
   | .i64Eq => false
   | .i64LeS => false
   | .i64LtS => false
   | .i64GeS => false
+  | .i64GtS => false
   | .i32Eq => false
   | .i32LtS => false
   | .i32GtS => false
@@ -348,8 +371,13 @@ def primNeedsRelationalFloatResult : FragPrim → Bool
     explicit decision about nested blocks and Float-bit observation here.
 
     A Bool-result plan is intentionally outside this gate. In the current
-    grammar the only Float-to-Bool primitive is `f64.le`, whose result is false
-    for every NaN independently of its sign or payload. -/
+    grammar the Float-to-Bool primitives are `f64.le`, `f64.ge`, `f64.lt`,
+    `f64.gt` and `f64.eq`; each is an IEEE-754 ORDERED comparison, so its
+    result is false for every NaN operand independently of that NaN's sign or
+    payload. The single Float comparison general Wasm defines as UNORDERED,
+    `f64.ne` (true whenever an operand is NaN, including `NaN != NaN`), is
+    deliberately absent from `FragPrim`: it does not follow from this clause by
+    analogy and would need its own decision here before it could be admitted. -/
 def blockNeedsRelationalFloatResultFuel : Nat → FragBlock → Bool
   | 0, _ => true
   | fuel + 1, block =>
@@ -408,6 +436,10 @@ private def nestedFloatProbe (op : FragPrim) : ExprFragmentRawPlan :=
 example : checkExprFragmentRawPlan (binaryFloatProbe .f64Add .f64) = false := rfl
 example : checkExprFragmentRawPlan (binaryFloatProbe .f64Mul .f64) = false := rfl
 example : checkExprFragmentRawPlan (binaryFloatProbe .f64Le .boolI32) = true := rfl
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Ge .boolI32) = true := rfl
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Lt .boolI32) = true := rfl
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Gt .boolI32) = true := rfl
+example : checkExprFragmentRawPlan (binaryFloatProbe .f64Eq .boolI32) = true := rfl
 example : checkBlock (nestedFloatProbe .f64Add).params
     (nestedFloatProbe .f64Add).body = true := rfl
 example : checkExprFragmentRawPlan (nestedFloatProbe .f64Add) = false := rfl
@@ -730,6 +762,10 @@ def encodeSymPrim? : SymPrim → Option FragPrim
   | .floatAdd => some .f64Add
   | .floatMul => some .f64Mul
   | .floatLe => some .f64Le
+  | .floatGe => some .f64Ge
+  | .floatLt => some .f64Lt
+  | .floatGt => some .f64Gt
+  | .floatEq => some .f64Eq
   -- `intAdd` has no representation-level primitive: the encoder binds it to a
   -- `hostCall .add` node through the byte-derived host-role table instead.
   | .intAdd => none
@@ -759,17 +795,24 @@ def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
   | .lt => some .i64LtS
   | .le => some .i64LeS
   | .ge => some .i64GeS
+  | .gt => some .i64GtS
 
 inductive SymBigIntConstCmpKind where
   | always (value : Bool)
   | signLtZero
   | signGtZero
 
+/-- A Big carrier is strictly outside the i64 range, so its relation to any
+    i64 literal is fixed by the sign limb alone: Big-positive exceeds every
+    literal, Big-negative is below every literal, and a Big never equals one.
+    `gt` therefore lands on the same `signGtZero` branch as `ge`, exactly as
+    `lt` and `le` share `signLtZero`. -/
 def symIntBigConstCmpKind? : SymIntCmp → Option SymBigIntConstCmpKind
   | .eq => some (.always false)
   | .lt => some .signLtZero
   | .le => some .signLtZero
   | .ge => some .signGtZero
+  | .gt => some .signGtZero
 
 def appendFragNode
     (nodes : List FragNode)

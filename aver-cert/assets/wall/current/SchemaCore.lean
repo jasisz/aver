@@ -209,6 +209,10 @@ inductive SymPrim where
   | floatAdd
   | floatMul
   | floatLe
+  | floatGe
+  | floatLt
+  | floatGt
+  | floatEq
   | intAdd
   | stringEq
   | stringConcat
@@ -222,6 +226,7 @@ inductive SymIntCmp where
   | lt
   | le
   | ge
+  | gt
 deriving Repr, DecidableEq
 
 mutual
@@ -286,10 +291,15 @@ inductive FragPrim where
   | f64Add
   | f64Mul
   | f64Le
+  | f64Ge
+  | f64Lt
+  | f64Gt
+  | f64Eq
   | i64Eq
   | i64LeS
   | i64LtS
   | i64GeS
+  | i64GtS
   | i32Eq
   | i32LtS
   | i32GtS

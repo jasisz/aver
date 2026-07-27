@@ -289,7 +289,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert_eq!(
         declared_uncertified.len(),
         16,
-        "all 37 module exports must be certified or explicitly declared"
+        "all 41 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {
@@ -316,7 +316,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     // while Wasmtime's deterministic/canonicalizing profile returns the
     // positive canonical NaN. That set-valued boundary is why Float-producing
     // arithmetic is source-level-only until its certificate codomain becomes
-    // relational. The Bool comparison remains sign/payload-independent.
+    // relational. The Bool comparisons remain sign/payload-independent.
     const RAW_NANS: [(&str, u64); 4] = [
         ("positive qNaN payload", 0x7ff8_0000_0000_0001),
         ("negative qNaN payload", 0xfff8_0000_0000_0042),
@@ -324,7 +324,46 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("negative sNaN payload", 0xfff0_0000_0000_0042),
     ];
     const ONE: u64 = 0x3ff0_0000_0000_0000;
+    const TWO: u64 = 0x4000_0000_0000_0000;
+    const POSITIVE_ZERO: u64 = 0x0000_0000_0000_0000;
+    const NEGATIVE_ZERO: u64 = 0x8000_0000_0000_0000;
     const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+    // Every ordered Float comparison the plan grammar admits, paired with the
+    // source operator it comes from. The wall states each of these with Lean's
+    // own `Float` `<=` / `<` / `==`, which are opaque extern symbols the kernel
+    // cannot unfold: "Lean `Float` ordered comparison behaves as the Wasm f64
+    // ordered comparison" is the one premise held EMPIRICALLY, right here.
+    // Admitting another float comparison opcode without adding it to this table
+    // puts it on that unproved bridge with no engine-level coverage.
+    const FLOAT_ORDERED_CMP: [(&str, &str); 5] = [
+        ("floatLeGoal", "<="),
+        ("floatGeGoal", ">="),
+        ("floatLtGoal", "<"),
+        ("floatGtGoal", ">"),
+        ("floatEqGoal", "=="),
+    ];
+    // (case, lhs bits, rhs bits, expected i32 per FLOAT_ORDERED_CMP entry in
+    // that order). The ordered pairs are the control: a harness that answered
+    // "false" everywhere would still pass a NaN-only table. The signed-zero rows
+    // are where IEEE equality and bit equality disagree (`-0.0 == 0.0` is true
+    // while the bit patterns differ), which is exactly where a Lean/Wasm
+    // divergence could hide. The NaN rows use the canonical quiet NaN; the
+    // sign/payload variants are swept separately by RAW_NANS below.
+    const CMP_CASES: [(&str, u64, u64, [i32; 5]); 8] = [
+        ("1.0 vs 2.0 (ordered control)", ONE, TWO, [1, 0, 1, 0, 0]),
+        ("2.0 vs 1.0 (ordered control)", TWO, ONE, [0, 1, 0, 1, 0]),
+        ("1.0 vs 1.0 (equal control)", ONE, ONE, [1, 1, 0, 0, 1]),
+        ("qNaN on the left", CANONICAL_NAN, ONE, [0, 0, 0, 0, 0]),
+        ("qNaN on the right", ONE, CANONICAL_NAN, [0, 0, 0, 0, 0]),
+        (
+            "qNaN on both sides",
+            CANONICAL_NAN,
+            CANONICAL_NAN,
+            [0, 0, 0, 0, 0],
+        ),
+        ("-0.0 vs 0.0", NEGATIVE_ZERO, POSITIVE_ZERO, [1, 1, 0, 0, 1]),
+        ("0.0 vs -0.0", POSITIVE_ZERO, NEGATIVE_ZERO, [1, 1, 0, 0, 1]),
+    ];
     for canonicalize_nans in [false, true] {
         let profile = if canonicalize_nans {
             "canonicalizing"
@@ -338,14 +377,20 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         let mul_add = instance
             .get_typed_func::<(f64, f64), f64>(&mut store, "floatMulAddGoal")
             .expect("floatMulAddGoal export");
-        let le = instance
-            .get_typed_func::<(f64, f64), i32>(&mut store, "floatLeGoal")
-            .expect("floatLeGoal export");
+        let comparisons = FLOAT_ORDERED_CMP.map(|(export, _)| {
+            instance
+                .get_typed_func::<(f64, f64), i32>(&mut store, export)
+                .unwrap_or_else(|error| panic!("{export} export: {error}"))
+        });
 
         for (nan_name, nan_bits) in RAW_NANS {
             let nan = f64::from_bits(nan_bits);
             let one = f64::from_bits(ONE);
-            for (position, raw_args) in [("lhs", (nan, one)), ("rhs", (one, nan))] {
+            for (position, raw_args) in [
+                ("lhs", (nan, one)),
+                ("rhs", (one, nan)),
+                ("both sides", (nan, nan)),
+            ] {
                 for (export, function) in [("floatAddGoal", &add), ("floatMulAddGoal", &mul_add)] {
                     let result_bits = function
                         .call(&mut store, raw_args)
@@ -367,12 +412,51 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
                         );
                     }
                 }
+                for (index, (export, operator)) in FLOAT_ORDERED_CMP.into_iter().enumerate() {
+                    assert_eq!(
+                        comparisons[index]
+                            .call(&mut store, raw_args)
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "run {profile} {export} with {nan_name} on {position}: {error}"
+                                )
+                            }),
+                        0,
+                        "ordered `{operator}` ({export}) must be false for {nan_name} on \
+                         {position} in the {profile} profile"
+                    );
+                }
+            }
+        }
+
+        for (case, lhs_bits, rhs_bits, expected) in CMP_CASES {
+            let args = (f64::from_bits(lhs_bits), f64::from_bits(rhs_bits));
+            for (index, (export, operator)) in FLOAT_ORDERED_CMP.into_iter().enumerate() {
+                // The host's own IEEE-754 comparison is the second reading of
+                // the same relation Lean's extern `Float` primitives compile
+                // to, so a mistyped row in the table is caught here rather than
+                // being mistaken for a Wasm divergence below.
+                let host = i32::from(match operator {
+                    "<=" => args.0 <= args.1,
+                    ">=" => args.0 >= args.1,
+                    "<" => args.0 < args.1,
+                    ">" => args.0 > args.1,
+                    "==" => args.0 == args.1,
+                    other => panic!("no host reading for float comparison `{other}`"),
+                });
                 assert_eq!(
-                    le.call(&mut store, raw_args).unwrap_or_else(|error| {
-                        panic!("run {profile} floatLeGoal with {nan_name} on {position}: {error}")
-                    }),
-                    0,
-                    "f64.le must be false for {nan_name} on {position} in the {profile} profile"
+                    host, expected[index],
+                    "pinned IEEE expectation for `{operator}` on {case} disagrees with the host"
+                );
+                assert_eq!(
+                    comparisons[index]
+                        .call(&mut store, args)
+                        .unwrap_or_else(|error| {
+                            panic!("run {profile} {export} on {case}: {error}")
+                        }),
+                    expected[index],
+                    "{export} (`{operator}`) diverged from the IEEE ordered comparison on \
+                     {case} in the {profile} profile"
                 );
             }
         }
@@ -434,6 +518,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("intEqZero", "expr-fragment-v1"),
         ("boolAndGoal", "expr-fragment-v1"),
         ("floatLeGoal", "expr-fragment-v1"),
+        ("floatGeGoal", "expr-fragment-v1"),
+        ("floatLtGoal", "expr-fragment-v1"),
+        ("floatGtGoal", "expr-fragment-v1"),
+        ("floatEqGoal", "expr-fragment-v1"),
     ]
     .into_iter()
     .map(|(name, class)| (name.to_string(), class.to_string()))
@@ -450,7 +538,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .collect::<Vec<_>>();
     assert_eq!(
         expr_entries.len(),
-        7,
+        11,
         "expr-fragment report count changed; update this deliberately"
     );
     let expr_names = expr_entries
@@ -467,6 +555,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             "intEqZero",
             "boolAndGoal",
             "floatLeGoal",
+            "floatGeGoal",
+            "floatLtGoal",
+            "floatGtGoal",
+            "floatEqGoal",
         ]
         .into_iter()
         .map(str::to_string)
@@ -483,6 +575,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "intEqZero",
         "boolAndGoal",
         "floatLeGoal",
+        "floatGeGoal",
+        "floatLtGoal",
+        "floatGtGoal",
+        "floatEqGoal",
     ] {
         assert!(
             plans_lean.contains(&format!("def {name}SymPlan : SymRawPlan"))
@@ -651,6 +747,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "floatAddGoal",
         "floatMulAddGoal",
         "floatLeGoal",
+        "floatGeGoal",
+        "floatLtGoal",
+        "floatGtGoal",
+        "floatEqGoal",
         "idGoal",
         "listHeadGoal",
         "sumListGoal",
@@ -668,8 +768,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     .into_iter()
     .map(str::to_string)
     .collect();
-    assert_eq!(planned_goal_names.len(), 26, "goal denominator changed");
-    assert_eq!(actual.len(), 21, "goal numerator changed");
+    assert_eq!(planned_goal_names.len(), 30, "goal denominator changed");
+    assert_eq!(actual.len(), 25, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -881,7 +981,13 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             "declared-envelope face theorem missing from Artifact.lean: {face}\n{artifact_lean}"
         );
     }
-    for float_name in ["floatLeGoal"] {
+    for float_name in [
+        "floatLeGoal",
+        "floatGeGoal",
+        "floatLtGoal",
+        "floatGtGoal",
+        "floatEqGoal",
+    ] {
         assert!(
             artifact_lean.contains(&format!(
                 "Or.inr (Or.inr ⟨rfl, CertProofs.{float_name}_simulates⟩)"
@@ -986,7 +1092,13 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             "integer composition must emit claim acceptance plus its small semantic bridge: {composition_name}\n{certificate}"
         );
     }
-    for float_name in ["floatLeGoal"] {
+    for float_name in [
+        "floatLeGoal",
+        "floatGeGoal",
+        "floatLtGoal",
+        "floatGtGoal",
+        "floatEqGoal",
+    ] {
         assert!(
             certificate.contains(&format!("theorem {float_name}_wasm_certified"))
                 && certificate.contains(&format!("theorem {float_name}_simulates")),

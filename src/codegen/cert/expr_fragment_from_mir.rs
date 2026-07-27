@@ -393,6 +393,13 @@ impl MirSymPlanBuilder<'_> {
             crate::ast::BinOp::Add => (SymPrim::FloatAdd, SymTy::Float),
             crate::ast::BinOp::Mul => (SymPrim::FloatMul, SymTy::Float),
             crate::ast::BinOp::Lte => (SymPrim::FloatLe, SymTy::Bool),
+            crate::ast::BinOp::Gte => (SymPrim::FloatGe, SymTy::Bool),
+            crate::ast::BinOp::Lt => (SymPrim::FloatLt, SymTy::Bool),
+            crate::ast::BinOp::Gt => (SymPrim::FloatGt, SymTy::Bool),
+            crate::ast::BinOp::Eq => (SymPrim::FloatEq, SymTy::Bool),
+            // `Neq` stays out: `f64.ne` is the UNORDERED comparison (true on
+            // NaN), so it is not covered by the ordered-comparison NaN clause
+            // the other five share.
             _ => return None,
         };
         self.push_node(
@@ -659,6 +666,10 @@ impl MirExprFragmentBuilder<'_> {
             crate::ast::BinOp::Add => (FragPrim::F64Add, FragTy::F64),
             crate::ast::BinOp::Mul => (FragPrim::F64Mul, FragTy::F64),
             crate::ast::BinOp::Lte => (FragPrim::F64Le, FragTy::BoolI32),
+            crate::ast::BinOp::Gte => (FragPrim::F64Ge, FragTy::BoolI32),
+            crate::ast::BinOp::Lt => (FragPrim::F64Lt, FragTy::BoolI32),
+            crate::ast::BinOp::Gt => (FragPrim::F64Gt, FragTy::BoolI32),
+            crate::ast::BinOp::Eq => (FragPrim::F64Eq, FragTy::BoolI32),
             _ => return None,
         };
         self.push_node(
@@ -897,8 +908,11 @@ fn i64_const_cmp_prim(op: crate::ast::BinOp) -> Option<FragPrim> {
         crate::ast::BinOp::Lt => Some(FragPrim::I64LtS),
         crate::ast::BinOp::Lte => Some(FragPrim::I64LeS),
         crate::ast::BinOp::Gte => Some(FragPrim::I64GeS),
-        // `expr-fragment-v1` has no `i64.gt_s`/`i64.ne` proof rule yet.
-        crate::ast::BinOp::Gt | crate::ast::BinOp::Neq => None,
+        crate::ast::BinOp::Gt => Some(FragPrim::I64GtS),
+        // `Neq` stays out: `i64.ne` is not in the wall's measured instruction
+        // set (`WInstr`), so admitting it is a wasm-model extension, not a
+        // plan-grammar one.
+        crate::ast::BinOp::Neq => None,
         _ => None,
     }
 }
@@ -909,9 +923,10 @@ fn sym_int_const_cmp_op(op: crate::ast::BinOp) -> Option<SymIntCmp> {
         crate::ast::BinOp::Lt => Some(SymIntCmp::Lt),
         crate::ast::BinOp::Lte => Some(SymIntCmp::Le),
         crate::ast::BinOp::Gte => Some(SymIntCmp::Ge),
-        // Kept aligned with the representation encoder: no `Gt`/`Neq`
-        // admission until the carrier proof rules grow those branches.
-        crate::ast::BinOp::Gt | crate::ast::BinOp::Neq => None,
+        crate::ast::BinOp::Gt => Some(SymIntCmp::Gt),
+        // Kept aligned with the representation encoder: `Neq` needs
+        // `i64.ne` in the wall's measured instruction set first.
+        crate::ast::BinOp::Neq => None,
         _ => None,
     }
 }
@@ -920,9 +935,12 @@ fn big_int_const_cmp_kind(op: crate::ast::BinOp) -> Option<BigIntConstCmpKind> {
     match op {
         crate::ast::BinOp::Eq => Some(BigIntConstCmpKind::Always(false)),
         crate::ast::BinOp::Lt | crate::ast::BinOp::Lte => Some(BigIntConstCmpKind::SignLtZero),
-        crate::ast::BinOp::Gte => Some(BigIntConstCmpKind::SignGtZero),
-        // Kept aligned with `i64_const_cmp_prim`: no `Gt`/`Neq` admission yet.
-        crate::ast::BinOp::Gt | crate::ast::BinOp::Neq => None,
+        // A Big carrier is strictly outside the i64 range, so `> k` and `>= k`
+        // are both decided by the sign limb alone (a Big never equals an i64
+        // literal) — the mirror of `Lt | Lte` sharing `SignLtZero`.
+        crate::ast::BinOp::Gte | crate::ast::BinOp::Gt => Some(BigIntConstCmpKind::SignGtZero),
+        // Kept aligned with `i64_const_cmp_prim`: no `Neq` admission yet.
+        crate::ast::BinOp::Neq => None,
         _ => None,
     }
 }
