@@ -1557,15 +1557,44 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     );
 }
 
-#[test]
-fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
+// Plans.lean-authority soundness gates.
+//
+// These tests share one baseline artifact and differ only in which single
+// tamper they apply to the emitted certificate package before demanding a
+// DECLINE. They used to be one test that ran every verification sequentially.
+// Each of these tampers edits Lean sources, so the decline only surfaces after
+// a full certificate verification (minutes on CI), while the shared
+// `aver compile --certify` baseline costs a fraction of a second. Splitting the
+// tamper vectors into separate tests behind the `cert_plans_authority_` prefix
+// — each redoing the cheap setup — lets CI run the expensive verifications in
+// parallel lanes, the same way `cert_certify_spec.rs` runs its
+// `cert_hostile_model_` family. Prefix in, prefix out: the dedicated lanes
+// select this prefix and the `rest` lanes exclude exactly it, so a gate added
+// here is run exactly once and needs no workflow edit.
+
+/// Compiles the shared Plans.lean-authority baseline package.
+///
+/// Every gate below runs this itself rather than depending on a baseline built
+/// by another test (and therefore another CI lane), so each one fails on its
+/// own terms. The compile is a fraction of a second, so duplicating the setup
+/// per gate is nearly free — unlike the verification each gate then performs.
+///
+/// The honest package's own verdict is asserted once, by
+/// `cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data`,
+/// rather than per gate: that keeps the number of full verifications the same
+/// as before the split. Every tamper gate additionally pins the REASON its
+/// tamper is declined, so a fixture that stopped verifying for an unrelated
+/// reason surfaces as a wrong-reason failure rather than as a vacuous pass.
+///
+/// Returns `None` when `lake` is unavailable; the caller then skips, as before.
+fn plans_authority_baseline(prefix: &str) -> Option<PathBuf> {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping Plans.lean authority test: `lake` not available");
-        return;
+        return None;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-plans-authority");
+    let out_dir = temp_dir(prefix);
 
     let compile = aver_command()
         .current_dir(&repo_root)
@@ -1584,6 +1613,18 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
     );
+
+    Some(out_dir)
+}
+
+/// The honest goals package verifies, and `Plans.lean` is its only public plan
+/// DATA: no checker-generated `ArtifactBytes.lean`, no fragment sidecars, and
+/// no plan metadata leaking into the public manifest.
+#[test]
+fn cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority") else {
+        return;
+    };
 
     let wasm = out_dir.join("cert_goals.wasm");
     let cert = out_dir.join("cert");
@@ -1610,6 +1651,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         assert!(entry.get("plan_sha256").is_none());
     }
 
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A cert-supplied `ArtifactBytes.lean` is a checker-owned filename, so a
+/// package that ships a decoy under that name must still be ACCEPTED with the
+/// decoy ignored — the verifier regenerates it from the artifact bytes it read.
+#[test]
+fn cert_plans_authority_ignores_cert_supplied_artifact_bytes_decoy() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-bytes-decoy")
+    else {
+        return;
+    };
+
     // The honest package does not carry ArtifactBytes, but an adversarial
     // package may add a decoy. The verifier must still generate the module from
     // the artifact bytes it read and ignore this checker-owned filename.
@@ -1629,6 +1683,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The expr-fragment acceptance path pins the carrier scratch local declared by
+/// the canonical byte lowering, so a code table claiming zero locals is
+/// DECLINED even with honest bytes and an honest plan.
+#[test]
+fn cert_plans_authority_declines_zero_locals_expr_fragment_code() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-zero-locals") else {
+        return;
+    };
+
     // Honest bytes and plan, but the standalone obligation code table claims
     // zero locals. The expr-fragment acceptance path must pin the one carrier
     // scratch local declared by the canonical byte lowering.
@@ -1641,8 +1708,30 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
             !ok,
             "expr-fragment zero-locals code must be DECLINED:\n{report}"
         );
+        // Pin WHY it declined, like every sibling gate here. On its own lane a
+        // bare `!ok` would also be satisfied by a fixture that stopped building
+        // for an unrelated reason, which would retire this gate silently while
+        // the test still passed. In the monolith the shared clean check ahead
+        // of this block ruled that out; standing alone, it has to say so itself.
+        assert!(
+            !report.contains("CERTIFIED"),
+            "zero-locals tamper must not report any certified export:\n{report}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// An expr-fragment claim whose obligation is not carried by the manifest must
+/// be DECLINED: emptying the manifest obligation list and re-proving the
+/// weakened `Final.cert` must not buy acceptance.
+#[test]
+fn cert_plans_authority_declines_claim_without_manifest_obligation() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-claim-without-obligation")
+    else {
+        return;
+    };
 
     let claim_without_manifest_ob_dir = temp_dir("cert-expr-claim-without-obligation");
     copy_dir(&out_dir, &claim_without_manifest_ob_dir);
@@ -1707,6 +1796,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "expr-fragment claim without manifest obligation credited:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A claim obligation that is no longer structurally the manifest's obligation
+/// — same name, host table wrapped so it differs — must be DECLINED.
+#[test]
+fn cert_plans_authority_declines_artifact_claim_obligation_tamper() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-obligation-tamper")
+    else {
+        return;
+    };
+
     let artifact_obligation_tamper_dir = temp_dir("cert-expr-artifact-obligation-tamper");
     copy_dir(&out_dir, &artifact_obligation_tamper_dir);
     let artifact_obligation_tamper_wasm = artifact_obligation_tamper_dir.join("cert_goals.wasm");
@@ -1756,6 +1858,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "artifact claim obligation tamper credited:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&artifact_obligation_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A package that bridges its acceptance with a carried `axiom` must be
+/// DECLINED by the axiom whitelist, naming the offending axiom.
+#[test]
+fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-axiom-tamper")
+    else {
+        return;
+    };
+
     let artifact_axiom_tamper_dir = temp_dir("cert-expr-artifact-axiom-tamper");
     copy_dir(&out_dir, &artifact_axiom_tamper_dir);
     let artifact_axiom_tamper_wasm = artifact_axiom_tamper_dir.join("cert_goals.wasm");
@@ -1796,6 +1911,18 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "artifact-carried axiom bridge credited:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// `Plans.lean` is the authoritative plan DATA, so reordering a raw plan's
+/// operands there must be DECLINED against the module bytes.
+#[test]
+fn cert_plans_authority_declines_tampered_lean_raw_plan() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-plan-tamper") else {
+        return;
+    };
+
     let lean_plan_tamper_dir = temp_dir("cert-expr-lean-plan-tamper");
     copy_dir(&out_dir, &lean_plan_tamper_dir);
     let lean_plan_tamper_wasm = lean_plan_tamper_dir.join("cert_goals.wasm");
@@ -1823,6 +1950,18 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         !out.contains("CERTIFIED"),
         "tampered Lean RawPlan data credited:\n{out}"
     );
+
+    let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The code-entry byte pin in `Plans.lean` is checked against the module, so a
+/// single flipped opcode byte in that pin must be DECLINED.
+#[test]
+fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-bytes-tamper") else {
+        return;
+    };
 
     let lean_bytes_tamper_dir = temp_dir("cert-expr-lean-bytes-tamper");
     copy_dir(&out_dir, &lean_bytes_tamper_dir);
@@ -1857,6 +1996,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         !out.contains("CERTIFIED"),
         "tampered Lean code-entry byte pin credited:\n{out}"
     );
+
+    let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The `WasmSlice` byte-origin pin ties the plan's bytes to their position in
+/// the module, so flipping a byte in that exact-slice argument must be
+/// DECLINED.
+#[test]
+fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-slice-tamper") else {
+        return;
+    };
 
     let lean_slice_tamper_dir = temp_dir("cert-expr-lean-slice-tamper");
     copy_dir(&out_dir, &lean_slice_tamper_dir);
@@ -1894,14 +2046,8 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "tampered Lean WasmSlice byte-origin pin credited:\n{out}"
     );
 
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
-    let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
-    let _ = std::fs::remove_dir_all(&artifact_obligation_tamper_dir);
-    let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
-    let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
-    let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Byte-derived host-role indices for the goals module, read from the emitted

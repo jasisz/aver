@@ -2714,8 +2714,80 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-#[test]
-fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
+/// Non-recursive ADT witness fixtures, as `(source, prefix, expected exports)`.
+///
+/// Each entry compiles its own certificate package and `lake build`s it, so the
+/// list used to be ten full Lean builds run back to back inside a single test —
+/// the longest serial chain in the certify suite and the reason its `rest` lane
+/// was the slowest one left after the hostile-model split.
+///
+/// This list is the single source of truth for which fixtures the gate covers,
+/// and it deliberately stays a list. The shard tests below select entries by
+/// `idx % NONRECURSIVE_ADT_WITNESS_SHARDS`, never by name, so a fixture
+/// appended here is automatically exercised by exactly one existing shard: no
+/// new test function to write, no CI filter to update, nothing to forget.
+const NONRECURSIVE_ADT_WITNESS_CASES: &[(&str, &str, &[&str])] = &[
+    (
+        "tools/certkit/fixtures/opteval.av",
+        "opteval",
+        &["mk", "eval"],
+    ),
+    ("examples/core/user_record.av", "user-record", &["greet"]),
+    (
+        "tools/certkit/fixtures/tupleproj.av",
+        "tuple-proj",
+        &["pairFst", "pairSnd"],
+    ),
+    (
+        "tools/certkit/fixtures/widenedmatch.av",
+        "widened-match",
+        &["boxInt"],
+    ),
+    (
+        "tools/certkit/fixtures/rangepred.av",
+        "range-pred",
+        &["inAsciiDigit"],
+    ),
+    (
+        "tools/certkit/fixtures/verbatimwiden.av",
+        "verbatim-widen",
+        &["wrapItems"],
+    ),
+    (
+        "tools/certkit/fixtures/f64verbatim.av",
+        "f64-verbatim",
+        &["floatOrZero"],
+    ),
+    // Out-of-template variant dispatch: four constructors, mixed arm
+    // semantics (negation, offset addition, identity, non-zero default) —
+    // provable only through the structural walker, not a shape template.
+    (
+        "tools/certkit/fixtures/signalgauge.av",
+        "signal-gauge",
+        &["gauge"],
+    ),
+    (
+        "tools/certkit/fixtures/intdispatchgen.av",
+        "int-dispatch-gen",
+        &["boxInt", "gauge"],
+    ),
+    // Payload-first subtraction, constant-first addition, and payload
+    // variants elided into the wildcard default.
+    ("tools/certkit/fixtures/meter.av", "meter", &["readout"]),
+];
+
+/// How many parallel shards `NONRECURSIVE_ADT_WITNESS_CASES` is spread over:
+/// one test function per shard. Keep it at most the list length so no shard
+/// runs empty (an empty shard would pass vacuously); the runner asserts that.
+const NONRECURSIVE_ADT_WITNESS_SHARDS: usize = 4;
+
+/// Runs the `NONRECURSIVE_ADT_WITNESS_CASES` entries that belong to `shard`.
+fn assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(shard: usize) {
+    assert!(
+        shard < NONRECURSIVE_ADT_WITNESS_SHARDS
+            && NONRECURSIVE_ADT_WITNESS_SHARDS <= NONRECURSIVE_ADT_WITNESS_CASES.len(),
+        "shard {shard} of {NONRECURSIVE_ADT_WITNESS_SHARDS} covers no ADT witness fixture: keep the shard count at most the list length, one test function per shard"
+    );
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping certify ADT test: `lake` not available");
         return;
@@ -2723,57 +2795,13 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    let cases = [
-        (
-            "tools/certkit/fixtures/opteval.av",
-            "opteval",
-            vec!["mk", "eval"],
-        ),
-        ("examples/core/user_record.av", "user-record", vec!["greet"]),
-        (
-            "tools/certkit/fixtures/tupleproj.av",
-            "tuple-proj",
-            vec!["pairFst", "pairSnd"],
-        ),
-        (
-            "tools/certkit/fixtures/widenedmatch.av",
-            "widened-match",
-            vec!["boxInt"],
-        ),
-        (
-            "tools/certkit/fixtures/rangepred.av",
-            "range-pred",
-            vec!["inAsciiDigit"],
-        ),
-        (
-            "tools/certkit/fixtures/verbatimwiden.av",
-            "verbatim-widen",
-            vec!["wrapItems"],
-        ),
-        (
-            "tools/certkit/fixtures/f64verbatim.av",
-            "f64-verbatim",
-            vec!["floatOrZero"],
-        ),
-        // Out-of-template variant dispatch: four constructors, mixed arm
-        // semantics (negation, offset addition, identity, non-zero default) —
-        // provable only through the structural walker, not a shape template.
-        (
-            "tools/certkit/fixtures/signalgauge.av",
-            "signal-gauge",
-            vec!["gauge"],
-        ),
-        (
-            "tools/certkit/fixtures/intdispatchgen.av",
-            "int-dispatch-gen",
-            vec!["boxInt", "gauge"],
-        ),
-        // Payload-first subtraction, constant-first addition, and payload
-        // variants elided into the wildcard default.
-        ("tools/certkit/fixtures/meter.av", "meter", vec!["readout"]),
-    ];
+    // Index-sharded rather than name-selected: every entry of the list lands in
+    // exactly one shard by construction, including entries added later.
+    for (idx, &(input, prefix, expected)) in NONRECURSIVE_ADT_WITNESS_CASES.iter().enumerate() {
+        if idx % NONRECURSIVE_ADT_WITNESS_SHARDS != shard {
+            continue;
+        }
 
-    for (input, prefix, expected) in cases {
         let out_dir = temp_dir(prefix);
         let compile = aver_command()
             .current_dir(&repo_root)
@@ -2804,7 +2832,7 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
             .iter()
             .map(|c| c["name"].as_str().unwrap())
             .collect();
-        for &name in &expected {
+        for &name in expected {
             assert!(
                 certified.contains(&name),
                 "expected {name} certified for {input}, got {certified:?}"
@@ -2943,6 +2971,62 @@ fn certify_nonrecursive_adt_witnesses_lake_build_kernel_clean() {
         }
 
         let _ = std::fs::remove_dir_all(&out_dir);
+    }
+}
+
+/// Non-recursive ADT witnesses, shard 0: `NONRECURSIVE_ADT_WITNESS_CASES`
+/// entries 0, 4, 8, ... — today `opteval`, `range-pred` and `int-dispatch-gen`.
+#[test]
+fn cert_adt_witness_shard_0_of_4_lake_builds_kernel_clean() {
+    assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(0);
+}
+
+/// Non-recursive ADT witnesses, shard 1: `NONRECURSIVE_ADT_WITNESS_CASES`
+/// entries 1, 5, 9, ... — today `user-record`, `verbatim-widen` and `meter`.
+#[test]
+fn cert_adt_witness_shard_1_of_4_lake_builds_kernel_clean() {
+    assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(1);
+}
+
+/// Non-recursive ADT witnesses, shard 2: `NONRECURSIVE_ADT_WITNESS_CASES`
+/// entries 2, 6, 10, ... — today `tuple-proj` and `f64-verbatim`.
+#[test]
+fn cert_adt_witness_shard_2_of_4_lake_builds_kernel_clean() {
+    assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(2);
+}
+
+/// Non-recursive ADT witnesses, shard 3: `NONRECURSIVE_ADT_WITNESS_CASES`
+/// entries 3, 7, 11, ... — today `widened-match` and `signal-gauge`.
+#[test]
+fn cert_adt_witness_shard_3_of_4_lake_builds_kernel_clean() {
+    assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(3);
+}
+
+/// Guard the ADT witness shard count against drifting away from its test
+/// functions.
+///
+/// The shard runner already fails when the list shrinks below its shard count.
+/// The opposite direction is the silent one: RAISING
+/// `NONRECURSIVE_ADT_WITNESS_SHARDS` without adding the matching
+/// `shard_N_of_M` test means every fixture whose index has that remainder is
+/// simply never built, and every remaining test still passes. Nothing in the
+/// type system ties a constant to the number of `#[test]` functions, so this
+/// reads the source of this file and counts them.
+///
+/// Deliberately outside the `cert_adt_witness_` prefix: it needs no `lake` and
+/// belongs on the fast lane, not on a kernel-heavy one.
+#[test]
+fn certify_adt_witness_shards_all_have_test_functions() {
+    let source = include_str!("cert_certify_spec.rs");
+    let shards = NONRECURSIVE_ADT_WITNESS_SHARDS;
+    for shard in 0..shards {
+        let expected =
+            format!("fn cert_adt_witness_shard_{shard}_of_{shards}_lake_builds_kernel_clean");
+        assert!(
+            source.contains(&expected),
+            "ADT witness shard {shard} of {shards} has no test function, so fixtures with \
+             idx % {shards} == {shard} are never built; add `{expected}`"
+        );
     }
 }
 
