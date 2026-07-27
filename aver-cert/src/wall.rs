@@ -394,13 +394,19 @@ mod tests {
 
     /// The lint must still be able to SEE the historical gap.
     ///
-    /// Deleting the one conjunct that commit fd455ade added — the equality
-    /// pinning `roles.toIndex` to `CertDecode.AddSub.toIndexIdx` — reproduces
-    /// the pre-fix acceptance predicate for that field, and the lint must flag
-    /// it. `box` is the control: a sibling field of the SAME structure,
-    /// projected in the SAME function on an ADJACENT line, which must stay
-    /// bound. Without that control the test would pass for a lint that had
-    /// stopped discriminating and simply flags everything.
+    /// Deleting every conjunct that pins `roles.toIndex` reproduces the pre-fix
+    /// acceptance predicate for that field, and the lint must flag it. `box` is
+    /// the control: a sibling field of the SAME structure, projected in the SAME
+    /// function on ADJACENT lines, which must stay bound. Without that control
+    /// the test would pass for a lint that had stopped discriminating and simply
+    /// flags everything.
+    ///
+    /// There are now two such conjuncts, and BOTH have to go. The export-name
+    /// equality that commit fd455ade added is the historical one; the template
+    /// equality (`arithRoleCheck .toIndex`) came later and pins the bytes at the
+    /// declared index. Removing only one leaves the field genuinely bound by the
+    /// other — which is correct behaviour, not a lint failure — so the historical
+    /// state is reproduced only by removing both.
     ///
     /// This test is the guard on every future precision refinement. Two
     /// plausible generalisations (transitive byte taint, and unrestricted
@@ -408,14 +414,17 @@ mod tests {
     /// wins and each silently re-bound `toIndex`; this is what caught them.
     #[test]
     fn lint_still_flags_the_historical_index_helper_gap() {
-        const PIN: &str = "(roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&";
+        const NAME_PIN: &str = "(roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&";
+        const TEMPLATE_PIN: &str = "arithRoleCheck n len .toIndex roles.toIndex p &&";
         let core = CERT_ACCEPTED_ARTIFACT_CORE;
-        assert!(
-            core.contains(PIN),
-            "the `toIndex` pin has moved; this regression test must be re-aimed \
-             rather than deleted"
-        );
-        let without_pin = core.replace(PIN, "");
+        for pin in [NAME_PIN, TEMPLATE_PIN] {
+            assert!(
+                core.contains(pin),
+                "a `toIndex` pin has moved ({pin:?}); this regression test must be \
+                 re-aimed rather than deleted"
+            );
+        }
+        let without_pin = core.replace(NAME_PIN, "").replace(TEMPLATE_PIN, "");
 
         let sources: Vec<(&str, &str)> = wall_sources()
             .into_iter()
@@ -431,16 +440,39 @@ mod tests {
         let report = byte_binding_lint::analyse(&sources);
         assert!(
             report.is_flagged("AddSub.Roles", "toIndex"),
-            "the lint no longer detects the historical index-helper gap: with the \
-             `toIndex` pin removed, `Roles.toIndex` was still considered bound. A \
+            "the lint no longer detects the historical index-helper gap: with both \
+             `toIndex` pins removed, `Roles.toIndex` was still considered bound. A \
              precision refinement has blunted the lint past the point of usefulness."
         );
         assert!(
             report.is_bound("AddSub.Roles", "box"),
             "control failed: sibling field `Roles.box` is pinned by its own export \
-             name on an adjacent line and must remain bound. The lint is flagging \
-             indiscriminately rather than discriminating."
+             name and by its own template equality, on adjacent lines, and must \
+             remain bound. The lint is flagging indiscriminately rather than \
+             discriminating."
         );
+
+        // Each pin binds the field on its own: removing either one alone must
+        // leave `toIndex` bound. This is what makes the two-pin removal above a
+        // reproduction of the historical gap rather than a weakened assertion.
+        for pin in [NAME_PIN, TEMPLATE_PIN] {
+            let one_gone = core.replace(pin, "");
+            let sources: Vec<(&str, &str)> = wall_sources()
+                .into_iter()
+                .map(|(name, text)| {
+                    if name == "AcceptedArtifactCore.lean" {
+                        (name, one_gone.as_str())
+                    } else {
+                        (name, text)
+                    }
+                })
+                .collect();
+            assert!(
+                byte_binding_lint::analyse(&sources).is_bound("AddSub.Roles", "toIndex"),
+                "with only {pin:?} removed, `Roles.toIndex` lost its binding — the \
+                 surviving pin should still bind it"
+            );
+        }
 
         // and with the pin present, the field is bound
         let clean = byte_binding_lint::analyse(&wall_sources());

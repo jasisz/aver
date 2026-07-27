@@ -428,6 +428,67 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
         Some(index) => format!("some {}", index + 1),
         None => "some 0".to_string(),
     };
+    // The second toIndex attack, available only when the module really does
+    // export the helper: declare the role ABSENT. `arithRoleCheck` is vacuous on
+    // `none`, so the template equality accepts this and the export-name equality
+    // is the only thing that rejects it. This is the case that says the two pins
+    // are not redundant and neither may be dropped for the other.
+    let to_index_none_block = match to_index_idx {
+        None => String::new(),
+        Some(_) => format!(
+            r#"
+-- Same bytes and claims; the manifest declares `toIndex` ABSENT while the
+-- module exports `__aint_to_index`. Left unchecked this is the strongest form
+-- of the attack: an unbound role is what `Subject.hostRoles` reports to claim
+-- matching, so the producer would be free to decide whether the index-extraction
+-- contract exists at all.
+def absentToIndexTable : CertDecode.AddSub.Roles :=
+  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
+     toIndex := none }}
+def absentToIndexManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with hostRoleTable := some absentToIndexTable }} }}
+def absentToIndexArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := absentToIndexManifest }}
+
+-- Isolation: every sibling decoded fact still accepts it.
+example : withoutHostRoleTable absentToIndexArtifact := by
+  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
+    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
+  exact honestDecoded.2
+
+example : ¬ AcceptedArtifact.decodedNonExprFacts absentToIndexArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      (some absentToIndexTable) Artifact.data.manifest.subject.arithParams = true := h.1
+  exact absurd bad (by decide +kernel)
+
+-- Attribution: the copy that KEEPS the toIndex template equality and drops only
+-- the export-name equality ACCEPTS the absent declaration. The template pin is
+-- blind to this attack by construction — it is vacuous on `none` — so the name
+-- pin is load-bearing on its own and must not be replaced by the template one.
+def arithTableCheckWithoutToIndexName (n len : Nat)
+    (roles? : Option CertDecode.AddSub.Roles)
+    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
+  match roles?, params? with
+  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
+  | some roles, some p =>
+      !CertDecode.AddSub.carrierHelperAbsent n len &&
+      (roles.box == CertDecode.AddSub.boxIdx n len) &&
+      ArithTemplateDerisk.checkArithHostParams p &&
+      AcceptedArtifact.arithRoleCheck n len .box roles.box p &&
+      AcceptedArtifact.arithRoleCheck n len .toIndex roles.toIndex p &&
+      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
+      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
+      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
+  | _, _ => false
+
+example : arithTableCheckWithoutToIndexName ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some absentToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
+  decide +kernel
+"#
+        ),
+    };
 
     let cert = out_dir.join("cert");
     materialize_wall(&cert);
@@ -509,9 +570,12 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileToIndexArtifact := by
   exact absurd bad (by decide +kernel)
 
 -- Attribution, one conjunct deep: a literal copy of `arithTableCheck` with ONLY
--- the toIndex equality removed ACCEPTS the same hostile table. So the rejection
--- above is caused by that conjunct alone, not by a sibling check that happens to
--- dislike the hostile manifest for an unrelated reason.
+-- the two toIndex conjuncts removed ACCEPTS the same hostile table. So the
+-- rejection above is caused by those conjuncts alone, not by a sibling check
+-- that happens to dislike the hostile manifest for an unrelated reason. Both
+-- have to come out: a hostile INDEX is refused by the export-name equality and
+-- again by the template equality, since the function at the hostile index does
+-- not carry the canonical index-helper body either.
 def arithTableCheckWithoutToIndex (n len : Nat)
     (roles? : Option CertDecode.AddSub.Roles)
     (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
@@ -521,6 +585,7 @@ def arithTableCheckWithoutToIndex (n len : Nat)
       !CertDecode.AddSub.carrierHelperAbsent n len &&
       (roles.box == CertDecode.AddSub.boxIdx n len) &&
       ArithTemplateDerisk.checkArithHostParams p &&
+      AcceptedArtifact.arithRoleCheck n len .box roles.box p &&
       AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
       AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
       AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
@@ -529,7 +594,7 @@ def arithTableCheckWithoutToIndex (n len : Nat)
 example : arithTableCheckWithoutToIndex ArtifactBytes.modBytes ArtifactBytes.modLen
     (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
   decide +kernel
-
+{to_index_none_block}
 -- A carriered artifact cannot declare the table absent either: the byte-derived
 -- box export is present, so the carrierless `none`/`none` pin never closes.
 def absentTableManifest : Manifest :=
