@@ -1261,15 +1261,84 @@ example :
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-#[test]
-fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutual_models() {
+// Hostile-model soundness gates.
+//
+// These tests all share one baseline artifact and differ only in which single
+// tamper they apply before demanding a DECLINE. They used to be one test that
+// ran every verification sequentially: each `check_certificate` call is a full
+// kernel-checked certificate verification (~95s locally, minutes on CI) while
+// the baseline `aver compile --certify` costs a fraction of a second. Splitting
+// the tamper vectors into separate tests — each redoing the cheap setup — lets
+// CI run the expensive verifications in parallel lanes.
+
+/// Hostile obligation-model rewrites applied to the emitted `cert/Manifest.lean`,
+/// as `(label, honest, hostile)`.
+///
+/// This list is the single source of truth for which manifest obligation models
+/// the gate covers, and it deliberately stays a list. The shard tests below
+/// select entries by `idx % HOSTILE_MANIFEST_MODEL_SHARDS`, never by name, so an
+/// entry appended here is automatically exercised by exactly one existing shard:
+/// no new test function to write, no CI filter to update, nothing to forget.
+const HOSTILE_MANIFEST_MODELS: &[(&str, &str, &str)] = &[
+    (
+        "verbatim",
+        "model := tagNameModel }",
+        "model := wrapItemsModel }",
+    ),
+    (
+        "string",
+        "model := quoteOrSelfModel }",
+        "model := shoutModel }",
+    ),
+    (
+        "dispatch",
+        "model := AverCert.DeclaredIndexEnvelope.dEnvStructModel Plans.gaugeDeclaredEnvelope Plans.gaugeIntDispatchPlan.body }",
+        "model := fun _ => 0 }",
+    ),
+];
+
+/// How many parallel shards `HOSTILE_MANIFEST_MODELS` is spread over: one test
+/// function per shard. Keep it at most the list length so no shard runs empty
+/// (an empty shard would pass vacuously); the shard runner asserts that.
+const HOSTILE_MANIFEST_MODEL_SHARDS: usize = 3;
+
+/// Hostile rewrites of the generated mutual-recursion model definitions in
+/// `cert/CertGoals.lean`, as `(name, honest, hostile)`. Index-sharded for the
+/// same reason as `HOSTILE_MANIFEST_MODELS`: adding a member of the mutual SCC
+/// here is enough to get it covered.
+const HOSTILE_MUTUAL_MODELS: &[(&str, &str, &str)] = &[
+    (
+        "isEven",
+        "else isOdd__fuel fuel' (n - 1))",
+        "else isOdd__fuel fuel' (n - 2))",
+    ),
+    (
+        "isOdd",
+        "else isEven__fuel fuel' (n - 1))",
+        "else isEven__fuel fuel' (n - 2))",
+    ),
+];
+
+/// How many parallel shards `HOSTILE_MUTUAL_MODELS` is spread over.
+const HOSTILE_MUTUAL_MODEL_SHARDS: usize = 2;
+
+/// Compiles the shared hostile-model baseline and asserts the untampered
+/// certificate still passes the developer preflight.
+///
+/// Every hostile-model test runs this itself rather than trusting a baseline
+/// established in some other test (and therefore some other CI lane), so each
+/// one can fail honestly on its own. The compile is ~0.26s, so duplicating the
+/// setup per shard is nearly free.
+///
+/// Returns `None` when `lake` is unavailable; the caller then skips, as before.
+fn hostile_models_baseline(prefix: &str) -> Option<PathBuf> {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping hostile leaf-model test: `lake` not available");
-        return;
+        return None;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-hostile-leaf-models");
+    let out_dir = temp_dir(prefix);
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
@@ -1299,10 +1368,126 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
         clean_report.contains("CHECKED") && !clean_report.contains("CERTIFIED"),
         "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
+
+    Some(out_dir)
+}
+
+/// Runs the `HOSTILE_MANIFEST_MODELS` entries that belong to `shard`.
+fn assert_hostile_manifest_model_shard_is_declined(shard: usize) {
+    assert!(
+        shard < HOSTILE_MANIFEST_MODEL_SHARDS
+            && HOSTILE_MANIFEST_MODEL_SHARDS <= HOSTILE_MANIFEST_MODELS.len(),
+        "shard {shard} of {HOSTILE_MANIFEST_MODEL_SHARDS} covers no hostile manifest model: keep the shard count at most the list length, one test function per shard"
+    );
+    let Some(out_dir) =
+        hostile_models_baseline(&format!("certify-hostile-manifest-models-{shard}"))
+    else {
+        return;
+    };
+
+    // Index-sharded rather than name-selected: every entry of the list lands in
+    // exactly one shard by construction, including entries added later.
+    for (idx, &(label, honest, hostile)) in HOSTILE_MANIFEST_MODELS.iter().enumerate() {
+        if idx % HOSTILE_MANIFEST_MODEL_SHARDS != shard {
+            continue;
+        }
+
+        let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
+        copy_dir_all(&out_dir, &tampered);
+        let manifest = tampered.join("cert/Manifest.lean");
+        let source = std::fs::read_to_string(&manifest).unwrap();
+        let edited = source.replacen(honest, hostile, 1);
+        assert_ne!(
+            source, edited,
+            "{label} obligation model shape changed; update the hostile-model regression"
+        );
+        std::fs::write(&manifest, edited).unwrap();
+
+        let (ok, report) =
+            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+        assert!(
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
+            "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&tampered);
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// Runs the `HOSTILE_MUTUAL_MODELS` entries that belong to `shard`.
+fn assert_hostile_mutual_model_shard_is_declined(shard: usize) {
+    assert!(
+        shard < HOSTILE_MUTUAL_MODEL_SHARDS
+            && HOSTILE_MUTUAL_MODEL_SHARDS <= HOSTILE_MUTUAL_MODELS.len(),
+        "shard {shard} of {HOSTILE_MUTUAL_MODEL_SHARDS} covers no hostile mutual model: keep the shard count at most the list length, one test function per shard"
+    );
+    let Some(out_dir) = hostile_models_baseline(&format!("certify-hostile-mutual-models-{shard}"))
+    else {
+        return;
+    };
+
+    // Index-sharded rather than name-selected: see the note on the manifest
+    // shard runner above.
+    for (idx, &(name, honest, hostile)) in HOSTILE_MUTUAL_MODELS.iter().enumerate() {
+        if idx % HOSTILE_MUTUAL_MODEL_SHARDS != shard {
+            continue;
+        }
+
+        let tampered = temp_dir(&format!("certify-hostile-{name}-model-definition"));
+        copy_dir_all(&out_dir, &tampered);
+        let model = tampered.join("cert/CertGoals.lean");
+        let source = std::fs::read_to_string(&model).unwrap();
+        let edited = source.replacen(honest, hostile, 1);
+        assert_ne!(
+            source, edited,
+            "{name} model definition changed; update the hostile-model regression"
+        );
+        std::fs::write(&model, edited).unwrap();
+        let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
+        assert!(
+            manifest.contains(&format!("model := fun ns => {name} (ns.headD 0)")),
+            "{name} hostile regression must leave the manifest model reference untouched"
+        );
+
+        let (ok, report) =
+            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+        assert!(
+            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
+            "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
+        );
+        let _ = std::fs::remove_dir_all(&tampered);
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The untampered hostile-model baseline is preflight-clean and its isolated
+/// `Certificate` target builds, so a DECLINE in any hostile-model test below is
+/// the tamper's doing and not a broken fixture.
+#[test]
+fn cert_hostile_model_baseline_is_preflight_clean_and_lake_builds() {
+    let Some(out_dir) = hostile_models_baseline("certify-hostile-leaf-models") else {
+        return;
+    };
+
     let build_green = temp_dir("certify-hostile-mutual-build-green");
     copy_dir_all(&out_dir, &build_green);
     assert_certificate_target_builds(&build_green.join("cert"), "mutual hostile-model baseline");
     let _ = std::fs::remove_dir_all(&build_green);
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// Hostile model: the generated expression-fragment leaf definition `addTwo`
+/// in `cert/CertGoals.lean` computes `x + 3` instead of `x + 2`, with the wasm
+/// bytes and the manifest's model reference left untouched.
+#[test]
+fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
+    let Some(out_dir) = hostile_models_baseline("certify-hostile-expr-fragment-baseline") else {
+        return;
+    };
+    let wasm = out_dir.join("cert_goals.wasm");
 
     let tampered = temp_dir("certify-hostile-expr-fragment-model-definition");
     copy_dir_all(&out_dir, &tampered);
@@ -1334,49 +1519,44 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
     );
     let _ = std::fs::remove_dir_all(&tampered);
 
-    for (label, honest, hostile) in [
-        (
-            "verbatim",
-            "model := tagNameModel }",
-            "model := wrapItemsModel }",
-        ),
-        (
-            "string",
-            "model := quoteOrSelfModel }",
-            "model := shoutModel }",
-        ),
-        (
-            "dispatch",
-            "model := AverCert.DeclaredIndexEnvelope.dEnvStructModel Plans.gaugeDeclaredEnvelope Plans.gaugeIntDispatchPlan.body }",
-            "model := fun _ => 0 }",
-        ),
-    ] {
-        let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
-        copy_dir_all(&out_dir, &tampered);
-        let manifest = tampered.join("cert/Manifest.lean");
-        let source = std::fs::read_to_string(&manifest).unwrap();
-        let edited = source.replacen(honest, hostile, 1);
-        assert_ne!(
-            source, edited,
-            "{label} obligation model shape changed; update the hostile-model regression"
-        );
-        std::fs::write(&manifest, edited).unwrap();
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
 
-        let (ok, report) =
-            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
-        assert!(
-            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-            "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
-        );
-        let _ = std::fs::remove_dir_all(&tampered);
-    }
+/// Hostile manifest obligation models, shard 0: `HOSTILE_MANIFEST_MODELS`
+/// entries 0, 3, 6, ... — today the `verbatim` variant-tag model.
+#[test]
+fn cert_hostile_model_manifest_obligation_shard_0_of_3_is_declined() {
+    assert_hostile_manifest_model_shard_is_declined(0);
+}
 
-    // The declared-envelope wiring derives the constructor obligation model from
-    // the emitted plan (`dEnvCtorModel Plans.mkOpDeclaredEnvelope 1`), so the
-    // generated `def mkOp` source definition is no longer load-bearing for the
-    // obligation. The hostile vector moves with the model: declare the WRONG hit
-    // constructor index, so the still well-typed model claims `mkOp` builds the
-    // second constructor while the accepted claim and module bytes pin the first.
+/// Hostile manifest obligation models, shard 1: `HOSTILE_MANIFEST_MODELS`
+/// entries 1, 4, 7, ... — today the `string` host-contract model.
+#[test]
+fn cert_hostile_model_manifest_obligation_shard_1_of_3_is_declined() {
+    assert_hostile_manifest_model_shard_is_declined(1);
+}
+
+/// Hostile manifest obligation models, shard 2: `HOSTILE_MANIFEST_MODELS`
+/// entries 2, 5, 8, ... — today the `dispatch` declared-envelope model.
+#[test]
+fn cert_hostile_model_manifest_obligation_shard_2_of_3_is_declined() {
+    assert_hostile_manifest_model_shard_is_declined(2);
+}
+
+/// Hostile model: the declared constructor index for `mkOp`.
+///
+/// The declared-envelope wiring derives the constructor obligation model from
+/// the emitted plan (`dEnvCtorModel Plans.mkOpDeclaredEnvelope 1`), so the
+/// generated `def mkOp` source definition is no longer load-bearing for the
+/// obligation. The hostile vector moves with the model: declare the WRONG hit
+/// constructor index, so the still well-typed model claims `mkOp` builds the
+/// second constructor while the accepted claim and module bytes pin the first.
+#[test]
+fn cert_hostile_model_declared_construct_index_is_declined() {
+    let Some(out_dir) = hostile_models_baseline("certify-hostile-construct-baseline") else {
+        return;
+    };
+
     let tampered = temp_dir("certify-hostile-construct-model-definition");
     copy_dir_all(&out_dir, &tampered);
     let manifest_path = tampered.join("cert/Manifest.lean");
@@ -1407,42 +1587,60 @@ fn cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutua
     );
     let _ = std::fs::remove_dir_all(&tampered);
 
-    for (name, honest, hostile) in [
-        (
-            "isEven",
-            "else isOdd__fuel fuel' (n - 1))",
-            "else isOdd__fuel fuel' (n - 2))",
-        ),
-        (
-            "isOdd",
-            "else isEven__fuel fuel' (n - 1))",
-            "else isEven__fuel fuel' (n - 2))",
-        ),
-    ] {
-        let tampered = temp_dir(&format!("certify-hostile-{name}-model-definition"));
-        copy_dir_all(&out_dir, &tampered);
-        let model = tampered.join("cert/CertGoals.lean");
-        let source = std::fs::read_to_string(&model).unwrap();
-        let edited = source.replacen(honest, hostile, 1);
-        assert_ne!(
-            source, edited,
-            "{name} model definition changed; update the hostile-model regression"
-        );
-        std::fs::write(&model, edited).unwrap();
-        let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
-        assert!(
-            manifest.contains(&format!("model := fun ns => {name} (ns.headD 0)")),
-            "{name} hostile regression must leave the manifest model reference untouched"
-        );
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
 
-        let (ok, report) =
-            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
-        assert!(
-            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-            "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
-        );
-        let _ = std::fs::remove_dir_all(&tampered);
+/// Hostile mutual-recursion model definitions, shard 0: `HOSTILE_MUTUAL_MODELS`
+/// entries 0, 2, 4, ... — today `isEven` recursing on `n - 2`.
+#[test]
+fn cert_hostile_model_mutual_recursion_shard_0_of_2_is_declined() {
+    assert_hostile_mutual_model_shard_is_declined(0);
+}
+
+/// Hostile mutual-recursion model definitions, shard 1: `HOSTILE_MUTUAL_MODELS`
+/// entries 1, 3, 5, ... — today `isOdd` recursing on `n - 2`.
+#[test]
+fn cert_hostile_model_mutual_recursion_shard_1_of_2_is_declined() {
+    assert_hostile_mutual_model_shard_is_declined(1);
+}
+
+/// Guard the shard counts against drifting away from the test functions.
+///
+/// The shard runners already fail when a list shrinks below its shard count.
+/// The opposite direction is the silent one: RAISING a `*_SHARDS` constant
+/// without adding the matching `shard_N_of_M` test means every entry whose
+/// index has that remainder is simply never checked, and every remaining test
+/// still passes. Nothing in the type system ties a constant to the number of
+/// `#[test]` functions, so this reads the source of this file and counts them.
+///
+/// Deliberately outside the `cert_hostile_model_` prefix: it needs no baseline
+/// and belongs on the fast lane, not on a kernel-heavy one.
+#[test]
+fn certify_hostile_model_shards_all_have_test_functions() {
+    let source = include_str!("cert_certify_spec.rs");
+    for (family, shards) in [
+        ("manifest_obligation", HOSTILE_MANIFEST_MODEL_SHARDS),
+        ("mutual_recursion", HOSTILE_MUTUAL_MODEL_SHARDS),
+    ] {
+        for shard in 0..shards {
+            let expected =
+                format!("fn cert_hostile_model_{family}_shard_{shard}_of_{shards}_is_declined");
+            assert!(
+                source.contains(&expected),
+                "hostile {family} shard {shard} of {shards} has no test function, so entries with \
+                 idx % {shards} == {shard} are never checked; add `{expected}`"
+            );
+        }
     }
+}
+
+/// Hostile model: the generated fueled self-recursion `sumFrom` accumulates the
+/// constant `2` instead of `n`.
+#[test]
+fn cert_hostile_model_fueled_recursion_definition_is_declined() {
+    let Some(out_dir) = hostile_models_baseline("certify-hostile-recursion-baseline") else {
+        return;
+    };
 
     let tampered = temp_dir("certify-hostile-recursion-model-definition");
     copy_dir_all(&out_dir, &tampered);

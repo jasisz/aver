@@ -17,7 +17,16 @@ jobs:
   cert-kernel:
     # The two sequential verify monster tests get dedicated runners. The
     # complement is slice-partitioned, so each verify test is selected exactly
-    # once. The one certify monster test is isolated from its complement.
+    # once.
+    #
+    # The certify suite's hostile-model soundness gates all share the
+    # `cert_hostile_model_` name prefix; they are selected by that prefix and
+    # slice-partitioned across dedicated runners, and the `rest` lane excludes
+    # exactly the same prefix. Prefix in, prefix out: no overlap (which would
+    # double the kernel work) and no gap (which would silently stop running a
+    # gate). A hostile model added to the lists inside the suite lands in an
+    # existing shard test, so these lanes never need editing for coverage —
+    # only to add throughput.
     name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -26,14 +35,34 @@ jobs:
       matrix:
         include:
           - suite: cert_certify_spec
-            lane: hostile-models
+            lane: hostile-models-1/5
             mode: nextest
-            filter: 'test(=cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutual_models)'
-            partition: 1/1
+            filter: 'test(/^cert_hostile_model_/)'
+            partition: 1/5
+          - suite: cert_certify_spec
+            lane: hostile-models-2/5
+            mode: nextest
+            filter: 'test(/^cert_hostile_model_/)'
+            partition: 2/5
+          - suite: cert_certify_spec
+            lane: hostile-models-3/5
+            mode: nextest
+            filter: 'test(/^cert_hostile_model_/)'
+            partition: 3/5
+          - suite: cert_certify_spec
+            lane: hostile-models-4/5
+            mode: nextest
+            filter: 'test(/^cert_hostile_model_/)'
+            partition: 4/5
+          - suite: cert_certify_spec
+            lane: hostile-models-5/5
+            mode: nextest
+            filter: 'test(/^cert_hostile_model_/)'
+            partition: 5/5
           - suite: cert_certify_spec
             lane: rest
             mode: nextest
-            filter: 'not test(=cert_verify_declines_hostile_expr_leaf_dispatch_construct_recursion_and_mutual_models)'
+            filter: 'not test(/^cert_hostile_model_/)'
             partition: 1/1
           - suite: cert_decode_spec
             lane: ''
@@ -153,8 +182,9 @@ jobs:
         run: cargo test -p aver-lang --features wasm --test ${{ matrix.suite }}
 
       - name: Run certification suite lane
-        # Filtering happens before slice partitioning. Each exact monster-test
-        # filter and its suite-specific complement are disjoint and exhaustive.
+        # Filtering happens before slice partitioning. Each monster-test filter
+        # (exact name, or the `cert_hostile_model_` prefix) and its
+        # suite-specific complement are disjoint and exhaustive.
         if: matrix.mode == 'nextest'
         run: >-
           cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }}
