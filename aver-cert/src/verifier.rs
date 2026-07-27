@@ -205,9 +205,38 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
     ReportSummary { text, faces, count }
 }
 
-fn kernel_replay_args(mode: ReplayMode) -> Option<&'static [&'static str]> {
+/// Developer-only override naming a locally built parallel replayer.
+///
+/// Read in exactly one place, empty by default. The published contract — CI,
+/// releases, and every consumer-facing run — stays on stock `leanchecker
+/// --fresh`. The replayer's process exit status is the verdict, the same
+/// contract stock replay is held to.
+const PARALLEL_REPLAY_ENV: &str = "AVER_CERT_PARALLEL_REPLAY";
+
+/// Arguments for the final kernel replay, or `None` when the mode replays
+/// nothing. Stock `leanchecker` unless the developer override names a binary.
+fn kernel_replay_args(mode: ReplayMode) -> Option<Vec<String>> {
+    let override_binary = std::env::var(PARALLEL_REPLAY_ENV).ok();
+    replay_args_for(mode, override_binary.as_deref())
+}
+
+/// The dispatch itself, free of environment lookup so it is testable directly.
+/// A blank override is treated as absent: an exported-but-empty variable must
+/// not select a replayer named by the empty string.
+fn replay_args_for(mode: ReplayMode, override_binary: Option<&str>) -> Option<Vec<String>> {
     match mode {
-        ReplayMode::Fresh => Some(&FRESH_REPLAY_ARGS),
+        ReplayMode::Fresh => Some(match override_binary {
+            Some(binary) if !binary.trim().is_empty() => vec![
+                "env".to_string(),
+                binary.to_string(),
+                "ArtifactCertificate".to_string(),
+                "AverCert.Artifact.certificate".to_string(),
+                "replay".to_string(),
+                "8".to_string(),
+                "32".to_string(),
+            ],
+            _ => FRESH_REPLAY_ARGS.iter().map(|a| (*a).to_string()).collect(),
+        }),
         ReplayMode::TrustBuiltOleans => None,
     }
 }
@@ -335,7 +364,8 @@ fn trusted_check(
         ));
     }
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
-        let replayed = run_lake(&lean, &build.path, "final kernel replay", replay_args)?;
+        let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
+        let replayed = run_lake(&lean, &build.path, "final kernel replay", &replay_args)?;
         if !replayed.status.success() {
             return Err(format!(
                 "certificate failed fresh-environment kernel replay:\n{}",
@@ -1355,11 +1385,41 @@ mod tests {
 
     #[test]
     fn strict_and_trusted_olean_modes_differ_only_at_fresh_replay_dispatch() {
-        assert_eq!(
-            kernel_replay_args(ReplayMode::Fresh),
-            Some(FRESH_REPLAY_ARGS.as_slice())
+        let stock: Vec<String> = FRESH_REPLAY_ARGS.iter().map(|a| (*a).to_string()).collect();
+        assert_eq!(replay_args_for(ReplayMode::Fresh, None), Some(stock));
+        assert_eq!(replay_args_for(ReplayMode::TrustBuiltOleans, None), None);
+    }
+
+    #[test]
+    fn the_replayer_override_is_off_unless_it_names_a_binary() {
+        let stock: Vec<String> = FRESH_REPLAY_ARGS.iter().map(|a| (*a).to_string()).collect();
+        // Absent, empty and whitespace-only all keep the published path.
+        for absent in [None, Some(""), Some("   ")] {
+            assert_eq!(
+                replay_args_for(ReplayMode::Fresh, absent),
+                Some(stock.clone()),
+                "override {absent:?} must not divert the replay"
+            );
+        }
+
+        let diverted = replay_args_for(ReplayMode::Fresh, Some("/opt/parreplay"))
+            .expect("fresh mode always replays");
+        assert_eq!(diverted[0], "env");
+        assert_eq!(diverted[1], "/opt/parreplay");
+        assert!(
+            diverted.contains(&"replay".to_string()),
+            "must request the single-pass mode, not the comparison mode: {diverted:?}"
         );
-        assert_eq!(kernel_replay_args(ReplayMode::TrustBuiltOleans), None);
+        assert!(
+            !diverted.contains(&"leanchecker".to_string()),
+            "stock replayer must not also run: {diverted:?}"
+        );
+
+        // The override never applies to the mode that replays nothing.
+        assert_eq!(
+            replay_args_for(ReplayMode::TrustBuiltOleans, Some("/opt/parreplay")),
+            None
+        );
     }
 
     /// Convenience: run the code-exec scanner over a Lean source snippet.
