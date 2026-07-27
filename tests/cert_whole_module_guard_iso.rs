@@ -421,6 +421,13 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
     );
     let wrong_add_idx = add_idx + 1;
     assert_ne!(wrong_add_idx, add_idx);
+    // A hostile `toIndex` declaration: any index other than the one the export
+    // section binds. When the module exports no helper at all, declaring one is
+    // itself the attack (the fused read's contract slot would become wirable).
+    let hostile_to_index = match to_index_idx {
+        Some(index) => format!("some {}", index + 1),
+        None => "some 0".to_string(),
+    };
 
     let cert = out_dir.join("cert");
     materialize_wall(&cert);
@@ -473,6 +480,32 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
   intro h
   have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
       (some hostileRoleTable) Artifact.data.manifest.subject.arithParams = true := h.1
+  exact absurd bad (by decide +kernel)
+
+-- Same bytes and claims; only the manifest's toIndex index is hostile. The
+-- fused vector-read face wires an ABSTRACT contract function at the declared
+-- index and never interprets its body, so this index must be byte-bound to the
+-- `__aint_to_index` export or the contract could be wired to any function.
+def hostileToIndexTable : CertDecode.AddSub.Roles :=
+  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
+     toIndex := {hostile_to_index} }}
+def hostileToIndexManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with hostRoleTable := some hostileToIndexTable }} }}
+def hostileToIndexArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := hostileToIndexManifest }}
+
+-- Isolation: every sibling decoded fact still accepts the hostile toIndex.
+example : withoutHostRoleTable hostileToIndexArtifact := by
+  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
+    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
+  exact honestDecoded.2
+
+-- The full predicate fails exactly at the omitted export-name binding.
+example : ¬ AcceptedArtifact.decodedNonExprFacts hostileToIndexArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := h.1
   exact absurd bad (by decide +kernel)
 
 -- A carriered artifact cannot declare the table absent either: the byte-derived

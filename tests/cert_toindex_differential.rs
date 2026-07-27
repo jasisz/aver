@@ -241,11 +241,17 @@ fn to_index_helper_collapses_big_values_to_the_sentinel() {
     }
 }
 
+/// The fused read's own bounds boundary for `probeVec`'s three elements: the
+/// last in-bounds index, the first out-of-bounds one (`idx == len`, where the
+/// `i32LtU` guard must flip), and one past it. The contract edge values above
+/// exercise the `2^31` cut but never land on the vector's length.
+const LENGTH_EDGE_INDICES: &[i64] = &[2, 3, 4];
+
 #[test]
 fn fused_vector_read_matches_face_model_and_machine_chain_on_edge_values() {
     let mut h = harness();
     let elements: &[i64] = &[10, 20, 30];
-    for &v in EDGE_VALUES {
+    for &v in EDGE_VALUES.iter().chain(LENGTH_EDGE_INDICES) {
         let face = vec_model(elements, i128::from(v), 0);
         let chain = machine_chain_model(elements, i128::from(v), 0);
         assert_eq!(

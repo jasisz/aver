@@ -1112,8 +1112,17 @@ def carrierHelperAbsent (n len : Nat) : Bool :=
   | none => false
   | some es => es.all (fun e => e.1 != "__rt_aint_from_i64")
 
-/-- Three-state module host-role decode. Exactly one unconditional equality on
-    this value distinguishes every module class:
+/-- Three-state module host-role decode.
+
+    NOT ON THE ACCEPTANCE PATH. Acceptance pins the declared table with
+    `AcceptedArtifact.arithTableCheck` (declare-and-confirm: `box`/`toIndex`
+    bound by export name, `add`/`sub`/`mul` by synthesized-template equality).
+    This decoder and `roleTable` below it remain producer-side classifiers and
+    test material only. Adding a field to `Roles` therefore does NOT pin it —
+    the pin has to be added to `arithTableCheck` as its own conjunct.
+
+    Were it on the acceptance path, exactly one unconditional equality on this
+    value would distinguish every module class:
     * `some none`     — the module is definitely carrierless (the
                         `__rt_aint_from_i64` helper export is byte-provably
                         absent); the manifest must declare no table.
