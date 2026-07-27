@@ -1,7 +1,8 @@
 //! Integration tests for `aver cert verify` — the tripwires ARE the product.
 //!
 //! Compiles a fixture with `--certify`, confirms `aver cert verify` accepts it
-//! end to end, then confirms it fails closed on each tampering class:
+//! end to end, then confirms it fails closed on each tampering class. Each class
+//! is one `cert_tripwire_` test carrying the letter tag used below:
 //!   (a) one flipped wasm byte           → artifact hash mismatch
 //!   (b) a corrupted `Module.lean` body  → lake build failure
 //!   (c) a trivialized final theorem     → kernel witness rejects the type
@@ -376,15 +377,60 @@ const WEAK_FINAL: &str = "import Certificate\nimport Manifest\nimport Schema\n\n
 theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := trivial\n\n\
 #print axioms AverCert.Final.cert\n";
 
-#[test]
-fn cert_verify_accepts_and_tripwires_fail_closed() {
+// Tripwire soundness gates.
+//
+// These tests share one baseline artifact — the `certprobe2` fixture emitted
+// with `--certify` — and differ only in which single tamper they apply before
+// demanding a verdict. They used to be one test that ran every check
+// sequentially, which made it the critical path of certificate CI.
+//
+// The cost here is NOT uniform, and the split is arranged around that. A tamper
+// the Rust verifier rejects up front (an unsupported schema/format/wall, a
+// rebound JSON field, a flipped artifact byte, a candidate outside the charset,
+// a cert file the staging gates refuse) costs milliseconds: no Lean process is
+// ever started. A tamper of Lean SOURCE inside the cert directory, and every
+// gate that must be ACCEPTED, pays a full artifact DATA build plus the checker
+// witness — minutes on CI. One test per tamper puts each of those builds on its
+// own row so the lanes can run them in parallel, the same way
+// `cert_certify_spec.rs` runs its `cert_hostile_model_` family. Prefix in,
+// prefix out: the dedicated lanes select `cert_tripwire_` and the `rest` lanes
+// exclude exactly it, so a gate added here is run exactly once and needs no
+// workflow edit.
+//
+// The clean certificate is verified end to end ONCE, by
+// `cert_tripwire_accepts_clean_certificate_end_to_end`, and not again per gate:
+// that keeps the number of full verifications the same as before the split.
+// Every gate below pins the REASON it was declined (or, for the two gates that
+// must be accepted, the verdict it was granted), so a fixture that stopped
+// verifying for an unrelated reason surfaces as a wrong-reason failure rather
+// than as a vacuous pass; if the honest certificate itself stops verifying, the
+// clean-certificate test is the one that says so.
+
+/// `true` when `lake` is on PATH. Prints the skip note otherwise, exactly as
+/// the single tripwire test did before the split.
+fn tripwire_lake_available() -> bool {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping cert verify test: `lake` not available");
-        return;
+        return false;
+    }
+    true
+}
+
+/// Emits the shared `certprobe2` tripwire baseline.
+///
+/// Every gate below runs this itself rather than depending on a baseline built
+/// by another test (and therefore another CI lane), so each one fails on its
+/// own terms. The compile is a fraction of a second, so duplicating the setup
+/// per gate is nearly free — unlike the verification each gate then performs.
+///
+/// Returns `None` when `lake` is unavailable; the caller then skips, as before.
+fn tripwire_baseline(prefix: &str) -> Option<PathBuf> {
+    if !tripwire_lake_available() {
+        return None;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certverify");
+    let out_dir = temp_dir(prefix);
 
     // Emit the recursive fixture's certificate.
     let compile = aver_command()
@@ -403,6 +449,23 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         "compile --certify failed:\n{}",
         String::from_utf8_lossy(&compile.stderr)
     );
+
+    Some(out_dir)
+}
+
+/// The freshly emitted certificate verifies end to end through the
+/// production clean-cache path: the green report, its export count, and the
+/// boundary line it names are all pinned here.
+///
+/// This is the ONE full clean verification of the family, and the reason no
+/// gate below re-verifies a clean certificate: every gate pins the reason it
+/// was declined instead, and this test is what fails if the honest artifact
+/// stops verifying at all.
+#[test]
+fn cert_tripwire_accepts_clean_certificate_end_to_end() {
+    let Some(out_dir) = tripwire_baseline("certverify-clean") else {
+        return;
+    };
 
     let wasm = out_dir.join("certprobe2.wasm");
     let cert = out_dir.join("cert");
@@ -423,105 +486,166 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
         "missing artifact-check line on the happy path:\n{report}"
     );
 
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A cert-data shape this checker does not know is rejected, never
+/// reinterpreted under the current schema. Rejected before any Lean process.
+#[test]
+fn cert_tripwire_declines_unsupported_schema_version() {
+    let Some(out_dir) = tripwire_baseline("certverify-schema-version") else {
+        return;
+    };
+
     // The cert schema version is a breaking cert-data shape. The checker rejects
     // unsupported manifests instead of trying to reinterpret them under the
     // current schema.
-    {
-        let dir = temp_dir("neg-schema-v99");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["schema_version"] = serde_json::json!(99);
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "schema v99 cert must be rejected:\n{out}");
-        assert!(
-            out.contains("unsupported certificate schema_version 99"),
-            "wrong reason for schema v99 rejection:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-schema-v99");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["schema_version"] = serde_json::json!(99);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "schema v99 cert must be rejected:\n{out}");
+    assert!(
+        out.contains("unsupported certificate schema_version 99"),
+        "wrong reason for schema v99 rejection:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (y) Package-format drift: the package format is versioned independently
+/// of the Lean statement schema, and an unknown version is refused up front.
+#[test]
+fn cert_tripwire_declines_unsupported_format_version() {
+    let Some(out_dir) = tripwire_baseline("certverify-format-version") else {
+        return;
+    };
 
     // The package format is independently versioned from the Lean statement
     // schema. Unknown versions are never reinterpreted as the current shape.
-    {
-        let dir = temp_dir("neg-format-version");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["format"]["version"] = serde_json::json!(2);
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "format version drift must be rejected:\n{out}");
-        assert!(
-            out.contains("unsupported certificate format version 2"),
-            "wrong reason for format version drift:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-format-version");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["format"]["version"] = serde_json::json!(2);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "format version drift must be rejected:\n{out}");
+    assert!(
+        out.contains("unsupported certificate format version 2"),
+        "wrong reason for format version drift:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (z) Wall drift: an unknown aggregate `wall_id` is rejected before any Lean
+/// build, with no filesystem, environment, or network fallback.
+#[test]
+fn cert_tripwire_declines_unknown_wall_id() {
+    let Some(out_dir) = tripwire_baseline("certverify-wall-id") else {
+        return;
+    };
 
     // One aggregate identifier commits to every checker-owned Lean source and
     // the exact toolchain. Resolution is embedded-only: no path, URL, or
     // ambient installation is consulted for an unknown wall.
-    {
-        let dir = temp_dir("neg-wall-id");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["format"]["wall_id"] = serde_json::json!("sha256:deadbeef");
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "unknown wall id must be rejected:\n{out}");
-        assert!(
-            out.contains("unsupported certificate wall `sha256:deadbeef`"),
-            "wrong reason for unknown wall rejection:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-wall-id");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["format"]["wall_id"] = serde_json::json!("sha256:deadbeef");
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "unknown wall id must be rejected:\n{out}");
+    assert!(
+        out.contains("unsupported certificate wall `sha256:deadbeef`"),
+        "wrong reason for unknown wall rejection:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The JSON must pin the artifact-level certificate root the checker expects.
+/// A consumer should not have to guess which theorem is the self-check root.
+#[test]
+fn cert_tripwire_declines_json_artifact_root_drift() {
+    let Some(out_dir) = tripwire_baseline("certverify-artifact-root-pin") else {
+        return;
+    };
 
     // The artifact-level certificate root is pinned as routing metadata. A
     // consumer should not have to guess which theorem is the self-check root.
-    {
-        let dir = temp_dir("neg-artifact-root-pin");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["artifact_certificate_root"] = serde_json::json!("AverCert.Final.cert");
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "wrong artifact certificate root must be rejected:\n{out}"
-        );
-        assert!(
-            out.contains("artifact certificate root mismatch"),
-            "wrong reason for artifact root drift:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-artifact-root-pin");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["artifact_certificate_root"] = serde_json::json!("AverCert.Final.cert");
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "wrong artifact certificate root must be rejected:\n{out}"
+    );
+    assert!(
+        out.contains("artifact certificate root mismatch"),
+        "wrong reason for artifact root drift:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The LEAN manifest must name the artifact-level certificate root too: JSON
+/// consistency alone is not enough, so this one reaches the kernel witness.
+#[test]
+fn cert_tripwire_declines_lean_artifact_root_drift() {
+    let Some(out_dir) = tripwire_baseline("certverify-lean-artifact-root-pin") else {
+        return;
+    };
 
     // The Lean manifest must also name the artifact-level certificate root.
     // JSON consistency alone is not enough; the checker witness pins the
     // proven manifest literal and the artifact predicate checks the same root.
-    {
-        let dir = temp_dir("neg-lean-artifact-root-pin");
-        copy_dir(&out_dir, &dir);
-        let manifest = dir.join("cert").join("Manifest.lean");
-        let src = std::fs::read_to_string(&manifest).unwrap();
-        let poisoned = src.replacen(
-            "artifactRoot := \"AverCert.Artifact.certificate\"",
-            "artifactRoot := \"AverCert.Final.cert\"",
-            1,
-        );
-        assert_ne!(src, poisoned, "Manifest.lean artifactRoot shape changed");
-        std::fs::write(&manifest, poisoned).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "wrong Lean artifact root must be rejected:\n{out}");
-        assert!(
-            out.contains("manifest.subject.artifactRoot"),
-            "wrong reason for Lean artifact root drift:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-lean-artifact-root-pin");
+    copy_dir(&out_dir, &dir);
+    let manifest = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&manifest).unwrap();
+    let poisoned = src.replacen(
+        "artifactRoot := \"AverCert.Artifact.certificate\"",
+        "artifactRoot := \"AverCert.Final.cert\"",
+        1,
+    );
+    assert_ne!(src, poisoned, "Manifest.lean artifactRoot shape changed");
+    std::fs::write(&manifest, poisoned).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "wrong Lean artifact root must be rejected:\n{out}");
+    assert!(
+        out.contains("manifest.subject.artifactRoot"),
+        "wrong reason for Lean artifact root drift:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (ab) Artifact-data decoy: a cert-supplied `Artifact.data` that points at
+/// zero module bytes must bind its byte/manifest fields — it cannot.
+#[test]
+fn cert_tripwire_declines_tampered_artifact_data() {
+    let Some(out_dir) = tripwire_baseline("certverify-artifact-data-pin") else {
+        return;
+    };
 
     // The artifact-carried data root is useful metadata, not authority. Since
     // the recursion exports carry byte-origin plan claims, an `Artifact.lean`
@@ -529,117 +653,178 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     // claims (`exactFuncBindingForExport 0 modLen name code = some …` has no `rfl`), so the tamper
     // dies at the cert's own build — before the checker witness pins
     // `AverCert.Artifact.data` to the actual bytes and manifest.
-    {
-        let dir = temp_dir("neg-artifact-data-pin");
-        copy_dir(&out_dir, &dir);
-        let artifact = dir.join("cert").join("Artifact.lean");
-        let src = std::fs::read_to_string(&artifact).unwrap();
-        let corrupted = src.replacen(
-            "modBytes := AverCert.ArtifactBytes.modBytes",
-            "modBytes := 0",
-            1,
-        );
-        assert_ne!(src, corrupted, "Artifact.lean data shape changed");
-        std::fs::write(&artifact, corrupted).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "tampered Artifact.lean data must fail:\n{out}");
-        assert!(
-            out.contains("did not build")
-                || out.contains("AverCert.Artifact.data")
-                || out.contains("does not bind"),
-            "wrong reason for artifact data tamper:\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "tampered artifact data credited:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-artifact-data-pin");
+    copy_dir(&out_dir, &dir);
+    let artifact = dir.join("cert").join("Artifact.lean");
+    let src = std::fs::read_to_string(&artifact).unwrap();
+    let corrupted = src.replacen(
+        "modBytes := AverCert.ArtifactBytes.modBytes",
+        "modBytes := 0",
+        1,
+    );
+    assert_ne!(src, corrupted, "Artifact.lean data shape changed");
+    std::fs::write(&artifact, corrupted).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "tampered Artifact.lean data must fail:\n{out}");
+    assert!(
+        out.contains("did not build")
+            || out.contains("AverCert.Artifact.data")
+            || out.contains("does not bind"),
+        "wrong reason for artifact data tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered artifact data credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (a) One flipped wasm byte is an artifact hash mismatch, caught before any
+/// Lean build.
+#[test]
+fn cert_tripwire_declines_flipped_wasm_byte() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-a") else {
+        return;
+    };
 
     // (a) One flipped wasm byte → hash mismatch, before any build.
-    {
-        let dir = temp_dir("neg-a");
-        copy_dir(&out_dir, &dir);
-        let w = dir.join("certprobe2.wasm");
-        let mut bytes = std::fs::read(&w).unwrap();
-        let mid = bytes.len() / 2;
-        bytes[mid] ^= 0x01;
-        std::fs::write(&w, &bytes).unwrap();
-        let (ok, out) = aver_check(&w, &dir.join("cert"));
-        assert!(!ok, "flipped wasm byte must fail:\n{out}");
-        assert!(out.contains("hash mismatch"), "wrong reason (a):\n{out}");
-    }
+    let dir = temp_dir("neg-a");
+    copy_dir(&out_dir, &dir);
+    let w = dir.join("certprobe2.wasm");
+    let mut bytes = std::fs::read(&w).unwrap();
+    let mid = bytes.len() / 2;
+    bytes[mid] ^= 0x01;
+    std::fs::write(&w, &bytes).unwrap();
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
+    assert!(!ok, "flipped wasm byte must fail:\n{out}");
+    assert!(out.contains("hash mismatch"), "wrong reason (a):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (a2) A byte flipped inside the certified `countDown` body is the same hard
+/// decline, and is deliberately caught by the hash before any Lean build.
+#[test]
+fn cert_tripwire_declines_flipped_countdown_body_byte() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-a2") else {
+        return;
+    };
 
     // (a2) A byte flipped inside the newly certified `countDown` body is still a
     //      hard decline. This is intentionally caught by the artifact hash
     //      before the checker spends time building Lean.
-    {
-        let dir = temp_dir("neg-a2-countdown-body");
-        copy_dir(&out_dir, &dir);
-        let w = dir.join("certprobe2.wasm");
-        let mut bytes = std::fs::read(&w).unwrap();
-        let count_down_prefix = [
-            0x20, 0x01, 0x05, 0x20, 0x00, 0x42, 0x01, 0x10, 0x07, 0x10, 0x09, 0x20, 0x01, 0x20,
-            0x00, 0x10, 0x08, 0x12, 0x02,
-        ];
-        let off = bytes
-            .windows(count_down_prefix.len())
-            .position(|win| win == count_down_prefix)
-            .expect("countDown body prefix should be present in wasm");
-        bytes[off + 1] ^= 0x01;
-        std::fs::write(&w, &bytes).unwrap();
-        let (ok, out) = aver_check(&w, &dir.join("cert"));
-        assert!(!ok, "countDown body-byte flip must fail:\n{out}");
-        assert!(
-            out.contains("hash mismatch"),
-            "wrong reason for countDown body-byte flip:\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-a2-countdown-body");
+    copy_dir(&out_dir, &dir);
+    let w = dir.join("certprobe2.wasm");
+    let mut bytes = std::fs::read(&w).unwrap();
+    let count_down_prefix = [
+        0x20, 0x01, 0x05, 0x20, 0x00, 0x42, 0x01, 0x10, 0x07, 0x10, 0x09, 0x20, 0x01, 0x20, 0x00,
+        0x10, 0x08, 0x12, 0x02,
+    ];
+    let off = bytes
+        .windows(count_down_prefix.len())
+        .position(|win| win == count_down_prefix)
+        .expect("countDown body prefix should be present in wasm");
+    bytes[off + 1] ^= 0x01;
+    std::fs::write(&w, &bytes).unwrap();
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
+    assert!(!ok, "countDown body-byte flip must fail:\n{out}");
+    assert!(
+        out.contains("hash mismatch"),
+        "wrong reason for countDown body-byte flip:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (b) A corrupted `Module.lean` instruction fails the certificate's own lake
+/// build.
+#[test]
+fn cert_tripwire_declines_corrupted_module_body() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-b") else {
+        return;
+    };
 
     // (b) A corrupted Module.lean instruction → lake build failure.
-    {
-        let dir = temp_dir("neg-b");
-        copy_dir(&out_dir, &dir);
-        let m = dir.join("cert").join("Module.lean");
-        let src = std::fs::read_to_string(&m).unwrap();
-        let corrupted = src.replacen(".i64Const 0, .i64LeS", ".i64Const 999, .i64LeS", 1);
-        assert_ne!(src, corrupted, "fixture body shape changed");
-        std::fs::write(&m, corrupted).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "corrupted Module.lean must fail:\n{out}");
-        assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
-    }
+    let dir = temp_dir("neg-b");
+    copy_dir(&out_dir, &dir);
+    let m = dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let corrupted = src.replacen(".i64Const 0, .i64LeS", ".i64Const 999, .i64LeS", 1);
+    assert_ne!(src, corrupted, "fixture body shape changed");
+    std::fs::write(&m, corrupted).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "corrupted Module.lean must fail:\n{out}");
+    assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (c) A trivialized final theorem — same name, `: True := trivial` — fails
+/// the build, because the artifact-carried self-check root imports it.
+#[test]
+fn cert_tripwire_declines_trivialized_final_theorem() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-c") else {
+        return;
+    };
 
     // (c) A trivialized final theorem (same name, `: True := trivial`) → the
     //     artifact-carried self-check root imports `Final.cert`, so the cert
     //     build fails before the checker witness can ascribe `Final.cert` to
     //     `Holds manifest`.
-    {
-        let dir = temp_dir("neg-c");
-        copy_dir(&out_dir, &dir);
-        let f = dir.join("cert").join("Final.lean");
-        let trivial = "import Certificate\nimport Manifest\nimport Schema\n\n\
-             theorem AverCert.Final.cert : True := trivial\n\n\
-             #print axioms AverCert.Final.cert\n";
-        std::fs::write(&f, trivial).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "trivialized final theorem must fail:\n{out}");
-        assert!(out.contains("did not build"), "wrong reason (c):\n{out}");
-    }
+    let dir = temp_dir("neg-c");
+    copy_dir(&out_dir, &dir);
+    let f = dir.join("cert").join("Final.lean");
+    let trivial = "import Certificate\nimport Manifest\nimport Schema\n\n\
+         theorem AverCert.Final.cert : True := trivial\n\n\
+         #print axioms AverCert.Final.cert\n";
+    std::fs::write(&f, trivial).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "trivialized final theorem must fail:\n{out}");
+    assert!(out.contains("did not build"), "wrong reason (c):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (d) A cert-supplied `Schema.lean` is IGNORED — the checker builds against
+/// its own embedded audited schema — so the genuine certificate still passes.
+#[test]
+fn cert_tripwire_ignores_cert_supplied_schema() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-d") else {
+        return;
+    };
 
     // (d) A swapped Schema.lean is IGNORED: the checker builds against its own
     //     embedded audited schema, never the cert's. Even a weakened schema in
     //     the cert dir has no effect, so the genuine cert still verifies.
-    {
-        let dir = temp_dir("neg-d");
-        copy_dir(&out_dir, &dir);
-        std::fs::write(dir.join("cert").join("Schema.lean"), WEAK_SCHEMA).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(ok, "cert-supplied Schema.lean must be ignored:\n{out}");
-        assert!(
-            out.contains("CHECKED") && !out.contains("CERTIFIED"),
-            "genuine cert should pass trusted-olean preflight (d):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-d");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(dir.join("cert").join("Schema.lean"), WEAK_SCHEMA).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(ok, "cert-supplied Schema.lean must be ignored:\n{out}");
+    assert!(
+        out.contains("CHECKED") && !out.contains("CERTIFIED"),
+        "genuine cert should pass trusted-olean preflight (d):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (e) A1 hash rebind: a different but genuine module, with `wasm_sha256`
+/// edited to match it, must not buy acceptance.
+#[test]
+fn cert_tripwire_declines_hash_rebind_to_foreign_module() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-e") else {
+        return;
+    };
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // (e) A1 hash rebind: replace the artifact with a DIFFERENT but genuine cert
     //     module (certprobe's wasm) and edit ONLY `wasm_sha256` in the JSON to
@@ -648,42 +833,57 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //     bind the checker-staged `ArtifactBytes` (the actual, swapped bytes), so
     //     the cert's own build now fails before the checker witness even runs —
     //     an even earlier fail-closed decline than the witness hash face.
-    {
-        let dir = temp_dir("neg-e");
-        copy_dir(&out_dir, &dir);
-        let foreign_out = temp_dir("neg-e-foreign");
-        let fc = aver_command()
-            .current_dir(&repo_root)
-            .arg("compile")
-            .arg("tools/certkit/fixtures/certprobe.av")
-            .arg("--target")
-            .arg("wasm-gc")
-            .arg("--certify")
-            .arg("-o")
-            .arg(&foreign_out)
-            .output()
-            .expect("aver compile --certify runs");
-        assert!(fc.status.success(), "foreign fixture compile failed");
-        let foreign = std::fs::read(foreign_out.join("certprobe.wasm")).unwrap();
-        std::fs::write(dir.join("certprobe2.wasm"), &foreign).unwrap();
-        let sha = aver::codegen::cert::sha256_hex(&foreign);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let json = std::fs::read_to_string(&mf).unwrap();
-        let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
-        m["wasm_sha256"] = serde_json::Value::String(sha);
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&foreign_out);
-        assert!(!ok, "A1 hash rebind must fail:\n{out}");
-        assert!(
-            out.contains("did not build") || out.contains("does not bind"),
-            "wrong reason (e):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "hash rebind credited (e):\n{out}"
-        );
+    let dir = temp_dir("neg-e");
+    copy_dir(&out_dir, &dir);
+    let foreign_out = temp_dir("neg-e-foreign");
+    let fc = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/certprobe.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&foreign_out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(fc.status.success(), "foreign fixture compile failed");
+    let foreign = std::fs::read(foreign_out.join("certprobe.wasm")).unwrap();
+    std::fs::write(dir.join("certprobe2.wasm"), &foreign).unwrap();
+    let sha = aver::codegen::cert::sha256_hex(&foreign);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let json = std::fs::read_to_string(&mf).unwrap();
+    let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
+    m["wasm_sha256"] = serde_json::Value::String(sha);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    let _ = std::fs::remove_dir_all(&foreign_out);
+    assert!(!ok, "A1 hash rebind must fail:\n{out}");
+    assert!(
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (e):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "hash rebind credited (e):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (e2) A1 hash rebind against a CLAIM-FREE certificate, whose Lean data
+/// builds green over any staged bytes: only the kernel witness's hash faces
+/// can catch this swap, so this gate keeps them exercised.
+///
+/// Compiles its own `certempty` fixture and never touches the shared
+/// `certprobe2` baseline, so it takes the lake check alone.
+#[test]
+fn cert_tripwire_declines_hash_rebind_on_claim_free_cert() {
+    if !tripwire_lake_available() {
+        return;
     }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // (e2) A1 hash rebind against a CLAIM-FREE cert: `certempty` proves zero
     //      obligations and ships no plan claims, so its Lean data builds green
@@ -693,292 +893,413 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //      catch the swap: the theorems (and the manifest artifact-hash face) talk about
     //      the ORIGINAL hash, not the checker-computed one. This keeps the
     //      witness hash face exercised now that claim-covered certs die earlier.
-    {
-        let empty_out = temp_dir("neg-e2-empty");
-        let ec = aver_command()
-            .current_dir(&repo_root)
-            .arg("compile")
-            .arg("tools/certkit/fixtures/certempty.av")
-            .arg("--target")
-            .arg("wasm-gc")
-            .arg("--certify")
-            .arg("-o")
-            .arg(&empty_out)
-            .output()
-            .expect("aver compile --certify runs");
-        assert!(ec.status.success(), "certempty fixture compile failed");
-        let w = empty_out.join("certempty.wasm");
-        let mut foreign = std::fs::read(&w).unwrap();
-        // Inert trailing custom section (id 0, size 2, name "x", empty payload).
-        foreign.extend_from_slice(&[0x00, 0x02, 0x01, 0x78]);
-        std::fs::write(&w, &foreign).unwrap();
-        let sha = aver::codegen::cert::sha256_hex(&foreign);
-        let mf = empty_out.join("cert").join("cert-manifest.json");
-        let json = std::fs::read_to_string(&mf).unwrap();
-        let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
-        m["wasm_sha256"] = serde_json::Value::String(sha);
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&w, &empty_out.join("cert"));
-        let _ = std::fs::remove_dir_all(&empty_out);
-        assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
-        // The witness names the exact face the kernel rejected.
-        assert!(
-            out.contains("AverCert.manifest.subject.artifactHash"),
-            "witness not exercised (e2):\n{out}"
-        );
-    }
+    let empty_out = temp_dir("neg-e2-empty");
+    let ec = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/certempty.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&empty_out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(ec.status.success(), "certempty fixture compile failed");
+    let w = empty_out.join("certempty.wasm");
+    let mut foreign = std::fs::read(&w).unwrap();
+    // Inert trailing custom section (id 0, size 2, name "x", empty payload).
+    foreign.extend_from_slice(&[0x00, 0x02, 0x01, 0x78]);
+    std::fs::write(&w, &foreign).unwrap();
+    let sha = aver::codegen::cert::sha256_hex(&foreign);
+    let mf = empty_out.join("cert").join("cert-manifest.json");
+    let json = std::fs::read_to_string(&mf).unwrap();
+    let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
+    m["wasm_sha256"] = serde_json::Value::String(sha);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&w, &empty_out.join("cert"));
+    let _ = std::fs::remove_dir_all(&empty_out);
+    assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
+    assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
+    // The witness names the exact face the kernel rejected.
+    assert!(
+        out.contains("AverCert.manifest.subject.artifactHash"),
+        "witness not exercised (e2):\n{out}"
+    );
+}
+
+/// (f) A2 comment smuggle: the approved statement present only in a COMMENT,
+/// plus a trivial theorem of the same name.
+#[test]
+fn cert_tripwire_declines_comment_smuggled_final_theorem() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-f") else {
+        return;
+    };
 
     // (f) A2 comment smuggle: the approved statement line present only in a
     //     COMMENT, plus a `theorem AverCert.Final.cert : True := trivial`. The
     //     artifact-carried self-check root imports `Final.cert`, so this now
     //     fails at cert build time before the checker witness.
-    {
-        let dir = temp_dir("neg-f");
-        copy_dir(&out_dir, &dir);
-        let f = dir.join("cert").join("Final.lean");
-        let smuggled = "import Certificate\nimport Manifest\nimport Schema\n\n\
-             -- theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := by trivial\n\
-             theorem AverCert.Final.cert : True := trivial\n\n\
-             #print axioms AverCert.Final.cert\n";
-        std::fs::write(&f, smuggled).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "A2 comment smuggle must fail:\n{out}");
-        assert!(out.contains("did not build"), "wrong reason (f):\n{out}");
-    }
+    let dir = temp_dir("neg-f");
+    copy_dir(&out_dir, &dir);
+    let f = dir.join("cert").join("Final.lean");
+    let smuggled = "import Certificate\nimport Manifest\nimport Schema\n\n\
+         -- theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := by trivial\n\
+         theorem AverCert.Final.cert : True := trivial\n\n\
+         #print axioms AverCert.Final.cert\n";
+    std::fs::write(&f, smuggled).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "A2 comment smuggle must fail:\n{out}");
+    assert!(out.contains("did not build"), "wrong reason (f):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (g) A3 build-tree subversion: a decoy tree behind a redirected `srcDir`
+/// plus a weak final proof. The checker ignores the cert's lakefile.
+#[test]
+fn cert_tripwire_declines_srcdir_build_tree_subversion() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-g") else {
+        return;
+    };
 
     // (g) A3 build-tree subversion: point the cert's lakefile `srcDir` at a
     //     hidden decoy tree whose `Holds := True`, and weaken the final proof to
     //     `trivial`. Under the OLD (cert-controlled) build this passed. The
     //     checker now ignores the cert's lakefile/srcDir and builds `Final.lean`
     //     against its OWN embedded schema, so `trivial` fails closed.
-    {
-        let dir = temp_dir("neg-g");
-        copy_dir(&out_dir, &dir);
-        let cert = dir.join("cert");
-        // Decoy build tree with a weakened schema, reached via srcDir redirect.
-        let hidden = cert.join("hidden");
-        copy_dir(&out_dir.join("cert"), &hidden);
-        std::fs::write(hidden.join("Schema.lean"), WEAK_SCHEMA).unwrap();
-        // The (visible) final proof only holds against the trivial `Holds`.
-        std::fs::write(cert.join("Final.lean"), WEAK_FINAL).unwrap();
-        // Redirect the cert's own lakefile at the decoy tree.
-        let lf = cert.join("lakefile.lean");
-        let redirected = "import Lake\nopen Lake DSL\n\npackage «hostile»\n\n\
-             @[default_target]\nlean_lib «Hostile» where\n  srcDir := \"hidden\"\n  roots := #[`Final]\n";
-        std::fs::write(&lf, redirected).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
-        assert!(!ok, "A3 srcDir subversion must fail:\n{out}");
-        assert!(out.contains("did not build"), "wrong reason (g):\n{out}");
-    }
+    let dir = temp_dir("neg-g");
+    copy_dir(&out_dir, &dir);
+    let cert = dir.join("cert");
+    // Decoy build tree with a weakened schema, reached via srcDir redirect.
+    let hidden = cert.join("hidden");
+    copy_dir(&out_dir.join("cert"), &hidden);
+    std::fs::write(hidden.join("Schema.lean"), WEAK_SCHEMA).unwrap();
+    // The (visible) final proof only holds against the trivial `Holds`.
+    std::fs::write(cert.join("Final.lean"), WEAK_FINAL).unwrap();
+    // Redirect the cert's own lakefile at the decoy tree.
+    let lf = cert.join("lakefile.lean");
+    let redirected = "import Lake\nopen Lake DSL\n\npackage «hostile»\n\n\
+         @[default_target]\nlean_lib «Hostile» where\n  srcDir := \"hidden\"\n  roots := #[`Final]\n";
+    std::fs::write(&lf, redirected).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
+    assert!(!ok, "A3 srcDir subversion must fail:\n{out}");
+    assert!(out.contains("did not build"), "wrong reason (g):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (h) A3 olean cache: a poisoned `.lake` cache shipped in the certificate is
+/// never consumed — the checker builds in a fresh dir — so the genuine
+/// certificate still passes.
+#[test]
+fn cert_tripwire_ignores_shipped_olean_cache() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-h") else {
+        return;
+    };
 
     // (h) A3 olean cache: ship a poisoned `.lake` cache in the cert. The checker
     //     builds in a fresh dir and never consumes it, so a genuine cert still
     //     verifies (a checker that reused the cache would choke on the garbage).
-    {
-        let dir = temp_dir("neg-h");
-        copy_dir(&out_dir, &dir);
-        let lib = dir.join("cert").join(".lake").join("build").join("lib");
-        std::fs::create_dir_all(&lib).unwrap();
-        std::fs::write(lib.join("Schema.olean"), b"GARBAGE-NOT-AN-OLEAN").unwrap();
-        std::fs::write(lib.join("Final.olean"), b"GARBAGE").unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(ok, "shipped .lake cache must be ignored:\n{out}");
-        assert!(
-            out.contains("CHECKED") && !out.contains("CERTIFIED"),
-            "genuine cert should pass trusted-olean preflight (h):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-h");
+    copy_dir(&out_dir, &dir);
+    let lib = dir.join("cert").join(".lake").join("build").join("lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("Schema.olean"), b"GARBAGE-NOT-AN-OLEAN").unwrap();
+    std::fs::write(lib.join("Final.olean"), b"GARBAGE").unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(ok, "shipped .lake cache must be ignored:\n{out}");
+    assert!(
+        out.contains("CHECKED") && !out.contains("CERTIFIED"),
+        "genuine cert should pass trusted-olean preflight (h):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (i) A4 report forgery: a fabricated certified export and contract appended
+/// to ONLY the JSON. The report candidates are kernel-bound to the proven
+/// manifest, so the forged names are never credited.
+#[test]
+fn cert_tripwire_declines_forged_report_json() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-i") else {
+        return;
+    };
 
     // (i) A4 report forgery: append a fabricated certified export + contract to
     //     ONLY the JSON. The report names/count/contracts are now candidates the
     //     kernel witness binds to the proven Lean manifest with `rfl`, so a JSON
     //     that claims an export or contract the manifest does not have makes a
     //     binding fail: the cert is DECLINED and the forged names never appear.
-    {
-        let dir = temp_dir("neg-i");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let json = std::fs::read_to_string(&mf).unwrap();
-        let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
-        m["certified"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!({
-                "name": "withdrawAll",
-                "class": "straight-line",
-                "policy": "simulatesModel",
-                "level": "L1",
-                "theorem": "CertProofs.withdrawAll_wasm_certified",
-                "dom": "List Int",
-                "cod": "Int"
-            }));
-        m["runtime_contracts"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::Value::String("FAKE contract injected".into()));
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        // Every .lean and hash is byte-identical; only the JSON changed.
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "padded JSON must be DECLINED, not credited:\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (i):\n{out}");
-        // The declined diagnostic echoes the rejected candidate; what matters is
-        // that the forged export is never CERTIFIED (credited).
-        assert!(
-            !out.contains("CERTIFIED"),
-            "forged export credited (i):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-i");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let json = std::fs::read_to_string(&mf).unwrap();
+    let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
+    m["certified"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "name": "withdrawAll",
+            "class": "straight-line",
+            "policy": "simulatesModel",
+            "level": "L1",
+            "theorem": "CertProofs.withdrawAll_wasm_certified",
+            "dom": "List Int",
+            "cod": "Int"
+        }));
+    m["runtime_contracts"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::Value::String("FAKE contract injected".into()));
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    // Every .lean and hash is byte-identical; only the JSON changed.
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "padded JSON must be DECLINED, not credited:\n{out}");
+    assert!(out.contains("does not bind"), "wrong reason (i):\n{out}");
+    // The declined diagnostic echoes the rejected candidate; what matters is
+    // that the forged export is never CERTIFIED (credited).
+    assert!(
+        !out.contains("CERTIFIED"),
+        "forged export credited (i):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// Class labels are paired with exports by Lean, not compared as two bags, so
+/// swapping two distinct labels while preserving names and order is declined.
+#[test]
+fn cert_tripwire_declines_swapped_report_class_pairs() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-i-pair-swap") else {
+        return;
+    };
 
     // Class labels are paired with exports by Lean, not compared as two bags.
     // Swapping the two distinct recursion labels while preserving names and
     // order must therefore fail the atomic `reportEntries` binding.
-    {
-        let dir = temp_dir("neg-i-report-pair-swap");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert/cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        let certified = m["certified"].as_array_mut().unwrap();
-        assert!(certified.len() >= 2);
-        let first = certified[0]["class"].as_str().unwrap().to_string();
-        let second = certified[1]["class"].as_str().unwrap().to_string();
-        assert_ne!(first, second, "fixture needs two distinct report classes");
-        certified[0]["class"] = serde_json::Value::String(second);
-        certified[1]["class"] = serde_json::Value::String(first);
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let dir = temp_dir("neg-i-report-pair-swap");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert/cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let certified = m["certified"].as_array_mut().unwrap();
+    assert!(certified.len() >= 2);
+    let first = certified[0]["class"].as_str().unwrap().to_string();
+    let second = certified[1]["class"].as_str().unwrap().to_string();
+    assert_ne!(first, second, "fixture needs two distinct report classes");
+    certified[0]["class"] = serde_json::Value::String(second);
+    certified[1]["class"] = serde_json::Value::String(first);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "swapped export/class pairs must be DECLINED:\n{out}");
-        assert!(
-            out.contains("does not bind"),
-            "wrong report-pair decline:\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "swapped classes were credited:\n{out}"
-        );
-    }
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "swapped export/class pairs must be DECLINED:\n{out}");
+    assert!(
+        out.contains("does not bind"),
+        "wrong report-pair decline:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "swapped classes were credited:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (j) Drift, JSON claims MORE than the manifest: a charset-clean certified
+/// entry that no obligation backs.
+#[test]
+fn cert_tripwire_declines_json_claiming_an_extra_export() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-j") else {
+        return;
+    };
 
     // (j) Drift, JSON claims MORE than the manifest: a second certified entry
     //     whose name is charset-clean but absent from the obligations. The
     //     `obligations.length = N` / export-name bindings fail closed.
-    {
-        let dir = temp_dir("neg-j");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["certified"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!({
-                "name": "phantom",
-                "class": "straight-line",
-                "policy": "simulatesModel",
-                "level": "L1",
-                "dom": "List Int",
-                "cod": "Int"
-            }));
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "JSON claiming an extra export must fail (j):\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (j):\n{out}");
-        assert!(
-            !out.contains("CERTIFIED"),
-            "phantom export credited (j):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-j");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["certified"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "name": "phantom",
+            "class": "straight-line",
+            "policy": "simulatesModel",
+            "level": "L1",
+            "dom": "List Int",
+            "cod": "Int"
+        }));
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "JSON claiming an extra export must fail (j):\n{out}");
+    assert!(out.contains("does not bind"), "wrong reason (j):\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "phantom export credited (j):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (k) Drift, JSON claims FEWER than the manifest: an empty `certified` while
+/// the manifest still proves an obligation.
+#[test]
+fn cert_tripwire_declines_json_dropping_a_real_export() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-k") else {
+        return;
+    };
 
     // (k) Drift, JSON claims FEWER than the manifest: an empty `certified` while
     //     the manifest still proves one obligation. `length = 0 := rfl` fails.
-    {
-        let dir = temp_dir("neg-k");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["certified"] = serde_json::Value::Array(vec![]);
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "JSON dropping a real export must fail (k):\n{out}");
-        assert!(out.contains("does not bind"), "wrong reason (k):\n{out}");
-    }
+    let dir = temp_dir("neg-k");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["certified"] = serde_json::Value::Array(vec![]);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "JSON dropping a real export must fail (k):\n{out}");
+    assert!(out.contains("does not bind"), "wrong reason (k):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (l) Charset gate: a certified name carrying a control character is rejected
+/// before any splice, so it can never reach the Lean witness.
+#[test]
+fn cert_tripwire_declines_control_char_in_candidate_name() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-l") else {
+        return;
+    };
 
     // (l) Charset gate: a certified name carrying a control character (decoded
     //     from the JSON) is rejected before any splice, so it can never reach
     //     the Lean witness.
-    {
-        let dir = temp_dir("neg-l");
-        copy_dir(&out_dir, &dir);
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        m["certified"][0]["name"] = serde_json::Value::String("sumTo\nevil := by rfl".into());
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "control char in a candidate must fail (l):\n{out}");
-        assert!(out.contains("printable ASCII"), "wrong reason (l):\n{out}");
-    }
+    let dir = temp_dir("neg-l");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["certified"][0]["name"] = serde_json::Value::String("sumTo\nevil := by rfl".into());
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "control char in a candidate must fail (l):\n{out}");
+    assert!(out.contains("printable ASCII"), "wrong reason (l):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (m) Evil axiom: `Final.cert` proved from a smuggled `axiom`. The build
+/// succeeds — an axiom is valid Lean — and the witness axiom collector throws.
+#[test]
+fn cert_tripwire_declines_axiom_backed_final_theorem() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-m") else {
+        return;
+    };
 
     // (m) Evil axiom: prove `Final.cert` from a smuggled `axiom evil`. The build
     //     succeeds (an axiom is valid Lean), but the witness runs the kernel's
     //     axiom collector over the ascribed constant and throws on `evil`.
-    {
-        let dir = temp_dir("neg-m");
-        copy_dir(&out_dir, &dir);
-        let f = dir.join("cert").join("Final.lean");
-        let evil = "import Certificate\nimport Manifest\nimport Schema\n\n\
-             open AverCert AverCert.Schema\n\n\
-             axiom evil : AverCert.Schema.Holds AverCert.manifest\n\
-             theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := evil\n";
-        std::fs::write(&f, evil).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "axiom-backed final theorem must fail (m):\n{out}");
-        assert!(
-            out.contains("non-whitelisted axiom"),
-            "witness axiom collector not exercised (m):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-m");
+    copy_dir(&out_dir, &dir);
+    let f = dir.join("cert").join("Final.lean");
+    let evil = "import Certificate\nimport Manifest\nimport Schema\n\n\
+         open AverCert AverCert.Schema\n\n\
+         axiom evil : AverCert.Schema.Holds AverCert.manifest\n\
+         theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := evil\n";
+    std::fs::write(&f, evil).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "axiom-backed final theorem must fail (m):\n{out}");
+    assert!(
+        out.contains("non-whitelisted axiom"),
+        "witness axiom collector not exercised (m):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (n) A7 filename gate: a cert data file whose name is not a plain Lean
+/// module identifier is rejected before staging, so it cannot inject tokens
+/// into the checker-authored lakefile roots.
+#[test]
+fn cert_tripwire_declines_hostile_cert_file_name() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-n") else {
+        return;
+    };
 
     // (n) A7 filename gate: a cert data file whose name is not a plain Lean
     //     module identifier (a space here) is rejected before staging, so it
     //     cannot inject tokens into the checker-authored lakefile roots.
-    {
-        let dir = temp_dir("neg-n");
-        copy_dir(&out_dir, &dir);
-        std::fs::write(
-            dir.join("cert").join("bad name.lean"),
-            "-- inert\ndef x : Nat := 0\n",
-        )
-        .unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "hostile cert file name must fail (n):\n{out}");
-        assert!(
-            out.contains("bad name.lean") && out.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
-            "wrong reason (n):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-n");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("bad name.lean"),
+        "-- inert\ndef x : Nat := 0\n",
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "hostile cert file name must fail (n):\n{out}");
+    assert!(
+        out.contains("bad name.lean") && out.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
+        "wrong reason (n):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (o) A8 token scan: a cert data file carrying an elaboration-executes-code
+/// token is rejected before it is staged (deliberately brittle wall).
+#[test]
+fn cert_tripwire_declines_code_executing_token_in_cert_data() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-o") else {
+        return;
+    };
 
     // (o) A8 token scan: a cert data file carrying an elaboration-executes-code
     //     token is rejected before it is staged (deliberately brittle wall).
-    {
-        let dir = temp_dir("neg-o");
-        copy_dir(&out_dir, &dir);
-        let c = dir.join("cert").join("Contracts.lean");
-        let mut src = std::fs::read_to_string(&c).unwrap();
-        src.push_str("\n#eval IO.println \"pwned\"\n");
-        std::fs::write(&c, src).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "code-executing token in a data file must fail (o):\n{out}"
-        );
-        assert!(
-            out.contains("elaboration-executing") && out.contains("#eval"),
-            "wrong reason (o):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-o");
+    copy_dir(&out_dir, &dir);
+    let c = dir.join("cert").join("Contracts.lean");
+    let mut src = std::fs::read_to_string(&c).unwrap();
+    src.push_str("\n#eval IO.println \"pwned\"\n");
+    std::fs::write(&c, src).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "code-executing token in a data file must fail (o):\n{out}"
+    );
+    assert!(
+        out.contains("elaboration-executing") && out.contains("#eval"),
+        "wrong reason (o):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (p) Bytes-vs-data divergence: a `Module.lean` body that still builds green
+/// and still passes the report bindings, but does not decode from the real
+/// bytes. The wasm is untouched, so the mismatch is purely in the Lean data.
+#[test]
+fn cert_tripwire_declines_diverging_module_body() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-p") else {
+        return;
+    };
 
     // (p) bytes-vs-data divergence: a Module.lean whose `sumToCode` body does NOT
     //     decode from the real bytes. The locals count in the CodeTbl entry is
@@ -990,157 +1311,209 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //     (locals 1), so the kernel witness fails: DECLINED, never CERTIFIED. The
     //     wasm bytes are untouched, so the hash stays consistent — the mismatch is
     //     purely in the attacker-editable Lean data.
-    {
-        let dir = temp_dir("neg-p");
-        copy_dir(&out_dir, &dir);
-        let m = dir.join("cert").join("Module.lean");
-        let src = std::fs::read_to_string(&m).unwrap();
-        let corrupted = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-        assert_ne!(src, corrupted, "fixture recursive body shape changed");
-        std::fs::write(&m, corrupted).unwrap();
-        // wasm bytes are untouched: the hash still matches the pinned value.
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "a body that does not bind to the artifact bytes must be DECLINED:\n{out}"
-        );
-        // The acceptance predicate now pins the locals count exactly, so this
-        // mutation can trip either the shipped artifact's own acceptance `rfl`
-        // during the lake build ("did not build") or the later checker-witness
-        // code binding ("does not bind"). Both are the same fail-closed
-        // decline; the earlier stage is the stronger constraint.
-        assert!(
-            out.contains("does not bind") || out.contains("did not build"),
-            "wrong reason (p):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "a diverging body must never be credited (p):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-p");
+    copy_dir(&out_dir, &dir);
+    let m = dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let corrupted = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+    assert_ne!(src, corrupted, "fixture recursive body shape changed");
+    std::fs::write(&m, corrupted).unwrap();
+    // wasm bytes are untouched: the hash still matches the pinned value.
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "a body that does not bind to the artifact bytes must be DECLINED:\n{out}"
+    );
+    // The acceptance predicate now pins the locals count exactly, so this
+    // mutation can trip either the shipped artifact's own acceptance `rfl`
+    // during the lake build ("did not build") or the later checker-witness
+    // code binding ("does not bind"). Both are the same fail-closed
+    // decline; the earlier stage is the stronger constraint.
+    assert!(
+        out.contains("does not bind") || out.contains("did not build"),
+        "wrong reason (p):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "a diverging body must never be credited (p):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (q) Shadow decoy — the reproduced bypass: the ACTIVE body mutated plus a
+/// byte-honest copy re-planted in a `namespace Shadow`. The decoy text does
+/// not change `o.code`.
+#[test]
+fn cert_tripwire_declines_shadow_namespace_decoy() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-q") else {
+        return;
+    };
 
     // (q) Shadow decoy (the reproduced bypass): mutate the ACTIVE `sumToCode`
     //     (locals 1→2) and re-plant a byte-identical honest body in a
     //     `namespace Shadow`. The old substring check matched the honest text in
     //     `Shadow` and passed; the code `rfl` pins `o.code` — which is the active,
     //     mutated `CertModule.sumToCode`, not the shadow — so it fails: DECLINED.
-    {
-        let dir = temp_dir("neg-q");
-        copy_dir(&out_dir, &dir);
-        let m = dir.join("cert").join("Module.lean");
-        let src = std::fs::read_to_string(&m).unwrap();
-        let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-        assert_ne!(src, mutated, "fixture recursive body shape changed");
-        let shadow = format!("namespace Shadow\n{HONEST_SUMTO_CODE}\nend Shadow\n\nend CertModule");
-        let planted = mutated.replacen("end CertModule", &shadow, 1);
-        assert_ne!(mutated, planted, "shadow decoy not planted");
-        std::fs::write(&m, planted).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "shadow decoy must be DECLINED:\n{out}");
-        // The locals-count mutation can trip the shipped artifact's own
-        // acceptance `rfl` at lake build ("did not build") or the later
-        // checker-witness code binding ("does not bind") — the shadow decoy
-        // fools neither stage.
-        assert!(
-            out.contains("does not bind") || out.contains("did not build"),
-            "wrong reason (q):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "shadow decoy credited (q):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-q");
+    copy_dir(&out_dir, &dir);
+    let m = dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+    assert_ne!(src, mutated, "fixture recursive body shape changed");
+    let shadow = format!("namespace Shadow\n{HONEST_SUMTO_CODE}\nend Shadow\n\nend CertModule");
+    let planted = mutated.replacen("end CertModule", &shadow, 1);
+    assert_ne!(mutated, planted, "shadow decoy not planted");
+    std::fs::write(&m, planted).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "shadow decoy must be DECLINED:\n{out}");
+    // The locals-count mutation can trip the shipped artifact's own
+    // acceptance `rfl` at lake build ("did not build") or the later
+    // checker-witness code binding ("does not bind") — the shadow decoy
+    // fools neither stage.
+    assert!(
+        out.contains("does not bind") || out.contains("did not build"),
+        "wrong reason (q):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "shadow decoy credited (q):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (r) Comment decoy: the active body mutated plus a byte-honest copy inside a
+/// block comment. Dead text.
+#[test]
+fn cert_tripwire_declines_block_comment_decoy() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-r") else {
+        return;
+    };
 
     // (r) Comment decoy: mutate the active `sumToCode` and re-plant a byte-honest
     //     body inside a `/- … -/` block comment. Dead text; `o.code` is still the
     //     mutated active def, so the code `rfl` fails: DECLINED.
-    {
-        let dir = temp_dir("neg-r");
-        copy_dir(&out_dir, &dir);
-        let m = dir.join("cert").join("Module.lean");
-        let src = std::fs::read_to_string(&m).unwrap();
-        let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-        assert_ne!(src, mutated, "fixture recursive body shape changed");
-        let comment = format!("/- honest decoy:\n{HONEST_SUMTO_CODE}\n-/\n\nend CertModule");
-        let planted = mutated.replacen("end CertModule", &comment, 1);
-        std::fs::write(&m, planted).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "comment decoy must be DECLINED:\n{out}");
-        // Same stage-agnostic decline as (q): the locals-count pin can trip at
-        // the artifact's own lake build or at the checker witness.
-        assert!(
-            out.contains("does not bind") || out.contains("did not build"),
-            "wrong reason (r):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "comment decoy credited (r):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-r");
+    copy_dir(&out_dir, &dir);
+    let m = dir.join("cert").join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
+    assert_ne!(src, mutated, "fixture recursive body shape changed");
+    let comment = format!("/- honest decoy:\n{HONEST_SUMTO_CODE}\n-/\n\nend CertModule");
+    let planted = mutated.replacen("end CertModule", &comment, 1);
+    std::fs::write(&m, planted).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "comment decoy must be DECLINED:\n{out}");
+    // Same stage-agnostic decline as (q): the locals-count pin can trip at
+    // the artifact's own lake build or at the checker witness.
+    assert!(
+        out.contains("does not bind") || out.contains("did not build"),
+        "wrong reason (r):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "comment decoy credited (r):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (s) Migrated-recursion code decouple: `sumTo`'s obligation points at a decoy
+/// code table. The generic recursion claim must bind the obligation's code to
+/// the byte-derived plan with no bespoke simulation proof to swap.
+#[test]
+fn cert_tripwire_declines_recursion_code_decouple() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-s") else {
+        return;
+    };
 
     // (s) Migrated-recursion code decouple: point `sumTo`'s obligation at a
     //     decoy `wrongCode`, leaving the byte-honest `sumToCode` dead. `sumTo`
     //     deliberately has no bespoke `sumTo_simulates` proof now: the generic
     //     recursion bridge's `recursionClaimAccepted` must bind the obligation's
     //     code directly to the byte-derived plan and fail closed.
-    {
-        let dir = temp_dir("neg-s");
-        copy_dir(&out_dir, &dir);
-        let cert = dir.join("cert");
-        let m = cert.join("Module.lean");
-        let src = std::fs::read_to_string(&m).unwrap();
-        let with_decoy = src.replacen(
-            "end CertModule",
-            "/-- decoy: always traps, so `holds` is vacuous. -/\n\
-             def wrongCode : CodeTbl := fun _ => none\nend CertModule",
-            1,
-        );
-        std::fs::write(&m, with_decoy).unwrap();
-        let man = cert.join("Manifest.lean");
-        let msrc = std::fs::read_to_string(&man).unwrap();
-        let decoupled = msrc.replacen(
-            "code := CertModule.sumToCode",
-            "code := CertModule.wrongCode",
-            1,
-        );
-        assert_ne!(msrc, decoupled, "manifest code field shape changed");
-        std::fs::write(&man, decoupled).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
-        assert!(!ok, "code decouple must be DECLINED:\n{out}");
-        assert!(
-            out.contains("did not build") || out.contains("does not bind"),
-            "wrong reason (s):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "code decouple credited (s):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-s");
+    copy_dir(&out_dir, &dir);
+    let cert = dir.join("cert");
+    let m = cert.join("Module.lean");
+    let src = std::fs::read_to_string(&m).unwrap();
+    let with_decoy = src.replacen(
+        "end CertModule",
+        "/-- decoy: always traps, so `holds` is vacuous. -/\n\
+         def wrongCode : CodeTbl := fun _ => none\nend CertModule",
+        1,
+    );
+    std::fs::write(&m, with_decoy).unwrap();
+    let man = cert.join("Manifest.lean");
+    let msrc = std::fs::read_to_string(&man).unwrap();
+    let decoupled = msrc.replacen(
+        "code := CertModule.sumToCode",
+        "code := CertModule.wrongCode",
+        1,
+    );
+    assert_ne!(msrc, decoupled, "manifest code field shape changed");
+    std::fs::write(&man, decoupled).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
+    assert!(!ok, "code decouple must be DECLINED:\n{out}");
+    assert!(
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (s):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "code decouple credited (s):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (t) Migrated-recursion self decouple: `sumTo`'s obligation uses a wrong
+/// function index; the generic claim binds it to the byte-derived index.
+#[test]
+fn cert_tripwire_declines_recursion_self_decouple() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-t") else {
+        return;
+    };
 
     // (t) Migrated-recursion self decouple: set `sumTo`'s obligation `self` to a
     //     wrong index. The generic recursion bridge's `recursionClaimAccepted`
     //     binds `obligation.self` to the byte-derived function index, so this
     //     must fail closed without any bespoke simulation-proof replacement.
-    {
-        let dir = temp_dir("neg-t");
-        copy_dir(&out_dir, &dir);
-        let cert = dir.join("cert");
-        let man = cert.join("Manifest.lean");
-        let msrc = std::fs::read_to_string(&man).unwrap();
-        let decoupled = msrc.replacen("self := 1,", "self := 999,", 1);
-        assert_ne!(msrc, decoupled, "manifest self field shape changed");
-        std::fs::write(&man, decoupled).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
-        assert!(!ok, "self decouple must be DECLINED:\n{out}");
-        assert!(
-            out.contains("did not build") || out.contains("does not bind"),
-            "wrong reason (t):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "self decouple credited (t):\n{out}"
-        );
-    }
+    let dir = temp_dir("neg-t");
+    copy_dir(&out_dir, &dir);
+    let cert = dir.join("cert");
+    let man = cert.join("Manifest.lean");
+    let msrc = std::fs::read_to_string(&man).unwrap();
+    let decoupled = msrc.replacen("self := 1,", "self := 999,", 1);
+    assert_ne!(msrc, decoupled, "manifest self field shape changed");
+    std::fs::write(&man, decoupled).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
+    assert!(!ok, "self decouple must be DECLINED:\n{out}");
+    assert!(
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (t):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "self decouple credited (t):\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (u) Export-name relabel: an honest body relabelled to a duplicate export
+/// name in both the Lean manifest and the JSON.
+#[test]
+fn cert_tripwire_declines_export_name_relabel() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-u") else {
+        return;
+    };
 
     // (u) Export-name relabel: keep the byte-bound honest body/self/carrier, but
     //     relabel the first obligation (and the JSON) to a duplicate export name
@@ -1148,74 +1521,83 @@ fn cert_verify_accepts_and_tripwires_fail_closed() {
     //     `obligation.export_` to the claimed export name, so the relabel now
     //     fails the cert's OWN build; the checker witness's manifest export
     //     list `rfl` remains the backstop for claim-free certs → DECLINED.
-    {
-        let dir = temp_dir("neg-u");
-        copy_dir(&out_dir, &dir);
-        let man = dir.join("cert").join("Manifest.lean");
-        let mt = std::fs::read_to_string(&man)
-            .unwrap()
-            .replace("export_ := \"sumTo\"", "export_ := \"countDown\"")
-            .replace("exports := [\"sumTo\"]", "exports := [\"countDown\"]");
-        std::fs::write(&man, mt).unwrap();
-        let mf = dir.join("cert").join("cert-manifest.json");
-        let mut m: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-        for c in m["certified"].as_array_mut().unwrap() {
-            if c["name"] == serde_json::json!("sumTo") {
-                c["name"] = serde_json::json!("countDown");
-            }
+    let dir = temp_dir("neg-u");
+    copy_dir(&out_dir, &dir);
+    let man = dir.join("cert").join("Manifest.lean");
+    let mt = std::fs::read_to_string(&man)
+        .unwrap()
+        .replace("export_ := \"sumTo\"", "export_ := \"countDown\"")
+        .replace("exports := [\"sumTo\"]", "exports := [\"countDown\"]");
+    std::fs::write(&man, mt).unwrap();
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    for c in m["certified"].as_array_mut().unwrap() {
+        if c["name"] == serde_json::json!("sumTo") {
+            c["name"] = serde_json::json!("countDown");
         }
-        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-        assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
-        assert!(
-            out.contains("did not build") || out.contains("does not bind"),
-            "wrong reason (u):\n{out}"
-        );
-        assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
     }
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
+    assert!(
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (u):\n{out}"
+    );
+    assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// (v) Migrated accumulator-recursion code decouple: `countDown` pointed at an
+/// always-trapping code table, with no bespoke simulation theorem to swap.
+#[test]
+fn cert_tripwire_declines_accumulator_code_decouple() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-v") else {
+        return;
+    };
 
     // (v) Migrated accumulator-recursion code decouple: point `countDown` at an
     //     always-trapping code table. There is no bespoke simulation theorem to
     //     swap after the migration; the audited generic claim/bridge must bind
     //     the arity-two obligation directly to the byte-derived plan.
-    {
-        let dir = temp_dir("neg-v-countdown-code");
-        copy_dir(&out_dir, &dir);
-        let cert = dir.join("cert");
-        let module = cert.join("Module.lean");
-        let src = std::fs::read_to_string(&module).unwrap();
-        let with_decoy = src.replacen(
-            "end CertModule",
-            "/-- decoy: always traps, so `holds` is vacuous. -/\n\
-             def wrongCode : CodeTbl := fun _ => none\nend CertModule",
-            1,
-        );
-        assert_ne!(src, with_decoy, "module end marker shape changed");
-        std::fs::write(&module, with_decoy).unwrap();
+    let dir = temp_dir("neg-v-countdown-code");
+    copy_dir(&out_dir, &dir);
+    let cert = dir.join("cert");
+    let module = cert.join("Module.lean");
+    let src = std::fs::read_to_string(&module).unwrap();
+    let with_decoy = src.replacen(
+        "end CertModule",
+        "/-- decoy: always traps, so `holds` is vacuous. -/\n\
+         def wrongCode : CodeTbl := fun _ => none\nend CertModule",
+        1,
+    );
+    assert_ne!(src, with_decoy, "module end marker shape changed");
+    std::fs::write(&module, with_decoy).unwrap();
 
-        let manifest = cert.join("Manifest.lean");
-        let msrc = std::fs::read_to_string(&manifest).unwrap();
-        let decoupled = msrc.replacen(
-            "code := CertModule.countDownCode",
-            "code := CertModule.wrongCode",
-            1,
-        );
-        assert_ne!(msrc, decoupled, "countDown code field shape changed");
-        std::fs::write(&manifest, decoupled).unwrap();
+    let manifest = cert.join("Manifest.lean");
+    let msrc = std::fs::read_to_string(&manifest).unwrap();
+    let decoupled = msrc.replacen(
+        "code := CertModule.countDownCode",
+        "code := CertModule.wrongCode",
+        1,
+    );
+    assert_ne!(msrc, decoupled, "countDown code field shape changed");
+    std::fs::write(&manifest, decoupled).unwrap();
 
-        let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
-        assert!(!ok, "countDown code decouple must be DECLINED (v):\n{out}");
-        assert!(
-            out.contains("did not build") || out.contains("does not bind"),
-            "wrong reason (v):\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "countDown code decouple credited (v):\n{out}"
-        );
-    }
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
+    assert!(!ok, "countDown code decouple must be DECLINED (v):\n{out}");
+    assert!(
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (v):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "countDown code decouple credited (v):\n{out}"
+    );
 
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
@@ -1557,15 +1939,44 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     );
 }
 
-#[test]
-fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
+// Plans.lean-authority soundness gates.
+//
+// These tests share one baseline artifact and differ only in which single
+// tamper they apply to the emitted certificate package before demanding a
+// DECLINE. They used to be one test that ran every verification sequentially.
+// Each of these tampers edits Lean sources, so the decline only surfaces after
+// a full certificate verification (minutes on CI), while the shared
+// `aver compile --certify` baseline costs a fraction of a second. Splitting the
+// tamper vectors into separate tests behind the `cert_plans_authority_` prefix
+// — each redoing the cheap setup — lets CI run the expensive verifications in
+// parallel lanes, the same way `cert_certify_spec.rs` runs its
+// `cert_hostile_model_` family. Prefix in, prefix out: the dedicated lanes
+// select this prefix and the `rest` lanes exclude exactly it, so a gate added
+// here is run exactly once and needs no workflow edit.
+
+/// Compiles the shared Plans.lean-authority baseline package.
+///
+/// Every gate below runs this itself rather than depending on a baseline built
+/// by another test (and therefore another CI lane), so each one fails on its
+/// own terms. The compile is a fraction of a second, so duplicating the setup
+/// per gate is nearly free — unlike the verification each gate then performs.
+///
+/// The honest package's own verdict is asserted once, by
+/// `cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data`,
+/// rather than per gate: that keeps the number of full verifications the same
+/// as before the split. Every tamper gate additionally pins the REASON its
+/// tamper is declined, so a fixture that stopped verifying for an unrelated
+/// reason surfaces as a wrong-reason failure rather than as a vacuous pass.
+///
+/// Returns `None` when `lake` is unavailable; the caller then skips, as before.
+fn plans_authority_baseline(prefix: &str) -> Option<PathBuf> {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping Plans.lean authority test: `lake` not available");
-        return;
+        return None;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-plans-authority");
+    let out_dir = temp_dir(prefix);
 
     let compile = aver_command()
         .current_dir(&repo_root)
@@ -1584,6 +1995,18 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
     );
+
+    Some(out_dir)
+}
+
+/// The honest goals package verifies, and `Plans.lean` is its only public plan
+/// DATA: no checker-generated `ArtifactBytes.lean`, no fragment sidecars, and
+/// no plan metadata leaking into the public manifest.
+#[test]
+fn cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority") else {
+        return;
+    };
 
     let wasm = out_dir.join("cert_goals.wasm");
     let cert = out_dir.join("cert");
@@ -1610,6 +2033,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         assert!(entry.get("plan_sha256").is_none());
     }
 
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A cert-supplied `ArtifactBytes.lean` is a checker-owned filename, so a
+/// package that ships a decoy under that name must still be ACCEPTED with the
+/// decoy ignored — the verifier regenerates it from the artifact bytes it read.
+#[test]
+fn cert_plans_authority_ignores_cert_supplied_artifact_bytes_decoy() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-bytes-decoy")
+    else {
+        return;
+    };
+
     // The honest package does not carry ArtifactBytes, but an adversarial
     // package may add a decoy. The verifier must still generate the module from
     // the artifact bytes it read and ignore this checker-owned filename.
@@ -1629,6 +2065,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The expr-fragment acceptance path pins the carrier scratch local declared by
+/// the canonical byte lowering, so a code table claiming zero locals is
+/// DECLINED even with honest bytes and an honest plan.
+#[test]
+fn cert_plans_authority_declines_zero_locals_expr_fragment_code() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-zero-locals") else {
+        return;
+    };
+
     // Honest bytes and plan, but the standalone obligation code table claims
     // zero locals. The expr-fragment acceptance path must pin the one carrier
     // scratch local declared by the canonical byte lowering.
@@ -1641,8 +2090,30 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
             !ok,
             "expr-fragment zero-locals code must be DECLINED:\n{report}"
         );
+        // Pin WHY it declined, like every sibling gate here. On its own lane a
+        // bare `!ok` would also be satisfied by a fixture that stopped building
+        // for an unrelated reason, which would retire this gate silently while
+        // the test still passed. In the monolith the shared clean check ahead
+        // of this block ruled that out; standing alone, it has to say so itself.
+        assert!(
+            !report.contains("CERTIFIED"),
+            "zero-locals tamper must not report any certified export:\n{report}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// An expr-fragment claim whose obligation is not carried by the manifest must
+/// be DECLINED: emptying the manifest obligation list and re-proving the
+/// weakened `Final.cert` must not buy acceptance.
+#[test]
+fn cert_plans_authority_declines_claim_without_manifest_obligation() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-claim-without-obligation")
+    else {
+        return;
+    };
 
     let claim_without_manifest_ob_dir = temp_dir("cert-expr-claim-without-obligation");
     copy_dir(&out_dir, &claim_without_manifest_ob_dir);
@@ -1707,6 +2178,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "expr-fragment claim without manifest obligation credited:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A claim obligation that is no longer structurally the manifest's obligation
+/// — same name, host table wrapped so it differs — must be DECLINED.
+#[test]
+fn cert_plans_authority_declines_artifact_claim_obligation_tamper() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-obligation-tamper")
+    else {
+        return;
+    };
+
     let artifact_obligation_tamper_dir = temp_dir("cert-expr-artifact-obligation-tamper");
     copy_dir(&out_dir, &artifact_obligation_tamper_dir);
     let artifact_obligation_tamper_wasm = artifact_obligation_tamper_dir.join("cert_goals.wasm");
@@ -1756,6 +2240,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "artifact claim obligation tamper credited:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&artifact_obligation_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A package that bridges its acceptance with a carried `axiom` must be
+/// DECLINED by the axiom whitelist, naming the offending axiom.
+#[test]
+fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-axiom-tamper")
+    else {
+        return;
+    };
+
     let artifact_axiom_tamper_dir = temp_dir("cert-expr-artifact-axiom-tamper");
     copy_dir(&out_dir, &artifact_axiom_tamper_dir);
     let artifact_axiom_tamper_wasm = artifact_axiom_tamper_dir.join("cert_goals.wasm");
@@ -1796,6 +2293,18 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "artifact-carried axiom bridge credited:\n{out}"
     );
 
+    let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// `Plans.lean` is the authoritative plan DATA, so reordering a raw plan's
+/// operands there must be DECLINED against the module bytes.
+#[test]
+fn cert_plans_authority_declines_tampered_lean_raw_plan() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-plan-tamper") else {
+        return;
+    };
+
     let lean_plan_tamper_dir = temp_dir("cert-expr-lean-plan-tamper");
     copy_dir(&out_dir, &lean_plan_tamper_dir);
     let lean_plan_tamper_wasm = lean_plan_tamper_dir.join("cert_goals.wasm");
@@ -1823,6 +2332,18 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         !out.contains("CERTIFIED"),
         "tampered Lean RawPlan data credited:\n{out}"
     );
+
+    let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The code-entry byte pin in `Plans.lean` is checked against the module, so a
+/// single flipped opcode byte in that pin must be DECLINED.
+#[test]
+fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-bytes-tamper") else {
+        return;
+    };
 
     let lean_bytes_tamper_dir = temp_dir("cert-expr-lean-bytes-tamper");
     copy_dir(&out_dir, &lean_bytes_tamper_dir);
@@ -1857,6 +2378,19 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         !out.contains("CERTIFIED"),
         "tampered Lean code-entry byte pin credited:\n{out}"
     );
+
+    let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The `WasmSlice` byte-origin pin ties the plan's bytes to their position in
+/// the module, so flipping a byte in that exact-slice argument must be
+/// DECLINED.
+#[test]
+fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
+    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-slice-tamper") else {
+        return;
+    };
 
     let lean_slice_tamper_dir = temp_dir("cert-expr-lean-slice-tamper");
     copy_dir(&out_dir, &lean_slice_tamper_dir);
@@ -1894,14 +2428,8 @@ fn cert_verify_uses_plans_lean_as_the_only_plan_data() {
         "tampered Lean WasmSlice byte-origin pin credited:\n{out}"
     );
 
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
-    let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
-    let _ = std::fs::remove_dir_all(&artifact_obligation_tamper_dir);
-    let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
-    let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
-    let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
     let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);
+    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Byte-derived host-role indices for the goals module, read from the emitted
