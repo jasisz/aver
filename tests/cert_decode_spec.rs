@@ -46,6 +46,7 @@ const FIXTURES: &[&str] = &[
 /// Full S1 transition corpus. Keep this explicit so adding a certkit fixture
 /// requires consciously extending the Rust-splice ↔ kernel-decode regression.
 const S1_FIXTURES: &[&str] = &[
+    "arity3",
     "cell_at",
     "cert_goals",
     "certempty",
@@ -56,6 +57,7 @@ const S1_FIXTURES: &[&str] = &[
     "compose",
     "f64verbatim",
     "intdispatchgen",
+    "letnamed",
     "manytypes",
     "meter",
     "mutual",
