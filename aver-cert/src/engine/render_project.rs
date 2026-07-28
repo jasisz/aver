@@ -2018,8 +2018,20 @@ fn render_byte_nat(bytes: &[u8]) -> String {
     numeral
 }
 
+/// Write one file of the certificate project.
+///
+/// `name` may be a nested path: a module declared as `Data.Fibonacci` transpiles
+/// to `Data/Fibonacci.lean`. The certificate directory is cleared and recreated
+/// at the start of rendering, so intermediate directories never survive from a
+/// previous run and have to be made here — without this, every project with a
+/// dotted module dependency failed to emit a certificate at all.
 fn write(dir: &Path, name: &str, content: &str) -> Result<(), String> {
-    std::fs::write(dir.join(name), content).map_err(|e| format!("write {name}: {e}"))
+    let path = dir.join(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create directory for {name}: {e}"))?;
+    }
+    std::fs::write(path, content).map_err(|e| format!("write {name}: {e}"))
 }
 
 fn sanitize_model_for_cert(content: &str) -> String {
