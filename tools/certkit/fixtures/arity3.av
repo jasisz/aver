@@ -1,0 +1,15 @@
+module Arity3Probe
+    intent =
+        "Probe: three-parameter Bool fragment for the generic bridge."
+    exposes [tripleCheck]
+
+fn tripleCheck(a: Int, b: Int, c: Int) -> Bool
+  ? "Branch on a, compare b or c against constants."
+  match a > 0
+    true -> b > 1
+    false -> c > 2
+
+verify tripleCheck
+    tripleCheck(1, 2, 0) => true
+    tripleCheck(0, 0, 3) => true
+    tripleCheck(0, 0, 0) => false

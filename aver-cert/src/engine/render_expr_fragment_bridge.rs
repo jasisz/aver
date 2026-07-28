@@ -27,8 +27,16 @@ fn expr_fragment_source_model(c: &Cert) -> String {
     debug_assert!(expr_fragment_uses_audited_generic(c));
     match c.arity() {
         1 => c.name().to_string(),
-        2 => format!("fun p => {} p.1 p.2", c.name()),
-        arity => panic!("unsupported generic expr-fragment source arity {arity}"),
+        // The obligation domain is the right-nested product
+        // `FragParams.denote` builds, so the model uncurries the source
+        // function over the same `p.1, p.2.1, …, p.2…2` accessors the
+        // obligation emitter uses (`expr_fragment_dom_accessor`).
+        arity => {
+            let args = (0..arity)
+                .map(|index| format!(" {}", expr_fragment_dom_accessor("p", index, arity)))
+                .collect::<String>();
+            format!("fun p => {}{args}", c.name())
+        }
     }
 }
 
@@ -339,9 +347,20 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     locals.push(".null".to_string());
     let locals = format!("[{}]", locals.join(", "));
     let (dom_name, unpack) = match plan.params.len() {
-        1 => ("a0", String::new()),
-        2 => ("p", "  rcases p with ⟨a0, a1⟩\n".to_string()),
-        arity => panic!("unsupported generic expr-fragment arity {arity}"),
+        1 => ("a0".to_string(), String::new()),
+        // Right-nested product domain: the flat anonymous-constructor
+        // pattern `⟨a0, a1, …⟩` destructures `A × (B × (…))` exactly, so
+        // one `rcases` unpacks any arity.
+        arity => (
+            "p".to_string(),
+            format!(
+                "  rcases p with ⟨{}⟩\n",
+                (0..arity)
+                    .map(|index| format!("a{index}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
     };
     let evalset = format!(
         "AverCert.Plans.{name}Plan, AverCert.PlanLower.maxFuel, \

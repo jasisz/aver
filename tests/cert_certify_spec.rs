@@ -3210,6 +3210,69 @@ fn certify_let_named_shapes_certify_and_lake_build() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// Arity-3 integer/Bool expression fragment through the audited generic
+/// bridge: three Int params, a branch on the first and a constant comparison
+/// of the second or third (three comparisons total — each adds a `by_cases`,
+/// so goal count stays at 2^3). The Lean wall is n-ary throughout
+/// (`FragParams.denote` right-nested products); this pins the renderer's
+/// generalized source model (`fun p => f p.1 p.2.1 p.2.2`) and product
+/// unpacking, and the package must close under lake.
+#[test]
+fn certify_arity_three_fragment_certifies_and_lake_builds() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-arity3");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/arity3.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify arity3 failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let triple = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .find(|entry| entry["name"] == "tripleCheck")
+        .unwrap_or_else(|| panic!("tripleCheck must certify: {manifest:#}"));
+    assert_eq!(triple["class"], "expr-fragment-v1");
+    let manifest_lean = std::fs::read_to_string(out_dir.join("cert").join("Manifest.lean"))
+        .expect("Manifest.lean exists");
+    assert!(
+        manifest_lean.contains("model := fun p => tripleCheck p.1 p.2.1 p.2.2"),
+        "arity-3 obligation must uncurry over the right-nested product:\n{manifest_lean}"
+    );
+    let certificate = std::fs::read_to_string(out_dir.join("cert").join("Certificate.lean"))
+        .expect("Certificate.lean exists");
+    assert!(
+        certificate.contains("rcases p with ⟨a0, a1, a2⟩"),
+        "arity-3 bridge must unpack the right-nested product domain:\n{certificate}"
+    );
+
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping arity3 lake build: `lake` not available");
+        let _ = std::fs::remove_dir_all(&out_dir);
+        return;
+    }
+    assert_certificate_target_builds(&out_dir.join("cert"), "arity-3 fragment");
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// The s33 heap-type boundary: 16 nominal sum roots plus 46 user variant
 /// structs push the Int carrier to wasm type index 64, the first index whose
 /// signed s33 encoding (`c0 00`)
