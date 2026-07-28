@@ -1,0 +1,38 @@
+module LetNamed
+    intent =
+        "Single-use let-renamed certificate shapes: a renamed Option match,"
+        "a named integer increment, and a named range comparison."
+    exposes [named, addTwoNamed, inRangeNamed]
+
+fn named(o: Option<Int>) -> Int
+  ? "Let-renamed Option match with literal arms."
+  y = o
+  match y
+    Option.Some(v) -> 1
+    Option.None -> 0
+
+fn addTwoNamed(n: Int) -> Int
+  ? "Let-named integer increment by two."
+  m = n + 2
+  m
+
+fn inRangeNamed(c: Int) -> Bool
+  ? "Let-named lower-bound comparison feeding the branch."
+  isLow = c >= 48
+  match isLow
+    true -> c <= 57
+    false -> false
+
+verify named
+    named(Option.Some(9)) => 1
+    named(Option.None) => 0
+
+verify addTwoNamed
+    addTwoNamed(1) => 3
+    addTwoNamed(-2) => 0
+
+verify inRangeNamed
+    inRangeNamed(48) => true
+    inRangeNamed(57) => true
+    inRangeNamed(58) => false
+    inRangeNamed(47) => false

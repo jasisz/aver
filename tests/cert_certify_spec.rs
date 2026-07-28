@@ -3142,6 +3142,74 @@ fn certify_adt_witness_shards_all_have_test_functions() {
     }
 }
 
+/// Single-use let-renamed certificate shapes: a let-renamed Option match
+/// (`named`), a let-named integer increment (`addTwoNamed`), and a let-named
+/// comparison feeding the branch (`inRangeNamed`). The MIR optimizer performs
+/// no copy propagation, so each keeps its `Let` node; the plan producer
+/// inlines the proven single-use binding at its use site. All three must
+/// certify as expression fragments and the emitted package must close under
+/// lake.
+#[test]
+fn certify_let_named_shapes_certify_and_lake_build() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-letnamed");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/letnamed.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify letnamed failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let classes: BTreeMap<String, String> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["name"].as_str().unwrap().to_string(),
+                entry["class"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    for name in ["named", "addTwoNamed", "inRangeNamed"] {
+        assert_eq!(
+            classes.get(name).map(String::as_str),
+            Some("expr-fragment-v1"),
+            "{name} must certify through the plan path; manifest classes: {classes:?}"
+        );
+    }
+    assert!(
+        manifest["source_level_only"]
+            .as_array()
+            .is_none_or(|declined| declined.is_empty()),
+        "no let-named shape may decline to source-level-only: {manifest:#}"
+    );
+
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping letnamed lake build: `lake` not available");
+        let _ = std::fs::remove_dir_all(&out_dir);
+        return;
+    }
+    assert_certificate_target_builds(&out_dir.join("cert"), "let-named shapes");
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// The s33 heap-type boundary: 16 nominal sum roots plus 46 user variant
 /// structs push the Int carrier to wasm type index 64, the first index whose
 /// signed s33 encoding (`c0 00`)

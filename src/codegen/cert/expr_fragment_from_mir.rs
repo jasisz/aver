@@ -114,6 +114,8 @@ pub(crate) fn sym_plan_from_mir_fn(
         params_by_slot: &params_by_slot,
         record_fields,
         builtins,
+        aliases: std::collections::HashMap::new(),
+        alias_hops: 0,
         nodes: Vec::new(),
     };
     let (root, root_ty) = builder.lower_expr(&mir_fn.body)?;
@@ -250,17 +252,111 @@ fn expr_fragment_ty_from_mir_name(ty: &str) -> Option<FragTy> {
     }
 }
 
-struct MirSymPlanBuilder<'a> {
+/// Depth guard for let-alias resolution: a chain deeper than this refuses to
+/// plan instead of recursing further. Well-formed MIR let chains are acyclic,
+/// so any real program resolves in a handful of hops; the cap only exists so
+/// pathological nesting degrades to an unplanned fn.
+const MAX_ALIAS_RESOLUTION_DEPTH: usize = 32;
+
+/// Number of reads of `slot` inside `expr`: `Local` reads plus first-class
+/// fn-value calls through the slot (`MirCallee::LocalSlot`). `Let` bindings
+/// and pattern bindings are definitions, not reads; MIR mints locals fresh
+/// per binding, so no shadowing can hide a read from this count.
+fn count_slot_reads(expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>, slot: u32) -> usize {
+    use crate::ir::mir::MirExpr;
+    let sum_all =
+        |items: &[crate::ast::Spanned<MirExpr>]| -> usize {
+            items.iter().map(|item| count_slot_reads(item, slot)).sum()
+        };
+    match &expr.node {
+        MirExpr::Literal(_) | MirExpr::FnValue(_) => 0,
+        MirExpr::Local(local) => usize::from(local.node.slot.0 == slot),
+        MirExpr::Let(l) => {
+            count_slot_reads(&l.node.value, slot) + count_slot_reads(&l.node.body, slot)
+        }
+        MirExpr::Call(call) => {
+            let callee_reads = match &call.node.callee {
+                crate::ir::mir::MirCallee::LocalSlot {
+                    slot: callee_slot, ..
+                } => usize::from(u32::from(*callee_slot) == slot),
+                _ => 0,
+            };
+            callee_reads + sum_all(&call.node.args)
+        }
+        MirExpr::TailCall(tail_call) => sum_all(&tail_call.node.args),
+        MirExpr::BinOp(binop) => {
+            count_slot_reads(&binop.node.lhs, slot) + count_slot_reads(&binop.node.rhs, slot)
+        }
+        MirExpr::Neg(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => count_slot_reads(inner, slot),
+        MirExpr::Match(m) => {
+            count_slot_reads(&m.node.subject, slot)
+                + m.node
+                    .arms
+                    .iter()
+                    .map(|arm| count_slot_reads(&arm.body, slot))
+                    .sum::<usize>()
+        }
+        MirExpr::Construct(construct) => sum_all(&construct.node.args),
+        MirExpr::RecordCreate(create) => create
+            .node
+            .fields
+            .iter()
+            .map(|field| count_slot_reads(&field.value, slot))
+            .sum(),
+        MirExpr::RecordUpdate(update) => {
+            count_slot_reads(&update.node.base, slot)
+                + update
+                    .node
+                    .updates
+                    .iter()
+                    .map(|field| count_slot_reads(&field.value, slot))
+                    .sum::<usize>()
+        }
+        MirExpr::Project(project) => count_slot_reads(&project.node.base, slot),
+        MirExpr::IfThenElse(ite) => {
+            count_slot_reads(&ite.node.cond, slot)
+                + count_slot_reads(&ite.node.then_branch, slot)
+                + count_slot_reads(&ite.node.else_branch, slot)
+        }
+        MirExpr::List(items) | MirExpr::Tuple(items) => sum_all(items),
+        MirExpr::MapLiteral(pairs) => pairs
+            .iter()
+            .map(|(key, value)| count_slot_reads(key, slot) + count_slot_reads(value, slot))
+            .sum(),
+        MirExpr::InterpolatedStr(parts) => parts
+            .iter()
+            .map(|part| match part {
+                crate::ir::mir::MirStrPart::Literal(_) => 0,
+                crate::ir::mir::MirStrPart::Expr(inner) => count_slot_reads(inner, slot),
+            })
+            .sum(),
+        MirExpr::IndependentProduct(product) => sum_all(&product.node.items),
+    }
+}
+
+struct MirSymPlanBuilder<'a, 'e> {
     params_by_slot: &'a std::collections::HashMap<u32, (u32, SymTy)>,
     record_fields: RecordFieldLookup<'a>,
     builtins: &'a [String],
+    /// Single-use `let` bindings in scope: slot -> initializer. A `Local`
+    /// read of an aliased slot re-lowers the initializer at the use site
+    /// (sound because every plannable MirExpr is pure, and exact because the
+    /// binding is proven single-use before it is recorded).
+    aliases: std::collections::HashMap<u32, &'e crate::ast::Spanned<crate::ir::mir::MirExpr>>,
+    /// Alias hops currently on the resolution stack (see
+    /// [`MAX_ALIAS_RESOLUTION_DEPTH`]).
+    alias_hops: usize,
     nodes: Vec<SymNode>,
 }
 
-impl MirSymPlanBuilder<'_> {
+impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
     fn lower_expr(
         &mut self,
-        expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        expr: &'e crate::ast::Spanned<crate::ir::mir::MirExpr>,
     ) -> Option<(SymValueId, SymTy)> {
         match &expr.node {
             crate::ir::mir::MirExpr::Literal(lit) => match &lit.node {
@@ -276,9 +372,22 @@ impl MirSymPlanBuilder<'_> {
                 _ => None,
             },
             crate::ir::mir::MirExpr::Local(local) => {
-                let (index, ty) = self.params_by_slot.get(&local.node.slot.0)?.clone();
-                self.push_node(ty, SymNodeKind::Param { index })
+                if let Some((index, ty)) = self.params_by_slot.get(&local.node.slot.0).cloned() {
+                    return self.push_node(ty, SymNodeKind::Param { index });
+                }
+                // The one read of a single-use `let` binding: lower the
+                // recorded initializer here, preserving stack discipline
+                // (nodes append in evaluation order at the use site).
+                let init = *self.aliases.get(&local.node.slot.0)?;
+                if self.alias_hops >= MAX_ALIAS_RESOLUTION_DEPTH {
+                    return None;
+                }
+                self.alias_hops += 1;
+                let lowered = self.lower_expr(init);
+                self.alias_hops -= 1;
+                lowered
             }
+            crate::ir::mir::MirExpr::Let(spanned_let) => self.lower_let(&spanned_let.node),
             crate::ir::mir::MirExpr::BinOp(binop) => self.lower_binop(&binop.node),
             crate::ir::mir::MirExpr::Project(spanned_proj) => {
                 // Record field access `base.field`: only a named-record base
@@ -307,6 +416,45 @@ impl MirSymPlanBuilder<'_> {
             crate::ir::mir::MirExpr::Call(call) => self.lower_fused_vector_get(&call.node),
             _ => None,
         }
+    }
+
+    /// Single-use `let` inlining: `x = init; body` lowers as `body` with the
+    /// single read of `x` replaced by lowering `init` at the use site. All
+    /// constraints are mandatory and fail closed to "unplanned":
+    ///
+    /// - the binding must be read EXACTLY once across the whole remaining
+    ///   body, including nested if/match sub-blocks and later `let`
+    ///   initializers (a multi-use binding inlined per-use would duplicate
+    ///   evaluation relative to the MIR-emitted bytes' sharing);
+    /// - the initializer must itself be plannable — checked where it is
+    ///   lowered at the use site; purity comes for free because every
+    ///   plannable MirExpr shape is pure (the fn-level effect gate in
+    ///   `sym_plan_from_mir_fn` is unchanged);
+    /// - malformed shapes (a binding shadowing a param slot, a
+    ///   self-referential initializer) refuse outright.
+    fn lower_let(
+        &mut self,
+        spanned_let: &'e crate::ir::mir::MirLet,
+    ) -> Option<(SymValueId, SymTy)> {
+        if self.params_by_slot.contains_key(&spanned_let.binding.0) {
+            return None;
+        }
+        if count_slot_reads(&spanned_let.body, spanned_let.binding.0) != 1 {
+            return None;
+        }
+        if count_slot_reads(&spanned_let.value, spanned_let.binding.0) != 0 {
+            return None;
+        }
+        let displaced = self
+            .aliases
+            .insert(spanned_let.binding.0, &spanned_let.value);
+        let lowered = self.lower_expr(&spanned_let.body);
+        // Restore the exact scope: the binding ends with its body.
+        match displaced {
+            Some(previous) => self.aliases.insert(spanned_let.binding.0, previous),
+            None => self.aliases.remove(&spanned_let.binding.0),
+        };
+        lowered
     }
 
     /// The fused `Option.withDefault(Vector.get(p0, p1), <int literal>)`
@@ -360,7 +508,7 @@ impl MirSymPlanBuilder<'_> {
         )
     }
 
-    fn lower_binop(&mut self, binop: &crate::ir::mir::MirBinOp) -> Option<(SymValueId, SymTy)> {
+    fn lower_binop(&mut self, binop: &'e crate::ir::mir::MirBinOp) -> Option<(SymValueId, SymTy)> {
         // Narrow straight-line integer face: exactly `param + k` over the
         // single Int parameter (const on the right, matching the emitted byte
         // shape). Anything broader stays unplanned so the emitted bytes are
@@ -428,10 +576,10 @@ impl MirSymPlanBuilder<'_> {
         )
     }
 
-    fn int_const_cmp_shape<'a>(
+    fn int_const_cmp_shape(
         &self,
-        binop: &'a crate::ir::mir::MirBinOp,
-    ) -> Option<(&'a crate::ast::Spanned<crate::ir::mir::MirExpr>, crate::ast::BinOp, i64, bool)>
+        binop: &'e crate::ir::mir::MirBinOp,
+    ) -> Option<(&'e crate::ast::Spanned<crate::ir::mir::MirExpr>, crate::ast::BinOp, i64, bool)>
     {
         if let Some(k) = mir_int_literal(&binop.rhs)
             && self.expr_is_int_param(&binop.lhs)
@@ -446,19 +594,39 @@ impl MirSymPlanBuilder<'_> {
         None
     }
 
-    fn expr_is_int_param(&self, expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>) -> bool {
-        match &expr.node {
-            crate::ir::mir::MirExpr::Local(local) => self
-                .params_by_slot
-                .get(&local.node.slot.0)
-                .is_some_and(|(_, ty)| ty == &SymTy::Int),
-            _ => false,
+    /// Resolve a `Local` read through the single-use let-alias chain to the
+    /// param it terminates at. Only chains made of `Local` reads qualify: a
+    /// COMPUTED alias (any non-`Local` initializer) returns `None`. The two
+    /// callers require exactly that: the `intConstCmp` operand must be a
+    /// param read (PlanCheck's `isSymParam` — kernel-side, not adapter
+    /// courtesy), and the tag-match scrutinee is pinned by the wall face to
+    /// the param-0 local read.
+    fn resolve_local_chain_param(
+        &self,
+        expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        hops: usize,
+    ) -> Option<(u32, SymTy)> {
+        if hops > MAX_ALIAS_RESOLUTION_DEPTH {
+            return None;
         }
+        let crate::ir::mir::MirExpr::Local(local) = &expr.node else {
+            return None;
+        };
+        if let Some(entry) = self.params_by_slot.get(&local.node.slot.0) {
+            return Some(entry.clone());
+        }
+        let init = self.aliases.get(&local.node.slot.0)?;
+        self.resolve_local_chain_param(init, hops + 1)
+    }
+
+    fn expr_is_int_param(&self, expr: &crate::ast::Spanned<crate::ir::mir::MirExpr>) -> bool {
+        self.resolve_local_chain_param(expr, 0)
+            .is_some_and(|(_, ty)| ty == SymTy::Int)
     }
 
     fn lower_int_const_cmp(
         &mut self,
-        operand: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        operand: &'e crate::ast::Spanned<crate::ir::mir::MirExpr>,
         op: crate::ast::BinOp,
         k: i64,
         const_on_left: bool,
@@ -479,7 +647,7 @@ impl MirSymPlanBuilder<'_> {
         )
     }
 
-    fn lower_if(&mut self, ite: &crate::ir::mir::MirIfThenElse) -> Option<(SymValueId, SymTy)> {
+    fn lower_if(&mut self, ite: &'e crate::ir::mir::MirIfThenElse) -> Option<(SymValueId, SymTy)> {
         let (cond, cond_ty) = self.lower_expr(&ite.cond)?;
         if cond_ty != SymTy::Bool {
             return None;
@@ -489,6 +657,8 @@ impl MirSymPlanBuilder<'_> {
             params_by_slot: self.params_by_slot,
             record_fields: self.record_fields,
             builtins: self.builtins,
+            aliases: self.aliases.clone(),
+            alias_hops: self.alias_hops,
             nodes: Vec::new(),
         };
         let (then_root, then_ty) = then_builder.lower_expr(&ite.then_branch)?;
@@ -498,6 +668,8 @@ impl MirSymPlanBuilder<'_> {
             params_by_slot: self.params_by_slot,
             record_fields: self.record_fields,
             builtins: self.builtins,
+            aliases: self.aliases.clone(),
+            alias_hops: self.alias_hops,
             nodes: Vec::new(),
         };
         let (else_root, else_ty) = else_builder.lower_expr(&ite.else_branch)?;
@@ -519,16 +691,17 @@ impl MirSymPlanBuilder<'_> {
 
     fn lower_tag_match(
         &mut self,
-        m: &crate::ir::mir::MirMatch,
+        m: &'e crate::ir::mir::MirMatch,
     ) -> Option<(SymValueId, SymTy)> {
         if self.params_by_slot.len() != 1 || m.arms.len() != 2 {
             return None;
         }
-        let crate::ir::mir::MirExpr::Local(subject_local) = &m.subject.node else {
-            return None;
-        };
-        let (_, subject_ty) = self.params_by_slot.get(&subject_local.node.slot.0)?;
-        let (type_name, hit_ctor, miss_ctor, tag) = match subject_ty {
+        // The subject must resolve to THE single param — directly or through
+        // a single-use let-alias chain of `Local` reads (the wall face pins
+        // the encoded scrutinee to the param-0 local read, which is exactly
+        // what the aliased subject lowers back to in `push_tag_match`).
+        let (_, subject_ty) = self.resolve_local_chain_param(&m.subject, 0)?;
+        let (type_name, hit_ctor, miss_ctor, tag) = match &subject_ty {
             SymTy::App(name, args) if name == "Option" && args.len() == 1 => (
                 "Option",
                 crate::ir::hir::BuiltinCtor::OptionSome,
@@ -592,7 +765,7 @@ impl MirSymPlanBuilder<'_> {
 
     fn push_tag_match(
         &mut self,
-        subject: &crate::ast::Spanned<crate::ir::mir::MirExpr>,
+        subject: &'e crate::ast::Spanned<crate::ir::mir::MirExpr>,
         type_name: &str,
         tag: i32,
         hit: i64,
@@ -969,8 +1142,8 @@ mod tests {
     use crate::ir::hir::BuiltinCtor;
     use crate::ir::FnId;
     use crate::ir::mir::{
-        LocalId, MirBinOp, MirCtor, MirExpr, MirFn, MirFnRepr, MirLocal, MirMatch, MirMatchArm,
-        MirParam, MirPattern,
+        LocalId, MirBinOp, MirCtor, MirExpr, MirFn, MirFnRepr, MirIfThenElse, MirLet, MirLocal,
+        MirMatch, MirMatchArm, MirParam, MirPattern,
     };
 
     fn span<T>(node: T) -> Spanned<T> {
@@ -987,6 +1160,58 @@ mod tests {
 
     fn int_lit(value: i64) -> Spanned<MirExpr> {
         span(MirExpr::Literal(span(Literal::Int(value))))
+    }
+
+    fn bool_lit(value: bool) -> Spanned<MirExpr> {
+        span(MirExpr::Literal(span(Literal::Bool(value))))
+    }
+
+    fn binop(op: BinOp, lhs: Spanned<MirExpr>, rhs: Spanned<MirExpr>) -> Spanned<MirExpr> {
+        span(MirExpr::BinOp(span(MirBinOp {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        })))
+    }
+
+    fn let_expr(slot: u32, value: Spanned<MirExpr>, body: Spanned<MirExpr>) -> Spanned<MirExpr> {
+        span(MirExpr::Let(span(MirLet {
+            binding: LocalId(slot),
+            binding_name: "y".to_string(),
+            value: Box::new(value),
+            body: Box::new(body),
+        })))
+    }
+
+    fn if_expr(
+        cond: Spanned<MirExpr>,
+        then_branch: Spanned<MirExpr>,
+        else_branch: Spanned<MirExpr>,
+    ) -> Spanned<MirExpr> {
+        span(MirExpr::IfThenElse(span(MirIfThenElse {
+            cond: Box::new(cond),
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+        })))
+    }
+
+    /// `fn f(x: Int) -> <return_type>` with an arbitrary body.
+    fn int_param_fn(return_type: &str, body: Spanned<MirExpr>, local_count: u32) -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "f".to_string(),
+            params: vec![MirParam {
+                local: LocalId(0),
+                name: "x".to_string(),
+                ty: "Int".to_string(),
+            }],
+            return_type: return_type.to_string(),
+            effects: vec![],
+            body,
+            local_count,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
     }
 
     fn float_local(slot: u32) -> Spanned<MirExpr> {
@@ -1408,6 +1633,181 @@ mod tests {
         // Control: the identical body with the default (all-boxed) repr plans.
         let boxed = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
         assert!(fragment_plan_from_mir_fn(&boxed, &|_, _| None, &[]).is_some());
+    }
+
+    /// `named(egg) = y = egg; match y { None -> 0; Some(_) -> 1 }`: the
+    /// let-renamed subject resolves through the alias chain back to the
+    /// single param, so the encoded scrutinee is still the param-0 read the
+    /// wall face pins.
+    fn let_renamed_option_match_fn() -> MirFn {
+        let m = span(MirExpr::Match(span(MirMatch {
+            subject: Box::new(int_local(2)),
+            arms: vec![
+                MirMatchArm {
+                    pattern: MirPattern::Ctor {
+                        ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+                        bindings: vec![],
+                        binding_names: vec![],
+                    },
+                    body: int_lit(0),
+                },
+                MirMatchArm {
+                    pattern: MirPattern::Ctor {
+                        ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+                        bindings: vec![LocalId(1)],
+                        binding_names: vec!["value".to_string()],
+                    },
+                    body: int_lit(1),
+                },
+            ],
+        })));
+        let mut mir_fn = option_slot_count_fn(int_lit(1));
+        mir_fn.body = let_expr(2, int_local(0), m);
+        mir_fn.local_count = 3;
+        mir_fn
+    }
+
+    #[test]
+    fn let_renamed_option_match_lowers_to_tag_dispatch() {
+        let mir_fn = let_renamed_option_match_fn();
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).expect("tag plan");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("let-renamed Option tag match must remain a source symbolic plan")
+        };
+        assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
+        assert!(matches!(
+            &sym.body.nodes[1].kind,
+            SymNodeKind::TagMatch {
+                scrutinee: SymValueId(0),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn chained_let_renames_resolve_recursively() {
+        // `y = egg; z = y; match z { ... }` — two hops back to the param.
+        let mut mir_fn = let_renamed_option_match_fn();
+        let MirExpr::Let(spanned_let) = mir_fn.body.node else {
+            panic!("fixture body is a let")
+        };
+        let mut inner_match = *spanned_let.node.body;
+        let MirExpr::Match(m) = &mut inner_match.node else {
+            panic!("fixture let body is a match")
+        };
+        m.node.subject = Box::new(int_local(3));
+        mir_fn.body = let_expr(2, int_local(0), let_expr(3, int_local(2), inner_match));
+        mir_fn.local_count = 4;
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).expect("tag plan");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("chained let renames must remain a source symbolic plan")
+        };
+        assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
+    }
+
+    #[test]
+    fn let_over_int_add_lowers_through_the_int_add_face() {
+        // `m = x + 2; m` — the single read of `m` re-lowers the initializer,
+        // producing exactly the straight-line integer face node order.
+        let body = let_expr(1, binop(BinOp::Add, int_local(0), int_lit(2)), int_local(1));
+        let mir_fn = int_param_fn("Int", body, 2);
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).expect("plan");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("let over int add should use SymPlan")
+        };
+        assert!(matches!(sym.body.nodes[0].kind, SymNodeKind::Param { index: 0 }));
+        assert!(matches!(sym.body.nodes[1].kind, SymNodeKind::ConstInt(2)));
+        assert!(matches!(
+            sym.body.nodes[2].kind,
+            SymNodeKind::Prim {
+                op: SymPrim::IntAdd,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn let_bound_comparison_feeds_the_if_condition() {
+        // `isLow = x >= 48; if isLow { x <= 57 } else { false }` — the
+        // `inRangeNamed` shape after `bool_match_to_if`.
+        let body = let_expr(
+            1,
+            binop(BinOp::Gte, int_local(0), int_lit(48)),
+            if_expr(
+                int_local(1),
+                binop(BinOp::Lte, int_local(0), int_lit(57)),
+                bool_lit(false),
+            ),
+        );
+        let mir_fn = int_param_fn("Bool", body, 2);
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).expect("plan");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("let-bound comparison should use SymPlan")
+        };
+        assert!(matches!(
+            sym.body.nodes[1].kind,
+            SymNodeKind::IntConstCmp {
+                op: SymIntCmp::Ge,
+                value: SymValueId(0),
+                constant: 48,
+            }
+        ));
+        assert!(matches!(sym.body.nodes[2].kind, SymNodeKind::If { cond: SymValueId(1), .. }));
+    }
+
+    #[test]
+    fn multi_use_let_binding_stays_unplanned() {
+        // `y = x; if y > 0 { y <= 5 } else { false }` — TWO reads of `y`
+        // (condition + then branch). Inlining would be semantically fine for
+        // a pure alias, but the single-use gate is the contract: refuse.
+        let body = let_expr(
+            1,
+            int_local(0),
+            if_expr(
+                binop(BinOp::Gt, int_local(1), int_lit(0)),
+                binop(BinOp::Lte, int_local(1), int_lit(5)),
+                bool_lit(false),
+            ),
+        );
+        let mir_fn = int_param_fn("Bool", body, 2);
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
+            "a let binding read more than once must stay unplanned"
+        );
+    }
+
+    #[test]
+    fn computed_alias_is_not_an_int_const_cmp_operand() {
+        // `y = x + 2; y > 0` — the alias chain terminates in a COMPUTED
+        // expression, not a param read. PlanCheck's `isSymParam` requires the
+        // comparison operand to be a param read, so the producer must refuse
+        // rather than emit a plan the kernel rejects.
+        let body = let_expr(
+            1,
+            binop(BinOp::Add, int_local(0), int_lit(2)),
+            binop(BinOp::Gt, int_local(1), int_lit(0)),
+        );
+        let mir_fn = int_param_fn("Bool", body, 2);
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
+            "a computed let alias must not become an intConstCmp operand"
+        );
+    }
+
+    #[test]
+    fn let_with_unplannable_initializer_stays_unplanned() {
+        // `y = -x; y > 0` — `Neg` has no plan lowering, so the use-site
+        // lowering of the initializer fails and the fn stays unplanned.
+        let body = let_expr(
+            1,
+            span(MirExpr::Neg(Box::new(int_local(0)))),
+            binop(BinOp::Gt, int_local(1), int_lit(0)),
+        );
+        let mir_fn = int_param_fn("Bool", body, 2);
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
+            "an unplannable initializer must keep the fn unplanned"
+        );
     }
 
     #[test]
