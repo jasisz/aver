@@ -15,12 +15,12 @@ pub const FORMAT_VERSION: u32 = 1;
 /// value. The declared arith helper indices (carrier, limb, and the
 /// decompose/normalize/strip/umagCmp sub-routines) are proof-term data in the
 /// generated Lean certificate, not public JSON, so the acceptance pin can
-/// confirm each declared add/sub/mul helper body byte-for-byte without moving
-/// the public schema. Version 3 added the required `toIndex` key to the
-/// object form of `hostRoleTable`: the fused vector-read face binds the
-/// `__aint_to_index` helper by its named function export, exactly like `box`,
-/// and the exact-object manifest matching means a version-2 table would
-/// reject every module carrying the helper.
+/// confirm each declared helper body byte-for-byte — box and toIndex included,
+/// alongside add/sub/mul — without moving the public schema. Version 3 added
+/// the required `toIndex` key to the object form of `hostRoleTable`: the fused
+/// vector-read face binds the `__aint_to_index` helper by its named function
+/// export, exactly like `box`, and the exact-object manifest matching means a
+/// version-2 table would reject every module carrying the helper.
 pub const CERT_SCHEMA_VERSION: u32 = 3;
 
 /// Named theorem audited by the checker-owned witness.
@@ -28,7 +28,7 @@ pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:eacb494ea171bab6099eb662145c8c3f9fc3ce70d0c4fd72e22ebd6ae2a8b8d0";
+    "sha256:cc44a3f28eaa3d7132532d2676267e6a75eaaac282f81764e7f2aefb73c48835";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

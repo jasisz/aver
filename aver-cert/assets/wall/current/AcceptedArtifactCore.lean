@@ -1533,24 +1533,37 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
 
 /-- The whole-module arith host-role pin — declare-and-confirm, no fingerprint.
     A byte-provably carrierless module (`__rt_aint_from_i64` export absent)
-    declares no table and no params. A carriered module declares both, with the
-    `box` role bound by the runtime export name exactly as before (#736), the
-    `toIndex` role bound by its own runtime export name the same way, the
-    declared indices inside the single-byte-LEB regime, and each declared
-    add/sub/mul index pinned to its canonical helper body by template equality.
-    The three-state consistency between presence of the helper export and
-    presence of the declaration is preserved: mixing `some`/`none` across the
+    declares no table and no params. A carriered module declares both, and every
+    declared role index is pinned to its canonical helper body by template
+    equality. The three-state consistency between presence of the helper export
+    and presence of the declaration is preserved: mixing `some`/`none` across the
     table and params fails closed. No byte scan DISCOVERS a role here: the
     module-wide arith scanner that predated this pin has been deleted from the
     wall rather than left in place as an unreachable decoder.
 
-    The `toIndex` conjunct is load-bearing, not decorative: the fused vector-read
+    `box` and `toIndex` carry a SECOND pin, to their runtime export names
+    (#736 for `box`), and both pins are kept because they constrain different
+    things. The name equality says at WHICH INDEX the role may be declared; the
+    template equality says WHICH BYTES sit there. Only the name equality has any
+    force on a `none` declaration, since `arithRoleCheck` is vacuous on `none`
+    by design — dropping it would turn "this module exports no
+    `__aint_to_index`" from a byte-proved fact into a producer's free choice.
+    Conversely only the template equality constrains the code at an
+    honestly-named export, which the name equality never reads.
+
+    The `toIndex` pins are load-bearing, not decorative: the fused vector-read
     face wires an ABSTRACT contract function at the declared index and never
-    interprets that function's body, so without this equality a package could
-    declare any same-signature function as the index helper and certify a law the
-    bytes do not satisfy. `none` on both sides is the honest reading for a
-    carriered module that exports no `__aint_to_index`; a claim citing the role
-    then fails to match, because `Subject.hostRoles` binds it to `none`. -/
+    interprets that function's body, so without them a package could declare
+    any same-signature function as the index helper and certify a law the bytes
+    do not satisfy. `none` on both sides is the honest reading for a carriered
+    module that exports no `__aint_to_index`; a claim citing the role then fails
+    to match, because `Subject.hostRoles` binds it to `none`.
+
+    What none of this establishes: the template equality identifies the code
+    behind a role, never its meaning. The add/sub/mul/box/index-extraction
+    contracts stay explicit hypotheses of `Obligation.holds` and stay disclosed
+    by `ClaimAxes`. Pinning bytes narrows the artifact, not the trusted-computing
+    base. -/
 def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
     (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
   match roles?, params? with
@@ -1560,6 +1573,8 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
       (roles.box == CertDecode.AddSub.boxIdx n len) &&
       (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
       ArithTemplateDerisk.checkArithHostParams p &&
+      arithRoleCheck n len .box roles.box p &&
+      arithRoleCheck n len .toIndex roles.toIndex p &&
       arithRoleCheck n len .add roles.add p &&
       arithRoleCheck n len .sub roles.sub p &&
       arithRoleCheck n len .mul roles.mul p
@@ -1567,11 +1582,12 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
 
 /-- Bind the declared host-role table and arith indices to the module bytes by
     TEMPLATE equality. Replaces the earlier byte-fingerprint decode: the
-    certificate DECLARES which function index carries each add/sub/mul helper
-    (plus the carrier/limb/sub-routine indices the bodies mention) and the wall
+    certificate DECLARES which function index carries each helper (plus the
+    carrier/limb/sub-routine indices the bodies mention) and the wall
     SYNTHESIZES the canonical helper body from that declaration and pins the real
-    code bytes equal to it. `box` stays name-bound and the carrierless class
-    stays proved by the absent `__rt_aint_from_i64` export (#736 intact). -/
+    code bytes equal to it. `box` and `toIndex` stay name-bound as well, and the
+    carrierless class stays proved by the absent `__rt_aint_from_i64` export
+    (#736 intact). -/
 def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
   arithTableCheck artifact.modBytes artifact.modLen
     artifact.manifest.subject.hostRoleTable artifact.manifest.subject.arithParams = true
