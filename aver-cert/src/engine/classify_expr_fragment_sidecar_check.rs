@@ -472,10 +472,15 @@ fn prim_has_nan_nondeterministic_float_result(op: &FragPrim) -> bool {
     match op {
         FragPrim::F64Add | FragPrim::F64Mul => true,
         FragPrim::F64Le
+        | FragPrim::F64Ge
+        | FragPrim::F64Lt
+        | FragPrim::F64Gt
+        | FragPrim::F64Eq
         | FragPrim::I64Eq
         | FragPrim::I64LeS
         | FragPrim::I64LtS
         | FragPrim::I64GeS
+        | FragPrim::I64GtS
         | FragPrim::I32Eq
         | FragPrim::I32LtS
         | FragPrim::I32GtS => false,

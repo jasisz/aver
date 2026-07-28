@@ -70,6 +70,10 @@ impl SymPrim {
             SymPrim::FloatAdd => "float.add",
             SymPrim::FloatMul => "float.mul",
             SymPrim::FloatLe => "float.le",
+            SymPrim::FloatGe => "float.ge",
+            SymPrim::FloatLt => "float.lt",
+            SymPrim::FloatGt => "float.gt",
+            SymPrim::FloatEq => "float.eq",
             SymPrim::IntAdd => "int.add",
             SymPrim::StringEq => "string.eq",
             SymPrim::StringConcat => "string.concat",
@@ -81,6 +85,10 @@ impl SymPrim {
             "float.add" => Some(SymPrim::FloatAdd),
             "float.mul" => Some(SymPrim::FloatMul),
             "float.le" => Some(SymPrim::FloatLe),
+            "float.ge" => Some(SymPrim::FloatGe),
+            "float.lt" => Some(SymPrim::FloatLt),
+            "float.gt" => Some(SymPrim::FloatGt),
+            "float.eq" => Some(SymPrim::FloatEq),
             "int.add" => Some(SymPrim::IntAdd),
             "string.eq" => Some(SymPrim::StringEq),
             "string.concat" => Some(SymPrim::StringConcat),
@@ -93,6 +101,10 @@ impl SymPrim {
             SymPrim::FloatAdd => ".floatAdd",
             SymPrim::FloatMul => ".floatMul",
             SymPrim::FloatLe => ".floatLe",
+            SymPrim::FloatGe => ".floatGe",
+            SymPrim::FloatLt => ".floatLt",
+            SymPrim::FloatGt => ".floatGt",
+            SymPrim::FloatEq => ".floatEq",
             SymPrim::IntAdd => ".intAdd",
             SymPrim::StringEq => ".stringEq",
             SymPrim::StringConcat => ".stringConcat",
@@ -107,6 +119,7 @@ impl SymIntCmp {
             SymIntCmp::Lt => "int.lt",
             SymIntCmp::Le => "int.le",
             SymIntCmp::Ge => "int.ge",
+            SymIntCmp::Gt => "int.gt",
         }
     }
 
@@ -116,6 +129,7 @@ impl SymIntCmp {
             "int.lt" => Some(SymIntCmp::Lt),
             "int.le" => Some(SymIntCmp::Le),
             "int.ge" => Some(SymIntCmp::Ge),
+            "int.gt" => Some(SymIntCmp::Gt),
             _ => None,
         }
     }
@@ -126,6 +140,7 @@ impl SymIntCmp {
             SymIntCmp::Lt => ".lt",
             SymIntCmp::Le => ".le",
             SymIntCmp::Ge => ".ge",
+            SymIntCmp::Gt => ".gt",
         }
     }
 }

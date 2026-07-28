@@ -401,9 +401,14 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         Operator::I64LeS => Op::I64LeS,
                         Operator::I64LtS => Op::I64LtS,
                         Operator::I64GeS => Op::I64GeS,
+                        Operator::I64GtS => Op::I64GtS,
                         Operator::F64Add => Op::F64Add,
                         Operator::F64Mul => Op::F64Mul,
                         Operator::F64Le => Op::F64Le,
+                        Operator::F64Ge => Op::F64Ge,
+                        Operator::F64Lt => Op::F64Lt,
+                        Operator::F64Gt => Op::F64Gt,
+                        Operator::F64Eq => Op::F64Eq,
                         Operator::I64Add => {
                             saw_i64_add = true;
                             first_i64_arith.get_or_insert(HostRole::Add);

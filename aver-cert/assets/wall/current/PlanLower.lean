@@ -20,10 +20,15 @@ def primInstr : FragPrim → WInstr
   | .f64Add => .f64Add
   | .f64Mul => .f64Mul
   | .f64Le => .f64Le
+  | .f64Ge => .f64Ge
+  | .f64Lt => .f64Lt
+  | .f64Gt => .f64Gt
+  | .f64Eq => .f64Eq
   | .i64Eq => .i64Eq
   | .i64LeS => .i64LeS
   | .i64LtS => .i64LtS
   | .i64GeS => .i64GeS
+  | .i64GtS => .i64GtS
   | .i32Eq => .i32Eq
   | .i32LtS => .i32LtS
   | .i32GtS => .i32GtS

@@ -300,6 +300,40 @@ where
                     let rhs = expr_fragment_value_expr(block, args[1], local);
                     format!("Float.ofBits ({lhs}) <= Float.ofBits ({rhs})")
                 }
+                // `f64.ge` is stated as the swapped `<=`, exactly the shape the
+                // wall interpreter gives `.f64Ge` (`b32 (f b <= f a)`) and the
+                // same convention `i64.ge_s` already uses. It is an IEEE ordered
+                // comparison in both directions, so a NaN operand makes it false
+                // — the identical NaN posture as `f64.le`.
+                FragPrim::F64Ge => {
+                    let lhs = expr_fragment_value_expr(block, args[0], local);
+                    let rhs = expr_fragment_value_expr(block, args[1], local);
+                    format!("Float.ofBits ({rhs}) <= Float.ofBits ({lhs})")
+                }
+                FragPrim::F64Lt => {
+                    let lhs = expr_fragment_value_expr(block, args[0], local);
+                    let rhs = expr_fragment_value_expr(block, args[1], local);
+                    format!("Float.ofBits ({lhs}) < Float.ofBits ({rhs})")
+                }
+                // `f64.gt` is stated as the swapped `<`, matching the wall
+                // interpreter's `.f64Gt` clause (`b32 (f b < f a)`) and the
+                // swapped-relation convention `f64.ge`/`i64.ge_s` already use.
+                FragPrim::F64Gt => {
+                    let lhs = expr_fragment_value_expr(block, args[0], local);
+                    let rhs = expr_fragment_value_expr(block, args[1], local);
+                    format!("Float.ofBits ({rhs}) < Float.ofBits ({lhs})")
+                }
+                // `f64.eq` is stated with Bool-valued `==` (`Float.beq`, the
+                // extern IEEE comparison), NEVER with propositional `=`:
+                // `Float` has no lawful `DecidableEq`, and `Float.ofBits b =
+                // Float.ofBits b` holds for a NaN pattern while `f64.eq`
+                // returns 0 for it. `==` is exactly the wall interpreter's
+                // `.f64Eq` clause (`b32 (f a == f b)`).
+                FragPrim::F64Eq => {
+                    let lhs = expr_fragment_value_expr(block, args[0], local);
+                    let rhs = expr_fragment_value_expr(block, args[1], local);
+                    format!("Float.ofBits ({lhs}) == Float.ofBits ({rhs})")
+                }
                 FragPrim::I64Eq => {
                     let lhs = expr_fragment_value_expr(block, args[0], local);
                     let rhs = expr_fragment_value_expr(block, args[1], local);
@@ -319,6 +353,13 @@ where
                     let lhs = expr_fragment_value_expr(block, args[0], local);
                     let rhs = expr_fragment_value_expr(block, args[1], local);
                     format!("({rhs}) <= ({lhs})")
+                }
+                // Swapped `<`, the same convention `i64.ge_s` uses for `>=`,
+                // matching the wall interpreter's `.i64GtS` clause.
+                FragPrim::I64GtS => {
+                    let lhs = expr_fragment_value_expr(block, args[0], local);
+                    let rhs = expr_fragment_value_expr(block, args[1], local);
+                    format!("({rhs}) < ({lhs})")
                 }
                 FragPrim::I32Eq => {
                     let lhs = expr_fragment_i32_expr(block, args[0], local);
@@ -381,6 +422,26 @@ where
                 let rhs = expr_fragment_value_expr(block, args[1], local);
                 format!("Float.ofBits ({lhs}) <= Float.ofBits ({rhs})")
             }
+            FragPrim::F64Ge => {
+                let lhs = expr_fragment_value_expr(block, args[0], local);
+                let rhs = expr_fragment_value_expr(block, args[1], local);
+                format!("Float.ofBits ({rhs}) <= Float.ofBits ({lhs})")
+            }
+            FragPrim::F64Lt => {
+                let lhs = expr_fragment_value_expr(block, args[0], local);
+                let rhs = expr_fragment_value_expr(block, args[1], local);
+                format!("Float.ofBits ({lhs}) < Float.ofBits ({rhs})")
+            }
+            FragPrim::F64Gt => {
+                let lhs = expr_fragment_value_expr(block, args[0], local);
+                let rhs = expr_fragment_value_expr(block, args[1], local);
+                format!("Float.ofBits ({rhs}) < Float.ofBits ({lhs})")
+            }
+            FragPrim::F64Eq => {
+                let lhs = expr_fragment_value_expr(block, args[0], local);
+                let rhs = expr_fragment_value_expr(block, args[1], local);
+                format!("Float.ofBits ({lhs}) == Float.ofBits ({rhs})")
+            }
             FragPrim::I64Eq => {
                 let lhs = expr_fragment_value_expr(block, args[0], local);
                 let rhs = expr_fragment_value_expr(block, args[1], local);
@@ -400,6 +461,11 @@ where
                 let lhs = expr_fragment_value_expr(block, args[0], local);
                 let rhs = expr_fragment_value_expr(block, args[1], local);
                 format!("({rhs}) <= ({lhs})")
+            }
+            FragPrim::I64GtS => {
+                let lhs = expr_fragment_value_expr(block, args[0], local);
+                let rhs = expr_fragment_value_expr(block, args[1], local);
+                format!("({rhs}) < ({lhs})")
             }
             FragPrim::I32Eq => {
                 let lhs = expr_fragment_i32_expr(block, args[0], local);
@@ -499,10 +565,15 @@ where
             FragNodeKind::Prim {
                 op:
                     FragPrim::F64Le
+                    | FragPrim::F64Ge
+                    | FragPrim::F64Lt
+                    | FragPrim::F64Gt
+                    | FragPrim::F64Eq
                     | FragPrim::I64Eq
                     | FragPrim::I64LeS
                     | FragPrim::I64LtS
                     | FragPrim::I64GeS
+                    | FragPrim::I64GtS
                     | FragPrim::I32Eq
                     | FragPrim::I32LtS
                     | FragPrim::I32GtS,

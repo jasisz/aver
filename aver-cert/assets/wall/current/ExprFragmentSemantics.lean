@@ -23,6 +23,14 @@ def runPrim : FragPrim -> List WVal -> Option (List WVal)
       some (.f64v (f a * f b).toBits :: st)
   | .f64Le, .f64v b :: .f64v a :: st =>
       some (b32 (f a <= f b) :: st)
+  | .f64Ge, .f64v b :: .f64v a :: st =>
+      some (b32 (f b <= f a) :: st)
+  | .f64Lt, .f64v b :: .f64v a :: st =>
+      some (b32 (f a < f b) :: st)
+  | .f64Gt, .f64v b :: .f64v a :: st =>
+      some (b32 (f b < f a) :: st)
+  | .f64Eq, .f64v b :: .f64v a :: st =>
+      some (b32 (f a == f b) :: st)
   | .i64Eq, .i64v b :: .i64v a :: st =>
       some (b32 (a = b) :: st)
   | .i64LeS, .i64v b :: .i64v a :: st =>
@@ -31,6 +39,8 @@ def runPrim : FragPrim -> List WVal -> Option (List WVal)
       some (b32 (a < b) :: st)
   | .i64GeS, .i64v b :: .i64v a :: st =>
       some (b32 (a >= b) :: st)
+  | .i64GtS, .i64v b :: .i64v a :: st =>
+      some (b32 (a > b) :: st)
   | .i32Eq, .i32v b :: .i32v a :: st =>
       some (b32 (a = b) :: st)
   | .i32LtS, .i32v b :: .i32v a :: st =>
