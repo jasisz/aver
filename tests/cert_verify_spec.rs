@@ -3447,7 +3447,216 @@ fn composition_orphan_member_is_declined() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
+/// Module layout indices of the `cert_goals.av` artifact, read back out of the
+/// bytes the test just compiled. None of these may be written down as a literal
+/// anywhere: every one of them shifts as soon as the fixture gains or loses a
+/// function, and a stale literal surfaces as an unreadable Lean "not
+/// definitionally equal" error instead of a failure anyone can act on.
+struct CertGoalsLayout {
+    carrier: u32,
+    box_idx: u32,
+    add_idx: u32,
+    mul_idx: u32,
+    sub_idx: u32,
+    add_constant: i64,
+    add_two_type_idx: u32,
+    projection_type_idx: u32,
+    struct_idx: u32,
+    field_idx: u32,
+}
+
+/// Recover every layout index the standard-face GuardIso template needs from
+/// the freshly compiled `cert_goals` artifact. The host-role indices come from
+/// the same byte-derived classifier the certificate itself runs against, and
+/// are cross-checked against the call targets actually present in `addTwo`'s
+/// body, so a disagreement fails here with a readable message rather than deep
+/// inside Lean.
+fn cert_goals_layout(out_dir: &Path) -> CertGoalsLayout {
+    const FIXTURE: &str = "tools/certkit/fixtures/cert_goals.av";
+    let wasm = std::fs::read(out_dir.join("cert_goals.wasm"))
+        .expect("cert_goals.wasm must exist after `aver compile --certify`");
+
+    let mut imported_funcs = 0u32;
+    let mut func_type_indices: Vec<u32> = Vec::new();
+    let mut add_two_func = None;
+    let mut user_name_func = None;
+    let mut code_ordinal = 0u32;
+    let mut add_two_body: Option<(i64, Vec<u32>)> = None;
+    let mut projection: Option<(u32, u32)> = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&wasm) {
+        match payload.expect("compiler-produced cert_goals wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::FunctionSection(reader) => {
+                for type_idx in reader {
+                    func_type_indices.push(type_idx.expect("function type index must parse"));
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("export must parse");
+                    if export.kind != wasmparser::ExternalKind::Func {
+                        continue;
+                    }
+                    match export.name {
+                        "addTwo" => add_two_func = Some(export.index),
+                        "userName" => user_name_func = Some(export.index),
+                        _ => {}
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                let func_idx = imported_funcs + code_ordinal;
+                code_ordinal += 1;
+                if Some(func_idx) != add_two_func && Some(func_idx) != user_name_func {
+                    continue;
+                }
+                let mut operators = body
+                    .get_operators_reader()
+                    .expect("function body must expose operators");
+                let mut constant = None;
+                let mut calls = Vec::new();
+                let mut struct_get = None;
+                while !operators.eof() {
+                    match operators.read().expect("operator must parse") {
+                        wasmparser::Operator::I64Const { value } => constant = Some(value),
+                        wasmparser::Operator::Call { function_index } => calls.push(function_index),
+                        wasmparser::Operator::StructGet {
+                            struct_type_index,
+                            field_index,
+                        } => struct_get = Some((struct_type_index, field_index)),
+                        _ => {}
+                    }
+                }
+                if Some(func_idx) == add_two_func {
+                    add_two_body = Some((
+                        constant.unwrap_or_else(|| {
+                            panic!("`addTwo` in {FIXTURE} must box an i64 constant")
+                        }),
+                        calls,
+                    ));
+                } else {
+                    projection = struct_get;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let add_two_func =
+        add_two_func.unwrap_or_else(|| panic!("{FIXTURE} must export a function `addTwo`"));
+    let user_name_func =
+        user_name_func.unwrap_or_else(|| panic!("{FIXTURE} must export a function `userName`"));
+    let type_idx_of = |func_idx: u32, name: &str| -> u32 {
+        let ordinal = func_idx
+            .checked_sub(imported_funcs)
+            .unwrap_or_else(|| panic!("`{name}` in {FIXTURE} must be a defined function"));
+        *func_type_indices
+            .get(ordinal as usize)
+            .unwrap_or_else(|| panic!("`{name}` in {FIXTURE} must have a function-section entry"))
+    };
+
+    let (add_constant, calls) =
+        add_two_body.expect("`addTwo` body must appear in the code section");
+    assert_eq!(
+        calls.len(),
+        2,
+        "`addTwo` in {FIXTURE} must still be the `add(param0, box(k))` shape the \
+         intAdd standard face classifies; it now calls {calls:?}"
+    );
+    let (body_box_idx, body_add_idx) = (calls[0], calls[1]);
+
+    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm)
+            .expect("cert_goals module must expose a byte-derived host-role table");
+    let box_idx = box_idx.expect("cert_goals box role");
+    let add_idx = add_idx.expect("cert_goals add role");
+    let mul_idx = mul_idx.expect("cert_goals mul role");
+    let sub_idx = sub_idx.expect("cert_goals sub role");
+    assert_eq!(
+        (box_idx, add_idx),
+        (body_box_idx, body_add_idx),
+        "the byte-derived host-role table disagrees with the calls in `addTwo`'s \
+         own body; the standard face this GuardIso probes would not be the one \
+         the certificate builds"
+    );
+
+    let (struct_idx, field_idx) = projection.unwrap_or_else(|| {
+        panic!("`userName` in {FIXTURE} must be a single `struct.get` projection")
+    });
+    assert!(
+        field_idx <= 1,
+        "the projection face requires a two-field struct; `userName` in {FIXTURE} \
+         reads field {field_idx}"
+    );
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json must exist after `aver compile --certify`"),
+    )
+    .expect("cert-manifest.json must parse");
+    let carrier = report["carrier_type_index"]
+        .as_u64()
+        .expect("cert-manifest.json must report `carrier_type_index`") as u32;
+    assert_ne!(
+        carrier, struct_idx,
+        "the projection face is only nominal when the struct is not the carrier"
+    );
+
+    CertGoalsLayout {
+        carrier,
+        box_idx,
+        add_idx,
+        mul_idx,
+        sub_idx,
+        add_constant,
+        add_two_type_idx: type_idx_of(add_two_func, "addTwo"),
+        projection_type_idx: type_idx_of(user_name_func, "userName"),
+        struct_idx,
+        field_idx,
+    }
+}
+
+/// Render `tests/fixtures/cert_standard_face_guard_iso.lean` against the layout
+/// of the artifact under test. The template carries no layout literals, so the
+/// only way this can go stale is if a placeholder loses its substitution — and
+/// that is caught below with a message, not by Lean.
+fn cert_goals_standard_face_guard_iso_lean(out_dir: &Path) -> String {
+    let layout = cert_goals_layout(out_dir);
+    let rendered = include_str!("fixtures/cert_standard_face_guard_iso.lean")
+        .replace("%carrier%", &layout.carrier.to_string())
+        .replace("%box%", &layout.box_idx.to_string())
+        .replace("%add%", &layout.add_idx.to_string())
+        .replace("%mul%", &layout.mul_idx.to_string())
+        .replace("%sub%", &layout.sub_idx.to_string())
+        .replace("%addConstant%", &layout.add_constant.to_string())
+        .replace("%addTwoTypeIdx%", &layout.add_two_type_idx.to_string())
+        .replace(
+            "%projectionTypeIdx%",
+            &layout.projection_type_idx.to_string(),
+        )
+        .replace("%structIdx%", &layout.struct_idx.to_string())
+        .replace("%otherFieldIdx%", &(1 - layout.field_idx).to_string())
+        .replace("%fieldIdx%", &layout.field_idx.to_string());
+    assert!(
+        !rendered.contains('%'),
+        "tests/fixtures/cert_standard_face_guard_iso.lean still holds an \
+         unsubstituted placeholder after rendering. Every module layout index in \
+         that template must be derived from the compiled artifact in \
+         `cert_goals_layout`; never replace a placeholder with a literal."
+    );
+    rendered
+}
+
+fn run_manifest_obligation_guard_iso(prefix: &str, lean: impl FnOnce(&Path) -> String) {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping manifest-obligation GuardIso test: `lake` not available");
         return;
@@ -3471,6 +3680,9 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
     );
+    // Rendered against the artifact that was just built, never against baked-in
+    // module layout indices.
+    let lean = lean(&out_dir);
     let cert = out_dir.join("cert");
     let build = lake_for_cert(&cert)
         .current_dir(&cert)
@@ -3508,7 +3720,7 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: &str) {
 fn standard_face_host_guard_is_isolating() {
     run_manifest_obligation_guard_iso(
         "cert-standard-face-host-guard-iso",
-        include_str!("fixtures/cert_standard_face_guard_iso.lean"),
+        cert_goals_standard_face_guard_iso_lean,
     );
 }
 
@@ -3642,7 +3854,7 @@ example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   · exact hmembersCovered
   · rfl
 "#;
-    run_manifest_obligation_guard_iso("cert-manifest-unclaimed-guard-iso", lean);
+    run_manifest_obligation_guard_iso("cert-manifest-unclaimed-guard-iso", |_| lean.to_string());
 }
 
 /// A second, mutated obligation behind the honest obligation with the same
@@ -3782,7 +3994,7 @@ example : acceptedWithoutUniqueExports duplicateArtifact := by
   · exact hmembersCovered
   · rfl
 "#;
-    run_manifest_obligation_guard_iso("cert-manifest-duplicate-guard-iso", lean);
+    run_manifest_obligation_guard_iso("cert-manifest-duplicate-guard-iso", |_| lean.to_string());
 }
 
 /// S5 guard isolation, including executed weaken confirmations. Each negative

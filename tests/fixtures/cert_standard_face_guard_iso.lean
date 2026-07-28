@@ -3,6 +3,15 @@ import ArtifactCertificate
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
 
+-- TEMPLATE, not standalone Lean. Each percent-delimited placeholder below is
+-- a module layout index, and every one of them shifts as soon as
+-- `tools/certkit/fixtures/cert_goals.av` gains or loses a function.
+-- `standard_face_host_guard_is_isolating` in `tests/cert_verify_spec.rs`
+-- reads them back out of the artifact it just compiled and substitutes them
+-- here, so no module layout index may ever be written down as a literal. The
+-- one bare number in a face below is the arity of the `intAdd` family, which
+-- `StandardFace.classifyIntAdd` pins to a single carrier parameter.
+
 def hostileHost : AverCert.StandardFace.HostBuilder :=
   fun _ _ _ _ _ _ _ => none
 
@@ -90,22 +99,22 @@ example : ¬ StandardFace.checkedFaces hostileArtifact := by
   have hfirst := hfaces.2.1.1
   have hface := hfirst.2
   change (StandardFace.StandardFace.known
-    (StandardFace.intList 23 1
-      (StandardFace.intAddHost 23
-        ({ constant := 2, boxIdx := 34, addIdx := 35 } :
+    (StandardFace.intList %carrier% 1
+      (StandardFace.intAddHost %carrier%
+        ({ constant := %addConstant%, boxIdx := %box%, addIdx := %add% } :
           StandardFace.IntAddFace)))).Matches hostileAddTwoOb at hface
   have hhost := hface.2.2.2.2.2.1
   have hslot := congrArg
     (fun host => (host (fun _ => none) (fun _ => none) (fun _ => none)
-      (fun _ => none) (fun _ _ => none) (fun _ => none) 34).map Prod.fst) hhost
+      (fun _ => none) (fun _ _ => none) (fun _ => none) %box%).map Prod.fst) hhost
   simp [hostileAddTwoOb, hostileHost, StandardFace.intList,
     StandardFace.intAddHost] at hslot
 
 -- Role labels cannot be permuted while retaining the same helper indices.
 example : StandardFace.hostTableBound manifest.subject.hostRoles
-    [(.box, 34), (.add, 35), (.mul, 37), (.sub, 36)] = true := rfl
+    [(.box, %box%), (.add, %add%), (.mul, %mul%), (.sub, %sub%)] = true := rfl
 example : StandardFace.hostTableBound manifest.subject.hostRoles
-    [(.box, 35), (.add, 34), (.mul, 37), (.sub, 36)] = false := rfl
+    [(.box, %add%), (.add, %box%), (.mul, %mul%), (.sub, %sub%)] = false := rfl
 
 -- Generic non-recursive fragments cannot smuggle a recursive call.
 def genericSelfCall : FragBlock :=
@@ -117,22 +126,22 @@ example : StandardFace.genericFragmentAllowedFuel 2 genericSelfCall = false := r
 -- expression face binds the exact declared parameter and result types too.
 example : AverCert.WasmSlice.exprFragmentFuncTypeMatches
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    34 23 [.intCarrier] .intCarrier = true := rfl
+    %addTwoTypeIdx% %carrier% [.intCarrier] .intCarrier = true := rfl
 example : AverCert.WasmSlice.exprFragmentFuncTypeMatches
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    34 23 [.f64] .intCarrier = false := rfl
+    %addTwoTypeIdx% %carrier% [.f64] .intCarrier = false := rfl
 example : AverCert.WasmSlice.exprFragmentFuncTypeMatches
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    34 23 [.intCarrier] .boolI32 = false := rfl
+    %addTwoTypeIdx% %carrier% [.intCarrier] .boolI32 = false := rfl
 
 -- Opaque projection faces are nominal: exact struct, two fields, and the
 -- selected field's actual result type are decoded from the type section.
 example : AverCert.WasmSlice.exprProjectionTypesMatch
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    44 23 20 0 = true := rfl
+    %projectionTypeIdx% %carrier% %structIdx% %fieldIdx% = true := rfl
 example : AverCert.WasmSlice.exprProjectionTypesMatch
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    44 20 20 0 = false := rfl
+    %projectionTypeIdx% %structIdx% %structIdx% %fieldIdx% = false := rfl
 example : AverCert.WasmSlice.exprProjectionTypesMatch
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    44 23 20 1 = false := rfl
+    %projectionTypeIdx% %carrier% %structIdx% %otherFieldIdx% = false := rfl
