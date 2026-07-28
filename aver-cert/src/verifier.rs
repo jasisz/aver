@@ -846,43 +846,76 @@ fn assemble_build(
 ) -> Result<BuildDir, String> {
     let build = BuildDir::new()?;
     let mut roots = Vec::new();
+    let mut flat_files: Vec<(String, PathBuf)> = Vec::new();
+    let mut subdirectories: Vec<(String, PathBuf)> = Vec::new();
     let entries = std::fs::read_dir(cert_dir)
         .map_err(|error| format!("cannot read cert dir {}: {error}", cert_dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("cert dir read: {error}"))?;
-        if !entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if kind.is_dir() {
+            // Dot-directories (`.lake`, `.git`) are build products or local
+            // state, never certificate data; skipping them entirely keeps a
+            // shipped cache out of the staged tree.
+            if !name.starts_with('.') {
+                subdirectories.push((name, entry.path()));
+            }
             continue;
         }
-        let name = entry.file_name().to_string_lossy().into_owned();
+        if !kind.is_file() {
+            continue;
+        }
         if !name.ends_with(".lean") || is_checker_owned(&name, selected_wall) {
             continue;
         }
-        let root = lean_module_root(&name)?;
-        let shadows_toolchain = TOOLCHAIN_ROOTS
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(&root));
-        let shadows_checker = selected_wall.sources.iter().any(|source| {
-            source
-                .name
-                .strip_suffix(".lean")
-                .is_some_and(|reserved| reserved.eq_ignore_ascii_case(&root))
-        }) || ["ArtifactBytes", "CheckerWitness", "lakefile"]
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(&root));
-        if shadows_toolchain || shadows_checker {
-            return Err(format!(
-                "cert data module `{root}` shadows a checker/toolchain import"
-            ));
-        }
-        let contents = std::fs::read(entry.path())
+        flat_files.push((name, entry.path()));
+    }
+
+    // Top-level package files stage unconditionally, exactly as before.
+    for (name, path) in &flat_files {
+        let root = lean_module_root(name)?;
+        reject_shadowed_root(&root, selected_wall)?;
+        let contents = std::fs::read(path)
             .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
-        scan_for_code_exec(&name, &contents)?;
-        std::fs::write(build.path.join(&name), contents)
+        scan_for_code_exec(name, &contents)?;
+        std::fs::write(build.path.join(name), contents)
             .map_err(|error| format!("cannot stage {name}: {error}"))?;
+        roots.push(root);
+    }
+
+    // A NESTED `.lean` file stages only when the package's own staged
+    // `Manifest.lean` or `Certificate.lean` imports its dotted module name.
+    // The producer imports every model root from those two files, so one
+    // level suffices — no transitive closure. Any other nested `.lean` file
+    // is ignored outright (a decoy tree behind a redirected `srcDir` never
+    // joins the staged set), but only after its name passes the same
+    // per-segment sanitation and shadow gates a staged file must pass.
+    let admitted = imported_module_names(&flat_files)?;
+    let mut nested_files: Vec<(String, PathBuf)> = Vec::new();
+    for (name, path) in &subdirectories {
+        collect_nested_lean_files(path, name, &mut nested_files)?;
+    }
+    for (relative, path) in &nested_files {
+        let root = lean_module_root(relative)?;
+        reject_shadowed_root(&root, selected_wall)?;
+        if !admitted.contains(&root) {
+            continue;
+        }
+        let contents = std::fs::read(path)
+            .map_err(|error| format!("cannot read cert file {relative}: {error}"))?;
+        scan_for_code_exec(relative, &contents)?;
+        let destination = relative
+            .split('/')
+            .fold(build.path.clone(), |path, segment| path.join(segment));
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot stage {relative}: {error}"))?;
+        }
+        std::fs::write(destination, contents)
+            .map_err(|error| format!("cannot stage {relative}: {error}"))?;
         roots.push(root);
     }
     for source in selected_wall.sources {
@@ -911,20 +944,118 @@ fn assemble_build(
     Ok(build)
 }
 
+/// Validate a package file name and return its Lean module root. A flat
+/// `Store.lean` yields `Store`; a nested `Apps/Notepad/Store.lean` yields the
+/// dotted `Apps.Notepad.Store`. Every `/`-separated segment must satisfy the
+/// same identifier rule (the file name additionally carries the `.lean`
+/// suffix). The rule is simultaneously the traversal guard — an accepted
+/// segment cannot be `.`, `..`, empty, absolute, or anything other than a
+/// plain `std::path::Component::Normal` — and the lakefile-injection guard:
+/// the returned root is interpolated unescaped into the checker-authored
+/// lakefile, so only validated segments may become roots.
 fn lean_module_root(name: &str) -> Result<String, String> {
     let stem = name
         .strip_suffix(".lean")
         .ok_or_else(|| format!("cert file `{name}` is not a Lean file"))?;
-    let mut chars = stem.chars();
-    let valid = matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
-        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_');
-    if stem.is_empty() || !valid {
-        Err(format!(
-            "cert file name `{name}` must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$"
-        ))
+    let segments: Vec<&str> = stem.split('/').collect();
+    let valid = segments.iter().all(|segment| {
+        let mut chars = segment.chars();
+        matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
+            && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+    });
+    if valid {
+        Ok(segments.join("."))
     } else {
-        Ok(stem.to_string())
+        Err(format!(
+            "cert file name `{name}` must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$ in every path segment"
+        ))
     }
+}
+
+/// Reject a package module root that would shadow a checker-owned or
+/// toolchain module. The check covers the full dotted name and every dotted
+/// prefix of it: `Lean/Extra.lean` (root `Lean.Extra`) is rejected exactly
+/// like a flat `Lean.lean`, because staging it would plant files under a
+/// directory the toolchain or the checker-owned wall claims.
+fn reject_shadowed_root(root: &str, selected_wall: &wall::Wall) -> Result<(), String> {
+    let segments: Vec<&str> = root.split('.').collect();
+    for length in 1..=segments.len() {
+        let prefix = segments[..length].join(".");
+        let shadows_toolchain = TOOLCHAIN_ROOTS
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(&prefix));
+        let shadows_checker = selected_wall.sources.iter().any(|source| {
+            source
+                .name
+                .strip_suffix(".lean")
+                .is_some_and(|reserved| reserved.eq_ignore_ascii_case(&prefix))
+        }) || ["ArtifactBytes", "CheckerWitness", "lakefile"]
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(&prefix));
+        if shadows_toolchain || shadows_checker {
+            return Err(format!(
+                "cert data module `{root}` shadows a checker/toolchain import"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The module names imported by the package's own top-level `Manifest.lean`
+/// and `Certificate.lean`. This is the nested-staging admission list: the
+/// producer imports every model root from those two files, so a nested model
+/// module is reachable in exactly one level and nothing else in a
+/// subdirectory can join the build.
+fn imported_module_names(
+    flat_files: &[(String, PathBuf)],
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let mut admitted = std::collections::BTreeSet::new();
+    for (name, path) in flat_files {
+        if name != "Manifest.lean" && name != "Certificate.lean" {
+            continue;
+        }
+        let contents = std::fs::read(path)
+            .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
+        let text = String::from_utf8_lossy(&contents);
+        for line in text.lines() {
+            if let Some(rest) = line.trim().strip_prefix("import ") {
+                let module = rest.trim();
+                if !module.is_empty() {
+                    admitted.insert(module.to_string());
+                }
+            }
+        }
+    }
+    Ok(admitted)
+}
+
+/// Collect `Sub/.../Name.lean` files under one first-level subdirectory of
+/// the certificate package. `relative` is the `/`-joined path walked so far.
+/// Dot-directories are skipped entirely at every depth (`.lake` caches are
+/// never certificate data) and non-file, non-directory entries are ignored
+/// like their top-level counterparts.
+fn collect_nested_lean_files(
+    dir: &Path,
+    relative: &str,
+    out: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read cert dir {}: {error}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cert dir read: {error}"))?;
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if kind.is_dir() {
+            if !name.starts_with('.') {
+                collect_nested_lean_files(&entry.path(), &format!("{relative}/{name}"), out)?;
+            }
+        } else if kind.is_file() && name.ends_with(".lean") {
+            out.push((format!("{relative}/{name}"), entry.path()));
+        }
+    }
+    Ok(())
 }
 
 /// Reject a cert data file that carries an elaboration-executing token in
@@ -1367,6 +1498,35 @@ mod tests {
         assert_eq!(lean_module_root("Artifact.lean").unwrap(), "Artifact");
         assert!(lean_module_root("../Artifact.lean").is_err());
         assert!(lean_module_root("A, `Injected.lean").is_err());
+        // Nested paths become dotted module names, one identifier per segment.
+        assert_eq!(
+            lean_module_root("Apps/Notepad/Store.lean").unwrap(),
+            "Apps.Notepad.Store"
+        );
+        assert!(lean_module_root("Apps/../X.lean").is_err());
+        assert!(lean_module_root("Apps/.lake/X.lean").is_err());
+        assert!(lean_module_root("Apps/Bad Name.lean").is_err());
+        assert!(lean_module_root("Apps/`Tick/X.lean").is_err());
+        assert!(lean_module_root("Apps/A,B/X.lean").is_err());
+        assert!(lean_module_root("Apps.Notepad/Store.lean").is_err());
+        assert!(lean_module_root("/Apps/Store.lean").is_err());
+        assert!(lean_module_root("Apps//Store.lean").is_err());
+    }
+
+    #[test]
+    fn nested_roots_shadowing_reserved_prefixes_are_rejected() {
+        let wall = wall::resolve(wall::current_id()).expect("embedded wall resolves");
+        // Flat behavior is unchanged.
+        assert!(reject_shadowed_root("Schema", wall).is_err());
+        assert!(reject_shadowed_root("Manifest", wall).is_ok());
+        // Every dotted prefix of a nested root is checked.
+        assert!(reject_shadowed_root("Lean.Extra", wall).is_err());
+        assert!(reject_shadowed_root("Schema.Sub", wall).is_err());
+        assert!(reject_shadowed_root("ArtifactBytes.Decoy", wall).is_err());
+        assert!(reject_shadowed_root("CheckerWitness.X.Y", wall).is_err());
+        // A reserved name in non-prefix position does not shadow the import.
+        assert!(reject_shadowed_root("Apps.Schema", wall).is_ok());
+        assert!(reject_shadowed_root("Apps.Notepad.Store", wall).is_ok());
     }
 
     #[test]
