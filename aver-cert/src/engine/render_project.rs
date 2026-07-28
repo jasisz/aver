@@ -28,7 +28,7 @@ pub fn write_project(
         }
         write(&cert_dir, path, &sanitize_model_for_cert(content))?;
         if let Some(stem) = path.strip_suffix(".lean") {
-            model_roots.push(stem.to_string());
+            model_roots.push(model_root_from_stem(stem)?);
         }
     }
     let model_info = ModelInfo::from_files(model_files);
@@ -98,6 +98,28 @@ pub fn write_project(
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())
+}
+
+/// The Lean module name a model file is imported by. A module declared as
+/// `Data.Fibonacci` transpiles to the file `Data/Fibonacci.lean`; the import
+/// lines in `Manifest.lean` and `Certificate.lean` need the dotted form back
+/// (`import Data/Fibonacci` is not Lean syntax). Every path segment must be a
+/// plain identifier so a model path can never smuggle stray syntax into an
+/// interpolated import line.
+fn model_root_from_stem(stem: &str) -> Result<String, String> {
+    let segments: Vec<&str> = stem.split('/').collect();
+    let valid = segments.iter().all(|segment| {
+        let mut chars = segment.chars();
+        matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
+            && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+    });
+    if valid {
+        Ok(segments.join("."))
+    } else {
+        Err(format!(
+            "model file stem `{stem}` is not a Lean module path (each segment must match ^[A-Za-z][A-Za-z0-9_]*$)"
+        ))
+    }
 }
 
 /// The module-wide struct table rendered at emit time: the consistent union of
@@ -2278,3 +2300,20 @@ fn render_code_def(c: &Cert) -> String {
 }
 
 // Code-value helpers live in render_code.rs.
+
+#[cfg(test)]
+mod tests {
+    use super::model_root_from_stem;
+
+    #[test]
+    fn model_roots_become_dotted_lean_module_names() {
+        assert_eq!(model_root_from_stem("AverCommon").unwrap(), "AverCommon");
+        assert_eq!(
+            model_root_from_stem("Apps/Notepad/Store").unwrap(),
+            "Apps.Notepad.Store"
+        );
+        assert!(model_root_from_stem("Apps/../Store").is_err());
+        assert!(model_root_from_stem("Apps/Bad Name").is_err());
+        assert!(model_root_from_stem("").is_err());
+    }
+}
