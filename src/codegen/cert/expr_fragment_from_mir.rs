@@ -72,12 +72,29 @@ pub(crate) fn expr_fragment_plan_from_mir_fn(
     plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &struct_table)
 }
 
+/// Fail-closed representation guard. The plan lowerer emits the ALL-BOXED
+/// representation: every Int value is a `$AverInt` carrier ref and every Int
+/// param read becomes a carrier `struct.get`. The wasm signature, however, is
+/// derived from `MirFnRepr` (`param_types_with_repr` / `return_results_with_repr`
+/// with `ENABLE_BARE_SLOTS` on), so a fn whose repr marks any bare param /
+/// return / let slot (or an ETAP-2 bare-carrier slot) carries scalar `i64`
+/// slots — a plan-emitted body over those slots would `struct.get` an `i64`,
+/// invalid wasm. Such functions must never plan; their MIR-emitted bodies
+/// already handle the bare representation.
+fn mir_fn_repr_is_all_boxed(mir_fn: &crate::ir::mir::MirFn) -> bool {
+    let repr = &mir_fn.repr;
+    !repr.bare_return
+        && repr.bare_slots.is_empty()
+        && repr.carrier_slots.is_empty()
+        && repr.bare_params.iter().all(|bare| !bare)
+}
+
 pub(crate) fn sym_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
     record_fields: RecordFieldLookup,
     builtins: &[String],
 ) -> Option<SymPlan> {
-    if !mir_fn.effects.is_empty() {
+    if !mir_fn.effects.is_empty() || !mir_fn_repr_is_all_boxed(mir_fn) {
         return None;
     }
 
@@ -113,7 +130,7 @@ pub(crate) fn sym_plan_from_mir_fn(
 fn repr_expr_fragment_plan_from_mir_fn(
     mir_fn: &crate::ir::mir::MirFn,
 ) -> Option<ExprFragmentPlan> {
-    if !mir_fn.effects.is_empty() {
+    if !mir_fn.effects.is_empty() || !mir_fn_repr_is_all_boxed(mir_fn) {
         return None;
     }
 
@@ -1327,6 +1344,70 @@ mod tests {
             fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
             "projection over an unknown record layout must stay unplanned"
         );
+    }
+
+    /// Belt-and-braces representation guard: a fn whose `MirFnRepr` marks any
+    /// bare param / return / slot (or bare-carrier slot) must never plan —
+    /// with `ENABLE_BARE_SLOTS` its wasm signature carries scalar `i64` slots
+    /// where the plan lowerer would emit carrier `struct.get` reads (invalid
+    /// wasm).
+    ///
+    /// No end-to-end reproduction is constructible for exported plan-shaped
+    /// functions today, which is why this stays a unit test: the wasm-gc bare
+    /// analysis only marks a PARAM bare when `compute_bare_param_intervals`
+    /// derived a bound for it, and its final mapping yields `Some(interval)`
+    /// exclusively for params carrying a recognized equality-decrement
+    /// RECURRENCE (a non-top `guard_floor`, i.e. a self-tail-call counter —
+    /// see the "Phase A withholds it" comment in
+    /// `src/ir/mir/optimize/bare_i64.rs`). A body containing that self call
+    /// dies on the plan builder's `Call`/`TailCall` catch-all, so a
+    /// plan-shaped body and a bare param are mutually exclusive. `bare_return`
+    /// similarly requires the body's tail value to be bare-eligible
+    /// (recurrence arithmetic or a literal), and literal-Int bodies do not
+    /// plan. Verified empirically: exported `p > 0`-shaped fns keep boxed
+    /// `(ref $AverInt)` signatures with and without internal literal callers.
+    /// The guard exists so a future widening of the bare analysis degrades to
+    /// an unplanned fn instead of emitting invalid wasm.
+    #[test]
+    fn bare_repr_functions_never_plan() {
+        let bare_param = {
+            let mut mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+            mir_fn.repr.bare_params = vec![true];
+            mir_fn
+        };
+        let bare_return = {
+            let mut mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+            mir_fn.repr.bare_return = true;
+            mir_fn
+        };
+        let bare_slot = {
+            let mut mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+            mir_fn.repr.bare_slots.insert(LocalId(1));
+            mir_fn
+        };
+        let carrier_slot = {
+            let mut mir_fn = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+            mir_fn.repr.carrier_slots.insert(LocalId(0));
+            mir_fn
+        };
+        for (case, mir_fn) in [
+            ("bare param", bare_param),
+            ("bare return", bare_return),
+            ("bare let slot", bare_slot),
+            ("bare carrier slot", carrier_slot),
+        ] {
+            assert!(
+                sym_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
+                "{case}: source plan must refuse a non-all-boxed repr"
+            );
+            assert!(
+                fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
+                "{case}: representation plan must refuse a non-all-boxed repr"
+            );
+        }
+        // Control: the identical body with the default (all-boxed) repr plans.
+        let boxed = int_predicate_fn(BinOp::Lt, int_local(0), int_lit(0));
+        assert!(fragment_plan_from_mir_fn(&boxed, &|_, _| None, &[]).is_some());
     }
 
     #[test]
