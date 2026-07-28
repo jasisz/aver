@@ -48,13 +48,24 @@ fn boolAndGoal(a: Bool, b: Bool) -> Bool
         true -> b
         false -> false
 
+fn letBoolGoal(a: Bool, b: Bool) -> Bool
+    c = a
+    match c
+        true -> b
+        false -> false
+
+fn floatPickGoal(a: Float, b: Float, c: Float) -> Bool
+    match a <= b
+        true -> b <= c
+        false -> c <= a
+
 fn report() -> String
-    "le={floatLeGoal(1.0, 2.0)}/{floatLeGoal(3.0, 2.0)} and={boolAndGoal(true, true)}/{boolAndGoal(true, false)}"
+    "le={floatLeGoal(1.0, 2.0)}/{floatLeGoal(3.0, 2.0)} and={boolAndGoal(true, true)}/{boolAndGoal(true, false)} let={letBoolGoal(true, true)}/{letBoolGoal(false, true)} pick={floatPickGoal(1.0, 2.0, 3.0)}/{floatPickGoal(3.0, 2.0, 4.0)}"
 "#;
 
 /// The report line both variants print. Bool-valued throughout, so the text is
 /// format-stable (no float-rendering ambiguity to reason about).
-const EXPECTED_REPORT: &str = "le=true/false and=true/false";
+const EXPECTED_REPORT: &str = "le=true/false and=true/false let=true/false pick=true/false";
 
 /// Variant (A): the shared float/bool functions in a module that ALSO declares
 /// Int (via `unrelatedInt`), which flips the `$AverInt` carrier on and routes
@@ -65,7 +76,7 @@ fn variant_a_source() -> String {
     format!(
         r#"module PlanCarrierOn
     intent = "plan-emitted float/bool functions in a module that also declares Int"
-    exposes [floatLeGoal, boolAndGoal]
+    exposes [floatLeGoal, boolAndGoal, letBoolGoal, floatPickGoal]
     effects [Console]
 {SHARED_BODY}
 fn unrelatedInt(x: Int) -> Int
@@ -215,7 +226,7 @@ fn plan_and_mir_emitters_agree_on_float_bool_functions() {
 #[test]
 fn variant_a_functions_take_the_plan_path() {
     let manifest = certify_manifest("plan-carrier-certify", &variant_a_source());
-    for name in ["floatLeGoal", "boolAndGoal"] {
+    for name in ["floatLeGoal", "boolAndGoal", "letBoolGoal", "floatPickGoal"] {
         assert_eq!(
             certified_class(&manifest, name),
             Some("expr-fragment-v1"),
