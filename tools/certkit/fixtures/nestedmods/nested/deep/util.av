@@ -1,0 +1,17 @@
+module Util
+    exposes [combine]
+    intent =
+        "Nested dependency for the certificate staging fixture. The exposed"
+        "function takes two arguments on purpose: it stays outside the"
+        "single-argument certified templates, so the fixture's certified"
+        "export lives in the entry module while this module's Lean model"
+        "(Nested/Deep/Util.lean) is still emitted, imported by the"
+        "certificate, and must stage for the package to build."
+    effects []
+
+fn combine(a: Int, b: Int) -> Int
+    ? "Adds two integers and two."
+    a + b + 2
+
+verify combine
+    combine(1, 0) => 3

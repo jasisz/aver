@@ -3706,3 +3706,70 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+#[test]
+fn certify_nested_module_models_close_end_to_end() {
+    // A project with a dotted module dependency emits its dependency model at
+    // a nested path (`Nested/Deep/Util.lean`). The certificate must import it
+    // by its dotted module name (`import Nested.Deep.Util`, never the
+    // path-shaped `import Nested/Deep/Util`) and the package must build.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping nested-module certify test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-nested-modules");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/nestedmods/app.av")
+        .arg("--module-root")
+        .arg("tools/certkit/fixtures/nestedmods")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        compile.status.success(),
+        "nestedmods --certify failed:\n{report}"
+    );
+    assert!(
+        report.contains("1 certified"),
+        "nestedmods must certify its entry-module export:\n{report}"
+    );
+
+    let cert_dir = out_dir.join("cert");
+    assert!(
+        cert_dir
+            .join("Nested")
+            .join("Deep")
+            .join("Util.lean")
+            .is_file(),
+        "the nested dependency model must be emitted at its nested path"
+    );
+    for file in ["Manifest.lean", "Certificate.lean"] {
+        let contents = std::fs::read_to_string(cert_dir.join(file))
+            .unwrap_or_else(|_| panic!("{file} exists"));
+        assert!(
+            contents.contains("import Nested.Deep.Util"),
+            "{file} must import the nested model by its dotted module name:\n{contents}"
+        );
+        assert!(
+            !contents.contains("import Nested/Deep/Util"),
+            "{file} must not emit a path-shaped import line:\n{contents}"
+        );
+    }
+
+    assert_certificate_target_builds(&cert_dir, "nested module models");
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}

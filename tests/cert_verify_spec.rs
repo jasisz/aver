@@ -489,6 +489,157 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// Emits the nested-module fixture baseline: a project whose dotted module
+/// dependency (`Nested.Deep.Util`) makes the certificate carry a nested model
+/// file (`Nested/Deep/Util.lean`) that `Manifest.lean` and `Certificate.lean`
+/// import by its dotted module name. Returns `None` when `lake` is
+/// unavailable, mirroring `tripwire_baseline`.
+fn nested_module_baseline(prefix: &str) -> Option<PathBuf> {
+    if !tripwire_lake_available() {
+        return None;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir(prefix);
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/nestedmods/app.av")
+        .arg("--module-root")
+        .arg("tools/certkit/fixtures/nestedmods")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify nestedmods failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    Some(out_dir)
+}
+
+/// A certificate whose model tree carries a nested module file stages, builds,
+/// and verifies CERTIFIED end to end. Before nested staging existed the
+/// checker silently skipped `Nested/Deep/Util.lean` and the build failed on
+/// the unresolvable `import Nested.Deep.Util`.
+#[test]
+fn cert_verify_accepts_nested_module_certificate() {
+    let Some(out_dir) = nested_module_baseline("certverify-nested-clean") else {
+        return;
+    };
+
+    let wasm = out_dir.join("app.wasm");
+    let cert = out_dir.join("cert");
+    assert!(
+        cert.join("Nested").join("Deep").join("Util.lean").is_file(),
+        "fixture must emit its dependency model at a nested path"
+    );
+    let (ok, report) = aver_verify_clean_cache(&wasm, &cert);
+    assert!(
+        ok,
+        "expected nested-module certificate to verify, got:\n{report}"
+    );
+    assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
+    assert!(
+        report.contains("1 certified export"),
+        "expected exactly one certified export:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A nested `.lean` file that no staged `Manifest.lean`/`Certificate.lean`
+/// import admits is ignored outright: it never reaches the build tree, so a
+/// planted file that would poison the build (a Lean type error and a banned
+/// token) leaves the verdict unchanged.
+#[test]
+fn cert_verify_ignores_unimported_nested_lean_file() {
+    let Some(out_dir) = nested_module_baseline("certverify-nested-unimported") else {
+        return;
+    };
+
+    let wasm = out_dir.join("app.wasm");
+    let cert = out_dir.join("cert");
+    let decoy_dir = cert.join("Unimported");
+    std::fs::create_dir_all(&decoy_dir).unwrap();
+    // If this file were staged, the token scan would decline it; if it were
+    // staged past a broken scan, the type error would fail the build. A clean
+    // verdict therefore proves it never joined the build tree.
+    std::fs::write(
+        decoy_dir.join("Decoy.lean"),
+        "#eval IO.println \"pwned\"\ndef broken : Nat := \"not a nat\"\n",
+    )
+    .unwrap();
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(
+        ok,
+        "unimported nested file must be ignored outright:\n{report}"
+    );
+    assert!(
+        report.contains("CHECKED") && !report.contains("DECLINED"),
+        "verdict must be unchanged by the unimported decoy:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A nested path with a bad segment declines with the filename-gate message
+/// before any Lean process, exactly like a hostile flat file name.
+#[test]
+fn cert_verify_declines_bad_nested_path_segment() {
+    let Some(out_dir) = nested_module_baseline("certverify-nested-badseg") else {
+        return;
+    };
+
+    let wasm = out_dir.join("app.wasm");
+    let cert = out_dir.join("cert");
+    let dir = cert.join("Nested");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Bad Name.lean"), "-- inert\ndef x : Nat := 0\n").unwrap();
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(!ok, "bad nested path segment must decline:\n{report}");
+    assert!(
+        report.contains("Nested/Bad Name.lean")
+            && report.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
+        "wrong reason for bad nested segment:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// A nested file whose dotted module name has a checker-owned or toolchain
+/// root as a prefix is rejected the same way a flat shadow is.
+#[test]
+fn cert_verify_declines_nested_shadow_of_checker_root() {
+    let Some(out_dir) = nested_module_baseline("certverify-nested-shadow") else {
+        return;
+    };
+
+    let wasm = out_dir.join("app.wasm");
+    let cert = out_dir.join("cert");
+    let dir = cert.join("Schema");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Sub.lean"), "-- inert\ndef x : Nat := 0\n").unwrap();
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(
+        !ok,
+        "nested shadow of a checker root must decline:\n{report}"
+    );
+    assert!(
+        report.contains("shadows a checker/toolchain import"),
+        "wrong reason for nested shadow:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// A cert-data shape this checker does not know is rejected, never
 /// reinterpreted under the current schema. Rejected before any Lean process.
 #[test]
