@@ -874,36 +874,55 @@ fn assemble_build(
         flat_files.push((name, entry.path()));
     }
 
-    // Top-level package files stage unconditionally, exactly as before.
+    // Top-level package files stage unconditionally, exactly as before. The
+    // import lines of the package's own `Manifest.lean` and `Certificate.lean`
+    // are collected from the very bytes being staged — never from a second
+    // read — so a concurrent writer cannot desync the nested admission list
+    // from the staged tree.
+    let mut staged_paths: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut admitted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (name, path) in &flat_files {
         let root = lean_module_root(name)?;
         reject_shadowed_root(&root, selected_wall)?;
+        note_staged_path(&mut staged_paths, name)?;
         let contents = std::fs::read(path)
             .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
         scan_for_code_exec(name, &contents)?;
+        if name == "Manifest.lean" || name == "Certificate.lean" {
+            collect_import_lines(&String::from_utf8_lossy(&contents), &mut admitted);
+        }
         std::fs::write(build.path.join(name), contents)
             .map_err(|error| format!("cannot stage {name}: {error}"))?;
         roots.push(root);
     }
 
     // A NESTED `.lean` file stages only when the package's own staged
-    // `Manifest.lean` or `Certificate.lean` imports its dotted module name.
-    // The producer imports every model root from those two files, so one
-    // level suffices — no transitive closure. Any other nested `.lean` file
-    // is ignored outright (a decoy tree behind a redirected `srcDir` never
-    // joins the staged set), but only after its name passes the same
-    // per-segment sanitation and shadow gates a staged file must pass.
-    let admitted = imported_module_names(&flat_files)?;
+    // `Manifest.lean` or `Certificate.lean` imports its dotted module name
+    // (the producer imports every model root from those two files, so one
+    // level suffices — no transitive closure). That admission list is
+    // authored by the UNTRUSTED producer, so it is build-set minimization —
+    // it keeps decoy trees and stray sidecars out of the build — NOT a
+    // security boundary. Safety rests on the per-file gates every staged
+    // file passes (per-segment name validation, shadow-prefix rejection, the
+    // code-execution token scan) and, behind them, on the checker-authored
+    // witness: only facts inside the `CheckerWitness` import cone, accepted
+    // by the kernel under the axiom whitelist, reach the verdict.
     let mut nested_files: Vec<(String, PathBuf)> = Vec::new();
     for (name, path) in &subdirectories {
-        collect_nested_lean_files(path, name, &mut nested_files)?;
+        collect_nested_lean_files(path, name, 1, &mut nested_files)?;
     }
+    // Stage in sorted relative-path order so the staged tree (and any error
+    // chosen among several candidates) does not depend on directory
+    // iteration order.
+    nested_files.sort();
     for (relative, path) in &nested_files {
         let root = lean_module_root(relative)?;
         reject_shadowed_root(&root, selected_wall)?;
         if !admitted.contains(&root) {
             continue;
         }
+        note_staged_path(&mut staged_paths, relative)?;
         let contents = std::fs::read(path)
             .map_err(|error| format!("cannot read cert file {relative}: {error}"))?;
         scan_for_code_exec(relative, &contents)?;
@@ -1001,44 +1020,67 @@ fn reject_shadowed_root(root: &str, selected_wall: &wall::Wall) -> Result<(), St
     Ok(())
 }
 
-/// The module names imported by the package's own top-level `Manifest.lean`
-/// and `Certificate.lean`. This is the nested-staging admission list: the
-/// producer imports every model root from those two files, so a nested model
-/// module is reachable in exactly one level and nothing else in a
-/// subdirectory can join the build.
-fn imported_module_names(
-    flat_files: &[(String, PathBuf)],
-) -> Result<std::collections::BTreeSet<String>, String> {
-    let mut admitted = std::collections::BTreeSet::new();
-    for (name, path) in flat_files {
-        if name != "Manifest.lean" && name != "Certificate.lean" {
-            continue;
-        }
-        let contents = std::fs::read(path)
-            .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
-        let text = String::from_utf8_lossy(&contents);
-        for line in text.lines() {
-            if let Some(rest) = line.trim().strip_prefix("import ") {
-                let module = rest.trim();
-                if !module.is_empty() {
-                    admitted.insert(module.to_string());
-                }
+/// Collect the module names named by literal `import` lines in one staged
+/// file's text. The scan is deliberately LITERAL: each line is trimmed, a
+/// leading `import ` prefix is stripped, and the trimmed remainder is the
+/// module name. Lean comments are NOT parsed — an import line inside a block
+/// comment still admits a nested file. That is acceptable because the
+/// admission list is build-set minimization, not a security gate (see the
+/// nested-staging comment in `assemble_build`); a conforming
+/// reimplementation must match this scan exactly.
+fn collect_import_lines(text: &str, admitted: &mut std::collections::BTreeSet<String>) {
+    for line in text.lines() {
+        if let Some(rest) = line.trim().strip_prefix("import ") {
+            let module = rest.trim();
+            if !module.is_empty() {
+                admitted.insert(module.to_string());
             }
         }
     }
-    Ok(admitted)
 }
 
+/// Record one staged relative path, rejecting any pair of staged paths that
+/// are equal ASCII-case-insensitively. On a case-insensitive staging
+/// filesystem (APFS, NTFS) `Apps/Store.lean` and `apps/Store.lean` silently
+/// merge and the later write clobbers the earlier one, so which bytes build
+/// would depend on directory iteration order; failing closed keeps the
+/// staged tree identical on every filesystem.
+fn note_staged_path(
+    staged: &mut std::collections::BTreeMap<String, String>,
+    relative: &str,
+) -> Result<(), String> {
+    if let Some(previous) = staged.insert(relative.to_ascii_lowercase(), relative.to_string()) {
+        return Err(format!(
+            "cert files `{previous}` and `{relative}` collide case-insensitively"
+        ));
+    }
+    Ok(())
+}
+
+/// Depth cap for the nested package walk. The certificate directory is the
+/// one tree whose recursion depth an untrusted party chooses; a pathological
+/// directory chain must fail loudly instead of exhausting the checker's
+/// stack. Sixteen levels is far beyond any real module tree.
+const MAX_NESTED_DEPTH: usize = 16;
+
 /// Collect `Sub/.../Name.lean` files under one first-level subdirectory of
-/// the certificate package. `relative` is the `/`-joined path walked so far.
-/// Dot-directories are skipped entirely at every depth (`.lake` caches are
-/// never certificate data) and non-file, non-directory entries are ignored
-/// like their top-level counterparts.
+/// the certificate package. `relative` is the `/`-joined path walked so far
+/// and `depth` counts directory levels below the package root (the first
+/// subdirectory is depth 1). Dot-directories are skipped entirely at every
+/// depth (`.lake` caches are never certificate data), non-file,
+/// non-directory entries are ignored like their top-level counterparts, and
+/// nesting past `MAX_NESTED_DEPTH` is a hard error.
 fn collect_nested_lean_files(
     dir: &Path,
     relative: &str,
+    depth: usize,
     out: &mut Vec<(String, PathBuf)>,
 ) -> Result<(), String> {
+    if depth > MAX_NESTED_DEPTH {
+        return Err(format!(
+            "cert subdirectory `{relative}` exceeds the maximum nesting depth of {MAX_NESTED_DEPTH}"
+        ));
+    }
     let entries = std::fs::read_dir(dir)
         .map_err(|error| format!("cannot read cert dir {}: {error}", dir.display()))?;
     for entry in entries {
@@ -1049,7 +1091,12 @@ fn collect_nested_lean_files(
         let name = entry.file_name().to_string_lossy().into_owned();
         if kind.is_dir() {
             if !name.starts_with('.') {
-                collect_nested_lean_files(&entry.path(), &format!("{relative}/{name}"), out)?;
+                collect_nested_lean_files(
+                    &entry.path(),
+                    &format!("{relative}/{name}"),
+                    depth + 1,
+                    out,
+                )?;
             }
         } else if kind.is_file() && name.ends_with(".lean") {
             out.push((format!("{relative}/{name}"), entry.path()));
@@ -1511,6 +1558,63 @@ mod tests {
         assert!(lean_module_root("Apps.Notepad/Store.lean").is_err());
         assert!(lean_module_root("/Apps/Store.lean").is_err());
         assert!(lean_module_root("Apps//Store.lean").is_err());
+    }
+
+    #[test]
+    fn staged_paths_that_collide_case_insensitively_are_rejected() {
+        let mut staged = std::collections::BTreeMap::new();
+        assert!(note_staged_path(&mut staged, "Apps/Store.lean").is_ok());
+        assert!(note_staged_path(&mut staged, "Apps/Other.lean").is_ok());
+        assert!(note_staged_path(&mut staged, "Manifest.lean").is_ok());
+        let error = note_staged_path(&mut staged, "apps/Store.lean").unwrap_err();
+        assert!(
+            error.contains("Apps/Store.lean")
+                && error.contains("apps/Store.lean")
+                && error.contains("collide case-insensitively"),
+            "collision error names both paths: {error}"
+        );
+        // Flat names participate in the same set.
+        assert!(note_staged_path(&mut staged, "MANIFEST.lean").is_err());
+    }
+
+    #[test]
+    fn nested_walk_rejects_unbounded_depth() {
+        let root = std::env::temp_dir().join(format!(
+            "aver-cert-depth-cap-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
+        let mut deep = root.clone();
+        for _ in 0..(MAX_NESTED_DEPTH + 2) {
+            deep = deep.join("D");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("X.lean"), "def x : Nat := 0\n").unwrap();
+
+        let mut out = Vec::new();
+        let error = collect_nested_lean_files(&root.join("D"), "D", 1, &mut out).unwrap_err();
+        assert!(
+            error.contains("maximum nesting depth"),
+            "depth cap error names the gate: {error}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_line_scan_is_literal() {
+        let mut admitted = std::collections::BTreeSet::new();
+        collect_import_lines(
+            "import Schema\n  import Apps.Notepad.Store  \n/-\nimport Inside.Block.Comment\n-/\n-- import Behind.Line.Comment\nnot an import\nimport\n",
+            &mut admitted,
+        );
+        assert!(admitted.contains("Schema"));
+        assert!(admitted.contains("Apps.Notepad.Store"));
+        // The scan is literal by contract: comment syntax is not parsed, so
+        // a line that begins with `import ` inside a block comment still
+        // admits. A line-comment prefix keeps the line from matching.
+        assert!(admitted.contains("Inside.Block.Comment"));
+        assert!(!admitted.contains("Behind.Line.Comment"));
+        assert_eq!(admitted.len(), 3);
     }
 
     #[test]

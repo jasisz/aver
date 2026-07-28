@@ -142,7 +142,21 @@ fn hash_part(hasher: &mut Sha256, name: &[u8], bytes: &[u8]) {
 /// (no cache, fresh build). Dot-directories (`.lake`) are never staged
 /// sources and are skipped.
 fn staged_source_files(build_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, ()> {
-    fn visit(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Result<(), ()> {
+    // The verifier caps staged nesting at 16 directory levels, so a deeper
+    // tree here is out of contract; erroring poisons the key (no cache,
+    // fresh build) instead of recursing without bound over a directory
+    // chain the checker did not author.
+    const MAX_STAGED_DEPTH: usize = 16;
+
+    fn visit(
+        root: &Path,
+        dir: &Path,
+        depth: usize,
+        files: &mut Vec<(String, Vec<u8>)>,
+    ) -> Result<(), ()> {
+        if depth > MAX_STAGED_DEPTH {
+            return Err(());
+        }
         for entry in std::fs::read_dir(dir).map_err(|_| ())? {
             let entry = entry.map_err(|_| ())?;
             let file_type = entry.file_type().map_err(|_| ())?;
@@ -151,7 +165,7 @@ fn staged_source_files(build_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, ()> {
                 if name.to_str().ok_or(())?.starts_with('.') {
                     continue;
                 }
-                visit(root, &entry.path(), files)?;
+                visit(root, &entry.path(), depth + 1, files)?;
             } else if file_type.is_file() {
                 let path = entry.path();
                 let relative = path.strip_prefix(root).map_err(|_| ())?;
@@ -174,7 +188,7 @@ fn staged_source_files(build_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, ()> {
     }
 
     let mut files = Vec::new();
-    visit(build_dir, build_dir, &mut files)?;
+    visit(build_dir, build_dir, 0, &mut files)?;
     files.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(files)
 }
@@ -387,6 +401,17 @@ mod tests {
         )
         .unwrap();
         assert_ne!(nested_added, artifact_cache_key(&dir, &material).unwrap());
+
+        // A directory chain deeper than the staging contract poisons the
+        // key: no cache is used rather than recursing without bound.
+        let mut deep = dir.join("Deep");
+        for _ in 0..20 {
+            deep = deep.join("D");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("X.lean"), "def x := 0\n").unwrap();
+        assert!(artifact_cache_key(&dir, &material).is_err());
+        std::fs::remove_dir_all(dir.join("Deep")).unwrap();
 
         // Build products under a dot-directory never enter the key.
         std::fs::create_dir_all(dir.join(".lake")).unwrap();

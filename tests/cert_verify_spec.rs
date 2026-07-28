@@ -640,6 +640,56 @@ fn cert_verify_declines_nested_shadow_of_checker_root() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// Two staged paths that differ only by ASCII case are rejected at staging:
+/// on a case-insensitive filesystem they silently merge and the later write
+/// clobbers the earlier one nondeterministically. Authoring both casings
+/// requires a case-sensitive filesystem, so this skips (with a note) where
+/// the two paths cannot coexist; the unit test on the collision gate itself
+/// runs everywhere.
+#[test]
+fn cert_verify_declines_case_colliding_nested_paths() {
+    let Some(out_dir) = nested_module_baseline("certverify-nested-case-collision") else {
+        return;
+    };
+
+    let wasm = out_dir.join("app.wasm");
+    let cert = out_dir.join("cert");
+
+    // Case-sensitivity probe: both casings must be creatable side by side.
+    let upper = cert.join("Casing");
+    let lower = cert.join("casing");
+    std::fs::create_dir_all(&upper).unwrap();
+    std::fs::write(upper.join("Store.lean"), "def a : Nat := 0\n").unwrap();
+    std::fs::create_dir_all(&lower).unwrap();
+    std::fs::write(lower.join("Store.lean"), "def b : Nat := 1\n").unwrap();
+    let coexist = std::fs::read_to_string(upper.join("Store.lean")).unwrap()
+        != std::fs::read_to_string(lower.join("Store.lean")).unwrap();
+    if !coexist {
+        eprintln!("skipping case-collision test: staging filesystem is case-insensitive");
+        let _ = std::fs::remove_dir_all(&out_dir);
+        return;
+    }
+
+    // Admit both casings so both are actually staged — unimported nested
+    // files are ignored before the collision gate could bite.
+    let manifest = cert.join("Manifest.lean");
+    let src = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        format!("import Casing.Store\nimport casing.Store\n{src}"),
+    )
+    .unwrap();
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(!ok, "case-colliding staged paths must decline:\n{report}");
+    assert!(
+        report.contains("collide case-insensitively"),
+        "wrong reason for case collision:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// A cert-data shape this checker does not know is rejected, never
 /// reinterpreted under the current schema. Rejected before any Lean process.
 #[test]
