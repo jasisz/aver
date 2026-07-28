@@ -2302,7 +2302,7 @@ fn render_code_def(c: &Cert) -> String {
 // Code-value helpers live in render_code.rs.
 
 #[cfg(test)]
-mod tests {
+mod render_project_tests {
     use super::model_root_from_stem;
 
     #[test]
