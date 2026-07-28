@@ -46,6 +46,21 @@ fn run_staged_binary(mut command: Command) -> std::process::Output {
     panic!("staged binary stayed busy for 1s");
 }
 
+/// `spawn` twin of [`run_staged_binary`] for tests that need to talk to the
+/// child's pipes before it exits. Same transient `ETXTBSY` race, same fix.
+fn spawn_staged_binary(command: &mut Command) -> std::process::Child {
+    for _ in 0..50 {
+        match command.spawn() {
+            Ok(child) => return child,
+            Err(error) if error.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => panic!("spawn staged binary: {error}"),
+        }
+    }
+    panic!("staged binary stayed busy for 1s");
+}
+
 #[test]
 fn sibling_receives_raw_argv_and_inherited_streams_and_controls_exit() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -65,7 +80,8 @@ exit 37
 
     let raw_name = OsString::from_vec(b"raw-\xff".to_vec());
 
-    let mut child = Command::new(aver)
+    let mut command = Command::new(aver);
+    command
         .current_dir(dir.path())
         .arg("cert")
         .arg("--future-verifier-flag")
@@ -73,9 +89,8 @@ exit 37
         .arg(raw_name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn copied aver");
+        .stderr(Stdio::piped());
+    let mut child = spawn_staged_binary(&mut command);
     use std::io::Write;
     child
         .stdin
