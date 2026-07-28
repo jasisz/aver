@@ -803,6 +803,22 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
     }
 
     fn finish(self, result: SymValueId) -> Option<SymBlock> {
+        // Kernel block-shape invariants (PlanCheck.checkSymBlock): every
+        // node's id equals its position, and the result is the LAST node
+        // (`result + 1 = nodes.length`). The builder satisfies both by
+        // construction today; checking them here makes a future producer bug
+        // degrade to an unplanned fn instead of a late kernel reject.
+        if self
+            .nodes
+            .iter()
+            .enumerate()
+            .any(|(position, node)| node.id.0 != position)
+        {
+            return None;
+        }
+        if result.0 + 1 != self.nodes.len() {
+            return None;
+        }
         let block = SymBlock {
             nodes: self.nodes,
             result,
@@ -1807,6 +1823,43 @@ mod tests {
         assert!(
             fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
             "an unplannable initializer must keep the fn unplanned"
+        );
+    }
+
+    /// The kernel requires every node id to equal its position and the block
+    /// result to be the LAST node (PlanCheck.checkSymBlock). The builder
+    /// produces exactly that shape; `finish` now refuses anything else so a
+    /// future producer bug fails at the producer, not in the kernel.
+    #[test]
+    fn finish_enforces_kernel_block_shape_invariants() {
+        let params = std::collections::HashMap::new();
+        let record_fields = |_: &str, _: &str| -> Option<(u32, String)> { None };
+        let make_builder = |nodes: Vec<SymNode>| MirSymPlanBuilder {
+            params_by_slot: &params,
+            record_fields: &record_fields,
+            builtins: &[],
+            aliases: std::collections::HashMap::new(),
+            alias_hops: 0,
+            nodes,
+        };
+        let node = |id: usize| SymNode {
+            id: SymValueId(id),
+            ty: SymTy::Bool,
+            kind: SymNodeKind::ConstBool(true),
+        };
+        assert!(
+            make_builder(vec![node(0), node(1)])
+                .finish(SymValueId(0))
+                .is_none(),
+            "a non-last result must not finish"
+        );
+        assert!(
+            make_builder(vec![node(1)]).finish(SymValueId(0)).is_none(),
+            "a discontiguous node id must not finish"
+        );
+        assert!(
+            make_builder(vec![node(0)]).finish(SymValueId(0)).is_some(),
+            "the canonical block shape must still finish"
         );
     }
 
