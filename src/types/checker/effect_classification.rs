@@ -80,6 +80,10 @@ pub enum RuntimeType {
     TcpConnection,
     /// `Result<Tcp.Connection, Str>` — return of `Tcp.connect`.
     ResultTcpConnectionStr,
+    /// `List<Int>` — the byte payload argument on `Tcp.sendBytes`.
+    ListInt,
+    /// `Result<List<Int>, Str>` — return of `Tcp.sendBytes`.
+    ResultListIntStr,
 }
 
 impl RuntimeType {
@@ -111,6 +115,11 @@ impl RuntimeType {
             RuntimeType::ResultTcpConnectionStr => {
                 Type::Result(Box::new(Type::named("Tcp.Connection")), Box::new(Type::Str))
             }
+            RuntimeType::ListInt => Type::List(Box::new(Type::Int)),
+            RuntimeType::ResultListIntStr => Type::Result(
+                Box::new(Type::List(Box::new(Type::Int))),
+                Box::new(Type::Str),
+            ),
         }
     }
 }
@@ -283,6 +292,12 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         dimension: EffectDimension::GenerativeOutput,
         runtime_params: &[RuntimeType::Str, RuntimeType::Int, RuntimeType::Str],
         runtime_return: RuntimeType::ResultStrStr,
+    },
+    EffectClassification {
+        method: "Tcp.sendBytes",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Int, RuntimeType::ListInt],
+        runtime_return: RuntimeType::ResultListIntStr,
     },
     EffectClassification {
         method: "Tcp.ping",

@@ -128,6 +128,7 @@ impl TypeChecker {
                 "Env.set".to_string(),
                 "Tcp.connect".to_string(),
                 "Tcp.send".to_string(),
+                "Tcp.sendBytes".to_string(),
                 "Tcp.ping".to_string(),
                 "Tcp.writeLine".to_string(),
                 "Tcp.readLine".to_string(),
@@ -286,6 +287,15 @@ impl TypeChecker {
                 &[Type::Str, Type::Int, Type::Str],
                 Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                 &["Tcp.send"],
+            ),
+            (
+                "Tcp.sendBytes",
+                &[Type::Str, Type::Int, Type::List(Box::new(Type::Int))],
+                Type::Result(
+                    Box::new(Type::List(Box::new(Type::Int))),
+                    Box::new(Type::Str),
+                ),
+                &["Tcp.sendBytes"],
             ),
             (
                 "Tcp.ping",
