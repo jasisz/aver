@@ -133,19 +133,62 @@ fn hash_part(hasher: &mut Sha256, name: &[u8], bytes: &[u8]) {
     hasher.update(bytes);
 }
 
+/// Every freshly staged source file, keyed by its `/`-normalized relative
+/// name. The walk is recursive because nested model modules stage at nested
+/// paths (`Apps/Notepad/Store.lean`); a key over top-level files only would
+/// let two certificates differing solely in nested models share an entry and
+/// reuse each other's stale `.olean` outputs. Mirrors `lake_tree_hashes`:
+/// newline-carrying names and non-file, non-directory entries poison the key
+/// (no cache, fresh build). Dot-directories (`.lake`) are never staged
+/// sources and are skipped.
 fn staged_source_files(build_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, ()> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(build_dir).map_err(|_| ())? {
-        let entry = entry.map_err(|_| ())?;
-        if !entry.file_type().map_err(|_| ())?.is_file() {
-            continue;
+    // The verifier caps staged nesting at 16 directory levels, so a deeper
+    // tree here is out of contract; erroring poisons the key (no cache,
+    // fresh build) instead of recursing without bound over a directory
+    // chain the checker did not author.
+    const MAX_STAGED_DEPTH: usize = 16;
+
+    fn visit(
+        root: &Path,
+        dir: &Path,
+        depth: usize,
+        files: &mut Vec<(String, Vec<u8>)>,
+    ) -> Result<(), ()> {
+        if depth > MAX_STAGED_DEPTH {
+            return Err(());
         }
-        let name = entry.file_name().to_str().ok_or(())?.to_string();
-        if name == "CheckerWitness.lean" {
-            continue;
+        for entry in std::fs::read_dir(dir).map_err(|_| ())? {
+            let entry = entry.map_err(|_| ())?;
+            let file_type = entry.file_type().map_err(|_| ())?;
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                if name.to_str().ok_or(())?.starts_with('.') {
+                    continue;
+                }
+                visit(root, &entry.path(), depth + 1, files)?;
+            } else if file_type.is_file() {
+                let path = entry.path();
+                let relative = path.strip_prefix(root).map_err(|_| ())?;
+                let relative = relative
+                    .to_str()
+                    .ok_or(())?
+                    .replace(std::path::MAIN_SEPARATOR, "/");
+                if relative.contains(['\n', '\r']) {
+                    return Err(());
+                }
+                if relative == "CheckerWitness.lean" {
+                    continue;
+                }
+                files.push((relative, std::fs::read(path).map_err(|_| ())?));
+            } else {
+                return Err(());
+            }
         }
-        files.push((name, std::fs::read(entry.path()).map_err(|_| ())?));
+        Ok(())
     }
+
+    let mut files = Vec::new();
+    visit(build_dir, build_dir, 0, &mut files)?;
     files.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(files)
 }
@@ -339,7 +382,53 @@ mod tests {
         );
 
         std::fs::write(dir.join("Artifact.lean"), "def artifact := 2\n").unwrap();
-        assert_ne!(baseline, artifact_cache_key(&dir, &material).unwrap());
+        let flat_edit = artifact_cache_key(&dir, &material).unwrap();
+        assert_ne!(baseline, flat_edit);
+
+        // A staged NESTED model file is part of the key: two certificates
+        // differing only under a subdirectory must not share an entry.
+        std::fs::create_dir_all(dir.join("Apps").join("Notepad")).unwrap();
+        std::fs::write(
+            dir.join("Apps").join("Notepad").join("Store.lean"),
+            "def store := 1\n",
+        )
+        .unwrap();
+        let nested_added = artifact_cache_key(&dir, &material).unwrap();
+        assert_ne!(flat_edit, nested_added);
+        std::fs::write(
+            dir.join("Apps").join("Notepad").join("Store.lean"),
+            "def store := 2\n",
+        )
+        .unwrap();
+        assert_ne!(nested_added, artifact_cache_key(&dir, &material).unwrap());
+
+        // A directory chain deeper than the staging contract poisons the
+        // key: no cache is used rather than recursing without bound.
+        let mut deep = dir.join("Deep");
+        for _ in 0..20 {
+            deep = deep.join("D");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("X.lean"), "def x := 0\n").unwrap();
+        assert!(artifact_cache_key(&dir, &material).is_err());
+        std::fs::remove_dir_all(dir.join("Deep")).unwrap();
+
+        // Build products under a dot-directory never enter the key.
+        std::fs::create_dir_all(dir.join(".lake")).unwrap();
+        std::fs::write(dir.join(".lake").join("junk.olean"), b"junk").unwrap();
+        assert_eq!(
+            artifact_cache_key(&dir, &material).unwrap(),
+            artifact_cache_key(&dir, &material).unwrap()
+        );
+        std::fs::write(
+            dir.join("Apps").join("Notepad").join("Store.lean"),
+            "def store := 2\n",
+        )
+        .unwrap();
+        let with_dot_dir = artifact_cache_key(&dir, &material).unwrap();
+        std::fs::remove_dir_all(dir.join(".lake")).unwrap();
+        assert_eq!(with_dot_dir, artifact_cache_key(&dir, &material).unwrap());
+
         let _ = std::fs::remove_dir_all(dir);
     }
 }
