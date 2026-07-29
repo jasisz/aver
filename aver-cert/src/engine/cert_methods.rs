@@ -193,9 +193,13 @@ impl Cert {
         }
     }
     /// The qualified Lean identifier of this export's source model function.
-    /// Only valid for certs that passed the analysis qualified-name gate;
-    /// citing a name the gate did not resolve would be a guess, so this
-    /// panics (producer bug) instead of emitting one.
+    ///
+    /// Only valid for a cert that passed `model_citation_gate` against THIS
+    /// `model_info` — `analyze` applies that gate to every cert it keeps, and
+    /// `write_project` re-checks it before rendering anything, so a resolution
+    /// failure here is a producer bug rather than a certificate that should
+    /// decline. Citing an unresolved name would be a guess, so this panics
+    /// instead of emitting one.
     fn model_lean_name(&self, model_info: &ModelInfo) -> String {
         model_info
             .model_lean_name(self.name())

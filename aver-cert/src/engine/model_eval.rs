@@ -77,11 +77,28 @@ struct CtorInfo {
     fields: Vec<String>,
 }
 
+/// The compiler prelude, emitted into every model tree alongside the user's
+/// own modules (`AverCommon.lean` plus the build files). It carries its own
+/// namespaces (`AverString`, `AverMap`, `AverFloat`, …) and dotted top-level
+/// defs (`String.charAtAv`, `Float.fromInt`, …), none of which is ever a user
+/// export's model.
+///
+/// Reading it into the name space would be actively wrong, not just noisy:
+/// its namespaces would populate `module_prefix_flats` even for a program with
+/// no dependency modules at all, and a user export whose name happens to
+/// collide with a prelude def's flattened key (`AverList_get`) would be marked
+/// ambiguous and DECLINE. The certificate cites only user models, so only user
+/// model files may define the name space.
+fn is_user_model_file(path: &str) -> bool {
+    path.ends_with(".lean") && path != "AverCommon.lean" && path != "lakefile.lean"
+}
+
 impl ModelInfo {
+    /// Parse the USER model modules only — see `is_user_model_file`.
     fn from_files(model_files: &[(String, String)]) -> Self {
         let mut info = Self::default();
         for (path, content) in model_files {
-            if !path.ends_with(".lean") {
+            if !is_user_model_file(path) {
                 continue;
             }
             info.parse_lean(content);
@@ -284,4 +301,94 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
             ret,
         },
     ))
+}
+
+#[cfg(test)]
+mod model_name_space_tests {
+    /// A single-file (no dependency module) program's model tree still ships
+    /// the compiler prelude, which carries its own namespaces and dotted
+    /// top-level defs. None of it may enter the name space: a flat program has
+    /// no module prefixes at all, so every export resolves to itself.
+    #[test]
+    fn prelude_namespaces_stay_out_of_the_flat_key_space() {
+        // Abridged from a real `AverCommon.lean`: a namespace block and the
+        // dotted top-level defs the prelude actually emits.
+        let prelude = "\
+def String.charAtAv (s : String) (i : Int) : Option String :=\n\
+  none\n\
+namespace AverList\n\
+def get (xs : List Int) (i : Int) : Int :=\n\
+  0\n\
+end AverList\n\
+namespace AverMap\n\
+def get (m : Int) (k : Int) : Int :=\n\
+  0\n\
+end AverMap\n";
+        let entry = "\
+def addTwo (n : Int) : Int :=\n\
+  n + 2\n";
+        let info = super::ModelInfo::from_files(&[
+            ("AverCommon.lean".to_string(), prelude.to_string()),
+            ("lakefile.lean".to_string(), "import Lake\n".to_string()),
+            ("Program.lean".to_string(), entry.to_string()),
+        ]);
+
+        assert!(
+            info.module_prefix_flats.is_empty(),
+            "a program with no dependency modules must have no module prefixes, got {:?}",
+            info.module_prefix_flats
+        );
+        assert!(
+            info.ambiguous.is_empty(),
+            "the prelude must not make any key ambiguous, got {:?}",
+            info.ambiguous
+        );
+        for prelude_key in ["AverList_get", "AverMap_get", "String_charAtAv"] {
+            assert!(
+                !info.fns.contains_key(prelude_key),
+                "prelude def leaked into the flat key space as `{prelude_key}`"
+            );
+        }
+        assert_eq!(
+            info.model_lean_name("addTwo").as_deref(),
+            Some("addTwo"),
+            "an entry-level export resolves to itself"
+        );
+        // The regression this guards: an export colliding with a prelude def's
+        // flattened key must still resolve, not decline as ambiguous.
+        assert_eq!(
+            info.model_lean_name("AverList_get").as_deref(),
+            Some("AverList_get"),
+            "a flat export must not be shadowed by a prelude namespace"
+        );
+    }
+
+    /// A real dependency module DOES define the name space: its namespace is a
+    /// module prefix, and its functions resolve to their qualified names.
+    #[test]
+    fn dependency_module_namespaces_define_the_flat_key_space() {
+        let dep = "\
+namespace Nested.Deep.Util\n\
+def bump (n : Int) : Int :=\n\
+  n + 2\n\
+end Nested.Deep.Util\n";
+        let info = super::ModelInfo::from_files(&[
+            ("AverCommon.lean".to_string(), "def unrelated : Int := 0\n".to_string()),
+            ("Nested/Deep/Util.lean".to_string(), dep.to_string()),
+        ]);
+
+        assert_eq!(info.module_prefix_flats, vec!["Nested_Deep_Util".to_string()]);
+        assert_eq!(
+            info.model_lean_name("Nested_Deep_Util_bump").as_deref(),
+            Some("Nested.Deep.Util.bump"),
+            "a dependency-module export resolves to its qualified name"
+        );
+        // Fail-closed: an export shaped like this module's prefix but with no
+        // parsed definition must NOT fall back to citing itself.
+        assert_eq!(
+            info.model_lean_name("Nested_Deep_Util_missing"),
+            None,
+            "an unresolvable dependency-shaped export must decline"
+        );
+    }
 }

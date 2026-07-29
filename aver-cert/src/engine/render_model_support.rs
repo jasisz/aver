@@ -5,9 +5,6 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         let Some((ty, indices)) = adt_repr_indices(c, model_info) else {
             continue;
         };
-        if !emitted.insert(ty.clone()) {
-            continue;
-        }
         let Some(ind) = model_info.inductives.get(&ty) else {
             continue;
         };
@@ -15,7 +12,15 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         // models). The def NAME flattens its dots so it stays one atomic
         // identifier inside the AverCert namespace; the type POSITION cites
         // the qualified name the imported model module actually declares.
+        //
+        // Dedupe on the EMITTED identifier, not on `ty`: two distinct
+        // qualified types can flatten onto one def name (`A.B` + type `C` and
+        // `A` + type `B_C` both yield `A_B_CRepr`), and emitting both would be
+        // a duplicate declaration that fails the package build.
         let ty_def = ty.replace('.', "_");
+        if !emitted.insert(ty_def.clone()) {
+            continue;
+        }
         out.push_str(&format!(
             "def {ty_def}Repr (S : CarrierSpec {}) : {ty} → WVal → Prop\n",
             c.carrier()

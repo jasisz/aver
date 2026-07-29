@@ -253,8 +253,9 @@ fn render_mutual_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> String {
         unreachable!()
     };
     let model_name = c.model_lean_name(model_info);
-    // Every member's model function, by its qualified Lean identifier (the
-    // gate guarantees each member of a certified SCC resolves).
+    // Every member's model function, by its qualified Lean identifier.
+    // `model_citation_gate` covers every member of the SCC, and both `analyze`
+    // and `write_project` enforce it, so each resolves.
     let member_model = |member: &MutualMember| -> String {
         model_info
             .model_lean_name(&member.name)

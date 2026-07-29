@@ -131,8 +131,9 @@ fn render_composition_semantic_bridge(
     else {
         unreachable!()
     };
-    // Qualified model identifiers: the root and every closure member (the
-    // gate guarantees each one resolves for a certified composition).
+    // Qualified model identifiers: the root and every closure member.
+    // `model_citation_gate` covers a composition's root AND its whole closure,
+    // and both `analyze` and `write_project` enforce it, so each resolves.
     let member_model = |entry: &ClosureEntry| -> String {
         model_info
             .model_lean_name(&entry.name)

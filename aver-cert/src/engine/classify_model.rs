@@ -85,9 +85,18 @@ fn parse_body_step(
 /// uses `-`, so it never
 /// confuses the scan; the recognised body shapes carry no other arithmetic.
 fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap<String, char> {
-    let mut ops = std::collections::HashMap::new();
+    // Flat key -> (qualified name that claimed it, combinator operator).
+    let mut ops: std::collections::HashMap<String, (String, char)> =
+        std::collections::HashMap::new();
+    // Flat keys claimed by two different definitions. This parser must agree
+    // with `ModelInfo::parse_lean`: a collision makes the combinator a guess,
+    // so the key is dropped and the recursion classifier declines rather than
+    // reading the operator off whichever definition happened to parse last.
+    let mut ambiguous = std::collections::HashSet::new();
     for (path, content) in model_files {
-        if !path.ends_with(".lean") {
+        // Same user-only file predicate as `ModelInfo::from_files`: the
+        // prelude defines no user model and must not claim flat keys.
+        if !is_user_model_file(path) {
             continue;
         }
         let lines: Vec<&str> = content.lines().collect();
@@ -116,12 +125,19 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
             let Some(fuel_pos) = rest.find("__fuel ") else {
                 continue;
             };
-            let flat_prefix = ns_stack.join(".").replace('.', "_");
-            let name = if flat_prefix.is_empty() {
-                rest[..fuel_pos].to_string()
+            let prefix = ns_stack.join(".");
+            let bare = &rest[..fuel_pos];
+            // The qualified Lean name identifies the definition; the flat name
+            // is the wasm-export-space key the classifier looks up.
+            let qualified = if prefix.is_empty() {
+                bare.to_string()
             } else {
-                format!("{flat_prefix}_{}", &rest[..fuel_pos])
+                format!("{prefix}.{bare}")
             };
+            let name = qualified.replace('.', "_");
+            if ambiguous.contains(&name) {
+                continue;
+            }
             for l in lines.iter().skip(i).take(8) {
                 if let Some(p) = l.find("else ") {
                     let els = &l[p + 5..];
@@ -133,12 +149,24 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
                         None
                     };
                     if let Some(op) = op {
-                        ops.insert(name.clone(), op);
+                        match ops.get(&name) {
+                            // Two DISTINCT definitions flattening onto one key:
+                            // drop it so no combinator is guessed.
+                            Some((existing, _)) if *existing != qualified => {
+                                ops.remove(&name);
+                                ambiguous.insert(name.clone());
+                            }
+                            _ => {
+                                ops.insert(name.clone(), (qualified.clone(), op));
+                            }
+                        }
                     }
                     break;
                 }
             }
         }
     }
-    ops
+    ops.into_iter()
+        .map(|(name, (_, op))| (name, op))
+        .collect()
 }
