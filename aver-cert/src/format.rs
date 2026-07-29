@@ -28,7 +28,7 @@ pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:4e281312588930482d53cfe76e15fbcf530d11d20512015eefba1c008631fd9a";
+    "sha256:f2a58eee4d390fe872366e06ccd0617b093c67acb916b16166308826074022e0";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
