@@ -53,6 +53,23 @@ fn assert_manifest_decode_declines(wasm: &std::path::Path, cert: &std::path::Pat
     );
 }
 
+/// Function index the export section binds `name` to.
+fn export_func_idx(bytes: &[u8], name: &str) -> u32 {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::ExportSection(reader) =
+            payload.expect("compiler-produced wasm must parse")
+        {
+            for export in reader {
+                let export = export.expect("export must parse");
+                if export.kind == wasmparser::ExternalKind::Func && export.name == name {
+                    return export.index;
+                }
+            }
+        }
+    }
+    panic!("module exports no function named `{name}`")
+}
+
 fn section_offset_after_export(bytes: &[u8]) -> usize {
     fn read_uleb(bytes: &[u8], cursor: &mut usize) -> usize {
         let mut value = 0usize;
@@ -995,6 +1012,12 @@ fn inkernel_code_table_guard_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
     );
+    // The SCC's two function indices, read out of the export section rather
+    // than assumed, so the probe follows the emitter's layout.
+    let wasm = std::fs::read(out_dir.join("mutual.wasm")).unwrap();
+    let even_idx = export_func_idx(&wasm, "isEven");
+    let odd_idx = export_func_idx(&wasm, "isOdd");
+
     let cert = out_dir.join("cert");
     materialize_wall(&cert);
     let build = Command::new("lake")
@@ -1009,19 +1032,20 @@ fn inkernel_code_table_guard_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let lean = r#"import Artifact
+    let lean = format!(
+        r#"import Artifact
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 200000
 
 -- Same module bytes; only the manifest obligation's code table is hostile.
 def hostileEvenCode : CodeTbl := fun fn =>
-  if fn = 2 then none else AverCert.isEvenOb.code fn
+  if fn = {odd_idx} then none else AverCert.isEvenOb.code fn
 def hostileEvenOb : Obligation :=
-  { AverCert.isEvenOb with code := hostileEvenCode }
+  {{ AverCert.isEvenOb with code := hostileEvenCode }}
 def hostileManifest : Manifest :=
-  { AverCert.manifest with
-    obligations := hostileEvenOb :: AverCert.manifest.obligations.tail }
+  {{ AverCert.manifest with
+    obligations := hostileEvenOb :: AverCert.manifest.obligations.tail }}
 
 def evenObligation (m : Manifest) : Option Obligation :=
   m.obligations.find? (fun o => o.export_ = "isEven")
@@ -1032,16 +1056,17 @@ def mutualDecodeWitness (m : Manifest) : Prop :=
   | some obligation =>
       AverCert.AcceptedArtifact.decodedObligationFacts
         AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-        obligation [1, 2]
+        obligation [{even_idx}, {odd_idx}]
   | none => False
 
--- Deliberately weakened copy: the cross-member equality at index 2 is absent.
+-- Deliberately weakened copy: the cross-member equality at the other member's
+-- index is absent.
 def mutualDecodeWitnessWithoutCrossCode (m : Manifest) : Prop :=
   match evenObligation m with
   | some obligation =>
       AverCert.AcceptedArtifact.decodedObligationFacts
         AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-        obligation [1]
+        obligation [{even_idx}]
   | none => False
 
 example : mutualDecodeWitness AverCert.manifest := by
@@ -1056,17 +1081,18 @@ example : ¬ mutualDecodeWitness hostileManifest := by
   intro h
   change AverCert.AcceptedArtifact.decodedObligationFacts
     AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    hostileEvenOb [1, 2] at h
+    hostileEvenOb [{even_idx}, {odd_idx}] at h
   have bad := h.2.2.1
   change CertDecode.decodeCode AverCert.ArtifactBytes.modBytes
-    AverCert.ArtifactBytes.modLen 2 = hostileEvenOb.code 2 at bad
-  have honestAtTwo :
+    AverCert.ArtifactBytes.modLen {odd_idx} = hostileEvenOb.code {odd_idx} at bad
+  have honestAtOther :
       CertDecode.decodeCode AverCert.ArtifactBytes.modBytes
-        AverCert.ArtifactBytes.modLen 2 = AverCert.isEvenOb.code 2 := rfl
-  have hostileAtTwo : hostileEvenOb.code 2 = none := rfl
-  rw [honestAtTwo, hostileAtTwo] at bad
+        AverCert.ArtifactBytes.modLen {odd_idx} = AverCert.isEvenOb.code {odd_idx} := rfl
+  have hostileAtOther : hostileEvenOb.code {odd_idx} = none := rfl
+  rw [honestAtOther, hostileAtOther] at bad
   cases bad
-"#;
+"#
+    );
     std::fs::write(cert.join("DecodeGuardIso.lean"), lean).unwrap();
     let check = Command::new("lake")
         .current_dir(&cert)
