@@ -3498,14 +3498,117 @@ fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
         !certified.contains("main"),
         "`main` is an effectful zero-argument export and must not certify"
     );
+    // `main` prints. That is what stops it being a pure simulation of the
+    // source model, and it is what the report must say: the parameter count it
+    // used to blame was never the blocker, since a zero-argument export with no
+    // effects declines for its arity only when nothing else applies.
     assert_eq!(
         declared.get("main").map(String::as_str),
         Some(
-            "unsupported signature (0 params); Stage-B templates cover \
-             one-argument Int functions and two-argument accumulator recursion"
+            "calls the host capability `aver.console_print`; \
+             certified templates simulate pure bodies, never effects"
         ),
-        "`main` must decline for its signature, not for the missing Int helper"
+        "`main` must decline for the effect it performs, not for its parameter \
+         count and not for the missing Int helper"
     );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// Each declined export must be told what is actually stopping it. The Fibonacci
+/// example carries one export per blocker the classifier can distinguish, so it
+/// pins the whole vocabulary at once — and in particular pins that a parameter
+/// count is reported for `fibTR`, whose body really is a pure three-argument
+/// recursion, and for nothing else here.
+#[test]
+fn certify_declines_name_the_blocker_that_actually_applies() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-decline-blockers");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/fibonacci.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "fibonacci --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    let declared: BTreeMap<String, String> = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["name"]
+                    .as_str()
+                    .expect("entry has a name")
+                    .to_string(),
+                entry["reason"]
+                    .as_str()
+                    .expect("entry has a reason")
+                    .to_string(),
+            )
+        })
+        .collect();
+
+    for (export, reason) in [
+        // A pure three-argument tail recursion: nothing but the accumulator
+        // template's two-argument limit stands in its way, so the report says
+        // which family it missed instead of calling the signature unsupported.
+        (
+            "fibTR",
+            "takes 3 parameters; the arity-free templates did not match this body, \
+             and the recursion, ADT-construction, variant-dispatch, String and \
+             composition templates take one or two arguments",
+        ),
+        (
+            "main",
+            "calls the host capability `aver.console_print`; \
+             certified templates simulate pure bodies, never effects",
+        ),
+        (
+            "absF",
+            "body uses the wasm instruction `F64Sub`, which is outside the certified fragment",
+        ),
+        (
+            "finalizeFibStats",
+            "parameter 1 is a user record, variant or list value; a value of that shape \
+             is certified only by the projection, variant-dispatch and String templates, \
+             and this body matches none of them",
+        ),
+        (
+            "buildFibStats",
+            "returns a user record, variant or list value; a value of that shape is built \
+             only by the constructor, projection, variant-dispatch and String templates, \
+             and this body matches none of them",
+        ),
+        (
+            "fib",
+            "calls other user functions; only the composition and mutual-recursion \
+             templates cross function boundaries, and this body fits neither",
+        ),
+    ] {
+        assert_eq!(
+            declared.get(export).map(String::as_str),
+            Some(reason),
+            "`{export}` must decline with the blocker that actually applies to it"
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }

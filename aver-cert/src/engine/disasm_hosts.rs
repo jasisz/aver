@@ -252,6 +252,19 @@ fn resolve_data_ops(ops: Vec<Op>, data_segments: &[Option<Vec<u8>>]) -> Vec<Op> 
         .collect()
 }
 
+/// The name of an instruction the opcode vocabulary does not model, for the
+/// decline reason. `wasmparser`'s `Debug` prints the instruction first and its
+/// operands after (`I32Sub`, `LocalTee { local_index: 3 }`), so the leading
+/// identifier is exactly the instruction and nothing else. Diagnostic only: no
+/// admission decision ever reads this string.
+fn operator_name(op: &wasmparser::Operator<'_>) -> String {
+    format!("{op:?}")
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn heap_type_index(hty: wasmparser::HeapType) -> Option<u32> {
     match hty {
         wasmparser::HeapType::Concrete(idx) => idx.as_module_index(),

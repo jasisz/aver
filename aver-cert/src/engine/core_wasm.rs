@@ -22,7 +22,61 @@ struct UserFn {
     ops: Vec<Op>,
     /// call targets in body order, for reason reporting.
     calls: Vec<u32>,
+    /// `module.name` of every host capability (function import) this body calls,
+    /// in body order. Diagnostic only: no certified template admits a call into
+    /// the import surface, so a non-empty list names the blocker outright.
+    host_capability_calls: Vec<String>,
+    /// The declared parameter kinds resolved against the module's own type
+    /// section, so a decline can say "a String" instead of "a reference to type
+    /// 20". Diagnostic only; every admission gate reads `params`.
+    param_shapes: Vec<ValShape>,
+    /// The declared result kinds, resolved the same way.
+    result_shapes: Vec<ValShape>,
+    /// The first instruction in the body that the opcode vocabulary does not
+    /// model, named as the disassembler saw it. Diagnostic only; `None` when
+    /// the body is fully in vocabulary or the instruction carried an operand
+    /// the disassembler could not resolve.
+    first_unsupported_op: Option<String>,
     has_loop_or_branch: bool,
+}
+
+/// What a declared parameter or result actually is, once its wasm type is
+/// resolved against the module's own type section. Purely for decline reasons:
+/// nothing is admitted or refused on a `ValShape`, so a misreading here can
+/// only make a message vaguer, never certify anything.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValShape {
+    /// A reference to the Int carrier struct: a boxed `Int`.
+    Int,
+    /// A reference to a string byte-array type: a `String`.
+    Str,
+    /// Any other reference: a user record, variant or list value.
+    UserRef,
+    /// A bare machine scalar (`i64`, `i32`, `f64`) — `Int` in unboxed form,
+    /// `Bool`, or `Float`.
+    Scalar,
+    /// A wasm type outside the certificate's type vocabulary altogether.
+    Raw,
+}
+
+impl ValShape {
+    /// Whether the certified fragment treats this shape as an opaque value
+    /// rather than a number it can compute with. Scalars and boxed `Int`s are
+    /// the fragment's native vocabulary; everything else is only ever read or
+    /// built by one of the specific ADT/String templates.
+    fn outside_scalar_fragment(self) -> bool {
+        matches!(self, ValShape::Str | ValShape::UserRef | ValShape::Raw)
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            ValShape::Int => "an Int",
+            ValShape::Str => "a String",
+            ValShape::UserRef => "a user record, variant or list value",
+            ValShape::Scalar => "a machine scalar",
+            ValShape::Raw => "a wasm type the certified fragment does not model",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -32,6 +86,9 @@ struct CodeEntry {
     ops: Vec<Op>,
     calls: Vec<u32>,
     has_loop_or_branch: bool,
+    /// Name of the first instruction the opcode vocabulary does not model, as
+    /// the disassembler read it. Diagnostic only.
+    first_unsupported_op: Option<String>,
     host_role: Option<HostRole>,
     /// The first `i64` arithmetic operator seen in the body — the strict
     /// discriminator the plan-first host-role table uses to tell the
