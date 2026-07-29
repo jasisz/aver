@@ -262,4 +262,30 @@ example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .f64Gt]) gHost 4 1
     [WVal.f64v (3.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
     = some true := by native_decide
 
+/-! ## LEB128 index encoders
+
+Boundary sanity for the shared total encoders. The pairs that matter:
+127/128 is where the UNSIGNED encoding grows a second byte, 63/64 is where
+the SIGNED (s33) encoding grows one (bit 6 of the final group is the sign),
+and `4294967295` is the largest index the u32 regime admits — five groups,
+still inside both encoders' exact fuel range. 166 is a live two-byte call
+target (the smallest helper index of the notepad fixture). -/
+
+example : uleb32Bytes 0 = [0x00] := by decide
+example : uleb32Bytes 63 = [0x3f] := by decide
+example : uleb32Bytes 64 = [0x40] := by decide
+example : uleb32Bytes 127 = [0x7f] := by decide
+example : uleb32Bytes 128 = [0x80, 0x01] := by decide
+example : uleb32Bytes 166 = [0xa6, 0x01] := by decide
+example : uleb32Bytes 16384 = [0x80, 0x80, 0x01] := by decide
+example : uleb32Bytes 4294967295 = [0xff, 0xff, 0xff, 0xff, 0x0f] := by decide
+
+example : s33Bytes 0 = [0x00] := by decide
+example : s33Bytes 63 = [0x3f] := by decide
+example : s33Bytes 64 = [0xc0, 0x00] := by decide
+example : s33Bytes 127 = [0xff, 0x00] := by decide
+example : s33Bytes 128 = [0x80, 0x01] := by decide
+example : s33Bytes 8192 = [0x80, 0xc0, 0x00] := by decide
+example : s33Bytes 4294967295 = [0xff, 0xff, 0xff, 0xff, 0x0f] := by decide
+
 end CertPrelude

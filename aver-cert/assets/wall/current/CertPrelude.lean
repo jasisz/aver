@@ -25,6 +25,56 @@
 
 namespace CertPrelude
 
+/-! ## LEB128 index encodings (total, fuel-bounded)
+
+The one audited pair of index encoders shared by every wall module that
+SYNTHESIZES bytes (`PlanBytes` lowers plans, `ArithTemplateDerisk` synthesizes
+the arith helper bodies). Both are TOTAL — they return `List Nat`, never an
+`Option` — because a synthesized template that could be `none` would let an
+undecodable module body agree with an unencodable declaration (`none == none`)
+and fail open. Totality is obtained with structural fuel, not well-founded
+recursion, so `decide +kernel` reduces these definitions.
+
+The fuel-exhausted branch emits the final quotient raw. It is NOT a correct
+LEB128 encoding of out-of-range values, and it does not need to be: fuel `f`
+encodes every value below `2 ^ (7 * f)` exactly (the branch is unreachable
+there), and every caller either range-guards its input (`PlanBytes` wraps
+these in `Option` behind a `< 2 ^ 32` test) or conjoins an explicit bound on
+the accepted path (`ArithTemplateDerisk.checkArithHostParams` bounds every
+spliced index below `2 ^ 32`). `2 ^ 32 ≤ 2 ^ 35`, so five unsigned groups and
+six signed groups always suffice. -/
+
+/-- Total unsigned LEB128 with structural fuel: canonical (shortest-form) for
+    every `value < 2 ^ (7 * fuel)`. -/
+def ulebBytesFuel : Nat → Nat → List Nat
+  | 0, value => [value % 128]
+  | fuel + 1, value =>
+      if value < 128 then [value]
+      else (value % 128 + 128) :: ulebBytesFuel fuel (value / 128)
+
+/-- Canonical unsigned LEB128 of a u32 index (`call` targets, `struct.new` /
+    `struct.get` / array-op type indices). Exact for every `value < 2 ^ 35`,
+    which covers the whole u32 index space wasm admits. -/
+def uleb32Bytes (value : Nat) : List Nat :=
+  ulebBytesFuel 5 value
+
+/-- Total signed LEB128 (s33) of a NON-NEGATIVE value with structural fuel:
+    canonical for every `value < 2 ^ (7 * fuel - 1)`. A group whose bit 6 is
+    set would read back negative, so the encoding terminates one bit earlier
+    than the unsigned form: 63 is the last single-byte index, and `64` encodes
+    as `c0 00`, never `40`. -/
+def s33BytesFuel : Nat → Nat → List Nat
+  | 0, value => [value % 128]
+  | fuel + 1, value =>
+      if value < 64 then [value]
+      else (value % 128 + 128) :: s33BytesFuel fuel (value / 128)
+
+/-- Canonical signed-LEB (s33) encoding of a concrete heap-type index
+    (`ref.null <ht>`, `(ref null <ht>)` local/blocktype positions). Exact for
+    every `value < 2 ^ 41`, which covers the whole u32 index space. -/
+def s33Bytes (value : Nat) : List Nat :=
+  s33BytesFuel 6 value
+
 /-- Runtime values on the wasm-gc stack / in locals. -/
 inductive WVal where
   | i32v (n : Int)

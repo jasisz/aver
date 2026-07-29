@@ -9,20 +9,12 @@ import PlanLower
 namespace AverCert.PlanBytes
 open AverCert.Schema
 
-def ulebFuel : Nat → Nat → Option (List Nat)
-  | 0, _ => none
-  | fuel + 1, value =>
-      let byte := value % 128
-      let rest := value / 128
-      if rest = 0 then
-        some [byte]
-      else
-        match ulebFuel fuel rest with
-        | some bytes => some ((byte + 128) :: bytes)
-        | none => none
-
+/-- Canonical unsigned LEB128 of a u32 index, or `none` outside the range.
+    The bytes come from the shared total encoder (`CertPrelude.uleb32Bytes`,
+    exact below `2 ^ 35`); the guard keeps this plan-side wrapper fail-closed
+    at the u32 boundary the wasm binary format admits. -/
 def uleb32 (value : Nat) : Option (List Nat) :=
-  if value < 4294967296 then ulebFuel 5 value else none
+  if value < 4294967296 then some (CertPrelude.uleb32Bytes value) else none
 
 def slebFuel : Nat → Int → Option (List Nat)
   | 0, _ => none
@@ -61,9 +53,12 @@ def sleb64 (value : Int) : Option (List Nat) :=
     or a `ref.cast`/`ref.test`/`ref.null` immediate) are encoded as SIGNED s33
     LEB128 per the Wasm spec, not unsigned: index 64 is `c0 00`, never `40`.
     Indices below 64 coincide with the unsigned encoding. Instruction TYPE
-    indices (`struct.get`, `array.new_data`, …) stay unsigned u32. -/
+    indices (`struct.get`, `array.new_data`, …) stay unsigned u32. The bytes
+    come from the shared total encoder (`CertPrelude.s33Bytes`, exact below
+    `2 ^ 41`); the guard keeps this plan-side wrapper fail-closed at the u32
+    boundary. -/
 def s33HeapIdx (idx : Nat) : Option (List Nat) :=
-  if idx < 4294967296 then slebFuel 6 (Int.ofNat idx) else none
+  if idx < 4294967296 then some (CertPrelude.s33Bytes idx) else none
 
 /-- Prefix a successfully lowered function body with its canonical u32 byte
     length, producing the exact byte sequence stored as one Wasm code entry. -/
