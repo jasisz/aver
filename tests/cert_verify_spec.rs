@@ -2958,8 +2958,11 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         "expected clean stringconcat certificate to verify:\n{report}"
     );
 
-    // Honest bytes and plan, zero locals in the obligation only: String.concat
-    // canonically declares one carrier scratch local.
+    // Honest bytes and plan, zero locals in the obligation only. This fixture
+    // touches `Int`, so its module carries the Int carrier struct and the
+    // emitted concatenation reserves one carrier scratch local; the canonical
+    // locals count for THIS carrier state is therefore one, and a zero declared
+    // here contradicts both the byte template and the decoded code entry.
     {
         let dir = temp_dir("cert-stringconcat-zero-locals");
         copy_dir(&out_dir, &dir);
@@ -3160,6 +3163,156 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         !out.contains("CERTIFIED"),
         "tampered String.concat helper credited:\n{out}"
     );
+}
+
+/// End to end on the flagship first example. `examples/core/hello.av` mentions
+/// no `Int` anywhere, so the compiler emits no Int carrier struct and no box
+/// helper, and its concatenations lower to a code entry with an EMPTY locals
+/// vector. Both exports must certify in that state, and the claim's declared
+/// carrier state must be pinned to the module's own type section rather than
+/// carried as a free field.
+#[test]
+fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping carrierless String.concat test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-hello-carrierless");
+
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "hello compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("hello.wasm");
+    let cert = out_dir.join("cert");
+
+    // The module really is in the carrierless state: no Int carrier helper is
+    // exported, so no claim in it may cite a box/add/mul/sub role either.
+    let bytes = std::fs::read(&wasm).unwrap();
+    let (box_idx, ..) = aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
+        .expect("hello.wasm classifies");
+    assert_eq!(
+        box_idx, None,
+        "hello.av must stay carrierless for this test to mean anything"
+    );
+
+    // The claims declare that state as `none`, and the obligations declare the
+    // reserved carrier index the wall forces in it.
+    let artifact = std::fs::read_to_string(cert.join("Artifact.lean")).unwrap();
+    assert!(
+        artifact.contains("carrier := none"),
+        "carrierless String.concat claims should declare `carrier := none`:\n{artifact}"
+    );
+
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(
+        ok,
+        "the carrierless hello certificate must verify:\n{report}"
+    );
+    assert!(
+        report.contains("CERTIFIED"),
+        "carrierless hello should be CERTIFIED:\n{report}"
+    );
+    for export in ["greet", "shout"] {
+        assert!(
+            report.contains(export),
+            "carrierless hello should certify `{export}`:\n{report}"
+        );
+    }
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    assert!(
+        manifest.get("hostRoleTable").is_some() && manifest["hostRoleTable"].is_null(),
+        "a carrierless module must declare the null host-role table, got {:?}",
+        manifest.get("hostRoleTable")
+    );
+    assert!(
+        manifest.get("carrier_type_index").is_some() && manifest["carrier_type_index"].is_null(),
+        "a carrierless module must report no carrier type index, got {:?}",
+        manifest.get("carrier_type_index")
+    );
+    for export in ["greet", "shout"] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"].as_str() == Some(export))
+            .unwrap_or_else(|| panic!("{export} manifest entry"));
+        assert_eq!(
+            entry["class"].as_str(),
+            Some("verbatim-string-concat"),
+            "{export} should render its concat class"
+        );
+    }
+
+    // The claim cannot buy itself the carriered template: declaring a carrier
+    // index in a module whose type section holds no carrier struct contradicts
+    // `CertDecode.carrierState`, and the synthesized prelude stops matching the
+    // module's own code entry as well.
+    {
+        let dir = temp_dir("cert-hello-carrier-claim");
+        copy_dir(&out_dir, &dir);
+        let path = dir.join("cert/Artifact.lean");
+        let src = std::fs::read_to_string(&path).unwrap();
+        let tampered = src.replacen("carrier := none", "carrier := some 2", 1);
+        assert_ne!(src, tampered, "carrierless claim shape changed");
+        std::fs::write(&path, &tampered).unwrap();
+        let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            !ok,
+            "a carrierless module claiming a carrier index must be DECLINED:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "carrier-index claim credited in a carrierless module:\n{out}"
+        );
+    }
+
+    // The obligation's carrier index is pinned too: the carrierless arm of
+    // `decodedCarrierIndex` forces the reserved `0` in this state, so any other
+    // declaration fails that byte-derived equality.
+    {
+        let dir = temp_dir("cert-hello-obligation-carrier");
+        copy_dir(&out_dir, &dir);
+        let path = dir.join("cert/Manifest.lean");
+        let src = std::fs::read_to_string(&path).unwrap();
+        let tampered = src.replacen("carrier := 0", "carrier := 1", 1);
+        assert_ne!(src, tampered, "carrierless obligation shape changed");
+        std::fs::write(&path, &tampered).unwrap();
+        let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            !ok,
+            "a free obligation carrier index must be DECLINED:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "free obligation carrier index credited:\n{out}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A cert with zero certified exports is an admission, not a certification: it

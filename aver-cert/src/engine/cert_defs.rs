@@ -230,7 +230,13 @@ enum Cert {
         self_idx: u32,
         type_idx: u32,
         nlocals: usize,
-        carrier: u32,
+        /// The module's Int-carrier struct type index, or `None` when the module
+        /// emits no Int carrier at all. Concatenation never touches the carrier,
+        /// so unlike every other family this one certifies in both states; the
+        /// index only picks the locals prelude the emitter reserved, and the
+        /// wall re-derives that choice from the type section rather than taking
+        /// it from here (`CertDecode.carrierState`).
+        carrier: Option<u32>,
         /// The wasm func index of the String.concat host helper.
         string_concat_idx: u32,
         /// The container type index (the array-of-string-arrays built by

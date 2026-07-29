@@ -410,6 +410,26 @@ def decodeCarrier (n len : Nat) : Option Nat :=
   | some ti => ti.carrier
   | none => none
 
+/-- Strict THREE-state Int-carrier decode, the presence counterpart of
+    `decodeCarrier`:
+
+    * `none` — the type section does not decode at all. No declaration is
+      admissible; absence is never certified from bytes that cannot be read.
+    * `some none` — the type section decodes strictly and holds no Int-carrier
+      struct. This is the byte-proved carrierless state.
+    * `some (some idx)` — the type section decodes strictly and the first
+      Int-carrier struct sits at type index `idx`.
+
+    `decodeCarrier` collapses the first two states onto `none`, so a conjunct
+    written against it can only ever pin a PRESENT carrier: it fails closed on a
+    carrierless module and on an unreadable one alike, and can distinguish
+    neither. Every acceptance conjunct that must ADMIT a carrierless module
+    reads this decoder instead, which keeps the unreadable case rejected. -/
+def carrierState (n len : Nat) : Option (Option Nat) :=
+  match decodeTypes n len with
+  | some ti => some ti.carrier
+  | none => none
+
 /-- The decoded struct-field count at one type index. Non-struct type entries
     have count zero; an out-of-range index or malformed type section is
     rejected. -/

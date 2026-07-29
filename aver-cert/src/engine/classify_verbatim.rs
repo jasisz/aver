@@ -245,7 +245,11 @@ fn nr_string_concat_verbatim_match(
         self_idx: f.wasm_idx,
         type_idx: f.type_idx,
         nlocals: f.nlocals,
-        carrier: carrier?,
+        // Deliberately NOT `carrier?`. Concatenation reads no carrier, so a
+        // module that emits no Int carrier at all still certifies here; the
+        // state is carried through so the byte lowering picks the same locals
+        // prelude the emitter produced.
+        carrier,
         string_concat_idx: *concat_idx,
         container_ty: *container_ty,
         result_ty,

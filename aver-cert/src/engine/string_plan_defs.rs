@@ -527,7 +527,7 @@ fn lower_string_concat_plan(
 
 fn lower_string_concat_plan_code_entry_bytes(
     plan: &StringConcatPlan,
-    carrier: u32,
+    carrier: Option<u32>,
     result_ty: u32,
     container_ty: u32,
     concat_func_idx: u32,
@@ -547,18 +547,27 @@ fn lower_string_concat_plan_code_entry_bytes(
     Ok(out)
 }
 
+/// Twin of the wall's `PlanBytes.lowerStringConcatBodyBytes`. The locals
+/// prelude follows the module's carrier state: one nullable carrier-reference
+/// local when the module has an Int carrier struct, an empty declaration vector
+/// when it has none. The expression that follows is identical in both states.
 fn lower_string_concat_plan_body_bytes(
     plan: &StringConcatPlan,
-    carrier: u32,
+    carrier: Option<u32>,
     result_ty: u32,
     container_ty: u32,
     concat_func_idx: u32,
 ) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    push_u32_leb(&mut out, 1);
-    push_u32_leb(&mut out, 1);
-    out.push(0x63);
-    push_s33_heap_idx(&mut out, carrier);
+    match carrier {
+        Some(carrier) => {
+            push_u32_leb(&mut out, 1);
+            push_u32_leb(&mut out, 1);
+            out.push(0x63);
+            push_s33_heap_idx(&mut out, carrier);
+        }
+        None => push_u32_leb(&mut out, 0),
+    }
     for chunk in &plan.prefixes {
         push_string_concat_chunk_bytes(&mut out, result_ty, chunk)?;
     }

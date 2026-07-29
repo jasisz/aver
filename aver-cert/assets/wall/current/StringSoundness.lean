@@ -179,8 +179,12 @@ theorem popConcatStack (stringTy : Nat) (prefixes suffixes : List StringConcatCh
 
 /-! ## Generic String.concat certificate -/
 
+/-- The concatenation body reads only `local.get 0`, so the certificate is
+    independent of how many declared locals follow the argument in the frame:
+    `nlocals` is a parameter here, and the caller supplies whichever count the
+    module's carrier state produced. -/
 theorem generic_string_concat_certified
-    (stringTy containerTy concatFuncIdx : Nat)
+    (stringTy containerTy concatFuncIdx nlocals : Nat)
     (plan : StringConcatRawPlan)
     (code : CodeTbl) (host : HostTbl) (self : Nat)
     (stringConcat : Nat → List WVal → Option WVal)
@@ -189,7 +193,7 @@ theorem generic_string_concat_certified
     (hcheck : AverCert.PlanCheck.checkStringConcatRawPlan plan = true)
     (instrs : List WInstr)
     (hlow : lowerStringConcatBody stringTy containerTy concatFuncIdx plan = some instrs)
-    (hself : code self = some ⟨1, 1, instrs⟩)
+    (hself : code self = some ⟨1, nlocals, instrs⟩)
     (hhost : host concatFuncIdx = some (1, stringConcat stringTy)) :
     ∀ (fuel : Nat) (v w : WVal),
       wFuncN code host (fuel + 1) self [v] = some w →

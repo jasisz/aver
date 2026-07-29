@@ -443,7 +443,7 @@ fn render_expr_fragment_plans(
                AverCert.PlanLower.lowerStringConcatBody {result_ty} {container_ty} {string_concat_idx} {name}StringConcatPlan := rfl\n\n\
              /-- The audited Lean-side byte lowerer maps `{name}`'s String.concat plan\n\
                  to the exact canonical code-entry bytes. -/\n\
-             example : AverCert.PlanBytes.lowerStringConcatCodeEntry {carrier} {result_ty} {container_ty} {string_concat_idx} {name}StringConcatPlan =\n  \
+             example : AverCert.PlanBytes.lowerStringConcatCodeEntry {carrier_state} {result_ty} {container_ty} {string_concat_idx} {name}StringConcatPlan =\n  \
                some {code_entry_bytes} := rfl\n\n\
              /-- The audited Lean-side Wasm slicer binds `{name}` to its function\n\
                  index, type index and exact expected code-entry bytes. -/\n\
@@ -452,6 +452,29 @@ fn render_expr_fragment_plans(
              \n",
             sym_plan_value = sym_plan_lean_value(&sym_plan),
             plan_value = string_concat_plan_lean_value(&plan),
+            carrier_state = render_carrier_state(*carrier),
+        ));
+    }
+    // The carrier state is a property of the MODULE, not of an export, so its
+    // audit line is emitted once for the whole package rather than repeated
+    // identically per concatenation. Acceptance pins it per claim anyway
+    // (`stringConcatPlanAccepted`); this is the readable restatement.
+    if let Some(carrier) = analysis
+        .certs
+        .iter()
+        .find_map(|c| match c.inner() {
+            Cert::StringConcatVerbatimMatch { carrier, .. } => Some(*carrier),
+            _ => None,
+        })
+    {
+        s.push_str(&format!(
+            "/-- The module's byte-derived carrier state: the value that selects the\n\
+                 locals prelude of every `string-concat-v1` code entry above.\n\
+                 Recomputed from the artifact bytes, so no claim can declare a\n\
+                 prelude the type section does not license. -/\n\
+             example : CertDecode.carrierState AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen =\n  \
+               some {carrier_state} := rfl\n\n",
+            carrier_state = render_carrier_state(carrier),
         ));
     }
     for c in &analysis.certs {
@@ -1035,18 +1058,26 @@ fn render_artifact_expr_fragment_claims(
                 let func_binding = format!(
                     "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
+                let carrier_state = render_carrier_state(*carrier);
+                // The obligation declares what `decodedCarrierIndex` forces:
+                // the real carrier index, or the reserved `0` in a module that
+                // provably has no Int carrier struct.
+                let obligation_carrier = carrier.unwrap_or(0);
                 string_claims.push(format!(
-                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
+                    "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier_state}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                     export_name = lean_str(name),
                 ));
+                // Five leading `rfl`s: export name, the carrier-state decode,
+                // the obligation's carrier index, the concat host role, and the
+                // canonical host wiring.
                 string_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
                 string_concat_faces.push(Some((
                     format!("AverCert.Plans.{name}StringConcatPlan"),
                     format!(
-                        "⟨rfl, rfl, ([] : List Nat), (⟨0, {carrier}, []⟩ : AverCert.DeclaredIndexEnvelope.DIdxEnvelope), \
+                        "⟨rfl, rfl, ([] : List Nat), (⟨0, {obligation_carrier}, []⟩ : AverCert.DeclaredIndexEnvelope.DIdxEnvelope), \
                          ⟨AverCert.Plans.declaredTypeCur, rfl, Nat.zero_le _, rfl⟩, rfl, rfl, \
                          HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
                     ),
@@ -2027,6 +2058,15 @@ fn render_mutual_scc_closure_pins(analysis: &Analysis) -> String {
         ));
     }
     out
+}
+
+/// Render a module carrier state as a Lean `Option Nat` literal. `none` is the
+/// byte-proved carrierless state, not a missing value.
+fn render_carrier_state(carrier: Option<u32>) -> String {
+    match carrier {
+        Some(idx) => format!("(some {idx})"),
+        None => "none".to_string(),
+    }
 }
 
 fn render_byte_list(bytes: &[u8]) -> String {

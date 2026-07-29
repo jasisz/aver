@@ -142,12 +142,12 @@ theorem stringConcat_accepted_call
           claim.obligation := by
         simpa [hPlan] using hClaim
       rcases hAccepted with
-        ⟨_hExport, _hCarrier, _hRole, hHost, body, codeEntry, binding,
+        ⟨_hExport, _hCarrierState, _hCarrier, _hRole, hHost, body, codeEntry, binding,
           _hSym, _hMatches, hCheck, hLow, _hCodeEntry, _hExactBinding,
           hSelf, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
-          some ⟨1, 1, body⟩ := by
-        simpa [hSelf, stringConcatNLocals] using hCode
+          some ⟨1, stringConcatNLocals claim.carrier, body⟩ := by
+        simpa [hSelf] using hCode
       refine ⟨plan, rfl, ?_⟩
       intro add sub mul stringEq stringConcat toIndex hStringConcat fuel v w hRun
       have hHostSlot :
@@ -157,7 +157,8 @@ theorem stringConcat_accepted_call
         rw [hHost]
         simp [stringConcatCanonicalHost]
       exact StringSoundness.generic_string_concat_certified
-        claim.resultTy claim.containerTy claim.concatFuncIdx plan
+        claim.resultTy claim.containerTy claim.concatFuncIdx
+        (stringConcatNLocals claim.carrier) plan
         claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat toIndex)
         claim.obligation.self stringConcat hStringConcat hCheck body hLow
@@ -210,10 +211,12 @@ theorem stringEq_canonical_discharges
         fuel v w hRun
       simpa [verbatimRepr] using hCall
 
-/-- Canonical option-(c) leaf bridge for a String.concat obligation. -/
+/-- Canonical option-(c) leaf bridge for a String.concat obligation. `nlocals`
+    is whatever the module's carrier state made the emitter declare; the body
+    reads only the argument, so the bridge holds at either count. -/
 theorem stringConcat_canonical_discharges
     (exportName : String)
-    (carrier resultTy containerTy concatFuncIdx self : Nat)
+    (carrier resultTy containerTy concatFuncIdx self nlocals : Nat)
     (plan : StringConcatRawPlan) (code : CodeTbl)
     (host :
       (List WVal → Option WVal) →
@@ -226,7 +229,7 @@ theorem stringConcat_canonical_discharges
     {body : List WInstr}
     (hLow : AverCert.PlanLower.lowerStringConcatBody
       resultTy containerTy concatFuncIdx plan = some body)
-    (hCode : code self = some ⟨1, 1, body⟩)
+    (hCode : code self = some ⟨1, nlocals, body⟩)
     (hHost : ∀ add sub mul stringEq stringConcat toIndex,
       host add sub mul stringEq stringConcat toIndex concatFuncIdx =
         some (1, stringConcat resultTy)) :
@@ -251,7 +254,7 @@ theorem stringConcat_canonical_discharges
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := StringSoundness.generic_string_concat_certified
-        resultTy containerTy concatFuncIdx plan code
+        resultTy containerTy concatFuncIdx nlocals plan code
         (host add sub mul stringEq stringConcat toIndex) self stringConcat hStringConcat
         hCheck body hLow hCode (hHost add sub mul stringEq stringConcat toIndex)
         fuel v w hRun

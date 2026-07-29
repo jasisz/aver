@@ -103,9 +103,16 @@ def symFragmentClaimAccepted
     claim.plan
     claim.obligation
 
-/-- Canonical locals count declared by `lowerStringConcatBodyBytes`: the
-    concatenation lowering always declares one carrier scratch local. -/
-def stringConcatNLocals (_plan : StringConcatRawPlan) : Nat := 1
+/-- Canonical locals count declared by `lowerStringConcatBodyBytes`: one carrier
+    scratch local in a module that has an Int carrier struct, none in a module
+    that provably has not. Reading the SAME `carrier?` the byte lowering reads
+    keeps the semantic frame and the emitted prelude from ever disagreeing, and
+    `decodedCodeAt` equates this count with the locals vector decoded from the
+    real code section — so the number is byte-checked, not asserted. -/
+def stringConcatNLocals (carrier? : Option Nat) : Nat :=
+  match carrier? with
+  | some _ => 1
+  | none => 0
 
 /-- Canonical whole-host builders for the two byte-exact string roles. -/
 def stringEqCanonicalHost (funcIdx : Nat) :
@@ -127,18 +134,36 @@ def stringConcatCanonicalHost (funcIdx resultTy : Nat) :
 /-- Artifact-level acceptance for one String.concat export. The raw plan carries
     source-level chunks plus the encoder's data-index binding; the audited Lean
     lowerers rebuild both the semantic `WInstr` body and exact code-entry bytes,
-    and the Wasm slicer binds those bytes to the exported function. -/
+    and the Wasm slicer binds those bytes to the exported function.
+
+    `carrier` is the declared CARRIER STATE of the module, not a plan parameter,
+    and the second conjunct pins it to `CertDecode.carrierState` recomputed from
+    the same bytes. That single equality decides which locals prelude the byte
+    lowering below synthesizes and which locals count the semantic frame carries:
+    a module whose type section holds an Int carrier struct can present only
+    `some idx` (for that exact index), a module whose type section decodes and
+    holds none can present only `none`, and a module whose type section does not
+    decode can present neither. The producer has no third option and no choice
+    between the two, which is the whole point of stating the template selector
+    against a decoder instead of leaving it as claim data.
+
+    It is also STRICTLY stronger than the `obligation.carrier = carrier` it
+    replaces: that conjunct only tied one declared field to another, whereas the
+    pair below ties the claim to the bytes, and `decodedCarrierIndex` ties the
+    obligation to the same decoded state. -/
 def stringConcatPlanAccepted
     (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
     (exportName : String)
-    (carrier resultTy containerTy concatFuncIdx : Nat)
+    (carrier : Option Nat)
+    (resultTy containerTy concatFuncIdx : Nat)
     (stringHostRoles : List (Nat × CertDecode.StringHost.Role))
     (symPlan : SymRawPlan)
     (plan : StringConcatRawPlan)
     (obligation : Obligation) : Prop :=
   obligation.export_ = exportName ∧
-  obligation.carrier = carrier ∧
+  CertDecode.carrierState modBytes modLen = some carrier ∧
+  obligation.carrier = carrier.getD 0 ∧
   stringHostRoles.contains (concatFuncIdx, .concat) = true ∧
   obligation.host = stringConcatCanonicalHost concatFuncIdx resultTy ∧
   ∃ body codeEntry binding,
@@ -153,7 +178,7 @@ def stringConcatPlanAccepted
       modBytes modLen exportNameBytes codeEntry = some binding ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
-      some { arity := 1, nlocals := stringConcatNLocals plan, body := body }
+      some { arity := 1, nlocals := stringConcatNLocals carrier, body := body }
 
 def stringEqPlanAccepted
     (modBytes modLen : Nat)
@@ -196,11 +221,14 @@ def constructPlanForExport
     Option ConstructRawPlan :=
   namedPlanForExport exportName
 
-/-- One source-level String.concat claim inside an artifact certificate. -/
+/-- One source-level String.concat claim inside an artifact certificate.
+    `carrier` is the module's carrier STATE — `none` for a module with no Int
+    carrier struct — and is pinned to `CertDecode.carrierState` by
+    `stringConcatPlanAccepted`. -/
 structure StringConcatClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
   exportName      : String
-  carrier         : Nat
+  carrier         : Option Nat
   resultTy        : Nat
   containerTy     : Nat
   concatFuncIdx   : Nat
@@ -1399,9 +1427,89 @@ def decodedCodeAtAll
       decodedCodeAt modBytes modLen obligation funcIdx ∧
       decodedCodeAtAll modBytes modLen obligation rest
 
+/-- Byte-derived binding of one obligation's carrier index, stated over the
+    THREE states `CertDecode.carrierState` distinguishes rather than over a
+    collapsed `Option Nat`:
+
+    * `some (some idx)` — the module has an Int carrier struct, and the
+      obligation must declare that exact index. Identical to the
+      `decodeCarrier … = some obligation.carrier` this replaces, so nothing an
+      existing certificate relies on moves.
+    * `some none` — the type section decodes and holds no carrier struct. There
+      is no index to bind, so the wall forces the reserved `0`. Writing the pin
+      against `decodeCarrier` left this state with no admissible declaration at
+      all, which is what made a carrierless module permanently uncertifiable.
+    * `none` — the type section does not decode. No declaration is admissible,
+      exactly as before.
+
+    Matching on the state instead of mapping it through `Option.getD` matters:
+    a collapsed reading sends both `some (some 0)` and `some none` to the same
+    `some 0`, reintroducing at `0` precisely the ambivalence `carrierState` was
+    introduced to remove at `none`. Both arms happen to force the same field
+    today, but a family that later branches on the carrier state would inherit a
+    decoder that cannot tell "the carrier is type 0" from "there is no carrier".
+
+    SCOPE. This relaxation is admitted for the String.concat claim list ALONE
+    (`decodedCarrierFreeClaims` below); every other NON-EXPRESSION-FRAGMENT
+    family keeps the strict `decodedStrictCarrierIndex`, and the
+    expression-fragment family is bound by neither (see
+    `decodedStrictCarrierIndex`). The reserved index is only harmless for a family
+    whose face provably never consults the `CarrierSpec`, and String.concat is
+    the family this leg established that for: its `Dom`/`Cod` are `WVal`, its
+    `domRepr` is `vs = [v]` and its `codRepr` is `verbatimRepr`, all of which
+    discard the spec argument. Applying it uniformly would be unsound, and
+    concretely so: `construct-v1`'s named face pins `HEq o.Dom Int` and
+    `HEq o.domRepr (intArgDomRepr env.carrier)`, an INT-REPRESENTATION face, and
+    it cites no arith role (`constructNamedFace` fixes `host = emptyHost`), so
+    neither the arith-table carrier pin nor the role table constrains it. Under a
+    uniform relaxation a module with no decodable carrier struct could carry a
+    constructor claim whose representation face is stated over `CarrierSpec 0`
+    while the module provably has no carrier struct at index `0` at all. -/
+def decodedCarrierIndex
+    (modBytes modLen : Nat) (obligation : Obligation) : Prop :=
+  match CertDecode.carrierState modBytes modLen with
+  | some (some idx) => obligation.carrier = idx
+  | some none => obligation.carrier = 0
+  | none => False
+
+/-- The carrier binding every NON-EXPRESSION-FRAGMENT family but String.concat
+    must satisfy: the module has a decodable Int-carrier struct and the
+    obligation declares that exact index. A module with no carrier struct, or one
+    whose type section does not decode, admits no claim in those families at all
+    — which is the guarantee that held before the carrierless state was admitted
+    anywhere, and the one that keeps a carrier-SENSITIVE face among them from
+    ever being stated over an index the bytes do not license.
+
+    The expression-fragment family is NOT among them and satisfies neither this
+    binding nor `decodedCarrierIndex`: `symFragmentClaims` is deliberately absent
+    from `decodedNonExprClaimFacts` (see the note there), so nothing in this file
+    constrains its carrier. What binds an `expr-fragment-v1` claim's carrier is
+    `ExprFragmentAccepted.accepted` alone, and it does so purely by BYTE
+    EQUALITY: the declared index is spliced into the synthesized locals prelude
+    (`01 01 63 <carrier>`) and into every carrier-typed instruction immediate,
+    and `WasmSlice.exactFuncBindingForExport` requires the result to equal the
+    export's real code entry; the integer-family renders additionally pin the
+    declared function type through `WasmSlice.funcTypeMatches`, which matches
+    each `intCarrier` position against `(ref null carrier)`. That index is
+    therefore confirmed against the CODE and the SIGNATURE, and is never tied to
+    `CertDecode.carrierState`, `CertDecode.decodeCarrier` or
+    `ArithHostParams.carrier`. Do not describe this file's bindings as covering
+    "every family": they cover every family whose claims appear below. -/
+def decodedStrictCarrierIndex
+    (modBytes modLen : Nat) (obligation : Obligation) : Prop :=
+  CertDecode.decodeCarrier modBytes modLen = some obligation.carrier
+
+/-- Byte-derived facts every non-expression-fragment obligation must satisfy. -/
 def decodedObligationFacts
     (modBytes modLen : Nat) (obligation : Obligation) (funcIndices : List Nat) : Prop :=
-  CertDecode.decodeCarrier modBytes modLen = some obligation.carrier ∧
+  decodedStrictCarrierIndex modBytes modLen obligation ∧
+  decodedCodeAtAll modBytes modLen obligation funcIndices
+
+/-- The same facts with the three-state carrier binding, for the one family
+    whose face is carrier-inert. -/
+def decodedCarrierFreeObligationFacts
+    (modBytes modLen : Nat) (obligation : Obligation) (funcIndices : List Nat) : Prop :=
+  decodedCarrierIndex modBytes modLen obligation ∧
   decodedCodeAtAll modBytes modLen obligation funcIndices
 
 def decodedClaims
@@ -1413,6 +1521,19 @@ def decodedClaims
   | claim :: rest =>
       decodedObligationFacts modBytes modLen (obligation claim) (funcIndices claim) ∧
       decodedClaims modBytes modLen obligation funcIndices rest
+
+/-- `decodedClaims` with the three-state carrier binding. Applied to the
+    String.concat claim list only; see `decodedCarrierIndex`. -/
+def decodedCarrierFreeClaims
+    {Claim : Type u}
+    (modBytes modLen : Nat)
+    (obligation : Claim → Obligation)
+    (funcIndices : Claim → List Nat) : List Claim → Prop
+  | [] => True
+  | claim :: rest =>
+      decodedCarrierFreeObligationFacts modBytes modLen
+        (obligation claim) (funcIndices claim) ∧
+      decodedCarrierFreeClaims modBytes modLen obligation funcIndices rest
 
 def decodedConstructStructFields
     (modBytes modLen : Nat) : List ConstructClaim → Prop
@@ -1450,7 +1571,7 @@ def decodedCompositionClaims
     (members : List CompositionMemberClaim) : List CompositionClaim → Prop
   | [] => True
   | claim :: rest =>
-      CertDecode.decodeCarrier modBytes modLen = some claim.obligation.carrier ∧
+      decodedStrictCarrierIndex modBytes modLen claim.obligation ∧
       decodedCompositionNames modBytes modLen members claim.obligation claim.memberNames ∧
       decodedCompositionClaims modBytes modLen members rest
 
@@ -1465,7 +1586,15 @@ def decodedNonExprClaimFacts (artifact : ArtifactData) : Prop :=
       (fun c : StringEqClaim => c.obligation)
       (fun c : StringEqClaim => [c.obligation.self])
       artifact.stringEqClaims ∧
-  decodedClaims artifact.modBytes artifact.modLen
+  -- The ONE list here on the three-state carrier binding. Every other list
+  -- below keeps the strict one, so among the families collected in THIS
+  -- predicate a module with no decodable carrier struct carries String.concat
+  -- claims and nothing else. That is not a statement about the whole artifact:
+  -- `symFragmentClaims` is absent from this predicate entirely, and such a
+  -- module can also carry expression-fragment claims — the `none, none` arith
+  -- arm needs only `carrierHelperAbsent`, `hostTableBound roles []` is
+  -- vacuously true, and generic and projection fragments cite no role at all.
+  decodedCarrierFreeClaims artifact.modBytes artifact.modLen
       (fun c : StringConcatClaim => c.obligation)
       (fun c : StringConcatClaim => [c.obligation.self])
       artifact.stringConcatClaims ∧
@@ -1541,6 +1670,46 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     module-wide arith scanner that predated this pin has been deleted from the
     wall rather than left in place as an unreachable decoder.
 
+    A declared table also has to name a carrier that the TYPE SECTION shows:
+    `carrierState n len = some (some p.carrier)`. Every other conjunct here reads
+    the export section, the code section, or nothing at all, so without this one
+    `p.carrier` was a free index that the wall only ever spliced into the helper
+    bodies it synthesized — an arith table could be admitted by a module whose
+    type section holds no Int-carrier struct anywhere. That is not hypothetical:
+    `isCarrier` requires the third field's storage tag to be `0x7f`, so a
+    perfectly working carrier whose flag field is a PACKED `i8` (tag `0x78`)
+    decodes as no carrier at all, and a module built that way could pair a real
+    Int runtime with a carrierless type section. Combined with the reserved
+    carrier index that `decodedCarrierIndex` forces in the carrierless state,
+    that would have let an Int-family claim wire the box role and state its
+    obligation over `CarrierSpec 0` while the values the code actually builds
+    live at a different struct index — the claim's representation face and the
+    module's representation would simply be about different things.
+
+    What this conjunct restores is the precondition every host-role-consuming
+    family needs and none of them state for themselves: an admitted arith table
+    now implies a byte-derived carrier struct at exactly the index the helper
+    bodies splice.
+
+    It is NOT what confines the carrierless state to `string-concat-v1`. Several
+    families cite no arith role at all — String.eq, verbatim dispatch, field
+    projection and named-ADT construction all reach acceptance with the table
+    absent — so this conjunct never runs for them. What confines the carrierless
+    state is that `decodedCarrierIndex` is wired to the String.concat claim list
+    ALONE; every other NON-EXPRESSION-FRAGMENT family keeps
+    `decodedStrictCarrierIndex`, which no module without a decodable carrier
+    struct can satisfy. Both mechanisms are needed: this one stops a role-citing
+    family from wiring an Int runtime the type section does not corroborate, and
+    the scoping stops a role-FREE family that is nonetheless carrier-sensitive
+    (`construct-v1`) from being stated over the reserved index.
+
+    Neither mechanism reaches the expression-fragment family, whose claims are
+    absent from `decodedNonExprClaimFacts` and whose carrier is confirmed only
+    by the byte equalities of `ExprFragmentAccepted.accepted` — never against
+    `carrierState`, `decodeCarrier` or `ArithHostParams.carrier`. A carrierless
+    module can therefore carry expression-fragment claims as well as
+    String.concat ones.
+
     `box` and `toIndex` carry a SECOND pin, to their runtime export names
     (#736 for `box`), and both pins are kept because they constrain different
     things. The name equality says at WHICH INDEX the role may be declared; the
@@ -1570,6 +1739,7 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
   | none, none => CertDecode.AddSub.carrierHelperAbsent n len
   | some roles, some p =>
       !CertDecode.AddSub.carrierHelperAbsent n len &&
+      (CertDecode.carrierState n len == some (some p.carrier)) &&
       (roles.box == CertDecode.AddSub.boxIdx n len) &&
       (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
       ArithTemplateDerisk.checkArithHostParams p &&
