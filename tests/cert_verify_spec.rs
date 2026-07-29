@@ -5390,6 +5390,39 @@ fn cert_verify_declines_broken_mutual_scc_membership() {
     }
 }
 
+/// The single-line value the producer wrote for `def {name} : {ty} := …` in an
+/// emitted Lean source. Reading the real definition back out of the certificate
+/// is what keeps a test's assertions tied to the emitter rather than to a
+/// hand-copied literal that can silently fall out of date.
+fn emitted_lean_def(src: &str, name: &str, ty: &str) -> String {
+    let head = format!("def {name} : {ty} := ");
+    let (_, rest) = src
+        .split_once(&head)
+        .unwrap_or_else(|| panic!("emitted Lean has no `{head}`; update the test"));
+    rest.lines()
+        .next()
+        .expect("emitted Lean definition has a value")
+        .trim()
+        .to_string()
+}
+
+/// The text the producer wrote between `head` and `tail` on one line of an
+/// emitted Lean source — used to read back the byte-derived arguments (carrier,
+/// member set, host-role table) it threads into its own examples.
+fn emitted_lean_args(src: &str, head: &str, tail: &str) -> String {
+    let line = src
+        .lines()
+        .find(|l| l.contains(head) && l.contains(tail))
+        .unwrap_or_else(|| panic!("emitted Lean has no line `{head}…{tail}`; update the test"));
+    let start = line.find(head).expect("head present") + head.len();
+    let end = line.rfind(tail).expect("tail present");
+    assert!(
+        start <= end,
+        "emitted Lean line `{line}` has no arguments between `{head}` and `{tail}`"
+    );
+    line[start..end].trim().to_string()
+}
+
 /// GUARD-ISOLATING direct Lean assertions for the two mutual-recursion kernel
 /// guards, elaborated with `lake env lean` against the audited cert modules — no
 /// `aver cert verify`, no sibling defence in the path. Each assertion is
@@ -5399,10 +5432,16 @@ fn cert_verify_declines_broken_mutual_scc_membership() {
 /// `mutualMembersFormClosedSccs` to `true` breaks solely the closure
 /// reject/wrapper lines — nothing else moves).
 ///
-/// FIX A (`checkMutualPlanShape`): the descent `.hostCall .sub 9` relabelled
-/// byte-identically as a non-tail `.selfCall false 9` — the ONLY thing
-/// `checkMutualPlanShape` catches that the generic checker + byte lowering do
-/// not. Asserts (i) `checkMutualRawPlan` ACCEPTS it, (ii) its `WInstr` body and
+/// The honest plan and its byte-derived binding context (carrier, member set,
+/// host-role table) are READ BACK OUT of the certificate this test just compiled
+/// from `tools/certkit/fixtures/mutual.av`, not restated as a literal. A
+/// producer-side change to the mutual plan shape therefore reaches these
+/// assertions instead of leaving a stale hand-written copy passing on its own.
+///
+/// FIX A (`checkMutualPlanShape`): the descent `.hostCall .sub` relabelled
+/// byte-identically as a non-tail `.selfCall false` at the SAME emitted index —
+/// the ONLY thing `checkMutualPlanShape` catches that the generic checker + byte
+/// lowering do not. Asserts (i) `checkMutualRawPlan` ACCEPTS it, (ii) its `WInstr` body and
 /// code-entry bytes are IDENTICAL to the honest plan, (iii) `checkMutualPlanShape`
 /// REJECTS it. Sibling rejectors avoided: the byte-equality face (ii proves it is
 /// blind here) and the generic typed-block checker (i proves it accepts).
@@ -5423,56 +5462,6 @@ fn mutual_scc_kernel_guards_are_isolating() {
         return;
     }
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    // The honest `isEven` mutual-plan literal (carrier 2, box=call 7, sub=call 9,
-    // tail cross-call to isOdd=index 2), kept byte-for-byte in sync with the
-    // emitter's `mutual_plan_lean_value`. The `checkMutualPlanShape honestPlan =
-    // true` and `checkMutualRawPlan` assertions below fail loudly if it drifts.
-    const HONEST: &str = r#"{ profile := "mutual-plan-v1", params := [.intCarrier], result := .intCarrier, body := ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .ref, kind := .structGet 1 0 }, { id := 2, ty := .boolI32, kind := .refIsNull 1 }, { id := 3, ty := .boolI32, kind := .ifElse 2 ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .i64, kind := .structGet 0 0 }, { id := 2, ty := .i64, kind := .constI64 (0 : Int) }, { id := 3, ty := .boolI32, kind := .prim .i64LeS [1, 2] }], result := 3 } : FragBlock) ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .rawI32, kind := .structGet 2 0 }, { id := 2, ty := .boolI32, kind := .constBool false }, { id := 3, ty := .boolI32, kind := .prim .i32LtS [1, 2] }], result := 3 } : FragBlock) }, { id := 4, ty := .intCarrier, kind := .ifElse 3 ({ nodes := [{ id := 0, ty := .i64, kind := .constI64 (1 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }], result := 1 } : FragBlock) ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .i64, kind := .constI64 (1 : Int) }, { id := 2, ty := .intCarrier, kind := .hostCall .box 7 [1] }, { id := 3, ty := .intCarrier, kind := .hostCall .sub 9 [0, 2] }, { id := 4, ty := .intCarrier, kind := .selfCall true 2 [3] }], result := 4 } : FragBlock) }], result := 4 } : FragBlock) }"#;
-    // Byte-identical relabel: the descent's `sub` host call becomes a non-tail
-    // self-call at the SAME index; both lower to `10 09` and the same `WInstr`.
-    let relabeled = HONEST.replace(".hostCall .sub 9 [0, 2]", ".selfCall false 9 [0, 2]");
-    assert_ne!(
-        relabeled, HONEST,
-        "relabel target string drifted; update the test"
-    );
-
-    let mut lean = String::new();
-    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport AcceptedArtifact\n\n");
-    lean.push_str("open AverCert.Schema\nopen AverCert.AcceptedArtifact\n\n");
-    lean.push_str("def honestPlan : MutualRawPlan := ");
-    lean.push_str(HONEST);
-    lean.push_str("\ndef relabeledPlan : MutualRawPlan := ");
-    lean.push_str(&relabeled);
-    lean.push_str("\n\n");
-    // FIX A.
-    lean.push_str("example : AverCert.PlanCheck.checkMutualRawPlan relabeledPlan = true := rfl\n");
-    lean.push_str("example : AverCert.PlanLower.lowerMutualBody 2 relabeledPlan = AverCert.PlanLower.lowerMutualBody 2 honestPlan := rfl\n");
-    lean.push_str("example : AverCert.PlanBytes.lowerMutualCodeEntry 2 relabeledPlan = AverCert.PlanBytes.lowerMutualCodeEntry 2 honestPlan := rfl\n");
-    lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
-    lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] relabeledPlan = false := rfl\n\n");
-    // FIX B: closure truth-table (each reject keeps target in memberSet).
-    lean.push_str(
-        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2])] = true := rfl\n",
-    );
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 1, [1, 2, 3])] = true := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2]), (3, 4, [3, 4]), (4, 3, [3, 4])] = true := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2])] = false := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 2, [1, 2, 3])] = false := rfl\n");
-    lean.push_str(
-        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (1, 2, [1, 2])] = false := rfl\n",
-    );
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 1, [1])] = false := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
-    // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
-    lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := 2, code := fun _ => none,\n    host := fun _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
-    lean.push_str("def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := 2, memberSet := [1, 2],\n      hostTable := [(.box, 7), (.sub, 9)], obligation := dummyOb \"a\" 1 } ]\n\n");
-    lean.push_str("example : AverCert.PlanCheck.checkMutualPlanShape [1, 2] [(.box, 7), (.sub, 9)] honestPlan = true := rfl\n");
-    lean.push_str("example : mutualClaimEdges manifestS claimsS = some [(1, 2, [1, 2])] := rfl\n");
-    lean.push_str(
-        "example : ¬ mutualClaimsFormClosedSccs manifestS claimsS := fun h => nomatch h\n",
-    );
 
     let out_dir = temp_dir("cert-mutual-guard-iso");
     let compile = aver_command()
@@ -5499,6 +5488,119 @@ fn mutual_scc_kernel_guards_are_isolating() {
         .output()
         .expect("lake build runs");
     assert!(honest_build.status.success(), "honest cert must lake-build");
+
+    // Everything the assertions below talk about is read back out of the cert
+    // the producer just wrote: `isEven`'s emitted mutual plan, and the
+    // byte-derived binding context (carrier, SCC member set, box/sub role table)
+    // the producer threads into its own shape example. Nothing is restated by
+    // hand, so a producer-side shape change lands here instead of sliding past a
+    // stale copy.
+    const PLAN: &str = "isEvenMutualPlan";
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let honest = emitted_lean_def(&plans, PLAN, "MutualRawPlan");
+    let carrier = emitted_lean_args(
+        &plans,
+        "example : AverCert.PlanBytes.lowerMutualCodeEntry ",
+        &format!(" {PLAN} ="),
+    );
+    let context = emitted_lean_args(
+        &plans,
+        "example : AverCert.PlanCheck.checkMutualPlanShape ",
+        &format!(" {PLAN} = true := rfl"),
+    );
+    // `<memberSet> <hostTable>`; the member set is a flat `List Nat`, so its
+    // closing bracket is the first one in the pair.
+    let split = context
+        .find("] ")
+        .expect("emitted shape context is `<memberSet> <hostTable>`")
+        + 1;
+    let (member_set, host_table) = context.split_at(split);
+    let (member_set, host_table) = (member_set.trim(), host_table.trim());
+    let sub_idx: u32 = host_table
+        .split_once("(.sub, ")
+        .expect("emitted host-role table names the sub role")
+        .1
+        .split(')')
+        .next()
+        .expect("sub role index is parenthesised")
+        .trim()
+        .parse()
+        .expect("sub role index is a number");
+    // The synthetic FIX B claim below reuses the emitted member set, and its
+    // obligation takes the set's first member as `self` — so the edge
+    // `mutualClaimEdges` extracts is the emitter's own (self, target, memberSet).
+    let self_idx: u32 = member_set
+        .trim_matches(['[', ']'])
+        .split(',')
+        .next()
+        .expect("emitted member set is non-empty")
+        .trim()
+        .parse()
+        .expect("emitted member set holds indices");
+    let cross_idx: u32 = honest
+        .split_once(".selfCall true ")
+        .expect("emitted mutual plan tail-calls a sibling member")
+        .1
+        .split_whitespace()
+        .next()
+        .expect("member-call target follows the tail flag")
+        .parse()
+        .expect("member-call target is a number");
+
+    // Byte-identical relabel: the descent's `sub` host call becomes a non-tail
+    // self-call at the SAME index; both lower to `10 09` and the same `WInstr`.
+    let relabel_from = format!(".hostCall .sub {sub_idx} [0, 2]");
+    let relabeled = honest.replace(&relabel_from, &format!(".selfCall false {sub_idx} [0, 2]"));
+    assert_ne!(
+        relabeled, honest,
+        "emitted mutual plan no longer contains `{relabel_from}`; update the test"
+    );
+
+    let mut lean = String::new();
+    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport AcceptedArtifact\n\n");
+    lean.push_str("open AverCert.Schema\nopen AverCert.AcceptedArtifact\n\n");
+    lean.push_str("def honestPlan : MutualRawPlan := ");
+    lean.push_str(&honest);
+    lean.push_str("\ndef relabeledPlan : MutualRawPlan := ");
+    lean.push_str(&relabeled);
+    lean.push_str("\n\n");
+    // FIX A.
+    lean.push_str("example : AverCert.PlanCheck.checkMutualRawPlan relabeledPlan = true := rfl\n");
+    lean.push_str(&format!("example : AverCert.PlanLower.lowerMutualBody {carrier} relabeledPlan = AverCert.PlanLower.lowerMutualBody {carrier} honestPlan := rfl\n"));
+    lean.push_str(&format!("example : AverCert.PlanBytes.lowerMutualCodeEntry {carrier} relabeledPlan = AverCert.PlanBytes.lowerMutualCodeEntry {carrier} honestPlan := rfl\n"));
+    lean.push_str(&format!("example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} honestPlan = true := rfl\n"));
+    lean.push_str(&format!("example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} relabeledPlan = false := rfl\n\n"));
+    // FIX B: closure truth-table (each reject keeps target in memberSet). These
+    // groups are synthetic adversaries with no emitter counterpart.
+    lean.push_str(
+        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2])] = true := rfl\n",
+    );
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 1, [1, 2, 3])] = true := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2]), (3, 4, [3, 4]), (4, 3, [3, 4])] = true := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2])] = false := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 2, [1, 2, 3])] = false := rfl\n");
+    lean.push_str(
+        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (1, 2, [1, 2])] = false := rfl\n",
+    );
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 1, [1])] = false := rfl\n");
+    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
+    // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
+    lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := ");
+    lean.push_str(&carrier);
+    lean.push_str(", code := fun _ => none,\n    host := fun _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str(
+        "def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := ",
+    );
+    lean.push_str(&carrier);
+    lean.push_str(&format!(", memberSet := {member_set},\n      hostTable := {host_table}, obligation := dummyOb \"a\" {self_idx} }} ]\n\n"));
+    lean.push_str(&format!("example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} honestPlan = true := rfl\n"));
+    lean.push_str(&format!(
+        "example : mutualClaimEdges manifestS claimsS = some [({self_idx}, {cross_idx}, {member_set})] := rfl\n"
+    ));
+    lean.push_str(
+        "example : ¬ mutualClaimsFormClosedSccs manifestS claimsS := fun h => nomatch h\n",
+    );
 
     std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
     let elab = lake_for_cert(&cert)
