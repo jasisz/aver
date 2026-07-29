@@ -168,6 +168,10 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         .map_err(|e| format!("wasm module failed validation: {e}"))?;
 
     let mut num_imported_funcs: u32 = 0;
+    // `module.name` of every FUNCTION import, in index order. Purely diagnostic:
+    // a call into one of these is a call into the host capability surface, which
+    // no certified template admits, and the decline reason names it.
+    let mut imported_func_names: Vec<String> = Vec::new();
     // defined-function index -> declared type index
     let mut func_type_idx: Vec<u32> = Vec::new();
     // type index -> byte-level signature (param kinds, FULL result-kind vector)
@@ -283,6 +287,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                         let (_, imp) = imp.map_err(|e| format!("import read: {e}"))?;
                         if let wasmparser::TypeRef::Func(_) = imp.ty {
                             num_imported_funcs += 1;
+                            imported_func_names.push(format!("{}.{}", imp.module, imp.name));
                         } else {
                             has_non_function_import = true;
                         }
@@ -339,6 +344,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         let mut saw_i64_sub = false;
                 let mut first_i64_arith = None;
                 let mut first_arith_strict = None;
+                let mut first_unsupported_op: Option<String> = None;
                 let mut host_ops = Vec::new();
                 let mut opr = body
                     .get_operators_reader()
@@ -460,7 +466,16 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                             array_type_index,
                             array_size,
                         } => Op::ArrayNewFixed(array_type_index, array_size),
-                        _ => Op::Other,
+                        _ => {
+                            // Record what the body actually used, so the
+                            // decline reason names the instruction instead of
+                            // guessing at a family. Reading `op` here is free:
+                            // no arm above moves anything out of it.
+                            if first_unsupported_op.is_none() {
+                                first_unsupported_op = Some(operator_name(&op));
+                            }
+                            Op::Other
+                        }
                     };
                     ops.push(mapped);
                 }
@@ -476,6 +491,7 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
                     ops,
                     calls,
                     has_loop_or_branch,
+                    first_unsupported_op,
                     host_role,
                     first_arith_strict,
                     kernel_arith_scan,
@@ -695,6 +711,16 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         }
     };
 
+    // Resolve one declared wasm type against this module's own type section so
+    // a decline reason can name the source-level shape. Diagnostic only.
+    let value_shape = |ty: &TyKind| match ty {
+        TyKind::Ref { idx, .. } if Some(*idx) == carrier => ValShape::Int,
+        TyKind::Ref { idx, .. } if string_byte_array_types.contains(idx) => ValShape::Str,
+        TyKind::Ref { .. } | TyKind::Eqref => ValShape::UserRef,
+        TyKind::I64 | TyKind::I32 | TyKind::F64 => ValShape::Scalar,
+        TyKind::Other => ValShape::Raw,
+    };
+
     let mut user_fns = Vec::new();
     for (name, wasm_idx) in user_exports {
         let Some(def_idx) = wasm_idx.checked_sub(num_imported_funcs) else {
@@ -712,6 +738,8 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             .cloned()
             .unwrap_or((Vec::new(), Vec::new()));
         let result = results.first().copied();
+        let param_shapes = params.iter().map(&value_shape).collect();
+        let result_shapes = results.iter().map(&value_shape).collect();
         user_fns.push(UserFn {
             name,
             wasm_idx,
@@ -723,6 +751,14 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             nlocals: entry.nlocals,
             code_entry_bytes: entry.code_entry_bytes,
             ops,
+            host_capability_calls: entry
+                .calls
+                .iter()
+                .filter_map(|c| imported_func_names.get(*c as usize).cloned())
+                .collect(),
+            param_shapes,
+            result_shapes,
+            first_unsupported_op: entry.first_unsupported_op,
             calls: entry.calls,
             has_loop_or_branch: entry.has_loop_or_branch,
         });
