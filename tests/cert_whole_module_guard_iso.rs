@@ -1391,3 +1391,174 @@ example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
     );
     let _ = std::fs::remove_dir_all(out_dir);
 }
+
+/// Byte offset of the immediate of the first `call <callee>` inside the body of
+/// function `func`, plus the byte value sitting there. The `call` opcode is one
+/// byte and every index this test uses is below 128, so the immediate is the
+/// single byte right after it.
+fn call_immediate_offset(bytes: &[u8], func: u32, callee: u32) -> usize {
+    let mut imported_funcs = 0u32;
+    let mut code_ordinal = 0u32;
+    let mut found = None;
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                if imported_funcs + code_ordinal == func {
+                    let mut operators = body.get_operators_reader().unwrap();
+                    while !operators.eof() {
+                        let opcode_offset = operators.original_position();
+                        if let wasmparser::Operator::Call { function_index } =
+                            operators.read().expect("operator must parse")
+                            && function_index == callee
+                            && found.is_none()
+                        {
+                            found = Some(opcode_offset + 1);
+                        }
+                    }
+                }
+                code_ordinal += 1;
+            }
+            _ => {}
+        }
+    }
+    let offset = found.expect("the named function must call the named callee");
+    assert_eq!(
+        u32::from(bytes[offset]),
+        callee,
+        "the call immediate must be a single byte"
+    );
+    offset
+}
+
+/// The arithmetic helper template pins the sub-routine CALL TARGETS, not just
+/// the surrounding skeleton.
+///
+/// The wall rebuilds each arith helper body from the manifest's declared
+/// `decompose`/`normalize`/`strip`/`umagCmp` indices and compares it to the real
+/// code bytes. Repointing one `call` inside the add helper — one byte, still a
+/// defined function, module still parses — must break that equality, otherwise
+/// the declaration would fix only the shape of the helper and leave the callee
+/// free. The isolation half is the honest artifact, which the certificate
+/// already proves passes the same check.
+///
+/// This also anchors the producer-side property the low-index block exists for:
+/// the declared sub-routine indices stay single-byte, so the rebuilt template
+/// and the emitted body agree byte for byte in the first place.
+#[test]
+fn arith_template_pins_the_subroutine_call_targets() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping arith call-target GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-arith-call-target-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/data/json.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile json fixture for arith call-target GuardIso");
+    assert!(
+        compile.status.success(),
+        "json compile failed for arith call-target GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
+    let (_, add_idx, _, _, _) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    let add_idx = add_idx.expect("json add role");
+    // The declared sub-routine indices live in `Manifest.lean` — the literal the
+    // wall reads when it rebuilds the helper bodies.
+    let manifest_lean = std::fs::read_to_string(out_dir.join("cert/Manifest.lean")).unwrap();
+    let decompose: u32 = manifest_lean
+        .split("decompose := ")
+        .nth(1)
+        .expect("json manifest declares the decompose sub-routine index")
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .expect("the declared index is a number")
+        .parse()
+        .expect("the declared index parses");
+    assert!(
+        decompose < 128,
+        "the declared sub-routine index must fit one LEB byte, got {decompose}"
+    );
+    let call_offset = call_immediate_offset(&wasm, add_idx, decompose);
+
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build json certificate before arith call-target GuardIso");
+    assert!(
+        build.status.success(),
+        "json certificate failed before arith call-target GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = format!(
+        r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+-- Honest control: the declared table and params match the real bytes.
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+
+-- Repoint one `call` inside the add helper to the next function index. Nothing
+-- else moves: same length, same declaration, same claims.
+def repointedCallBytes : Nat := ArtifactBytes.modBytes +
+  (1 <<< (8 * {call_offset}))
+
+example : AcceptedArtifact.arithTableCheck repointedCallBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+
+def repointedCallArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := repointedCallBytes }}
+example : ¬ AcceptedArtifact.decodedHostRoleTable repointedCallArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck repointedCallBytes ArtifactBytes.modLen
+      Artifact.data.manifest.subject.hostRoleTable
+      Artifact.data.manifest.subject.arithParams = true := h
+  exact absurd bad (by decide +kernel)
+"#
+    );
+    std::fs::write(cert.join("ArithCallTargetGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("ArithCallTargetGuardIso.lean")
+        .output()
+        .expect("run arith call-target GuardIso");
+    assert!(
+        check.status.success(),
+        "arith call-target GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}

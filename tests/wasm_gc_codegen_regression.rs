@@ -253,3 +253,157 @@ fn json_sum_uses_nominal_root_in_variants_tuple_and_dispatch() {
         "specific pattern tests/casts must target concrete variants, not the sum root"
     );
 }
+
+/// The four shared bignum sub-routines keep single-byte function indices no
+/// matter how many functions the program declares.
+///
+/// The arithmetic helper bodies are fixed-shape templates whose `call`
+/// immediates name these four functions. A reader that rebuilds the same
+/// template from the declared indices splices each index as one raw byte, so
+/// an index of 128 or more — which wasm encodes as two LEB bytes — makes the
+/// rebuilt body shorter than the emitted one and the comparison fails.
+/// Slotting the sub-routines immediately after `_start`, ahead of the user
+/// functions, makes the bound a property of the emitter instead of a bet on
+/// how small the program happens to be.
+#[test]
+fn shared_bignum_subroutines_keep_single_byte_function_indices() {
+    use wasmparser::{CompositeInnerType, Operator, Parser as WasmParser, Payload};
+
+    // 150 user functions, all of them doing Int arithmetic — enough that a
+    // layout trailing the user functions would push the sub-routines past 128.
+    const USER_FNS: usize = 150;
+    let mut source = String::new();
+    source.push_str("module ManyArithmeticFns\n    exposes []\n    effects []\n\n");
+    for i in 0..USER_FNS {
+        source.push_str(&format!(
+            "fn step{i}(x: Int) -> Int\n    x + {i} * 2 - 1\n\n"
+        ));
+    }
+    source.push_str("fn main() -> Int\n    step0(1)\n");
+
+    let items = parse_pipeline(&source).expect("synthetic arithmetic program typechecks");
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+        .expect("synthetic arithmetic program compiles to wasm-gc");
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .expect("synthetic arithmetic program validates");
+
+    let mut imported_funcs = 0u32;
+    // (param count, result count) per type index.
+    let mut type_sigs: Vec<(usize, usize)> = Vec::new();
+    let mut func_type_idx: Vec<u32> = Vec::new();
+    let mut exports: Vec<(String, u32)> = Vec::new();
+    let mut callees_per_body: Vec<Vec<u32>> = Vec::new();
+    for payload in WasmParser::new(0).parse_all(&bytes) {
+        match payload.expect("emitted module parses") {
+            Payload::TypeSection(reader) => {
+                for group in reader {
+                    for sub in group.expect("type group parses").into_types() {
+                        match &sub.composite_type.inner {
+                            CompositeInnerType::Func(ft) => {
+                                type_sigs.push((ft.params().len(), ft.results().len()))
+                            }
+                            _ => type_sigs.push((usize::MAX, usize::MAX)),
+                        }
+                    }
+                }
+            }
+            Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group parses") {
+                        let (_, import) = import.expect("import parses");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            Payload::FunctionSection(reader) => {
+                for ty in reader {
+                    func_type_idx.push(ty.expect("function entry parses"));
+                }
+            }
+            Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("export parses");
+                    if export.kind == wasmparser::ExternalKind::Func {
+                        exports.push((export.name.to_string(), export.index));
+                    }
+                }
+            }
+            Payload::CodeSectionEntry(body) => {
+                let mut calls = Vec::new();
+                let mut ops = body.get_operators_reader().expect("body reads");
+                while !ops.eof() {
+                    if let Operator::Call { function_index } = ops.read().expect("operator reads") {
+                        calls.push(function_index);
+                    }
+                }
+                callees_per_body.push(calls);
+            }
+            _ => {}
+        }
+    }
+
+    let sig_of = |wasm_idx: u32| -> (usize, usize) {
+        let def_idx = wasm_idx
+            .checked_sub(imported_funcs)
+            .expect("index names a defined function, not an import");
+        type_sigs[func_type_idx[def_idx as usize] as usize]
+    };
+
+    // The block sits immediately after `_start`, which itself sits at
+    // `imported_funcs` — so the four indices are consecutive from
+    // `imported_funcs + 1`.
+    let block: Vec<u32> = (1..=4).map(|k| imported_funcs + k).collect();
+    for idx in &block {
+        assert!(
+            *idx < 128,
+            "shared bignum sub-routine at fn index {idx} needs a two-byte LEB call immediate"
+        );
+    }
+
+    // Identify the block by signature: decompose is 1 -> 2, normalize 2 -> 1,
+    // strip 1 -> 1, umagCmp 4 -> 1. That multiset is unique to these four.
+    let mut sigs: Vec<(usize, usize)> = block.iter().copied().map(sig_of).collect();
+    sigs.sort();
+    let mut expected = vec![(1usize, 2usize), (2, 1), (1, 1), (4, 1)];
+    expected.sort();
+    assert_eq!(
+        sigs, expected,
+        "the four functions after `_start` are not the bignum sub-routines"
+    );
+
+    // Identity, not just shape: one emitted body (an arithmetic helper) calls
+    // all four of them.
+    assert!(
+        callees_per_body
+            .iter()
+            .any(|calls| block.iter().all(|idx| calls.contains(idx))),
+        "no emitted body calls all four sub-routines — the block is not what it claims"
+    );
+
+    // Every user function lands above the block, and there are enough of them
+    // that a trailing layout would have overflowed the single-byte range.
+    let user_fn_base = imported_funcs + 5;
+    let mut user_indices: Vec<u32> = exports
+        .iter()
+        .filter(|(name, _)| name.starts_with("step") || name == "main")
+        .map(|(_, idx)| *idx)
+        .collect();
+    user_indices.sort();
+    assert_eq!(
+        user_indices.len(),
+        USER_FNS + 1,
+        "every synthetic function is exported"
+    );
+    assert_eq!(
+        user_indices.first().copied(),
+        Some(user_fn_base),
+        "user functions start right above the sub-routine block"
+    );
+    assert!(
+        user_fn_base + (USER_FNS as u32) > 128,
+        "the fixture must be big enough that a trailing layout would exceed 128"
+    );
+}

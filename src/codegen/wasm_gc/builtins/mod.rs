@@ -488,8 +488,14 @@ impl BuiltinName {
 /// Per-module registry of used builtins.
 #[derive(Default)]
 pub(super) struct BuiltinRegistry {
-    /// Insertion order — wasm fn indices and type indices follow it.
+    /// Insertion order — TYPE indices follow it, and so do wasm fn indices
+    /// for every builtin outside `hoisted`.
     order: Vec<BuiltinName>,
+    /// Builtins pulled to the FRONT of the function/code sections by
+    /// `assign_hoisted_fn_slots`, in the order they were pulled. Their wasm
+    /// fn indices sit immediately after `_start`, ahead of the user
+    /// functions; their type indices still follow registration order.
+    hoisted: Vec<BuiltinName>,
     wasm_fn_idx: HashMap<BuiltinName, u32>,
     wasm_type_idx: HashMap<BuiltinName, u32>,
 }
@@ -509,12 +515,61 @@ impl BuiltinRegistry {
         self.order.iter().copied()
     }
 
+    /// The hoisted builtins, in function-index order.
+    pub(super) fn iter_hoisted(&self) -> impl Iterator<Item = BuiltinName> + '_ {
+        self.hoisted.iter().copied()
+    }
+
+    /// Every registered builtin that was NOT hoisted, in registration order.
+    pub(super) fn iter_unhoisted(&self) -> impl Iterator<Item = BuiltinName> + '_ {
+        self.order
+            .iter()
+            .copied()
+            .filter(|n| !self.hoisted.contains(n))
+    }
+
+    /// Give `names` the lowest available wasm fn indices, ahead of everything
+    /// the caller slots afterwards. Registration order still drives type
+    /// indices and the un-hoisted fn indices; only these few functions move to
+    /// the front of the function and code sections.
+    ///
+    /// Callers use this to keep a builtin's fn index inside the single-byte
+    /// unsigned-LEB range no matter how many user functions the module has, so
+    /// a `call <idx>` naming it stays one byte wide in the callers' bodies.
+    /// Names that were never registered are skipped.
+    pub(super) fn assign_hoisted_fn_slots(
+        &mut self,
+        names: &[BuiltinName],
+        next_wasm_fn_idx: &mut u32,
+    ) {
+        for name in names.iter().copied() {
+            if !self.order.contains(&name) || self.hoisted.contains(&name) {
+                continue;
+            }
+            self.hoisted.push(name);
+            self.wasm_fn_idx.insert(name, *next_wasm_fn_idx);
+            *next_wasm_fn_idx += 1;
+        }
+    }
+
+    /// Number of builtins already hoisted — the size of the low block the
+    /// caller must leave between `_start` and the first user function.
+    pub(super) fn hoisted_len(&self) -> u32 {
+        self.hoisted.len() as u32
+    }
+
     pub(super) fn assign_slots(&mut self, next_wasm_fn_idx: &mut u32, next_type_idx: &mut u32) {
         for name in self.order.iter().copied() {
-            self.wasm_fn_idx.insert(name, *next_wasm_fn_idx);
+            // Type indices follow registration order for every builtin,
+            // hoisted or not, so the type section keeps one emission loop.
             self.wasm_type_idx.insert(name, *next_type_idx);
-            *next_wasm_fn_idx += 1;
             *next_type_idx += 1;
+            // A hoisted builtin already holds a low fn index; don't move it.
+            if self.wasm_fn_idx.contains_key(&name) {
+                continue;
+            }
+            self.wasm_fn_idx.insert(name, *next_wasm_fn_idx);
+            *next_wasm_fn_idx += 1;
         }
     }
 
@@ -526,12 +581,26 @@ impl BuiltinRegistry {
         self.wasm_type_idx.get(&name).copied()
     }
 
+    /// Bodies of the hoisted builtins — emitted right after `_start`, before
+    /// the user functions, matching their function-section entries.
+    pub(super) fn emit_hoisted_bodies(
+        &self,
+        codes: &mut CodeSection,
+        registry: &TypeRegistry,
+    ) -> Result<(), WasmGcError> {
+        for name in self.iter_hoisted() {
+            let func = name.emit_helper_body(registry)?;
+            codes.function(&func);
+        }
+        Ok(())
+    }
+
     pub(super) fn emit_helper_bodies(
         &self,
         codes: &mut CodeSection,
         registry: &TypeRegistry,
     ) -> Result<(), WasmGcError> {
-        for name in self.iter() {
+        for name in self.iter_unhoisted() {
             let func = name.emit_helper_body(registry)?;
             codes.function(&func);
         }

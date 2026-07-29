@@ -1082,6 +1082,33 @@ pub(super) fn emit_module_with(
         super::TargetMode::Wasip2 => wasip2_imports.import_count(),
     };
 
+    // ── Low block: the shared bignum sub-routines ──────────────────
+    //
+    // The four factored sub-routines are the only builtins the
+    // arithmetic helper bodies `call` by index, and those bodies are
+    // fixed-shape templates: a `call` whose target needs a second
+    // unsigned-LEB byte changes the body's length and no longer matches
+    // the template a reader synthesises from the declared index. Keeping
+    // them below 128 is therefore a property of the emitted bytes, not a
+    // convenience, so they get the lowest function indices in the module
+    // — right after `_start` and ahead of every user function — instead
+    // of trailing a user function count we don't control.
+    //
+    // `_start` stays at `import_count`; the i-th user fn now lives at
+    // `user_fn_base + i`. Registration order still drives type indices
+    // and every other builtin's fn index.
+    let mut next_low_fn_idx = import_count + 1;
+    builtin_registry.assign_hoisted_fn_slots(
+        &[
+            BuiltinName::AintDecompose,
+            BuiltinName::AintNormalize,
+            BuiltinName::AintStrip,
+            BuiltinName::AintUmagCmp,
+        ],
+        &mut next_low_fn_idx,
+    );
+    let user_fn_base = import_count + 1 + builtin_registry.hoisted_len();
+
     // ── Funcref table for first-class `Fn` values ──────────────────
     //
     // Every address-taken fn (referenced via `MirExpr::FnValue`) that
@@ -1091,18 +1118,18 @@ pub(super) fn emit_module_with(
     // table (table 0). Names that don't match a user fn (builtins /
     // variants) are excluded — those `FnValue` sites fall back to the
     // trap stub. The i-th user fn lives at wasm fn idx
-    // `import_count + 1 + i` (`_start` is at `import_count`).
+    // `user_fn_base + i`.
     let mut funcref_table: HashMap<String, u32> = HashMap::new();
     let mut funcref_wasm_idxs: Vec<u32> = Vec::new();
     for name in collect_address_taken(&mir_program) {
         if let Some(i) = fn_defs.iter().position(|fd| fd.name == name) {
             let table_idx = funcref_wasm_idxs.len() as u32;
             funcref_table.insert(name, table_idx);
-            funcref_wasm_idxs.push(import_count + 1 + (i as u32));
+            funcref_wasm_idxs.push(user_fn_base + (i as u32));
         }
     }
 
-    let mut next_builtin_fn_idx = import_count + 1 + (fn_defs.len() as u32);
+    let mut next_builtin_fn_idx = user_fn_base + (fn_defs.len() as u32);
     builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     for name in builtin_registry.iter() {
         let p = name.params(&registry)?;
@@ -2064,10 +2091,18 @@ pub(super) fn emit_module_with(
     // ── Function section ───────────────────────────────────────────
     let mut funcs = FunctionSection::new();
     funcs.function(start_type_idx); // _start at wasm fn idx K
+    // Hoisted builtins occupy the block between `_start` and the user
+    // functions, so their entries come first (see `user_fn_base`).
+    for name in builtin_registry.iter_hoisted() {
+        let type_idx = builtin_registry
+            .lookup_wasm_type_idx(name)
+            .expect("just-assigned builtin type idx");
+        funcs.function(type_idx);
+    }
     for type_idx in &fn_type_indices {
         funcs.function(*type_idx);
     }
-    for name in builtin_registry.iter() {
+    for name in builtin_registry.iter_unhoisted() {
         let type_idx = builtin_registry
             .lookup_wasm_type_idx(name)
             .expect("just-assigned builtin type idx");
@@ -2489,11 +2524,14 @@ pub(super) fn emit_module_with(
     // wired in the post-emit phase further down. Globals + their
     // start-fn init are gone.)
 
-    // Build the FnId → wasm-fn-idx map. With K imports:
+    // Build the FnId → wasm-fn-idx map. With K imports and H hoisted
+    // builtins (the shared bignum sub-routines, `user_fn_base = K+1+H`):
     //   imports at idx 0..K
     //   _start at K
-    //   user fn i at K+1+i
-    //   builtin at K+1+N+m (assigned by builtin_registry already)
+    //   hoisted builtin h at K+1+h
+    //   user fn i at user_fn_base+i
+    //   every other builtin at user_fn_base+N+m (assigned by
+    //   builtin_registry already)
     //
     // `resolved_fn_defs` is position-aligned with `fn_defs`
     // (`WasmGcLinkedView::build` errors if the resolver drops any
@@ -2508,7 +2546,7 @@ pub(super) fn emit_module_with(
         by_id.insert(
             rfd.fn_id,
             FnEntry {
-                wasm_idx: import_count + 1 + (i as u32),
+                wasm_idx: user_fn_base + (i as u32),
                 return_type: fd.return_type.clone(),
             },
         );
@@ -2624,7 +2662,7 @@ pub(super) fn emit_module_with(
     };
     exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
     for (i, fd) in fn_defs.iter().enumerate() {
-        let wasm_idx = import_count + 1 + (i as u32);
+        let wasm_idx = user_fn_base + (i as u32);
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
     if let Some(b) = &bridge {
@@ -2799,7 +2837,7 @@ pub(super) fn emit_module_with(
             mir_dispatch[i] = true;
             continue;
         }
-        let self_wasm_idx = import_count + 1 + (i as u32);
+        let self_wasm_idx = user_fn_base + (i as u32);
         let mut probe = Function::new([]);
         let used_mir = match mir_fn_for[i] {
             Some(mir_fn) => emit_fn_body_via_mir(
@@ -2878,7 +2916,7 @@ pub(super) fn emit_module_with(
                     handler_name.unwrap_or("?")
                 ))
             })?;
-        let user_handler_wasm_idx = import_count + 1 + (user_handler_idx as u32);
+        let user_handler_wasm_idx = user_fn_base + (user_handler_idx as u32);
 
         let string_idx = registry
             .string_array_type_idx
@@ -3036,7 +3074,7 @@ pub(super) fn emit_module_with(
     } else {
         let mut start = Function::new([]);
         if let Some(idx) = main_idx {
-            let main_idx_wasm = import_count + 1 + (idx as u32);
+            let main_idx_wasm = user_fn_base + (idx as u32);
             let main_returns_value = !fn_defs[idx].return_type.trim().eq("Unit");
             start.instruction(&Instruction::Call(main_idx_wasm));
             if main_returns_value {
@@ -3049,6 +3087,11 @@ pub(super) fn emit_module_with(
         start.instruction(&Instruction::End);
         codes.function(&start);
     }
+
+    // Hoisted builtin bodies — the shared bignum sub-routines, whose fn
+    // indices sit between `_start` and the first user function so the
+    // arithmetic helpers can name them in a single LEB byte.
+    builtin_registry.emit_hoisted_bodies(&mut codes, &registry)?;
 
     // Host-bound plan nodes (Int literals box; `intAdd` calls the carrier
     // add helper) encode against the module's own helper indices, which the
@@ -3066,7 +3109,7 @@ pub(super) fn emit_module_with(
         ..Default::default()
     };
     for (i, _fd) in fn_defs.iter().enumerate() {
-        let self_wasm_idx = import_count + 1 + (i as u32);
+        let self_wasm_idx = user_fn_base + (i as u32);
         if let (Some(plan), Some(carrier)) =
             (fragment_plan_for[i].as_ref(), registry.aint_struct_idx)
         {
@@ -3170,8 +3213,8 @@ pub(super) fn emit_module_with(
     }
 
     // Builtin helper bodies — emitted after user fns so their own
-    // wasm fn indices come last. Bodies are stubs today (Unreachable);
-    // real impls land in `builtins/` per phase 3c roadmap.
+    // wasm fn indices come last. The hoisted sub-routines already went
+    // out above; this covers the rest.
     builtin_registry.emit_helper_bodies(&mut codes, &registry)?;
 
     // Map helper bodies (hash, eq, empty, set, get, len per
@@ -3294,7 +3337,7 @@ pub(super) fn emit_module_with(
     )?;
 
     if let Some(hw) = &handler_wrapper {
-        let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);
+        let user_handler_wasm_idx = user_fn_base + (hw.user_handler_idx as u32);
         // Reserve a caller_fn idx for the synthesised wrapper itself.
         // `emit_handler_wrapper` pushes this constant before every
         // host-effect `Call` to satisfy the ABI's trailing
