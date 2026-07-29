@@ -545,8 +545,12 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("1 certified export"),
-        "expected exactly one certified export:\n{report}"
+        report.contains("3 certified exports"),
+        "expected the entry export and both nested-module exports:\n{report}"
+    );
+    assert!(
+        report.contains("Nested_Deep_Util_bump") && report.contains("Nested_Deep_Util_tally"),
+        "the exports whose models live in the nested module must certify:\n{report}"
     );
 
     let _ = std::fs::remove_dir_all(&out_dir);

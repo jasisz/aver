@@ -91,14 +91,37 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
             continue;
         }
         let lines: Vec<&str> = content.lines().collect();
+        // Track the namespace stack exactly like `ModelInfo::parse_lean`, so
+        // a dependency module's `X__fuel` is keyed by its FLAT export-space
+        // name (`Prefix_X`) and the classifier's export-name lookup hits it.
+        let mut ns_stack: Vec<String> = Vec::new();
         for i in 0..lines.len() {
-            let Some(rest) = lines[i].trim().strip_prefix("def ") else {
+            let line = lines[i].trim();
+            if let Some(rest) = line.strip_prefix("namespace ")
+                && let Some(ns) = rest.split_whitespace().next()
+                && rest.trim() == ns
+            {
+                ns_stack.push(ns.to_string());
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("end ")
+                && ns_stack.last().map(String::as_str) == Some(rest.trim())
+            {
+                ns_stack.pop();
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("def ") else {
                 continue;
             };
             let Some(fuel_pos) = rest.find("__fuel ") else {
                 continue;
             };
-            let name = rest[..fuel_pos].to_string();
+            let flat_prefix = ns_stack.join(".").replace('.', "_");
+            let name = if flat_prefix.is_empty() {
+                rest[..fuel_pos].to_string()
+            } else {
+                format!("{flat_prefix}_{}", &rest[..fuel_pos])
+            };
             for l in lines.iter().skip(i).take(8) {
                 if let Some(p) = l.find("else ") {
                     let els = &l[p + 5..];

@@ -1,4 +1,5 @@
-fn recursive_fuel_pieces(c: &Cert) -> FuelPieces {
+fn recursive_fuel_pieces(c: &Cert, model_info: &ModelInfo) -> FuelPieces {
+    let q = c.model_lean_name(model_info);
     let Cert::Recursive {
         name,
         self_idx,
@@ -44,7 +45,7 @@ fn recursive_fuel_pieces(c: &Cert) -> FuelPieces {
         BodyOperand::Const(k) => lean_int_lit(k),
     };
     let step_rhs = {
-        let rec_expr = format!("{name} (n - 1)");
+        let rec_expr = format!("{q} (n - 1)");
         if rec_first {
             format!("{rec_expr} {op} {}", other_expr("n"))
         } else {
@@ -63,7 +64,7 @@ fn recursive_fuel_pieces(c: &Cert) -> FuelPieces {
             BodyOperand::Input => "hv".to_string(),
             BodyOperand::Const(k) => format!("(hsmall_intro {})", lean_int_lit(k)),
         };
-        let rec_int = format!("({name} ({input} - 1))");
+        let rec_int = format!("({q} ({input} - 1))");
         if rec_first {
             (
                 format!("[vr, {other_wval}]"),
@@ -100,7 +101,7 @@ theorem {name}_wasm_total_aux
     (hSubTot : ∀ a b va vb, Repr a va → Repr b vb → ∃ w, sub [va, vb] = some w) :
     ∀ (fuel : Nat) (n : Int) (v : WVal), Repr n v → n.natAbs < fuel →
       ∃ w, wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [v] = some w ∧
-        Repr ({name} n) w := by
+        Repr ({q} n) w := by
   intro fuel
   induction fuel with
   | zero => intro n v hv hlt; omega
@@ -154,7 +155,7 @@ theorem {name}_wasm_total
     (hSubTot : ∀ a b va vb, Repr a va → Repr b vb → ∃ w, sub [va, vb] = some w) :
     ∀ (n : Int) (v : WVal), Repr n v →
       ∃ w, wFuncN {name}Code ({name}Host add sub) (n.natAbs + 1) {self_idx} [v] = some w ∧
-        Repr ({name} n) w :=
+        Repr ({q} n) w :=
   fun n v hv =>
     {name}_wasm_total_aux Repr hcar hsmall_intro hsmall_elim hbig add sub hAdd hSub
       hAddTot hSubTot (n.natAbs + 1) n v hv (by omega)
@@ -190,7 +191,7 @@ theorem {name}_simulates_total : AverCert.Schema.Obligation.holdsTotal {name}Ob 
             r#"-- model-side fuel bridge (the cap-induction pattern at R = 1).
 theorem {name}_fuel_irrel :
     ∀ (t k1 k2 : Nat) (n : Int), n.natAbs < t → n.natAbs < k1 → n.natAbs < k2 →
-      {name}__fuel k1 n = {name}__fuel k2 n := by
+      {q}__fuel k1 n = {q}__fuel k2 n := by
   intro t
   induction t with
   | zero => intro k1 k2 n ht _ _; omega
@@ -203,24 +204,24 @@ theorem {name}_fuel_irrel :
       | zero => omega
       | succ m2 =>
       by_cases hn : n ≤ 0
-      · simp [{name}__fuel, hn]
+      · simp [{q}__fuel, hn]
       · have hrec := ih m1 m2 (n - 1) (by omega) (by omega) (by omega)
-        simp only [{name}__fuel]
+        simp only [{q}__fuel]
         rw [if_neg hn, if_neg hn, hrec]
 
 theorem {name}_fuel_stable (k : Nat) (n : Int) (h : n.natAbs < k) :
-    {name}__fuel k n = {name} n :=
+    {q}__fuel k n = {q} n :=
   {name}_fuel_irrel (n.natAbs + k + 1) k (n.natAbs + 1) n (by omega) h (by omega)
 
-theorem {name}_step (n : Int) (hn : ¬ n ≤ 0) : {name} n = {step_rhs} := by
-  have h0 : {name} n = {name}__fuel (n.natAbs + 1) n := rfl
+theorem {name}_step (n : Int) (hn : ¬ n ≤ 0) : {q} n = {step_rhs} := by
+  have h0 : {q} n = {q}__fuel (n.natAbs + 1) n := rfl
   rw [h0]
-  simp only [{name}__fuel]
+  simp only [{q}__fuel]
   rw [if_neg hn, {name}_fuel_stable n.natAbs (n - 1) (by omega)]
 
-theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
-  have h0 : {name} n = {name}__fuel (n.natAbs + 1) n := rfl
-  rw [h0]; simp [{name}__fuel, hn]"#
+theorem {name}_base (n : Int) (hn : n ≤ 0) : {q} n = {base} := by
+  have h0 : {q} n = {q}__fuel (n.natAbs + 1) n := rfl
+  rw [h0]; simp [{q}__fuel, hn]"#
         ),
         comb_hyps: format!(
             r#"    ({cparam} sub : List WVal → Option WVal)
@@ -230,7 +231,7 @@ theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
         concl: format!(
             r#"    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
       wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [v] = some w →
-      Repr ({name} n) w := by"#
+      Repr ({q} n) w := by"#
         ),
         zero_body: "      intro n v w hv hrun\n      simp [wFuncN] at hrun".to_string(),
         succ_body: format!(
@@ -253,7 +254,7 @@ theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
             rcases hrec : wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [vd] with _ | vr
             · simp [hrec] at hrun
             · simp only [hrec] at hrun
-              have hrr : Repr ({name} (s - 1)) vr := ih (s - 1) vd vr hrd hrec
+              have hrr : Repr ({q} (s - 1)) vr := ih (s - 1) vd vr hrd hrec
               rcases hadd : {cparam} {add_small} with _ | wa
               · simp [hadd] at hrun
               · simp only [hadd, Option.some.injEq] at hrun
@@ -280,7 +281,7 @@ theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
             rcases hrec : wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [vd] with _ | vr
             · simp [hrec] at hrun
             · simp only [hrec] at hrun
-              have hrr : Repr ({name} (n - 1)) vr := ih (n - 1) vd vr hrd hrec
+              have hrr : Repr ({q} (n - 1)) vr := ih (n - 1) vd vr hrd hrec
               rcases hadd : {cparam} {add_big} with _ | wa
               · simp [hadd] at hrun
               · simp only [hadd, Option.some.injEq] at hrun
@@ -291,11 +292,11 @@ theorem {name}_base (n : Int) (hn : n ≤ 0) : {name} n = {base} := by
         faithful_concl: format!(
             r#"    ∀ (fuel : Nat) (n : Int) (v w : WVal), Repr n v →
       wFuncN {name}Code ({name}Host {cparam} sub) fuel {self_idx} [v] = some w →
-      ∃ m : Int, Repr m w ∧ m = {name} n :="#
+      ∃ m : Int, Repr m w ∧ m = {q} n :="#
         ),
         faithful_body: format!(
             r#"  fun fuel n v w hv hrun =>
-    ⟨{name} n,
+    ⟨{q} n,
      {name}_wasm_certified Repr hcar hsmall_intro hsmall_elim hbig {cparam} sub {chyp} hSub fuel n v w hv hrun,
      rfl⟩"#
         ),

@@ -240,7 +240,7 @@ theorem {primary}_mutualFragmentsAccepted :
 /// relates every source member to the plan-derived k-generic evaluator; the
 /// selected member then supplies the represented-domain relation required by
 /// `mutualSemanticBridge`.  Wasm execution and totality stay in the audited wall.
-fn render_mutual_semantic_bridge(c: &Cert) -> String {
+fn render_mutual_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> String {
     let Cert::MutualRecursion {
         name,
         position,
@@ -252,6 +252,14 @@ fn render_mutual_semantic_bridge(c: &Cert) -> String {
     else {
         unreachable!()
     };
+    let model_name = c.model_lean_name(model_info);
+    // Every member's model function, by its qualified Lean identifier (the
+    // gate guarantees each member of a certified SCC resolves).
+    let member_model = |member: &MutualMember| -> String {
+        model_info
+            .model_lean_name(&member.name)
+            .expect("model-citing certificate passed the qualified-name gate")
+    };
     let primary = &scc[0].name;
     let k = scc.len();
     let model_fuel = scc
@@ -261,14 +269,14 @@ fn render_mutual_semantic_bridge(c: &Cert) -> String {
             format!(
                 "MutualRecursionSoundness.evalMutualUFuel {primary}_mutualMembers fuel \
                  ⟨{member_pos}, by omega⟩ n = {}__fuel fuel n",
-                member.name,
+                member_model(member),
             )
         })
         .collect::<Vec<_>>()
         .join(" ∧\n      ");
     let source_fuels = scc
         .iter()
-        .map(|member| format!("{}__fuel", member.name))
+        .map(|member| format!("{}__fuel", member_model(member)))
         .collect::<Vec<_>>()
         .join(", ");
     let zero = mutual_rfl_conjunction(k);
@@ -291,9 +299,9 @@ theorem {name}_mutualSemanticBridge :
         split <;> simp_all [{primary}_mutualMembers]
   have hModel : ∀ n,
       MutualRecursionSoundness.evalMutualU {primary}_mutualMembers
-        ⟨{position}, by omega⟩ n = {name} n := by
+        ⟨{position}, by omega⟩ n = {model_name} n := by
     intro n
-    simpa [MutualRecursionSoundness.evalMutualU, {name}] using
+    simpa [MutualRecursionSoundness.evalMutualU, {model_name}] using
       (hModelFuel (n.natAbs + 1) n){projection}
   refine ⟨{k}, {box_idx}, {sub_idx}, {primary}_mutualScc,
     ⟨{position}, by omega⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩

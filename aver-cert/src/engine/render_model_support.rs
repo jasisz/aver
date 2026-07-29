@@ -11,8 +11,13 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         let Some(ind) = model_info.inductives.get(&ty) else {
             continue;
         };
+        // `ty` is the qualified inductive name (identity for entry-level
+        // models). The def NAME flattens its dots so it stays one atomic
+        // identifier inside the AverCert namespace; the type POSITION cites
+        // the qualified name the imported model module actually declares.
+        let ty_def = ty.replace('.', "_");
         out.push_str(&format!(
-            "def {ty}Repr (S : CarrierSpec {}) : {ty} → WVal → Prop\n",
+            "def {ty_def}Repr (S : CarrierSpec {}) : {ty} → WVal → Prop\n",
             c.carrier()
         ));
         for (i, ctor) in ind.ctors.iter().enumerate() {
@@ -144,11 +149,11 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
     out
 }
 
-/// For a widened Int match: the model inductive name, its constructor list, and
-/// the name of the single integer-payload constructor the body projects (the
-/// unique `fields == ["Int"]` constructor). `None` — so the class declines by a
-/// failed render — if the model type is unknown or the projected constructor is
-/// not unique.
+/// For a widened Int match: the model inductive's QUALIFIED name, its
+/// constructor list, and the name of the single integer-payload constructor
+/// the body projects (the unique `fields == ["Int"]` constructor). `None` — so
+/// the class declines by a failed render — if the model type is unknown or the
+/// projected constructor is not unique.
 fn widened_match_info<'a>(
     c: &Cert,
     model_info: &'a ModelInfo,
@@ -157,8 +162,9 @@ fn widened_match_info<'a>(
     let Cert::WidenedIntMatch { name, .. } = c else {
         return None;
     };
-    let ty = model_info.fns.get(name)?.params.first()?.clone();
-    let ind = model_info.inductives.get(&ty)?;
+    let sig = model_info.fns.get(name)?;
+    let written = sig.params.first()?;
+    let (ty, ind) = model_info.resolve_inductive(&sig.prefix, written)?;
     let mut int_ctors = ind.ctors.iter().filter(|ct| ct.fields == ["Int"]);
     let hit = int_ctors.next()?.name.clone();
     if int_ctors.next().is_some() {
@@ -193,7 +199,7 @@ fn adt_constructor_uses_model(c: &Cert, model_info: &ModelInfo) -> bool {
         && model_info
             .fns
             .get(name)
-            .map(|s| model_info.inductives.contains_key(&s.ret))
+            .map(|s| model_info.resolve_inductive(&s.prefix, &s.ret).is_some())
             .unwrap_or(false)
 }
 
@@ -222,11 +228,14 @@ fn verbatim_ctor_shape(
     }
 }
 
+/// The QUALIFIED model inductive name and per-constructor struct indices for a
+/// user-ADT cert (identity qualification for entry-level models).
 fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32>)> {
     match c.inner() {
         Cert::VariantDispatch { name, arms, .. } => {
-            let ty = model_info.fns.get(name)?.params.first()?.clone();
-            let ind = model_info.inductives.get(&ty)?;
+            let sig = model_info.fns.get(name)?;
+            let written = sig.params.first()?;
+            let (ty, ind) = model_info.resolve_inductive(&sig.prefix, written)?;
             // Struct tags are assigned per constructor in declaration order;
             // anchor the base on the smallest dispatched tag. A mis-anchored
             // base renders an unprovable `Repr` and fails the lake build —
@@ -237,8 +246,8 @@ fn adt_repr_indices(c: &Cert, model_info: &ModelInfo) -> Option<(String, Vec<u32
         Cert::AdtConstructor {
             name, struct_idx, ..
         } => {
-            let ty = model_info.fns.get(name)?.ret.clone();
-            let ind = model_info.inductives.get(&ty)?;
+            let sig = model_info.fns.get(name)?;
+            let (ty, ind) = model_info.resolve_inductive(&sig.prefix, &sig.ret)?;
             let base = *struct_idx;
             let mut indices = Vec::new();
             for i in 0..ind.ctors.len() {

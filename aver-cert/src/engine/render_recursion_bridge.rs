@@ -101,7 +101,7 @@ fn recursion_claim_acceptance_proof(c: &Cert) -> String {
 /// generated source model to the independent `RecursionSoundness.evalRecU` evaluator in
 /// the represented obligation domain. Fuel induction and Wasm execution stay in the
 /// sha-pinned `RecursionSoundness` / `DischargeRecursion` wall.
-fn render_unary_recursion_semantic_bridge(c: &Cert) -> String {
+fn render_unary_recursion_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> String {
     let Cert::Recursive {
         name,
         box_idx,
@@ -113,6 +113,7 @@ fn render_unary_recursion_semantic_bridge(c: &Cert) -> String {
         unreachable!()
     };
     debug_assert!(recursion_uses_audited_generic(c));
+    let model_name = c.model_lean_name(model_info);
     let shape = recursion_shape_lean_value(c);
     let combine = recursion_combine_lean_value(c);
     let claim = recursion_claim_lean_value(c);
@@ -133,17 +134,17 @@ theorem {name}_recursionSemanticBridge :
     AcceptanceSoundness.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
   have hModelFuel : ∀ fuel n,
-      RecursionSoundness.evalRecUFuel {combine} {shape} fuel n = {name}__fuel fuel n := by
+      RecursionSoundness.evalRecUFuel {combine} {shape} fuel n = {model_name}__fuel fuel n := by
     intro fuel
     induction fuel with
     | zero => intro n; rfl
     | succ fuel ih =>
         intro n
-        simp only [RecursionSoundness.evalRecUFuel, {name}__fuel]
+        simp only [RecursionSoundness.evalRecUFuel, {model_name}__fuel]
         split <;> simp_all [RecursionSoundness.stepEval, RecursionSoundness.combineEval]
-  have hModel : ∀ n, RecursionSoundness.evalRecU {combine} {shape} n = {name} n := by
+  have hModel : ∀ n, RecursionSoundness.evalRecU {combine} {shape} n = {model_name} n := by
     intro n
-    simpa [RecursionSoundness.evalRecU, {name}] using hModelFuel (n.natAbs + 1) n
+    simpa [RecursionSoundness.evalRecU, {model_name}] using hModelFuel (n.natAbs + 1) n
   refine Or.inl ?_
   refine ⟨{combine}, {box_idx}, {add_idx}, {sub_idx}, {shape},
     rfl, rfl, ?_, ?_⟩
@@ -168,7 +169,7 @@ theorem {name}_recursionSemanticBridge :
     )
 }
 
-fn render_accumulator_recursion_semantic_bridge(c: &Cert) -> String {
+fn render_accumulator_recursion_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> String {
     let Cert::AccumulatorRecursive {
         name,
         box_idx,
@@ -179,6 +180,7 @@ fn render_accumulator_recursion_semantic_bridge(c: &Cert) -> String {
     else {
         unreachable!()
     };
+    let model_name = c.model_lean_name(model_info);
     let claim = recursion_claim_lean_value(c);
     let acceptance = recursion_claim_acceptance_proof(c);
     format!(
@@ -197,17 +199,17 @@ theorem {name}_recursionSemanticBridge :
     AcceptanceSoundness.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
   have hModelFuel : ∀ fuel n acc,
-      RecursionSoundness.evalRecAFuel fuel n acc = {name}__fuel fuel n acc := by
+      RecursionSoundness.evalRecAFuel fuel n acc = {model_name}__fuel fuel n acc := by
     intro fuel
     induction fuel with
     | zero => intro n acc; rfl
     | succ fuel ih =>
         intro n acc
-        simp only [RecursionSoundness.evalRecAFuel, {name}__fuel]
+        simp only [RecursionSoundness.evalRecAFuel, {model_name}__fuel]
         split <;> simp_all
-  have hModel : ∀ n acc, RecursionSoundness.evalRecA n acc = {name} n acc := by
+  have hModel : ∀ n acc, RecursionSoundness.evalRecA n acc = {model_name} n acc := by
     intro n acc
-    simpa [RecursionSoundness.evalRecA, {name}] using hModelFuel (n.natAbs + 1) n acc
+    simpa [RecursionSoundness.evalRecA, {model_name}] using hModelFuel (n.natAbs + 1) n acc
   refine Or.inr ?_
   refine ⟨{box_idx}, {add_idx}, {sub_idx}, .accumulator,
     rfl, rfl, ?_, ?_⟩
@@ -234,11 +236,11 @@ theorem {name}_recursionSemanticBridge :
     )
 }
 
-fn render_recursion_semantic_bridge(c: &Cert) -> String {
+fn render_recursion_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> String {
     match c.inner() {
-        Cert::Recursive { .. } => render_unary_recursion_semantic_bridge(c),
+        Cert::Recursive { .. } => render_unary_recursion_semantic_bridge(c, model_info),
         Cert::AccumulatorRecursive { .. } => {
-            render_accumulator_recursion_semantic_bridge(c)
+            render_accumulator_recursion_semantic_bridge(c, model_info)
         }
         _ => unreachable!(),
     }

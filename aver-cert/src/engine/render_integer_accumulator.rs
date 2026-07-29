@@ -1,4 +1,5 @@
-fn accumulator_fuel_pieces(c: &Cert) -> FuelPieces {
+fn accumulator_fuel_pieces(c: &Cert, model_info: &ModelInfo) -> FuelPieces {
+    let q = c.model_lean_name(model_info);
     let Cert::AccumulatorRecursive {
         name,
         self_idx,
@@ -19,7 +20,7 @@ fn accumulator_fuel_pieces(c: &Cert) -> FuelPieces {
             r#"-- model-side fuel bridge (fuel induction; the IH is quantified over both args).
 theorem {name}_fuel_irrel :
     ∀ (t k1 k2 : Nat) (n acc : Int), n.natAbs < t → n.natAbs < k1 → n.natAbs < k2 →
-      {name}__fuel k1 n acc = {name}__fuel k2 n acc := by
+      {q}__fuel k1 n acc = {q}__fuel k2 n acc := by
   intro t
   induction t with
   | zero => intro k1 k2 n acc ht _ _; omega
@@ -32,25 +33,25 @@ theorem {name}_fuel_irrel :
       | zero => omega
       | succ m2 =>
       by_cases hn : n ≤ 0
-      · simp [{name}__fuel, hn]
+      · simp [{q}__fuel, hn]
       · have hrec := ih m1 m2 (n - 1) (acc + n) (by omega) (by omega) (by omega)
-        simp only [{name}__fuel]
+        simp only [{q}__fuel]
         rw [if_neg hn, if_neg hn, hrec]
 
 theorem {name}_fuel_stable (k : Nat) (n acc : Int) (h : n.natAbs < k) :
-    {name}__fuel k n acc = {name} n acc :=
+    {q}__fuel k n acc = {q} n acc :=
   {name}_fuel_irrel (n.natAbs + k + 1) k (n.natAbs + 1) n acc (by omega) h (by omega)
 
 theorem {name}_step (n acc : Int) (hn : ¬ n ≤ 0) :
-    {name} n acc = {name} (n - 1) (acc + n) := by
-  have h0 : {name} n acc = {name}__fuel (n.natAbs + 1) n acc := rfl
+    {q} n acc = {q} (n - 1) (acc + n) := by
+  have h0 : {q} n acc = {q}__fuel (n.natAbs + 1) n acc := rfl
   rw [h0]
-  simp only [{name}__fuel]
+  simp only [{q}__fuel]
   rw [if_neg hn, {name}_fuel_stable n.natAbs (n - 1) (acc + n) (by omega)]
 
-theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {name} n acc = acc := by
-  have h0 : {name} n acc = {name}__fuel (n.natAbs + 1) n acc := rfl
-  rw [h0]; simp [{name}__fuel, hn]"#
+theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {q} n acc = acc := by
+  have h0 : {q} n acc = {q}__fuel (n.natAbs + 1) n acc := rfl
+  rw [h0]; simp [{q}__fuel, hn]"#
         ),
         comb_hyps: r#"    (add sub : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, Repr a va → Repr b vb → add [va, vb] = some w → Repr (a + b) w)
@@ -59,7 +60,7 @@ theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {name} n acc = acc := by
         concl: format!(
             r#"    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
       wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →
-      Repr ({name} n acc) w := by"#
+      Repr ({q} n acc) w := by"#
         ),
         zero_body: "      intro n acc vn vacc w hvn hvacc hrun\n      simp [wFuncN] at hrun"
             .to_string(),
@@ -123,11 +124,11 @@ theorem {name}_base (n acc : Int) (hn : n ≤ 0) : {name} n acc = acc := by
         faithful_concl: format!(
             r#"    ∀ (fuel : Nat) (n acc : Int) (vn vacc w : WVal), Repr n vn → Repr acc vacc →
       wFuncN {name}Code ({name}Host add sub) fuel {self_idx} [vn, vacc] = some w →
-      ∃ m : Int, Repr m w ∧ m = {name} n acc :="#
+      ∃ m : Int, Repr m w ∧ m = {q} n acc :="#
         ),
         faithful_body: format!(
             r#"  fun fuel n acc vn vacc w hvn hvacc hrun =>
-    ⟨{name} n acc,
+    ⟨{q} n acc,
      {name}_wasm_certified Repr hcar hsmall_intro hsmall_elim hbig add sub hAdd hSub fuel n acc vn
        vacc w hvn hvacc hrun,
      rfl⟩"#

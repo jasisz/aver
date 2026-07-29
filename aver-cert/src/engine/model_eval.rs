@@ -40,11 +40,30 @@ fn eval_accumulator(n: i64, acc: i64) -> i64 {
 
 #[derive(Default)]
 struct ModelInfo {
+    /// Keyed by the FLAT (wasm-export-space) name: for a def inside
+    /// `namespace P` the key is `P` with dots replaced by underscores,
+    /// joined to the bare name with `_` — exactly the compiler's dependency
+    /// flattening. Entry-level defs are keyed by their bare name unchanged.
     fns: std::collections::HashMap<String, FnSig>,
+    /// Keyed by the QUALIFIED Lean name (`P.Ty` inside `namespace P`, the
+    /// bare name at entry level).
     inductives: std::collections::HashMap<String, InductiveInfo>,
+    /// Flat forms (dots replaced by underscores) of every namespace the model
+    /// files open. An export name shaped like `<prefix>_<rest>` for one of
+    /// these prefixes MAY be a dependency-module function, so its Lean
+    /// identifier can never be assumed to be the export name itself.
+    module_prefix_flats: Vec<String>,
+    /// Flat keys claimed by two DIFFERENT qualified names. A lookup on such a
+    /// key must fail (fail-closed): citing either candidate would be a guess.
+    ambiguous: std::collections::HashSet<String>,
 }
 
 struct FnSig {
+    /// Fully qualified Lean identifier of this def (equals the bare name at
+    /// entry level, `P.name` inside `namespace P`).
+    lean_name: String,
+    /// Dotted namespace prefix the def was parsed under (empty at entry level).
+    prefix: String,
     params: Vec<String>,
     ret: String,
 }
@@ -70,15 +89,89 @@ impl ModelInfo {
         info
     }
 
+    /// The Lean identifier the generated certificate must cite for the model
+    /// of export `name`, or `None` when it cannot be derived (then the export
+    /// must decline rather than cite a guess).
+    ///
+    /// - A parsed model def with this flat key resolves to its qualified name
+    ///   (identity for entry-level defs).
+    /// - Two distinct defs flattening to the same key are ambiguous: `None`.
+    /// - With no parsed def, the export name itself is citable only when no
+    ///   model namespace flattens to a prefix of it — otherwise the export may
+    ///   be a dependency-module function whose bare-underscore name does not
+    ///   exist in Lean, so `None`.
+    fn model_lean_name(&self, name: &str) -> Option<String> {
+        if self.ambiguous.contains(name) {
+            return None;
+        }
+        if let Some(sig) = self.fns.get(name) {
+            return Some(sig.lean_name.clone());
+        }
+        let may_be_dep_fn = self.module_prefix_flats.iter().any(|prefix| {
+            name.len() > prefix.len() + 1
+                && name.starts_with(prefix.as_str())
+                && name.as_bytes()[prefix.len()] == b'_'
+        });
+        if may_be_dep_fn {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }
+
+    /// Resolve a type name AS WRITTEN in a model def signature (relative to
+    /// that def's namespace) to the qualified inductive it denotes: first in
+    /// the def's own namespace, then as a fully qualified / entry-level name.
+    fn resolve_inductive<'a>(
+        &'a self,
+        prefix: &str,
+        written: &str,
+    ) -> Option<(String, &'a InductiveInfo)> {
+        if !prefix.is_empty() {
+            let qualified = format!("{prefix}.{written}");
+            if let Some(ind) = self.inductives.get(&qualified) {
+                return Some((qualified, ind));
+            }
+        }
+        self.inductives
+            .get(written)
+            .map(|ind| (written.to_string(), ind))
+    }
+
     fn parse_lean(&mut self, content: &str) {
         let lines: Vec<&str> = content.lines().collect();
+        // Namespace stack: `namespace X` pushes (X may be dotted), a matching
+        // `end X` pops. A bare `end` (a `mutual` block) never pops.
+        let mut ns_stack: Vec<String> = Vec::new();
         let mut i = 0usize;
         while i < lines.len() {
             let line = lines[i].trim();
+            if let Some(rest) = line.strip_prefix("namespace ")
+                && let Some(name) = rest.split_whitespace().next()
+                && rest.trim() == name
+            {
+                ns_stack.push(name.to_string());
+                let prefix = ns_stack.join(".");
+                let flat = prefix.replace('.', "_");
+                if !self.module_prefix_flats.contains(&flat) {
+                    self.module_prefix_flats.push(flat);
+                }
+                i += 1;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("end ")
+                && ns_stack.last().map(String::as_str) == Some(rest.trim())
+            {
+                ns_stack.pop();
+                i += 1;
+                continue;
+            }
+            let prefix = ns_stack.join(".");
             if let Some(name) = line
                 .strip_prefix("inductive ")
                 .and_then(|s| s.split_whitespace().next())
             {
+                let qualified = qualify(&prefix, name);
                 i += 1;
                 let mut ctors = Vec::new();
                 while i < lines.len() {
@@ -105,22 +198,49 @@ impl ModelInfo {
                     });
                     i += 1;
                 }
-                self.inductives
-                    .insert(name.to_string(), InductiveInfo { ctors });
+                self.inductives.insert(qualified, InductiveInfo { ctors });
                 continue;
             }
             if line.starts_with("def ")
                 && line.contains(" : ")
                 && line.ends_with(":=")
-                && let Some((name, sig)) = parse_def_sig(line)
+                && let Some((name, mut sig)) = parse_def_sig(line)
             {
-                self.fns.insert(name, sig);
+                let qualified = qualify(&prefix, &name);
+                let flat = qualified.replace('.', "_");
+                sig.lean_name = qualified;
+                sig.prefix = prefix.clone();
+                if self.ambiguous.contains(&flat) {
+                    i += 1;
+                    continue;
+                }
+                match self.fns.get(&flat) {
+                    Some(existing) if existing.lean_name != sig.lean_name => {
+                        // Two distinct qualified names collide on one flat
+                        // key: neither may ever resolve (fail-closed).
+                        self.fns.remove(&flat);
+                        self.ambiguous.insert(flat);
+                    }
+                    _ => {
+                        self.fns.insert(flat, sig);
+                    }
+                }
             }
             i += 1;
         }
     }
 }
 
+fn qualify(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}.{name}")
+    }
+}
+
+/// Parse one single-line def signature. `lean_name`/`prefix` are filled by the
+/// caller, which knows the namespace the line was parsed under.
 fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
     let rest = line.strip_prefix("def ")?;
     let name = rest.split_whitespace().next()?.to_string();
@@ -155,5 +275,13 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
         }
         tail = &after[end + 1..];
     }
-    Some((name, FnSig { params, ret }))
+    Some((
+        name.clone(),
+        FnSig {
+            lean_name: name,
+            prefix: String::new(),
+            params,
+            ret,
+        },
+    ))
 }

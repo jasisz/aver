@@ -3743,8 +3743,12 @@ fn certify_nested_module_models_close_end_to_end() {
         "nestedmods --certify failed:\n{report}"
     );
     assert!(
-        report.contains("1 certified"),
-        "nestedmods must certify its entry-module export:\n{report}"
+        report.contains("3 certified"),
+        "nestedmods must certify the entry export and both nested-module exports:\n{report}"
+    );
+    assert!(
+        report.contains("Nested_Deep_Util_bump") && report.contains("Nested_Deep_Util_tally"),
+        "nestedmods must certify the exports whose models live in the nested module:\n{report}"
     );
 
     let cert_dir = out_dir.join("cert");
@@ -3768,6 +3772,35 @@ fn certify_nested_module_models_close_end_to_end() {
             "{file} must not emit a path-shaped import line:\n{contents}"
         );
     }
+    // The nested-module export's obligation must cite its model by the
+    // QUALIFIED name the model file declares (inside `namespace
+    // Nested.Deep.Util`), never by the flattened wasm export name — the
+    // flattened form is not a Lean identifier in the model and fails the
+    // package build.
+    let manifest_lean =
+        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    assert!(
+        manifest_lean.contains("model := fun ns => Nested.Deep.Util.bump (ns.headD 0)")
+            && manifest_lean.contains("model := fun ns => Nested.Deep.Util.tally (ns.headD 0)"),
+        "each nested export's obligation must cite the qualified model name:\n{manifest_lean}"
+    );
+    assert!(
+        !manifest_lean.contains("model := fun ns => Nested_Deep_Util_bump")
+            && !manifest_lean.contains("model := fun ns => Nested_Deep_Util_tally"),
+        "the obligation must never cite the flattened export name as the model:\n{manifest_lean}"
+    );
+    // The nested recursion bridge must also cite the model's qualified fuel
+    // form (`Nested.Deep.Util.tally__fuel`), never a flattened one.
+    let certificate_lean = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
+        .expect("Certificate.lean exists");
+    assert!(
+        certificate_lean.contains("Nested.Deep.Util.tally__fuel"),
+        "the recursion bridge must cite the qualified fuel model:\n{certificate_lean}"
+    );
+    assert!(
+        !certificate_lean.contains("Nested_Deep_Util_tally__fuel"),
+        "the recursion bridge must never cite a flattened fuel model:\n{certificate_lean}"
+    );
 
     assert_certificate_target_builds(&cert_dir, "nested module models");
 

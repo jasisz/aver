@@ -1,17 +1,35 @@
 module Util
-    exposes [combine]
+    exposes [combine, bump, tally]
     intent =
-        "Nested dependency for the certificate staging fixture. The exposed"
-        "function takes two arguments on purpose: it stays outside the"
-        "single-argument certified templates, so the fixture's certified"
-        "export lives in the entry module while this module's Lean model"
-        "(Nested/Deep/Util.lean) is still emitted, imported by the"
-        "certificate, and must stage for the package to build."
+        "Nested dependency for the certificate staging fixture. `combine`"
+        "takes two arguments on purpose: it stays outside the certified"
+        "templates, so the package always carries a declined dependency"
+        "function. `bump` is deliberately CERTIFIABLE (straight-line n + 2):"
+        "its wasm export is the flattened `Nested_Deep_Util_bump`, while its"
+        "Lean model lives inside `namespace Nested.Deep.Util` in the nested"
+        "model file (Nested/Deep/Util.lean) — so the generated certificate"
+        "must cite the model by its qualified name for the package to build."
     effects []
 
 fn combine(a: Int, b: Int) -> Int
     ? "Adds two integers and two."
     a + b + 2
 
+fn bump(n: Int) -> Int
+    ? "Adds two to an integer."
+    n + 2
+
+fn tally(n: Int) -> Int
+    ? "Single-argument self recursion; its certificate must cite the qualified model and its fuel form."
+    match n <= 0
+        true -> 0
+        false -> n + tally(n - 1)
+
 verify combine
     combine(1, 0) => 3
+
+verify bump
+    bump(1) => 3
+
+verify tally
+    tally(3) => 6
