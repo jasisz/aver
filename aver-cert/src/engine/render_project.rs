@@ -1897,6 +1897,14 @@ fn render_artifact(
          -- The whole-module big-Nat closure fold is kernel reduction. This\n\
          -- explicit depth budget affects kernel reduction limits only, not soundness or axioms.\n\
          set_option maxRecDepth 200000\n\
+         -- Companion budget for the elaborator, matching the one Certificate.lean\n\
+         -- already carries. Precautionary rather than a fix for an observed\n\
+         -- failure: this proof is one fixed shape repeated per claim, so its\n\
+         -- elaboration cost grows with the size of the artifact, and the stock\n\
+         -- allowance is the only thing here that was never stated explicitly.\n\
+         -- Like the depth budget above it moves a resource limit only: no axiom,\n\
+         -- no trusted hypothesis, no change to what the kernel must accept.\n\
+         set_option maxHeartbeats 1600000\n\
          set_option linter.unusedSimpArgs false\n\n\
          namespace AverCert.Artifact\n\n\
          def symFragmentClaims : List AverCert.AcceptedArtifact.SymFragmentClaim := {sym_claims_list}\n\n\
