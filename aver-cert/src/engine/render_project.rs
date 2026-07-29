@@ -5,6 +5,14 @@
 /// checker-owned wall and build configuration are resolved from `wall_id`.
 /// Any existing `cert/` directory is removed first so a reused output path
 /// cannot retain files from an older package format.
+///
+/// PRECONDITION: `model_files` must be the SAME emission `analysis` was
+/// derived from. The renderers cite each certified export's model by the
+/// qualified Lean name resolved from these files, and `analyze` already
+/// declined every export whose name it could not resolve — so a mismatched
+/// pair would leave a renderer with a citation the gate never approved. This
+/// is checked here rather than assumed: a mismatch returns an error and no
+/// package is written.
 pub fn write_project(
     out_dir: &Path,
     wasm_name: &str,
@@ -12,6 +20,17 @@ pub fn write_project(
     analysis: &Analysis,
     model_files: &[(String, String)],
 ) -> Result<(), String> {
+    // Enforce the model-file precondition BEFORE touching the output
+    // directory, so a mismatched call leaves any existing package intact.
+    let model_info = ModelInfo::from_files(model_files);
+    for c in &analysis.certs {
+        model_citation_gate(c, &model_info).map_err(|reason| {
+            format!(
+                "model files passed to write_project do not match the analysis: {reason}"
+            )
+        })?;
+    }
+
     let cert_dir = out_dir.join("cert");
     match std::fs::remove_dir_all(&cert_dir) {
         Ok(()) => {}
@@ -31,7 +50,6 @@ pub fn write_project(
             model_roots.push(model_root_from_stem(stem)?);
         }
     }
-    let model_info = ModelInfo::from_files(model_files);
 
     let sha = {
         let mut h = Sha256::new();

@@ -49,13 +49,13 @@ struct FuelPieces {
 /// the shared `Repr` hypotheses, the two `#print axioms` lines, the anti-vacuity
 /// and obligation structure) into which the recognised shape — single-argument
 /// combinator recursion or two-argument tail accumulator — splices its pieces.
-fn render_fueled_recursion_cert(c: &Cert) -> String {
+fn render_fueled_recursion_cert(c: &Cert, model_info: &ModelInfo) -> String {
     let name = c.name();
     let carrier = c.carrier();
     let hyps = recursion_repr_hyps(carrier);
     let p = match c.inner() {
-        Cert::Recursive { .. } => recursive_fuel_pieces(c),
-        Cert::AccumulatorRecursive { .. } => accumulator_fuel_pieces(c),
+        Cert::Recursive { .. } => recursive_fuel_pieces(c, model_info),
+        Cert::AccumulatorRecursive { .. } => accumulator_fuel_pieces(c, model_info),
         _ => unreachable!(),
     };
     let FuelPieces {

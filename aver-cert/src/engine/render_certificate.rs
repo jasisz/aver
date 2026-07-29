@@ -1,7 +1,7 @@
 fn render_certificate(
     analysis: &Analysis,
     model_roots: &[String],
-    _model_info: &ModelInfo,
+    model_info: &ModelInfo,
 ) -> String {
     let mut s = String::new();
     s.push_str(
@@ -32,10 +32,10 @@ fn render_certificate(
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
                 if recursion_uses_audited_generic(c) =>
             {
-                s.push_str(&render_recursion_semantic_bridge(c))
+                s.push_str(&render_recursion_semantic_bridge(c, model_info))
             }
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
-                s.push_str(&render_fueled_recursion_cert(c))
+                s.push_str(&render_fueled_recursion_cert(c, model_info))
             }
             // Constructor packs (verbatim and named-ADT) are discharged in
             // `Final.cert`: verbatim packs by the canonical option-(c) leaf,
@@ -55,6 +55,7 @@ fn render_certificate(
                     c,
                     analysis.frag_host_table,
                     &struct_table_lean,
+                    model_info,
                 ))
             }
             Cert::ExprFragment { .. } => s.push_str(&render_expr_fragment_cert(c)),
@@ -65,9 +66,11 @@ fn render_certificate(
             | Cert::StringEqVerbatimMatch { .. }
             | Cert::StringConcatVerbatimMatch { .. } => {}
             Cert::Composition { .. } => {
-                s.push_str(&render_composition_semantic_bridge(c, analysis))
+                s.push_str(&render_composition_semantic_bridge(c, analysis, model_info))
             }
-            Cert::MutualRecursion { .. } => s.push_str(&render_mutual_semantic_bridge(c)),
+            Cert::MutualRecursion { .. } => {
+                s.push_str(&render_mutual_semantic_bridge(c, model_info))
+            }
             Cert::NonRecursive { .. } => unreachable!(),
         }
         s.push('\n');

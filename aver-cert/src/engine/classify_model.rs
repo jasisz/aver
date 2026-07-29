@@ -85,20 +85,59 @@ fn parse_body_step(
 /// uses `-`, so it never
 /// confuses the scan; the recognised body shapes carry no other arithmetic.
 fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap<String, char> {
-    let mut ops = std::collections::HashMap::new();
+    // Flat key -> (qualified name that claimed it, combinator operator).
+    let mut ops: std::collections::HashMap<String, (String, char)> =
+        std::collections::HashMap::new();
+    // Flat keys claimed by two different definitions. This parser must agree
+    // with `ModelInfo::parse_lean`: a collision makes the combinator a guess,
+    // so the key is dropped and the recursion classifier declines rather than
+    // reading the operator off whichever definition happened to parse last.
+    let mut ambiguous = std::collections::HashSet::new();
     for (path, content) in model_files {
-        if !path.ends_with(".lean") {
+        // Same user-only file predicate as `ModelInfo::from_files`: the
+        // prelude defines no user model and must not claim flat keys.
+        if !is_user_model_file(path) {
             continue;
         }
         let lines: Vec<&str> = content.lines().collect();
+        // Track the namespace stack exactly like `ModelInfo::parse_lean`, so
+        // a dependency module's `X__fuel` is keyed by its FLAT export-space
+        // name (`Prefix_X`) and the classifier's export-name lookup hits it.
+        let mut ns_stack: Vec<String> = Vec::new();
         for i in 0..lines.len() {
-            let Some(rest) = lines[i].trim().strip_prefix("def ") else {
+            let line = lines[i].trim();
+            if let Some(rest) = line.strip_prefix("namespace ")
+                && let Some(ns) = rest.split_whitespace().next()
+                && rest.trim() == ns
+            {
+                ns_stack.push(ns.to_string());
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("end ")
+                && ns_stack.last().map(String::as_str) == Some(rest.trim())
+            {
+                ns_stack.pop();
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("def ") else {
                 continue;
             };
             let Some(fuel_pos) = rest.find("__fuel ") else {
                 continue;
             };
-            let name = rest[..fuel_pos].to_string();
+            let prefix = ns_stack.join(".");
+            let bare = &rest[..fuel_pos];
+            // The qualified Lean name identifies the definition; the flat name
+            // is the wasm-export-space key the classifier looks up.
+            let qualified = if prefix.is_empty() {
+                bare.to_string()
+            } else {
+                format!("{prefix}.{bare}")
+            };
+            let name = qualified.replace('.', "_");
+            if ambiguous.contains(&name) {
+                continue;
+            }
             for l in lines.iter().skip(i).take(8) {
                 if let Some(p) = l.find("else ") {
                     let els = &l[p + 5..];
@@ -110,12 +149,24 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
                         None
                     };
                     if let Some(op) = op {
-                        ops.insert(name.clone(), op);
+                        match ops.get(&name) {
+                            // Two DISTINCT definitions flattening onto one key:
+                            // drop it so no combinator is guessed.
+                            Some((existing, _)) if *existing != qualified => {
+                                ops.remove(&name);
+                                ambiguous.insert(name.clone());
+                            }
+                            _ => {
+                                ops.insert(name.clone(), (qualified.clone(), op));
+                            }
+                        }
                     }
                     break;
                 }
             }
         }
     }
-    ops
+    ops.into_iter()
+        .map(|(name, (_, op))| (name, op))
+        .collect()
 }

@@ -289,7 +289,7 @@ fn adt_constructor_sym_plan_from_cert(c: &Cert, model_info: &ModelInfo) -> Optio
     let result = sym_ty_from_source_type_name(&sig.ret)?;
     let (type_name, ctor_name, source_args) = match &result {
         SymTy::Named(type_name) if adt_constructor_uses_model(c, model_info) => {
-            let ind = model_info.inductives.get(&sig.ret)?;
+            let (_, ind) = model_info.resolve_inductive(&sig.prefix, &sig.ret)?;
             let ctor = ind.ctors.first()?;
             if ctor.fields != sig.params || !sym_plan_simple_token(&ctor.name) {
                 return None;
@@ -1037,6 +1037,8 @@ mod sym_plan_defs_tests {
         model_info.fns.insert(
             "mkOp".to_string(),
             FnSig {
+                lean_name: "mkOp".to_string(),
+                prefix: String::new(),
                 params: vec!["Int".to_string()],
                 ret: "Op".to_string(),
             },
@@ -1088,6 +1090,8 @@ mod sym_plan_defs_tests {
         model_info.fns.insert(
             "singletonEntry".to_string(),
             FnSig {
+                lean_name: "singletonEntry".to_string(),
+                prefix: String::new(),
                 params: vec!["(String × Json)".to_string()],
                 ret: "List (String × Json)".to_string(),
             },

@@ -12,10 +12,11 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
              Dom := List Int, Cod := Int,\n    \
              domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
              codRepr := fun S n w => intRepr S n w,\n    \
-             model := fun ns => {name} (ns.headD 0) }}\n\n",
+             model := fun ns => {model_name} (ns.headD 0) }}\n\n",
             carrier = c.carrier(),
             self_idx = c.self_idx(),
             arity = c.arity(),
+            model_name = c.model_lean_name(model_info),
         );
     }
     if let Some(face) = c.tag_dispatch_face() {
@@ -167,7 +168,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
                     expr_fragment_dom_accessor("p", idx as usize, plan.params.len())
                 });
             let model = if expr_fragment_uses_audited_generic(c) {
-                expr_fragment_source_model(c)
+                expr_fragment_source_model(c, model_info)
             } else {
                 format!("fun p => {plan_model}")
             };
@@ -208,7 +209,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
              Dom := List Int, Cod := Int,\n    \
              domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,\n    \
              codRepr := fun S n w => intRepr S n w,\n    \
-             model := fun ns => {name} (ns.headD 0) }}\n\n",
+             model := fun ns => {model_name} (ns.headD 0) }}\n\n",
             primary = scc[0].name,
             carrier = c.carrier(),
             host = c.host_expr(),
@@ -217,6 +218,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             termination = c
                 .termination_witness()
                 .map_or_else(|| "none".to_string(), |w| format!("some {}", w.lean_value())),
+            model_name = c.model_lean_name(model_info),
         ),
         _ => format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
@@ -229,7 +231,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             carrier = c.carrier(),
             host = c.host_expr(),
             self_idx = c.self_idx(),
-            model = c.model_expr(),
+            model = c.model_expr(model_info),
             arity = c.arity(),
             policy = c.policy().lean_value(),
             termination = c

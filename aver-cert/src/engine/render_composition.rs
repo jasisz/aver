@@ -116,7 +116,11 @@ fn composition_claim_acceptance_proof(
 /// Option-(b) composition bridge. Root glue is discharged by the audited
 /// generic; generated lemmas remain only for the non-root member semantics
 /// that the generic deliberately consumes through `MemberFact`.
-fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
+fn render_composition_semantic_bridge(
+    c: &Cert,
+    analysis: &Analysis,
+    model_info: &ModelInfo,
+) -> String {
     let Cert::Composition {
         name,
         self_idx,
@@ -127,6 +131,15 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
     else {
         unreachable!()
     };
+    // Qualified model identifiers: the root and every closure member.
+    // `model_citation_gate` covers a composition's root AND its whole closure,
+    // and both `analyze` and `write_project` enforce it, so each resolves.
+    let member_model = |entry: &ClosureEntry| -> String {
+        model_info
+            .model_lean_name(&entry.name)
+            .expect("model-citing certificate passed the qualified-name gate")
+    };
+    let root_model = c.model_lean_name(model_info);
     let add_idx = analysis
         .frag_host_table
         .add_idx
@@ -164,7 +177,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
             .map(|entry| format!(
                 "if member = {} then {} x else",
                 lean_str(&entry.name),
-                entry.name
+                member_model(entry)
             ))
             .chain(std::iter::once("x".to_string()))
             .collect::<Vec<_>>()
@@ -172,7 +185,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
     ));
     let model_simp = closure
         .iter()
-        .map(|entry| entry.name.as_str())
+        .map(&member_model)
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -343,7 +356,7 @@ fn render_composition_semantic_bridge(c: &Cert, analysis: &Analysis) -> String {
          cases htail with\n      \
          | cons _ _ => simp at hLen\n      \
          | nil =>\n          \
-         refine ⟨n, v, {model_name}, {name}, rfl, hv, ?_, ?_, ?_⟩\n          \
+         refine ⟨n, v, {model_name}, {root_model}, rfl, hv, ?_, ?_, ?_⟩\n          \
          · intro input\n            \
          simp [{model_name}, CompositionSoundness.evalCompositionCalls, {model_simp}]\n          \
          · intro w hw\n            \

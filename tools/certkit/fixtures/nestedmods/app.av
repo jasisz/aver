@@ -14,8 +14,15 @@ fn viaDep(n: Int) -> Int
     ? "Delegates to the nested dependency module."
     Nested.Deep.Util.combine(n, 0)
 
+fn viaBump(n: Int) -> Int
+    ? "Keeps the nested certifiable function live from the entry module."
+    Nested.Deep.Util.bump(n)
+
 verify addTwo
     addTwo(1) => 3
 
 verify viaDep
     viaDep(1) => 3
+
+verify viaBump
+    viaBump(1) => 3

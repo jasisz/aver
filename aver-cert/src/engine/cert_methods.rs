@@ -192,19 +192,35 @@ impl Cert {
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
+    /// The qualified Lean identifier of this export's source model function.
+    ///
+    /// Only valid for a cert that passed `model_citation_gate` against THIS
+    /// `model_info` — `analyze` applies that gate to every cert it keeps, and
+    /// `write_project` re-checks it before rendering anything, so a resolution
+    /// failure here is a producer bug rather than a certificate that should
+    /// decline. Citing an unresolved name would be a guess, so this panics
+    /// instead of emitting one.
+    fn model_lean_name(&self, model_info: &ModelInfo) -> String {
+        model_info
+            .model_lean_name(self.name())
+            .expect("model-citing certificate passed the qualified-name gate")
+    }
     /// The Lean expression for the model this export simulates.
-    fn model_expr(&self) -> String {
+    fn model_expr(&self, model_info: &ModelInfo) -> String {
         if let Some(face) = self.int_add_face() {
             return format!("fun ns => ns.headD 0 + ({})", face.k);
         }
         match self.inner() {
-            Cert::Recursive { name, .. }
-            | Cert::Composition { name, .. }
-            | Cert::MutualRecursion { name, .. } => {
-                format!("fun ns => {name} (ns.headD 0)")
+            Cert::Recursive { .. }
+            | Cert::Composition { .. }
+            | Cert::MutualRecursion { .. } => {
+                format!("fun ns => {} (ns.headD 0)", self.model_lean_name(model_info))
             }
-            Cert::AccumulatorRecursive { name, .. } => {
-                format!("fun ns => {name} (ns.headD 0) ((ns.drop 1).headD 0)")
+            Cert::AccumulatorRecursive { .. } => {
+                format!(
+                    "fun ns => {} (ns.headD 0) ((ns.drop 1).headD 0)",
+                    self.model_lean_name(model_info)
+                )
             }
             Cert::AdtConstructor { .. }
             | Cert::FieldProjection { .. }
@@ -316,11 +332,20 @@ impl Cert {
             | Cert::StringConcatVerbatimMatch { .. } => ("WVal".to_string(), "WVal".to_string()),
             Cert::ExprFragment { plan, .. } => (plan.source_dom(), plan.source_cod()),
             Cert::VariantDispatch { name, .. } | Cert::WidenedIntMatch { name, .. } => {
+                // Display the qualified inductive name when the written type
+                // resolves (identity for entry-level models).
                 let dom = model_info
                     .fns
                     .get(name)
-                    .and_then(|s| s.params.first())
-                    .map(|s| ascii(s))
+                    .and_then(|s| {
+                        s.params.first().map(|written| {
+                            model_info
+                                .resolve_inductive(&s.prefix, written)
+                                .map(|(qualified, _)| qualified)
+                                .unwrap_or_else(|| written.clone())
+                        })
+                    })
+                    .map(|s| ascii(&s))
                     .unwrap_or_else(|| "Op".to_string());
                 (dom, "Int".to_string())
             }
@@ -329,7 +354,13 @@ impl Cert {
                     let cod = model_info
                         .fns
                         .get(self.name())
-                        .map(|s| ascii(&s.ret))
+                        .map(|s| {
+                            model_info
+                                .resolve_inductive(&s.prefix, &s.ret)
+                                .map(|(qualified, _)| qualified)
+                                .unwrap_or_else(|| s.ret.clone())
+                        })
+                        .map(|s| ascii(&s))
                         .unwrap_or_else(|| "Unit".to_string());
                     ("Int".to_string(), cod)
                 } else {

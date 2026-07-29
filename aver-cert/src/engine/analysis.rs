@@ -231,6 +231,21 @@ pub fn analyze_with_fragment_plans(
     }
     let certs = gated_certs;
 
+    // Qualified-model-name gate: every class whose generated Lean cites the
+    // source model by name must resolve that name to the identifier that
+    // actually exists in the emitted model module — the export name itself at
+    // entry level, the dotted namespace form for a dependency-module function.
+    // An export whose citation cannot be derived declines here (fail-closed)
+    // instead of rendering a name Lean would reject.
+    let mut named_certs = Vec::new();
+    for c in certs {
+        match model_citation_gate(&c, &model_info) {
+            Ok(()) => named_certs.push(c),
+            Err(reason) => declined.push((c.name().to_string(), reason)),
+        }
+    }
+    let certs = named_certs;
+
     // Named runtime contracts actually consumed by the certified functions.
     let contracts = runtime_contracts_for_certs(&certs);
     let certified = certs
@@ -249,6 +264,50 @@ pub fn analyze_with_fragment_plans(
         string_host_roles,
         declared_envelopes,
     })
+}
+
+/// Every export name this certificate's renderers cite as a MODEL identifier
+/// in generated Lean. Classes that cite no model function (verbatim packs,
+/// field projections, string leaves, envelope-modeled dispatch/constructors,
+/// plan-modeled fragments) require nothing here; their per-class lookups
+/// already skip or decline on a miss.
+fn model_citation_names(c: &Cert) -> Vec<String> {
+    match c.inner() {
+        Cert::Recursive { name, .. } | Cert::AccumulatorRecursive { name, .. } => {
+            vec![name.clone()]
+        }
+        // The bridge's simultaneous fuel induction cites EVERY member's model.
+        Cert::MutualRecursion { scc, .. } => {
+            scc.iter().map(|member| member.name.clone()).collect()
+        }
+        // The composition model and its simp set cite the root and every
+        // closure member.
+        Cert::Composition { name, closure, .. } => std::iter::once(name.clone())
+            .chain(closure.iter().map(|entry| entry.name.clone()))
+            .collect(),
+        // Audited integer/Bool fragments (including the straight-line add
+        // face) state `model := <source fn>`; plan-modeled (float) fragments
+        // cite no model name.
+        Cert::ExprFragment { name, .. }
+            if expr_fragment_uses_audited_generic(c) || c.int_add_face().is_some() =>
+        {
+            vec![name.clone()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Fail-closed: decline any cert whose model citation cannot be derived.
+fn model_citation_gate(c: &Cert, model_info: &ModelInfo) -> Result<(), String> {
+    for name in model_citation_names(c) {
+        if model_info.model_lean_name(&name).is_none() {
+            return Err(format!(
+                "model identifier for `{name}` cannot be resolved to a definition \
+                 in the emitted Lean model; declined"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn has_complete_artifact_plan(

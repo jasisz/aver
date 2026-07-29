@@ -23,10 +23,11 @@ fn expr_fragment_uses_audited_generic(c: &Cert) -> bool {
         && matches!(plan.result, FragTy::IntCarrier | FragTy::BoolI32)
 }
 
-fn expr_fragment_source_model(c: &Cert) -> String {
+fn expr_fragment_source_model(c: &Cert, model_info: &ModelInfo) -> String {
     debug_assert!(expr_fragment_uses_audited_generic(c));
+    let model_name = c.model_lean_name(model_info);
     match c.arity() {
-        1 => c.name().to_string(),
+        1 => model_name,
         // The obligation domain is the right-nested product
         // `FragParams.denote` builds, so the model uncurries the source
         // function over the same `p.1, p.2.1, …, p.2…2` accessors the
@@ -35,7 +36,7 @@ fn expr_fragment_source_model(c: &Cert) -> String {
             let args = (0..arity)
                 .map(|index| format!(" {}", expr_fragment_dom_accessor("p", index, arity)))
                 .collect::<String>();
-            format!("fun p => {}{args}", c.name())
+            format!("fun p => {model_name}{args}")
         }
     }
 }
@@ -91,6 +92,7 @@ fn render_expr_fragment_semantic_bridge(
     c: &Cert,
     host_table: FragHostTable,
     struct_table_lean: &str,
+    model_info: &ModelInfo,
 ) -> String {
     if let Some(face) = c.tag_dispatch_face() {
         return render_expr_fragment_tag_dispatch_semantic_bridge(
@@ -107,9 +109,10 @@ fn render_expr_fragment_semantic_bridge(
             face,
             host_table,
             struct_table_lean,
+            model_info,
         );
     }
-    render_expr_fragment_int_bool_semantic_bridge(c, host_table, struct_table_lean)
+    render_expr_fragment_int_bool_semantic_bridge(c, host_table, struct_table_lean, model_info)
 }
 
 fn render_expr_fragment_tag_dispatch_semantic_bridge(
@@ -182,8 +185,10 @@ fn render_expr_fragment_int_add_semantic_bridge(
     face: FragIntAddFace,
     host_table: FragHostTable,
     struct_table_lean: &str,
+    model_info: &ModelInfo,
 ) -> String {
     let name = c.name();
+    let model_name = c.model_lean_name(model_info);
     let carrier = c.carrier();
     let k = lean_int_lit(face.k);
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
@@ -252,7 +257,7 @@ theorem {name}_exprFragmentSemanticBridge :
                   AverCert.AcceptedArtifact.exprFragmentNLocals,
                   CertModule.{name}Code, CertModule.{name}Host, boxRef,
                   popArgs, initLocals, hc, carrierSmall, b32]
-              · simpa [AverCert.Schema.intRepr, {name}] using
+              · simpa [AverCert.Schema.intRepr, {model_name}] using
                   hAdd n ({k}) v (carrierSmall {carrier} ({k})) result hv
                     (S.smallIntro ({k})) hc
 
@@ -318,6 +323,7 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     c: &Cert,
     host_table: FragHostTable,
     struct_table_lean: &str,
+    model_info: &ModelInfo,
 ) -> String {
     let Cert::ExprFragment {
         name,
@@ -328,6 +334,7 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     else {
         unreachable!()
     };
+    let model_name = c.model_lean_name(model_info);
     debug_assert_eq!(plan.result, FragTy::BoolI32);
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
     let acceptance = expr_fragment_claim_acceptance_proof(c);
@@ -368,7 +375,7 @@ fn render_expr_fragment_int_bool_semantic_bridge(
          ExprFragmentSemantics.runNodesFuel, ExprFragmentSemantics.finishWith, \
          AverCert.AcceptedArtifact.exprFragmentNLocals, \
          CertModule.{name}Code, CertModule.{name}Host, wFuncN, wRunF, f, b32, \
-         popArgs, initLocals, {name}"
+         popArgs, initLocals, {model_name}"
     );
     let host_table_lean = host_table.lean_value();
     let eval_tactic = expr_fragment_bridge_eval_tactic(
@@ -401,7 +408,7 @@ theorem {name}_exprFragmentSemanticBridge :
       AverCert.Plans.{name}Plan, CertModule.{name}Code, CertModule.{name}Host]
   ·
 {eval_tactic}
-  · simp [{name}, AverCert.Schema.boolRepr, b32]
+  · simp [{model_name}, AverCert.Schema.boolRepr, b32]
 
 #print axioms {name}_exprFragmentSemanticBridge
 "#
