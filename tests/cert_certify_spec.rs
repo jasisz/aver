@@ -3364,8 +3364,21 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// A module with no Int carrier certifies exactly its carrier-free classes and
+/// declares the carrierless state truthfully.
+///
+/// This test used to assert the opposite half — that `greet` and `shout` were
+/// NOT certified, with the exact no-Int-helper decline reason — as an
+/// anti-false-positive tripwire. Certifying them is now the deliberate result of
+/// teaching `string-concat-v1` to lower in both carrier states, so the tripwire
+/// is INVERTED here rather than deleted, and its original intent is kept as the
+/// explicit assertion below that no integer-family class appears: those classes
+/// all cite an arith host role, an admitted arith table requires a byte-derived
+/// carrier struct, and this module has neither. A carrier-free class appearing
+/// here is the reviewed new fact; an integer-family class appearing here would
+/// still be a false positive.
 #[test]
-fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
+fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
     // No `lake` needed: this is a pure emitter no-abort check. hello.av has
     // zero Int arithmetic, so its emitted module carries neither the Int
     // carrier type nor the `__rt_aint_from_i64` box helper export. The
@@ -3454,11 +3467,13 @@ fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
         );
     }
 
-    // hello.wasm has no Int carrier at all, so the integer-family classes can
-    // never match; the manifest must truthfully declare the ABSENCE of the
-    // host-role table (`null`), never a fabricated all-null table, because the
-    // in-kernel pin equates the manifest value with the byte decoder's result
-    // and the decoder resolves no table for a carrierless module.
+    // hello.wasm has no Int carrier at all. The manifest must truthfully
+    // declare the ABSENCE of the host-role table (`null`), never a fabricated
+    // all-null table, because the in-kernel pin equates the manifest value with
+    // the byte decoder's result and the decoder resolves no table for a
+    // carrierless module. These facts are MORE load-bearing than they were when
+    // this module could carry no claims at all: they are now what keeps the
+    // arith roles unciteable while carrier-free claims ride alongside them.
     assert_eq!(
         manifest["carrier_type_index"],
         serde_json::Value::Null,
@@ -3476,24 +3491,48 @@ fn certify_emits_declared_uncertified_package_for_module_without_int_helper() {
         "the Lean manifest must declare the absent host-role table as `none`"
     );
 
-    // Pin the exact human-readable decline reasons. If a future classifier
-    // change silently certifies (or reclassifies) one of these exports, this
-    // must fail loudly instead of quietly shifting the report.
-    const NO_INT_HELPER_REASON: &str = "body does not match a carrier-free certified template, \
-         and the module has no Int carrier host helpers (`__rt_aint_from_i64`); \
-         integer-family certification requires the Int carrier";
+    // The reviewed new fact: both String concatenations certify, in the exact
+    // carrier-free class. `string-concat-v1` reads no carrier and cites no arith
+    // role, so it is the one family that lowers in this state.
+    let classes: BTreeMap<String, String> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .map(|c| {
+            (
+                c["name"].as_str().expect("entry has a name").to_string(),
+                c["class"].as_str().expect("entry has a class").to_string(),
+            )
+        })
+        .collect();
     for export in ["greet", "shout"] {
-        assert!(
-            !certified.contains(export),
-            "`{export}` is a String-shaped export with no certified class; \
-             a sudden certification is a false positive until reviewed"
-        );
         assert_eq!(
-            declared.get(export).map(String::as_str),
-            Some(NO_INT_HELPER_REASON),
-            "`{export}` must decline with the exact no-Int-helper reason"
+            classes.get(export).map(String::as_str),
+            Some("verbatim-string-concat"),
+            "`{export}` must certify as the carrier-free String.concat class, got \
+             certified={classes:?} declared={declared:?}"
         );
     }
+
+    // The original tripwire's intent, preserved: every class that cites an
+    // arith host role stays impossible here. An admitted arith table requires
+    // `carrierState` to name a carrier struct, and this module's type section
+    // names none, so none of these can appear however the classifier changes.
+    const INTEGER_FAMILY_CLASSES: &[&str] = &[
+        "self-recursive",
+        "multi-argument self-recursive",
+        "mutual-recursive",
+        "int-dispatch",
+        "cross-function-composition",
+    ];
+    for (name, class) in &classes {
+        assert!(
+            !INTEGER_FAMILY_CLASSES.contains(&class.as_str()),
+            "`{name}` certified as `{class}` in a module with no Int carrier; \
+             an integer-family class here is a false positive until reviewed"
+        );
+    }
+
     assert!(
         !certified.contains("main"),
         "`main` is an effectful zero-argument export and must not certify"
@@ -3613,14 +3652,22 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// End-to-end on a module WITHOUT the Int box helper: emit the package, then
+/// run the REAL verification.
+///
+/// This test used to pin the admission-only verdict for `hello.av` — exit 1,
+/// the zero-certified banner. `string-concat-v1` now lowers in the carrierless
+/// state, so that module certifies two exports and the verdict is CERTIFIED.
+/// Only the zero-certified half of the old expectation is obsolete; what the
+/// test exists for is unchanged and is asserted more strongly below, because
+/// the pipeline succeeding is now witnessed by a green CERTIFIED rather than
+/// merely by the absence of `DECLINED`. The admission-only path itself is still
+/// real behaviour and keeps its own coverage in
+/// `certify_then_verify_module_with_no_certifiable_export_is_admission_only`.
 #[test]
-fn certify_then_verify_module_without_int_helper_is_admission_only_green() {
+fn certify_then_verify_carrierless_module_acceptance_pin_closes() {
     // The end-to-end regression whose absence let the carrierless flow ship
-    // with an unprovable acceptance pin: emit the certificate package for a
-    // module WITHOUT the Int box helper, then run the REAL verification. The
-    // Lean acceptance must build green; the only rejection allowed is the
-    // admission-only verdict every 0-certified module gets, with its exact
-    // banner and honest nonzero exit.
+    // with an unprovable acceptance pin. The Lean acceptance must build green.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping carrierless verify test: `lake` not available");
         return;
@@ -3646,6 +3693,15 @@ fn certify_then_verify_module_without_int_helper_is_admission_only_green() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
+    // The module really is the carrierless one this test is about.
+    let bytes = std::fs::read(out_dir.join("hello.wasm")).unwrap();
+    let (box_idx, ..) = aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
+        .expect("hello.wasm classifies");
+    assert_eq!(
+        box_idx, None,
+        "hello.av must stay carrierless for this test to mean anything"
+    );
+
     let verify = aver_command()
         .arg("cert")
         .arg("verify")
@@ -3659,23 +3715,29 @@ fn certify_then_verify_module_without_int_helper_is_admission_only_green() {
         String::from_utf8_lossy(&verify.stderr)
     );
 
-    // 0 certified exports: the verdict is admission-only, never CERTIFIED.
+    // The acceptance pin closes, and now says so positively: the pipeline
+    // succeeding is witnessed by a green verdict, not by the absence of a
+    // decline. The `DECLINED` assertion is kept alongside it because the two
+    // fail differently — a crash or a timeout could produce neither string.
     assert_eq!(
         verify.status.code(),
-        Some(1),
-        "the admission-only verdict must be the honest exit 1, not a crash:\n{combined}"
+        Some(0),
+        "the carrierless package must verify green:\n{combined}"
     );
     assert!(
-        combined.contains("NO CERTIFIED EXPORTS (admission only, no behavioral claims)"),
-        "the admission-only banner must be printed:\n{combined}"
+        combined.contains("CERTIFIED"),
+        "the carrierless package must reach the CERTIFIED verdict:\n{combined}"
     );
     assert!(
-        combined.contains("0 certified exports"),
-        "the summary must count zero certified exports:\n{combined}"
+        combined.contains("2 certified exports"),
+        "the summary must count the two String.concat exports:\n{combined}"
     );
-    // The Lean acceptance itself built green: reaching the admission-only
-    // verdict requires the full checker pipeline to succeed, so no decline
-    // reason may appear.
+    for export in ["greet", "shout"] {
+        assert!(
+            combined.contains(export),
+            "`{export}` must appear in the certified list:\n{combined}"
+        );
+    }
     assert!(
         !combined.contains("DECLINED"),
         "the carrierless package must not be DECLINED — its acceptance pin must close:\n{combined}"
@@ -3683,6 +3745,19 @@ fn certify_then_verify_module_without_int_helper_is_admission_only_green() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+/// The admission-only path keeps its coverage — it just no longer has a reason
+/// to live in this file. `empty_cert_is_admission_only_and_exits_nonzero`
+/// (`tests/cert_verify_spec.rs`) runs the same `compile --certify` then
+/// `cert verify` pipeline on `tools/certkit/fixtures/certempty.av`, whose only
+/// export is a two-argument `Int` add that no certified template admits, and
+/// pins the same banner, the same nonzero exit and the absence of the green
+/// path. Restating it here would duplicate a full Lean verification in a second
+/// CI lane for no additional guarantee, so this comment stands in for the test:
+/// if that one is ever deleted or repointed at a module that certifies
+/// something, the admission-only verdict loses its only coverage.
+#[cfg(test)]
+const _ADMISSION_ONLY_COVERAGE_NOTE: () = ();
 
 #[test]
 fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {

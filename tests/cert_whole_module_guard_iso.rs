@@ -1670,3 +1670,629 @@ example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
     );
     let _ = std::fs::remove_dir_all(out_dir);
 }
+
+/// One `String.concat` module in four states: the Int-carrier struct present or
+/// absent, crossed with the emitted locals prelude reserving a carrier slot or
+/// none. The two DIAGONAL states are what the compiler actually emits — a
+/// module that touches `Int` carries the struct and the scratch local, a module
+/// that never touches `Int` carries neither — and the two OFF-DIAGONAL states
+/// are the artifacts a producer would need in order to choose the more
+/// convenient byte template for a module it does not fit.
+///
+/// Everything but the struct's first storage byte and the locals prelude is
+/// shared: the same export, the same concatenation, the same data segment, the
+/// same function and code sections.
+fn string_concat_carrier_fixture(carrier_field: &str, locals: &str) -> Vec<u8> {
+    let wat = format!(
+        r#"
+(module
+  (type $str (array (mut i8)))
+  (type $parts (array (mut (ref null $str))))
+  (type $shape (struct (field {carrier_field}) (field anyref) (field i32)))
+  (func $concat (param (ref null $parts)) (result (ref null $str))
+    ref.null $str)
+  (func $greet (param (ref null $str)) (result (ref null $str))
+    {locals}
+    i32.const 0
+    i32.const 7
+    array.new_data $str $hello
+    local.get 0
+    array.new_fixed $parts 2
+    call $concat)
+  (data $hello "Hello, ")
+  (export "greet" (func $greet)))
+"#
+    );
+    let bytes = wat::parse_str(&wat).expect("string-concat carrier fixture assembles");
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .expect("string-concat carrier fixture must be valid wasm");
+    bytes
+}
+
+/// GuardIso for the `string-concat-v1` locals prelude. The family is the only
+/// one that lowers in both carrier states of a module, so it is the only one
+/// whose certificate carries a template SELECTOR at all — and a selector the
+/// producer could pick freely would let a carriered module present the shorter
+/// body, or a carrierless one the longer, whichever its bytes happened to fit.
+///
+/// Four facts, all against kernel-evaluated modules built inside the fixture:
+///
+/// (a) the two honest states are ACCEPTED by the real family predicate, so the
+///     fixture exercises both templates and the rejections below are not an
+///     artefact of the framing;
+/// (b) a CARRIERED module presenting the zero-local body with a `carrier :=
+///     none` claim is REJECTED, and the mirror — a CARRIERLESS module
+///     presenting the one-local body with a `carrier := some 2` claim — is
+///     rejected too, so neither direction is open;
+/// (c) the literal one-conjunct-weakened copy — `stringConcatPlanAccepted`
+///     with the `CertDecode.carrierState` equality deleted and nothing else
+///     touched — ACCEPTS both hostile artifacts. This is the attribution: the
+///     hostile bodies satisfy every other conjunct, byte binding included,
+///     because the byte template each claim selected really is the byte
+///     template sitting in that module.
+///
+/// Point (c) is why the pin cannot be dropped in favour of the byte equality
+/// alone: the byte equality checks that the claim describes the module's bytes,
+/// never that the module was entitled to those bytes.
+#[test]
+fn string_concat_carrier_state_guard_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping String.concat carrier-state GuardIso test: `lake` not available");
+        return;
+    }
+    let wall_dir = temp_dir("cert-string-concat-carrier-guard-iso");
+    std::fs::create_dir_all(&wall_dir).unwrap();
+    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
+    for source in wall.sources {
+        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    std::fs::write(
+        wall_dir.join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
+         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
+         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `StringSoundness, `AcceptedArtifactCore]\n",
+    )
+    .unwrap();
+    let build = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("build")
+        .output()
+        .expect("build the wall before the String.concat carrier-state GuardIso");
+    assert!(
+        build.status.success(),
+        "wall build failed before the String.concat carrier-state GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // The carrier struct is `{i64, anyref, i32}`; the decoy differs in exactly
+    // one storage-type byte and is therefore NOT a carrier. The locals prelude
+    // is either empty or one nullable reference to that same struct type.
+    let carrier_local = "(local (ref null $shape))";
+    let honest_carriered = string_concat_carrier_fixture("i64", carrier_local);
+    let honest_carrierless = string_concat_carrier_fixture("i32", "");
+    let hostile_carriered = string_concat_carrier_fixture("i64", "");
+    let hostile_carrierless = string_concat_carrier_fixture("i32", carrier_local);
+
+    let lean = format!(
+        r#"import AcceptedArtifactCore
+import StringSoundness
+
+open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact
+set_option maxRecDepth 300000
+
+-- Four assemblies of ONE module. The struct at type index 2 is the Int carrier
+-- shape `{{i64, anyref, i32}}` in the "carriered" pair and a decoy differing in
+-- one storage-type byte in the "carrierless" pair. `greet` reserves one
+-- nullable reference to that struct in the "oneLocal" pair and no locals at all
+-- in the "zeroLocal" pair. Bytes crafted by the test harness.
+def honestCarrieredBytes : Nat := 0x{honest_carriered_hex}
+def honestCarrieredLen : Nat := {honest_carriered_len}
+def honestCarrierlessBytes : Nat := 0x{honest_carrierless_hex}
+def honestCarrierlessLen : Nat := {honest_carrierless_len}
+def hostileCarrieredBytes : Nat := 0x{hostile_carriered_hex}
+def hostileCarrieredLen : Nat := {hostile_carriered_len}
+def hostileCarrierlessBytes : Nat := 0x{hostile_carrierless_hex}
+def hostileCarrierlessLen : Nat := {hostile_carrierless_len}
+
+-- The byte-derived carrier state of each: the struct SHAPE decides it, and the
+-- locals prelude has no say in it whatsoever.
+example : CertDecode.carrierState honestCarrieredBytes honestCarrieredLen
+    = some (some 2) := by decide +kernel
+example : CertDecode.carrierState hostileCarrieredBytes hostileCarrieredLen
+    = some (some 2) := by decide +kernel
+example : CertDecode.carrierState honestCarrierlessBytes honestCarrierlessLen
+    = some none := by decide +kernel
+example : CertDecode.carrierState hostileCarrierlessBytes hostileCarrierlessLen
+    = some none := by decide +kernel
+
+def greetName : AverCert.WasmSlice.ByteSeq := [103, 114, 101, 101, 116]
+def helloBytes : List Nat := [72, 101, 108, 108, 111, 44, 32]
+
+def concatPlan : StringConcatRawPlan :=
+  {{ profile := "string-concat-v1",
+     prefixes := [({{ dataIdx := 0, bytes := helloBytes }} : StringConcatChunk)],
+     suffixes := [] }}
+
+def concatSymPlan : SymRawPlan :=
+  {{ profile := "sym-fragment-v1", params := [.string], result := .string,
+     body := ({{ nodes := [{{ id := 0, ty := .string, kind := .constStringBytes helloBytes }},
+                          {{ id := 1, ty := .string, kind := .param 0 }},
+                          {{ id := 2, ty := .string, kind := .prim .stringConcat [0, 1] }}],
+                result := 2 }} : SymBlock) }}
+
+def concatBody : List WInstr :=
+  [.i32Const (0), .i32Const (7), .arrayNewData 0 helloBytes, .localGet 0,
+   .arrayNewFixed 1 2, .call 0]
+
+-- One obligation shape, parameterised by exactly the two fields the carrier
+-- state fixes: the declared carrier index and the frame's locals count.
+def greetOb (carrierIdx nlocals : Nat) : Obligation :=
+  {{ export_ := "greet", policy := .simulatesModel, carrier := carrierIdx,
+     code := fun fn => if fn = 1 then some ⟨1, nlocals, concatBody⟩ else none,
+     host := stringConcatCanonicalHost 0 0,
+     self := 1, Dom := WVal, Cod := WVal,
+     domRepr := fun _ v vs => vs = [v],
+     codRepr := fun S v w => verbatimRepr S v w,
+     model := fun v => StringSoundness.evalStringConcat 0 1 concatPlan v }}
+
+def concatRoles : List (Nat × CertDecode.StringHost.Role) := [(0, .concat)]
+
+-- Literal one-conjunct-weakened copy of `stringConcatPlanAccepted`: the
+-- `CertDecode.carrierState` equality is deleted and every other conjunct, in
+-- its original order, is kept verbatim.
+def stringConcatPlanAcceptedWithoutCarrierState
+    (modBytes modLen : Nat)
+    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
+    (exportName : String)
+    (carrier : Option Nat)
+    (resultTy containerTy concatFuncIdx : Nat)
+    (stringHostRoles : List (Nat × CertDecode.StringHost.Role))
+    (symPlan : SymRawPlan)
+    (plan : StringConcatRawPlan)
+    (obligation : Obligation) : Prop :=
+  obligation.export_ = exportName ∧
+  obligation.carrier = carrier.getD 0 ∧
+  stringHostRoles.contains (concatFuncIdx, .concat) = true ∧
+  obligation.host = stringConcatCanonicalHost concatFuncIdx resultTy ∧
+  ∃ body codeEntry binding,
+    AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
+    AverCert.PlanCheck.stringConcatPlanMatchesSymRawPlan symPlan plan = true ∧
+    AverCert.PlanCheck.checkStringConcatRawPlan plan = true ∧
+    AverCert.PlanLower.lowerStringConcatBody
+      resultTy containerTy concatFuncIdx plan = some body ∧
+    AverCert.PlanBytes.lowerStringConcatCodeEntry
+      carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
+    AverCert.WasmSlice.exactFuncBindingForExport
+      modBytes modLen exportNameBytes codeEntry = some binding ∧
+    obligation.self = binding.funcIdx ∧
+    obligation.code binding.funcIdx =
+      some {{ arity := 1, nlocals := stringConcatNLocals carrier, body := body }}
+
+def oneLocalEntry : AverCert.WasmSlice.ByteSeq :=
+  (AverCert.PlanBytes.lowerStringConcatCodeEntry (some 2) 0 1 0 concatPlan).getD []
+def zeroLocalEntry : AverCert.WasmSlice.ByteSeq :=
+  (AverCert.PlanBytes.lowerStringConcatCodeEntry none 0 1 0 concatPlan).getD []
+
+-- The two templates really are different bytes, so the fixture is not testing a
+-- distinction without a difference.
+example : oneLocalEntry ≠ zeroLocalEntry := by decide +kernel
+
+def bindingIn (modBytes modLen : Nat) (entry : AverCert.WasmSlice.ByteSeq) :
+    AverCert.WasmSlice.FuncBinding :=
+  (AverCert.WasmSlice.exactFuncBindingForExport modBytes modLen greetName entry).getD
+    ⟨0, 0, []⟩
+
+-- (a) Isolation, honest carriered: carrier struct present, one-local body,
+-- `carrier := some 2` claimed. The real predicate accepts.
+example : stringConcatPlanAccepted honestCarrieredBytes honestCarrieredLen greetName
+    "greet" (some 2) 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 2 1) :=
+  ⟨rfl, rfl, rfl, rfl, rfl, concatBody, oneLocalEntry,
+   bindingIn honestCarrieredBytes honestCarrieredLen oneLocalEntry,
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+-- (a) Isolation, honest carrierless: no carrier struct, zero-local body,
+-- `carrier := none` claimed. The real predicate accepts this too, which is the
+-- point of the whole change.
+example : stringConcatPlanAccepted honestCarrierlessBytes honestCarrierlessLen greetName
+    "greet" none 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 0 0) :=
+  ⟨rfl, rfl, rfl, rfl, rfl, concatBody, zeroLocalEntry,
+   bindingIn honestCarrierlessBytes honestCarrierlessLen zeroLocalEntry,
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+-- (b) A CARRIERED module claiming the carrierless template is rejected, exactly
+-- at the carrier-state decode.
+example : ¬ stringConcatPlanAccepted hostileCarrieredBytes hostileCarrieredLen greetName
+    "greet" none 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 0 0) := by
+  intro h
+  have bad : CertDecode.carrierState hostileCarrieredBytes hostileCarrieredLen = some none :=
+    h.2.1
+  exact absurd bad (by decide +kernel)
+
+-- (b) The mirror: a CARRIERLESS module claiming the carriered template.
+example : ¬ stringConcatPlanAccepted hostileCarrierlessBytes hostileCarrierlessLen greetName
+    "greet" (some 2) 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 2 1) := by
+  intro h
+  have bad : CertDecode.carrierState hostileCarrierlessBytes hostileCarrierlessLen
+      = some (some 2) := h.2.1
+  exact absurd bad (by decide +kernel)
+
+-- (c) ATTRIBUTION. Delete that one conjunct and the SAME hostile artifacts are
+-- accepted: every remaining conjunct holds of them, the byte binding included.
+example : stringConcatPlanAcceptedWithoutCarrierState hostileCarrieredBytes
+    hostileCarrieredLen greetName "greet" none 0 1 0 concatRoles concatSymPlan
+    concatPlan (greetOb 0 0) :=
+  ⟨rfl, rfl, rfl, rfl, concatBody, zeroLocalEntry,
+   bindingIn hostileCarrieredBytes hostileCarrieredLen zeroLocalEntry,
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+example : stringConcatPlanAcceptedWithoutCarrierState hostileCarrierlessBytes
+    hostileCarrierlessLen greetName "greet" (some 2) 0 1 0 concatRoles concatSymPlan
+    concatPlan (greetOb 2 1) :=
+  ⟨rfl, rfl, rfl, rfl, concatBody, oneLocalEntry,
+   bindingIn hostileCarrierlessBytes hostileCarrierlessLen oneLocalEntry,
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+-- The byte equality on its own is blind to the attack, which is why it cannot
+-- stand in for the pin: each hostile module really does carry the code entry
+-- its claim synthesizes.
+example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrieredBytes
+    hostileCarrieredLen greetName zeroLocalEntry ≠ none := by decide +kernel
+example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrierlessBytes
+    hostileCarrierlessLen greetName oneLocalEntry ≠ none := by decide +kernel
+
+-- And the honest-template equalities fail on the swapped bodies, so the module
+-- pairs really are in the states the fixture claims.
+example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrieredBytes
+    hostileCarrieredLen greetName oneLocalEntry = none := by decide +kernel
+example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrierlessBytes
+    hostileCarrierlessLen greetName zeroLocalEntry = none := by decide +kernel
+"#,
+        honest_carriered_hex = hex_le(&honest_carriered),
+        honest_carriered_len = honest_carriered.len(),
+        honest_carrierless_hex = hex_le(&honest_carrierless),
+        honest_carrierless_len = honest_carrierless.len(),
+        hostile_carriered_hex = hex_le(&hostile_carriered),
+        hostile_carriered_len = hostile_carriered.len(),
+        hostile_carrierless_hex = hex_le(&hostile_carrierless),
+        hostile_carrierless_len = hostile_carrierless.len(),
+    );
+    std::fs::write(wall_dir.join("StringConcatCarrierGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("env")
+        .arg("lean")
+        .arg("StringConcatCarrierGuardIso.lean")
+        .output()
+        .expect("run the String.concat carrier-state GuardIso check");
+    assert!(
+        check.status.success(),
+        "String.concat carrier-state GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(wall_dir);
+}
+
+/// A minimal but REAL Int runtime: the canonical `__rt_aint_from_i64` helper
+/// over a three-field carrier struct, exported under its runtime name. The flag
+/// field's storage type is the only parameter — `i32` is the shape
+/// `CertDecode.TypeEntry.isCarrier` recognises, and a packed `i8` is a carrier
+/// that works exactly as well in a real engine while decoding as no carrier at
+/// all (`isCarrier` compares the storage tag against `0x7f`, and packed `i8` is
+/// `0x78`). The two assemblies differ in that single byte; the box helper's code
+/// entry is byte-identical in both.
+fn arith_carrier_fixture(flag_field: &str) -> Vec<u8> {
+    let wat = format!(
+        r#"
+(module
+  (type $mag (array (mut i64)))
+  (type $aint (struct (field i64) (field (ref null $mag)) (field {flag_field})))
+  (func $box (param i64) (result (ref null $aint))
+    local.get 0
+    ref.null $mag
+    i32.const 0
+    struct.new $aint)
+  (export "__rt_aint_from_i64" (func $box)))
+"#
+    );
+    let bytes = wat::parse_str(&wat).expect("arith carrier fixture assembles");
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .expect("arith carrier fixture must be valid wasm");
+    bytes
+}
+
+/// GuardIso for the two conjuncts that keep a DECLARED arith table, and the
+/// carrier index every obligation declares, tied to the module's type section.
+///
+/// The attack this closes: `arithTableCheck` reads the export section
+/// (`carrierHelperAbsent`, `boxIdx`, `toIndexIdx`), the code section
+/// (`arithRoleCheck`) and a pure bound (`checkArithHostParams`) — and, before
+/// this change, nothing else. `arithParams.carrier` was therefore confirmed only
+/// against helper bodies the wall itself synthesized FROM it, never against the
+/// type section. A module can hold a perfectly good Int carrier that
+/// `isCarrier` cannot see (the packed-`i8` flag field below), which makes
+/// `carrierState` report the carrierless state while a full arith table is
+/// admissible. Pair that with the reserved carrier index the carrierless arm of
+/// `decodedCarrierIndex` forces, and an Int-family claim could wire the box role
+/// — int-dispatch needs no other — and state its obligation over `CarrierSpec 0`
+/// while the values its code builds live at a different struct index.
+///
+/// Four facts, all against kernel-evaluated modules built inside the fixture:
+///
+/// (a) the honest module — same bytes, `i32` flag field — is ACCEPTED by both
+///     pins, so the fixture exercises the admitting path;
+/// (b) the packed-`i8` module is REJECTED by the real `arithTableCheck`, and by
+///     the real `decodedObligationFacts` when its obligation declares the index
+///     its own values actually live at;
+/// (c) the literal one-conjunct-weakened copies — `arithTableCheck` without the
+///     `carrierState` equality, and `decodedObligationFacts` without the carrier
+///     equality — ACCEPT that same module. Both attributions are acceptances:
+///     every other conjunct genuinely holds, template equality included;
+/// (d) the exploit's remaining links are pinned as facts, so the chain is
+///     legible rather than asserted: the helper export really is present, the
+///     box body really does equal the canonical template, and the role a claim
+///     would cite really is bound by `hostTableBound`.
+#[test]
+fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping declared-arith-carrier GuardIso test: `lake` not available");
+        return;
+    }
+    let wall_dir = temp_dir("cert-arith-carrier-guard-iso");
+    std::fs::create_dir_all(&wall_dir).unwrap();
+    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
+    for source in wall.sources {
+        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    // The import closure of what this fixture needs — the sibling GuardIso
+    // root list plus `StandardFace` and everything `StandardFace` transitively
+    // imports. A `roots` list is NOT auto-extended: a module outside it is not
+    // part of the library, so its olean is never built and the import fails,
+    // which is why naming `StandardFace` alone is not enough. Nineteen roots
+    // instead of the wall's full thirty-six keeps the fresh-temp-dir build
+    // proportionate. Only files the wall actually EMBEDS may be named: the
+    // staged directory is `wall.sources`, a strict subset of the repository.
+    std::fs::write(
+        wall_dir.join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
+         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
+         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `StringSoundness, `AcceptedArtifactCore, `ConstructVerbatimSoundness, \
+         `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelope, `EnvelopeLowering, \
+         `FieldProjectionSoundness, `IntDispatchSoundness, `WidenedEnvelope, \
+         `StandardFace]\n",
+    )
+    .unwrap();
+    let build = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("build")
+        .output()
+        .expect("build the wall before the declared-arith-carrier GuardIso");
+    assert!(
+        build.status.success(),
+        "wall build failed before the declared-arith-carrier GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let hidden = arith_carrier_fixture("i8");
+    let visible = arith_carrier_fixture("i32");
+    // The whole difference between a carrier the wall sees and one it does not.
+    // `zip` truncates, so the length equality has to be asserted first or the
+    // one-byte claim below would hold vacuously for a shorter prefix — and the
+    // "the box helper code entry is byte-identical in both" conclusion rests on
+    // exactly this.
+    assert_eq!(
+        hidden.len(),
+        visible.len(),
+        "the two arith carrier fixtures must be the same length for the \
+         byte-difference count below to mean anything"
+    );
+    let differing: Vec<usize> = hidden
+        .iter()
+        .zip(visible.iter())
+        .enumerate()
+        .filter_map(|(i, (a, b))| (a != b).then_some(i))
+        .collect();
+    assert_eq!(
+        differing.len(),
+        1,
+        "the two arith carrier fixtures must differ in exactly one byte, got {differing:?}"
+    );
+    assert_eq!((hidden[differing[0]], visible[differing[0]]), (0x78, 0x7f));
+
+    let lean = format!(
+        r#"import AcceptedArtifactCore
+import StandardFace
+
+open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact
+set_option maxRecDepth 300000
+
+-- One Int runtime, assembled twice. The carrier struct at type index 1 has a
+-- packed `i8` flag field in `hidden` and an `i32` flag field in `visible`; the
+-- exported `__rt_aint_from_i64` body is byte-identical in both. Bytes crafted by
+-- the test harness.
+def hiddenBytes : Nat := 0x{hidden_hex}
+def hiddenLen : Nat := {hidden_len}
+def visibleBytes : Nat := 0x{visible_hex}
+def visibleLen : Nat := {visible_len}
+
+def params : ArithTemplateDerisk.ArithHostParams :=
+  {{ carrier := 1, limb := 0, decompose := 0, normalize := 0, strip := 0, umagCmp := 0 }}
+def roles : CertDecode.AddSub.Roles :=
+  {{ box := some 0, add := none, mul := none, sub := none, toIndex := none }}
+
+-- (d) The exploit's links, pinned rather than asserted.
+-- The Int runtime is genuinely present in BOTH modules...
+example : CertDecode.AddSub.carrierHelperAbsent hiddenBytes hiddenLen = false := by decide +kernel
+example : CertDecode.AddSub.boxIdx hiddenBytes hiddenLen = some 0 := by decide +kernel
+example : CertDecode.AddSub.toIndexIdx hiddenBytes hiddenLen = none := by decide +kernel
+-- ...and the declared box index really does carry the canonical helper body, so
+-- the template equality that is supposed to confirm `params.carrier` is fully
+-- satisfied by a module whose type section holds no carrier the wall can see.
+example : AcceptedArtifact.arithRoleCheck hiddenBytes hiddenLen .box (some 0) params = true := by
+  decide +kernel
+example : ArithTemplateDerisk.checkArithHostParams params = true := by decide
+-- The role an Int-dispatch claim would cite is bound by the declared table.
+example : StandardFace.hostTableBound roles [(HostRole.box, 0)] = true := by decide
+
+-- The single byte decides whether the carrier is visible to the wall at all.
+example : CertDecode.carrierState hiddenBytes hiddenLen = some none := by decide +kernel
+example : CertDecode.carrierState visibleBytes visibleLen = some (some 1) := by decide +kernel
+
+-- Literal one-conjunct-weakened copy of `arithTableCheck`: the `carrierState`
+-- equality is deleted and every other conjunct, in its original order, is kept.
+def arithTableCheckWithoutCarrierStruct (n len : Nat)
+    (roles? : Option CertDecode.AddSub.Roles)
+    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
+  match roles?, params? with
+  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
+  | some roles, some p =>
+      !CertDecode.AddSub.carrierHelperAbsent n len &&
+      (roles.box == CertDecode.AddSub.boxIdx n len) &&
+      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
+      ArithTemplateDerisk.checkArithHostParams p &&
+      AcceptedArtifact.arithRoleCheck n len .box roles.box p &&
+      AcceptedArtifact.arithRoleCheck n len .toIndex roles.toIndex p &&
+      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
+      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
+      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
+  | _, _ => false
+
+-- (a) Isolation: the honest module is accepted by the real check.
+example : AcceptedArtifact.arithTableCheck visibleBytes visibleLen (some roles) (some params)
+    = true := by decide +kernel
+
+-- (b) The packed-`i8` module is rejected — its type section names no carrier.
+example : AcceptedArtifact.arithTableCheck hiddenBytes hiddenLen (some roles) (some params)
+    = false := by decide +kernel
+
+-- (c) ATTRIBUTION: delete that one conjunct and the SAME module is accepted.
+example : arithTableCheckWithoutCarrierStruct hiddenBytes hiddenLen (some roles) (some params)
+    = true := by decide +kernel
+
+-- ...and the weakened copy still accepts the honest module, so the flip is
+-- attributable to the deleted conjunct and not to the fixture's framing.
+example : arithTableCheckWithoutCarrierStruct visibleBytes visibleLen (some roles) (some params)
+    = true := by decide +kernel
+
+/-! ### The second conjunct: the obligation's own carrier index -/
+
+-- The exact code entry both assemblies decode to at function 0. Written as a
+-- LITERAL, not as `decodeCode` applied to the module: if the stub's code table
+-- were the decoder itself, the surviving conjunct of the weakened copy below
+-- would hold as a beta-identity rather than by decoding the artifact, and the
+-- two attributions would not be of equal strength.
+def boxWCode : WCode := ⟨1, 0, [.localGet 0, .refNull, .i32Const (0), .structNew 1 3]⟩
+
+-- ...and that literal really is what the bytes decode to, in both assemblies.
+example : CertDecode.decodeCode hiddenBytes hiddenLen 0 = some boxWCode := by rfl
+example : CertDecode.decodeCode visibleBytes visibleLen 0 = some boxWCode := by rfl
+
+def stubOb (carrierIdx : Nat) : Obligation :=
+  {{ export_ := "__rt_aint_from_i64", policy := .simulatesModel, carrier := carrierIdx,
+     code := fun fn => if fn = 0 then some boxWCode else none,
+     host := stringConcatCanonicalHost 0 0,
+     self := 0, Dom := WVal, Cod := WVal,
+     domRepr := fun _ v vs => vs = [v],
+     codRepr := fun S v w => verbatimRepr S v w,
+     model := fun v => v }}
+
+/-! ### The scoping: which binding a family is wired to is the whole guarantee
+
+`decodedObligationFacts` (strict) is what NINE families get;
+`decodedCarrierFreeObligationFacts` (three-state) is wired to the String.concat
+claim list alone. The pair of facts below is the same artifact and the same
+obligation under both, so the accept/reject flip is attributable to the scoping
+decision and to nothing else. -/
+
+-- (a) Isolation, honest carriered module: the obligation declares the decoded
+-- carrier index and the strict predicate accepts.
+example : AcceptedArtifact.decodedObligationFacts visibleBytes visibleLen
+    (stubOb 1) [0] := ⟨rfl, rfl, trivial⟩
+
+-- ...and any other index is rejected, so the equality is not vacuous.
+example : ¬ AcceptedArtifact.decodedObligationFacts visibleBytes visibleLen
+    (stubOb 2) [0] := by
+  intro h
+  have hcar : CertDecode.decodeCarrier visibleBytes visibleLen = some 2 := h.1
+  exact absurd hcar (by decide +kernel)
+
+-- (b) THE RESTORED GUARANTEE. In a module with no decodable carrier struct the
+-- strict binding admits NO index at all — not the struct index the module's own
+-- values live at, and not the reserved `0` either. This is what keeps a
+-- carrier-SENSITIVE but role-FREE family out of the carrierless state:
+-- `construct-v1`'s named face pins `HEq o.Dom Int` and
+-- `HEq o.domRepr (intArgDomRepr env.carrier)` while fixing `host = emptyHost`,
+-- so neither the role table nor the arith-table carrier pin constrains it, and
+-- this conjunct is the only thing standing between it and an Int-representation
+-- face stated over an index the bytes do not license.
+example : ¬ AcceptedArtifact.decodedObligationFacts hiddenBytes hiddenLen
+    (stubOb 1) [0] := by
+  intro h
+  have hcar : CertDecode.decodeCarrier hiddenBytes hiddenLen = some 1 := h.1
+  exact absurd hcar (by decide +kernel)
+
+example : ¬ AcceptedArtifact.decodedObligationFacts hiddenBytes hiddenLen
+    (stubOb 0) [0] := by
+  intro h
+  have hcar : CertDecode.decodeCarrier hiddenBytes hiddenLen = some 0 := h.1
+  exact absurd hcar (by decide +kernel)
+
+-- (c) ATTRIBUTION. The String.concat-scoped binding ACCEPTS that same artifact
+-- and that same obligation at the reserved index. Every conjunct it keeps holds
+-- of the artifact — the code binding equates the literal table above with the
+-- real decode — so the rejection in (b) is attributable to the carrier binding,
+-- and admitting it for a family whose face reads the CarrierSpec is exactly the
+-- unsoundness the scoping prevents.
+example : AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes hiddenLen
+    (stubOb 0) [0] := ⟨rfl, rfl, trivial⟩
+
+-- The relaxed binding is still not a free choice: it forces the reserved index
+-- and rejects the struct index the module's values actually live at.
+example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes hiddenLen
+    (stubOb 1) [0] := by
+  intro h
+  have hcar : (1 : Nat) = 0 := h.1
+  exact absurd hcar (by decide)
+
+-- The `none` arm of `decodedCarrierIndex`, which no other example reaches: a
+-- module whose type section does not decode admits nothing under EITHER
+-- binding, reserved index included. Truncating the module mid-type-section is
+-- the cheapest way to reach that state.
+def truncatedLen : Nat := 12
+example : CertDecode.carrierState hiddenBytes truncatedLen = none := by decide +kernel
+example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes truncatedLen
+    (stubOb 0) [0] := by
+  intro h
+  exact h.1
+"#,
+        hidden_hex = hex_le(&hidden),
+        hidden_len = hidden.len(),
+        visible_hex = hex_le(&visible),
+        visible_len = visible.len(),
+    );
+    std::fs::write(wall_dir.join("ArithCarrierGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("env")
+        .arg("lean")
+        .arg("ArithCarrierGuardIso.lean")
+        .output()
+        .expect("run the declared-arith-carrier GuardIso check");
+    assert!(
+        check.status.success(),
+        "declared-arith-carrier GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(wall_dir);
+}

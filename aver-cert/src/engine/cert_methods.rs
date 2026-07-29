@@ -157,6 +157,10 @@ impl Cert {
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }
+    /// The carrier type index this certificate's `Obligation` declares. A
+    /// String.concat certificate in a module with no Int carrier struct has no
+    /// index to declare and uses the reserved `0`, matching the wall's
+    /// `CertDecode.carrierState`'s carrierless arm (`decodedCarrierIndex`).
     fn carrier(&self) -> u32 {
         match self.inner() {
             Cert::Recursive { carrier, .. }
@@ -167,11 +171,11 @@ impl Cert {
             | Cert::VerbatimWidenedMatch { carrier, .. }
             | Cert::VerbatimVariantDispatch { carrier, .. }
             | Cert::StringEqVerbatimMatch { carrier, .. }
-            | Cert::StringConcatVerbatimMatch { carrier, .. }
             | Cert::ExprFragment { carrier, .. }
             | Cert::VariantDispatch { carrier, .. }
             | Cert::Composition { carrier, .. }
             | Cert::MutualRecursion { carrier, .. } => *carrier,
+            Cert::StringConcatVerbatimMatch { carrier, .. } => carrier.unwrap_or(0),
             Cert::NonRecursive { .. } => unreachable!(),
         }
     }

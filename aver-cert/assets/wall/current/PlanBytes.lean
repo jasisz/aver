@@ -78,6 +78,31 @@ private def singleCarrierLocalBodyBytes
       some (localDeclCount ++ localCount ++ [0x63] ++ carrierBytes ++ exprBytes)
   | _, _, _, _ => none
 
+/-- Encode an EMPTY local-declaration vector, then append the lowered
+    expression. A module that emits no Int carrier struct has no carrier type to
+    name in a locals prelude, and the emitter reserves no scratch slot there, so
+    the code entry opens with a zero declaration-group count and goes straight
+    into the expression. -/
+private def noLocalBodyBytes (exprBytes? : Option (List Nat)) : Option (List Nat) :=
+  match uleb32 0, exprBytes? with
+  | some localDeclCount, some exprBytes => some (localDeclCount ++ exprBytes)
+  | _, _ => none
+
+/-- Locals prelude selected by the module's byte-derived CARRIER STATE.
+
+    This is deliberately a function of `carrier?` and nothing else: a plan cannot
+    reach the shorter prelude by describing itself differently, because the only
+    input that selects it is the carrier state, and every acceptance predicate
+    that calls this passes a `carrier?` pinned by
+    `CertDecode.carrierState modBytes modLen`. `some` and `none` are therefore
+    two states of the MODULE, decided by its type section, not two options open
+    to the producer. -/
+private def carrierLocalsBodyBytes
+    (carrier? : Option Nat) (exprBytes? : Option (List Nat)) : Option (List Nat) :=
+  match carrier? with
+  | some carrier => singleCarrierLocalBodyBytes carrier exprBytes?
+  | none => noLocalBodyBytes exprBytes?
+
 def fieldProjectionResultTyBytes : FieldProjectionResultTy → Option (List Nat)
   | .eqref => some [0x6d]
   | .nullableRef idx => (s33HeapIdx idx).map (fun b => [0x63] ++ b)
@@ -559,17 +584,23 @@ def lowerStringConcatExprBytes
   else
     none
 
+/-- The `string-concat-v1` code entry, in both carrier states of the module.
+    The expression is identical either way — concatenation never touches the
+    carrier — and only the locals prelude differs, so the carrier state is an
+    environmental fact about the module rather than anything the concatenation
+    means. `carrier?` is the pinned `CertDecode.carrierState` of the same bytes;
+    see `carrierLocalsBodyBytes`. -/
 def lowerStringConcatBodyBytes
-    (carrier resultTy containerTy concatFuncIdx : Nat)
+    (carrier? : Option Nat) (resultTy containerTy concatFuncIdx : Nat)
     (plan : StringConcatRawPlan) : Option (List Nat) :=
-  singleCarrierLocalBodyBytes carrier
+  carrierLocalsBodyBytes carrier?
     (lowerStringConcatExprBytes resultTy containerTy concatFuncIdx plan)
 
 def lowerStringConcatCodeEntry
-    (carrier resultTy containerTy concatFuncIdx : Nat)
+    (carrier? : Option Nat) (resultTy containerTy concatFuncIdx : Nat)
     (plan : StringConcatRawPlan) : Option (List Nat) :=
   codeEntryBytes
-    (lowerStringConcatBodyBytes carrier resultTy containerTy concatFuncIdx plan)
+    (lowerStringConcatBodyBytes carrier? resultTy containerTy concatFuncIdx plan)
 
 def lowerStringEqChunkBytes
     (stringTy : Nat)

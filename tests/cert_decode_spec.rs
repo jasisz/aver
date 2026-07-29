@@ -473,6 +473,36 @@ fn option_nat(value: Option<u32>) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
+/// Independent oracle for the Int-carrier struct index: `wasmparser` walks the
+/// type section and reports the FIRST struct with three fields whose first
+/// storage type is `i64` and whose third is `i32` — the same shape
+/// `CertDecode.TypeEntry.isCarrier` recognises, written against a different
+/// parser. `None` means the module carries no such struct at all.
+fn wasmparser_carrier_index(bytes: &[u8]) -> Option<u32> {
+    use wasmparser::{CompositeInnerType, Parser, Payload, StorageType, ValType};
+    let mut type_idx = 0u32;
+    for payload in Parser::new(0).parse_all(bytes) {
+        let Ok(Payload::TypeSection(reader)) = payload else {
+            continue;
+        };
+        for group in reader {
+            for sub in group.expect("type rec group parses").into_types() {
+                if let CompositeInnerType::Struct(s) = &sub.composite_type.inner {
+                    let fields = &s.fields;
+                    if fields.len() == 3
+                        && matches!(fields[0].element_type, StorageType::Val(ValType::I64))
+                        && matches!(fields[2].element_type, StorageType::Val(ValType::I32))
+                    {
+                        return Some(type_idx);
+                    }
+                }
+                type_idx += 1;
+            }
+        }
+    }
+    None
+}
+
 fn string_host_roles_lit(roles: &aver::codegen::cert::StringHostRoles) -> String {
     format!(
         "[{}]",
@@ -517,6 +547,11 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
         })
         .collect::<Vec<_>>();
     corpus.push(("json".to_string(), repo.join("examples/data/json.av")));
+    // `hello.av` touches no `Int`, so the compiler emits neither the carrier
+    // struct nor the box helper. It is this corpus's only byte-provably
+    // CARRIERLESS module and the only one that exercises the `some none` arm of
+    // the three-state carrier decode against a real artifact.
+    corpus.push(("hello".to_string(), repo.join("examples/core/hello.av")));
 
     let actual_fixture_names = std::fs::read_dir(repo.join("tools/certkit/fixtures"))
         .unwrap()
@@ -537,6 +572,7 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
     );
 
     let mut checked = 0usize;
+    let mut carrierless_seen = 0usize;
     for (name, av_path) in corpus {
         let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
         let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
@@ -548,29 +584,53 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
         // against a synthesized helper body), so only these three decoders
         // are on the trusted path and worth a differential.
         let helper_absent = if box_idx.is_some() { "false" } else { "true" };
+        // The carrier STATE, from an independent oracle: `wasmparser` reads the
+        // type section and reports the first struct shaped `{i64, _, i32}`. The
+        // kernel's `carrierState` must agree on both arms, and its collapsed
+        // reading `decodeCarrier` must agree on the present arm alone — the
+        // difference between the two is exactly what makes a carrierless module
+        // certifiable rather than merely unpinnable.
+        let carrier = wasmparser_carrier_index(&bytes);
+        let carrier_state = match carrier {
+            Some(idx) => format!("some (some {idx})"),
+            None => "some none".to_string(),
+        };
         let src = format!(
             "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
              def bytesN : Nat := 0x{}\n\
              def bytesLen : Nat := {}\n\n\
              example : CertDecode.AddSub.boxIdx bytesN bytesLen = {} := rfl\n\
              example : CertDecode.AddSub.toIndexIdx bytesN bytesLen = {} := rfl\n\
-             example : CertDecode.AddSub.carrierHelperAbsent bytesN bytesLen = {} := rfl\n",
+             example : CertDecode.AddSub.carrierHelperAbsent bytesN bytesLen = {} := rfl\n\
+             example : CertDecode.decodeCarrier bytesN bytesLen = {} := rfl\n\
+             example : CertDecode.carrierState bytesN bytesLen = {} := rfl\n",
             hex_le(&bytes),
             bytes.len(),
             option_nat(box_idx),
             option_nat(to_index_idx),
             helper_absent,
+            option_nat(carrier),
+            carrier_state,
         );
         let (ok, report) = run_lean(&prelude, &src);
         assert!(
             ok,
             "S3 Rust/kernel role-table differential DIVERGED on `{name}`:\n{report}"
         );
+        if carrier.is_none() {
+            carrierless_seen += 1;
+        }
         checked += 1;
     }
-    assert_eq!(checked, S1_FIXTURES.len() + 1);
+    assert_eq!(checked, S1_FIXTURES.len() + 2);
+    assert!(
+        carrierless_seen > 0,
+        "the S3 corpus must keep at least one byte-provably carrierless module, \
+         or the `some none` arm of the carrier state goes unexercised"
+    );
     eprintln!(
-        "S3 role-table differential PASS: {checked} modules (all certkit fixtures + json.av)"
+        "S3 role-table differential PASS: {checked} modules \
+         (all certkit fixtures + json.av + hello.av), {carrierless_seen} carrierless"
     );
 
     let _ = std::fs::remove_dir_all(&out);
@@ -1093,10 +1153,24 @@ fn cert_decode_three_way_differential_and_coverage() {
             "example : CertDecode.decodeImports bytesN bytesLen = some {} := rfl\n",
             imports_lit(&oracle["imports"])
         ));
-        if let Some(c) = oracle["carrier"].as_u64() {
-            src.push_str(&format!(
-                "example : CertDecode.decodeCarrier bytesN bytesLen = some {c} := rfl\n"
-            ));
+        // The Python oracle reports the carrier three-state directly: a struct
+        // index, or `null` when the type section decodes and holds none. Pin
+        // BOTH kernel readings of it — `decodeCarrier`, which collapses "absent"
+        // onto "unreadable", and `carrierState`, which keeps them apart so a
+        // carrierless module has a state to declare.
+        match oracle["carrier"].as_u64() {
+            Some(c) => {
+                src.push_str(&format!(
+                    "example : CertDecode.decodeCarrier bytesN bytesLen = some {c} := rfl\n\
+                     example : CertDecode.carrierState bytesN bytesLen = some (some {c}) := rfl\n"
+                ));
+            }
+            None => {
+                src.push_str(
+                    "example : CertDecode.decodeCarrier bytesN bytesLen = none := rfl\n\
+                     example : CertDecode.carrierState bytesN bytesLen = some none := rfl\n",
+                );
+            }
         }
 
         // Per-function code bindings for EVERY user function (oracle: Python).
