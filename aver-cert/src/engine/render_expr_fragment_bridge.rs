@@ -312,6 +312,12 @@ fn collect_expr_fragment_steering_conditions<F>(
         } = &node.kind
         {
             let steering = match block.node(*cond).map(|n| &n.kind) {
+                // A local condition is covered elsewhere, not skipped: the
+                // checker types an `ifElse` condition as `BoolI32`, and a local
+                // carries its parameter's type, so such a condition is a
+                // Boolean parameter and the script already splits on it with
+                // `cases`. A constant one reduces away inside the single
+                // simplification step.
                 Some(FragNodeKind::Local { .. }) | Some(FragNodeKind::ConstBool(_)) | None => {
                     false
                 }

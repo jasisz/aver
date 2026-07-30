@@ -61,10 +61,15 @@ The `ifElse` node of the plan grammar may sit above already-computed values
 the stack BELOW the condition, so the soundness proof needs: a successful run
 of a (lowered, self-contained) instruction list is invariant under extra
 values appended UNDER its stack — the same pops happen, the same pushes
-happen, and the extra suffix rides through untouched.  Stated for ALL
-instruction lists whose run SUCCEEDS: a success never pops past its own
-stack's values into the suffix only if it did not pop past the original
-stack, which is exactly what success on the original stack certifies. -/
+happen, and the extra suffix rides through untouched.
+
+Stated for ALL instruction lists, hypothesised only on SUCCESS.  Success on
+the original stack is what rules out reaching into the suffix: every arm
+either matches a fixed number of stack tops, which `cons` distributes over
+`++`, or pops through `popArgs`, whose only stack test is a length check
+that the appended suffix can only relax while leaving the taken and dropped
+segments unchanged.  Returns keep their value and abandon the stack, which
+is what `frameOut` does to `.ret`. -/
 
 /-- Frame a normal result with an extra stack suffix; returns pass through. -/
 def frameOut (extra : List WVal) : Out → Out
