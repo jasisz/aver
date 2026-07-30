@@ -624,7 +624,7 @@ pub(super) fn collect_options_from_expr(
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
     match expr {
         ResolvedExpr::Call(callee, args) => {
             // `String.charAt(s, i)` and `Char.fromCode(code)` both
@@ -643,6 +643,9 @@ pub(super) fn collect_options_from_expr(
                     order.push(canonical);
                     *next_idx += 1;
                 }
+            }
+            if let ResolvedCallee::Unresolved { callee } = callee {
+                collect_options_from_expr(&callee.node, out, order, next_idx);
             }
             for a in args {
                 collect_options_from_expr(&a.node, out, order, next_idx);
@@ -681,7 +684,9 @@ pub(super) fn collect_options_from_expr(
                 collect_options_from_expr(&a.node, out, order, next_idx);
             }
         }
-        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
                 collect_options_from_expr(&it.node, out, order, next_idx);
             }
@@ -689,7 +694,20 @@ pub(super) fn collect_options_from_expr(
         ResolvedExpr::ErrorProp(inner) => {
             collect_options_from_expr(&inner.node, out, order, next_idx)
         }
-        _ => {}
+        ResolvedExpr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let ResolvedStrPart::Parsed(inner) = part {
+                    collect_options_from_expr(&inner.node, out, order, next_idx);
+                }
+            }
+        }
+        ResolvedExpr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_options_from_expr(&key.node, out, order, next_idx);
+                collect_options_from_expr(&value.node, out, order, next_idx);
+            }
+        }
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
     }
 }
 
@@ -728,7 +746,7 @@ pub(super) fn collect_vectors_from_expr(
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ir::hir::{ResolvedExpr, ResolvedStrPart};
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
     match expr {
         ResolvedExpr::Call(callee, args) => {
             // `Vector.new(n, fill)` instantiates `Vector<T>` where `T` is
@@ -747,6 +765,9 @@ pub(super) fn collect_vectors_from_expr(
             {
                 let canonical = format!("Vector<{}>", fill_ty.display());
                 collect_vectors_from_str(&canonical, out, order, next_idx);
+            }
+            if let ResolvedCallee::Unresolved { callee } = callee {
+                collect_vectors_from_expr(&callee.node, out, order, next_idx);
             }
             for a in args {
                 collect_vectors_from_expr(&a.node, out, order, next_idx);
@@ -794,7 +815,9 @@ pub(super) fn collect_vectors_from_expr(
                 collect_vectors_from_expr(&a.node, out, order, next_idx);
             }
         }
-        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
                 collect_vectors_from_expr(&it.node, out, order, next_idx);
             }
@@ -815,7 +838,13 @@ pub(super) fn collect_vectors_from_expr(
                 }
             }
         }
-        _ => {}
+        ResolvedExpr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_vectors_from_expr(&key.node, out, order, next_idx);
+                collect_vectors_from_expr(&value.node, out, order, next_idx);
+            }
+        }
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
     }
 }
 

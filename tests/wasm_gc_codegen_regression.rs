@@ -108,6 +108,59 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
     Ok(items)
 }
 
+fn assert_compiles_and_validates(source: &str) {
+    let items = parse_pipeline(source).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+        .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|e| panic!("wasmparser validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
+fn bare_list_literal_inside_interpolation_compiles() {
+    assert_compiles_and_validates(
+        r#"module Probe
+    intent = "Minimal List<Int> literal for wasm-gc compilation."
+    exposes [main]
+    effects [Console.print]
+
+fn main() -> Unit
+    ? "Print a list literal."
+    ! [Console.print]
+    Console.print("{[1, 2, 3]}")
+"#,
+    );
+}
+
+#[test]
+fn unannotated_list_binding_compiles() {
+    assert_compiles_and_validates(
+        r#"module Probe
+    intent = "Compile an unannotated list binding."
+    exposes [main]
+
+fn main() -> Int
+    xs = [1, 2, 3]
+    List.len(xs)
+"#,
+    );
+}
+
+#[test]
+fn nested_unannotated_list_literal_compiles() {
+    assert_compiles_and_validates(
+        r#"module Probe
+    intent = "Compile a nested unannotated list literal."
+    exposes [main]
+
+fn main() -> Int
+    xss = [[1], [2, 3]]
+    List.len(xss)
+"#,
+    );
+}
+
 #[test]
 fn wasm_gc_codegen_emits_valid_module_for_every_single_file_example() {
     let files = single_file_examples();

@@ -40,7 +40,7 @@ use super::types_discovery::{
     collect_vectors_from_fn_body, collect_vectors_from_str, is_primitive,
 };
 
-use crate::ast::{TopLevel, TypeDef};
+use crate::ast::{TopLevel, Type, TypeDef};
 
 /// User-type lookup tables built once before any fn body emit.
 pub(super) struct TypeRegistry {
@@ -2339,7 +2339,8 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
 /// ever appears in the binding annotation. Mirrors `collect_options
 /// _from_fn_body` and `collect_vectors_from_fn_body`. Also walks
 /// expressions to catch builtin calls like `String.chars` whose
-/// return type (`List<String>`) only appears as a stdlib signature.
+/// return type (`List<String>`) only appears as a stdlib signature,
+/// plus unannotated list literals whose type only exists as a stamp.
 fn collect_lists_from_fn_body(
     fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
@@ -2357,20 +2358,40 @@ fn collect_lists_from_fn_body(
             collect_lists_from_str(&annot.display(), out, order, next_idx);
         }
         let expr = match stmt {
-            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => e,
         };
         collect_lists_from_expr(expr, out, order, next_idx);
     }
 }
 
+fn type_is_concrete_for_discovery(ty: &Type) -> bool {
+    match ty {
+        Type::Var(_) | Type::Invalid => false,
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named { .. } => true,
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            type_is_concrete_for_discovery(inner)
+        }
+        Type::Result(ok, err) => {
+            type_is_concrete_for_discovery(ok) && type_is_concrete_for_discovery(err)
+        }
+        Type::Map(key, value) => {
+            type_is_concrete_for_discovery(key) && type_is_concrete_for_discovery(value)
+        }
+        Type::Tuple(items) => items.iter().all(type_is_concrete_for_discovery),
+        Type::Fn(params, ret, _) => {
+            params.iter().all(type_is_concrete_for_discovery) && type_is_concrete_for_discovery(ret)
+        }
+    }
+}
+
 fn collect_lists_from_expr(
-    expr: &crate::ir::hir::ResolvedExpr,
+    expr: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
-    match expr {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
+    match &expr.node {
         ResolvedExpr::Call(callee, args) => {
             // `String.chars(s)` returns `List<String>` — register it
             // eagerly here since the canonical never appears in fn
@@ -2385,57 +2406,86 @@ fn collect_lists_from_expr(
                     *next_idx += 1;
                 }
             }
+            if let ResolvedCallee::Unresolved { callee } = callee {
+                collect_lists_from_expr(callee, out, order, next_idx);
+            }
             for a in args {
-                collect_lists_from_expr(&a.node, out, order, next_idx);
+                collect_lists_from_expr(a, out, order, next_idx);
             }
         }
         ResolvedExpr::BinOp(_, l, r) => {
-            collect_lists_from_expr(&l.node, out, order, next_idx);
-            collect_lists_from_expr(&r.node, out, order, next_idx);
+            collect_lists_from_expr(l, out, order, next_idx);
+            collect_lists_from_expr(r, out, order, next_idx);
         }
-        ResolvedExpr::Neg(inner) => collect_lists_from_expr(&inner.node, out, order, next_idx),
+        ResolvedExpr::Neg(inner) => collect_lists_from_expr(inner, out, order, next_idx),
         ResolvedExpr::Match { subject, arms } => {
-            collect_lists_from_expr(&subject.node, out, order, next_idx);
+            collect_lists_from_expr(subject, out, order, next_idx);
             for arm in arms {
-                collect_lists_from_expr(&arm.body.node, out, order, next_idx);
+                collect_lists_from_expr(&arm.body, out, order, next_idx);
             }
         }
         ResolvedExpr::TailCall { args, .. } => {
             for a in args {
-                collect_lists_from_expr(&a.node, out, order, next_idx);
+                collect_lists_from_expr(a, out, order, next_idx);
             }
         }
-        ResolvedExpr::Attr(obj, _) => collect_lists_from_expr(&obj.node, out, order, next_idx),
+        ResolvedExpr::Attr(obj, _) => collect_lists_from_expr(obj, out, order, next_idx),
         ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                collect_lists_from_expr(&e.node, out, order, next_idx);
+                collect_lists_from_expr(e, out, order, next_idx);
             }
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
-            collect_lists_from_expr(&base.node, out, order, next_idx);
+            collect_lists_from_expr(base, out, order, next_idx);
             for (_, e) in updates {
-                collect_lists_from_expr(&e.node, out, order, next_idx);
+                collect_lists_from_expr(e, out, order, next_idx);
             }
         }
         ResolvedExpr::Ctor(_, args) => {
             for a in args {
-                collect_lists_from_expr(&a.node, out, order, next_idx);
+                collect_lists_from_expr(a, out, order, next_idx);
             }
         }
         ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
-                collect_lists_from_expr(&it.node, out, order, next_idx);
+                collect_lists_from_expr(it, out, order, next_idx);
             }
         }
-        ResolvedExpr::ErrorProp(inner) => {
-            collect_lists_from_expr(&inner.node, out, order, next_idx)
+        ResolvedExpr::ErrorProp(inner) => collect_lists_from_expr(inner, out, order, next_idx),
+        ResolvedExpr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let ResolvedStrPart::Parsed(inner) = part {
+                    collect_lists_from_expr(inner, out, order, next_idx);
+                }
+            }
         }
         ResolvedExpr::List(items) => {
+            if let Some(ty) = expr.ty()
+                && matches!(ty, Type::List(_))
+                && type_is_concrete_for_discovery(ty)
+            {
+                collect_lists_from_str(&ty.display(), out, order, next_idx);
+            } else if let Some(elem_ty) = items.first().and_then(|item| item.ty())
+                && type_is_concrete_for_discovery(elem_ty)
+            {
+                collect_lists_from_str(
+                    &format!("List<{}>", elem_ty.display()),
+                    out,
+                    order,
+                    next_idx,
+                );
+            }
             for x in items {
-                collect_lists_from_expr(&x.node, out, order, next_idx);
+                collect_lists_from_expr(x, out, order, next_idx);
             }
         }
-        _ => {}
+        ResolvedExpr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_lists_from_expr(key, out, order, next_idx);
+                collect_lists_from_expr(value, out, order, next_idx);
+            }
+        }
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
     }
 }
 
