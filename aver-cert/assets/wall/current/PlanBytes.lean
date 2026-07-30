@@ -168,6 +168,7 @@ def primBytes : FragPrim → List Nat
   | .i32Eq => [0x46]
   | .i32LtS => [0x48]
   | .i32GtS => [0x4a]
+  | .i32And => [0x71]
 
 /-- Byte and semantic lowering share one symbolic-stack discipline and one
     fail-closed recursion budget.  The aliases retain the public API while
@@ -231,17 +232,19 @@ mutual
               | some stack', some idxBytes =>
                   some ((if tail then [0x12] else [0x10]) ++ idxBytes, node.id :: stack')
               | _, _ => none
+          -- Byte twin of `PlanLower`'s arm: operands already on the symbolic
+          -- stack stay beneath the emitted `if` block.
           | .ifElse cond thenBlock elseBlock =>
               match popExpected stack cond with
-              | some [] =>
+              | some stack' =>
                   match blockTypeBytes carrier node.ty,
                         lowerBlockBytesFuel fuel carrier thenBlock,
                         lowerBlockBytesFuel fuel carrier elseBlock with
                   | some blockTy, some thenBytes, some elseBytes =>
                       some ([0x04] ++ blockTy ++ thenBytes ++ [0x05] ++ elseBytes ++ [0x0b],
-                        [node.id])
+                        node.id :: stack')
                   | _, _, _ => none
-              | _ => none
+              | none => none
           | .vectorGetOrDefault arrTy toIndexIdx boxIdx default =>
               -- Byte twin of `PlanLower.vectorGetOrDefaultTemplate`, including
               -- the `(ref null carrier)` if block type the emitter declares.

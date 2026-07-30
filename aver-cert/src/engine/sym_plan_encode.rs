@@ -13,6 +13,7 @@ impl SymPrim {
             SymPrim::IntAdd => None,
             SymPrim::StringEq => None,
             SymPrim::StringConcat => None,
+            SymPrim::BoolAnd => Some(FragPrim::I32And),
         }
     }
 }

@@ -77,6 +77,7 @@ impl SymPrim {
             SymPrim::IntAdd => "int.add",
             SymPrim::StringEq => "string.eq",
             SymPrim::StringConcat => "string.concat",
+            SymPrim::BoolAnd => "bool.and",
         }
     }
 
@@ -92,6 +93,7 @@ impl SymPrim {
             "int.add" => Some(SymPrim::IntAdd),
             "string.eq" => Some(SymPrim::StringEq),
             "string.concat" => Some(SymPrim::StringConcat),
+            "bool.and" => Some(SymPrim::BoolAnd),
             _ => None,
         }
     }
@@ -108,6 +110,7 @@ impl SymPrim {
             SymPrim::IntAdd => ".intAdd",
             SymPrim::StringEq => ".stringEq",
             SymPrim::StringConcat => ".stringConcat",
+            SymPrim::BoolAnd => ".boolAnd",
         }
     }
 }

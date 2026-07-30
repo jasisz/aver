@@ -20,6 +20,37 @@ const DEFAULT_PHASE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// Upper bound for the override: one day per step. Far beyond any real
 /// verify, and it keeps every deadline computation trivially in range.
 const MAX_PHASE_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+/// Overrides the per-worker Lean heap ceiling, in whole MiB, for every `lean`
+/// the verify/check path spawns: injected as `--memory` on direct
+/// `lake env lean` steps here, and via `moreLeanArgs` in the generated
+/// checker lakefiles for `lake build` steps.
+pub(crate) const MEMORY_LIMIT_ENV: &str = "AVER_CERT_MEMORY_LIMIT_MB";
+/// Default heap ceiling: 16 GiB. This bounds the heap Lean itself accounts
+/// for, which is what a runaway term-level elaboration grows, and an
+/// over-budget step then fails with Lean's own memory diagnostic instead of
+/// running until the step timeout.
+///
+/// It does NOT bound the process. Measured on a 32 GiB host (Lean 4.32): a
+/// certificate module whose acceptance theorem walks the artifact bytes was
+/// killed by the operating system (exit 137) under both a 16 GiB and an 8 GiB
+/// ceiling, having driven the host into swap either way. That growth comes
+/// from arbitrary-precision arithmetic, whose allocations sit outside the
+/// accounted heap, so no value here catches it. Bounding the process is the
+/// job of the byte-cursor rework, not of this knob; until then a large enough
+/// artifact can still take a host down, which is why the wall-clock limit and
+/// the single-worker default below both stay in place.
+const DEFAULT_MEMORY_LIMIT_MB: u64 = 16 * 1024;
+/// Overrides how many Lean workers `lake build` may run at once. Each worker
+/// gets the full heap ceiling above, so the concurrency and the ceiling
+/// multiply into the machine's real memory demand.
+pub(crate) const BUILD_JOBS_ENV: &str = "AVER_CERT_BUILD_JOBS";
+/// One worker at a time: the ceiling is sized for a single heavy elaboration,
+/// so anything above this needs a host that can absorb the product. A host
+/// with memory to spare raises it through the knob.
+const DEFAULT_BUILD_JOBS: u64 = 1;
+/// Upper bound for the override: 1 TiB. Past that nothing legitimate is
+/// being configured, and the bound keeps the flag rendering trivially sane.
+const MAX_MEMORY_LIMIT_MB: u64 = 1024 * 1024;
 /// How long cleanup after a kill may itself take (reaping the child, waiting
 /// for the kill helper) before the cleanup is abandoned so the caller gets
 /// its fail-closed error promptly.
@@ -57,6 +88,8 @@ pub(crate) struct LeanRunner {
     toolchain: String,
     system_environment: Vec<(&'static str, OsString)>,
     phase_timeout: Duration,
+    memory_limit_mb: u64,
+    build_jobs: u64,
 }
 
 impl LeanRunner {
@@ -73,6 +106,8 @@ impl LeanRunner {
             return Err("embedded Lean toolchain name is empty or malformed".to_string());
         }
         let phase_timeout = phase_timeout(&environment)?;
+        let memory_limit_mb = memory_limit_mb(&environment)?;
+        let build_jobs = build_jobs(&environment)?;
 
         #[cfg(windows)]
         let user_home =
@@ -122,7 +157,17 @@ impl LeanRunner {
             toolchain: toolchain.to_string(),
             system_environment,
             phase_timeout,
+            memory_limit_mb,
+            build_jobs,
         })
+    }
+
+    /// The Lean heap ceiling every worker runs under, in MiB. Exposed so the
+    /// generated checker lakefiles can carry the same value into `lake build`
+    /// workers via `moreLeanArgs` (Lake 4.32 ignores `LEAN_OPTS`, so the
+    /// lakefile is the only channel that reaches build-spawned workers).
+    pub(crate) fn memory_limit_mb(&self) -> u64 {
+        self.memory_limit_mb
     }
 
     pub(crate) fn run_lake(
@@ -191,9 +236,77 @@ impl LeanRunner {
             .arg("--install")
             .arg(&self.toolchain)
             .arg("lake")
-            .args(arguments);
+            .args(arguments.iter().take(DIRECT_LEAN_PREFIX.len()));
+        // Direct `lake env lean` steps get the heap ceiling on the command
+        // line; `lake build` workers get the same value through the generated
+        // lakefile's `moreLeanArgs`. `lake env leanchecker` replays stored
+        // oleans through the kernel and takes no `--memory` flag.
+        if arguments.starts_with(&DIRECT_LEAN_PREFIX) {
+            command.arg(format!("--memory={}", self.memory_limit_mb));
+        }
+        command.args(arguments.iter().skip(DIRECT_LEAN_PREFIX.len()));
+        // The heap ceiling bounds ONE worker, and a build runs as many workers
+        // as the machine has cores — Lake schedules module builds on Lean's
+        // task pool, so the pool size is the worker count. The ceilings add up:
+        // measured on a 32 GiB host, the certificate module for the checkers
+        // board elaborates in 11.4 GiB when run alone under a 16 GiB ceiling,
+        // while the same build through a parallel Lake was killed by the
+        // operating system (exit 137) — the ceiling held per worker while the
+        // machine ran out overall. Serialising keeps total demand at one
+        // ceiling; the pristine wall is cached, so the cost lands once.
+        if arguments.starts_with(&BUILD_PREFIX) {
+            command.env("LEAN_NUM_THREADS", self.build_jobs.to_string());
+        }
         command
     }
+}
+
+/// The argument shape of a direct Lean elaboration step (`lake env lean …`).
+const DIRECT_LEAN_PREFIX: [&str; 2] = ["env", "lean"];
+/// The argument shape of a Lake build step (`lake build …`).
+const BUILD_PREFIX: [&str; 1] = ["build"];
+
+fn build_jobs(environment: &impl Fn(&str) -> Option<OsString>) -> Result<u64, String> {
+    let Some(value) = nonempty(environment(BUILD_JOBS_ENV)) else {
+        return Ok(DEFAULT_BUILD_JOBS);
+    };
+    let text = value.to_string_lossy();
+    text.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|&jobs| jobs > 0)
+        .ok_or_else(|| {
+            format!(
+                "{BUILD_JOBS_ENV} must be a positive whole number of workers, got `{}`",
+                text.trim()
+            )
+        })
+}
+
+fn memory_limit_mb(environment: &impl Fn(&str) -> Option<OsString>) -> Result<u64, String> {
+    let Some(value) = nonempty(environment(MEMORY_LIMIT_ENV)) else {
+        return Ok(DEFAULT_MEMORY_LIMIT_MB);
+    };
+    let text = value.to_string_lossy();
+    let limit = text
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|&limit| limit > 0)
+        .ok_or_else(|| {
+            format!(
+                "{MEMORY_LIMIT_ENV} must be a positive whole number of MiB, got `{}`",
+                text.trim()
+            )
+        })?;
+    // Fail closed on absurd overrides, mirroring the phase-timeout knob.
+    if limit > MAX_MEMORY_LIMIT_MB {
+        return Err(format!(
+            "{MEMORY_LIMIT_ENV} must be at most {MAX_MEMORY_LIMIT_MB} MiB (1 TiB), got `{}`",
+            text.trim()
+        ));
+    }
+    Ok(limit)
 }
 
 fn phase_timeout(environment: &impl Fn(&str) -> Option<OsString>) -> Result<Duration, String> {
@@ -411,11 +524,13 @@ mod tests {
             toolchain: wall::LEAN_TOOLCHAIN.trim().to_string(),
             system_environment: Vec::new(),
             phase_timeout: DEFAULT_PHASE_TIMEOUT,
+            memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
+            build_jobs: DEFAULT_BUILD_JOBS,
         };
         let command = runner.lake_command(
             Path::new("/checker/build"),
             Path::new("/checker/temp"),
-            &["env", "lean"],
+            &["env", "lean", "Probe.lean"],
         );
 
         assert_eq!(command.get_program(), "/trusted/elan/bin/elan");
@@ -430,8 +545,54 @@ mod tests {
                 wall::LEAN_TOOLCHAIN.trim(),
                 "lake",
                 "env",
-                "lean"
+                "lean",
+                "--memory=16384",
+                "Probe.lean"
             ]
+        );
+
+        // The heap ceiling reaches only direct `lean` elaboration steps:
+        // `lake build` carries it through the generated lakefile instead, and
+        // `leanchecker` takes no such flag.
+        for untouched in [
+            &["build"] as &[&str],
+            &["env", "leanchecker", "--fresh", "ArtifactCertificate"],
+        ] {
+            let command = runner.lake_command(
+                Path::new("/checker/build"),
+                Path::new("/checker/temp"),
+                untouched,
+            );
+            let arguments = command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert!(
+                !arguments
+                    .iter()
+                    .any(|argument| argument.contains("--memory")),
+                "{untouched:?} must not receive a lean flag: {arguments:?}"
+            );
+            assert_eq!(&arguments[4..], untouched, "arguments reordered");
+        }
+
+        // Build steps carry the worker count instead: Lake schedules module
+        // builds on Lean's task pool, so the pool size caps how many heap
+        // ceilings can be live at once. Lake 5.0 has no jobs flag, which makes
+        // this environment variable the only channel.
+        let build = runner.lake_command(
+            Path::new("/checker/build"),
+            Path::new("/checker/temp"),
+            &["build"],
+        );
+        assert_eq!(
+            command_environment(&build).get("LEAN_NUM_THREADS"),
+            Some(&OsString::from("1")),
+            "build step did not carry the worker count"
+        );
+        assert!(
+            !command_environment(&command).contains_key("LEAN_NUM_THREADS"),
+            "worker count leaked onto a direct elaboration step"
         );
 
         let environment = command_environment(&command);
@@ -588,7 +749,7 @@ mod tests {
         );
     }
 
-    fn runner_with_timeout_setting(value: Option<&str>) -> Result<LeanRunner, String> {
+    fn runner_with_setting(knob: &'static str, value: Option<&str>) -> Result<LeanRunner, String> {
         let tree = TestTree::new();
         let elan_home = tree.0.join("elan");
         std::fs::create_dir_all(elan_home.join("bin")).unwrap();
@@ -601,12 +762,20 @@ mod tests {
         .unwrap();
 
         let elan_home = elan_home.into_os_string();
-        let timeout = value.map(OsString::from);
-        LeanRunner::with_environment(wall::LEAN_TOOLCHAIN, move |name| match name {
-            "ELAN_HOME" => Some(elan_home.clone()),
-            PHASE_TIMEOUT_ENV => timeout.clone(),
-            _ => None,
+        let setting = value.map(OsString::from);
+        LeanRunner::with_environment(wall::LEAN_TOOLCHAIN, move |name| {
+            if name == "ELAN_HOME" {
+                Some(elan_home.clone())
+            } else if name == knob {
+                setting.clone()
+            } else {
+                None
+            }
         })
+    }
+
+    fn runner_with_timeout_setting(value: Option<&str>) -> Result<LeanRunner, String> {
+        runner_with_setting(PHASE_TIMEOUT_ENV, value)
     }
 
     #[test]
@@ -640,6 +809,40 @@ mod tests {
             assert!(error.contains(PHASE_TIMEOUT_ENV), "{error}");
             assert!(error.contains("at most"), "{error}");
         }
+    }
+
+    #[test]
+    fn memory_limit_defaults_and_validates_the_override() {
+        let default = runner_with_setting(MEMORY_LIMIT_ENV, None).unwrap();
+        assert_eq!(default.memory_limit_mb(), DEFAULT_MEMORY_LIMIT_MB);
+        assert_eq!(default.memory_limit_mb(), 16384);
+
+        let overridden = runner_with_setting(MEMORY_LIMIT_ENV, Some("256")).unwrap();
+        assert_eq!(overridden.memory_limit_mb(), 256);
+        // The override value is exactly what the lean worker will run under.
+        let command = overridden.lake_command(
+            Path::new("/checker/build"),
+            Path::new("/checker/temp"),
+            &["env", "lean", "Probe.lean"],
+        );
+        assert!(
+            command
+                .get_args()
+                .any(|argument| argument.to_string_lossy() == "--memory=256"),
+            "override did not reach the lean command line"
+        );
+
+        for invalid in ["0", "-5", "lots", "1.5"] {
+            let Err(error) = runner_with_setting(MEMORY_LIMIT_ENV, Some(invalid)) else {
+                panic!("malformed memory override `{invalid}` must fail closed");
+            };
+            assert!(error.contains(MEMORY_LIMIT_ENV), "{error}");
+        }
+        let over_cap = (MAX_MEMORY_LIMIT_MB + 1).to_string();
+        let Err(error) = runner_with_setting(MEMORY_LIMIT_ENV, Some(&over_cap)) else {
+            panic!("oversized memory override must fail closed");
+        };
+        assert!(error.contains("at most"), "{error}");
     }
 
     /// The hang guard must kill the whole process group: lake spawns lean

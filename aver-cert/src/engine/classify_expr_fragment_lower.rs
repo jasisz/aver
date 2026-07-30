@@ -198,12 +198,9 @@ fn lower_expr_fragment_block_bytes(
                 else_block,
             } => {
                 lower_pop(&mut stack, *cond, node.id)?;
-                if !stack.is_empty() {
-                    return Err(format!(
-                        "canonical byte lowering for if v{} would leave non-empty stack before branch",
-                        node.id.0
-                    ));
-                }
+                // Values already on the stack stay beneath the branch, as the
+                // wasm `if` leaves the remaining operand stack in place (twin
+                // of `PlanBytes`' arm; `InterpreterSequencing.wRunF_frame`).
                 out.push(0x04);
                 push_expr_fragment_blocktype(out, node.ty, carrier)?;
                 lower_expr_fragment_block_bytes(then_block, carrier, out)?;
@@ -262,6 +259,7 @@ fn push_prim_opcode(out: &mut Vec<u8>, op: FragPrim) {
         FragPrim::I32Eq => 0x46,
         FragPrim::I32LtS => 0x48,
         FragPrim::I32GtS => 0x4a,
+        FragPrim::I32And => 0x71,
     });
 }
 

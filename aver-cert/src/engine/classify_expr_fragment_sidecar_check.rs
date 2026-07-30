@@ -483,7 +483,8 @@ fn prim_has_nan_nondeterministic_float_result(op: &FragPrim) -> bool {
         | FragPrim::I64GtS
         | FragPrim::I32Eq
         | FragPrim::I32LtS
-        | FragPrim::I32GtS => false,
+        | FragPrim::I32GtS
+        | FragPrim::I32And => false,
     }
 }
 

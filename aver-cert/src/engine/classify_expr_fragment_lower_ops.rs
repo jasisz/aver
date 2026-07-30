@@ -126,12 +126,8 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 else_block,
             } => {
                 lower_pop(&mut stack, *cond, node.id)?;
-                if !stack.is_empty() {
-                    return Err(format!(
-                        "plan if v{} would leave non-empty stack before branch",
-                        node.id.0
-                    ));
-                }
+                // Values already on the stack stay beneath the branch (twin
+                // of `PlanLower`'s arm; `InterpreterSequencing.wRunF_frame`).
                 ops.push(Op::If);
                 ops.extend(lower_expr_fragment_block(then_block, carrier)?);
                 ops.push(Op::Else);
@@ -166,6 +162,7 @@ fn op_to_wasm(op: FragPrim) -> Op {
         FragPrim::I64GeS => Op::I64GeS,
         FragPrim::I64GtS => Op::I64GtS,
         FragPrim::I32Eq => Op::I32Eq,
+        FragPrim::I32And => Op::I32And,
         FragPrim::I32LtS => Op::I32LtS,
         FragPrim::I32GtS => Op::I32GtS,
     }

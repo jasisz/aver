@@ -216,6 +216,11 @@ inductive SymPrim where
   | intAdd
   | stringEq
   | stringConcat
+  /-- Source-level `Bool.and` (eager conjunction on Aver `Bool`). Both
+      operands must already be source Booleans; the encoder lowers it to the
+      representation `i32.and` over two `boolI32` values, where bitwise and
+      logical conjunction coincide. -/
+  | boolAnd
 deriving Repr, DecidableEq
 
 /-- Source-level integer comparison against a literal. This is intentionally
@@ -303,6 +308,11 @@ inductive FragPrim where
   | i32Eq
   | i32LtS
   | i32GtS
+  /-- `i32.and` restricted to the Boolean domain: `PlanCheck` types it only
+      over two `boolI32` operands (NOT the loose `hasI32Ty`), because bitwise
+      AND of arbitrary raw i32 values can produce a non-Boolean result
+      (`2 and 2 = 2`) and the interpreter models the operation on {0,1}. -/
+  | i32And
 deriving Repr, DecidableEq
 
 /-- Runtime host helper roles admitted by `expr-fragment-v1`. Each role fixes a

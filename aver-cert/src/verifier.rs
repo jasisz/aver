@@ -304,8 +304,8 @@ fn trusted_check(
     }
 
     let candidates = read_candidates(&manifest)?;
-    let build = assemble_build(cert_dir, &bytes, selected_wall)?;
     let lean = LeanRunner::new(selected_wall.toolchain)?;
+    let build = assemble_build(cert_dir, &bytes, selected_wall, lean.memory_limit_mb())?;
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
     let mut cache = ArtifactBuildCache::prepare(
         &build.path,
@@ -843,6 +843,7 @@ fn assemble_build(
     cert_dir: &Path,
     wasm_bytes: &[u8],
     selected_wall: &wall::Wall,
+    memory_limit_mb: u64,
 ) -> Result<BuildDir, String> {
     let build = BuildDir::new()?;
     let mut roots = Vec::new();
@@ -956,8 +957,11 @@ fn assemble_build(
     roots.push("ArtifactBytes".to_string());
     roots.sort();
     roots.dedup();
-    std::fs::write(build.path.join("lakefile.lean"), checker_lakefile(&roots))
-        .map_err(|error| format!("cannot write checker lakefile: {error}"))?;
+    std::fs::write(
+        build.path.join("lakefile.lean"),
+        checker_lakefile(&roots, memory_limit_mb),
+    )
+    .map_err(|error| format!("cannot write checker lakefile: {error}"))?;
     std::fs::write(build.path.join("lean-toolchain"), selected_wall.toolchain)
         .map_err(|error| format!("cannot write lean-toolchain: {error}"))?;
     Ok(build)
@@ -1319,14 +1323,17 @@ fn find_code_exec_token(chars: &[char]) -> Option<&'static str> {
     None
 }
 
-fn checker_lakefile(roots: &[String]) -> String {
+/// The generated lakefile carries the checker's Lean heap ceiling into every
+/// `lake build` worker via `moreLeanArgs`: Lake 4.32 ignores `LEAN_OPTS`, so
+/// this is the only channel that reaches build-spawned lean processes.
+fn checker_lakefile(roots: &[String], memory_limit_mb: u64) -> String {
     let roots = roots
         .iter()
         .map(|root| format!("`{root}"))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n@[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n@[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n  moreLeanArgs := #[\"--memory={memory_limit_mb}\"]\n"
     )
 }
 

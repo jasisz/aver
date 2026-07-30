@@ -32,7 +32,7 @@ impl PristineWallCache {
         let Some(store) = cache_store() else {
             return Self::disabled();
         };
-        let files = static_wall_files(wall);
+        let files = static_wall_files(wall, lean.memory_limit_mb());
         let key = static_wall_key(&files);
         let entry = store.join(&key);
 
@@ -98,7 +98,7 @@ fn cache_store() -> Option<PathBuf> {
 
 /// Exact artifact-independent inputs. The lakefile limits the build to roots
 /// whose complete import graph is independent of certificate DATA.
-fn static_wall_files(wall: &Wall) -> Vec<(String, Vec<u8>)> {
+fn static_wall_files(wall: &Wall, memory_limit_mb: u64) -> Vec<(String, Vec<u8>)> {
     let mut files = wall
         .sources
         .iter()
@@ -106,7 +106,7 @@ fn static_wall_files(wall: &Wall) -> Vec<(String, Vec<u8>)> {
         .collect::<Vec<_>>();
     files.push((
         "lakefile.lean".to_string(),
-        checker_lakefile(wall.pristine_roots).into_bytes(),
+        checker_lakefile(wall.pristine_roots, memory_limit_mb).into_bytes(),
     ));
     files.push((
         "lean-toolchain".to_string(),
@@ -116,14 +116,17 @@ fn static_wall_files(wall: &Wall) -> Vec<(String, Vec<u8>)> {
     files
 }
 
-fn checker_lakefile(roots: &[&str]) -> String {
+/// Mirrors the verifier's generated lakefile, including the `moreLeanArgs`
+/// heap ceiling, so cached pristine-wall oleans are built under the same
+/// worker limits as the build they seed.
+fn checker_lakefile(roots: &[&str], memory_limit_mb: u64) -> String {
     let roots = roots
         .iter()
         .map(|root| format!("`{root}"))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n@[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n@[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n  moreLeanArgs := #[\"--memory={memory_limit_mb}\"]\n"
     )
 }
 
@@ -346,30 +349,34 @@ mod tests {
 
     #[test]
     fn key_binds_wall_sources_roots_and_toolchain() {
-        let baseline = static_wall_key(&static_wall_files(&test_wall(
-            &BASE_SOURCES,
-            &BASE_ROOTS,
-            "leanprover/lean4:v4.32.0\n",
-        )));
-        let changed_source = static_wall_key(&static_wall_files(&test_wall(
-            &CHANGED_SOURCES,
-            &BASE_ROOTS,
-            "leanprover/lean4:v4.32.0\n",
-        )));
-        let changed_root = static_wall_key(&static_wall_files(&test_wall(
-            &BASE_SOURCES,
-            &CHANGED_ROOTS,
-            "leanprover/lean4:v4.32.0\n",
-        )));
-        let changed_toolchain = static_wall_key(&static_wall_files(&test_wall(
-            &BASE_SOURCES,
-            &BASE_ROOTS,
-            "leanprover/lean4:v4.33.0\n",
-        )));
+        let baseline = static_wall_key(&static_wall_files(
+            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            16384,
+        ));
+        let changed_source = static_wall_key(&static_wall_files(
+            &test_wall(&CHANGED_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            16384,
+        ));
+        let changed_root = static_wall_key(&static_wall_files(
+            &test_wall(&BASE_SOURCES, &CHANGED_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            16384,
+        ));
+        let changed_toolchain = static_wall_key(&static_wall_files(
+            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.33.0\n"),
+            16384,
+        ));
+        // The heap ceiling is part of the generated lakefile, so a different
+        // limit is a different cache entry: cached oleans always match the
+        // worker limits of the build they seed.
+        let changed_limit = static_wall_key(&static_wall_files(
+            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            256,
+        ));
 
         assert_ne!(baseline, changed_source);
         assert_ne!(baseline, changed_root);
         assert_ne!(baseline, changed_toolchain);
+        assert_ne!(baseline, changed_limit);
     }
 
     #[test]

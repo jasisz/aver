@@ -289,7 +289,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     assert_eq!(
         declared_uncertified.len(),
         16,
-        "all 41 module exports must be certified or explicitly declared"
+        "all 42 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {
@@ -517,6 +517,9 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("intLessZero", "expr-fragment-v1"),
         ("intEqZero", "expr-fragment-v1"),
         ("boolAndGoal", "expr-fragment-v1"),
+        // Eager `Bool.and` over two integer bounds: the `i32.and` fragment
+        // primitive over encoded comparisons (numerator moved deliberately).
+        ("inWindowGoal", "expr-fragment-v1"),
         ("floatLeGoal", "expr-fragment-v1"),
         ("floatGeGoal", "expr-fragment-v1"),
         ("floatLtGoal", "expr-fragment-v1"),
@@ -538,7 +541,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .collect::<Vec<_>>();
     assert_eq!(
         expr_entries.len(),
-        11,
+        12,
         "expr-fragment report count changed; update this deliberately"
     );
     let expr_names = expr_entries
@@ -554,6 +557,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             "intLessZero",
             "intEqZero",
             "boolAndGoal",
+            "inWindowGoal",
             "floatLeGoal",
             "floatGeGoal",
             "floatLtGoal",
@@ -574,6 +578,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "intLessZero",
         "intEqZero",
         "boolAndGoal",
+        "inWindowGoal",
         "floatLeGoal",
         "floatGeGoal",
         "floatLtGoal",
@@ -603,6 +608,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         plans_lean.contains("def boolAndGoalSymPlan : SymRawPlan")
             && plans_lean.contains("kind := .ifElse 0"),
         "boolAndGoal SymPlan should preserve source-level short-circuiting:\n{plans_lean}"
+    );
+    // Each param use gets its own node (the `.le` bound reads node 2, a second
+    // `.param 0`), mirroring the emitter's per-use `local.get`.
+    assert!(
+        plans_lean.contains(".prim .boolAnd [1, 3]")
+            && plans_lean.contains(".intConstCmp .ge 0 (-100 : Int)")
+            && plans_lean.contains(".intConstCmp .le 2 (100 : Int)"),
+        "inWindowGoal SymPlan should expose the eager source-level conjunction over both bounds:\n{plans_lean}"
     );
     assert!(
         !plans_lean.contains("floatAddGoalPlan")
@@ -744,6 +757,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "intLessZero",
         "intEqZero",
         "boolAndGoal",
+        "inWindowGoal",
         "floatAddGoal",
         "floatMulAddGoal",
         "floatLeGoal",
@@ -768,8 +782,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     .into_iter()
     .map(str::to_string)
     .collect();
-    assert_eq!(planned_goal_names.len(), 30, "goal denominator changed");
-    assert_eq!(actual.len(), 25, "goal numerator changed");
+    assert_eq!(planned_goal_names.len(), 31, "goal denominator changed");
+    assert_eq!(actual.len(), 26, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()

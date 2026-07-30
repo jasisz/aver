@@ -266,6 +266,72 @@ theorem {name}_exprFragmentSemanticBridge :
     )
 }
 
+/// `expr_fragment_bool_expr` with constant-condition `if`s folded away: the
+/// canonical-input null guards render as `if (true) …`, and a `by_cases`
+/// hypothesis must be stated in the same normal form simp leaves in the goal
+/// (the folded branch), or it never matches as a rewrite.
+fn expr_fragment_reduced_bool_expr<F>(block: &FragBlock, id: FragValueId, local: &F) -> String
+where
+    F: Fn(u32, FragTy) -> String,
+{
+    let node = block.node(id).expect("fragment node exists");
+    if let FragNodeKind::If {
+        cond,
+        then_block,
+        else_block,
+    } = &node.kind
+    {
+        let c = expr_fragment_bool_expr(block, *cond, local);
+        if c == "true" {
+            return expr_fragment_reduced_bool_expr(then_block, then_block.result, local);
+        }
+        if c == "false" {
+            return expr_fragment_reduced_bool_expr(else_block, else_block.result, local);
+        }
+    }
+    expr_fragment_bool_expr(block, id, local)
+}
+
+/// Conditions that steer the interpreter's `ifElse` branch selection and are
+/// neither constant (the canonical-input null guards reduce to `true`) nor a
+/// Bool parameter (those are split once by `cases a{i}`). Only these need a
+/// case split: every other comparison flows through the run as a symbolic
+/// `b32 P` value that simp's stock decide/ite lemmas normalize.
+fn collect_expr_fragment_steering_conditions<F>(
+    block: &FragBlock,
+    local: &F,
+    out: &mut Vec<String>,
+) where
+    F: Fn(u32, FragTy) -> String,
+{
+    for node in &block.nodes {
+        if let FragNodeKind::If {
+            cond,
+            then_block,
+            else_block,
+        } = &node.kind
+        {
+            let steering = match block.node(*cond).map(|n| &n.kind) {
+                Some(FragNodeKind::Local { .. }) | Some(FragNodeKind::ConstBool(_)) | None => {
+                    false
+                }
+                Some(_) => {
+                    let rendered = expr_fragment_reduced_bool_expr(block, *cond, local);
+                    rendered != "true" && rendered != "false"
+                }
+            };
+            if steering {
+                let rendered = expr_fragment_reduced_bool_expr(block, *cond, local);
+                if !out.contains(&rendered) {
+                    out.push(rendered);
+                }
+            }
+            collect_expr_fragment_steering_conditions(then_block, local, out);
+            collect_expr_fragment_steering_conditions(else_block, local, out);
+        }
+    }
+}
+
 fn expr_fragment_bridge_eval_tactic(
     plan: &ExprFragmentPlan,
     name: &str,
@@ -273,6 +339,16 @@ fn expr_fragment_bridge_eval_tactic(
     struct_table_lean: &str,
     evalset: &str,
 ) -> String {
+    // Case splits are limited to what actually steers the interpreter's
+    // control flow: Bool params (split once by `cases`) and non-constant
+    // `ifElse` conditions (short-circuit encodings). Comparison atoms that
+    // only produce values — the whole eager-conjunction class, whose null
+    // guards are constant under the canonical `carrierSmall`/`b32` inputs —
+    // are never split: the interpreter's comparison and `.i32And` clauses
+    // return `b32 P` symbolically and simp's stock decide/ite lemmas close
+    // the payload equality. This keeps elaboration linear in the atom count
+    // for eager conjunctions, where the old every-atom `by_cases` 2^n split
+    // peaked past physical memory at six atoms.
     let mut steps = plan
         .params
         .iter()
@@ -281,7 +357,11 @@ fn expr_fragment_bridge_eval_tactic(
         .map(|(i, _)| format!("cases a{i}"))
         .collect::<Vec<_>>();
     let mut conds = Vec::new();
-    collect_expr_fragment_conditions(&plan.body, &|idx, _ty| format!("a{idx}"), &mut conds);
+    collect_expr_fragment_steering_conditions(
+        &plan.body,
+        &|idx, _ty| format!("a{idx}"),
+        &mut conds,
+    );
     for (i, cond) in conds.iter().enumerate() {
         steps.push(format!("by_cases h{i} : {cond}"));
     }
@@ -296,26 +376,21 @@ fn expr_fragment_bridge_eval_tactic(
                 .join(", ")
         )
     };
+    let simp = format!(
+        "simp [{evalset}, PlanLower.popExpected, PlanLower.popExpectedAll, \
+         PlanLower.primInstr, ExprFragmentSemantics.runPrim, carrierSmall, ge_iff_le{hints}]"
+    );
     let first = if steps.is_empty() {
-        format!("simp [{evalset}, carrierSmall, ge_iff_le]")
+        simp
     } else {
-        format!(
-            "{} <;> simp [{evalset}, carrierSmall, ge_iff_le{hints}]",
-            steps.join(" <;> ")
-        )
+        format!("{} <;> {simp}", steps.join(" <;> "))
     };
-    let normalize = "ExprFragmentSemantics.runBlockFuel, \
-        ExprFragmentSemantics.runNodesFuel, ExprFragmentSemantics.finishWith, \
-        PlanLower.popExpected, PlanLower.popExpectedAll, PlanLower.primInstr, \
-        ExprFragmentSemantics.runPrim, wRunF, \
-        AverCert.AcceptedArtifact.exprFragmentNLocals, carrierSmall, b32";
     format!(
         "    simp only [ExprFragmentSemantics.evalSymRawPlan]\n    \
          rw [show AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan\n      \
          {host_table_lean} {struct_table_lean} AverCert.Plans.{name}SymPlan =\n      \
          some AverCert.Plans.{name}Plan by rfl]\n    \
-         {first} <;>\n    try simp_all [{normalize}] <;>\n    \
-         try simp_all [{normalize}] <;>\n    try simp_all [{normalize}]"
+         {first}"
     )
 }
 

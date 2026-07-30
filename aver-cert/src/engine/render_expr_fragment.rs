@@ -376,6 +376,11 @@ where
                     let rhs = expr_fragment_i32_expr(block, args[1], local);
                     format!("({lhs}) > ({rhs})")
                 }
+                FragPrim::I32And => {
+                    let lhs = expr_fragment_value_expr(block, args[0], local);
+                    let rhs = expr_fragment_value_expr(block, args[1], local);
+                    format!("(({lhs}) \u{2227} ({rhs}))")
+                }
             }
         }
         FragNodeKind::HostCall { .. } => {
@@ -481,6 +486,14 @@ where
                 let lhs = expr_fragment_i32_expr(block, args[0], local);
                 let rhs = expr_fragment_i32_expr(block, args[1], local);
                 format!("({lhs}) > ({rhs})")
+            }
+            // Both operands are `BoolI32` by the checker's strict typing, so
+            // the source reading is plain conjunction of the operand readings
+            // (matching the wall interpreter's {0,1}-domain `.i32And` clause).
+            FragPrim::I32And => {
+                let lhs = expr_fragment_value_expr(block, args[0], local);
+                let rhs = expr_fragment_value_expr(block, args[1], local);
+                format!("(({lhs}) \u{2227} ({rhs}))")
             }
             FragPrim::F64Add | FragPrim::F64Mul => {
                 unreachable!("numeric primitive cannot produce BoolI32")
