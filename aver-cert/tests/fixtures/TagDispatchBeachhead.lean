@@ -85,8 +85,8 @@ def slotCountClaim : SymFragmentClaim :=
 theorem slotCount_exprFragmentSemanticBridge :
     exprFragmentSemanticBridge slotCountClaim slotCountPlan := by
   refine ⟨rfl, ?_⟩
-  intro S add sub mul stringEq stringConcat hAdd hSub hMul hStringEq hStringConcat
-    fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex hAdd hSub hMul hStringEq hStringConcat
+    _hToIndex fuel x vs w hDom hRun
   dsimp only [slotCountClaim, slotCountOb] at x hDom ⊢
   subst hDom
   by_cases hx : x.1 = 1
@@ -125,7 +125,7 @@ theorem slotCount_exprFragmentSemanticBridge :
 
 /-- The decoded byte role table naming the box helper at index 6. -/
 def slotCountRoles : CertDecode.AddSub.Roles :=
-  { box := some 6, add := none, mul := none, sub := none }
+  { box := some 6, add := none, mul := none, sub := none, toIndex := none }
 
 /-- The wall's face selector picks the tag-dispatch face for slotCount, and it
     MATCHES the operational obligation (Dom/domRepr/model/host all pinned). -/
