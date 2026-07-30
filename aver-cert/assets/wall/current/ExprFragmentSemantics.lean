@@ -47,6 +47,10 @@ def runPrim : FragPrim -> List WVal -> Option (List WVal)
       some (b32 (a < b) :: st)
   | .i32GtS, .i32v b :: .i32v a :: st =>
       some (b32 (a > b) :: st)
+  -- Twin of the `wRunF` `.i32And` clause: logical AND on the {0,1} Boolean
+  -- domain `PlanCheck` pins for this primitive's operands.
+  | .i32And, .i32v b :: .i32v a :: st =>
+      some (b32 (a ≠ 0 ∧ b ≠ 0) :: st)
   | _, _ => none
 
 def finishWith
@@ -105,17 +109,22 @@ mutual
         -- semantics: its face discharges through the audited template
         -- theorem, never through this evaluator (fail-closed here).
         | .vectorGetOrDefault _ _ _ _ => none
+        -- The branch runs on a fresh block stack; already-computed values
+        -- under the condition (e.g. the first operand of `Bool.and` over two
+        -- encoded comparisons) ride through untouched, mirroring the wasm
+        -- `if`, whose branch executes above the remaining operand stack
+        -- (`InterpreterSequencing.wRunF_frame`).
         | .ifElse cond thenBlock elseBlock =>
             match popExpected symStack cond, stack with
-            | some [], .i32v c :: [] =>
+            | some symRest, .i32v c :: stackRest =>
                 let branch := if c = 0 then elseBlock else thenBlock
                 finishWith host ar callee []
                   (runBlockFuel host ar callee fuel carrier branch locals)
                   |> fun branchOut =>
                     match branchOut with
                     | some (.ok locals' [value]) =>
-                        runNodesFuel host ar callee fuel carrier rest [node.id]
-                          locals' [value]
+                        runNodesFuel host ar callee fuel carrier rest
+                          (node.id :: symRest) locals' (value :: stackRest)
                     | some (.ret value) => some (.ret value)
                     | _ => none
             | _, _ => none

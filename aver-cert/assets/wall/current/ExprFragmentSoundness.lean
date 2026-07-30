@@ -294,95 +294,99 @@ theorem mutualCorrectStep :
               cases hp : popExpected symS cond with
               | none => simp [hp] at hlow hrun
               | some popped =>
-                  cases popped with
-                  | cons x xs => simp [hp] at hlow hrun
-                  | nil =>
-                      simp only [hp] at hlow hrun
-                      cases ht : lowerBlockFuel fuel carrier thenBlock with
-                      | none => simp [ht] at hlow
-                      | some thenInstrs =>
-                          rw [ht] at hlow
-                          cases he : lowerBlockFuel fuel carrier elseBlock with
-                          | none => simp [he] at hlow
-                          | some elseInstrs =>
-                              rw [he] at hlow
-                              simp only at hlow
-                              cases hrest : lowerNodesFuel fuel carrier rest [node.id] with
-                              | none => simp [hrest] at hlow
-                              | some pair =>
-                                  obtain ⟨restInstrs, fin⟩ := pair
-                                  rw [hrest] at hlow
-                                  simp only [Option.some.injEq, Prod.mk.injEq] at hlow
-                                  obtain ⟨rfl, rfl⟩ := hlow
-                                  cases stack with
-                                  | nil => simp at hrun
-                                  | cons cv stackTail =>
-                                      cases cv <;> try simp at hrun
-                                      next c =>
-                                        cases stackTail with
-                                        | cons x xs => simp at hrun
-                                        | nil =>
-                                            by_cases hc : c = 0
-                                            · have hbcall := hbranches.2
-                                              cases hb : runBlockFuel host ar callee fuel carrier
-                                                  elseBlock locals with
-                                              | none => simp [finishWith, hc, hb] at hrun
-                                              | some branchOut =>
-                                                  have hbw := ih.2 host ar callee carrier elseBlock
-                                                    elseInstrs hbcall he locals branchOut hb
-                                                  cases branchOut with
-                                                  | ret value =>
-                                                      simp [finishWith, hc, hb] at hrun
-                                                      subst out
-                                                      rw [wRunF_append]
-                                                      simp [seqOut, wRunF, hc, hbw]
-                                                  | ok locals' branchStack =>
-                                                      obtain ⟨value, rfl⟩ :=
-                                                        runBlockFuel_ok_stack host ar callee fuel
-                                                          carrier elseBlock locals locals'
-                                                          branchStack hb
-                                                      have hstep : wRunF host ar callee
-                                                          [.ifElse thenInstrs elseInstrs]
-                                                          locals [.i32v c] =
-                                                          some (.ok locals' [value]) := by
-                                                        simp [wRunF, hc, hbw]
-                                                      simp [finishWith, wRunF, hc, hb] at hrun
-                                                      apply oneThenNodes fuel ih.1 host ar callee
-                                                        carrier rest [node.id]
-                                                        (.ifElse thenInstrs elseInstrs)
-                                                        restInstrs fin hcallsRest hrest locals
-                                                        [.i32v c] out
-                                                      simpa [hstep] using hrun
-                                            · have hbcall := hbranches.1
-                                              cases hb : runBlockFuel host ar callee fuel carrier
-                                                  thenBlock locals with
-                                              | none => simp [finishWith, hc, hb] at hrun
-                                              | some branchOut =>
-                                                  have hbw := ih.2 host ar callee carrier thenBlock
-                                                    thenInstrs hbcall ht locals branchOut hb
-                                                  cases branchOut with
-                                                  | ret value =>
-                                                      simp [finishWith, hc, hb] at hrun
-                                                      subst out
-                                                      rw [wRunF_append]
-                                                      simp [seqOut, wRunF, hc, hbw]
-                                                  | ok locals' branchStack =>
-                                                      obtain ⟨value, rfl⟩ :=
-                                                        runBlockFuel_ok_stack host ar callee fuel
-                                                          carrier thenBlock locals locals'
-                                                          branchStack hb
-                                                      have hstep : wRunF host ar callee
-                                                          [.ifElse thenInstrs elseInstrs]
-                                                          locals [.i32v c] =
-                                                          some (.ok locals' [value]) := by
-                                                        simp [wRunF, hc, hbw]
-                                                      simp [finishWith, wRunF, hc, hb] at hrun
-                                                      apply oneThenNodes fuel ih.1 host ar callee
-                                                        carrier rest [node.id]
-                                                        (.ifElse thenInstrs elseInstrs)
-                                                        restInstrs fin hcallsRest hrest locals
-                                                        [.i32v c] out
-                                                      simpa [hstep] using hrun
+                  simp only [hp] at hlow hrun
+                  cases ht : lowerBlockFuel fuel carrier thenBlock with
+                  | none => simp [ht] at hlow
+                  | some thenInstrs =>
+                      rw [ht] at hlow
+                      cases he : lowerBlockFuel fuel carrier elseBlock with
+                      | none => simp [he] at hlow
+                      | some elseInstrs =>
+                          rw [he] at hlow
+                          simp only at hlow
+                          cases hrest : lowerNodesFuel fuel carrier rest
+                              (node.id :: popped) with
+                          | none => simp [hrest] at hlow
+                          | some pair =>
+                              obtain ⟨restInstrs, fin⟩ := pair
+                              rw [hrest] at hlow
+                              simp only [Option.some.injEq, Prod.mk.injEq] at hlow
+                              obtain ⟨rfl, rfl⟩ := hlow
+                              cases stack with
+                              | nil => simp at hrun
+                              | cons cv stackTail =>
+                                  cases cv <;> try simp at hrun
+                                  next c =>
+                                    by_cases hc : c = 0
+                                    · have hbcall := hbranches.2
+                                      cases hb : runBlockFuel host ar callee fuel carrier
+                                          elseBlock locals with
+                                      | none => simp [finishWith, hc, hb] at hrun
+                                      | some branchOut =>
+                                          have hbw := ih.2 host ar callee carrier elseBlock
+                                            elseInstrs hbcall he locals branchOut hb
+                                          -- The branch was proven on the empty stack;
+                                          -- frame it over the values still under the
+                                          -- condition.
+                                          have hbwf := wRunF_frame host ar callee stackTail
+                                            elseInstrs locals [] branchOut hbw
+                                          simp only [List.nil_append] at hbwf
+                                          cases branchOut with
+                                          | ret value =>
+                                              simp [finishWith, hc, hb] at hrun
+                                              subst out
+                                              rw [wRunF_append]
+                                              simp [seqOut, wRunF, hc, hbwf, frameOut]
+                                          | ok locals' branchStack =>
+                                              obtain ⟨value, rfl⟩ :=
+                                                runBlockFuel_ok_stack host ar callee fuel
+                                                  carrier elseBlock locals locals'
+                                                  branchStack hb
+                                              have hstep : wRunF host ar callee
+                                                  [.ifElse thenInstrs elseInstrs]
+                                                  locals (.i32v c :: stackTail) =
+                                                  some (.ok locals' (value :: stackTail)) := by
+                                                simp [wRunF, hc, hbwf, frameOut]
+                                              simp [finishWith, wRunF, hc, hb] at hrun
+                                              apply oneThenNodes fuel ih.1 host ar callee
+                                                carrier rest (node.id :: popped)
+                                                (.ifElse thenInstrs elseInstrs)
+                                                restInstrs fin hcallsRest hrest locals
+                                                (.i32v c :: stackTail) out
+                                              simpa [hstep] using hrun
+                                    · have hbcall := hbranches.1
+                                      cases hb : runBlockFuel host ar callee fuel carrier
+                                          thenBlock locals with
+                                      | none => simp [finishWith, hc, hb] at hrun
+                                      | some branchOut =>
+                                          have hbw := ih.2 host ar callee carrier thenBlock
+                                            thenInstrs hbcall ht locals branchOut hb
+                                          have hbwf := wRunF_frame host ar callee stackTail
+                                            thenInstrs locals [] branchOut hbw
+                                          simp only [List.nil_append] at hbwf
+                                          cases branchOut with
+                                          | ret value =>
+                                              simp [finishWith, hc, hb] at hrun
+                                              subst out
+                                              rw [wRunF_append]
+                                              simp [seqOut, wRunF, hc, hbwf, frameOut]
+                                          | ok locals' branchStack =>
+                                              obtain ⟨value, rfl⟩ :=
+                                                runBlockFuel_ok_stack host ar callee fuel
+                                                  carrier thenBlock locals locals'
+                                                  branchStack hb
+                                              have hstep : wRunF host ar callee
+                                                  [.ifElse thenInstrs elseInstrs]
+                                                  locals (.i32v c :: stackTail) =
+                                                  some (.ok locals' (value :: stackTail)) := by
+                                                simp [wRunF, hc, hbwf, frameOut]
+                                              simp [finishWith, wRunF, hc, hb] at hrun
+                                              apply oneThenNodes fuel ih.1 host ar callee
+                                                carrier rest (node.id :: popped)
+                                                (.ifElse thenInstrs elseInstrs)
+                                                restInstrs fin hcallsRest hrest locals
+                                                (.i32v c :: stackTail) out
+                                              simpa [hstep] using hrun
             next _arrTy _toIndexIdx _boxIdx _default =>
               -- The monolithic fused vector read never runs through the
               -- symbolic evaluator, so a successful run is contradictory.

@@ -32,6 +32,7 @@ def primInstr : FragPrim → WInstr
   | .i32Eq => .i32Eq
   | .i32LtS => .i32LtS
   | .i32GtS => .i32GtS
+  | .i32And => .i32And
 
 def popExpected : List Nat → Nat → Option (List Nat)
   | got :: rest, expected => if got = expected then some rest else none
@@ -108,15 +109,18 @@ mutual
                   some ([if tail then .returnCall funcIdx else .call funcIdx],
                     node.id :: stack')
               | none => none
+          -- Values already on the symbolic stack stay beneath the branch,
+          -- exactly as the wasm `if` leaves the remaining operand stack in
+          -- place (`InterpreterSequencing.wRunF_frame`).
           | .ifElse cond thenBlock elseBlock =>
               match popExpected stack cond with
-              | some [] =>
+              | some stack' =>
                   match lowerBlockFuel fuel carrier thenBlock,
                         lowerBlockFuel fuel carrier elseBlock with
                   | some thenInstrs, some elseInstrs =>
-                      some ([.ifElse thenInstrs elseInstrs], [node.id])
+                      some ([.ifElse thenInstrs elseInstrs], node.id :: stack')
                   | _, _ => none
-              | _ => none
+              | none => none
           | .vectorGetOrDefault arrTy toIndexIdx boxIdx default =>
               -- Monolithic template over pinned locals 0/1; it consumes no
               -- stack operands, so it is canonical only as the sole value.

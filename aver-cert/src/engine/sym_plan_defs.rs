@@ -97,6 +97,9 @@ pub enum SymPrim {
     IntAdd,
     StringEq,
     StringConcat,
+    /// Source-level `Bool.and` (eager conjunction); encodes to the
+    /// representation `i32.and` over two Boolean operands.
+    BoolAnd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -672,7 +675,10 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
                 | FragPrim::I64GtS
                 | FragPrim::I32Eq
                 | FragPrim::I32LtS
-                | FragPrim::I32GtS => return None,
+                | FragPrim::I32GtS
+                // The source-subset lift stays float-only; `Bool.and` certs
+                // carry their SymPlan forward from the producer instead.
+                | FragPrim::I32And => return None,
             },
             args: args.iter().map(|id| SymValueId(id.0)).collect(),
         },

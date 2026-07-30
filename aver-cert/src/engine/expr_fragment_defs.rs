@@ -433,6 +433,10 @@ pub enum FragPrim {
     I32Eq,
     I32LtS,
     I32GtS,
+    /// `i32.and` restricted to the Boolean domain: the checker types it only
+    /// over two `BoolI32` operands, because bitwise AND of arbitrary raw i32
+    /// values can produce a non-Boolean result (`2 and 2 = 2`).
+    I32And,
 }
 
 impl FragPrim {
@@ -454,6 +458,7 @@ impl FragPrim {
             FragPrim::I32Eq => "i32.eq",
             FragPrim::I32LtS => "i32.lt_s",
             FragPrim::I32GtS => "i32.gt_s",
+            FragPrim::I32And => "i32.and",
         }
     }
 
@@ -475,6 +480,7 @@ impl FragPrim {
             FragPrim::I32Eq => ".i32Eq",
             FragPrim::I32LtS => ".i32LtS",
             FragPrim::I32GtS => ".i32GtS",
+            FragPrim::I32And => ".i32And",
         }
     }
 }

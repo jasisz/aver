@@ -3,7 +3,7 @@ module CertGoals
         "Certification goal matrix. This fixture is the primary progress"
         "dashboard for artifact-level certificates; larger examples such as JSON"
         "remain integration side-effects."
-    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, floatGeGoal, floatLtGoal, floatGtGoal, floatEqGoal, idGoal, listHeadGoal, sumListGoal]
+    exposes [Op, Box, Wrap, Tag, Signal, User, addTwo, sumFrom, countDown, quad, hex16, isEven, isOdd, mkOp, evalOp, userName, boxInt, wrapItems, tagName, gauge, inAsciiDigit, quoteOrSelf, shout, intLessZero, intEqZero, boolAndGoal, inWindowGoal, floatAddGoal, floatMulAddGoal, floatLeGoal, floatGeGoal, floatLtGoal, floatGtGoal, floatEqGoal, idGoal, listHeadGoal, sumListGoal]
 
 type Op
   Add(Int)
@@ -150,6 +150,10 @@ fn boolAndGoal(a: Bool, b: Bool) -> Bool
     true -> b
     false -> false
 
+fn inWindowGoal(e: Int) -> Bool
+  ? "Eager conjunction of two integer bounds through the Bool.and builtin."
+  Bool.and(0 - 100 <= e, e <= 100)
+
 fn floatAddGoal(a: Float, b: Float) -> Float
   ? "Aspirational float arithmetic goal."
   a + b
@@ -258,6 +262,11 @@ verify intEqZero
 verify boolAndGoal
   boolAndGoal(true, false) => false
   boolAndGoal(true, true) => true
+
+verify inWindowGoal
+  inWindowGoal(0) => true
+  inWindowGoal(-100) => true
+  inWindowGoal(101) => false
 
 verify floatAddGoal
   floatAddGoal(1.5, 2.0) => 3.5

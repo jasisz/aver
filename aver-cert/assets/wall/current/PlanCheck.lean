@@ -131,6 +131,20 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       match args with
       | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
       | _ => none
+  -- SOUNDNESS: `i32.and` must NOT use the loose `hasI32Ty` the comparisons
+  -- use. Bitwise AND over arbitrary `rawI32` operands can yield a value
+  -- outside {0,1} (`2 and 2 = 2`), so declaring `boolI32` for it would let a
+  -- non-Boolean flow into every consumer that reads the result as a `Bool`;
+  -- on top of that, the interpreter's `.i32And` clause models the operation
+  -- on the {0,1} domain, where it coincides with wasm's bitwise `i32.and`
+  -- only when both operands are Booleans. Requiring `.boolI32` on BOTH
+  -- operands is therefore load-bearing twice over.
+  | .i32And =>
+      match args with
+      | [a, b] =>
+          if hasTy nodes a .boolI32 && hasTy nodes b .boolI32 then some .boolI32
+          else none
+      | _ => none
 
 /-- Static registry of host-helper role type signatures. `box` takes one raw
     `i64` and returns the Int carrier; each arithmetic role takes two Int
@@ -182,6 +196,8 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
   | .stringConcat =>
       if args.isEmpty then none
       else if symArgsAllTy nodes .string args then some .string else none
+  | .boolAnd =>
+      if symArgsHaveTys nodes args [.bool, .bool] then some .bool else none
 
 /-- Hard cap for recursive plan checking. Exceeding it is a fail-closed
     unsupported fragment, matching the producer's profile-limit discipline. -/
@@ -361,6 +377,7 @@ def primNeedsRelationalFloatResult : FragPrim → Bool
   | .i32Eq => false
   | .i32LtS => false
   | .i32GtS => false
+  | .i32And => false
 
 /-- The general WebAssembly profile gives `f64.add`/`f64.mul` a set-valued
     result when they produce NaN: more than one sign/payload bit pattern may
@@ -771,6 +788,7 @@ def encodeSymPrim? : SymPrim → Option FragPrim
   | .intAdd => none
   | .stringEq => none
   | .stringConcat => none
+  | .boolAnd => some .i32And
 
 /-- Look up the resolved wasm function index for one host role in the
     byte-derived role table an artifact claim carries. A role the table lacks

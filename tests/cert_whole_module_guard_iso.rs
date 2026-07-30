@@ -2296,3 +2296,228 @@ example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes trun
     );
     let _ = std::fs::remove_dir_all(wall_dir);
 }
+
+/// Extract one top-level `def NAME ...` block (through the line before the
+/// next top-level item) from a wall source file. Used to build LITERAL
+/// weakened copies of live checker definitions: the copy is derived from the
+/// exact source the certificate elaborated against, so a moved or renamed
+/// conjunct fails this test loudly instead of letting a stale hand copy
+/// keep passing.
+fn extract_wall_def(source: &str, name: &str) -> String {
+    let header = format!("def {name} ");
+    let alt_header = format!("def {name} :");
+    let start = source
+        .lines()
+        .scan(0usize, |offset, line| {
+            let at = *offset;
+            *offset += line.len() + 1;
+            Some((at, line))
+        })
+        .find(|(_, line)| line.starts_with(&header) || line.starts_with(&alt_header))
+        .map(|(at, _)| at)
+        .unwrap_or_else(|| panic!("wall source has no top-level `def {name}`"));
+    let rest = &source[start..];
+    let mut end = rest.len();
+    let mut offset = 0usize;
+    for (index, line) in rest.lines().enumerate() {
+        if index > 0 && !line.is_empty() && !line.starts_with(' ') && !line.starts_with('|') {
+            end = offset;
+            break;
+        }
+        offset += line.len() + 1;
+    }
+    rest[..end].trim_end().to_string()
+}
+
+/// GuardIso for the `i32.and` fragment primitive's Boolean operand typing —
+/// the one conjunct that keeps the new conjunction primitive sound. `i32.and`
+/// over arbitrary raw i32 operands can produce a value outside {0, 1}
+/// (`2 and 2 = 2`), and the wall interpreter's `.i32And` clause models the
+/// operation on the {0, 1} domain, so declaring `boolI32` for a non-Boolean
+/// conjunction would poison every downstream reader of the result AND break
+/// the model/wasm agreement at once.
+///
+/// Attribution is BY ACCEPTANCE at both plan levels, with the weakened
+/// checkers built as literal copies of the LIVE wall source text (surgery
+/// asserts the strict conjunct exists exactly once before relaxing it):
+///   - representation level: `checkExprFragmentRawPlan` rejects a plan whose
+///     `i32.and` operands are raw i32 constants, while the copy whose only
+///     change is the comparisons' loose `hasI32Ty` admission accepts it;
+///   - source level: `checkSymRawPlan` (and therefore the audited encoder,
+///     which the acceptance predicate matches on) rejects `bool.and` over two
+///     Int operands, while the copy weakened by exactly the `[.bool, .bool]`
+///     operand typing accepts it.
+/// The honest fixture plan passes the real checkers AND both weakened copies,
+/// so each rejection above is attributable to exactly the weakened conjunct.
+#[test]
+fn i32_and_boolean_operand_typing_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Bool.and GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-bool-and-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/bool_window.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile bool_window fixture for Bool.and GuardIso");
+    assert!(
+        compile.status.success(),
+        "bool_window compile failed for Bool.and GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build bool_window certificate before Bool.and GuardIso");
+    assert!(
+        build.status.success(),
+        "bool_window certificate failed before Bool.and GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Literal copies from the LIVE materialized checker source.
+    let plan_check = std::fs::read_to_string(cert.join("PlanCheck.lean"))
+        .expect("materialized wall has PlanCheck.lean");
+    let mut weak_frag = [
+        extract_wall_def(&plan_check, "primResultTy?"),
+        extract_wall_def(&plan_check, "checkBlockFuel"),
+        extract_wall_def(&plan_check, "checkBlock"),
+        extract_wall_def(&plan_check, "checkExprFragmentRawPlan"),
+    ]
+    .join("\n\n");
+    let strict_frag = "hasTy nodes a .boolI32 && hasTy nodes b .boolI32";
+    assert_eq!(
+        weak_frag.matches(strict_frag).count(),
+        1,
+        "the strict i32.and operand conjunct moved; refit the GuardIso surgery"
+    );
+    weak_frag = weak_frag.replace(strict_frag, "hasI32Ty nodes a && hasI32Ty nodes b");
+    for (from, to) in [
+        ("checkExprFragmentRawPlan", "weakCheckExprFragmentRawPlan"),
+        ("checkBlockFuel", "weakCheckBlockFuel"),
+        ("checkBlock", "weakCheckBlock"),
+        ("primResultTy?", "weakPrimResultTy?"),
+    ] {
+        weak_frag = weak_frag.replace(from, to);
+    }
+
+    let mut weak_sym = [
+        extract_wall_def(&plan_check, "symPrimResultTy?"),
+        extract_wall_def(&plan_check, "checkSymBlockFuel"),
+        extract_wall_def(&plan_check, "checkSymBlock"),
+        extract_wall_def(&plan_check, "checkSymRawPlan"),
+    ]
+    .join("\n\n");
+    let strict_sym = "if symArgsHaveTys nodes args [.bool, .bool] then some .bool else none";
+    assert_eq!(
+        weak_sym.matches(strict_sym).count(),
+        1,
+        "the strict bool.and operand conjunct moved; refit the GuardIso surgery"
+    );
+    weak_sym = weak_sym.replace(
+        strict_sym,
+        "if symArgsExist nodes args then some .bool else none",
+    );
+    for (from, to) in [
+        ("symPrimResultTy?", "weakSymPrimResultTy?"),
+        ("checkSymRawPlan", "weakCheckSymRawPlan"),
+        ("checkSymBlockFuel", "weakCheckSymBlockFuel"),
+        ("checkSymBlock", "weakCheckSymBlock"),
+    ] {
+        weak_sym = weak_sym.replace(from, to);
+    }
+
+    // Lean structure-instance fields are indentation-sensitive: a field that
+    // starts left of the first field's column ends the field block, so the
+    // multi-line hostile literals keep `result` aligned under `nodes`.
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema AverCert.PlanCheck
+set_option maxRecDepth 300000
+
+namespace BoolAndGuardIso
+
+/-! Hostile representation plan: `i32.and` over two raw i32 constants outside
+    {{0, 1}}, declaring a Boolean result (2 and 3 = 2 — not a Boolean, and the
+    interpreter's {{0,1}}-domain model would not even agree with wasm here). -/
+def hostilePlan : ExprFragmentRawPlan :=
+  {{ profile := "expr-fragment-v1", params := [], result := .boolI32,
+    body := ({{ nodes :=
+                 [{{ id := 0, ty := .rawI32, kind := .constI32 2 }},
+                  {{ id := 1, ty := .rawI32, kind := .constI32 3 }},
+                  {{ id := 2, ty := .boolI32, kind := .prim .i32And [0, 1] }}],
+               result := 2 }} : FragBlock) }}
+
+-- The real checker rejects it...
+example : AverCert.PlanCheck.checkExprFragmentRawPlan hostilePlan = false := rfl
+-- ...while accepting the honest fixture plan at the same entry point.
+example : AverCert.PlanCheck.checkExprFragmentRawPlan AverCert.Plans.inWindowPlan = true := rfl
+
+/-! Literal copy of the live checker, weakened by EXACTLY the i32.and operand
+    typing (Boolean operands relaxed to the comparisons' loose i32
+    admission). -/
+{weak_frag}
+
+-- The weakened copy accepts the hostile plan: the rejection above is
+-- attributable to exactly that conjunct...
+example : weakCheckExprFragmentRawPlan hostilePlan = true := rfl
+-- ...and the weakening is strict: the honest plan still passes it.
+example : weakCheckExprFragmentRawPlan AverCert.Plans.inWindowPlan = true := rfl
+
+/-! Hostile source plan: `bool.and` over two Int parameters. -/
+def hostileSymPlan : SymRawPlan :=
+  {{ profile := "sym-fragment-v1", params := [.int, .int], result := .bool,
+    body := ({{ nodes :=
+                 [{{ id := 0, ty := .int, kind := .param 0 }},
+                  {{ id := 1, ty := .int, kind := .param 1 }},
+                  {{ id := 2, ty := .bool, kind := .prim .boolAnd [0, 1] }}],
+               result := 2 }} : SymBlock) }}
+
+-- The real source checker rejects it, so the audited encoder — the arm
+-- `symFragmentPlanAccepted` matches on before anything else — fail-closes
+-- regardless of the tables the claim carries.
+example : AverCert.PlanCheck.checkSymRawPlan hostileSymPlan = false := rfl
+example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan [] [] hostileSymPlan = none := rfl
+example : AverCert.PlanCheck.checkSymRawPlan AverCert.Plans.inWindowSymPlan = true := rfl
+
+/-! Literal copy of the live source checker, weakened by EXACTLY the
+    `[.bool, .bool]` operand typing of `bool.and`. -/
+{weak_sym}
+
+example : weakCheckSymRawPlan hostileSymPlan = true := rfl
+example : weakCheckSymRawPlan AverCert.Plans.inWindowSymPlan = true := rfl
+
+end BoolAndGuardIso
+"#
+    );
+    std::fs::write(cert.join("BoolAndGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("BoolAndGuardIso.lean")
+        .output()
+        .expect("run Bool.and GuardIso");
+    assert!(
+        check.status.success(),
+        "Bool.and GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}

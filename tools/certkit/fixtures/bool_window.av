@@ -1,0 +1,17 @@
+module BoolWindow
+    intent =
+        "Eager Bool.and conjunction certification fixture: one exported window"
+        "predicate whose operands are two integer bounds."
+    exposes [inWindow]
+    effects []
+
+fn inWindow(e: Int) -> Bool
+    ? "The window predicate: -100 <= e <= 100, conjoined eagerly."
+    Bool.and(0 - 100 <= e, e <= 100)
+
+verify inWindow
+    inWindow(0) => true
+    inWindow(-100) => true
+    inWindow(100) => true
+    inWindow(-101) => false
+    inWindow(101) => false

@@ -413,7 +413,7 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
             }
             crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
             crate::ir::mir::MirExpr::Match(m) => self.lower_tag_match(&m.node),
-            crate::ir::mir::MirExpr::Call(call) => self.lower_fused_vector_get(&call.node),
+            crate::ir::mir::MirExpr::Call(call) => self.lower_call(&call.node),
             _ => None,
         }
     }
@@ -455,6 +455,50 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
             None => self.aliases.remove(&spanned_let.binding.0),
         };
         lowered
+    }
+
+    /// Builtin calls with a planned source meaning: the fused vector read and
+    /// eager `Bool.and`. Everything else stays unplanned (fail-closed `None`).
+    fn lower_call(
+        &mut self,
+        call: &'e crate::ir::mir::MirCall,
+    ) -> Option<(SymValueId, SymTy)> {
+        if let Some(lowered) = self.lower_fused_vector_get(call) {
+            return Some(lowered);
+        }
+        self.lower_bool_and(call)
+    }
+
+    /// Eager source-level conjunction: `Bool.and(a, b)` over two Bool-typed
+    /// operands, exactly as the wasm-gc emitter lowers the builtin (operand 0,
+    /// operand 1, `i32.and`). `Bool.or` / `Bool.not` are deliberately NOT
+    /// recognised: their representation opcodes (`i32.or` / `i32.eqz`) are not
+    /// in the audited instruction set. Anything else returns `None`.
+    fn lower_bool_and(
+        &mut self,
+        call: &'e crate::ir::mir::MirCall,
+    ) -> Option<(SymValueId, SymTy)> {
+        let crate::ir::mir::MirCallee::Builtin(id) = call.callee else {
+            return None;
+        };
+        if self.builtins.get(id.0 as usize)? != "Bool.and" || call.args.len() != 2 {
+            return None;
+        }
+        let (lhs, lhs_ty) = self.lower_expr(&call.args[0])?;
+        if lhs_ty != SymTy::Bool {
+            return None;
+        }
+        let (rhs, rhs_ty) = self.lower_expr(&call.args[1])?;
+        if rhs_ty != SymTy::Bool {
+            return None;
+        }
+        self.push_node(
+            SymTy::Bool,
+            SymNodeKind::Prim {
+                op: SymPrim::BoolAnd,
+                args: vec![lhs, rhs],
+            },
+        )
     }
 
     /// The fused `Option.withDefault(Vector.get(p0, p1), <int literal>)`

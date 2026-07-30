@@ -485,6 +485,7 @@ fn check_sym_plan_prim_args(
         SymPrim::IntAdd => vec![SymTy::Int, SymTy::Int],
         SymPrim::StringEq => vec![SymTy::String, SymTy::String],
         SymPrim::StringConcat => Vec::new(),
+        SymPrim::BoolAnd => vec![SymTy::Bool, SymTy::Bool],
     };
     if op == SymPrim::StringConcat {
         if args.is_empty() {
@@ -515,6 +516,7 @@ fn check_sym_plan_prim_args(
         | SymPrim::FloatGt
         | SymPrim::FloatEq => SymTy::Bool,
         SymPrim::StringEq => SymTy::Bool,
+        SymPrim::BoolAnd => SymTy::Bool,
         SymPrim::StringConcat => unreachable!(),
     })
 }

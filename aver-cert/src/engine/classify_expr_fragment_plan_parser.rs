@@ -462,6 +462,7 @@ fn plan_prim_from_tag(tag: &str) -> Option<FragPrim> {
         "i32.eq" => Some(FragPrim::I32Eq),
         "i32.lt_s" => Some(FragPrim::I32LtS),
         "i32.gt_s" => Some(FragPrim::I32GtS),
+        "i32.and" => Some(FragPrim::I32And),
         _ => None,
     }
 }
@@ -488,6 +489,10 @@ fn check_plan_prim_args(
         FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS => {
             &[FragTy::RawI32, FragTy::RawI32]
         }
+        // SOUNDNESS: the loose "raw OR bool i32" admission of the comparisons
+        // must NOT extend to `i32.and`; both operands are required to be
+        // Boolean (twin of the wall's `primResultTy?` arm).
+        FragPrim::I32And => &[FragTy::BoolI32, FragTy::BoolI32],
     };
     if args.len() != expected_args.len() {
         return Err(format!(
@@ -529,7 +534,8 @@ fn check_plan_prim_args(
         | FragPrim::I64GtS
         | FragPrim::I32Eq
         | FragPrim::I32LtS
-        | FragPrim::I32GtS => FragTy::BoolI32,
+        | FragPrim::I32GtS
+        | FragPrim::I32And => FragTy::BoolI32,
     })
 }
 
