@@ -82,8 +82,10 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
         "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, \
          codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
     );
+    // The leading third `rfl` discharges the host-table
+    // declared-function-type pin (`hostTableFuncTypesMatch`).
     format!(
-        "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
+        "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
          ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }

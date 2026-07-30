@@ -6651,7 +6651,11 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     // artifact ships (Plans.lean pins + the Artifact.lean claim). The pair
     // lowers byte-identically and the table stays distinct, so the byte gate,
     // the structural checker and the distinctness guard are all blind — only
-    // the host-builder equality bind rejects it.
+    // the host-builder equality bind rejects it. The host-table declared-type
+    // pin (`hostTableFuncTypesMatch`) is blind to this permutation as well:
+    // the add and sub roles fix the SAME canonical two-argument carrier
+    // signature (proved by `rfl` in the host-table type-pin GuardIso), so the
+    // permuted table still type-checks and the attribution here stands.
     {
         let dir = temp_dir("cert-int-dispatch-role-permutation");
         copy_dir(&out_dir, &dir);
@@ -6807,7 +6811,13 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// attack (b)). The permuted pair is proven byte-identical (`rfl`),
 /// sibling-blind (`rfl`), the honest tables close the equality by `rfl`, and
 /// the permuted/sneaky builders are rejected exactly by the equality conjunct
-/// (each `≠` exhibited through a distinguishing input).
+/// (each `≠` exhibited through a distinguishing input). The host-table
+/// declared-type pin (`hostTableFuncTypesMatch`, added alongside this guard's
+/// conjuncts) does not re-reject the permuted table: add and sub fix the SAME
+/// canonical declared signature (`checkHostRoleFuncType` collapses to one
+/// `checkCanonicalFuncType 2` for both, proved by `rfl` in the host-table
+/// type-pin GuardIso), so the equality conjunct remains the sole rejector and
+/// this attribution is unweakened.
 ///
 /// LOCALS-COUNT bind (`nlocals := armCount + 2` in `intDispatchPlanAccepted`):
 /// a code table claiming ZERO locals for the honest body traps on its first

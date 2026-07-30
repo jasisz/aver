@@ -58,7 +58,11 @@ def exprFragmentPlanAccepted
 /-- Artifact-level acceptance for one source-level symbolic fragment export.
     The source plan is still untrusted data: the audited checker/encoder must
     accept it and produce the representation-level expr-fragment plan before
-    the existing byte-origin predicate is allowed to run. -/
+    the existing byte-origin predicate is allowed to run. Every host-role index
+    the encoded plan cites (each `hostCall` node and the fused vector-read
+    node's `toIndexIdx`/`boxIdx`) is resolved by the encoder through
+    `hostTable`, so pinning the declared function type of every table entry
+    pins the declared type of every helper the proof faces model. -/
 def symFragmentPlanAccepted
     (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
@@ -71,6 +75,8 @@ def symFragmentPlanAccepted
   match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
       hostTable structTable plan with
   | some exprPlan =>
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       exprFragmentPlanAccepted
         modBytes modLen exportNameBytes exportName carrier exprPlan obligation
   | none => False
@@ -506,6 +512,8 @@ def recursionPlanAccepted
         obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := recursionNLocals plan, body := body }
@@ -572,6 +580,8 @@ def mutualPlanAccepted
       AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := mutualNLocals plan, body := body }
@@ -770,6 +780,8 @@ def intDispatchPlanAccepted
     obligation.carrier = carrier ∧
     AverCert.PlanCheck.checkIntDispatchRawPlan plan = true ∧
     AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true ∧
+    AverCert.WasmSlice.hostTableFuncTypesMatch
+      modBytes modLen carrier hostTable = true ∧
     obligation.host = intDispatchCanonicalHost carrier hostTable ∧
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body ∧
@@ -893,6 +905,8 @@ def compositionMemberPlanAccepted
     AverCert.WasmSlice.exactFuncBindingForExport
       modBytes modLen member.exportNameBytes codeEntry = some binding ∧
     AverCert.WasmSlice.funcTypeMatches modBytes modLen binding.typeIdx 1 carrier = true ∧
+    AverCert.WasmSlice.hostTableFuncTypesMatch
+      modBytes modLen carrier hostTable = true ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := compositionNLocals member.plan, body := body }
 
@@ -1017,6 +1031,8 @@ def compositionClaimAccepted
   claim.obligation.export_ = claim.exportName ∧
   claim.obligation.carrier = claim.carrier ∧
   AverCert.PlanCheck.checkCompositionHostTable claim.hostTable = true ∧
+  AverCert.WasmSlice.hostTableFuncTypesMatch
+    modBytes modLen claim.carrier claim.hostTable = true ∧
   claim.obligation.host = intDispatchCanonicalHost claim.carrier claim.hostTable ∧
   match compositionFuncTable modBytes modLen members with
   | some funcTable =>

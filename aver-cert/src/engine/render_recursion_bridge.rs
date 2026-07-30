@@ -92,7 +92,7 @@ fn recursion_claim_acceptance_proof(c: &Cert) -> String {
     );
     format!(
         "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }
 
