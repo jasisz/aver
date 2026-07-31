@@ -933,36 +933,6 @@ fn render_face_bundles(
     (theorems, aggregate)
 }
 
-/// Render one opaque theorem per concrete claim plus the small constructor
-/// spine used by the corresponding per-family theorem.  Indexing the already
-/// defined family list avoids repeating the large claim literals in theorem
-/// statements; reduction proves that each indexed claim is definitionally the
-/// same value consumed by the aggregate predicate.
-fn render_per_claim_bundles(
-    family: &str,
-    predicate: &str,
-    claims_def: &str,
-    unfolds: &str,
-    proofs: &[String],
-) -> (String, String) {
-    let mut theorems = String::new();
-    let mut names = Vec::with_capacity(proofs.len());
-    for (index, proof) in proofs.iter().enumerate() {
-        let theorem = format!("{family}Claim{index}Accepted");
-        theorems.push_str(&format!(
-            "theorem {theorem} :\n  {predicate} ({claims_def}.get ⟨{index}, by decide⟩) := by\n  dsimp [{claims_def}, {unfolds}]\n  exact {proof}\n\n"
-        ));
-        names.push(theorem);
-    }
-    let aggregate = names
-        .into_iter()
-        .rev()
-        .fold("trivial".to_string(), |rest, theorem| {
-            format!("⟨{theorem}, {rest}⟩")
-        });
-    (theorems, aggregate)
-}
-
 /// Render, per claim, the SPLIT acceptance proof: `per_claim(index)` supplies
 /// the already-numbered witness `def`s and per-conjunct leaf theorems as one
 /// text block plus the aggregate proof term that combines those constants. The
@@ -1788,6 +1758,80 @@ fn render_verbatim_claim_bundles(parts: &[VerbatimParts]) -> (String, String) {
     )
 }
 
+/// Structured inputs for one Int-face `ref.test`-dispatch claim's split proof.
+struct IntDispatchParts {
+    name: String,
+    export_name_bytes: String,
+    host_table: String,
+    carrier: u32,
+}
+
+/// Split the Int-face dispatch family the same way as the verbatim family: the
+/// body, code entry and binding — formerly inferred `_` witnesses solved into
+/// large literals — become named `def`s computed by the wall lowerers and byte
+/// decoder, and each byte-walking conjunct becomes its own leaf theorem.
+fn render_int_dispatch_claim_bundles(parts: &[IntDispatchParts]) -> (String, String) {
+    render_split_bundles(
+        "intDispatch",
+        "AverCert.AcceptedArtifact.intDispatchClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "intDispatchClaims",
+        "AverCert.AcceptedArtifact.intDispatchClaimAccepted, AverCert.AcceptedArtifact.intDispatchPlanForExport, AverCert.AcceptedArtifact.intDispatchPlanAccepted",
+        parts.len(),
+        |index| {
+            let IntDispatchParts {
+                name,
+                export_name_bytes,
+                host_table,
+                carrier,
+            } = &parts[index];
+            let body = format!("intDispatchClaim{index}Body");
+            let code_entry = format!("intDispatchClaim{index}CodeEntry");
+            let binding = format!("intDispatchClaim{index}Binding");
+            let check_plan = format!("intDispatchClaim{index}CheckPlan");
+            let host_types = format!("intDispatchClaim{index}HostTypes");
+            let lower_body = format!("intDispatchClaim{index}LowerBody");
+            let lower_code = format!("intDispatchClaim{index}LowerCode");
+            let func_binding = format!("intDispatchClaim{index}FuncBinding");
+            let func_type = format!("intDispatchClaim{index}FuncType");
+            let plan = format!("AverCert.Plans.{name}IntDispatchPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named `def`s computed by the wall\n\
+                 -- lowerers / decoder, so no large literal is baked into the aggregate.\n\
+                 def {body} : List CertPrelude.WInstr :=\n  \
+                   (AverCert.PlanLower.lowerIntDispatchBody {host_table} {plan}).getD []\n\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq :=\n  \
+                   (AverCert.PlanBytes.lowerIntDispatchCodeEntry {carrier} {host_table} {plan}).getD []\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   (AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes}).getD ⟨0, 0, []⟩\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+                 -- `modBytes` binding decode and type-section walks.\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkIntDispatchRawPlan {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {host_types} :\n  \
+                   AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerIntDispatchBody {host_table} {plan} = some {body} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerIntDispatchCodeEntry {carrier} {host_table} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n\
+                 theorem {func_type} :\n  \
+                   AverCert.WasmSlice.verbatimFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx (.refNull {carrier}) = true := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, {check_plan}, rfl, {host_types}, rfl, ⟨{body}, {code_entry}, {binding}, {lower_body}, {lower_code}, {func_binding}, rfl, {func_type}, rfl⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1811,7 +1855,7 @@ fn render_artifact_expr_fragment_claims(
     let mut recursion_parts: Vec<RecursionParts> = Vec::new();
     let mut mutual_parts: Vec<MutualParts> = Vec::new();
     let mut verbatim_parts: Vec<VerbatimParts> = Vec::new();
-    let mut int_dispatch_proofs = Vec::new();
+    let mut int_dispatch_parts: Vec<IntDispatchParts> = Vec::new();
     let mut field_projection_parts: Vec<FieldProjectionParts> = Vec::new();
     let mut composition_parts: Vec<CompositionParts> = Vec::new();
     let mut string_concat_faces: Vec<Option<(String, String)>> = Vec::new();
@@ -2148,17 +2192,13 @@ fn render_artifact_expr_fragment_claims(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.IntDispatchClaim)",
                     export_name = lean_str(name),
                 ));
-                // The code-entry and signature conjuncts plus the role-table
-                // parameterization are the binding, so the witness is anonymous
-                // for the body, code entry and binding — each pinned by `rfl`
-                // (the three extra leading `rfl`s discharge the host-table
-                // distinctness, the host-table declared-function-type pin, and
-                // the obligation-wiring bind; the final `rfl` pins the code
-                // table with the CANONICAL locals count, no existential).
-                int_dispatch_proofs.push(
-                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
-                        .to_string(),
-                );
+                // Split acceptance proof; see `render_int_dispatch_claim_bundles`.
+                int_dispatch_parts.push(IntDispatchParts {
+                    name: name.clone(),
+                    export_name_bytes,
+                    host_table,
+                    carrier: *carrier,
+                });
                 int_dispatch_faces.push(Some((
                     format!("AverCert.Plans.{name}IntDispatchPlan"),
                     "⟨rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
@@ -2346,7 +2386,7 @@ fn render_artifact_expr_fragment_claims(
         + recursion_parts.len()
         + mutual_parts.len()
         + verbatim_parts.len()
-        + int_dispatch_proofs.len()
+        + int_dispatch_parts.len()
         + field_projection_parts.len()
         + composition_parts.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
@@ -2374,13 +2414,8 @@ fn render_artifact_expr_fragment_claims(
     let (recursion_bundles, recursion_proof) = render_recursion_claim_bundles(&recursion_parts);
     let (mutual_bundles, mutual_proof) = render_mutual_claim_bundles(&mutual_parts);
     let (verbatim_bundles, verbatim_proof) = render_verbatim_claim_bundles(&verbatim_parts);
-    let (int_dispatch_bundles, int_dispatch_proof) = render_per_claim_bundles(
-        "intDispatch",
-        "AverCert.AcceptedArtifact.intDispatchClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "intDispatchClaims",
-        "AverCert.AcceptedArtifact.intDispatchClaimAccepted, AverCert.AcceptedArtifact.intDispatchPlanForExport, AverCert.AcceptedArtifact.intDispatchPlanAccepted, AverCert.AcceptedArtifact.intDispatchCanonicalHost, AverCert.AcceptedArtifact.intDispatchCanonicalSlots",
-        &int_dispatch_proofs,
-    );
+    let (int_dispatch_bundles, int_dispatch_proof) =
+        render_int_dispatch_claim_bundles(&int_dispatch_parts);
     let (field_projection_bundles, field_projection_proof) =
         render_field_projection_claim_bundles(&field_projection_parts);
     let (composition_bundles, composition_claims_proof) =
