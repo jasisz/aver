@@ -1462,6 +1462,92 @@ fn render_string_eq_claim_bundles(parts: &[StringEqParts]) -> (String, String) {
     )
 }
 
+/// Structured inputs for one ADT-constructor claim's split acceptance proof.
+struct ConstructParts {
+    name: String,
+    lowered_body: String,
+    code_entry_bytes: String,
+    export_name_bytes: String,
+    struct_type_proof: String,
+    func_type_proof: String,
+    struct_idx: u32,
+    self_idx: u32,
+    type_idx: u32,
+    carrier: u32,
+}
+
+/// Split the ADT-constructor family. The sym/plan checks and the two lowerings
+/// are leaves over `Plans.{name}Construct{Sym}Plan`, and the function binding
+/// decode is the `modBytes` walk. The list-constructor struct/func-type
+/// conjuncts already reference the hoisted `Plans.{name}Construct…Matches`
+/// lemmas, so they stay as-is (constants, not re-run literals).
+fn render_construct_claim_bundles(parts: &[ConstructParts]) -> (String, String) {
+    render_split_bundles(
+        "construct",
+        "AverCert.AcceptedArtifact.constructClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "constructClaims",
+        "AverCert.AcceptedArtifact.constructClaimAccepted, AverCert.AcceptedArtifact.constructPlanForExport, AverCert.AcceptedArtifact.constructPlanAccepted",
+        parts.len(),
+        |index| {
+            let ConstructParts {
+                name,
+                lowered_body,
+                code_entry_bytes,
+                export_name_bytes,
+                struct_type_proof,
+                func_type_proof,
+                struct_idx,
+                self_idx,
+                type_idx,
+                carrier,
+            } = &parts[index];
+            let body = format!("constructClaim{index}Body");
+            let code_entry = format!("constructClaim{index}CodeEntry");
+            let binding = format!("constructClaim{index}Binding");
+            let check_sym = format!("constructClaim{index}CheckSym");
+            let match_sym = format!("constructClaim{index}MatchSym");
+            let check_plan = format!("constructClaim{index}CheckPlan");
+            let lower_body = format!("constructClaim{index}LowerBody");
+            let lower_code = format!("constructClaim{index}LowerCode");
+            let func_binding = format!("constructClaim{index}FuncBinding");
+            let sym_plan = format!("AverCert.Plans.{name}ConstructSymPlan");
+            let plan = format!("AverCert.Plans.{name}ConstructPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named constants so no large literal is\n\
+                 -- duplicated across the leaf statements or baked into the aggregate term.\n\
+                 def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy one is the\n\
+                 -- `modBytes` binding decode.\n\
+                 theorem {check_sym} :\n  \
+                   AverCert.PlanCheck.checkSymRawPlan {sym_plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {match_sym} :\n  \
+                   AverCert.PlanCheck.constructPlanMatchesSymRawPlan {sym_plan} {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkConstructRawPlan {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerConstructBody {struct_idx} {plan} = some {body} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerConstructCodeEntry {carrier} {struct_idx} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, {check_sym}, {match_sym}, {check_plan}, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{lower_body}, {lower_code}, {func_binding}, rfl, {struct_type_proof}, {func_type_proof}, rfl⟩⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1481,7 +1567,7 @@ fn render_artifact_expr_fragment_claims(
     let mut sym_parts: Vec<SymClaimParts> = Vec::new();
     let mut string_eq_parts: Vec<StringEqParts> = Vec::new();
     let mut string_parts: Vec<StringConcatParts> = Vec::new();
-    let mut construct_proofs = Vec::new();
+    let mut construct_parts: Vec<ConstructParts> = Vec::new();
     let mut recursion_parts: Vec<RecursionParts> = Vec::new();
     let mut mutual_parts: Vec<MutualParts> = Vec::new();
     let mut verbatim_proofs = Vec::new();
@@ -1654,9 +1740,6 @@ fn render_artifact_expr_fragment_claims(
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let elem_ty = construct_val_type_lean_value(*elem_ty)
                     .expect("certified constructor has a supported byte-level element type");
-                let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
-                );
                 let (struct_type_proof, func_type_proof) =
                     if sym_plan_is_list_construct(&sym_plan) {
                         (
@@ -1670,11 +1753,19 @@ fn render_artifact_expr_fragment_claims(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, elemTy := {elem_ty}, symPlan := AverCert.Plans.{name}ConstructSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.ConstructClaim)",
                     export_name = lean_str(name),
                 ));
-                construct_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, {struct_type_proof}, \
-                     {func_type_proof}, rfl⟩⟩⟩"
-                ));
+                // Split acceptance proof; see `render_construct_claim_bundles`.
+                construct_parts.push(ConstructParts {
+                    name: name.clone(),
+                    lowered_body,
+                    code_entry_bytes,
+                    export_name_bytes,
+                    struct_type_proof,
+                    func_type_proof,
+                    struct_idx: *struct_idx,
+                    self_idx: *self_idx,
+                    type_idx: *type_idx,
+                    carrier: *carrier,
+                });
                 if adt_constructor_uses_model(c, model_info) {
                     construct_faces.push(Some((
                         format!("AverCert.Plans.{name}ConstructPlan"),
@@ -1993,7 +2084,7 @@ fn render_artifact_expr_fragment_claims(
     let obligation_proof_count = sym_parts.len()
         + string_eq_parts.len()
         + string_parts.len()
-        + construct_proofs.len()
+        + construct_parts.len()
         + recursion_parts.len()
         + mutual_parts.len()
         + verbatim_proofs.len()
@@ -2011,14 +2102,8 @@ fn render_artifact_expr_fragment_claims(
     let (sym_bundles, sym_proof) = render_sym_claim_bundles(&sym_parts, host_table_lean);
     let (string_bundles, string_proof) = render_string_concat_claim_bundles(&string_parts);
     let (string_eq_bundles, string_eq_proof) = render_string_eq_claim_bundles(&string_eq_parts);
-    let construct_claim_count = construct_proofs.len();
-    let (construct_bundles, construct_claims_proof) = render_per_claim_bundles(
-        "construct",
-        "AverCert.AcceptedArtifact.constructClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "constructClaims",
-        "AverCert.AcceptedArtifact.constructClaimAccepted, AverCert.AcceptedArtifact.constructPlanForExport, AverCert.AcceptedArtifact.constructPlanAccepted, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted",
-        &construct_proofs,
-    );
+    let construct_claim_count = construct_parts.len();
+    let (construct_bundles, construct_claims_proof) = render_construct_claim_bundles(&construct_parts);
     // `acceptedConstructFragments` conjoins per-claim acceptance with unique
     // export-name coverage. Build the `Nodup` proof one list cell at a time so
     // Lean never runs a whole-list decision procedure inside the already deep
