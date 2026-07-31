@@ -1635,6 +1635,92 @@ fn render_composition_claim_bundles(parts: &[CompositionParts]) -> (String, Stri
     )
 }
 
+/// Structured inputs for one field-projection claim's split acceptance proof.
+struct FieldProjectionParts {
+    name: String,
+    body: String,
+    code_entry: String,
+    export_name_bytes: String,
+    result_ty: String,
+    struct_idx: u32,
+    field_count: u32,
+    self_idx: u32,
+    type_idx: u32,
+    carrier: u32,
+}
+
+/// Split the field-projection family. The former proof left the body,
+/// code-entry and binding as `_`; elaboration solves them to the same large
+/// literals the byte lowerers produce, so they still bloated the single proof
+/// term. Emit them as named `def`s (the `Cert` already carries the exact bytes
+/// and ops the wall lowerers reproduce) and each byte-walking conjunct as its
+/// own leaf theorem over `Plans.{name}FieldProjectionPlan`.
+fn render_field_projection_claim_bundles(parts: &[FieldProjectionParts]) -> (String, String) {
+    render_split_bundles(
+        "fieldProjection",
+        "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "fieldProjectionClaims",
+        "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted, AverCert.AcceptedArtifact.fieldProjectionPlanForExport, AverCert.AcceptedArtifact.fieldProjectionPlanAccepted",
+        parts.len(),
+        |index| {
+            let FieldProjectionParts {
+                name,
+                body,
+                code_entry,
+                export_name_bytes,
+                result_ty,
+                struct_idx,
+                field_count,
+                self_idx,
+                type_idx,
+                carrier,
+            } = &parts[index];
+            let body_def = format!("fieldProjectionClaim{index}Body");
+            let code_def = format!("fieldProjectionClaim{index}CodeEntry");
+            let binding_def = format!("fieldProjectionClaim{index}Binding");
+            let check_plan = format!("fieldProjectionClaim{index}CheckPlan");
+            let lower_body = format!("fieldProjectionClaim{index}LowerBody");
+            let lower_code = format!("fieldProjectionClaim{index}LowerCode");
+            let func_binding = format!("fieldProjectionClaim{index}FuncBinding");
+            let struct_type = format!("fieldProjectionClaim{index}StructType");
+            let func_type = format!("fieldProjectionClaim{index}FuncType");
+            let plan = format!("AverCert.Plans.{name}FieldProjectionPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named constants so the byte lowerings\n\
+                 -- are not solved into large literals inside one proof term.\n\
+                 def {body_def} : List CertPrelude.WInstr := {body}\n\n\
+                 def {code_def} : AverCert.WasmSlice.ByteSeq := {code_entry}\n\n\
+                 def {binding_def} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_def} }}\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+                 -- `modBytes` binding decode and type-section walks.\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkFieldProjectionRawPlan {field_count} {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerFieldProjectionBody {struct_idx} {field_count} {plan} = some {body_def} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerFieldProjectionCodeEntry {carrier} {struct_idx} {field_count} {result_ty} {plan} = some {code_def} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_def} = some {binding_def} := by\n  \
+                   rfl\n\n\
+                 theorem {struct_type} :\n  \
+                   AverCert.WasmSlice.projectionStructTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {struct_idx} {field_count} {plan}.fieldIdx {result_ty} = true := by\n  \
+                   rfl\n\n\
+                 theorem {func_type} :\n  \
+                   AverCert.WasmSlice.projectionFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding_def}.typeIdx {struct_idx} {result_ty} = true := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, {check_plan}, ⟨{body_def}, {code_def}, {binding_def}, {lower_body}, {lower_code}, {func_binding}, {struct_type}, {func_type}, rfl, rfl⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1659,7 +1745,7 @@ fn render_artifact_expr_fragment_claims(
     let mut mutual_parts: Vec<MutualParts> = Vec::new();
     let mut verbatim_proofs = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
-    let mut field_projection_proofs = Vec::new();
+    let mut field_projection_parts: Vec<FieldProjectionParts> = Vec::new();
     let mut composition_parts: Vec<CompositionParts> = Vec::new();
     let mut string_concat_faces: Vec<Option<(String, String)>> = Vec::new();
     let mut construct_faces: Vec<Option<(String, String)>> = Vec::new();
@@ -2020,24 +2106,40 @@ fn render_artifact_expr_fragment_claims(
             }
             Cert::FieldProjection {
                 name,
+                self_idx,
+                type_idx,
                 carrier,
                 struct_idx,
                 field_count,
+                code_entry_bytes,
+                ops,
                 ..
             } => {
                 let Some((_plan, result_ty)) = field_projection_plan_from_cert(c) else {
                     continue;
                 };
+                let result_ty = field_projection_result_ty_lean_value(result_ty);
                 field_projection_claims.push(format!(
                     "({{ exportNameBytes := {bytes}, exportName := {export_name}, carrier := {carrier}, structIdx := {struct_idx}, fieldCount := {field_count}, resultTy := {result_ty}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.FieldProjectionClaim)",
                     bytes = render_byte_list(name.as_bytes()),
                     export_name = lean_str(name),
-                    result_ty = field_projection_result_ty_lean_value(result_ty),
                 ));
-                field_projection_proofs.push(
-                    "⟨rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
-                        .to_string(),
-                );
+                // Split acceptance proof; the `Cert` already carries the exact
+                // ops and code-entry bytes the wall lowerers reproduce, so no `_`
+                // witness is solved into a large literal. See
+                // `render_field_projection_claim_bundles`.
+                field_projection_parts.push(FieldProjectionParts {
+                    name: name.clone(),
+                    body: render_ops_value(ops),
+                    code_entry: render_byte_list(code_entry_bytes),
+                    export_name_bytes: render_byte_list(name.as_bytes()),
+                    result_ty,
+                    struct_idx: *struct_idx,
+                    field_count: *field_count,
+                    self_idx: *self_idx,
+                    type_idx: *type_idx,
+                    carrier: *carrier,
+                });
             }
             _ => {}
         }
@@ -2181,7 +2283,7 @@ fn render_artifact_expr_fragment_claims(
         + mutual_parts.len()
         + verbatim_proofs.len()
         + int_dispatch_proofs.len()
-        + field_projection_proofs.len()
+        + field_projection_parts.len()
         + composition_parts.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
@@ -2221,13 +2323,8 @@ fn render_artifact_expr_fragment_claims(
         "AverCert.AcceptedArtifact.intDispatchClaimAccepted, AverCert.AcceptedArtifact.intDispatchPlanForExport, AverCert.AcceptedArtifact.intDispatchPlanAccepted, AverCert.AcceptedArtifact.intDispatchCanonicalHost, AverCert.AcceptedArtifact.intDispatchCanonicalSlots",
         &int_dispatch_proofs,
     );
-    let (field_projection_bundles, field_projection_proof) = render_per_claim_bundles(
-        "fieldProjection",
-        "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "fieldProjectionClaims",
-        "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted, AverCert.AcceptedArtifact.fieldProjectionPlanForExport, AverCert.AcceptedArtifact.fieldProjectionPlanAccepted",
-        &field_projection_proofs,
-    );
+    let (field_projection_bundles, field_projection_proof) =
+        render_field_projection_claim_bundles(&field_projection_parts);
     let (composition_bundles, composition_claims_proof) =
         render_composition_claim_bundles(&composition_parts);
     // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
