@@ -60,39 +60,95 @@ fn recursion_claim_lean_value(c: &Cert) -> String {
     )
 }
 
-/// Concrete byte/plan acceptance needed to instantiate the artifact-shaped
-/// audited discharge from `Final.lean`. This is data reconstruction only: the
-/// source-model residual lives exclusively in the semantic bridge below.
-fn recursion_claim_acceptance_proof(c: &Cert) -> String {
-    let (self_idx, type_idx, carrier) = match c.inner() {
+/// Render the companion `{name}_recursionClaimAccepted` theorem as a SPLIT
+/// proof, mirroring `render_recursion_claim_bundles` in `render_project.rs`.
+///
+/// This bridge module re-proves acceptance for its export in a STANDALONE file,
+/// so the same monolithic witness tuple that inflated the artifact root also
+/// inflated this module. Emitting the lowered body, code-entry bytes and
+/// function binding as named `def`s and each byte-walking conjunct as its own
+/// leaf theorem keeps this module's per-claim peak at the largest single leaf.
+/// The leaves are stated over `AverCert.Plans.{name}RecursionPlan`, so the
+/// aggregate re-runs no byte-decode work.
+fn render_recursion_bridge_claim_accepted(c: &Cert) -> String {
+    let (name, self_idx, type_idx, carrier) = match c.inner() {
         Cert::Recursive {
+            name,
             self_idx,
             type_idx,
             carrier,
             ..
         }
         | Cert::AccumulatorRecursive {
+            name,
             self_idx,
             type_idx,
             carrier,
             ..
-        } => (self_idx, type_idx, carrier),
+        } => (name, self_idx, type_idx, carrier),
         _ => unreachable!("audited recursion acceptance has a recursion shape"),
     };
-    let plan = recursion_plan_from_cert(c).expect("audited recursion has a canonical plan");
-    let body = lower_expr_fragment_plan(&plan, *carrier)
+    let plan_cert = recursion_plan_from_cert(c).expect("audited recursion has a canonical plan");
+    let lowered_body = lower_expr_fragment_plan(&plan_cert, *carrier)
         .map(|ops| render_ops_value(&ops))
         .expect("audited recursion plan lowers to WInstr");
-    let bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier)
+    let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan_cert, *carrier)
         .expect("audited recursion plan lowers to exact code-entry bytes");
-    let bytes = render_byte_list(&bytes);
-    let binding = format!(
-        "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, \
-         codeEntry := {bytes} }} : AverCert.WasmSlice.FuncBinding)"
-    );
+    let code_entry_bytes = render_byte_list(&code_entry_bytes);
+    let export_name_bytes = render_byte_list(name.as_bytes());
+    let host_table = recursion_host_table_lean_value(c);
+    let claim = recursion_claim_lean_value(c);
+
+    let body = format!("{name}RecursionClaimBody");
+    let code_entry = format!("{name}RecursionClaimCodeEntry");
+    let binding = format!("{name}RecursionClaimBinding");
+    let check_plan = format!("{name}RecursionClaimCheckPlan");
+    let lower_body = format!("{name}RecursionClaimLowerBody");
+    let lower_code = format!("{name}RecursionClaimLowerCode");
+    let func_binding = format!("{name}RecursionClaimFuncBinding");
+    let check_shape = format!("{name}RecursionClaimCheckShape");
+    let func_type = format!("{name}RecursionClaimFuncType");
+    let host_types = format!("{name}RecursionClaimHostTypes");
+    let plan = format!("AverCert.Plans.{name}RecursionPlan");
+    let obligation = format!("AverCert.{name}Ob");
     format!(
-        "⟨rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+        "-- Witness data for `{name}` as named constants so no large literal is\n\
+         -- duplicated across the leaf statements or baked into the aggregate term.\n\
+         def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+         def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+         def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+           {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+         -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+         -- `modBytes` binding decode and type-section walks.\n\
+         theorem {check_plan} :\n  \
+           AverCert.PlanCheck.checkRecursionRawPlan {plan} = true := by\n  \
+           rfl\n\n\
+         theorem {lower_body} :\n  \
+           AverCert.PlanLower.lowerRecursionBody {carrier} {plan} = some {body} := by\n  \
+           rfl\n\n\
+         theorem {lower_code} :\n  \
+           AverCert.PlanBytes.lowerRecursionCodeEntry {carrier} {plan} = some {code_entry} := by\n  \
+           rfl\n\n\
+         theorem {func_binding} :\n  \
+           AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+           rfl\n\n\
+         theorem {check_shape} :\n  \
+           AverCert.PlanCheck.checkRecursionPlanShape {binding}.funcIdx {host_table} {obligation}.totalityRole {plan} = true := by\n  \
+           rfl\n\n\
+         theorem {func_type} :\n  \
+           AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {plan}.params.length {carrier} = true := by\n  \
+           rfl\n\n\
+         theorem {host_types} :\n  \
+           AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+           rfl\n\n\
+         theorem {name}_recursionClaimAccepted :\n    \
+           AverCert.AcceptedArtifact.recursionClaimAccepted\n      \
+             AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n      \
+             AverCert.manifest {claim} := by\n  \
+           dsimp [AverCert.AcceptedArtifact.recursionClaimAccepted,\n    \
+             AverCert.AcceptedArtifact.recursionPlanForExport,\n    \
+             AverCert.AcceptedArtifact.recursionPlanAccepted]\n  \
+           exact ⟨rfl, rfl, {check_plan}, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{lower_body}, {lower_code}, {func_binding}, rfl, {check_shape}, {func_type}, {host_types}, rfl⟩⟩⟩\n"
     )
 }
 
@@ -117,19 +173,11 @@ fn render_unary_recursion_semantic_bridge(c: &Cert, model_info: &ModelInfo) -> S
     let shape = recursion_shape_lean_value(c);
     let combine = recursion_combine_lean_value(c);
     let claim = recursion_claim_lean_value(c);
-    let acceptance = recursion_claim_acceptance_proof(c);
+    let claim_accepted = render_recursion_bridge_claim_accepted(c);
     format!(
         r#"/-! ### {name} — option-(b) recursion semantic bridge -/
 
-theorem {name}_recursionClaimAccepted :
-    AverCert.AcceptedArtifact.recursionClaimAccepted
-      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-      AverCert.manifest {claim} := by
-  dsimp [AverCert.AcceptedArtifact.recursionClaimAccepted,
-    AverCert.AcceptedArtifact.recursionPlanForExport,
-    AverCert.AcceptedArtifact.recursionPlanAccepted]
-  exact {acceptance}
-
+{claim_accepted}
 theorem {name}_recursionSemanticBridge :
     AcceptanceSoundness.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
@@ -182,19 +230,11 @@ fn render_accumulator_recursion_semantic_bridge(c: &Cert, model_info: &ModelInfo
     };
     let model_name = c.model_lean_name(model_info);
     let claim = recursion_claim_lean_value(c);
-    let acceptance = recursion_claim_acceptance_proof(c);
+    let claim_accepted = render_recursion_bridge_claim_accepted(c);
     format!(
         r#"/-! ### {name} — option-(b) accumulator recursion semantic bridge -/
 
-theorem {name}_recursionClaimAccepted :
-    AverCert.AcceptedArtifact.recursionClaimAccepted
-      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-      AverCert.manifest {claim} := by
-  dsimp [AverCert.AcceptedArtifact.recursionClaimAccepted,
-    AverCert.AcceptedArtifact.recursionPlanForExport,
-    AverCert.AcceptedArtifact.recursionPlanAccepted]
-  exact {acceptance}
-
+{claim_accepted}
 theorem {name}_recursionSemanticBridge :
     AcceptanceSoundness.recursionSemanticBridge {claim}
       AverCert.Plans.{name}RecursionPlan := by
