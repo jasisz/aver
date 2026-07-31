@@ -55,14 +55,46 @@ def exprFragmentPlanAccepted
       some { arity := plan.params.length,
              nlocals := exprFragmentNLocals plan, body := body }
 
+/-- Byte-derived carrier binding for a source fragment that cites host roles.
+    A claim with a NON-EMPTY `hostTable` has proof faces that model at least
+    one helper against the claimed carrier index (`boxRef claim.carrier` in the
+    tag-dispatch and fused vector-read faces, the arith contracts elsewhere),
+    so that index must be the one the module's own type section decodes to:
+    `CertDecode.carrierState` (three-state, fail-closed) must return
+    `some (some carrier)`. A byte-provably carrierless module (`some none`) and
+    a module whose type section does not decode (`none`) both reject — no
+    host-role-citing fragment can live in either.
+
+    An EMPTY `hostTable` stays unconstrained: generic Bool fragments,
+    projections and float/string-boundary fragments cite no role, legitimately
+    live in carrierless modules, and their carrier field is inert there.
+
+    This binding and the declared-type pin beside it are COMPLEMENTARY, not
+    alternatives. `hostTableFuncTypesMatch` compares each helper's declared
+    function type against the CLAIMED carrier, so on this family alone it was
+    circular (the expr-fragment carrier is claim data bound to no decoder —
+    see the scope note at `decodedStrictCarrierIndex`): a producer that
+    declares the box helper AT a fake supertype and claims that same fake
+    index satisfies the pin, while the template-pinned box BODY still builds
+    structs at the real byte-derived carrier — the face's `boxRef` would be a
+    fiction. The equality here removes the free reference point (catching
+    "both consistently fake"); the declared-type pin then catches "claimed
+    carrier right, helper type wrong", which no carrier equality can see. -/
+def symFragmentHostCarrierBound
+    (modBytes modLen carrier : Nat) : List (HostRole × Nat) → Prop
+  | [] => True
+  | _ :: _ => CertDecode.carrierState modBytes modLen = some (some carrier)
+
 /-- Artifact-level acceptance for one source-level symbolic fragment export.
     The source plan is still untrusted data: the audited checker/encoder must
     accept it and produce the representation-level expr-fragment plan before
     the existing byte-origin predicate is allowed to run. Every host-role index
     the encoded plan cites (each `hostCall` node and the fused vector-read
     node's `toIndexIdx`/`boxIdx`) is resolved by the encoder through
-    `hostTable`, so pinning the declared function type of every table entry
-    pins the declared type of every helper the proof faces model. -/
+    `hostTable`, so a claim citing any role must present the byte-derived
+    carrier (`symFragmentHostCarrierBound`) AND every table entry's declared
+    function type must match that carrier (`hostTableFuncTypesMatch`) — the
+    two halves of the helper pin the faces rely on. -/
 def symFragmentPlanAccepted
     (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
@@ -75,6 +107,7 @@ def symFragmentPlanAccepted
   match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
       hostTable structTable plan with
   | some exprPlan =>
+      symFragmentHostCarrierBound modBytes modLen carrier hostTable ∧
       AverCert.WasmSlice.hostTableFuncTypesMatch
         modBytes modLen carrier hostTable = true ∧
       exprFragmentPlanAccepted
@@ -1498,19 +1531,24 @@ def decodedCarrierIndex
 
     The expression-fragment family is NOT among them and satisfies neither this
     binding nor `decodedCarrierIndex`: `symFragmentClaims` is deliberately absent
-    from `decodedNonExprClaimFacts` (see the note there), so nothing in this file
-    constrains its carrier. What binds an `expr-fragment-v1` claim's carrier is
-    `ExprFragmentAccepted.accepted` alone, and it does so purely by BYTE
-    EQUALITY: the declared index is spliced into the synthesized locals prelude
-    (`01 01 63 <carrier>`) and into every carrier-typed instruction immediate,
-    and `WasmSlice.exactFuncBindingForExport` requires the result to equal the
-    export's real code entry; the integer-family renders additionally pin the
-    declared function type through `WasmSlice.funcTypeMatches`, which matches
-    each `intCarrier` position against `(ref null carrier)`. That index is
-    therefore confirmed against the CODE and the SIGNATURE, and is never tied to
-    `CertDecode.carrierState`, `CertDecode.decodeCarrier` or
-    `ArithHostParams.carrier`. Do not describe this file's bindings as covering
-    "every family": they cover every family whose claims appear below. -/
+    from `decodedNonExprClaimFacts` (see the note there). What binds an
+    `expr-fragment-v1` claim's carrier depends on whether the claim cites host
+    roles. A ROLE-FREE claim is bound by `ExprFragmentAccepted.accepted` alone,
+    purely by BYTE EQUALITY: the declared index is spliced into the synthesized
+    locals prelude (`01 01 63 <carrier>`) and into every carrier-typed
+    instruction immediate, and `WasmSlice.exactFuncBindingForExport` requires
+    the result to equal the export's real code entry; the integer-family
+    renders additionally pin the declared function type through
+    `WasmSlice.funcTypeMatches`, which matches each `intCarrier` position
+    against `(ref null carrier)`. Those equalities confirm the index against
+    the CODE and the SIGNATURE but never against a decoder — a module can spell
+    them out consistently at ANY index — which is exactly why a claim with a
+    NON-EMPTY `hostTable` carries the additional decoder equality
+    `symFragmentHostCarrierBound` inside `symFragmentPlanAccepted`: its faces
+    model helpers at the claimed index, so that index must be the one
+    `CertDecode.carrierState` derives from the bytes. Do not describe this
+    file's decoded-claim bindings as covering "every family": they cover every
+    family whose claims appear below. -/
 def decodedStrictCarrierIndex
     (modBytes modLen : Nat) (obligation : Obligation) : Prop :=
   CertDecode.decodeCarrier modBytes modLen = some obligation.carrier
@@ -1720,11 +1758,15 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     (`construct-v1`) from being stated over the reserved index.
 
     Neither mechanism reaches the expression-fragment family, whose claims are
-    absent from `decodedNonExprClaimFacts` and whose carrier is confirmed only
-    by the byte equalities of `ExprFragmentAccepted.accepted` — never against
-    `carrierState`, `decodeCarrier` or `ArithHostParams.carrier`. A carrierless
-    module can therefore carry expression-fragment claims as well as
-    String.concat ones.
+    absent from `decodedNonExprClaimFacts`. A ROLE-FREE expression-fragment
+    claim's carrier is confirmed only by the byte equalities of
+    `ExprFragmentAccepted.accepted`, and a carrierless module can therefore
+    carry such claims as well as String.concat ones. A claim whose `hostTable`
+    is non-empty carries its own decoder equality instead
+    (`symFragmentHostCarrierBound`, inside `symFragmentPlanAccepted`), which
+    pins the claimed carrier to the same `carrierState` this conjunct pins
+    `ArithHostParams.carrier` to — so a role-citing fragment and the arith
+    table it cites can never disagree about where the carrier lives.
 
     `box` and `toIndex` carry a SECOND pin, to their runtime export names
     (#736 for `box`), and both pins are kept because they constrain different

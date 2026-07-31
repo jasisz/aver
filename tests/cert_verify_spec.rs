@@ -6811,13 +6811,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// attack (b)). The permuted pair is proven byte-identical (`rfl`),
 /// sibling-blind (`rfl`), the honest tables close the equality by `rfl`, and
 /// the permuted/sneaky builders are rejected exactly by the equality conjunct
-/// (each `≠` exhibited through a distinguishing input). The host-table
-/// declared-type pin (`hostTableFuncTypesMatch`, added alongside this guard's
-/// conjuncts) does not re-reject the permuted table: add and sub fix the SAME
-/// canonical declared signature (`checkHostRoleFuncType` collapses to one
-/// `checkCanonicalFuncType 2` for both, proved by `rfl` in the host-table
-/// type-pin GuardIso), so the equality conjunct remains the sole rejector and
-/// this attribution is unweakened.
+/// (each `≠` exhibited through a distinguishing input).
 ///
 /// LOCALS-COUNT bind (`nlocals := armCount + 2` in `intDispatchPlanAccepted`):
 /// a code table claiming ZERO locals for the honest body traps on its first
@@ -7125,6 +7119,14 @@ example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nod
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
+/// The permuted-table probes below attribute their rejection to the
+/// host-builder equality conjunct alone, and the host-table declared-type pin
+/// (`hostTableFuncTypesMatch`, added alongside the dispatch guards) does not
+/// weaken that attribution: add and sub fix the SAME canonical declared
+/// signature (`checkHostRoleFuncType` collapses to one
+/// `checkCanonicalFuncType 2` for both, proved by `rfl` in the host-table
+/// type-pin GuardIso), so a consistently permuted add/sub table still
+/// type-checks and the equality conjunct remains the sole rejector.
 #[test]
 fn int_dispatch_kernel_guards_are_isolating() {
     if Command::new("lake").arg("--version").output().is_err() {

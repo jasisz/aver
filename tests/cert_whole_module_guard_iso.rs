@@ -2600,17 +2600,22 @@ fn slot_count_probe_plan(opt_idx: u32, box_idx: u32) -> aver::codegen::cert::Exp
 }
 
 /// One `slotCount` tag-dispatch module, parameterized by the CLAIMED carrier
-/// index its dispatch body cites. Type layout:
-///   0 `$fake` — an OPEN two-field struct `{i64, anyref}` (NOT a carrier),
+/// index its dispatch body cites and by the box helper's DECLARED result
+/// reference (ref-type tag byte, heap index byte). Type layout:
+///   0 `$fake` — an OPEN two-field struct `{i64, anyref}` (NOT a carrier, so
+///     `CertDecode.carrierState` skips it and derives `some (some 1)`),
 ///   1 `$real` — the real three-field carrier `{i64, anyref, i32}`, declared
 ///     `sub final $fake` so `(ref null 1) <: (ref null 0)` holds nominally,
 ///   2 `$opt`  — the scrutinee struct `{i32 tag, anyref payload}`,
-///   3 the box helper's function type `[i64] -> (ref null 1)` (ALWAYS the
-///     real carrier — this is the declared type the acceptance pin probes),
+///   3 the box helper's function type `[i64] -> (result)` with the declared
+///     result supplied by the caller — `(0x63, 1)` is the canonical
+///     `(ref null $real)`, `(0x63, 0)` the fake supertype, `(0x64, 1)` the
+///     non-nullable `(ref $real)`,
 ///   4 the dispatch function type `[(ref null 2)] -> (ref null claim)`.
-/// Function 0 is the box helper, function 1 the exported `slotCount` whose
-/// code entry is EXACTLY the canonical byte lowering for the claimed carrier.
-fn tag_dispatch_type_confusion_module(claim_carrier: u32) -> Vec<u8> {
+/// Function 0 is the box helper (its BODY always builds `struct.new $real`),
+/// function 1 the exported `slotCount` whose code entry is EXACTLY the
+/// canonical byte lowering for the claimed carrier.
+fn tag_dispatch_type_confusion_module(claim_carrier: u32, box_result: (u8, u8)) -> Vec<u8> {
     assert!(claim_carrier < 64, "single-byte s33 heap index expected");
     let plan = slot_count_probe_plan(2, 0);
     let dispatch_entry =
@@ -2635,8 +2640,8 @@ fn tag_dispatch_type_confusion_module(claim_carrier: u32) -> Vec<u8> {
     ]);
     // 2 $opt: (struct (field i32) (field anyref))
     types.extend([0x5f, 0x02, 0x7f, 0x00, 0x6e, 0x00]);
-    // 3 box: (func (param i64) (result (ref null $real)))
-    types.extend([0x60, 0x01, 0x7e, 0x01, 0x63, 0x01]);
+    // 3 box: (func (param i64) (result (<box_result.0> <box_result.1>)))
+    types.extend([0x60, 0x01, 0x7e, 0x01, box_result.0, box_result.1]);
     // 4 dispatch: (func (param (ref null $opt)) (result (ref null claim)))
     types.extend([0x60, 0x01, 0x63, 0x02, 0x01, 0x63, claim_carrier as u8]);
     let funcs = vec![0x02, 0x03, 0x04];
@@ -2659,38 +2664,65 @@ fn tag_dispatch_type_confusion_module(claim_carrier: u32) -> Vec<u8> {
     module
 }
 
-/// GuardIso for the host-table declared-function-type pin
-/// (`hostTableFuncTypesMatch`), on the LIVE attack arm: tag dispatch. Helper
-/// BODIES are pinned by template byte equality elsewhere, but a helper's
-/// DECLARED type was free — a box helper declared `[i64] -> (ref null $real)`
-/// wasm-validates inside a dispatch body whose claimed carrier is a strict
-/// SUPERTYPE `$fake` (nominal width subtyping), while every proof face models
-/// the box role as `boxRef claim.carrier` over the claimed index — a fiction.
+/// GuardIso for the TWO complementary host-helper pins on the sym-fragment
+/// acceptance arm (`symFragmentPlanAccepted`), on the LIVE attack arm: tag
+/// dispatch. Helper BODIES are pinned by template byte equality elsewhere;
+/// these conjuncts pin what that equality never reads. The declared-type pin
+/// (`hostTableFuncTypesMatch`) compares each cited helper's declared function
+/// type against the CLAIMED carrier — but the expr-fragment carrier is itself
+/// claim data bound to no decoder, so alone the pin is circular: a producer
+/// that declares the box helper AT a fake supertype and claims that same fake
+/// index satisfies it while the pinned box body still builds `struct.new
+/// $real`. The byte-derived carrier binding (`symFragmentHostCarrierBound`)
+/// closes that by forcing a role-citing claim's carrier to equal
+/// `CertDecode.carrierState`; the declared-type pin in turn catches a wrong
+/// helper declaration at the RIGHT carrier, which no carrier equality sees.
 ///
-/// Both probe modules are REAL validated wasm (`wasmparser::validate_all`
-/// passes, including the `(ref null $real) <: (ref null $fake)` use), so the
-/// arm is reachable, not hypothetical. The hostile pair — claim.carrier = the
-/// two-field non-carrier supertype, box declared to return the real carrier —
-/// satisfies EVERY other acceptance conjunct (the canonical code entry for the
-/// fake carrier really sits in the module, the export's own signature really
-/// returns `(ref null $fake)`, the scrutinee gate holds), so:
+/// This is a PLAN-LEVEL demonstration, elaborated directly against
+/// `symFragmentPlanAccepted` on crafted modules. Every probe module is real
+/// validated wasm (`wasmparser::validate_all` passes, including the
+/// `(ref null $real) <: (ref null $fake)` uses), but each exports ONLY
+/// `slotCount`: at whole-artifact level none of them carries a host-role
+/// table, and no tag-dispatch face or full-artifact acceptance is exhibited
+/// here — whole-module conjuncts (`arithTableCheck`, faces, manifest
+/// coverage) are deliberately out of frame. What the probes show is that
+/// within this predicate each pin is the SOLE rejector of its attack shape,
+/// with both weakened copies cut from the LIVE materialized wall source
+/// (surgery asserted exactly-once — never a hand-maintained copy):
 ///
-///   - the REAL `symFragmentPlanAccepted` REJECTS it, and the rejection is
-///     extracted at exactly the `hostTableFuncTypesMatch` conjunct;
-///   - the copy weakened by EXACTLY that conjunct — a literal extraction from
-///     the LIVE materialized wall source, surgery asserted exactly-once —
-///     ACCEPTS the same hostile pair (attribution THROUGH acceptance);
-///   - the honest twin (claim.carrier = the real carrier) is ACCEPTED by the
-///     real predicate, so the rejection is not a framing artefact.
+///   - hostileSig — claim = the byte-derived carrier `$real`, box DECLARED at
+///     the non-nullable `(ref $real)` instead of the canonical
+///     `(ref null $real)`: the real predicate REJECTS it, the copy weakened
+///     by EXACTLY the declared-type conjunct ACCEPTS it, and the copy
+///     weakened by the carrier conjunct still rejects it.
+///   - hostileCarrier — box declared AT the fake supertype and the claim
+///     citing that same fake index ("both consistently fake", the shape the
+///     declared-type pin alone cannot see): the declared-type pin holds of
+///     it; the real predicate REJECTS it, the copy weakened by EXACTLY the
+///     carrier conjunct ACCEPTS it, and the copy weakened by the
+///     declared-type conjunct still rejects it.
+///   - hostileBoth — claim cites the fake index while the box is declared at
+///     the real carrier: rejected by the real predicate AND by each
+///     singly-weakened copy; only removing both pins would admit it.
+///   - the honest twin (claim = real carrier, canonical declaration) is
+///     ACCEPTED by the real predicate and by both weakened copies, so no
+///     rejection above is a framing artefact.
 #[test]
 fn host_table_declared_type_pin_is_isolated_and_weaken_confirmed() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping host-table type-pin GuardIso test: `lake` not available");
         return;
     }
-    let hostile = tag_dispatch_type_confusion_module(0);
-    let honest = tag_dispatch_type_confusion_module(1);
-    for (label, bytes) in [("hostile", &hostile), ("honest", &honest)] {
+    let honest = tag_dispatch_type_confusion_module(1, (0x63, 1));
+    let hostile_sig = tag_dispatch_type_confusion_module(1, (0x64, 1));
+    let hostile_carrier = tag_dispatch_type_confusion_module(0, (0x63, 0));
+    let hostile_both = tag_dispatch_type_confusion_module(0, (0x63, 1));
+    for (label, bytes) in [
+        ("honest", &honest),
+        ("hostileSig", &hostile_sig),
+        ("hostileCarrier", &hostile_carrier),
+        ("hostileBoth", &hostile_both),
+    ] {
         wasmparser::Validator::new()
             .validate_all(bytes)
             .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
@@ -2729,20 +2761,33 @@ fn host_table_declared_type_pin_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    // Literal weakened copy from the LIVE materialized acceptance source: the
-    // host-table declared-type conjunct is deleted and nothing else moves.
+    // Literal weakened copies from the LIVE materialized acceptance source:
+    // one deletes EXACTLY the declared-type conjunct, the other EXACTLY the
+    // byte-derived carrier conjunct, and nothing else moves in either.
     let accepted_core = std::fs::read_to_string(wall_dir.join("AcceptedArtifactCore.lean"))
         .expect("materialized wall has AcceptedArtifactCore.lean");
-    let mut weak_def = extract_wall_def(&accepted_core, "symFragmentPlanAccepted");
-    let strict_conjunct = "      AverCert.WasmSlice.hostTableFuncTypesMatch\n        \
-                           modBytes modLen carrier hostTable = true ∧\n";
-    assert_eq!(
-        weak_def.matches(strict_conjunct).count(),
-        1,
-        "the host-table declared-type conjunct moved; refit the GuardIso surgery"
+    let live_def = extract_wall_def(&accepted_core, "symFragmentPlanAccepted");
+    let sig_conjunct = "      AverCert.WasmSlice.hostTableFuncTypesMatch\n        \
+                        modBytes modLen carrier hostTable = true ∧\n";
+    let carrier_conjunct =
+        "      symFragmentHostCarrierBound modBytes modLen carrier hostTable ∧\n";
+    for (conjunct, what) in [
+        (sig_conjunct, "host-table declared-type"),
+        (carrier_conjunct, "byte-derived carrier"),
+    ] {
+        assert_eq!(
+            live_def.matches(conjunct).count(),
+            1,
+            "the {what} conjunct moved; refit the GuardIso surgery"
+        );
+    }
+    let weak_sig_def = live_def
+        .replace(sig_conjunct, "")
+        .replace("symFragmentPlanAccepted", "weakSigSymFragmentPlanAccepted");
+    let weak_carrier_def = live_def.replace(carrier_conjunct, "").replace(
+        "symFragmentPlanAccepted",
+        "weakCarrierSymFragmentPlanAccepted",
     );
-    weak_def = weak_def.replace(strict_conjunct, "");
-    weak_def = weak_def.replace("symFragmentPlanAccepted", "weakSymFragmentPlanAccepted");
 
     let lean = format!(
         r#"import AcceptedArtifactCore
@@ -2750,15 +2795,24 @@ fn host_table_declared_type_pin_is_isolated_and_weaken_confirmed() {
 open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.PlanCheck
 set_option maxRecDepth 300000
 
--- Two assemblies of ONE module (crafted and wasmparser-validated by the test
+-- Four assemblies of ONE module (crafted and wasmparser-validated by the test
 -- harness): type 0 is an open two-field NON-carrier struct, type 1 the real
--- three-field carrier declared as its final subtype, and the box helper at
--- function 0 is declared `[i64] -> (ref null 1)` in BOTH. Only the claimed
--- carrier the dispatch body cites differs: 0 (hostile) vs 1 (honest).
-def hostileBytes : Nat := 0x{hostile_hex}
-def hostileLen : Nat := {hostile_len}
+-- three-field carrier declared as its final subtype — so the byte-derived
+-- carrier state is `some (some 1)` in ALL four — and the box helper's BODY
+-- always builds `struct.new $real`. They differ only in the claimed carrier
+-- the dispatch body cites and in the box helper's DECLARED result type:
+--   honest         claim 1, box declared `[i64] -> (ref null 1)`
+--   hostileSig     claim 1, box declared `[i64] -> (ref 1)` (non-nullable)
+--   hostileCarrier claim 0, box declared `[i64] -> (ref null 0)` (the fake)
+--   hostileBoth    claim 0, box declared `[i64] -> (ref null 1)`
 def honestBytes : Nat := 0x{honest_hex}
 def honestLen : Nat := {honest_len}
+def hostileSigBytes : Nat := 0x{hostile_sig_hex}
+def hostileSigLen : Nat := {hostile_sig_len}
+def hostileCarrierBytes : Nat := 0x{hostile_carrier_hex}
+def hostileCarrierLen : Nat := {hostile_carrier_len}
+def hostileBothBytes : Nat := 0x{hostile_both_hex}
+def hostileBothLen : Nat := {hostile_both_len}
 
 def slotCountName : AverCert.WasmSlice.ByteSeq := [115, 108, 111, 116, 67, 111, 117, 110, 116]
 def probeHostTable : List (HostRole × Nat) := [(.box, 0)]
@@ -2800,59 +2854,175 @@ def probeOb (carrier : Nat) : Obligation :=
     domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
     model := fun _ => 0 }}
 
--- HONEST control: the claim names the real carrier and the REAL predicate
--- accepts, so the rejection below is not an artefact of the framing.
+-- Byte-derived ground truth: the type sections of all four modules decode to
+-- the SAME carrier state — the real three-field carrier at type 1.
+example : CertDecode.carrierState honestBytes honestLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState hostileSigBytes hostileSigLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState hostileCarrierBytes hostileCarrierLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState hostileBothBytes hostileBothLen = some (some 1) := by
+  decide +kernel
+
+-- HONEST control: the claim names the real carrier with the canonical
+-- declaration and the REAL predicate accepts, so no rejection below is an
+-- artefact of the framing.
 example : symFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- Conjunct-level ground truth for the declared-type pin. Note the third line:
+-- the pin HOLDS of hostileCarrier — box declared at the fake supertype, claim
+-- citing the same fake index — which is exactly the circularity the carrier
+-- binding exists to close.
+example : AverCert.WasmSlice.hostTableFuncTypesMatch honestBytes honestLen
+    1 probeHostTable = true := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
+    1 probeHostTable = false := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileCarrierBytes hostileCarrierLen
+    0 probeHostTable = true := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
+    0 probeHostTable = false := by decide +kernel
+
+-- hostileSig is rejected by the real predicate, at exactly the declared-type
+-- pin (its carrier bound holds: claim 1 IS the byte-derived carrier).
+example : ¬ symFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : symFragmentHostCarrierBound hostileSigBytes hostileSigLen 1 probeHostTable ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
+        1 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  exact absurd h'.2.1 (by decide +kernel)
+
+-- hostileCarrier is rejected by the real predicate, at exactly the carrier
+-- binding (the declared-type pin holds of it, per the ground truth above).
+example : ¬ symFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentHostCarrierBound hostileCarrierBytes hostileCarrierLen 0 probeHostTable ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch hostileCarrierBytes hostileCarrierLen
+        0 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  have hBound : CertDecode.carrierState hostileCarrierBytes hostileCarrierLen
+      = some (some 0) := h'.1
+  exact absurd hBound (by decide +kernel)
+
+-- hostileBoth is rejected by the real predicate (either pin rejects it).
+example : ¬ symFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentHostCarrierBound hostileBothBytes hostileBothLen 0 probeHostTable ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
+        0 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  have hBound : CertDecode.carrierState hostileBothBytes hostileBothLen
+      = some (some 0) := h'.1
+  exact absurd hBound (by decide +kernel)
+
+/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
+    host-table declared-function-type conjunct. -/
+{weak_sig_def}
+
+/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
+    byte-derived carrier conjunct. -/
+{weak_carrier_def}
+
+-- ATTRIBUTION THROUGH ACCEPTANCE, declared-type pin: the copy weakened by
+-- exactly that conjunct accepts hostileSig — every remaining conjunct holds
+-- of it, the carrier binding and the byte binding included.
+example : weakSigSymFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
     1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
   ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
    ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
 
--- The declared-type pin is the discriminator, in both directions.
-example : AverCert.WasmSlice.hostTableFuncTypesMatch honestBytes honestLen
-    1 probeHostTable = true := by decide +kernel
-example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBytes hostileLen
-    0 probeHostTable = false := by decide +kernel
+-- ATTRIBUTION THROUGH ACCEPTANCE, carrier binding: the copy weakened by
+-- exactly that conjunct accepts hostileCarrier — the declared-type pin and
+-- every byte conjunct hold of it, so WITHOUT the carrier binding the
+-- consistently-fake pair would be admitted.
+example : weakCarrierSymFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) :=
+  ⟨rfl, rfl, rfl, bodyFor 0, entryFor 0, ⟨1, 4, entryFor 0⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
 
--- THE HOSTILE PAIR is rejected by the real predicate, at exactly that pin.
-example : ¬ symFragmentPlanAccepted hostileBytes hostileLen slotCountName "slotCount"
+-- The attributions are EXCLUSIVE: each singly-weakened copy still rejects the
+-- OTHER hostile pair, so neither conjunct shadows the other.
+example : ¬ weakSigSymFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen
+    slotCountName "slotCount"
     0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
   intro h
-  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBytes hostileLen
+  have h' : symFragmentHostCarrierBound hostileCarrierBytes hostileCarrierLen 0 probeHostTable ∧
+      exprFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  have hBound : CertDecode.carrierState hostileCarrierBytes hostileCarrierLen
+      = some (some 0) := h'.1
+  exact absurd hBound (by decide +kernel)
+example : ¬ weakCarrierSymFragmentPlanAccepted hostileSigBytes hostileSigLen
+    slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
+        1 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  exact absurd h'.1 (by decide +kernel)
+
+-- The pins are COMPLEMENTARY, not redundant: hostileBoth is still rejected by
+-- EACH singly-weakened copy — only removing both conjuncts would admit it.
+example : ¬ weakSigSymFragmentPlanAccepted hostileBothBytes hostileBothLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentHostCarrierBound hostileBothBytes hostileBothLen 0 probeHostTable ∧
+      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  have hBound : CertDecode.carrierState hostileBothBytes hostileBothLen
+      = some (some 0) := h'.1
+  exact absurd hBound (by decide +kernel)
+example : ¬ weakCarrierSymFragmentPlanAccepted hostileBothBytes hostileBothLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
         0 probeHostTable = true ∧
-      exprFragmentPlanAccepted hostileBytes hostileLen slotCountName "slotCount"
+      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
         0 probePlan (probeOb 0) := h
   exact absurd h'.1 (by decide +kernel)
 
-/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
-    host-table declared-function-type conjunct. -/
-{weak_def}
-
--- ATTRIBUTION THROUGH ACCEPTANCE: the weakened copy accepts the SAME hostile
--- pair — every remaining conjunct holds of it, the byte binding included.
-example : weakSymFragmentPlanAccepted hostileBytes hostileLen slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) :=
-  ⟨rfl, rfl, bodyFor 0, entryFor 0, ⟨1, 4, entryFor 0⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- The weakening is strict: the honest pair still passes the weakened copy.
-example : weakSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+-- Both weakenings are strict: the honest pair still passes each weakened copy.
+example : weakSigSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
     1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+example : weakCarrierSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
    ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
 
 -- Attribution of the OLDER role-permutation probes is preserved: the add and
--- sub roles fix the SAME canonical declared signature, so this pin is blind to
--- a consistent add/sub table permutation and the host-builder equality remains
--- that vector's sole rejector.
+-- sub roles fix the SAME canonical declared signature, so the declared-type
+-- pin is blind to a consistent add/sub table permutation and the host-builder
+-- equality remains that vector's sole rejector. (The carrier binding is blind
+-- to it as well: a permutation moves indices, never the claimed carrier.)
 example : ∀ carrier entry,
     AverCert.WasmSlice.checkHostRoleFuncType carrier .add entry
       = AverCert.WasmSlice.checkHostRoleFuncType carrier .sub entry :=
   fun _ _ => rfl
 "#,
-        hostile_hex = hex_le(&hostile),
-        hostile_len = hostile.len(),
         honest_hex = hex_le(&honest),
         honest_len = honest.len(),
+        hostile_sig_hex = hex_le(&hostile_sig),
+        hostile_sig_len = hostile_sig.len(),
+        hostile_carrier_hex = hex_le(&hostile_carrier),
+        hostile_carrier_len = hostile_carrier.len(),
+        hostile_both_hex = hex_le(&hostile_both),
+        hostile_both_len = hostile_both.len(),
     );
     std::fs::write(wall_dir.join("HostTableTypePinGuardIso.lean"), lean).unwrap();
     let check = Command::new("lake")

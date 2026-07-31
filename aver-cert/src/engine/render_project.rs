@@ -1013,11 +1013,15 @@ fn render_artifact_expr_fragment_claims(
                 let func_binding = format!(
                     "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
-                // The first `rfl` discharges the host-table
-                // declared-function-type pin (`hostTableFuncTypesMatch`),
-                // stated ahead of the export/carrier binds.
+                // The first component discharges the byte-derived carrier
+                // binding (`symFragmentHostCarrierBound`), keyed on the exact
+                // host-table literal spliced into the claim; the `rfl` after
+                // it discharges the host-table declared-function-type pin
+                // (`hostTableFuncTypesMatch`). Both are stated ahead of the
+                // export/carrier binds.
+                let carrier_bound = expr_fragment_host_carrier_bound_proof(host_table_lean);
                 let proof = format!(
-                    "⟨rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨{carrier_bound}, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
                 );
                 if expr_fragment_source_plan(source_plan, plan).is_some() {
