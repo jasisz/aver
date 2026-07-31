@@ -106,11 +106,11 @@ fn composition_claim_acceptance_proof(
             entry.self_idx, entry.type_idx, code_entry
         );
         let member_proof = format!(
-            "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl⟩⟩"
+            "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
         );
         named_proof = format!("⟨{member_proof}, {named_proof}⟩");
     }
-    format!("⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩")
+    format!("⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩⟩")
 }
 
 /// Option-(b) composition bridge. Root glue is discharged by the audited

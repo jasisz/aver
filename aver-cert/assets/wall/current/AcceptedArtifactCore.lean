@@ -55,10 +55,131 @@ def exprFragmentPlanAccepted
       some { arity := plan.params.length,
              nlocals := exprFragmentNLocals plan, body := body }
 
+/-- Whether one representation-level fragment type names the Int carrier.
+    Every `FragTy` constructor is listed: a new one makes this match
+    non-exhaustive and stops the wall building, rather than silently defaulting
+    to "does not name the carrier". -/
+def fragTyIsIntCarrier : FragTy → Bool
+  | .intCarrier => true
+  | .f64 | .boolI32 | .i64 | .rawI32 | .ref | .adtRef => false
+
+/-- Does any node of this block — or of any block nested inside it — carry the
+    Int-carrier type?
+
+    Every `FragNodeKind` constructor is listed explicitly, so a future
+    block-carrying node cannot slip past the walk unvisited: adding one makes
+    this match non-exhaustive and the wall stops building. Running out of fuel
+    answers `true` (REQUIRE the binding), never `false`; the walk is used to
+    decide whether a constraint applies, so its unreachable case must fail
+    closed. -/
+def fragBlockMentionsIntCarrierFuel : Nat → FragBlock → Bool
+  | 0, _ => true
+  | fuel + 1, block =>
+      block.nodes.any fun node =>
+        fragTyIsIntCarrier node.ty ||
+          match node.kind with
+          | .ifElse _ thenBlock elseBlock =>
+              fragBlockMentionsIntCarrierFuel fuel thenBlock ||
+                fragBlockMentionsIntCarrierFuel fuel elseBlock
+          | .local _ | .constBool _ | .constI64 _ | .constI32 _
+          | .constF64Bits _ | .structGet _ _ | .structGetUser _ _ _
+          | .refIsNull _ | .prim _ _ | .hostCall _ _ _ | .selfCall _ _ _
+          | .vectorGetOrDefault _ _ _ _ => false
+
+/-- Whether an encoded fragment plan names the Int carrier ANYWHERE. A
+    `FragTy` occurs in exactly three positions of an `ExprFragmentRawPlan` —
+    the parameter list, the result, and `FragNode.ty` of every node in the body
+    and in every nested block — and this visits all three. -/
+def fragPlanMentionsIntCarrier (plan : ExprFragmentRawPlan) : Bool :=
+  plan.params.any fragTyIsIntCarrier ||
+    fragTyIsIntCarrier plan.result ||
+    fragBlockMentionsIntCarrierFuel AverCert.PlanCheck.maxFuel plan.body
+
+/-- When a source-fragment claim must present the byte-derived carrier index.
+    Both triggers are DERIVED from the claim's own data — the encoded plan and
+    the host table — never from a hand-listed set of families:
+
+    * the encoded plan names `.intCarrier` anywhere, or
+    * the host table is non-empty.
+
+    Keying on the host table alone was unsound. `StandardFace.fragment`'s
+    `domRepr` is `args = FragParams.encodeArgs carrier params values`, and
+    `FragTy.encodeArg` sends an `.intCarrier` parameter to
+    `CertPrelude.carrierSmall carrier value` — the CONCRETE three-field struct
+    `structv carrier [i64v k, null, i32v 0]` at the claimed index. A generic
+    Int fragment (`genericFragmentAllowed` forbids `.adtRef` parameters and
+    `.adtRef`/`.intCarrier` RESULTS, but admits `.intCarrier` PARAMETERS; the
+    Int-versus-constant comparison family lowers without consulting any host
+    role) therefore models that layout while citing no role at all, so an
+    empty table exempted a carrier-sensitive face.
+
+    The residual permissive case is exactly "no `.intCarrier` in the encoded
+    plan AND no role cited". There the claimed index cannot reach the face's
+    meaning: `FragParams.encodeArgs`/`FragTy.resultRepr` mention `carrier` only
+    on `.intCarrier`, the remaining representations (`boolRepr`,
+    `floatBitsRepr`, `verbatimRepr`) and the projection face's
+    `vs = [.structv structIdx [p.1, p.2]]` discard the `CarrierSpec` argument,
+    and `host = emptyHost` presents no `boxRef carrier` slot. That case is what
+    keeps projection and float/string-boundary fragments certifiable in
+    carrierless modules.
+
+    Interior node types are included even though only parameters and the result
+    reach the face; the walk is total and conservative by construction, which
+    is the side to err on. -/
+def symFragmentCarrierBindingRequired
+    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan) : Bool :=
+  !hostTable.isEmpty || fragPlanMentionsIntCarrier plan
+
+/-- Byte-derived carrier binding for a source fragment. When the claim's own
+    data requires it (`symFragmentCarrierBindingRequired`), the claimed index
+    must be the one the module's own type section decodes to:
+    `CertDecode.carrierState` (three-state, fail-closed) must return
+    `some (some carrier)`. A byte-provably carrierless module (`some none`) and
+    a module whose type section does not decode (`none`) both reject.
+
+    Because `CertDecode.TypeEntry.isCarrier` admits only a three-field struct
+    whose field 0 is `i64` and whose field 2 is `i32`, this equality also pins
+    the field COUNT of the type the `carrierSmall` layout is asserted at — a
+    claim naming a four-field struct is rejected here rather than certifying a
+    theorem quantified over states the module's type section forbids.
+
+    This binding and the declared-type pin beside it are COMPLEMENTARY, not
+    alternatives. `hostTableFuncTypesMatch` compares each helper's declared
+    function type against the CLAIMED carrier, so on this family alone it was
+    circular (the expr-fragment carrier is claim data bound to no decoder —
+    see the scope note at `decodedStrictCarrierIndex`): a producer that
+    declares the box helper AT a fake supertype and claims that same fake
+    index satisfies the pin, while the template-pinned box BODY still builds
+    structs at the real byte-derived carrier — the face's `boxRef` would be a
+    fiction. The equality here removes the free reference point (catching
+    "both consistently fake"); the declared-type pin then catches "claimed
+    carrier right, helper type wrong", which no carrier equality can see. -/
+def symFragmentCarrierBound
+    (modBytes modLen carrier : Nat)
+    (hostTable : List (HostRole × Nat))
+    (plan : ExprFragmentRawPlan) : Bool :=
+  if symFragmentCarrierBindingRequired hostTable plan then
+    CertDecode.carrierState modBytes modLen == some (some carrier)
+  else
+    true
+
 /-- Artifact-level acceptance for one source-level symbolic fragment export.
     The source plan is still untrusted data: the audited checker/encoder must
     accept it and produce the representation-level expr-fragment plan before
-    the existing byte-origin predicate is allowed to run. -/
+    the existing byte-origin predicate is allowed to run.
+
+    Two conjuncts of this predicate constrain the CARRIER REFERENCE POINT the
+    proof faces are stated over: `symFragmentCarrierBound` forces the claimed
+    index to be the decoded one whenever the encoded plan or the host table can
+    make a face read it, and `hostTableFuncTypesMatch` forces every cited
+    helper's DECLARED function type to be the one its role fixes over that
+    index. Neither subsumes the other and both live here.
+
+    The rest of the host-helper pinning lives in OTHER predicates and is not
+    duplicated here: the role-to-index binding against the decoded role table
+    is `StandardFace.hostTableBound` (whole-module face checking), and the
+    helper BODY equality against the audited templates is `arithRoleCheck` /
+    `arithTableCheck` further down this file. -/
 def symFragmentPlanAccepted
     (modBytes modLen : Nat)
     (exportNameBytes : AverCert.WasmSlice.ByteSeq)
@@ -71,16 +192,28 @@ def symFragmentPlanAccepted
   match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
       hostTable structTable plan with
   | some exprPlan =>
+      symFragmentCarrierBound modBytes modLen carrier hostTable exprPlan = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       exprFragmentPlanAccepted
         modBytes modLen exportNameBytes exportName carrier exprPlan obligation
   | none => False
 
 /-- One source-level symbolic fragment claim inside an artifact certificate.
-    `hostTable`/`structTable` are representation
-    context (the byte-derived host-role and struct-type indices), not part of
-    the source plan: a wrong table encodes to a representation plan that cannot
-    match the byte-bound `exprFragmentPlans` the checker pins, so the claim
-    fail-closes. -/
+    `hostTable`/`structTable` are representation context (host-role and
+    struct-type indices), not part of the source plan.
+
+    What a wrong table costs depends on whether the plan CITES it. A table
+    entry the encoder actually resolves — a `hostCall` role, the fused
+    vector-read helpers, a `projectField`/`tagMatch` struct name — is copied
+    into the encoded plan and then into the lowered bytes, so a wrong entry
+    yields a code entry the module does not contain and the byte gate rejects
+    it. A table entry no node cites is NOT bound that way: for a role-free plan
+    the byte gate never reads the table at all. Those entries are constrained
+    only by the conjuncts stated at `symFragmentPlanAccepted`
+    (`symFragmentCarrierBound`, `hostTableFuncTypesMatch`) and, at
+    whole-module level, by `StandardFace.hostTableBound` against the decoded
+    role table. -/
 structure SymFragmentClaim where
   exportNameBytes : AverCert.WasmSlice.ByteSeq
   exportName      : String
@@ -506,6 +639,8 @@ def recursionPlanAccepted
         obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := recursionNLocals plan, body := body }
@@ -572,6 +707,8 @@ def mutualPlanAccepted
       AverCert.PlanCheck.checkMutualPlanShape memberSet hostTable plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := mutualNLocals plan, body := body }
@@ -770,6 +907,8 @@ def intDispatchPlanAccepted
     obligation.carrier = carrier ∧
     AverCert.PlanCheck.checkIntDispatchRawPlan plan = true ∧
     AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true ∧
+    AverCert.WasmSlice.hostTableFuncTypesMatch
+      modBytes modLen carrier hostTable = true ∧
     obligation.host = intDispatchCanonicalHost carrier hostTable ∧
     ∃ body codeEntry binding,
       AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body ∧
@@ -893,6 +1032,8 @@ def compositionMemberPlanAccepted
     AverCert.WasmSlice.exactFuncBindingForExport
       modBytes modLen member.exportNameBytes codeEntry = some binding ∧
     AverCert.WasmSlice.funcTypeMatches modBytes modLen binding.typeIdx 1 carrier = true ∧
+    AverCert.WasmSlice.hostTableFuncTypesMatch
+      modBytes modLen carrier hostTable = true ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := compositionNLocals member.plan, body := body }
 
@@ -1017,6 +1158,8 @@ def compositionClaimAccepted
   claim.obligation.export_ = claim.exportName ∧
   claim.obligation.carrier = claim.carrier ∧
   AverCert.PlanCheck.checkCompositionHostTable claim.hostTable = true ∧
+  AverCert.WasmSlice.hostTableFuncTypesMatch
+    modBytes modLen claim.carrier claim.hostTable = true ∧
   claim.obligation.host = intDispatchCanonicalHost claim.carrier claim.hostTable ∧
   match compositionFuncTable modBytes modLen members with
   | some funcTable =>
@@ -1482,19 +1625,26 @@ def decodedCarrierIndex
 
     The expression-fragment family is NOT among them and satisfies neither this
     binding nor `decodedCarrierIndex`: `symFragmentClaims` is deliberately absent
-    from `decodedNonExprClaimFacts` (see the note there), so nothing in this file
-    constrains its carrier. What binds an `expr-fragment-v1` claim's carrier is
-    `ExprFragmentAccepted.accepted` alone, and it does so purely by BYTE
-    EQUALITY: the declared index is spliced into the synthesized locals prelude
-    (`01 01 63 <carrier>`) and into every carrier-typed instruction immediate,
-    and `WasmSlice.exactFuncBindingForExport` requires the result to equal the
-    export's real code entry; the integer-family renders additionally pin the
-    declared function type through `WasmSlice.funcTypeMatches`, which matches
-    each `intCarrier` position against `(ref null carrier)`. That index is
-    therefore confirmed against the CODE and the SIGNATURE, and is never tied to
-    `CertDecode.carrierState`, `CertDecode.decodeCarrier` or
-    `ArithHostParams.carrier`. Do not describe this file's bindings as covering
-    "every family": they cover every family whose claims appear below. -/
+    from `decodedNonExprClaimFacts` (see the note there). What binds an
+    `expr-fragment-v1` claim's carrier depends on whether the claim cites host
+    roles. A ROLE-FREE claim is bound by `ExprFragmentAccepted.accepted` alone,
+    purely by BYTE EQUALITY: the declared index is spliced into the synthesized
+    locals prelude (`01 01 63 <carrier>`) and into every carrier-typed
+    instruction immediate, and `WasmSlice.exactFuncBindingForExport` requires
+    the result to equal the export's real code entry; the integer-family
+    renders additionally pin the declared function type through
+    `WasmSlice.funcTypeMatches`, which matches each `intCarrier` position
+    against `(ref null carrier)`. Those equalities confirm the index against
+    the CODE and the SIGNATURE but never against a decoder — a module can spell
+    them out consistently at ANY index — which is exactly why a claim whose own
+    data can make a face read the carrier (`symFragmentCarrierBindingRequired`:
+    a non-empty `hostTable`, or an `.intCarrier` anywhere in the encoded plan)
+    carries the additional decoder equality `symFragmentCarrierBound` inside
+    `symFragmentPlanAccepted`: those faces model helpers or arguments at the
+    claimed index, so that index must be the one `CertDecode.carrierState`
+    derives from the bytes. Do not describe this
+    file's decoded-claim bindings as covering "every family": they cover every
+    family whose claims appear below. -/
 def decodedStrictCarrierIndex
     (modBytes modLen : Nat) (obligation : Obligation) : Prop :=
   CertDecode.decodeCarrier modBytes modLen = some obligation.carrier
@@ -1704,11 +1854,16 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     (`construct-v1`) from being stated over the reserved index.
 
     Neither mechanism reaches the expression-fragment family, whose claims are
-    absent from `decodedNonExprClaimFacts` and whose carrier is confirmed only
-    by the byte equalities of `ExprFragmentAccepted.accepted` — never against
-    `carrierState`, `decodeCarrier` or `ArithHostParams.carrier`. A carrierless
-    module can therefore carry expression-fragment claims as well as
-    String.concat ones.
+    absent from `decodedNonExprClaimFacts`. A fragment claim that can make no
+    face read its carrier — no role cited AND no `.intCarrier` in the encoded
+    plan — has that field confirmed only by the byte equalities of
+    `ExprFragmentAccepted.accepted`, and a carrierless module can therefore
+    carry such claims as well as String.concat ones. Every other fragment claim
+    carries its own decoder equality instead (`symFragmentCarrierBound`, inside
+    `symFragmentPlanAccepted`), which pins the claimed carrier to the same
+    `carrierState` this conjunct pins `ArithHostParams.carrier` to — so a
+    role-citing fragment and the arith table it cites can never disagree about
+    where the carrier lives.
 
     `box` and `toIndex` carry a SECOND pin, to their runtime export names
     (#736 for `box`), and both pins are kept because they constrain different

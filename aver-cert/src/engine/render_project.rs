@@ -1013,8 +1013,14 @@ fn render_artifact_expr_fragment_claims(
                 let func_binding = format!(
                     "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
                 );
+                // The first component discharges the byte-derived carrier
+                // binding (`symFragmentCarrierBound`) and the second the
+                // host-table declared-function-type pin
+                // (`hostTableFuncTypesMatch`). Both are stated ahead of the
+                // export/carrier binds, and both are Boolean checks the
+                // kernel runs, so neither is keyed on claim data here.
                 let proof = format!(
-                    "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
+                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
                      ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
                 );
                 if expr_fragment_source_plan(source_plan, plan).is_some() {
@@ -1212,7 +1218,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 recursion_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::MutualRecursion {
@@ -1250,7 +1256,7 @@ fn render_artifact_expr_fragment_claims(
                 ));
                 mutual_proofs.push(format!(
                     "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
                 ));
             }
             Cert::VerbatimWidenedMatch {
@@ -1299,12 +1305,12 @@ fn render_artifact_expr_fragment_claims(
                 // The code-entry and signature conjuncts plus the role-table
                 // parameterization are the binding, so the witness is anonymous
                 // for the body, code entry and binding — each pinned by `rfl`
-                // (the two extra leading `rfl`s discharge the host-table
-                // distinctness and obligation-wiring binds; the final `rfl`
-                // pins the code table with the CANONICAL locals count, no
-                // existential).
+                // (the three extra leading `rfl`s discharge the host-table
+                // distinctness, the host-table declared-function-type pin, and
+                // the obligation-wiring bind; the final `rfl` pins the code
+                // table with the CANONICAL locals count, no existential).
                 int_dispatch_proofs.push(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, _, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
                         .to_string(),
                 );
                 int_dispatch_faces.push(Some((
@@ -1402,13 +1408,13 @@ fn render_artifact_expr_fragment_claims(
                 entry.self_idx, entry.type_idx, code_entry
             );
             let member_proof = format!(
-                "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl⟩⟩"
+                "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
             );
             named_proof = format!("⟨{member_proof}, {named_proof}⟩");
         }
         let _ = self_idx;
         composition_proofs.push(format!(
-            "⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩"
+            "⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩⟩"
         ));
     }
     let sym_claims = if sym_claims.is_empty() {

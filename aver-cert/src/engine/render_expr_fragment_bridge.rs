@@ -82,8 +82,14 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
         "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, \
          codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
     );
+    // The first component discharges the byte-derived carrier binding
+    // (`symFragmentCarrierBound`) and the second the host-table
+    // declared-function-type pin (`hostTableFuncTypesMatch`), both stated
+    // ahead of the export/carrier binds. Both are Boolean checks the kernel
+    // runs, so neither is keyed on anything this emitter has to recompute:
+    // when the binding does not apply the check answers `true` by itself.
     format!(
-        "⟨rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
+        "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
          ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }

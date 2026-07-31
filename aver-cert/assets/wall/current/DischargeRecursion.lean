@@ -87,7 +87,7 @@ theorem unary_recursion_claim_discharges
   rcases hAccepted with
     ⟨_hExport, hCarrier, hRaw, _hTermination,
       body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
-      hSelf, _hShape, _hType, hCode⟩
+      hSelf, _hShape, _hType, _hHostTypes, hCode⟩
   rcases hBridge with
     ⟨combineOp, boxIdx, combineIdx, subIdx, sh,
       hParse, hTotalityRole, hHost, hModel⟩
@@ -175,7 +175,7 @@ theorem accumulator_recursion_claim_discharges
   rcases hAccepted with
     ⟨_hExport, hCarrier, hRaw, _hTermination,
       body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
-      hSelf, _hShape, _hType, hCode⟩
+      hSelf, _hShape, _hType, _hHostTypes, hCode⟩
   rcases hBridge with
     ⟨boxIdx, addIdx, subIdx, sh, hParse, hTotalityRole, hHost, hModel⟩
   have hParams : plan.params = [.intCarrier, .intCarrier] := by
@@ -330,7 +330,7 @@ theorem mutual_claim_discharges
       rcases hAccepted with
         ⟨_hExport, hCarrier, hTotalityRole, hRaw, _hTermination,
           body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
-          hSelf, _hShape, _hType, hCode⟩
+          hSelf, _hShape, _hType, _hHostTypes, hCode⟩
       rcases hBridge plan hPlan with
         ⟨k, boxIdx, subIdx, scc, i, hSccPlan, hSccSelf, hParams,
           hEdges, hCodeOther, hHost, hModel⟩

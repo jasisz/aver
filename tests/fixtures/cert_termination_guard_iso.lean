@@ -43,6 +43,8 @@ def recursionPlanAcceptedWithoutCheckTerm
         obligation.totalityRole plan = true ∧
       AverCert.WasmSlice.funcTypeMatches
         modBytes modLen binding.typeIdx plan.params.length carrier = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch
+        modBytes modLen carrier hostTable = true ∧
       obligation.code binding.funcIdx =
         some { arity := plan.params.length,
                nlocals := AverCert.AcceptedArtifact.recursionNLocals plan, body := body }

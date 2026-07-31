@@ -165,7 +165,7 @@ theorem intDispatch_accepted_call
           claim.carrier claim.hostTable plan claim.obligation := by
         simpa [hPlan] using hClaim
       rcases hAccepted with
-        ⟨_hExport, hCarrier, hRaw, hDistinct, hHost,
+        ⟨_hExport, hCarrier, hRaw, hDistinct, _hHostTypes, hHost,
           body, codeEntry, binding, hLow, _hCodeEntry, _hExactBinding,
           hSelf, _hFuncType, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =

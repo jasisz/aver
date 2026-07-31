@@ -290,7 +290,7 @@ theorem composition_claim_discharges_with_bridge
       ∀ callees, rootMember.plan.shape = .chain callees →
         compositionClaimSemanticBridge artifact claim callees) :
     obligationHolds claim.obligation := by
-  rcases hClaim with ⟨_hExport, hCarrier, _hHostCheck, hHost, hClaim⟩
+  rcases hClaim with ⟨_hExport, hCarrier, _hHostCheck, _hHostTypes, hHost, hClaim⟩
   cases hTable : compositionFuncTable artifact.modBytes artifact.modLen
       artifact.compositionMembers with
   | none => simp [hTable] at hClaim
@@ -312,7 +312,7 @@ theorem composition_claim_discharges_with_bridge
       clear hClosure
       rcases hRootAccepted with
         ⟨hCheck, body, codeEntry, binding, hLower, _hCodeEntry,
-          hExactBinding, _hType, hCode⟩
+          hExactBinding, _hType, _hHostTypes, hCode⟩
       unfold AverCert.WasmSlice.exactFuncBindingForExport at hExactBinding
       have hBinding := Option.eq_some_of_filter_eq_some hExactBinding
       cases hTarget : AverCert.PlanLower.compositionFuncIdx?

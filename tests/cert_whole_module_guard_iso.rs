@@ -2306,6 +2306,7 @@ example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes trun
 fn extract_wall_def(source: &str, name: &str) -> String {
     let header = format!("def {name} ");
     let alt_header = format!("def {name} :");
+    let bare_header = format!("def {name}");
     let start = source
         .lines()
         .scan(0usize, |offset, line| {
@@ -2313,7 +2314,9 @@ fn extract_wall_def(source: &str, name: &str) -> String {
             *offset += line.len() + 1;
             Some((at, line))
         })
-        .find(|(_, line)| line.starts_with(&header) || line.starts_with(&alt_header))
+        .find(|(_, line)| {
+            line.starts_with(&header) || line.starts_with(&alt_header) || *line == bare_header
+        })
         .map(|(at, _)| at)
         .unwrap_or_else(|| panic!("wall source has no top-level `def {name}`"));
     let rest = &source[start..];
@@ -2520,4 +2523,1104 @@ end BoolAndGuardIso
         String::from_utf8_lossy(&check.stderr)
     );
     let _ = std::fs::remove_dir_all(out_dir);
+}
+
+/// The canonical tag-dispatch representation plan for a `slotCount`-shaped
+/// export (`match Option { Some(_) -> 1; None -> 0 }`): scrutinee struct at
+/// type `opt_idx`, box helper at function `box_idx`.
+fn slot_count_probe_plan(opt_idx: u32, box_idx: u32) -> aver::codegen::cert::ExprFragmentPlan {
+    use aver::codegen::cert::{
+        ExprFragmentPlan, FragBlock, FragHostRole, FragNode, FragNodeKind, FragPrim, FragTy,
+        FragValueId,
+    };
+    let arm = |k: i64| FragBlock {
+        nodes: vec![
+            FragNode {
+                id: FragValueId(0),
+                ty: FragTy::I64,
+                kind: FragNodeKind::ConstI64(k),
+            },
+            FragNode {
+                id: FragValueId(1),
+                ty: FragTy::IntCarrier,
+                kind: FragNodeKind::HostCall {
+                    role: FragHostRole::Box,
+                    func_idx: box_idx,
+                    args: vec![FragValueId(0)],
+                },
+            },
+        ],
+        result: FragValueId(1),
+    };
+    ExprFragmentPlan {
+        params: vec![FragTy::AdtRef],
+        result: FragTy::IntCarrier,
+        body: FragBlock {
+            nodes: vec![
+                FragNode {
+                    id: FragValueId(0),
+                    ty: FragTy::AdtRef,
+                    kind: FragNodeKind::Local { index: 0 },
+                },
+                FragNode {
+                    id: FragValueId(1),
+                    ty: FragTy::RawI32,
+                    kind: FragNodeKind::StructGetUser {
+                        ty_idx: opt_idx,
+                        field: 0,
+                        value: FragValueId(0),
+                    },
+                },
+                FragNode {
+                    id: FragValueId(2),
+                    ty: FragTy::RawI32,
+                    kind: FragNodeKind::ConstI32(1),
+                },
+                FragNode {
+                    id: FragValueId(3),
+                    ty: FragTy::BoolI32,
+                    kind: FragNodeKind::Prim {
+                        op: FragPrim::I32Eq,
+                        args: vec![FragValueId(1), FragValueId(2)],
+                    },
+                },
+                FragNode {
+                    id: FragValueId(4),
+                    ty: FragTy::IntCarrier,
+                    kind: FragNodeKind::If {
+                        cond: FragValueId(3),
+                        then_block: Box::new(arm(1)),
+                        else_block: Box::new(arm(0)),
+                    },
+                },
+            ],
+            result: FragValueId(4),
+        },
+    }
+}
+
+/// One `slotCount` tag-dispatch module, parameterized by the CLAIMED carrier
+/// index its dispatch body cites and by the box helper's DECLARED result
+/// reference (ref-type tag byte, heap index byte). Type layout:
+///   0 `$fake` — an OPEN two-field struct `{i64, anyref}` (NOT a carrier, so
+///     `CertDecode.carrierState` skips it and derives `some (some 1)`),
+///   1 `$real` — the real three-field carrier `{i64, anyref, i32}`, declared
+///     `sub final $fake` so `(ref null 1) <: (ref null 0)` holds nominally,
+///   2 `$opt`  — the scrutinee struct `{i32 tag, anyref payload}`, widened to
+///     `{i32 tag, anyref payload, anyref extra}` when `opt_fields` is 3,
+///   3 the box helper's function type `[i64] -> (result)` with the declared
+///     result supplied by the caller — `(0x63, 1)` is the canonical
+///     `(ref null $real)`, `(0x63, 0)` the fake supertype, `(0x64, 1)` the
+///     non-nullable `(ref $real)`,
+///   4 the dispatch function type `[(ref null 2)] -> (ref null claim)`.
+/// Function 0 is the box helper (its BODY always builds `struct.new $real`),
+/// function 1 the exported `slotCount` whose code entry is EXACTLY the
+/// canonical byte lowering for the claimed carrier.
+fn tag_dispatch_type_confusion_module(
+    claim_carrier: u32,
+    box_result: (u8, u8),
+    opt_fields: u8,
+) -> Vec<u8> {
+    assert!(claim_carrier < 64, "single-byte s33 heap index expected");
+    assert!(
+        opt_fields == 2 || opt_fields == 3,
+        "the scrutinee probe varies only between the face's two fields and one more"
+    );
+    let plan = slot_count_probe_plan(2, 0);
+    let dispatch_entry =
+        aver::codegen::cert::lower_expr_fragment_plan_code_entry_bytes(&plan, claim_carrier)
+            .expect("probe plan lowers to code-entry bytes");
+    let leb = |value: usize| -> Vec<u8> {
+        assert!(value < 128, "single-byte section framing expected");
+        vec![value as u8]
+    };
+    let section = |id: u8, payload: Vec<u8>| -> Vec<u8> {
+        let mut out = vec![id];
+        out.extend(leb(payload.len()));
+        out.extend(payload);
+        out
+    };
+    let mut types = vec![0x05];
+    // 0 $fake: (sub (struct (field i64) (field anyref)))
+    types.extend([0x50, 0x00, 0x5f, 0x02, 0x7e, 0x00, 0x6e, 0x00]);
+    // 1 $real: (sub final $fake (struct (field i64) (field anyref) (field i32)))
+    types.extend([
+        0x4f, 0x01, 0x00, 0x5f, 0x03, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00,
+    ]);
+    // 2 $opt: (struct (field i32) (field anyref) [(field anyref)])
+    types.extend([0x5f, opt_fields, 0x7f, 0x00, 0x6e, 0x00]);
+    if opt_fields == 3 {
+        types.extend([0x6e, 0x00]);
+    }
+    // 3 box: (func (param i64) (result (<box_result.0> <box_result.1>)))
+    types.extend([0x60, 0x01, 0x7e, 0x01, box_result.0, box_result.1]);
+    // 4 dispatch: (func (param (ref null $opt)) (result (ref null claim)))
+    types.extend([0x60, 0x01, 0x63, 0x02, 0x01, 0x63, claim_carrier as u8]);
+    let funcs = vec![0x02, 0x03, 0x04];
+    let mut exports = vec![0x01, 0x09];
+    exports.extend(b"slotCount");
+    exports.extend([0x00, 0x01]);
+    // Box body: local.get 0; ref.null any; i32.const 0; struct.new $real.
+    let box_payload = vec![
+        0x00, 0x20, 0x00, 0xd0, 0x6e, 0x41, 0x00, 0xfb, 0x00, 0x01, 0x0b,
+    ];
+    let mut code = vec![0x02];
+    code.extend(leb(box_payload.len()));
+    code.extend(box_payload);
+    code.extend(dispatch_entry);
+    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    module.extend(section(1, types));
+    module.extend(section(3, funcs));
+    module.extend(section(7, exports));
+    module.extend(section(10, code));
+    module
+}
+
+/// The canonical representation plan of a role-free `Int -> Bool` predicate:
+/// the small/big split the source encoder emits for `c >= 48` (the shape
+/// `RangePred.inAsciiDigit` certifies with). It cites NO host role, so it
+/// encodes under an EMPTY host table — and its parameter is `.intCarrier`, so
+/// `StandardFace.fragment`'s `domRepr` asserts `carrierSmall carrier value`,
+/// the concrete three-field carrier layout, at the claimed index.
+fn int_const_cmp_probe_plan() -> aver::codegen::cert::ExprFragmentPlan {
+    use aver::codegen::cert::{
+        ExprFragmentPlan, FragBlock, FragNode, FragNodeKind, FragPrim, FragTy, FragValueId,
+    };
+    let carrier_local = FragNode {
+        id: FragValueId(0),
+        ty: FragTy::IntCarrier,
+        kind: FragNodeKind::Local { index: 0 },
+    };
+    let small_arm = FragBlock {
+        nodes: vec![
+            carrier_local.clone(),
+            FragNode {
+                id: FragValueId(1),
+                ty: FragTy::I64,
+                kind: FragNodeKind::StructGet {
+                    field: 0,
+                    receiver: FragValueId(0),
+                },
+            },
+            FragNode {
+                id: FragValueId(2),
+                ty: FragTy::I64,
+                kind: FragNodeKind::ConstI64(48),
+            },
+            FragNode {
+                id: FragValueId(3),
+                ty: FragTy::BoolI32,
+                kind: FragNodeKind::Prim {
+                    op: FragPrim::I64GeS,
+                    args: vec![FragValueId(1), FragValueId(2)],
+                },
+            },
+        ],
+        result: FragValueId(3),
+    };
+    let big_arm = FragBlock {
+        nodes: vec![
+            carrier_local.clone(),
+            FragNode {
+                id: FragValueId(1),
+                ty: FragTy::RawI32,
+                kind: FragNodeKind::StructGet {
+                    field: 2,
+                    receiver: FragValueId(0),
+                },
+            },
+            FragNode {
+                id: FragValueId(2),
+                ty: FragTy::BoolI32,
+                kind: FragNodeKind::ConstBool(false),
+            },
+            FragNode {
+                id: FragValueId(3),
+                ty: FragTy::BoolI32,
+                kind: FragNodeKind::Prim {
+                    op: FragPrim::I32GtS,
+                    args: vec![FragValueId(1), FragValueId(2)],
+                },
+            },
+        ],
+        result: FragValueId(3),
+    };
+    ExprFragmentPlan {
+        params: vec![FragTy::IntCarrier],
+        result: FragTy::BoolI32,
+        body: FragBlock {
+            nodes: vec![
+                carrier_local,
+                FragNode {
+                    id: FragValueId(1),
+                    ty: FragTy::Ref,
+                    kind: FragNodeKind::StructGet {
+                        field: 1,
+                        receiver: FragValueId(0),
+                    },
+                },
+                FragNode {
+                    id: FragValueId(2),
+                    ty: FragTy::BoolI32,
+                    kind: FragNodeKind::RefIsNull {
+                        value: FragValueId(1),
+                    },
+                },
+                FragNode {
+                    id: FragValueId(3),
+                    ty: FragTy::BoolI32,
+                    kind: FragNodeKind::If {
+                        cond: FragValueId(2),
+                        then_block: Box::new(small_arm),
+                        else_block: Box::new(big_arm),
+                    },
+                },
+            ],
+            result: FragValueId(3),
+        },
+    }
+}
+
+/// One role-free `inAsciiDigit` module, parameterized by the CLAIMED carrier
+/// index its body cites. Type layout:
+///   0 `$wide` — a FOUR-field struct `{i64, anyref, i32, i32}`: every field the
+///     lowering reads exists at the right scalar type, so the body validates
+///     against it, but `CertDecode.TypeEntry.isCarrier` (exactly three fields)
+///     rejects it,
+///   1 `$real` — the real three-field carrier `{i64, anyref, i32}`, so
+///     `CertDecode.carrierState` derives `some (some 1)` in BOTH assemblies,
+///   2 the predicate function type `[(ref null claim)] -> [i32]`.
+/// The single function is the exported `inAsciiDigit`, whose code entry is
+/// EXACTLY the canonical byte lowering for the claimed carrier. The module
+/// declares no host helper at all, so its fragment host table is empty.
+fn generic_int_fragment_module(claim_carrier: u32) -> Vec<u8> {
+    assert!(claim_carrier < 64, "single-byte s33 heap index expected");
+    let plan = int_const_cmp_probe_plan();
+    let entry =
+        aver::codegen::cert::lower_expr_fragment_plan_code_entry_bytes(&plan, claim_carrier)
+            .expect("probe plan lowers to code-entry bytes");
+    let leb = |value: usize| -> Vec<u8> {
+        assert!(value < 128, "single-byte section framing expected");
+        vec![value as u8]
+    };
+    let section = |id: u8, payload: Vec<u8>| -> Vec<u8> {
+        let mut out = vec![id];
+        out.extend(leb(payload.len()));
+        out.extend(payload);
+        out
+    };
+    let mut types = vec![0x03];
+    // 0 $wide: (struct (field i64) (field anyref) (field i32) (field i32))
+    types.extend([0x5f, 0x04, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00, 0x7f, 0x00]);
+    // 1 $real: (struct (field i64) (field anyref) (field i32))
+    types.extend([0x5f, 0x03, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00]);
+    // 2 pred: (func (param (ref null claim)) (result i32))
+    types.extend([0x60, 0x01, 0x63, claim_carrier as u8, 0x01, 0x7f]);
+    let funcs = vec![0x01, 0x02];
+    let mut exports = vec![0x01, 0x0c];
+    exports.extend(b"inAsciiDigit");
+    exports.extend([0x00, 0x00]);
+    let mut code = vec![0x01];
+    code.extend(entry);
+    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    module.extend(section(1, types));
+    module.extend(section(3, funcs));
+    module.extend(section(7, exports));
+    module.extend(section(10, code));
+    module
+}
+
+/// GuardIso for the carrier-reference-point pins on the sym-fragment
+/// acceptance arm (`symFragmentPlanAccepted`) plus the scrutinee arity pin the
+/// tag-dispatch face depends on. Helper BODIES are pinned by template byte
+/// equality elsewhere; these conjuncts pin what that equality never reads. The
+/// declared-type pin (`hostTableFuncTypesMatch`) compares each cited helper's
+/// declared function type against the CLAIMED carrier — but the expr-fragment
+/// carrier is itself claim data bound to no decoder, so alone the pin is
+/// circular: a producer that declares the box helper AT a fake supertype and
+/// claims that same fake index satisfies it while the pinned box body still
+/// builds `struct.new $real`. The byte-derived carrier binding
+/// (`symFragmentCarrierBound`) closes that by forcing the claim's carrier to
+/// equal `CertDecode.carrierState`; the declared-type pin in turn catches a
+/// wrong helper declaration at the RIGHT carrier, which no carrier equality
+/// sees.
+///
+/// This is a PLAN-LEVEL demonstration, elaborated directly against
+/// `symFragmentPlanAccepted` on crafted modules. Every probe module is real
+/// validated wasm (`wasmparser::validate_all` passes, including the
+/// `(ref null $real) <: (ref null $fake)` uses), but each exports ONLY its one
+/// certified function: at whole-artifact level none of them carries a
+/// host-role table, and no face or full-artifact acceptance is exhibited here
+/// — whole-module conjuncts (`arithTableCheck`, faces, manifest coverage) are
+/// deliberately out of frame. What the probes show is that within this
+/// predicate each pin is the SOLE rejector of its attack shape, with every
+/// weakened copy cut from the LIVE materialized wall source (surgery asserted
+/// exactly-once — never a hand-maintained copy).
+///
+/// Four assemblies of the `slotCount` tag-dispatch module, which cites the box
+/// role:
+///
+///   - hostileSig — claim = the byte-derived carrier `$real`, box DECLARED at
+///     the non-nullable `(ref $real)` instead of the canonical
+///     `(ref null $real)`: the real predicate REJECTS it, the copy weakened
+///     by EXACTLY the declared-type conjunct ACCEPTS it, and the copy
+///     weakened by the carrier conjunct still rejects it.
+///   - hostileCarrier — box declared AT the fake supertype and the claim
+///     citing that same fake index ("both consistently fake", the shape the
+///     declared-type pin alone cannot see): the declared-type pin holds of
+///     it; the real predicate REJECTS it, the copy weakened by EXACTLY the
+///     carrier conjunct ACCEPTS it, and the copy weakened by the
+///     declared-type conjunct still rejects it.
+///   - hostileBoth — claim cites the fake index while the box is declared at
+///     the real carrier: rejected by the real predicate AND by each
+///     singly-weakened copy, and ACCEPTED by the DOUBLY-weakened copy (also
+///     cut from the live source), so "only removing both pins admits it" is
+///     exhibited, not asserted.
+///   - the honest twin (claim = real carrier, canonical declaration) is
+///     ACCEPTED by the real predicate and by both weakened copies, so no
+///     rejection above is a framing artefact.
+///
+/// Two assemblies of a ROLE-FREE `inAsciiDigit` module — the `Int -> Bool`
+/// comparison shape, whose plan cites no host role at all and whose host table
+/// is therefore empty. The declared-type pin is VACUOUSLY true on an empty
+/// table, so it cannot see this attack at all; keying the carrier binding on
+/// table emptiness (its previous shape) exempted the whole family, and
+/// `StandardFace.fragment`'s `domRepr` asserts `carrierSmall carrier value`
+/// for the `.intCarrier` parameter — a concrete three-field struct at the
+/// claimed index:
+///
+///   - genericHostile — the claim names the FOUR-field `$wide` struct the body
+///     reads while the module's real carrier sits at type 1: the real
+///     predicate REJECTS it (the plan names `.intCarrier`, so the binding
+///     applies), the copy weakened by EXACTLY the carrier conjunct ACCEPTS it,
+///     and the copy weakened by the declared-type conjunct still rejects it.
+///   - genericHonest — the same plan claiming the real carrier is ACCEPTED.
+///
+/// Two assemblies of the tag-dispatch module differing ONLY in the scrutinee
+/// struct's field count, for the face-layout pin in `checkTagDispatchTypes`:
+///
+///   - wideOpt — `$opt` declared with THREE fields while the face states
+///     `domRepr := vs = [.structv optIdx [.i32v p.1, p.2]]`, a two-field
+///     struct: the real predicate REJECTS it, a copy of the whole
+///     `checkTagDispatchTypes → exprTagDispatchTypesMatch →
+///     exprFragmentNominalTypesMatch → exprFragmentPlanAccepted →
+///     symFragmentPlanAccepted` chain weakened by EXACTLY the arity term
+///     ACCEPTS it, and both carrier-side weakened copies still reject it.
+#[test]
+fn host_table_declared_type_pin_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping host-table type-pin GuardIso test: `lake` not available");
+        return;
+    }
+    let honest = tag_dispatch_type_confusion_module(1, (0x63, 1), 2);
+    let hostile_sig = tag_dispatch_type_confusion_module(1, (0x64, 1), 2);
+    let hostile_carrier = tag_dispatch_type_confusion_module(0, (0x63, 0), 2);
+    let hostile_both = tag_dispatch_type_confusion_module(0, (0x63, 1), 2);
+    let wide_opt = tag_dispatch_type_confusion_module(1, (0x63, 1), 3);
+    for (label, bytes) in [
+        ("honest", &honest),
+        ("hostileSig", &hostile_sig),
+        ("hostileCarrier", &hostile_carrier),
+        ("hostileBoth", &hostile_both),
+        ("wideOpt", &wide_opt),
+    ] {
+        wasmparser::Validator::new()
+            .validate_all(bytes)
+            .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
+        assert_eq!(
+            export_func_type_idx(bytes, "slotCount"),
+            4,
+            "{label} probe module binds slotCount to the dispatch type"
+        );
+    }
+    let generic_honest = generic_int_fragment_module(1);
+    let generic_hostile = generic_int_fragment_module(0);
+    for (label, bytes) in [
+        ("genericHonest", &generic_honest),
+        ("genericHostile", &generic_hostile),
+    ] {
+        wasmparser::Validator::new()
+            .validate_all(bytes)
+            .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
+        assert_eq!(
+            export_func_type_idx(bytes, "inAsciiDigit"),
+            2,
+            "{label} probe module binds inAsciiDigit to the predicate type"
+        );
+    }
+
+    let wall_dir = temp_dir("cert-host-table-type-pin-guard-iso");
+    std::fs::create_dir_all(&wall_dir).unwrap();
+    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
+    for source in wall.sources {
+        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    std::fs::write(
+        wall_dir.join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
+         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
+         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `AcceptedArtifactCore]\n",
+    )
+    .unwrap();
+    let build = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("build")
+        .output()
+        .expect("build the wall before the host-table type-pin GuardIso");
+    assert!(
+        build.status.success(),
+        "wall build failed before the host-table type-pin GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Literal weakened copies from the LIVE materialized acceptance source:
+    // one deletes EXACTLY the declared-type conjunct, one EXACTLY the
+    // byte-derived carrier conjunct, one BOTH, and nothing else moves in any
+    // of them.
+    let accepted_core = std::fs::read_to_string(wall_dir.join("AcceptedArtifactCore.lean"))
+        .expect("materialized wall has AcceptedArtifactCore.lean");
+    let live_def = extract_wall_def(&accepted_core, "symFragmentPlanAccepted");
+    let sig_conjunct = "      AverCert.WasmSlice.hostTableFuncTypesMatch\n        \
+                        modBytes modLen carrier hostTable = true ∧\n";
+    let carrier_conjunct =
+        "      symFragmentCarrierBound modBytes modLen carrier hostTable exprPlan = true ∧\n";
+    for (conjunct, what) in [
+        (sig_conjunct, "host-table declared-type"),
+        (carrier_conjunct, "byte-derived carrier"),
+    ] {
+        assert_eq!(
+            live_def.matches(conjunct).count(),
+            1,
+            "the {what} conjunct moved; refit the GuardIso surgery"
+        );
+    }
+    let weak_sig_def = live_def
+        .replace(sig_conjunct, "")
+        .replace("symFragmentPlanAccepted", "weakSigSymFragmentPlanAccepted");
+    let weak_carrier_def = live_def.replace(carrier_conjunct, "").replace(
+        "symFragmentPlanAccepted",
+        "weakCarrierSymFragmentPlanAccepted",
+    );
+    let weak_both_def = live_def
+        .replace(sig_conjunct, "")
+        .replace(carrier_conjunct, "")
+        .replace("symFragmentPlanAccepted", "weakBothSymFragmentPlanAccepted");
+
+    // The face-layout chain, weakened by EXACTLY the scrutinee arity term of
+    // `checkTagDispatchTypes`. Everything from that check up to the acceptance
+    // arm is re-cut from the live sources so the weakened arity term is the
+    // only difference; each rename is asserted exactly-once.
+    let wasm_slice = std::fs::read_to_string(wall_dir.join("WasmSlice.lean"))
+        .expect("materialized wall has WasmSlice.lean");
+    let arity_term = "fields.length == 2 &&\n        ";
+    let live_tag_check = extract_wall_def(&wasm_slice, "checkTagDispatchTypes");
+    assert_eq!(
+        live_tag_check.matches(arity_term).count(),
+        1,
+        "the tag-dispatch scrutinee arity term moved; refit the GuardIso surgery"
+    );
+    let mut chain = Vec::new();
+    chain.push(
+        live_tag_check
+            .replace(arity_term, "")
+            .replace("checkTagDispatchTypes", "weakArityCheckTagDispatchTypes"),
+    );
+    for (def, callee, renamed) in [
+        (
+            "exprTagDispatchTypesMatch",
+            "checkTagDispatchTypes",
+            "weakArityCheckTagDispatchTypes",
+        ),
+        (
+            "exprFragmentNominalTypesMatch",
+            "exprTagDispatchTypesMatch",
+            "weakArityExprTagDispatchTypesMatch",
+        ),
+    ] {
+        let live = extract_wall_def(&wasm_slice, def);
+        assert_eq!(
+            live.matches(&format!("{callee} ")).count(),
+            1,
+            "`{def}` no longer calls `{callee}` exactly once; refit the GuardIso surgery"
+        );
+        assert_eq!(
+            live.matches(&format!("def {def}")).count(),
+            1,
+            "`{def}` is not a single top-level definition; refit the GuardIso surgery"
+        );
+        chain.push(
+            live.replace(&format!("{callee} "), &format!("{renamed} "))
+                .replace(
+                    def,
+                    &format!("weakArity{}{}", &def[..1].to_uppercase(), &def[1..]),
+                ),
+        );
+    }
+    let weak_arity_wasm_slice = format!(
+        "namespace AverCert.WasmSlice\n\n{}\n\nend AverCert.WasmSlice",
+        chain.join("\n\n")
+    );
+    let live_expr_accepted = extract_wall_def(&accepted_core, "exprFragmentPlanAccepted");
+    assert_eq!(
+        live_expr_accepted
+            .matches("AverCert.WasmSlice.exprFragmentNominalTypesMatch")
+            .count(),
+        1,
+        "`exprFragmentPlanAccepted` no longer calls the nominal-type check exactly once"
+    );
+    let weak_arity_expr_accepted = live_expr_accepted
+        .replace(
+            "AverCert.WasmSlice.exprFragmentNominalTypesMatch",
+            "AverCert.WasmSlice.weakArityExprFragmentNominalTypesMatch",
+        )
+        .replace(
+            "exprFragmentPlanAccepted",
+            "weakArityExprFragmentPlanAccepted",
+        );
+    assert_eq!(
+        live_def.matches("exprFragmentPlanAccepted").count(),
+        1,
+        "`symFragmentPlanAccepted` no longer calls `exprFragmentPlanAccepted` exactly once"
+    );
+    let weak_arity_sym_accepted = live_def
+        .replace(
+            "exprFragmentPlanAccepted",
+            "weakArityExprFragmentPlanAccepted",
+        )
+        .replace(
+            "symFragmentPlanAccepted",
+            "weakAritySymFragmentPlanAccepted",
+        );
+    let weak_arity_accepted_core = format!(
+        "namespace AverCert.AcceptedArtifact\n\n{weak_arity_expr_accepted}\n\n\
+         {weak_arity_sym_accepted}\n\nend AverCert.AcceptedArtifact"
+    );
+
+    let lean = format!(
+        r#"import AcceptedArtifactCore
+
+open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.PlanCheck
+set_option maxRecDepth 300000
+
+-- Four assemblies of ONE module (crafted and wasmparser-validated by the test
+-- harness): type 0 is an open two-field NON-carrier struct, type 1 the real
+-- three-field carrier declared as its final subtype — so the byte-derived
+-- carrier state is `some (some 1)` in ALL four — and the box helper's BODY
+-- always builds `struct.new $real`. They differ only in the claimed carrier
+-- the dispatch body cites and in the box helper's DECLARED result type:
+--   honest         claim 1, box declared `[i64] -> (ref null 1)`
+--   hostileSig     claim 1, box declared `[i64] -> (ref 1)` (non-nullable)
+--   hostileCarrier claim 0, box declared `[i64] -> (ref null 0)` (the fake)
+--   hostileBoth    claim 0, box declared `[i64] -> (ref null 1)`
+def honestBytes : Nat := 0x{honest_hex}
+def honestLen : Nat := {honest_len}
+def hostileSigBytes : Nat := 0x{hostile_sig_hex}
+def hostileSigLen : Nat := {hostile_sig_len}
+def hostileCarrierBytes : Nat := 0x{hostile_carrier_hex}
+def hostileCarrierLen : Nat := {hostile_carrier_len}
+def hostileBothBytes : Nat := 0x{hostile_both_hex}
+def hostileBothLen : Nat := {hostile_both_len}
+
+def slotCountName : AverCert.WasmSlice.ByteSeq := [115, 108, 111, 116, 67, 111, 117, 110, 116]
+def probeHostTable : List (HostRole × Nat) := [(.box, 0)]
+def probeStructTable : List (String × Nat) := [("Option", 2)]
+
+def slotCountSym : SymRawPlan :=
+  {{ profile := "sym-fragment-v1",
+    params := [.app1 "Option" .int],
+    result := .int,
+    body :=
+      {{ nodes :=
+        [ {{ id := 0, ty := .app1 "Option" .int, kind := .param 0 }},
+          {{ id := 1, ty := .int,
+            kind := .tagMatch "Option" 0 1
+              {{ nodes := [{{ id := 0, ty := .int, kind := .constInt 1 }}], result := 0 }}
+              {{ nodes := [{{ id := 0, ty := .int, kind := .constInt 0 }}], result := 0 }} }} ],
+        result := 1 }} }}
+
+def probePlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.adtRef], result := .intCarrier, body := ({{ nodes := [{{ id := 0, ty := .adtRef, kind := .local 0 }}, {{ id := 1, ty := .rawI32, kind := .structGetUser 2 0 0 }}, {{ id := 2, ty := .rawI32, kind := .constI32 (1 : Int) }}, {{ id := 3, ty := .boolI32, kind := .prim .i32Eq [1, 2] }}, {{ id := 4, ty := .intCarrier, kind := .ifElse 3 ({{ nodes := [{{ id := 0, ty := .i64, kind := .constI64 (1 : Int) }}, {{ id := 1, ty := .intCarrier, kind := .hostCall .box 0 [0] }}], result := 1 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .i64, kind := .constI64 (0 : Int) }}, {{ id := 1, ty := .intCarrier, kind := .hostCall .box 0 [0] }}], result := 1 }} : FragBlock) }}], result := 4 }} : FragBlock) }}
+
+example : encodeSymRawPlanToExprFragmentRawPlan probeHostTable probeStructTable slotCountSym
+    = some probePlan := rfl
+
+def bodyFor (carrier : Nat) : List WInstr :=
+  (AverCert.PlanLower.lowerExprFragmentBody carrier probePlan).getD []
+def entryFor (carrier : Nat) : AverCert.WasmSlice.ByteSeq :=
+  (AverCert.PlanBytes.lowerExprFragmentCodeEntry carrier probePlan).getD []
+
+-- The two dispatch entries genuinely differ (the scratch local and the `if`
+-- block type cite the claimed carrier), so the byte gate really selects the
+-- claimed-carrier lowering in each module.
+example : entryFor 0 ≠ entryFor 1 := by decide +kernel
+
+def probeOb (carrier : Nat) : Obligation :=
+  {{ export_ := "slotCount", policy := .simulatesModel, carrier := carrier,
+    code := fun i => if i = 1 then some ⟨1, 1, bodyFor carrier⟩ else none,
+    host := fun _ _ _ _ _ _ => fun _ => none,
+    self := 1, Dom := Unit, Cod := Int,
+    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
+    model := fun _ => 0 }}
+
+-- Byte-derived ground truth: the type sections of all four modules decode to
+-- the SAME carrier state — the real three-field carrier at type 1.
+example : CertDecode.carrierState honestBytes honestLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState hostileSigBytes hostileSigLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState hostileCarrierBytes hostileCarrierLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState hostileBothBytes hostileBothLen = some (some 1) := by
+  decide +kernel
+
+-- HONEST control: the claim names the real carrier with the canonical
+-- declaration and the REAL predicate accepts, so no rejection below is an
+-- artefact of the framing.
+example : symFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- Conjunct-level ground truth for the declared-type pin. Note the third line:
+-- the pin HOLDS of hostileCarrier — box declared at the fake supertype, claim
+-- citing the same fake index — which is exactly the circularity the carrier
+-- binding exists to close.
+example : AverCert.WasmSlice.hostTableFuncTypesMatch honestBytes honestLen
+    1 probeHostTable = true := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
+    1 probeHostTable = false := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileCarrierBytes hostileCarrierLen
+    0 probeHostTable = true := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
+    0 probeHostTable = false := by decide +kernel
+
+-- hostileSig is rejected by the real predicate, at exactly the declared-type
+-- pin (its carrier bound holds: claim 1 IS the byte-derived carrier).
+example : ¬ symFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : symFragmentCarrierBound hostileSigBytes hostileSigLen 1 probeHostTable probePlan
+        = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
+        1 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  exact absurd h'.2.1 (by decide +kernel)
+
+-- hostileCarrier is rejected by the real predicate, at exactly the carrier
+-- binding (the declared-type pin holds of it, per the ground truth above).
+example : ¬ symFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentCarrierBound hostileCarrierBytes hostileCarrierLen 0 probeHostTable
+        probePlan = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch hostileCarrierBytes hostileCarrierLen
+        0 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+
+-- hostileBoth is rejected by the real predicate (either pin rejects it).
+example : ¬ symFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentCarrierBound hostileBothBytes hostileBothLen 0 probeHostTable probePlan
+        = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
+        0 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+
+/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
+    host-table declared-function-type conjunct. -/
+{weak_sig_def}
+
+/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
+    byte-derived carrier conjunct. -/
+{weak_carrier_def}
+
+/-! Literal copy of the live acceptance predicate, weakened by BOTH pins. -/
+{weak_both_def}
+
+-- ATTRIBUTION THROUGH ACCEPTANCE, declared-type pin: the copy weakened by
+-- exactly that conjunct accepts hostileSig — every remaining conjunct holds
+-- of it, the carrier binding and the byte binding included.
+example : weakSigSymFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- ATTRIBUTION THROUGH ACCEPTANCE, carrier binding: the copy weakened by
+-- exactly that conjunct accepts hostileCarrier — the declared-type pin and
+-- every byte conjunct hold of it, so WITHOUT the carrier binding the
+-- consistently-fake pair would be admitted.
+example : weakCarrierSymFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) :=
+  ⟨rfl, rfl, rfl, bodyFor 0, entryFor 0, ⟨1, 4, entryFor 0⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- The attributions are EXCLUSIVE: each singly-weakened copy still rejects the
+-- OTHER hostile pair, so neither conjunct shadows the other.
+example : ¬ weakSigSymFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentCarrierBound hostileCarrierBytes hostileCarrierLen 0 probeHostTable
+        probePlan = true ∧
+      exprFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+example : ¬ weakCarrierSymFragmentPlanAccepted hostileSigBytes hostileSigLen
+    slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
+        1 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  exact absurd h'.1 (by decide +kernel)
+
+-- The pins are COMPLEMENTARY, not redundant: hostileBoth is still rejected by
+-- EACH singly-weakened copy, and the DOUBLY-weakened copy accepts it — so
+-- "only removing both conjuncts admits it" is exhibited, not asserted.
+example : weakBothSymFragmentPlanAccepted hostileBothBytes hostileBothLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) :=
+  ⟨rfl, rfl, bodyFor 0, entryFor 0, ⟨1, 4, entryFor 0⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+example : ¬ weakSigSymFragmentPlanAccepted hostileBothBytes hostileBothLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : symFragmentCarrierBound hostileBothBytes hostileBothLen 0 probeHostTable probePlan
+        = true ∧
+      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+example : ¬ weakCarrierSymFragmentPlanAccepted hostileBothBytes hostileBothLen
+    slotCountName "slotCount"
+    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
+  intro h
+  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
+        0 probeHostTable = true ∧
+      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
+        0 probePlan (probeOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+
+-- Both weakenings are strict: the honest pair still passes each weakened copy.
+example : weakSigSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+example : weakCarrierSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- Attribution of the OLDER role-permutation probes is preserved: the add and
+-- sub roles fix the SAME canonical declared signature, so the declared-type
+-- pin is blind to a consistent add/sub table permutation and the host-builder
+-- equality remains that vector's sole rejector. (The carrier binding is blind
+-- to it as well: a permutation moves indices, never the claimed carrier.)
+example : ∀ carrier entry,
+    AverCert.WasmSlice.checkHostRoleFuncType carrier .add entry
+      = AverCert.WasmSlice.checkHostRoleFuncType carrier .sub entry :=
+  fun _ _ => rfl
+"#,
+        honest_hex = hex_le(&honest),
+        honest_len = honest.len(),
+        hostile_sig_hex = hex_le(&hostile_sig),
+        hostile_sig_len = hostile_sig.len(),
+        hostile_carrier_hex = hex_le(&hostile_carrier),
+        hostile_carrier_len = hostile_carrier.len(),
+        hostile_both_hex = hex_le(&hostile_both),
+        hostile_both_len = hostile_both.len(),
+    );
+
+    // Probe 2: the role-free `Int -> Bool` fragment. Keying the carrier
+    // binding on host-table emptiness exempted this whole family, and the
+    // declared-type pin is vacuously true on an empty table, so nothing at all
+    // held the claimed carrier down here.
+    let generic = format!(
+        r#"
+/-! ## Role-free generic Int fragment
+
+Two assemblies of ONE module: type 0 is a FOUR-field struct whose every read
+field has the type the lowering expects, type 1 the real three-field carrier —
+so `CertDecode.carrierState` derives `some (some 1)` in BOTH — and the module
+declares no host helper at all, so the claim's host table is EMPTY. They differ
+only in the carrier index the body cites and the claim names. -/
+def genericHonestBytes : Nat := 0x{generic_honest_hex}
+def genericHonestLen : Nat := {generic_honest_len}
+def genericHostileBytes : Nat := 0x{generic_hostile_hex}
+def genericHostileLen : Nat := {generic_hostile_len}
+
+def digitName : AverCert.WasmSlice.ByteSeq :=
+  [105, 110, 65, 115, 99, 105, 105, 68, 105, 103, 105, 116]
+def emptyHostTable : List (HostRole × Nat) := []
+def emptyStructTable : List (String × Nat) := []
+
+def digitSym : SymRawPlan :=
+  {{ profile := "sym-fragment-v1",
+    params := [.int],
+    result := .bool,
+    body :=
+      {{ nodes :=
+        [ {{ id := 0, ty := .int, kind := .param 0 }},
+          {{ id := 1, ty := .bool, kind := .intConstCmp .ge 0 (48 : Int) }} ],
+        result := 1 }} }}
+
+def digitPlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.intCarrier], result := .boolI32, body := ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}, {{ id := 1, ty := .ref, kind := .structGet 1 0 }}, {{ id := 2, ty := .boolI32, kind := .refIsNull 1 }}, {{ id := 3, ty := .boolI32, kind := .ifElse 2 ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}, {{ id := 1, ty := .i64, kind := .structGet 0 0 }}, {{ id := 2, ty := .i64, kind := .constI64 (48 : Int) }}, {{ id := 3, ty := .boolI32, kind := .prim .i64GeS [1, 2] }}], result := 3 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}, {{ id := 1, ty := .rawI32, kind := .structGet 2 0 }}, {{ id := 2, ty := .boolI32, kind := .constBool false }}, {{ id := 3, ty := .boolI32, kind := .prim .i32GtS [1, 2] }}], result := 3 }} : FragBlock) }}], result := 3 }} : FragBlock) }}
+
+-- The source encoder really does produce this plan WITHOUT consulting any host
+-- role: the empty table encodes fine, which is what made the family reachable
+-- under the old table-keyed exemption.
+example : encodeSymRawPlanToExprFragmentRawPlan emptyHostTable emptyStructTable digitSym
+    = some digitPlan := rfl
+
+def digitBodyFor (carrier : Nat) : List WInstr :=
+  (AverCert.PlanLower.lowerExprFragmentBody carrier digitPlan).getD []
+def digitEntryFor (carrier : Nat) : AverCert.WasmSlice.ByteSeq :=
+  (AverCert.PlanBytes.lowerExprFragmentCodeEntry carrier digitPlan).getD []
+
+def digitOb (carrier : Nat) : Obligation :=
+  {{ export_ := "inAsciiDigit", policy := .simulatesModel, carrier := carrier,
+    code := fun i => if i = 0 then some ⟨1, 1, digitBodyFor carrier⟩ else none,
+    host := fun _ _ _ _ _ _ => fun _ => none,
+    self := 0, Dom := Unit, Cod := Int,
+    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
+    model := fun _ => 0 }}
+
+-- Byte-derived ground truth: both assemblies decode to the SAME carrier state,
+-- the real three-field carrier at type 1.
+example : CertDecode.carrierState genericHonestBytes genericHonestLen = some (some 1) := by
+  decide +kernel
+example : CertDecode.carrierState genericHostileBytes genericHostileLen = some (some 1) := by
+  decide +kernel
+
+-- The plan-derived trigger, not the table: this plan cites NO role, so the
+-- table is empty, yet its `.intCarrier` parameter makes
+-- `StandardFace.fragment`'s `domRepr` assert `carrierSmall carrier value`.
+example : symFragmentCarrierBindingRequired emptyHostTable digitPlan = true := by decide
+
+-- The declared-type pin is VACUOUSLY true on an empty table, in BOTH
+-- assemblies: it cannot see this attack at all, which is why the two conjuncts
+-- are complementary rather than alternatives.
+example : AverCert.WasmSlice.hostTableFuncTypesMatch genericHostileBytes genericHostileLen
+    0 emptyHostTable = true := by decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch genericHonestBytes genericHonestLen
+    1 emptyHostTable = true := by decide +kernel
+
+-- HONEST control: the same plan claiming the real carrier is accepted.
+example : symFragmentPlanAccepted genericHonestBytes genericHonestLen digitName "inAsciiDigit"
+    1 emptyHostTable emptyStructTable digitSym (digitOb 1) :=
+  ⟨rfl, rfl, rfl, rfl, digitBodyFor 1, digitEntryFor 1, ⟨0, 2, digitEntryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- genericHostile is rejected by the real predicate, at exactly the carrier
+-- binding.
+example : ¬ symFragmentPlanAccepted genericHostileBytes genericHostileLen digitName
+    "inAsciiDigit" 0 emptyHostTable emptyStructTable digitSym (digitOb 0) := by
+  intro h
+  have h' : symFragmentCarrierBound genericHostileBytes genericHostileLen 0 emptyHostTable
+        digitPlan = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch genericHostileBytes genericHostileLen
+        0 emptyHostTable = true ∧
+      exprFragmentPlanAccepted genericHostileBytes genericHostileLen digitName "inAsciiDigit"
+        0 digitPlan (digitOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+
+-- ATTRIBUTION THROUGH ACCEPTANCE: the copy weakened by EXACTLY the carrier
+-- conjunct ACCEPTS it — every other conjunct, the byte gate included, holds of
+-- a module that declares a four-field struct where the face asserts the
+-- three-field carrier layout. On an EMPTY table the previous, table-keyed
+-- shape of this conjunct reduced to `True`, so this weakened copy is exactly
+-- that shape on this input: the acceptance below is the hole, exhibited.
+example : weakCarrierSymFragmentPlanAccepted genericHostileBytes genericHostileLen digitName
+    "inAsciiDigit" 0 emptyHostTable emptyStructTable digitSym (digitOb 0) :=
+  ⟨rfl, rfl, rfl, digitBodyFor 0, digitEntryFor 0, ⟨0, 2, digitEntryFor 0⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- EXCLUSIVE: the copy weakened by the OTHER conjunct still rejects it.
+example : ¬ weakSigSymFragmentPlanAccepted genericHostileBytes genericHostileLen digitName
+    "inAsciiDigit" 0 emptyHostTable emptyStructTable digitSym (digitOb 0) := by
+  intro h
+  have h' : symFragmentCarrierBound genericHostileBytes genericHostileLen 0 emptyHostTable
+        digitPlan = true ∧
+      exprFragmentPlanAccepted genericHostileBytes genericHostileLen digitName "inAsciiDigit"
+        0 digitPlan (digitOb 0) := h
+  exact absurd h'.1 (by decide +kernel)
+
+-- The weakening is strict: the honest pair still passes the weakened copy.
+example : weakCarrierSymFragmentPlanAccepted genericHonestBytes genericHonestLen digitName
+    "inAsciiDigit" 1 emptyHostTable emptyStructTable digitSym (digitOb 1) :=
+  ⟨rfl, rfl, rfl, digitBodyFor 1, digitEntryFor 1, ⟨0, 2, digitEntryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+/-! ### Scope of the residual permissive arm
+
+The binding still admits a free carrier index exactly when nothing can read it:
+no `.intCarrier` anywhere in the encoded plan AND no role cited. The walk that
+decides this descends into nested blocks — `deepCarrierPlan` hides its only
+`.intCarrier` two `ifElse` levels down and is still caught. -/
+def carrierFreePlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.boolI32], result := .boolI32, body := ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .local 0 }}], result := 0 }} : FragBlock) }}
+
+def deepCarrierPlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.boolI32], result := .boolI32, body := ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .local 0 }}, {{ id := 1, ty := .boolI32, kind := .ifElse 0 ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .ifElse 0 ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}], result := 0 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .constBool false }}], result := 0 }} : FragBlock) }}], result := 0 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .constBool false }}], result := 0 }} : FragBlock) }}], result := 1 }} : FragBlock) }}
+
+example : fragPlanMentionsIntCarrier carrierFreePlan = false := by decide
+example : fragPlanMentionsIntCarrier deepCarrierPlan = true := by decide
+example : symFragmentCarrierBindingRequired emptyHostTable carrierFreePlan = false := by decide
+example : symFragmentCarrierBindingRequired emptyHostTable deepCarrierPlan = true := by decide
+-- Unconstrained where nothing can read it: even a nonsense index passes.
+example : symFragmentCarrierBound genericHostileBytes genericHostileLen 7 emptyHostTable
+    carrierFreePlan = true := by decide +kernel
+"#,
+        generic_honest_hex = hex_le(&generic_honest),
+        generic_honest_len = generic_honest.len(),
+        generic_hostile_hex = hex_le(&generic_hostile),
+        generic_hostile_len = generic_hostile.len(),
+    );
+
+    // Probe 3: the tag-dispatch face's scrutinee arity. The face states
+    // `domRepr := vs = [.structv optIdx [.i32v p.1, p.2]]`, so a scrutinee
+    // declared with any other field count leaves the obligation quantified
+    // over states the module's own type section forbids.
+    let arity = format!(
+        r#"
+/-! ## Tag-dispatch scrutinee arity
+
+`wideOpt` is the honest tag-dispatch module with ONE byte changed: the
+scrutinee struct `$opt` is declared with three fields instead of two. The claim,
+the carrier, the box declaration and the code bytes are all the honest ones. -/
+def wideOptBytes : Nat := 0x{wide_opt_hex}
+def wideOptLen : Nat := {wide_opt_len}
+
+-- Byte-derived ground truth: the scrutinee's decoded field count is the ONLY
+-- difference, and the face's layout contradicts it.
+example : CertDecode.decodeStructFieldCount honestBytes honestLen 2 = some 2 := by decide +kernel
+example : CertDecode.decodeStructFieldCount wideOptBytes wideOptLen 2 = some 3 := by decide +kernel
+example : CertDecode.carrierState wideOptBytes wideOptLen = some (some 1) := by decide +kernel
+example : AverCert.WasmSlice.exprTagDispatchTypesMatch honestBytes honestLen 1 2 = true := by
+  decide +kernel
+example : AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 = false := by
+  decide +kernel
+
+-- Both carrier-side conjuncts HOLD of it: they are blind to the scrutinee's
+-- shape, which is why this needs its own pin.
+example : symFragmentCarrierBound wideOptBytes wideOptLen 1 probeHostTable probePlan = true := by
+  decide +kernel
+example : AverCert.WasmSlice.hostTableFuncTypesMatch wideOptBytes wideOptLen
+    1 probeHostTable = true := by decide +kernel
+
+{weak_arity_wasm_slice}
+
+{weak_arity_accepted_core}
+
+-- The nominal check reaches the tag-dispatch arm for this plan, so it does not
+-- depend on the existentially quantified binding's type index.
+example : ∀ t, AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen t 1
+    probePlan = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 :=
+  fun _ => rfl
+
+-- wideOpt is rejected by the real predicate, at exactly the arity term.
+example : ¬ symFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : symFragmentCarrierBound wideOptBytes wideOptLen 1 probeHostTable probePlan = true ∧
+      AverCert.WasmSlice.hostTableFuncTypesMatch wideOptBytes wideOptLen
+        1 probeHostTable = true ∧
+      exprFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  obtain ⟨_hExport, _hCarrier, _body, _entry, binding, _hAccepted, _hFuncType, hNominal,
+    _hSelf, _hCode⟩ := h'.2.2
+  have hArm : AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen
+      binding.typeIdx 1 probePlan
+      = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 := rfl
+  rw [hArm] at hNominal
+  exact absurd hNominal (by decide +kernel)
+
+-- ATTRIBUTION THROUGH ACCEPTANCE: the chain weakened by EXACTLY the arity term
+-- accepts it — every other conjunct, the i32 tag field and the byte gate
+-- included, holds of the widened scrutinee.
+example : weakAritySymFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- EXCLUSIVE: both carrier-side weakenings still reject it, so the arity term is
+-- its sole rejector.
+example : ¬ weakSigSymFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : symFragmentCarrierBound wideOptBytes wideOptLen 1 probeHostTable probePlan = true ∧
+      exprFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  obtain ⟨_hExport, _hCarrier, _body, _entry, binding, _hAccepted, _hFuncType, hNominal,
+    _hSelf, _hCode⟩ := h'.2
+  have hArm : AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen
+      binding.typeIdx 1 probePlan
+      = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 := rfl
+  rw [hArm] at hNominal
+  exact absurd hNominal (by decide +kernel)
+example : ¬ weakCarrierSymFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
+  intro h
+  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch wideOptBytes wideOptLen
+        1 probeHostTable = true ∧
+      exprFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
+        1 probePlan (probeOb 1) := h
+  obtain ⟨_hExport, _hCarrier, _body, _entry, binding, _hAccepted, _hFuncType, hNominal,
+    _hSelf, _hCode⟩ := h'.2
+  have hArm : AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen
+      binding.typeIdx 1 probePlan
+      = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 := rfl
+  rw [hArm] at hNominal
+  exact absurd hNominal (by decide +kernel)
+
+-- The weakening is strict: the honest two-field scrutinee still passes the
+-- weakened chain.
+example : weakAritySymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
+    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
+  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
+   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
+
+-- The projection face states the same two-field layout
+-- (`vs = [.structv structIdx [p.1, p.2]]`) and its own check already pins the
+-- arity, so it needed no change; the fused vector-read face asserts no fixed
+-- width at all (its element list is existentially quantified).
+def probeField : CertDecode.FieldType :=
+  {{ storage := .val (.numeric 0x7f), mutability := 0 }}
+def probeProjFuncEntry : CertDecode.TypeEntry :=
+  {{ form := .plain,
+    composite := .funcType [AverCert.WasmSlice.nullableRefType 2] [.numeric 0x7f] }}
+example : AverCert.WasmSlice.checkExprProjectionTypes 1 2 0 probeProjFuncEntry
+    {{ form := .plain, composite := .structType [probeField, probeField] }} = true := by decide
+example : AverCert.WasmSlice.checkExprProjectionTypes 1 2 0 probeProjFuncEntry
+    {{ form := .plain, composite := .structType [probeField, probeField, probeField] }}
+      = false := by decide
+"#,
+        wide_opt_hex = hex_le(&wide_opt),
+        wide_opt_len = wide_opt.len(),
+    );
+    let lean = format!("{lean}{generic}{arity}");
+    std::fs::write(wall_dir.join("HostTableTypePinGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("env")
+        .arg("lean")
+        .arg("HostTableTypePinGuardIso.lean")
+        .output()
+        .expect("run the host-table type-pin GuardIso check");
+    assert!(
+        check.status.success(),
+        "host-table type-pin GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(wall_dir);
 }
