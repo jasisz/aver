@@ -963,6 +963,52 @@ fn render_per_claim_bundles(
     (theorems, aggregate)
 }
 
+/// Render, per claim, the SPLIT acceptance proof: `per_claim(index)` supplies
+/// the already-numbered witness `def`s and per-conjunct leaf theorems as one
+/// text block plus the aggregate proof term that combines those constants. The
+/// aggregate `{family}Claim{index}Accepted` theorem is stated exactly like the
+/// opaque one `render_per_claim_bundles` emits — it indexes the same family
+/// list and `dsimp`s the same predicate — but its `exact` references the leaf
+/// constants instead of inlining one monolithic witness tuple.
+///
+/// This is the mechanism the expr-fragment beachhead established generalized to
+/// the other data-carrying families: emitting the heavy `WInstr` body, the
+/// code-entry bytes, and the function binding as their OWN top-level `def`s (so
+/// no large literal is duplicated into the aggregate term) and each acceptance
+/// conjunct that walks the module bytes as its OWN leaf theorem means every
+/// `addDecl` completes and frees before the next is elaborated. The per-claim
+/// kernel peak becomes the largest single leaf (a `modBytes` type-section walk)
+/// rather than the whole witness tuple held live at once. The leaf conjuncts are
+/// stated over the encoded plan `def` the aggregate reduces to, so the
+/// aggregate re-runs no byte-decode or lowering work.
+fn render_split_bundles(
+    family: &str,
+    predicate: &str,
+    claims_def: &str,
+    unfolds: &str,
+    count: usize,
+    per_claim: impl Fn(usize) -> (String, String),
+) -> (String, String) {
+    let mut theorems = String::new();
+    let mut names = Vec::with_capacity(count);
+    for index in 0..count {
+        let (declarations, aggregate_proof) = per_claim(index);
+        let accepted = format!("{family}Claim{index}Accepted");
+        theorems.push_str(&declarations);
+        theorems.push_str(&format!(
+            "theorem {accepted} :\n  {predicate} ({claims_def}.get ⟨{index}, by decide⟩) := by\n  dsimp [{claims_def}, {unfolds}]\n  exact {aggregate_proof}\n\n"
+        ));
+        names.push(accepted);
+    }
+    let aggregate = names
+        .into_iter()
+        .rev()
+        .fold("trivial".to_string(), |rest, theorem| {
+            format!("⟨{theorem}, {rest}⟩")
+        });
+    (theorems, aggregate)
+}
+
 /// Structured inputs for one expr-fragment (`sym`) claim's split acceptance
 /// proof. The heavy witness data (lowered body, code-entry bytes, function
 /// binding) and each acceptance conjunct are emitted as their OWN top-level
@@ -1076,6 +1122,92 @@ fn render_sym_claim_bundles(parts: &[SymClaimParts], host_table_lean: &str) -> (
     (theorems, aggregate)
 }
 
+/// Structured inputs for one fuel-recursion claim's split acceptance proof.
+struct RecursionParts {
+    name: String,
+    lowered_body: String,
+    code_entry_bytes: String,
+    export_name_bytes: String,
+    host_table: String,
+    self_idx: u32,
+    type_idx: u32,
+    carrier: u32,
+}
+
+/// Split the fuel-recursion family exactly as `render_sym_claim_bundles` splits
+/// the expr-fragment family: the lowered body, code-entry bytes and function
+/// binding become named `def`s, each byte-walking conjunct of
+/// `recursionPlanAccepted` becomes its own leaf theorem over
+/// `AverCert.Plans.{name}RecursionPlan`, and the aggregate combines them.
+fn render_recursion_claim_bundles(parts: &[RecursionParts]) -> (String, String) {
+    render_split_bundles(
+        "recursion",
+        "AverCert.AcceptedArtifact.recursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "recursionClaims",
+        "AverCert.AcceptedArtifact.recursionClaimAccepted, AverCert.AcceptedArtifact.recursionPlanForExport, AverCert.AcceptedArtifact.recursionPlanAccepted",
+        parts.len(),
+        |index| {
+            let RecursionParts {
+                name,
+                lowered_body,
+                code_entry_bytes,
+                export_name_bytes,
+                host_table,
+                self_idx,
+                type_idx,
+                carrier,
+            } = &parts[index];
+            let body = format!("recursionClaim{index}Body");
+            let code_entry = format!("recursionClaim{index}CodeEntry");
+            let binding = format!("recursionClaim{index}Binding");
+            let check_plan = format!("recursionClaim{index}CheckPlan");
+            let lower_body = format!("recursionClaim{index}LowerBody");
+            let lower_code = format!("recursionClaim{index}LowerCode");
+            let func_binding = format!("recursionClaim{index}FuncBinding");
+            let check_shape = format!("recursionClaim{index}CheckShape");
+            let func_type = format!("recursionClaim{index}FuncType");
+            let host_types = format!("recursionClaim{index}HostTypes");
+            let plan = format!("AverCert.Plans.{name}RecursionPlan");
+            let obligation = format!("AverCert.{name}Ob");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named constants so no large literal is\n\
+                 -- duplicated across the leaf statements or baked into the aggregate term.\n\
+                 def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+                 -- `modBytes` binding decode and type-section walks.\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkRecursionRawPlan {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerRecursionBody {carrier} {plan} = some {body} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerRecursionCodeEntry {carrier} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n\
+                 theorem {check_shape} :\n  \
+                   AverCert.PlanCheck.checkRecursionPlanShape {binding}.funcIdx {host_table} {obligation}.totalityRole {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {func_type} :\n  \
+                   AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {plan}.params.length {carrier} = true := by\n  \
+                   rfl\n\n\
+                 theorem {host_types} :\n  \
+                   AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, {check_plan}, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{lower_body}, {lower_code}, {func_binding}, rfl, {check_shape}, {func_type}, {host_types}, rfl⟩⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1096,7 +1228,7 @@ fn render_artifact_expr_fragment_claims(
     let mut string_eq_proofs = Vec::new();
     let mut string_proofs = Vec::new();
     let mut construct_proofs = Vec::new();
-    let mut recursion_proofs = Vec::new();
+    let mut recursion_parts: Vec<RecursionParts> = Vec::new();
     let mut mutual_proofs = Vec::new();
     let mut verbatim_proofs = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
@@ -1322,17 +1454,24 @@ fn render_artifact_expr_fragment_claims(
                     .expect("certified recursion plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let host_table = recursion_host_table_lean_value(c);
-                let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
-                );
                 recursion_claims.push(format!(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.RecursionClaim)",
                     export_name = lean_str(name),
                 ));
-                recursion_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
-                ));
+                // Split acceptance proof: the witness data and every byte-walking
+                // conjunct become their own top-level declarations (see
+                // `render_recursion_claim_bundles`) so the kernel checks and frees
+                // each separately instead of holding one monolithic witness tuple.
+                recursion_parts.push(RecursionParts {
+                    name: name.clone(),
+                    lowered_body,
+                    code_entry_bytes,
+                    export_name_bytes,
+                    host_table,
+                    self_idx: *self_idx,
+                    type_idx: *type_idx,
+                    carrier: *carrier,
+                });
             }
             Cert::MutualRecursion {
                 name,
@@ -1589,7 +1728,7 @@ fn render_artifact_expr_fragment_claims(
         + string_eq_proofs.len()
         + string_proofs.len()
         + construct_proofs.len()
-        + recursion_proofs.len()
+        + recursion_parts.len()
         + mutual_proofs.len()
         + verbatim_proofs.len()
         + int_dispatch_proofs.len()
@@ -1635,13 +1774,7 @@ fn render_artifact_expr_fragment_claims(
         |acc, _| format!("List.nodup_cons.mpr ⟨by decide, {acc}⟩"),
     );
     let construct_proof = format!("⟨{construct_claims_proof}, {construct_nodup_proof}⟩");
-    let (recursion_bundles, recursion_proof) = render_per_claim_bundles(
-        "recursion",
-        "AverCert.AcceptedArtifact.recursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "recursionClaims",
-        "AverCert.AcceptedArtifact.recursionClaimAccepted, AverCert.AcceptedArtifact.recursionPlanForExport, AverCert.AcceptedArtifact.recursionPlanAccepted",
-        &recursion_proofs,
-    );
+    let (recursion_bundles, recursion_proof) = render_recursion_claim_bundles(&recursion_parts);
     let (mutual_bundles, mutual_proof) = render_per_claim_bundles(
         "mutual",
         "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
