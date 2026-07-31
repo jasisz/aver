@@ -24,11 +24,21 @@ fn mutual_claim_lean_value(c: &Cert) -> String {
     )
 }
 
-/// Concrete byte/plan acceptance for one member of the shared SCC.  This is
-/// data reconstruction only; source-model semantics lives in the bridge below.
-fn mutual_claim_acceptance_proof(c: &Cert) -> String {
+/// Render one SCC member's `{name}_mutualClaimAccepted` companion theorem as a
+/// SPLIT proof, mirroring `render_mutual_claim_bundles` in `render_project.rs`.
+///
+/// This shared bridge module re-proves acceptance for every SCC member in a
+/// standalone file, so it carried the same monolithic witness tuple the artifact
+/// root did. Emitting the lowered body, code-entry bytes and function binding as
+/// named `def`s and each byte-walking conjunct as its own leaf theorem keeps the
+/// per-member kernel peak at the largest single leaf. The leaves are stated over
+/// `AverCert.Plans.{name}MutualPlan`, so the aggregate re-runs no decode work.
+fn render_mutual_bridge_claim_accepted(c: &Cert) -> String {
     let Cert::MutualRecursion {
+        name,
         carrier,
+        box_idx,
+        sub_idx,
         position,
         scc,
         ..
@@ -37,21 +47,67 @@ fn mutual_claim_acceptance_proof(c: &Cert) -> String {
         unreachable!("audited mutual acceptance has a mutual-recursion shape")
     };
     let member = &scc[*position];
-    let plan = mutual_plan_from_cert(c).expect("audited mutual member has a canonical plan");
-    let body = lower_expr_fragment_plan(&plan, *carrier)
+    let plan_cert = mutual_plan_from_cert(c).expect("audited mutual member has a canonical plan");
+    let lowered_body = lower_expr_fragment_plan(&plan_cert, *carrier)
         .map(|ops| render_ops_value(&ops))
         .expect("audited mutual plan lowers to WInstr");
-    let bytes = lower_expr_fragment_plan_code_entry_bytes(&plan, *carrier)
+    let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(&plan_cert, *carrier)
         .expect("audited mutual plan lowers to exact code-entry bytes");
-    let bytes = render_byte_list(&bytes);
-    let binding = format!(
-        "({{ funcIdx := {}, typeIdx := {}, codeEntry := {bytes} }} : \
-         AverCert.WasmSlice.FuncBinding)",
-        member.self_idx, member.type_idx,
-    );
+    let code_entry_bytes = render_byte_list(&code_entry_bytes);
+    let export_name_bytes = render_byte_list(name.as_bytes());
+    let host_table = mutual_host_table_lean_value(*box_idx, *sub_idx);
+    let member_set = mutual_member_set_lean_value(scc);
+
+    let body = format!("{name}MutualClaimBody");
+    let code_entry = format!("{name}MutualClaimCodeEntry");
+    let binding = format!("{name}MutualClaimBinding");
+    let check_plan = format!("{name}MutualClaimCheckPlan");
+    let lower_body = format!("{name}MutualClaimLowerBody");
+    let lower_code = format!("{name}MutualClaimLowerCode");
+    let func_binding = format!("{name}MutualClaimFuncBinding");
+    let check_shape = format!("{name}MutualClaimCheckShape");
+    let func_type = format!("{name}MutualClaimFuncType");
+    let host_types = format!("{name}MutualClaimHostTypes");
+    let plan = format!("AverCert.Plans.{name}MutualPlan");
     format!(
-        "⟨rfl, rfl, rfl, rfl, rfl, ⟨({body}), ({bytes}), {binding}, \
-         ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
+        "-- Witness data for `{name}` as named constants so no large literal is\n\
+         -- duplicated across the leaf statements or baked into the aggregate term.\n\
+         def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+         def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+         def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+           {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+         theorem {check_plan} :\n  \
+           AverCert.PlanCheck.checkMutualRawPlan {plan} = true := by\n  \
+           rfl\n\n\
+         theorem {lower_body} :\n  \
+           AverCert.PlanLower.lowerMutualBody {carrier} {plan} = some {body} := by\n  \
+           rfl\n\n\
+         theorem {lower_code} :\n  \
+           AverCert.PlanBytes.lowerMutualCodeEntry {carrier} {plan} = some {code_entry} := by\n  \
+           rfl\n\n\
+         theorem {func_binding} :\n  \
+           AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+           rfl\n\n\
+         theorem {check_shape} :\n  \
+           AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} {plan} = true := by\n  \
+           rfl\n\n\
+         theorem {func_type} :\n  \
+           AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {plan}.params.length {carrier} = true := by\n  \
+           rfl\n\n\
+         theorem {host_types} :\n  \
+           AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+           rfl\n\n\
+         theorem {name}_mutualClaimAccepted :\n    \
+           AverCert.AcceptedArtifact.mutualRecursionClaimAccepted\n      \
+             AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest\n      \
+             {name}_mutualClaim := by\n  \
+           dsimp [{name}_mutualClaim,\n    \
+             AverCert.AcceptedArtifact.mutualRecursionClaimAccepted,\n    \
+             AverCert.AcceptedArtifact.mutualPlanForExport,\n    \
+             AverCert.AcceptedArtifact.mutualPlanAccepted]\n  \
+           exact ⟨rfl, rfl, rfl, {check_plan}, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{lower_body}, {lower_code}, {func_binding}, rfl, {check_shape}, {func_type}, {host_types}, rfl⟩⟩⟩\n",
+        self_idx = member.self_idx,
+        type_idx = member.type_idx,
     )
 }
 
@@ -179,21 +235,12 @@ def {primary}_mutualScc : MutualRecursionSoundness.AdmittedScc {k} {carrier} {bo
             inner: Box::new(member_cert),
         };
         let claim = mutual_claim_lean_value(&wrapped);
-        let acceptance = mutual_claim_acceptance_proof(&wrapped);
+        let claim_accepted = render_mutual_bridge_claim_accepted(&wrapped);
         out.push_str(&format!(
             r#"def {name}_mutualClaim : AverCert.AcceptedArtifact.MutualRecursionClaim :=
   {claim}
 
-theorem {name}_mutualClaimAccepted :
-    AverCert.AcceptedArtifact.mutualRecursionClaimAccepted
-      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest
-      {name}_mutualClaim := by
-  dsimp [{name}_mutualClaim,
-    AverCert.AcceptedArtifact.mutualRecursionClaimAccepted,
-    AverCert.AcceptedArtifact.mutualPlanForExport,
-    AverCert.AcceptedArtifact.mutualPlanAccepted]
-  exact {acceptance}
-
+{claim_accepted}
 "#,
             name = member.name,
         ));
