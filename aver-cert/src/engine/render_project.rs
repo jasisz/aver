@@ -1548,6 +1548,93 @@ fn render_construct_claim_bundles(parts: &[ConstructParts]) -> (String, String) 
     )
 }
 
+/// One composition member's witness data for the split proof.
+struct CompositionMemberData {
+    export_name_bytes: String,
+    body: String,
+    code_entry: String,
+    self_idx: u32,
+    type_idx: u32,
+}
+
+/// Structured inputs for one composition-root claim's split acceptance proof.
+struct CompositionParts {
+    carrier: u32,
+    host_table: String,
+    members: Vec<CompositionMemberData>,
+}
+
+/// Split the cross-function composition family. Each member's lowered body and
+/// code-entry bytes become named `def`s, and the member `modBytes` walks (the
+/// binding decode and the declared-function-type pin) plus the claim-level
+/// host-table type pin become their own leaf theorems. The member lowerings and
+/// the closure/root conjuncts stay inline: they read the byte-derived
+/// `funcTable`, which the aggregate must reduce to enter the `some` branch in
+/// any case, so isolating them would not remove that one walk.
+fn render_composition_claim_bundles(parts: &[CompositionParts]) -> (String, String) {
+    render_split_bundles(
+        "composition",
+        "AverCert.AcceptedArtifact.compositionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen compositionMembers",
+        "compositionClaims",
+        "AverCert.AcceptedArtifact.compositionClaimAccepted, AverCert.AcceptedArtifact.compositionFuncTable, AverCert.AcceptedArtifact.compositionMemberBinding, AverCert.AcceptedArtifact.compositionNamedMembersAccepted, AverCert.AcceptedArtifact.compositionMemberPlanAccepted, AverCert.AcceptedArtifact.compositionMemberForName, AverCert.AcceptedArtifact.compositionClosureBound, AverCert.AcceptedArtifact.compositionEdges, AverCert.AcceptedArtifact.compositionPlanCallees, AverCert.AcceptedArtifact.compositionEdgesDescend, AverCert.AcceptedArtifact.compositionReachClosure, AverCert.AcceptedArtifact.compositionReachStep, AverCert.AcceptedArtifact.stringListNodup, AverCert.AcceptedArtifact.stringListSetEq",
+        parts.len(),
+        |index| {
+            let CompositionParts {
+                carrier,
+                host_table,
+                members,
+            } = &parts[index];
+            let host_types = format!("compositionClaim{index}HostTypes");
+            // Shared host-table type pin: the same statement is the claim-level
+            // conjunct and every member's host-type conjunct, so one leaf serves
+            // both and no member re-runs the walk.
+            let mut declarations = format!(
+                "-- Claim-level host-table declared-function-type pin (a `modBytes`\n\
+                 -- type-section walk), shared by the claim and every member.\n\
+                 theorem {host_types} :\n  \
+                   AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+                   rfl\n\n"
+            );
+            let mut named_proof = "trivial".to_string();
+            for (member_index, member) in members.iter().enumerate().rev() {
+                let CompositionMemberData {
+                    export_name_bytes,
+                    body,
+                    code_entry,
+                    self_idx,
+                    type_idx,
+                } = member;
+                let body_def = format!("compositionClaim{index}Member{member_index}Body");
+                let code_def = format!("compositionClaim{index}Member{member_index}CodeEntry");
+                let binding_def = format!("compositionClaim{index}Member{member_index}Binding");
+                let func_binding = format!("compositionClaim{index}Member{member_index}FuncBinding");
+                let func_type = format!("compositionClaim{index}Member{member_index}FuncType");
+                declarations = format!(
+                    "-- Member `{member_index}` witness data as named constants.\n\
+                     def {body_def} : List CertPrelude.WInstr := {body}\n\n\
+                     def {code_def} : AverCert.WasmSlice.ByteSeq := {code_entry}\n\n\
+                     def {binding_def} : AverCert.WasmSlice.FuncBinding :=\n  \
+                       {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_def} }}\n\n\
+                     theorem {func_binding} :\n  \
+                       AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_def} = some {binding_def} := by\n  \
+                       rfl\n\n\
+                     theorem {func_type} :\n  \
+                       AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding_def}.typeIdx 1 {carrier} = true := by\n  \
+                       rfl\n\n{declarations}"
+                );
+                let member_proof = format!(
+                    "⟨rfl, ⟨{body_def}, {code_def}, {binding_def}, rfl, rfl, {func_binding}, {func_type}, {host_types}, rfl⟩⟩"
+                );
+                named_proof = format!("⟨{member_proof}, {named_proof}⟩");
+            }
+            let aggregate_proof = format!(
+                "⟨rfl, ⟨rfl, ⟨rfl, ⟨{host_types}, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1573,7 +1660,7 @@ fn render_artifact_expr_fragment_claims(
     let mut verbatim_proofs = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
     let mut field_projection_proofs = Vec::new();
-    let mut composition_proofs = Vec::new();
+    let mut composition_parts: Vec<CompositionParts> = Vec::new();
     let mut string_concat_faces: Vec<Option<(String, String)>> = Vec::new();
     let mut construct_faces: Vec<Option<(String, String)>> = Vec::new();
     let mut int_dispatch_faces: Vec<Option<(String, String)>> = Vec::new();
@@ -2002,29 +2089,34 @@ fn render_artifact_expr_fragment_claims(
             "({{ exportName := {export_name}, carrier := {carrier}, hostTable := {host_table}, memberNames := {member_names}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.CompositionClaim)",
             export_name = lean_str(name),
         ));
-        let mut named_proof = "trivial".to_string();
-        for (entry, plan) in plans.iter().rev() {
-            let body = render_ops_value(
-                &lower_composition_plan(plan, add_idx, &global_func_table)
-                    .expect("composition member lowers against global byte table"),
-            );
-            let code_entry = render_byte_list(
-                &composition_code_entry_bytes(plan, *carrier, add_idx, &global_func_table)
-                    .expect("composition member byte-lowers against global byte table"),
-            );
-            let binding = format!(
-                "({{ funcIdx := {}, typeIdx := {}, codeEntry := {} }} : AverCert.WasmSlice.FuncBinding)",
-                entry.self_idx, entry.type_idx, code_entry
-            );
-            let member_proof = format!(
-                "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
-            );
-            named_proof = format!("⟨{member_proof}, {named_proof}⟩");
-        }
+        // Collect each member's witness data for the split acceptance proof;
+        // see `render_composition_claim_bundles`.
+        let members = plans
+            .iter()
+            .map(|(entry, plan)| {
+                let body = render_ops_value(
+                    &lower_composition_plan(plan, add_idx, &global_func_table)
+                        .expect("composition member lowers against global byte table"),
+                );
+                let code_entry = render_byte_list(
+                    &composition_code_entry_bytes(plan, *carrier, add_idx, &global_func_table)
+                        .expect("composition member byte-lowers against global byte table"),
+                );
+                CompositionMemberData {
+                    export_name_bytes: render_byte_list(entry.name.as_bytes()),
+                    body,
+                    code_entry,
+                    self_idx: entry.self_idx,
+                    type_idx: entry.type_idx,
+                }
+            })
+            .collect::<Vec<_>>();
         let _ = self_idx;
-        composition_proofs.push(format!(
-            "⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩⟩"
-        ));
+        composition_parts.push(CompositionParts {
+            carrier: *carrier,
+            host_table,
+            members,
+        });
     }
     let sym_claims = if sym_claims.is_empty() {
         "[]".to_string()
@@ -2090,7 +2182,7 @@ fn render_artifact_expr_fragment_claims(
         + verbatim_proofs.len()
         + int_dispatch_proofs.len()
         + field_projection_proofs.len()
-        + composition_proofs.len();
+        + composition_parts.len();
     let obligation_proof = (0..obligation_proof_count).fold("trivial".to_string(), |acc, _| {
         format!("⟨rfl, {acc}⟩")
     });
@@ -2136,13 +2228,8 @@ fn render_artifact_expr_fragment_claims(
         "AverCert.AcceptedArtifact.fieldProjectionClaimAccepted, AverCert.AcceptedArtifact.fieldProjectionPlanForExport, AverCert.AcceptedArtifact.fieldProjectionPlanAccepted",
         &field_projection_proofs,
     );
-    let (composition_bundles, composition_claims_proof) = render_per_claim_bundles(
-        "composition",
-        "AverCert.AcceptedArtifact.compositionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen compositionMembers",
-        "compositionClaims",
-        "AverCert.AcceptedArtifact.compositionClaimAccepted, AverCert.AcceptedArtifact.compositionFuncTable, AverCert.AcceptedArtifact.compositionMemberBinding, AverCert.AcceptedArtifact.compositionNamedMembersAccepted, AverCert.AcceptedArtifact.compositionMemberPlanAccepted, AverCert.AcceptedArtifact.compositionMemberForName, AverCert.AcceptedArtifact.compositionClosureBound, AverCert.AcceptedArtifact.compositionEdges, AverCert.AcceptedArtifact.compositionPlanCallees, AverCert.AcceptedArtifact.compositionEdgesDescend, AverCert.AcceptedArtifact.compositionReachClosure, AverCert.AcceptedArtifact.compositionReachStep, AverCert.AcceptedArtifact.stringListNodup, AverCert.AcceptedArtifact.stringListSetEq",
-        &composition_proofs,
-    );
+    let (composition_bundles, composition_claims_proof) =
+        render_composition_claim_bundles(&composition_parts);
     // `acceptedCompositionFragments` conjoins the per-claim acceptance with the
     // artifact-wide member coverage, manifest-obligation coverage, and unique
     // obligation-export bounds. Each is a decidable `Bool = true` over concrete
