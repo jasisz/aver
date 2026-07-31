@@ -60,8 +60,27 @@ fn expr_fragment_claim_lean_value(
     )
 }
 
-/// Reconstruct the same byte/plan witness emitted as DATA in `Artifact.lean`.
-fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
+/// Render the `{name}_exprFragmentClaimAccepted` theorem as a SPLIT proof:
+/// witness data (the lowered `WInstr` body, code-entry bytes, function binding)
+/// as named `def`s and each acceptance conjunct as its OWN leaf theorem, then an
+/// aggregate that combines the already-checked constants. This mirrors
+/// `render_sym_claim_bundles` in `render_project.rs` and exists for the SAME
+/// reason: emitting one monolithic `exact ⟨…giant nested tuple…⟩` submits the
+/// whole witness to the kernel in a single `addDecl` and holds it live, which
+/// peaked `Certificate.lean` at ~6.5 GB — co-equal with, and independent of, the
+/// artifact root's own peak. Splitting each piece into its own declaration drops
+/// the peak to the largest single leaf (a `modBytes` decode / type-section walk,
+/// each ≤ ~1.2 GB). The leaf conjuncts are stated over `AverCert.Plans.{name}Plan`
+/// (the encoded plan), definitionally the value the aggregate reduces to, so the
+/// aggregate re-runs no heavy reduction.
+///
+/// `claim_target` is what `symFragmentClaimAccepted` is applied to — the `claim`
+/// value inline, or a `{name}TagDispatchClaim` def the caller already emitted.
+fn render_expr_fragment_claim_accepted_split(
+    c: &Cert,
+    claim_target: &str,
+    host_table_lean: &str,
+) -> String {
     let Cert::ExprFragment {
         carrier,
         self_idx,
@@ -72,25 +91,67 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
     else {
         unreachable!()
     };
-    let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(plan, *carrier)
+    let name = c.name();
+    let carrier = *carrier;
+    let code_entry_bytes = lower_expr_fragment_plan_code_entry_bytes(plan, carrier)
         .expect("generic expr-fragment plan lowers to code-entry bytes");
     let code_entry_bytes = render_byte_list(&code_entry_bytes);
-    let lowered_body = lower_expr_fragment_plan(plan, *carrier)
+    let lowered_body = lower_expr_fragment_plan(plan, carrier)
         .map(|ops| render_ops_value(&ops))
         .expect("generic expr-fragment plan lowers to WInstr body");
-    let binding = format!(
-        "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, \
-         codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
-    );
-    // The first component discharges the byte-derived carrier binding
-    // (`symFragmentCarrierBound`) and the second the host-table
-    // declared-function-type pin (`hostTableFuncTypesMatch`), both stated
-    // ahead of the export/carrier binds. Both are Boolean checks the kernel
-    // runs, so neither is keyed on anything this emitter has to recompute:
-    // when the binding does not apply the check answers `true` by itself.
+    let export_name_bytes = render_byte_list(name.as_bytes());
+    let plan_ref = format!("AverCert.Plans.{name}Plan");
+    let body = format!("{name}ClaimBody");
+    let code_entry = format!("{name}ClaimCodeEntry");
+    let binding = format!("{name}ClaimBinding");
+    let carrier_bound = format!("{name}ClaimCarrierBound");
+    let host_types = format!("{name}ClaimHostTableFuncTypes");
+    let check_plan = format!("{name}ClaimCheckPlan");
+    let lower_body = format!("{name}ClaimLowerBody");
+    let lower_code = format!("{name}ClaimLowerCodeEntry");
+    let func_binding = format!("{name}ClaimFuncBinding");
+    let func_type = format!("{name}ClaimFuncTypeMatches");
+    let nominal = format!("{name}ClaimNominalTypes");
+    let accepted = format!("{name}_exprFragmentClaimAccepted");
     format!(
-        "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
-         ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
+        "-- Witness data as named constants so no large literal is baked into the\n\
+         -- aggregate acceptance term (the source of this file's memory peak).\n\
+         def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+         def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+         def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+           {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+         -- One leaf theorem per acceptance conjunct, each checked and freed in its\n\
+         -- own `addDecl`.\n\
+         theorem {carrier_bound} :\n  \
+           AverCert.AcceptedArtifact.symFragmentCarrierBound AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table_lean} {plan_ref} = true := by\n  \
+           rfl\n\n\
+         theorem {host_types} :\n  \
+           AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table_lean} = true := by\n  \
+           rfl\n\n\
+         theorem {check_plan} :\n  \
+           AverCert.PlanCheck.checkExprFragmentRawPlan {plan_ref} = true := by\n  \
+           rfl\n\n\
+         theorem {lower_body} :\n  \
+           AverCert.PlanLower.lowerExprFragmentBody {carrier} {plan_ref} = some {body} := by\n  \
+           rfl\n\n\
+         theorem {lower_code} :\n  \
+           AverCert.PlanBytes.lowerExprFragmentCodeEntry {carrier} {plan_ref} = some {code_entry} := by\n  \
+           rfl\n\n\
+         theorem {func_binding} :\n  \
+           AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+           rfl\n\n\
+         theorem {func_type} :\n  \
+           AverCert.WasmSlice.exprFragmentFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {carrier} {plan_ref}.params {plan_ref}.result = true := by\n  \
+           rfl\n\n\
+         theorem {nominal} :\n  \
+           AverCert.WasmSlice.exprFragmentNominalTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {carrier} {plan_ref} = true := by\n  \
+           rfl\n\n\
+         -- Aggregate: combine the already-checked leaf constants.\n\
+         theorem {accepted} :\n  \
+           AverCert.AcceptedArtifact.symFragmentClaimAccepted\n    \
+             AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {claim_target} := by\n  \
+           unfold AverCert.AcceptedArtifact.symFragmentClaimAccepted\n  \
+           exact ⟨{carrier_bound}, {host_types}, rfl, rfl, ⟨{body}, {code_entry}, {binding}, ⟨⟨{check_plan}, {lower_body}, {lower_code}, {func_binding}⟩, {func_type}, {nominal}, rfl, rfl⟩⟩⟩\n"
     )
 }
 
@@ -131,8 +192,8 @@ fn render_expr_fragment_tag_dispatch_semantic_bridge(
     let carrier = c.carrier();
     let claim_name = format!("{name}TagDispatchClaim");
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let acceptance = expr_fragment_claim_acceptance_proof(c);
     let host_table_lean = host_table.lean_value();
+    let claim_accepted = render_expr_fragment_claim_accepted_split(c, &claim_name, &host_table_lean);
     let tag = lean_int_lit(face.tag);
     let then_c = lean_int_lit(face.then_c);
     let else_c = lean_int_lit(face.else_c);
@@ -165,12 +226,7 @@ fn render_expr_fragment_tag_dispatch_semantic_bridge(
 
 def {claim_name} : AverCert.AcceptedArtifact.SymFragmentClaim := {claim}
 
-theorem {name}_exprFragmentClaimAccepted :
-    AverCert.AcceptedArtifact.symFragmentClaimAccepted
-      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {claim_name} := by
-  unfold AverCert.AcceptedArtifact.symFragmentClaimAccepted
-  exact {acceptance}
-
+{claim_accepted}
 theorem {name}_exprFragmentSemanticBridge :
     AcceptanceSoundness.exprFragmentSemanticBridge {claim_name}
       AverCert.Plans.{name}Plan := by
@@ -198,17 +254,12 @@ fn render_expr_fragment_int_add_semantic_bridge(
     let carrier = c.carrier();
     let k = lean_int_lit(face.k);
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let acceptance = expr_fragment_claim_acceptance_proof(c);
     let host_table_lean = host_table.lean_value();
+    let claim_accepted = render_expr_fragment_claim_accepted_split(c, &claim, &host_table_lean);
     format!(
         r#"/-! ### {name} — option-(b) integer expr-fragment semantic bridge -/
 
-theorem {name}_exprFragmentClaimAccepted :
-    AverCert.AcceptedArtifact.symFragmentClaimAccepted
-      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {claim} := by
-  unfold AverCert.AcceptedArtifact.symFragmentClaimAccepted
-  exact {acceptance}
-
+{claim_accepted}
 theorem {name}_exprFragmentSemanticBridge :
     AcceptanceSoundness.exprFragmentSemanticBridge {claim}
       AverCert.Plans.{name}Plan := by
@@ -424,7 +475,6 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     let model_name = c.model_lean_name(model_info);
     debug_assert_eq!(plan.result, FragTy::BoolI32);
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let acceptance = expr_fragment_claim_acceptance_proof(c);
     let result = expr_fragment_wval_expr(plan, &|idx, _ty| format!("a{idx}"));
     let input_values = plan
         .params
@@ -465,6 +515,7 @@ fn render_expr_fragment_int_bool_semantic_bridge(
          popArgs, initLocals, {model_name}"
     );
     let host_table_lean = host_table.lean_value();
+    let claim_accepted = render_expr_fragment_claim_accepted_split(c, &claim, &host_table_lean);
     let eval_tactic = expr_fragment_bridge_eval_tactic(
         plan,
         name,
@@ -475,12 +526,7 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     format!(
         r#"/-! ### {name} — option-(b) integer/Bool expr-fragment semantic bridge -/
 
-theorem {name}_exprFragmentClaimAccepted :
-    AverCert.AcceptedArtifact.symFragmentClaimAccepted
-      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {claim} := by
-  unfold AverCert.AcceptedArtifact.symFragmentClaimAccepted
-  exact {acceptance}
-
+{claim_accepted}
 theorem {name}_exprFragmentSemanticBridge :
     AcceptanceSoundness.exprFragmentSemanticBridge {claim}
       AverCert.Plans.{name}Plan := by
