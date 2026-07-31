@@ -1208,6 +1208,89 @@ fn render_recursion_claim_bundles(parts: &[RecursionParts]) -> (String, String) 
     )
 }
 
+/// Structured inputs for one mutual-recursion member claim's split proof.
+struct MutualParts {
+    name: String,
+    lowered_body: String,
+    code_entry_bytes: String,
+    export_name_bytes: String,
+    host_table: String,
+    member_set: String,
+    self_idx: u32,
+    type_idx: u32,
+    carrier: u32,
+}
+
+/// Split the mutual-recursion family the same way as the fuel-recursion family.
+fn render_mutual_claim_bundles(parts: &[MutualParts]) -> (String, String) {
+    render_split_bundles(
+        "mutual",
+        "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "mutualRecursionClaims",
+        "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted, AverCert.AcceptedArtifact.mutualPlanForExport, AverCert.AcceptedArtifact.mutualPlanAccepted",
+        parts.len(),
+        |index| {
+            let MutualParts {
+                name,
+                lowered_body,
+                code_entry_bytes,
+                export_name_bytes,
+                host_table,
+                member_set,
+                self_idx,
+                type_idx,
+                carrier,
+            } = &parts[index];
+            let body = format!("mutualClaim{index}Body");
+            let code_entry = format!("mutualClaim{index}CodeEntry");
+            let binding = format!("mutualClaim{index}Binding");
+            let check_plan = format!("mutualClaim{index}CheckPlan");
+            let lower_body = format!("mutualClaim{index}LowerBody");
+            let lower_code = format!("mutualClaim{index}LowerCode");
+            let func_binding = format!("mutualClaim{index}FuncBinding");
+            let check_shape = format!("mutualClaim{index}CheckShape");
+            let func_type = format!("mutualClaim{index}FuncType");
+            let host_types = format!("mutualClaim{index}HostTypes");
+            let plan = format!("AverCert.Plans.{name}MutualPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named constants so no large literal is\n\
+                 -- duplicated across the leaf statements or baked into the aggregate term.\n\
+                 def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+                 -- `modBytes` binding decode and type-section walks.\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkMutualRawPlan {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerMutualBody {carrier} {plan} = some {body} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerMutualCodeEntry {carrier} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n\
+                 theorem {check_shape} :\n  \
+                   AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {func_type} :\n  \
+                   AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {plan}.params.length {carrier} = true := by\n  \
+                   rfl\n\n\
+                 theorem {host_types} :\n  \
+                   AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, rfl, {check_plan}, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{lower_body}, {lower_code}, {func_binding}, rfl, {check_shape}, {func_type}, {host_types}, rfl⟩⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1229,7 +1312,7 @@ fn render_artifact_expr_fragment_claims(
     let mut string_proofs = Vec::new();
     let mut construct_proofs = Vec::new();
     let mut recursion_parts: Vec<RecursionParts> = Vec::new();
-    let mut mutual_proofs = Vec::new();
+    let mut mutual_parts: Vec<MutualParts> = Vec::new();
     let mut verbatim_proofs = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
     let mut field_projection_proofs = Vec::new();
@@ -1498,18 +1581,22 @@ fn render_artifact_expr_fragment_claims(
                 let export_name_bytes = render_byte_list(name.as_bytes());
                 let host_table = mutual_host_table_lean_value(*box_idx, *sub_idx);
                 let member_set = mutual_member_set_lean_value(scc);
-                let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)",
-                    type_idx = member.type_idx,
-                );
                 mutual_claims.push(format!(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, memberSet := {member_set}, hostTable := {host_table}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.MutualRecursionClaim)",
                     export_name = lean_str(name),
                 ));
-                mutual_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
-                ));
+                // Split acceptance proof; see `render_mutual_claim_bundles`.
+                mutual_parts.push(MutualParts {
+                    name: name.clone(),
+                    lowered_body,
+                    code_entry_bytes,
+                    export_name_bytes,
+                    host_table,
+                    member_set,
+                    self_idx: *self_idx,
+                    type_idx: member.type_idx,
+                    carrier: *carrier,
+                });
             }
             Cert::VerbatimWidenedMatch {
                 name, carrier, ..
@@ -1729,7 +1816,7 @@ fn render_artifact_expr_fragment_claims(
         + string_proofs.len()
         + construct_proofs.len()
         + recursion_parts.len()
-        + mutual_proofs.len()
+        + mutual_parts.len()
         + verbatim_proofs.len()
         + int_dispatch_proofs.len()
         + field_projection_proofs.len()
@@ -1775,13 +1862,7 @@ fn render_artifact_expr_fragment_claims(
     );
     let construct_proof = format!("⟨{construct_claims_proof}, {construct_nodup_proof}⟩");
     let (recursion_bundles, recursion_proof) = render_recursion_claim_bundles(&recursion_parts);
-    let (mutual_bundles, mutual_proof) = render_per_claim_bundles(
-        "mutual",
-        "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "mutualRecursionClaims",
-        "AverCert.AcceptedArtifact.mutualRecursionClaimAccepted, AverCert.AcceptedArtifact.mutualPlanForExport, AverCert.AcceptedArtifact.mutualPlanAccepted",
-        &mutual_proofs,
-    );
+    let (mutual_bundles, mutual_proof) = render_mutual_claim_bundles(&mutual_parts);
     let (verbatim_bundles, verbatim_proof) = render_per_claim_bundles(
         "verbatim",
         "AverCert.AcceptedArtifact.verbatimClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
