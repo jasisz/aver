@@ -60,19 +60,8 @@ fn expr_fragment_claim_lean_value(
     )
 }
 
-/// Proof term for the `symFragmentHostCarrierBound` conjunct, keyed on the
-/// exact host-table literal spliced into the claim: a claim citing host roles
-/// closes the decoder equality by `rfl`; an empty table's binding is `True`.
-fn expr_fragment_host_carrier_bound_proof(host_table_lean: &str) -> &'static str {
-    if host_table_lean == "[]" {
-        "True.intro"
-    } else {
-        "rfl"
-    }
-}
-
 /// Reconstruct the same byte/plan witness emitted as DATA in `Artifact.lean`.
-fn expr_fragment_claim_acceptance_proof(c: &Cert, host_table: FragHostTable) -> String {
+fn expr_fragment_claim_acceptance_proof(c: &Cert) -> String {
     let Cert::ExprFragment {
         carrier,
         self_idx,
@@ -94,14 +83,13 @@ fn expr_fragment_claim_acceptance_proof(c: &Cert, host_table: FragHostTable) -> 
          codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
     );
     // The first component discharges the byte-derived carrier binding
-    // (`symFragmentHostCarrierBound`): a claim citing host roles must present
-    // the decoded carrier index (`rfl` runs the decoder), an empty table is
-    // unconstrained (`True.intro`). The `rfl` after it discharges the
-    // host-table declared-function-type pin (`hostTableFuncTypesMatch`),
-    // stated ahead of the export/carrier binds.
-    let carrier_bound = expr_fragment_host_carrier_bound_proof(&host_table.lean_value());
+    // (`symFragmentCarrierBound`) and the second the host-table
+    // declared-function-type pin (`hostTableFuncTypesMatch`), both stated
+    // ahead of the export/carrier binds. Both are Boolean checks the kernel
+    // runs, so neither is keyed on anything this emitter has to recompute:
+    // when the binding does not apply the check answers `true` by itself.
     format!(
-        "⟨{carrier_bound}, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
+        "⟨rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {binding}, \
          ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩⟩"
     )
 }
@@ -143,7 +131,7 @@ fn render_expr_fragment_tag_dispatch_semantic_bridge(
     let carrier = c.carrier();
     let claim_name = format!("{name}TagDispatchClaim");
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let acceptance = expr_fragment_claim_acceptance_proof(c, host_table);
+    let acceptance = expr_fragment_claim_acceptance_proof(c);
     let host_table_lean = host_table.lean_value();
     let tag = lean_int_lit(face.tag);
     let then_c = lean_int_lit(face.then_c);
@@ -210,7 +198,7 @@ fn render_expr_fragment_int_add_semantic_bridge(
     let carrier = c.carrier();
     let k = lean_int_lit(face.k);
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let acceptance = expr_fragment_claim_acceptance_proof(c, host_table);
+    let acceptance = expr_fragment_claim_acceptance_proof(c);
     let host_table_lean = host_table.lean_value();
     format!(
         r#"/-! ### {name} — option-(b) integer expr-fragment semantic bridge -/
@@ -436,7 +424,7 @@ fn render_expr_fragment_int_bool_semantic_bridge(
     let model_name = c.model_lean_name(model_info);
     debug_assert_eq!(plan.result, FragTy::BoolI32);
     let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let acceptance = expr_fragment_claim_acceptance_proof(c, host_table);
+    let acceptance = expr_fragment_claim_acceptance_proof(c);
     let result = expr_fragment_wval_expr(plan, &|idx, _ty| format!("a{idx}"));
     let input_values = plan
         .params

@@ -228,7 +228,13 @@ def exprFragmentFuncTypeMatches
     projection (the other, tag dispatch, is checked below). Its function
     parameter must name that exact struct, and its result must equal the
     selected field's decoded storage type. This simultaneously proves that
-    the struct and field exist in the artifact's type section. -/
+    the struct and field exist in the artifact's type section.
+
+    `fields.length == 2` is the same arity pin `checkTagDispatchTypes` carries
+    and for the same reason: the projection face states
+    `domRepr := vs = [.structv structIdx [p.1, p.2]]`, a struct value with
+    exactly two fields, so a type entry of any other width would make the
+    obligation quantify over states the module forbids. -/
 def checkExprProjectionTypes
     (carrier structIdx fieldIdx : Nat)
     (funcEntry structEntry : CertDecode.TypeEntry) : Bool :=
@@ -283,15 +289,27 @@ def exprTagDispatchStructIdx? (plan : AverCert.Schema.ExprFragmentRawPlan) : Opt
     | _ => none
   else none
 
-/-- The scrutinee struct's field 0 must be the i32 operational tag. Guard
-    structIdx≠carrier (the Int carrier is never the scrutinee). -/
+/-- The scrutinee struct must have EXACTLY two fields, of which field 0 is the
+    i32 operational tag. Guard structIdx≠carrier (the Int carrier is never the
+    scrutinee).
+
+    The field count is soundness-relevant, not tidiness. The tag-dispatch face
+    states `domRepr := vs = [.structv structIdx [.i32v p.1, p.2]]` — a struct
+    value with exactly two fields at that index. A module whose type section
+    declares the index with a different field count admits no such state, so
+    the obligation would be quantified over nothing while the report labels the
+    export certified. `fields.length` here is `CertDecode.TypeEntry.fieldCount`
+    of the same decoded entry — the quantity `CertDecode.decodeStructFieldCount`
+    reports for this index — read off the single decode already performed by
+    `exprTagDispatchTypesMatch` rather than by decoding the section twice. -/
 def checkTagDispatchTypes (carrier structIdx : Nat) (structEntry : CertDecode.TypeEntry) : Bool :=
   if structIdx == carrier then false else
   match structEntry.form, structEntry.composite with
   | .plain, .structType fields =>
-      match (fields[0]? : Option CertDecode.FieldType) with
-      | some { storage := .val (.numeric 0x7f), .. } => true
-      | _ => false
+      fields.length == 2 &&
+        match (fields[0]? : Option CertDecode.FieldType) with
+        | some { storage := .val (.numeric 0x7f), .. } => true
+        | _ => false
   | _, _ => false
 
 def exprTagDispatchTypesMatch (modBytes modLen carrier structIdx : Nat) : Bool :=
@@ -321,7 +339,12 @@ def exprVectorGetOrDefaultArrTy?
     take exactly the declared vector array plus one Int carrier and return the
     carrier, and the declared array type's element storage must be the nullable
     carrier reference — so the elements a `domRepr` state carries really are
-    Int-carrier representations. The carrier is never the array itself. -/
+    Int-carrier representations. The carrier is never the array itself.
+
+    Unlike the projection and tag-dispatch faces there is no field count to
+    pin here: `vecDomRepr` reads `vs = [.arr arrTy elems, wi]` with `elems`
+    existentially quantified, so the face asserts no fixed width — the shape
+    fact it does assert is the ELEMENT type, which is what this check binds. -/
 def checkVectorGetTypes
     (carrier arrTy : Nat)
     (funcEntry arrEntry : CertDecode.TypeEntry) : Bool :=

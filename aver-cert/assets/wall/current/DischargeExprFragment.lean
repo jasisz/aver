@@ -164,8 +164,9 @@ theorem exprFragment_claim_discharges_generic
       claim.hostTable claim.structTable claim.plan with
   | none => simp [hEncode] at hClaim
   | some plan =>
-      have hAccepted : symFragmentHostCarrierBound
-            artifact.modBytes artifact.modLen claim.carrier claim.hostTable ∧
+      have hAccepted : symFragmentCarrierBound
+            artifact.modBytes artifact.modLen claim.carrier claim.hostTable
+            plan = true ∧
           AverCert.WasmSlice.hostTableFuncTypesMatch
             artifact.modBytes artifact.modLen claim.carrier
             claim.hostTable = true ∧

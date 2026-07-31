@@ -6778,56 +6778,21 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// ACCEPTANCE-LEVEL guard-isolation for the two Int-face dispatch binds that
-/// the byte-equality gate does NOT cover, elaborated with `lake env lean`
-/// against the audited cert modules — no `aver cert verify`, no sibling
-/// defence in the path.
+/// ACCEPTANCE-LEVEL guard-isolation for the List-constructor binds, elaborated
+/// with `lake env lean` against the audited cert modules of a real certified
+/// `examples/data/json.av` package — no `aver cert verify` in the path.
 ///
-/// SIGNATURE guard (`verbatimFuncTypeMatches … carrier`, reused with the Int
-/// carrier as the result heap type): two minimal modules identical in every
-/// section EXCEPT the type section (the second appends a second nominal-root
-/// parameter). The func/export/code sections — hence the byte-derived
-/// raw `FuncBinding` and code entry are byte-for-byte identical, so the exact
-/// binding lookup returns the SAME value and only the signature conjunct
-/// distinguishes unary from binary.
+/// Four vectors, each a predicate-level copy weakened by EXACTLY one conjunct:
+/// SymCheckAttack (an empty-tail node lying about its element type; only
+/// `checkSymRawPlan` rejects it), PermAttack (a target plan that uses every
+/// parameter once but swaps head and tail; only the source/target matcher
+/// rejects it), TypeAttack (the claimed element representation, read from both
+/// the list struct and the exported signature, so a coherent symbolic relabel
+/// cannot reach it), and CountAttack (a copy of `constructPlanAccepted`
+/// dropping only `plan.fields.length = fieldCount`).
 ///
-/// HOST-TABLE DISTINCTNESS guard (`hostTableIndicesDistinct`): the plan names
-/// helpers by ROLE and the byte lowering substitutes table indices, so under a
-/// DUPLICATED table (add and sub claiming one index) two plans differing only
-/// in an arm's role are proven to lower to IDENTICAL bytes (`rfl` — the byte
-/// gate is blind); under the honest distinct table they are proven to diverge
-/// (`by decide`). Only `hostTableIndicesDistinct` rejects the duplicated
-/// table, restoring the gate's discrimination.
-///
-/// HOST-BUILDER EQUALITY guard
-/// (`obligation.host = intDispatchCanonicalHost carrier hostTable`):
-/// distinctness alone leaves the table a free witness — swapping two arm roles
-/// in the plan AND permuting the table consistently cancels out
-/// byte-identically, keeps the table distinct, and passes the structural
-/// checker. The guard requires the WHOLE obligation host builder to equal the
-/// canonical builder for the claimed table (extensional, mirroring in-kernel
-/// the checker's whole-host `rfl` pin) — a sampled probe would leave unsampled
-/// slot behaviour free (a slot acting as its role only on the probed inputs:
-/// attack (b)). The permuted pair is proven byte-identical (`rfl`),
-/// sibling-blind (`rfl`), the honest tables close the equality by `rfl`, and
-/// the permuted/sneaky builders are rejected exactly by the equality conjunct
-/// (each `≠` exhibited through a distinguishing input).
-///
-/// LOCALS-COUNT bind (`nlocals := armCount + 2` in `intDispatchPlanAccepted`):
-/// a code table claiming ZERO locals for the honest body traps on its first
-/// `local.set`, making the partial-correctness obligation vacuously true; the
-/// acceptance pins the count to the canonical byte-derived value, and the
-/// zero-locals table is proven to diverge from it.
-///
-/// Each assertion is constructed so it holds ONLY because its target guard
-/// fires (weaken-confirmed: replacing the `verbatimFuncTypeMatches` conjunct
-/// with `true` in a throwaway copy breaks solely the binary-arity reject line;
-/// replacing `hostTableIndicesDistinct` with `true` breaks solely the
-/// duplicated-table reject line; replacing the host-builder equality conjunct
-/// with `True` accepts the permuted-pair acceptance witness that the equality
-/// rejects; reverting the locals count to an existential accepts the
-/// zero-locals vacuity obligation that the exact bind rejects — nothing else
-/// moves).
+/// A byte tamper on the constructed code entry is exhibited alongside, to show
+/// the byte gate still covers what these binds do not.
 #[test]
 fn list_constructor_kernel_guards_are_isolating() {
     if Command::new("lake").arg("--version").output().is_err() {
