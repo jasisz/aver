@@ -1721,6 +1721,73 @@ fn render_field_projection_claim_bundles(parts: &[FieldProjectionParts]) -> (Str
     )
 }
 
+/// Structured inputs for one verbatim `ref.test`-dispatch claim's split proof.
+struct VerbatimParts {
+    name: String,
+    export_name_bytes: String,
+    carrier: u32,
+}
+
+/// Split the verbatim family. Its `Cert` carries no code/type index (the binding
+/// is recovered from the module by name), so rather than rendering literals the
+/// witnesses are named `def`s whose VALUE is the wall lowerer / byte decoder
+/// applied to the encoded plan. The stored definition body is small, so the
+/// theorems that reference it hold no large literal; each byte walk is
+/// materialized transiently inside its own leaf `addDecl` and freed.
+fn render_verbatim_claim_bundles(parts: &[VerbatimParts]) -> (String, String) {
+    render_split_bundles(
+        "verbatim",
+        "AverCert.AcceptedArtifact.verbatimClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "verbatimClaims",
+        "AverCert.AcceptedArtifact.verbatimClaimAccepted, AverCert.AcceptedArtifact.verbatimPlanForExport, AverCert.AcceptedArtifact.verbatimPlanAccepted",
+        parts.len(),
+        |index| {
+            let VerbatimParts {
+                name,
+                export_name_bytes,
+                carrier,
+            } = &parts[index];
+            let code_entry = format!("verbatimClaim{index}CodeEntry");
+            let binding = format!("verbatimClaim{index}Binding");
+            let check_plan = format!("verbatimClaim{index}CheckPlan");
+            let lower_code = format!("verbatimClaim{index}LowerCode");
+            let func_binding = format!("verbatimClaim{index}FuncBinding");
+            let func_type = format!("verbatimClaim{index}FuncType");
+            let payloads = format!("verbatimClaim{index}Payloads");
+            let plan = format!("AverCert.Plans.{name}VerbatimPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named `def`s computed by the wall\n\
+                 -- lowerer / decoder, so no large literal is baked into the aggregate.\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq :=\n  \
+                   (AverCert.PlanBytes.lowerVerbatimCodeEntry {carrier} {plan}).getD []\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   (AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes}).getD ⟨0, 0, []⟩\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+                 -- `modBytes` binding decode and type-section walk.\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkVerbatimPlan (AverCert.AcceptedArtifact.verbatimNLocals {plan}) {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerVerbatimCodeEntry {carrier} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n\
+                 theorem {func_type} :\n  \
+                   AverCert.WasmSlice.verbatimFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {plan}.resultSig = true := by\n  \
+                   rfl\n\n\
+                 theorem {payloads} :\n  \
+                   AverCert.AcceptedArtifact.verbatimPayloadsBound AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {plan}.body = true := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, {check_plan}, ⟨{code_entry}, {binding}, {lower_code}, {func_binding}, rfl, {func_type}, {payloads}, rfl⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1743,7 +1810,7 @@ fn render_artifact_expr_fragment_claims(
     let mut construct_parts: Vec<ConstructParts> = Vec::new();
     let mut recursion_parts: Vec<RecursionParts> = Vec::new();
     let mut mutual_parts: Vec<MutualParts> = Vec::new();
-    let mut verbatim_proofs = Vec::new();
+    let mut verbatim_parts: Vec<VerbatimParts> = Vec::new();
     let mut int_dispatch_proofs = Vec::new();
     let mut field_projection_parts: Vec<FieldProjectionParts> = Vec::new();
     let mut composition_parts: Vec<CompositionParts> = Vec::new();
@@ -2058,15 +2125,12 @@ fn render_artifact_expr_fragment_claims(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.VerbatimClaim)",
                     export_name = lean_str(name),
                 ));
-                // The code entry, signature and payload conjuncts are the binding
-                // (no host/self calls), so the witness is anonymous for the code
-                // entry and binding; the final `rfl` pins the canonical locals
-                // count (the two preceding `rfl`s discharge the byte-derived
-                // signature and payload binds).
-                verbatim_proofs.push(
-                    "⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
-                        .to_string(),
-                );
+                // Split acceptance proof; see `render_verbatim_claim_bundles`.
+                verbatim_parts.push(VerbatimParts {
+                    name: name.clone(),
+                    export_name_bytes,
+                    carrier: *carrier,
+                });
             }
             Cert::VariantDispatch { name, carrier, .. }
             | Cert::WidenedIntMatch { name, carrier, .. } => {
@@ -2281,7 +2345,7 @@ fn render_artifact_expr_fragment_claims(
         + construct_parts.len()
         + recursion_parts.len()
         + mutual_parts.len()
-        + verbatim_proofs.len()
+        + verbatim_parts.len()
         + int_dispatch_proofs.len()
         + field_projection_parts.len()
         + composition_parts.len();
@@ -2309,13 +2373,7 @@ fn render_artifact_expr_fragment_claims(
     let construct_proof = format!("⟨{construct_claims_proof}, {construct_nodup_proof}⟩");
     let (recursion_bundles, recursion_proof) = render_recursion_claim_bundles(&recursion_parts);
     let (mutual_bundles, mutual_proof) = render_mutual_claim_bundles(&mutual_parts);
-    let (verbatim_bundles, verbatim_proof) = render_per_claim_bundles(
-        "verbatim",
-        "AverCert.AcceptedArtifact.verbatimClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "verbatimClaims",
-        "AverCert.AcceptedArtifact.verbatimClaimAccepted, AverCert.AcceptedArtifact.verbatimPlanForExport, AverCert.AcceptedArtifact.verbatimPlanAccepted",
-        &verbatim_proofs,
-    );
+    let (verbatim_bundles, verbatim_proof) = render_verbatim_claim_bundles(&verbatim_parts);
     let (int_dispatch_bundles, int_dispatch_proof) = render_per_claim_bundles(
         "intDispatch",
         "AverCert.AcceptedArtifact.intDispatchClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
