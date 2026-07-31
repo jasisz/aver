@@ -1291,6 +1291,177 @@ fn render_mutual_claim_bundles(parts: &[MutualParts]) -> (String, String) {
     )
 }
 
+/// Structured inputs for one String.concat claim's split acceptance proof.
+struct StringConcatParts {
+    name: String,
+    lowered_body: String,
+    code_entry_bytes: String,
+    export_name_bytes: String,
+    carrier_state: String,
+    result_ty: u32,
+    container_ty: u32,
+    concat_func_idx: u32,
+    self_idx: u32,
+    type_idx: u32,
+}
+
+/// Split the String.concat family. Beyond the shared body/code-entry/binding
+/// data, the heavy conjuncts are the carrier-state decode and the function
+/// binding decode, both `modBytes` walks; the plan/sym checks and the two
+/// lowerings are leaves stated over `Plans.{name}StringConcat{Sym}Plan`.
+fn render_string_concat_claim_bundles(parts: &[StringConcatParts]) -> (String, String) {
+    render_split_bundles(
+        "stringConcat",
+        "AverCert.AcceptedArtifact.stringConcatClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "stringConcatClaims",
+        "AverCert.AcceptedArtifact.stringConcatClaimAccepted, AverCert.AcceptedArtifact.stringConcatPlanForExport, AverCert.AcceptedArtifact.stringConcatPlanAccepted, AverCert.AcceptedArtifact.stringConcatCanonicalHost",
+        parts.len(),
+        |index| {
+            let StringConcatParts {
+                name,
+                lowered_body,
+                code_entry_bytes,
+                export_name_bytes,
+                carrier_state,
+                result_ty,
+                container_ty,
+                concat_func_idx,
+                self_idx,
+                type_idx,
+            } = &parts[index];
+            let body = format!("stringConcatClaim{index}Body");
+            let code_entry = format!("stringConcatClaim{index}CodeEntry");
+            let binding = format!("stringConcatClaim{index}Binding");
+            let carrier_dec = format!("stringConcatClaim{index}CarrierState");
+            let check_sym = format!("stringConcatClaim{index}CheckSym");
+            let match_sym = format!("stringConcatClaim{index}MatchSym");
+            let check_plan = format!("stringConcatClaim{index}CheckPlan");
+            let lower_body = format!("stringConcatClaim{index}LowerBody");
+            let lower_code = format!("stringConcatClaim{index}LowerCode");
+            let func_binding = format!("stringConcatClaim{index}FuncBinding");
+            let sym_plan = format!("AverCert.Plans.{name}StringConcatSymPlan");
+            let plan = format!("AverCert.Plans.{name}StringConcatPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named constants so no large literal is\n\
+                 -- duplicated across the leaf statements or baked into the aggregate term.\n\
+                 def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy ones are the\n\
+                 -- `modBytes` carrier-state decode and the binding decode.\n\
+                 theorem {carrier_dec} :\n  \
+                   CertDecode.carrierState AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some {carrier_state} := by\n  \
+                   rfl\n\n\
+                 theorem {check_sym} :\n  \
+                   AverCert.PlanCheck.checkSymRawPlan {sym_plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {match_sym} :\n  \
+                   AverCert.PlanCheck.stringConcatPlanMatchesSymRawPlan {sym_plan} {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkStringConcatRawPlan {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerStringConcatBody {result_ty} {container_ty} {concat_func_idx} {plan} = some {body} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerStringConcatCodeEntry {carrier_state} {result_ty} {container_ty} {concat_func_idx} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, {carrier_dec}, rfl, rfl, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{check_sym}, {match_sym}, {check_plan}, {lower_body}, {lower_code}, {func_binding}, rfl, rfl⟩⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
+/// Structured inputs for one String.eq claim's split acceptance proof.
+struct StringEqParts {
+    name: String,
+    lowered_body: String,
+    code_entry_bytes: String,
+    export_name_bytes: String,
+    string_ty: u32,
+    string_eq_idx: u32,
+    self_idx: u32,
+    type_idx: u32,
+    carrier: u32,
+}
+
+/// Split the String.eq family. The only `modBytes` walk is the function binding
+/// decode; the sym/plan checks and the two lowerings are leaves stated over
+/// `Plans.{name}StringEq{Sym}Plan`.
+fn render_string_eq_claim_bundles(parts: &[StringEqParts]) -> (String, String) {
+    render_split_bundles(
+        "stringEq",
+        "AverCert.AcceptedArtifact.stringEqClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
+        "stringEqClaims",
+        "AverCert.AcceptedArtifact.stringEqClaimAccepted, AverCert.AcceptedArtifact.stringEqPlanForExport, AverCert.AcceptedArtifact.stringEqPlanAccepted, AverCert.AcceptedArtifact.stringEqCanonicalHost",
+        parts.len(),
+        |index| {
+            let StringEqParts {
+                name,
+                lowered_body,
+                code_entry_bytes,
+                export_name_bytes,
+                string_ty,
+                string_eq_idx,
+                self_idx,
+                type_idx,
+                carrier,
+            } = &parts[index];
+            let body = format!("stringEqClaim{index}Body");
+            let code_entry = format!("stringEqClaim{index}CodeEntry");
+            let binding = format!("stringEqClaim{index}Binding");
+            let check_sym = format!("stringEqClaim{index}CheckSym");
+            let match_sym = format!("stringEqClaim{index}MatchSym");
+            let check_plan = format!("stringEqClaim{index}CheckPlan");
+            let lower_body = format!("stringEqClaim{index}LowerBody");
+            let lower_code = format!("stringEqClaim{index}LowerCode");
+            let func_binding = format!("stringEqClaim{index}FuncBinding");
+            let sym_plan = format!("AverCert.Plans.{name}StringEqSymPlan");
+            let plan = format!("AverCert.Plans.{name}StringEqPlan");
+            let declarations = format!(
+                "-- Witness data for `{name}` as named constants so no large literal is\n\
+                 -- duplicated across the leaf statements or baked into the aggregate term.\n\
+                 def {body} : List CertPrelude.WInstr := {lowered_body}\n\n\
+                 def {code_entry} : AverCert.WasmSlice.ByteSeq := {code_entry_bytes}\n\n\
+                 def {binding} : AverCert.WasmSlice.FuncBinding :=\n  \
+                   {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry} }}\n\n\
+                 -- One leaf theorem per acceptance conjunct; the heavy one is the\n\
+                 -- `modBytes` binding decode.\n\
+                 theorem {check_sym} :\n  \
+                   AverCert.PlanCheck.checkSymRawPlan {sym_plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {match_sym} :\n  \
+                   AverCert.PlanCheck.stringEqPlanMatchesSymRawPlan {sym_plan} {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {check_plan} :\n  \
+                   AverCert.PlanCheck.checkStringEqRawPlan {plan} = true := by\n  \
+                   rfl\n\n\
+                 theorem {lower_body} :\n  \
+                   AverCert.PlanLower.lowerStringEqBody {string_ty} {string_eq_idx} {plan} = some {body} := by\n  \
+                   rfl\n\n\
+                 theorem {lower_code} :\n  \
+                   AverCert.PlanBytes.lowerStringEqCodeEntry {carrier} {string_ty} {string_eq_idx} {plan} = some {code_entry} := by\n  \
+                   rfl\n\n\
+                 theorem {func_binding} :\n  \
+                   AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n"
+            );
+            let aggregate_proof = format!(
+                "⟨rfl, rfl, rfl, rfl, {check_sym}, {match_sym}, {check_plan}, ⟨{body}, {code_entry}, {binding}, ⟨{lower_body}, {lower_code}, {func_binding}, rfl, rfl⟩⟩⟩"
+            );
+            (declarations, aggregate_proof)
+        },
+    )
+}
+
 fn render_artifact_expr_fragment_claims(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -1308,8 +1479,8 @@ fn render_artifact_expr_fragment_claims(
     let mut field_projection_claims = Vec::new();
     let mut composition_claims = Vec::new();
     let mut sym_parts: Vec<SymClaimParts> = Vec::new();
-    let mut string_eq_proofs = Vec::new();
-    let mut string_proofs = Vec::new();
+    let mut string_eq_parts: Vec<StringEqParts> = Vec::new();
+    let mut string_parts: Vec<StringConcatParts> = Vec::new();
     let mut construct_proofs = Vec::new();
     let mut recursion_parts: Vec<RecursionParts> = Vec::new();
     let mut mutual_parts: Vec<MutualParts> = Vec::new();
@@ -1389,9 +1560,6 @@ fn render_artifact_expr_fragment_claims(
                 .map(|ops| render_ops_value(&ops))
                 .expect("certified String.concat plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
-                let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
-                );
                 let carrier_state = render_carrier_state(*carrier);
                 // The obligation declares what `decodedCarrierIndex` forces:
                 // the real carrier index, or the reserved `0` in a module that
@@ -1401,13 +1569,19 @@ fn render_artifact_expr_fragment_claims(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier_state}, resultTy := {result_ty}, containerTy := {container_ty}, concatFuncIdx := {string_concat_idx}, symPlan := AverCert.Plans.{name}StringConcatSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringConcatClaim)",
                     export_name = lean_str(name),
                 ));
-                // Five leading `rfl`s: export name, the carrier-state decode,
-                // the obligation's carrier index, the concat host role, and the
-                // canonical host wiring.
-                string_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
-                ));
+                // Split acceptance proof; see `render_string_concat_claim_bundles`.
+                string_parts.push(StringConcatParts {
+                    name: name.clone(),
+                    lowered_body,
+                    code_entry_bytes,
+                    export_name_bytes,
+                    carrier_state,
+                    result_ty: *result_ty,
+                    container_ty: *container_ty,
+                    concat_func_idx: *string_concat_idx,
+                    self_idx: *self_idx,
+                    type_idx: *type_idx,
+                });
                 string_concat_faces.push(Some((
                     format!("AverCert.Plans.{name}StringConcatPlan"),
                     format!(
@@ -1437,17 +1611,22 @@ fn render_artifact_expr_fragment_claims(
                     .map(|ops| render_ops_value(&ops))
                     .expect("certified String.eq plan lowers to WInstr body");
                 let export_name_bytes = render_byte_list(name.as_bytes());
-                let func_binding = format!(
-                    "({{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_entry_bytes} }} : AverCert.WasmSlice.FuncBinding)"
-                );
                 string_eq_claims.push(format!(
                     "({{ exportNameBytes := {export_name_bytes}, exportName := {export_name}, carrier := {carrier}, stringTy := {string_ty}, stringEqFuncIdx := {string_eq_idx}, symPlan := AverCert.Plans.{name}StringEqSymPlan, obligation := AverCert.{name}Ob }} : AverCert.AcceptedArtifact.StringEqClaim)",
                     export_name = lean_str(name),
                 ));
-                string_eq_proofs.push(format!(
-                    "⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨({lowered_body}), ({code_entry_bytes}), {func_binding}, \
-                     ⟨rfl, rfl, rfl, rfl, rfl⟩⟩⟩"
-                ));
+                // Split acceptance proof; see `render_string_eq_claim_bundles`.
+                string_eq_parts.push(StringEqParts {
+                    name: name.clone(),
+                    lowered_body,
+                    code_entry_bytes,
+                    export_name_bytes,
+                    string_ty,
+                    string_eq_idx: *string_eq_idx,
+                    self_idx: *self_idx,
+                    type_idx: *type_idx,
+                    carrier: *carrier,
+                });
             }
             Cert::AdtConstructor {
                 name,
@@ -1812,8 +1991,8 @@ fn render_artifact_expr_fragment_claims(
         format!("[\n  {}\n]", composition_claims.join(",\n  "))
     };
     let obligation_proof_count = sym_parts.len()
-        + string_eq_proofs.len()
-        + string_proofs.len()
+        + string_eq_parts.len()
+        + string_parts.len()
         + construct_proofs.len()
         + recursion_parts.len()
         + mutual_parts.len()
@@ -1830,20 +2009,8 @@ fn render_artifact_expr_fragment_claims(
     // per-claim kernel peak at the largest single leaf instead of the whole
     // witness tuple. The other nine families still emit one opaque theorem.
     let (sym_bundles, sym_proof) = render_sym_claim_bundles(&sym_parts, host_table_lean);
-    let (string_bundles, string_proof) = render_per_claim_bundles(
-        "stringConcat",
-        "AverCert.AcceptedArtifact.stringConcatClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "stringConcatClaims",
-        "AverCert.AcceptedArtifact.stringConcatClaimAccepted, AverCert.AcceptedArtifact.stringConcatPlanForExport, AverCert.AcceptedArtifact.stringConcatPlanAccepted, AverCert.AcceptedArtifact.stringConcatCanonicalHost",
-        &string_proofs,
-    );
-    let (string_eq_bundles, string_eq_proof) = render_per_claim_bundles(
-        "stringEq",
-        "AverCert.AcceptedArtifact.stringEqClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen AverCert.manifest",
-        "stringEqClaims",
-        "AverCert.AcceptedArtifact.stringEqClaimAccepted, AverCert.AcceptedArtifact.stringEqPlanForExport, AverCert.AcceptedArtifact.stringEqPlanAccepted, AverCert.AcceptedArtifact.stringEqCanonicalHost",
-        &string_eq_proofs,
-    );
+    let (string_bundles, string_proof) = render_string_concat_claim_bundles(&string_parts);
+    let (string_eq_bundles, string_eq_proof) = render_string_eq_claim_bundles(&string_eq_parts);
     let construct_claim_count = construct_proofs.len();
     let (construct_bundles, construct_claims_proof) = render_per_claim_bundles(
         "construct",
