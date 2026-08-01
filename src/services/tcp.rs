@@ -282,9 +282,18 @@ fn bytes_arg(val: &Value, method: &str) -> Result<Result<Vec<u8>, String>, Runti
     let mut out = Vec::with_capacity(items.len());
     for (idx, item) in items.iter().enumerate() {
         let n = match item {
-            Value::Int(n) => n.to_i64().ok_or_else(|| {
-                RuntimeError::Error(format!("{}: payload must be a List<Int>", method))
-            })?,
+            Value::Int(n) => match n.to_i64() {
+                Some(n) => n,
+                // An `Int` outside `i64` is still an `Int` — a fortiori out
+                // of byte range, so it takes the catchable value-error path,
+                // not the type-error one.
+                None => {
+                    return Ok(Err(format!(
+                        "{}: byte {} at index {} is out of range (0\u{2013}255)",
+                        method, n, idx
+                    )));
+                }
+            },
             _ => {
                 return Err(RuntimeError::Error(format!(
                     "{}: payload must be a List<Int>",

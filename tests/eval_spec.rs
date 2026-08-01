@@ -2367,6 +2367,30 @@ mod tcp_tests {
             other => panic!("expected Err, got {:?}", other),
         }
     }
+
+    /// An `Int` outside `i64` is still an `Int` — a fortiori out of byte
+    /// range, so it must take the same catchable value-error path as `256`,
+    /// not trap as a bogus type error.
+    #[test]
+    fn tcp_send_bytes_rejects_bignum_byte() {
+        let src = concat!(
+            "fn talk() -> Result<List<Int>, String>\n",
+            "    ! [Tcp.sendBytes]\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 1208925819614629174706176])\n",
+        );
+        match run_tcp_fn(src, "talk") {
+            Value::Err(inner) => match *inner {
+                Value::Str(msg) => {
+                    assert!(
+                        msg.contains("1208925819614629174706176") && msg.contains("index 1"),
+                        "error should name the offending byte and its index, got: {msg}"
+                    );
+                }
+                other => panic!("expected Str error, got {:?}", other),
+            },
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
