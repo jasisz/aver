@@ -363,6 +363,45 @@ fn run_vm_inline(name: &str, source: &str) -> Result<String, String> {
     out
 }
 
+/// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in
+/// the emitted project, so this regression must drive `Tcp.sendBytes` through
+/// a real `cargo build`. Invalid payloads fail before any socket connection,
+/// which also pins the VM's catchable value-error contract for both small and
+/// arbitrary-precision `Int` values.
+#[test]
+fn rust_tcp_send_bytes_builds_and_returns_catchable_range_errors() {
+    let src = r#"module TcpSendBytesRange
+    intent = "Rust codegen must render Tcp.sendBytes and preserve payload errors"
+    depends []
+    effects [Console, Tcp]
+
+fn report(payload: List<Int>) -> Unit
+    ? "Print the result of validating one binary payload."
+    ! [Console.print, Tcp.sendBytes]
+    match Tcp.sendBytes("127.0.0.1", 1, payload)
+        Result.Ok(_) -> Console.print("unexpected-ok")
+        Result.Err(e) -> Console.print(e)
+
+fn main() -> Unit
+    ! [Console.print, Tcp.sendBytes]
+    report([65, 256])
+    report([65, 1208925819614629174706176])
+"#;
+    let expected = concat!(
+        "Tcp.sendBytes: byte 256 at index 1 is out of range (0–255)\n",
+        "Tcp.sendBytes: byte 1208925819614629174706176 at index 1 is out of range (0–255)",
+    );
+
+    let vm = run_vm_inline("tcp_send_bytes_range", src).expect("vm run");
+    let rust = build_run_rust_inline("tcp_send_bytes_range", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM payload-range contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust payload-range contract diverged from VM"
+    );
+}
+
 /// The #383 corruption class on the RUST backend: a Vector PARAM captured
 /// into a record field AND own-mutated, both in the SAME fn on the SAME
 /// param. `own_param`'s capture guard must keep the slot flagged so the
@@ -2224,6 +2263,117 @@ fn spawn_pong_server(
         }
     });
     (port, handle)
+}
+
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
+fn rust_tcp_send_bytes_round_trips_non_utf8() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!("skipping Rust Tcp.sendBytes probe — set AVER_RUST_DIFF_FULL=1");
+        return;
+    }
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener addr").port();
+    listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+
+    let ws = temp_dir("tcp-send-bytes");
+    let src = ws.join("tcp_send_bytes.av");
+    fs::write(
+        &src,
+        format!(
+            r#"module TcpSendBytesProbe
+    intent = "Round-trip non-UTF-8 bytes through the Rust backend"
+    depends []
+    effects [Console, Tcp]
+
+fn exchange() -> Result<List<Int>, String>
+    ? "Send one binary payload to a loopback echo server."
+    ! [Tcp.sendBytes]
+    Tcp.sendBytes("127.0.0.1", {port}, [249, 190, 180, 217])
+
+fn main() -> Unit
+    ! [Console.print, Tcp.sendBytes]
+    match exchange()
+        Result.Ok(response) -> Console.print("{{response}}")
+        Result.Err(e) -> Console.print("err:{{e}}")
+"#
+        ),
+    )
+    .expect("write probe source");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "tcp_send_bytes_probe";
+
+    let result = (|| -> Result<(), String> {
+        compile_rust(&src, &project, name, None, &[])?;
+        let bin = cargo_build_in(&project, name, &isolated_target_dir(&ws))?;
+
+        let server = std::thread::spawn(move || -> Result<Vec<u8>, String> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_nonblocking(false)
+                            .map_err(|e| format!("set stream blocking: {e}"))?;
+                        stream
+                            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                            .map_err(|e| format!("set read timeout: {e}"))?;
+                        let mut payload = Vec::new();
+                        stream
+                            .read_to_end(&mut payload)
+                            .map_err(|e| format!("read payload: {e}"))?;
+                        stream
+                            .write_all(&payload)
+                            .map_err(|e| format!("echo payload: {e}"))?;
+                        return Ok(payload);
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return Err(
+                                "timed out waiting for Tcp.sendBytes connection".to_string()
+                            );
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(e) => return Err(format!("accept connection: {e}")),
+                }
+            }
+        });
+
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        let received = server
+            .join()
+            .map_err(|_| "loopback server panicked".to_string())??;
+        if !out.status.success() {
+            return Err(format!("generated binary failed:\n{}", format_output(&out)));
+        }
+        if received != [249, 190, 180, 217] {
+            return Err(format!(
+                "loopback server received wrong payload: {received:?}"
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if stdout != "[249, 190, 180, 217]" {
+            return Err(format!(
+                "generated binary returned wrong payload:\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
 }
 
 #[test]
