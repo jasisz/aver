@@ -74,12 +74,21 @@ fn composition_claim_lean_value(c: &Cert, add_idx: u32) -> String {
     )
 }
 
-fn composition_claim_acceptance_proof(
-    c: &Cert,
-    strict: FragHostTable,
-) -> String {
+/// Render the companion `{name}_compositionClaimAccepted` acceptance as a SPLIT
+/// proof, mirroring `render_composition_claim_bundles` in `render_project.rs`.
+///
+/// Returns `(declarations, aggregate_proof)`: the per-member witness `def`s and
+/// leaf theorems to emit before the aggregate theorem, and the aggregate proof
+/// term the theorem's `exact` uses. This bridge module re-proves acceptance in a
+/// standalone file, so it carried the same monolithic member tuple the artifact
+/// root did; naming each member's body/code-entry/binding and hoisting the
+/// member `modBytes` walks into leaves keeps the module's per-claim peak bounded.
+fn composition_bridge_claim_accepted(c: &Cert, strict: FragHostTable) -> (String, String) {
     let Cert::Composition {
-        carrier, closure, ..
+        name,
+        carrier,
+        closure,
+        ..
     } = c.inner()
     else {
         unreachable!()
@@ -89,9 +98,19 @@ fn composition_claim_acceptance_proof(
     let add_idx = strict
         .add_idx
         .expect("plan-backed composition has strict add host");
+    let host_table = composition_host_table_lean_value(add_idx);
     let funcs = composition_func_table(closure);
+    let host_types = format!("{name}CompositionHostTypes");
+    // Shared host-table type pin; one leaf serves the claim and every member.
+    let mut declarations = format!(
+        "-- Claim-level host-table declared-function-type pin, shared by the claim\n\
+         -- and every member (a `modBytes` type-section walk).\n\
+         theorem {host_types} :\n  \
+           AverCert.WasmSlice.hostTableFuncTypesMatch AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table} = true := by\n  \
+           rfl\n\n"
+    );
     let mut named_proof = "trivial".to_string();
-    for (entry, plan) in plans.iter().rev() {
+    for (member_index, (entry, plan)) in plans.iter().enumerate().rev() {
         let body = render_ops_value(
             &lower_composition_plan(plan, add_idx, &funcs)
                 .expect("composition member lowers against closure table"),
@@ -100,17 +119,36 @@ fn composition_claim_acceptance_proof(
             &composition_code_entry_bytes(plan, *carrier, add_idx, &funcs)
                 .expect("composition member byte-lowers against closure table"),
         );
-        let binding = format!(
-            "({{ funcIdx := {}, typeIdx := {}, codeEntry := {} }} : \
-             AverCert.WasmSlice.FuncBinding)",
-            entry.self_idx, entry.type_idx, code_entry
+        let export_name_bytes = render_byte_list(entry.name.as_bytes());
+        let body_def = format!("{name}CompositionMember{member_index}Body");
+        let code_def = format!("{name}CompositionMember{member_index}CodeEntry");
+        let binding_def = format!("{name}CompositionMember{member_index}Binding");
+        let func_binding = format!("{name}CompositionMember{member_index}FuncBinding");
+        let func_type = format!("{name}CompositionMember{member_index}FuncType");
+        declarations = format!(
+            "-- Member `{member_index}` witness data as named constants.\n\
+             def {body_def} : List CertPrelude.WInstr := {body}\n\n\
+             def {code_def} : AverCert.WasmSlice.ByteSeq := {code_entry}\n\n\
+             def {binding_def} : AverCert.WasmSlice.FuncBinding :=\n  \
+               {{ funcIdx := {self_idx}, typeIdx := {type_idx}, codeEntry := {code_def} }}\n\n\
+             theorem {func_binding} :\n  \
+               AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_def} = some {binding_def} := by\n  \
+               rfl\n\n\
+             theorem {func_type} :\n  \
+               AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding_def}.typeIdx 1 {carrier} = true := by\n  \
+               rfl\n\n{declarations}",
+            self_idx = entry.self_idx,
+            type_idx = entry.type_idx,
         );
         let member_proof = format!(
-            "⟨rfl, ⟨({body}), ({code_entry}), {binding}, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩"
+            "⟨rfl, ⟨{body_def}, {code_def}, {binding_def}, rfl, rfl, {func_binding}, {func_type}, {host_types}, rfl⟩⟩"
         );
         named_proof = format!("⟨{member_proof}, {named_proof}⟩");
     }
-    format!("⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩⟩")
+    let aggregate_proof = format!(
+        "⟨rfl, ⟨rfl, ⟨rfl, ⟨{host_types}, ⟨rfl, ⟨rfl, ⟨rfl, {named_proof}⟩⟩⟩⟩⟩⟩⟩"
+    );
+    (declarations, aggregate_proof)
 }
 
 /// Option-(b) composition bridge. Root glue is discharged by the audited
@@ -275,12 +313,14 @@ fn render_composition_semantic_bridge(
             .join(", ")
     );
     let claim = composition_claim_lean_value(c, add_idx);
-    let acceptance = composition_claim_acceptance_proof(c, analysis.frag_host_table);
+    let (claim_decls, acceptance) =
+        composition_bridge_claim_accepted(c, analysis.frag_host_table);
     s.push_str(&format!(
         "def {name}CompositionMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim :=\n  \
          {members}\n\n\
          def {name}CompositionClaim : AverCert.AcceptedArtifact.CompositionClaim :=\n  \
          {claim}\n\n\
+         {claim_decls}\
          theorem {name}_compositionClaimAccepted :\n    \
          AverCert.AcceptedArtifact.compositionClaimAccepted\n      \
          AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n      \
