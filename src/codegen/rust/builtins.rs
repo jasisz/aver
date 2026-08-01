@@ -53,6 +53,7 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Http.put"
             | "Http.patch"
             | "Tcp.send"
+            | "Tcp.sendBytes"
             | "Tcp.ping"
             | "Tcp.connect"
             | "Tcp.writeLine"
@@ -69,6 +70,13 @@ fn builtin_effect_name(name: &str) -> &str {
         "SelfHostRuntime.httpServerListenWith" => "HttpServer.listenWith",
         _ => name,
     }
+}
+
+fn compose_tcp_send_bytes_call(args: &[String]) -> String {
+    format!(
+        "{{ let __host = &{}; let __port = crate::to_host_i64(&{}, \"Tcp.sendBytes: port must be an Int\"); let __payload = &{}; match crate::tcp_send_bytes_payload_to_host(__payload) {{ Ok(__bytes) => aver_rt::tcp::send_bytes(__host, __port, &__bytes).map(crate::tcp_send_bytes_response_from_host), Err(__error) => Err(__error) }} }}",
+        args[0], args[1], args[2]
+    )
 }
 
 pub(super) fn builtin_is_effectful(name: &str) -> bool {
@@ -157,6 +165,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
             args[0], args[1], args[2]
         )),
+        "Tcp.sendBytes" => Some(compose_tcp_send_bytes_call(args)),
         "Tcp.ping" => Some(format!(
             "aver_rt::tcp::ping(&{}, crate::to_host_i64(&{}, \"Tcp.ping: port must be an Int\"))",
             args[0], args[1]
@@ -384,6 +393,7 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
             a(1),
             a(2)
         )),
+        "Tcp.sendBytes" => Some(compose_tcp_send_bytes_call(args)),
         "Tcp.ping" => Some(format!(
             "aver_rt::tcp::ping(&{}, crate::to_host_i64(&{}, \"Tcp.ping: port must be an Int\"))",
             a(0),
