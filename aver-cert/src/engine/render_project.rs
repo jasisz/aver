@@ -937,9 +937,10 @@ fn render_face_bundles(
 /// the already-numbered witness `def`s and per-conjunct leaf theorems as one
 /// text block plus the aggregate proof term that combines those constants. The
 /// aggregate `{family}Claim{index}Accepted` theorem is stated exactly like the
-/// opaque one `render_per_claim_bundles` emits — it indexes the same family
-/// list and `dsimp`s the same predicate — but its `exact` references the leaf
-/// constants instead of inlining one monolithic witness tuple.
+/// opaque tuple it replaces — it indexes the same family
+/// list and `dsimp`s the same predicate — but
+/// its `exact` references the leaf constants instead of inlining one monolithic
+/// witness tuple.
 ///
 /// This is the mechanism the expr-fragment beachhead established generalized to
 /// the other data-carrying families: emitting the heavy `WInstr` body, the
@@ -1012,8 +1013,8 @@ struct SymClaimParts {
 /// aggregate's `dsimp` computes, so unifying them is a structural plan compare,
 /// not a byte-carrier walk.
 ///
-/// Only the expr-fragment family is split this way; the other nine still emit
-/// one opaque theorem via `render_per_claim_bundles`.
+/// Every data-carrying claim family is split this way; this sym builder and the
+/// generic `render_split_bundles` below share the same leaf-plus-aggregate shape.
 fn render_sym_claim_bundles(parts: &[SymClaimParts], host_table_lean: &str) -> (String, String) {
     let mut theorems = String::new();
     let mut names = Vec::with_capacity(parts.len());
