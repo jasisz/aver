@@ -130,6 +130,35 @@ pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
+/// Byte-clean sibling of [`send`].
+///
+/// Identical socket behaviour — open, write, `shutdown(Write)`, read to EOF —
+/// but the payload and the response stay `Vec<u8>` end to end. `send` converts
+/// the response with `String::from_utf8_lossy`, which replaces every non-UTF-8
+/// sequence with U+FFFD and cannot be undone; that makes it unusable for binary
+/// protocols whose framing bytes are not valid UTF-8. This function performs no
+/// encoding or decoding, so the caller sees exactly what the peer sent.
+pub fn send_bytes(host: &str, port: i64, payload: &[u8]) -> Result<Vec<u8>, String> {
+    validate_port(port)?;
+    let socket_addr = resolve(&format!("{}:{}", host, port))?;
+    let mut stream =
+        TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
+    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
+    stream.write_all(payload).map_err(|e| e.to_string())?;
+    stream.shutdown(std::net::Shutdown::Write).ok();
+
+    let mut buf = Vec::new();
+    Read::by_ref(&mut stream)
+        .take(BODY_LIMIT as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| e.to_string())?;
+    if buf.len() > BODY_LIMIT {
+        return Err("Tcp.sendBytes: response exceeds 10 MB limit".to_string());
+    }
+    Ok(buf)
+}
+
 pub fn ping(host: &str, port: i64) -> Result<(), String> {
     validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;

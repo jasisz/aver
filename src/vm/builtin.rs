@@ -67,6 +67,7 @@ vm_builtins! {
     RandomFloat => "Random.float",
 
     TcpSend => "Tcp.send",
+    TcpSendBytes => "Tcp.sendBytes",
     TcpPing => "Tcp.ping",
     TcpConnect => "Tcp.connect",
     TcpWriteLine => "Tcp.writeLine",
@@ -274,6 +275,7 @@ impl VmBuiltin {
             Self::RandomInt | Self::RandomFloat => random::effects(self.name()),
 
             Self::TcpSend
+            | Self::TcpSendBytes
             | Self::TcpPing
             | Self::TcpConnect
             | Self::TcpWriteLine
@@ -358,6 +360,7 @@ impl VmBuiltin {
             Self::RandomInt | Self::RandomFloat => random::call_nv(self.name(), args, arena),
 
             Self::TcpSend
+            | Self::TcpSendBytes
             | Self::TcpPing
             | Self::TcpConnect
             | Self::TcpWriteLine

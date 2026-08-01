@@ -2,6 +2,10 @@
 ///
 /// One-shot methods:
 ///   `Tcp.send(host, port, message)` — connect, write message, read response, close.
+///   `Tcp.sendBytes(host, port, payload)` — same, but byte-clean: `List<Int>` in,
+///       `List<Int>` out, no UTF-8 encoding or decoding on either side. `send`
+///       decodes the response with `String::from_utf8_lossy`, which destroys any
+///       non-UTF-8 byte irrecoverably; binary protocols need this variant.
 ///   `Tcp.ping(host, port)`          — check whether the port accepts connections.
 ///
 /// Persistent-connection methods:
@@ -14,14 +18,22 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use aver_rt::TcpConnection;
+use aver_rt::{AverList, TcpConnection};
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &["send", "ping", "connect", "writeLine", "readLine", "close"] {
+    for method in &[
+        "send",
+        "sendBytes",
+        "ping",
+        "connect",
+        "writeLine",
+        "readLine",
+        "close",
+    ] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("Tcp.{}", method)),
@@ -38,6 +50,7 @@ pub fn register(global: &mut HashMap<String, Value>) {
 
 pub const DECLARED_EFFECTS: &[&str] = &[
     "Tcp.send",
+    "Tcp.sendBytes",
     "Tcp.ping",
     "Tcp.connect",
     "Tcp.writeLine",
@@ -48,6 +61,7 @@ pub const DECLARED_EFFECTS: &[&str] = &[
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Tcp.send" => &["Tcp.send"],
+        "Tcp.sendBytes" => &["Tcp.sendBytes"],
         "Tcp.ping" => &["Tcp.ping"],
         "Tcp.connect" => &["Tcp.connect"],
         "Tcp.writeLine" => &["Tcp.writeLine"],
@@ -61,6 +75,7 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "Tcp.send" => Some(tcp_send(args)),
+        "Tcp.sendBytes" => Some(tcp_send_bytes(args)),
         "Tcp.ping" => Some(tcp_ping(args)),
         "Tcp.connect" => Some(tcp_connect(args)),
         "Tcp.writeLine" => Some(tcp_write_line(args)),
@@ -83,6 +98,29 @@ fn tcp_send(args: &[Value]) -> Result<Value, RuntimeError> {
 
     match aver_rt::tcp::send(&host, port, &message) {
         Ok(response) => Ok(Value::Ok(Box::new(Value::Str(response)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+    }
+}
+
+fn tcp_send_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 3 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.sendBytes() takes 3 arguments (host, port, payload), got {}",
+            args.len()
+        )));
+    }
+    let host = str_arg(&args[0], "Tcp.sendBytes: host must be a String")?;
+    let port = int_arg(&args[1], "Tcp.sendBytes: port must be an Int")?;
+    let payload = match bytes_arg(&args[2], "Tcp.sendBytes")? {
+        Ok(bytes) => bytes,
+        // Out-of-range byte values are a value error, not a type error, so they
+        // surface as a catchable `Result.Err` — same treatment the port range
+        // gets in `aver-rt::tcp` rather than a VM-only trap.
+        Err(msg) => return Ok(Value::Err(Box::new(Value::Str(msg)))),
+    };
+
+    match aver_rt::tcp::send_bytes(&host, port, &payload) {
+        Ok(response) => Ok(Value::Ok(Box::new(bytes_to_value(&response)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }
@@ -225,6 +263,62 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
     }
 }
 
+/// Convert a `List<Int>` argument into raw bytes.
+///
+/// The outer `Result` is the type check (wrong shape is a `RuntimeError`); the
+/// inner one is the value check (an Int outside `0..=255` is a catchable Aver
+/// `Result.Err`, reported with its index so a long payload is debuggable).
+#[allow(clippy::type_complexity)]
+fn bytes_arg(val: &Value, method: &str) -> Result<Result<Vec<u8>, String>, RuntimeError> {
+    let items = match val {
+        Value::List(items) => items,
+        _ => {
+            return Err(RuntimeError::Error(format!(
+                "{}: payload must be a List<Int>",
+                method
+            )));
+        }
+    };
+    let mut out = Vec::with_capacity(items.len());
+    for (idx, item) in items.iter().enumerate() {
+        let n = match item {
+            Value::Int(n) => match n.to_i64() {
+                Some(n) => n,
+                // An `Int` outside `i64` is still an `Int` — a fortiori out
+                // of byte range, so it takes the catchable value-error path,
+                // not the type-error one.
+                None => {
+                    return Ok(Err(format!(
+                        "{}: byte {} at index {} is out of range (0\u{2013}255)",
+                        method, n, idx
+                    )));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::Error(format!(
+                    "{}: payload must be a List<Int>",
+                    method
+                )));
+            }
+        };
+        match u8::try_from(n) {
+            Ok(b) => out.push(b),
+            Err(_) => {
+                return Ok(Err(format!(
+                    "{}: byte {} at index {} is out of range (0\u{2013}255)",
+                    method, n, idx
+                )));
+            }
+        }
+    }
+    Ok(Ok(out))
+}
+
+fn bytes_to_value(bytes: &[u8]) -> Value {
+    let items: Vec<Value> = bytes.iter().map(|b| Value::int(*b as i64)).collect();
+    Value::List(AverList::from_vec(items))
+}
+
 fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
     // Phase 4.7+ fix #13 — type check only; the port-range check
     // moved into `aver-rt::tcp::{connect, send, ping}` so every
@@ -242,7 +336,15 @@ fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["send", "ping", "connect", "writeLine", "readLine", "close"];
+    let methods = &[
+        "send",
+        "sendBytes",
+        "ping",
+        "connect",
+        "writeLine",
+        "readLine",
+        "close",
+    ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("Tcp.{}", method));
@@ -263,7 +365,13 @@ pub fn call_nv(
 ) -> Option<Result<NanValue, RuntimeError>> {
     if !matches!(
         name,
-        "Tcp.send" | "Tcp.ping" | "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close"
+        "Tcp.send"
+            | "Tcp.sendBytes"
+            | "Tcp.ping"
+            | "Tcp.connect"
+            | "Tcp.writeLine"
+            | "Tcp.readLine"
+            | "Tcp.close"
     ) {
         return None;
     }

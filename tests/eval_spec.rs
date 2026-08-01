@@ -2298,6 +2298,99 @@ mod tcp_tests {
             other => panic!("expected Ok(\"echo me\"), got {:?}", other),
         }
     }
+
+    /// Regression: `Tcp.send` decodes the response with
+    /// `String::from_utf8_lossy`, so every non-UTF-8 byte comes back as U+FFFD
+    /// and the original is unrecoverable. `Tcp.sendBytes` must round-trip the
+    /// bytes untouched. The payload here is the Bitcoin mainnet magic
+    /// (`F9 BE B4 D9`) — four bytes that are each invalid UTF-8 for a different
+    /// reason, so a regression on any decode path shows up here.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_send_bytes_round_trips_non_utf8() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).ok();
+                stream.write_all(&buf).ok();
+            }
+        });
+
+        let src = format!(
+            "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.sendBytes]\n    Tcp.sendBytes(\"127.0.0.1\", {}, [249, 190, 180, 217])\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Ok(inner) => match *inner {
+                Value::List(items) => {
+                    let got: Vec<i64> = items
+                        .iter()
+                        .map(|v| match v {
+                            Value::Int(n) => n.to_i64().unwrap(),
+                            other => panic!("expected Int element, got {:?}", other),
+                        })
+                        .collect();
+                    assert_eq!(got, vec![249, 190, 180, 217]);
+                }
+                other => panic!("expected List, got {:?}", other),
+            },
+            other => panic!("expected Ok(List<Int>), got {:?}", other),
+        }
+    }
+
+    /// Byte values outside `0..=255` are a value error, not a type error, so
+    /// they surface as a catchable `Result.Err` rather than a VM trap — the
+    /// same treatment the port range gets.
+    #[test]
+    fn tcp_send_bytes_rejects_out_of_range_byte() {
+        let src = concat!(
+            "fn talk() -> Result<List<Int>, String>\n",
+            "    ! [Tcp.sendBytes]\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 256])\n",
+        );
+        match run_tcp_fn(src, "talk") {
+            Value::Err(inner) => match *inner {
+                Value::Str(msg) => {
+                    assert!(
+                        msg.contains("256") && msg.contains("index 1"),
+                        "error should name the offending byte and its index, got: {msg}"
+                    );
+                }
+                other => panic!("expected Str error, got {:?}", other),
+            },
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    /// An `Int` outside `i64` is still an `Int` — a fortiori out of byte
+    /// range, so it must take the same catchable value-error path as `256`,
+    /// not trap as a bogus type error.
+    #[test]
+    fn tcp_send_bytes_rejects_bignum_byte() {
+        let src = concat!(
+            "fn talk() -> Result<List<Int>, String>\n",
+            "    ! [Tcp.sendBytes]\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 1208925819614629174706176])\n",
+        );
+        match run_tcp_fn(src, "talk") {
+            Value::Err(inner) => match *inner {
+                Value::Str(msg) => {
+                    assert!(
+                        msg.contains("1208925819614629174706176") && msg.contains("index 1"),
+                        "error should name the offending byte and its index, got: {msg}"
+                    );
+                }
+                other => panic!("expected Str error, got {:?}", other),
+            },
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
