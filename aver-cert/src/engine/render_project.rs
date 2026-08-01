@@ -95,6 +95,18 @@ pub fn write_project(
         "Final.lean",
         &render_final(),
     )?;
+    // Per-role arith host-table leaves, in their own compilation unit so their
+    // `decide +kernel` reductions do not stack onto `Artifact.lean`'s peak.
+    // Emitted only for a carriered module (the only kind with a table to split);
+    // `render_artifact` adds the matching `import ArtifactHostRoles` and the
+    // recombining proof when it is present.
+    if analysis.frag_host_table.box_idx.is_some() {
+        write(
+            &cert_dir,
+            "ArtifactHostRoles.lean",
+            &render_artifact_host_roles(analysis),
+        )?;
+    }
     write(
         &cert_dir,
         "Artifact.lean",
@@ -2776,6 +2788,17 @@ fn render_artifact(
         construct_face_proof = claims.construct_face_proof,
         int_dispatch_face_proof = claims.int_dispatch_face_proof,
     );
+    // The whole-module arith host-role pin (`decodedHostRoleTable`) is the one
+    // per-module conjunct whose `decide +kernel` reduction sits well above the
+    // import floor: it materialises five decoded function bodies and five
+    // synthesised helper bodies in a single kernel term. A carriered module
+    // proves each role in its own freed leaf theorem in a SEPARATE compilation
+    // unit (`ArtifactHostRoles.lean`) and recombines them here with a cheap
+    // rewrite, so neither the leaf peak nor this module's other theorems pay
+    // for the monolith. A carrierless module has no table to split — its
+    // `arithTableCheck` is the floor-cost `carrierHelperAbsent` scan — so it
+    // keeps the single-tactic proof and emits no leaf file.
+    let (host_roles_import, decoded_host_roles_proof) = render_decoded_host_roles(analysis);
     format!(
          "-- Artifact-carried acceptance root.\n\
          -- This file is useful metadata, not verifier authority: `aver cert verify`\n\
@@ -2786,6 +2809,7 @@ fn render_artifact(
          import Certificate\n\
          import Manifest\n\
          import Plans\n\
+         {host_roles_import}\
          import AcceptanceSoundness\n\n\
          -- The whole-module big-Nat closure fold is kernel reduction. This\n\
          -- explicit depth budget affects kernel reduction limits only, not soundness or axioms.\n\
@@ -2815,7 +2839,7 @@ fn render_artifact(
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
            ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
-         theorem decodedHostRoles : AverCert.AcceptedArtifact.decodedHostRoleTable data := by dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, data]; decide +kernel\n\n\
+         {decoded_host_roles_proof}\n\n\
          theorem decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, data]; rfl\n\n\
          {claim_proof_bundles}\
          {proof_bundles}\n\n\
@@ -2837,7 +2861,91 @@ fn render_artifact(
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         claim_proof_bundles = claims.claim_proof_bundles,
         proof_bundles = proof_bundles,
-        side_conditions = render_discharge_side_conditions(analysis, model_info)
+        side_conditions = render_discharge_side_conditions(analysis, model_info),
+        host_roles_import = host_roles_import,
+        decoded_host_roles_proof = decoded_host_roles_proof,
+    )
+}
+
+/// The `import` line for the per-role leaf module and the proof of the
+/// whole-module `decodedHostRoles` theorem.
+///
+/// * Carriered module — the leaf theorems live in `ArtifactHostRoles.lean`
+///   (emitted by `render_project`); the aggregate rewrites the manifest
+///   projections to their literals, unfolds `arithTableCheck`, and rewrites the
+///   five `arithRoleCheck` subterms to `true` from the imported leaves, leaving
+///   only the floor-cost carrier/index conjuncts for a final `decide +kernel`.
+///   The statement is byte-identical to the monolith; only the proof changes.
+/// * Carrierless module — no table, no leaf file, and the original single
+///   `decide +kernel` (its `arithTableCheck` is the floor-cost
+///   `carrierHelperAbsent` scan).
+fn render_decoded_host_roles(analysis: &Analysis) -> (String, String) {
+    let carriered = analysis.frag_host_table.box_idx.is_some();
+    if !carriered {
+        return (
+            String::new(),
+            "theorem decodedHostRoles : AverCert.AcceptedArtifact.decodedHostRoleTable data := \
+             by dsimp [AverCert.AcceptedArtifact.decodedHostRoleTable, data]; decide +kernel"
+                .to_string(),
+        );
+    }
+    let roles_literal = analysis.frag_host_table.roles_lean_value();
+    let params_literal = analysis
+        .frag_host_table
+        .arith_params_record_lean_value(analysis.carrier)
+        .expect("a carriered module declares arith params");
+    let proof = format!(
+        "theorem decodedHostRoles : AverCert.AcceptedArtifact.decodedHostRoleTable data := by\n  \
+         dsimp only [AverCert.AcceptedArtifact.decodedHostRoleTable, data]\n  \
+         rw [show AverCert.manifest.subject.hostRoleTable = some {roles_literal} from rfl,\n      \
+         show AverCert.manifest.subject.arithParams = some {params_literal} from rfl]\n  \
+         simp only [AverCert.AcceptedArtifact.arithTableCheck, decodedHostRole_box, \
+         decodedHostRole_toIndex, decodedHostRole_add, decodedHostRole_sub, decodedHostRole_mul, \
+         Bool.and_true, Bool.true_and]\n  \
+         decide +kernel"
+    );
+    ("import ArtifactHostRoles\n".to_string(), proof)
+}
+
+/// The separate compilation unit that proves each declared arith host role in
+/// its own freed `decide +kernel` leaf theorem. Isolating them from the rest of
+/// `Artifact.lean` keeps the module peak at the shared import/whole-module-fold
+/// shelf instead of stacking the per-role reductions on top of it. Emitted only
+/// for a carriered module; the aggregate in `Artifact.lean` recombines these.
+fn render_artifact_host_roles(analysis: &Analysis) -> String {
+    let params_literal = analysis
+        .frag_host_table
+        .arith_params_record_lean_value(analysis.carrier)
+        .expect("a carriered module declares arith params");
+    let table = &analysis.frag_host_table;
+    let leaf = |name: &str, role: &str, idx: Option<u32>| {
+        let idx = idx.map_or_else(|| "none".to_string(), |idx| format!("(some {idx})"));
+        format!(
+            "theorem decodedHostRole_{name} : \
+             AverCert.AcceptedArtifact.arithRoleCheck AverCert.ArtifactBytes.modBytes \
+             AverCert.ArtifactBytes.modLen ArithTemplateDerisk.ArithRole.{role} {idx} \
+             {params_literal} = true := by decide +kernel"
+        )
+    };
+    let leaves = [
+        leaf("box", "box", table.box_idx),
+        leaf("toIndex", "toIndex", table.to_index_idx),
+        leaf("add", "add", table.add_idx),
+        leaf("sub", "sub", table.sub_idx),
+        leaf("mul", "mul", table.mul_idx),
+    ]
+    .join("\n\n");
+    format!(
+        "-- Per-role arith host-table leaves for `Artifact.decodedHostRoles`.\n\
+         -- Each role's template equality is checked and freed in its own\n\
+         -- `decide +kernel` declaration, in this separate compilation unit, so\n\
+         -- the whole-module proof never materialises all five at once.\n\
+         import AcceptedArtifact\n\
+         import ArtifactBytes\n\n\
+         set_option maxRecDepth 200000\n\n\
+         namespace AverCert.Artifact\n\n\
+         {leaves}\n\n\
+         end AverCert.Artifact\n"
     )
 }
 

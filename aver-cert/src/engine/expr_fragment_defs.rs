@@ -324,14 +324,43 @@ impl FragHostTable {
     /// Lean `Option ArithTemplateDerisk.ArithHostParams` literal for the subject.
     pub fn arith_params_lean_value(&self, carrier: Option<u32>) -> String {
         match self.arith_params(carrier) {
-            Some((carrier, limb, decompose, normalize, strip, umag_cmp)) => format!(
-                "some ({{ carrier := {carrier}, limb := {limb}, decompose := {decompose}, \
-                 normalize := {normalize}, strip := {strip}, umagCmp := {umag_cmp} }} : \
-                 ArithTemplateDerisk.ArithHostParams)"
-            ),
+            Some((carrier, limb, decompose, normalize, strip, umag_cmp)) => {
+                format!("some {}", arith_params_record_lean(carrier, limb, decompose, normalize, strip, umag_cmp))
+            }
             None => "(none : Option ArithTemplateDerisk.ArithHostParams)".to_string(),
         }
     }
+
+    /// The bare `ArithHostParams` record literal (no `some` wrapper), or `None`
+    /// for a carrierless module. This is the exact `p` the whole-module
+    /// `arithTableCheck` match binds from `arithParams := some p`; the per-role
+    /// leaf theorems that prove `arithRoleCheck … p = true` need it verbatim so
+    /// the recombine `simp only` rewrite matches after the projections reduce.
+    pub fn arith_params_record_lean_value(&self, carrier: Option<u32>) -> Option<String> {
+        self.arith_params(carrier).map(
+            |(carrier, limb, decompose, normalize, strip, umag_cmp)| {
+                arith_params_record_lean(carrier, limb, decompose, normalize, strip, umag_cmp)
+            },
+        )
+    }
+}
+
+/// The canonical `ArithHostParams` record literal shared by the subject
+/// manifest value and the per-role leaf theorems, so both render the same
+/// bytes and the leaf rewrites match the manifest-derived `p`.
+fn arith_params_record_lean(
+    carrier: u32,
+    limb: u32,
+    decompose: u32,
+    normalize: u32,
+    strip: u32,
+    umag_cmp: u32,
+) -> String {
+    format!(
+        "({{ carrier := {carrier}, limb := {limb}, decompose := {decompose}, \
+         normalize := {normalize}, strip := {strip}, umagCmp := {umag_cmp} }} : \
+         ArithTemplateDerisk.ArithHostParams)"
+    )
 }
 
 /// The struct-binding table: which wasm struct type index realises each source
