@@ -28,8 +28,8 @@ use wasm_encoder::{FunctionSection, TypeSection, ValType};
 use super::super::types::TypeRegistry;
 use super::super::wasip2_imports::{Wasip2ImportRegistry, Wasip2ImportSlot};
 use super::{
-    TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadLineIndices, TcpSendIndices,
-    TcpWriteLineIndices,
+    TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadLineIndices, TcpSendBytesIndices,
+    TcpSendIndices, TcpWriteLineIndices,
 };
 
 /// Per-helper allocation bundle. Every field is `Option<_>`: `None`
@@ -46,6 +46,7 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
     pub read_line: Option<TcpReadLineIndices>,
     pub close: Option<TcpCloseIndices>,
     pub send: Option<TcpSendIndices>,
+    pub send_bytes: Option<TcpSendBytesIndices>,
     pub ping: Option<TcpPingIndices>,
 }
 
@@ -111,6 +112,13 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         next_type_idx,
         next_builtin_fn_idx,
     );
+    let send_bytes = allocate_send_bytes(
+        registry,
+        wasip2_imports,
+        types,
+        next_type_idx,
+        next_builtin_fn_idx,
+    );
     let ping = allocate_ping(
         registry,
         wasip2_imports,
@@ -126,6 +134,7 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         read_line,
         close,
         send,
+        send_bytes,
         ping,
     }
 }
@@ -156,6 +165,9 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.send {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.send_bytes {
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.ping {
@@ -487,6 +499,92 @@ fn allocate_send(
         fn_idx,
         string_type_idx: string_idx,
         result_string_string_type_idx: res_string_idx,
+        dns_err_segment_idx: dns_err_seg,
+        dns_err_len: b"tcp: dns resolve failed".len() as u32,
+        no_addr_segment_idx: no_addr_seg,
+        no_addr_len: b"tcp: dns no addresses".len() as u32,
+        sock_err_segment_idx: sock_err_seg,
+        sock_err_len: b"tcp: socket create failed".len() as u32,
+        conn_err_segment_idx: conn_err_seg,
+        conn_err_len: b"tcp: connect failed".len() as u32,
+        port_err_segment_idx: port_err_seg,
+        port_err_len: b"tcp: port out of range".len() as u32,
+        write_err_segment_idx: write_err_seg,
+        write_err_len: b"tcp: write failed".len() as u32,
+        stream_err_segment_idx: stream_err_seg,
+        stream_err_len: b"tcp: stream error".len() as u32,
+        size_err_segment_idx: size_err_seg,
+        size_err_len: b"tcp: response exceeds 10 MiB limit".len() as u32,
+    })
+}
+
+fn allocate_send_bytes(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpSendBytesIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let list_int_idx = registry.list_type_idx("List<Int>")?;
+    let result_idx = registry.result_type_idx("Result<List<Int>,String>")?;
+    let dns_err_seg = registry.string_literal_segment(b"tcp: dns resolve failed")?;
+    let no_addr_seg = registry.string_literal_segment(b"tcp: dns no addresses")?;
+    let sock_err_seg = registry.string_literal_segment(b"tcp: socket create failed")?;
+    let conn_err_seg = registry.string_literal_segment(b"tcp: connect failed")?;
+    let port_err_seg = registry.string_literal_segment(b"tcp: port out of range")?;
+    let write_err_seg = registry.string_literal_segment(b"tcp: write failed")?;
+    let stream_err_seg = registry.string_literal_segment(b"tcp: stream error")?;
+    let size_err_seg = registry.string_literal_segment(b"tcp: response exceeds 10 MiB limit")?;
+    let gates: &[Wasip2ImportSlot] = &[
+        Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+        Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+        Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+        Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+        Wasip2ImportSlot::IoPollPoll,
+        Wasip2ImportSlot::IoPollResourceDropPollable,
+        Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+        Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+        Wasip2ImportSlot::SocketsTcpStartConnect,
+        Wasip2ImportSlot::SocketsTcpSubscribe,
+        Wasip2ImportSlot::SocketsTcpFinishConnect,
+        Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+        Wasip2ImportSlot::SocketsTcpShutdown,
+        Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+        Wasip2ImportSlot::InputStreamBlockingRead,
+        Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+        Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+    ];
+    for slot in gates {
+        wasip2_imports.lookup_wasm_fn_idx(*slot)?;
+    }
+
+    let s_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+    });
+    let list_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(list_int_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types
+        .ty()
+        .function([s_ref, ValType::I64, list_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpSendBytesIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        list_int_type_idx: list_int_idx,
+        result_list_int_string_type_idx: result_idx,
+        aint_struct_type_idx: registry.aint_struct_idx,
         dns_err_segment_idx: dns_err_seg,
         dns_err_len: b"tcp: dns resolve failed".len() as u32,
         no_addr_segment_idx: no_addr_seg,

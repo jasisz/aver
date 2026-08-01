@@ -155,6 +155,7 @@ pub(super) enum EffectName {
     TcpReadLine,
     TcpClose,
     TcpSend,
+    TcpSendBytes,
     TcpPing,
     // ── Outgoing HTTP verbs. `Http.send` already exists for the
     //   Workers handler path; the surface verbs (`Http.get` etc.)
@@ -236,6 +237,7 @@ impl EffectName {
         Self::TcpReadLine,
         Self::TcpClose,
         Self::TcpSend,
+        Self::TcpSendBytes,
         Self::TcpPing,
         Self::HttpGet,
         Self::HttpHead,
@@ -309,6 +311,7 @@ impl EffectName {
             "Tcp.readLine" => Some(Self::TcpReadLine),
             "Tcp.close" => Some(Self::TcpClose),
             "Tcp.send" => Some(Self::TcpSend),
+            "Tcp.sendBytes" => Some(Self::TcpSendBytes),
             "Tcp.ping" => Some(Self::TcpPing),
             "Http.get" => Some(Self::HttpGet),
             "Http.head" => Some(Self::HttpHead),
@@ -379,6 +382,7 @@ impl EffectName {
             Self::TcpReadLine => "Tcp.readLine",
             Self::TcpClose => "Tcp.close",
             Self::TcpSend => "Tcp.send",
+            Self::TcpSendBytes => "Tcp.sendBytes",
             Self::TcpPing => "Tcp.ping",
             Self::HttpGet => "Http.get",
             Self::HttpHead => "Http.head",
@@ -451,6 +455,7 @@ impl EffectName {
             Self::TcpReadLine => ("aver", "tcp_read_line"),
             Self::TcpClose => ("aver", "tcp_close"),
             Self::TcpSend => ("aver", "tcp_send"),
+            Self::TcpSendBytes => ("aver", "tcp_send_bytes"),
             Self::TcpPing => ("aver", "tcp_ping"),
             Self::HttpGet => ("aver", "http_get"),
             Self::HttpHead => ("aver", "http_head"),
@@ -467,9 +472,9 @@ impl EffectName {
     /// Param types declared in the wasm import. Strings are passed as
     /// `(ref null any)` — engine subtyping accepts our `(ref null
     /// $string)` and the host doesn't have to know the concrete type
-    /// idx. The headers Map crossing uses the registered concrete
-    /// `Map<String, List<String>>` ref so the host bridge has a
-    /// type-safe handle.
+    /// idx. Collection values crossing the boundary use their
+    /// registered concrete refs (`Map<String, List<String>>` and
+    /// `List<Int>`) so the host bridge has a type-safe handle.
     ///
     /// **Trailing `caller_fn: any_ref`.** Every host import gains a
     /// trailing String-ref param identifying the Aver fn that
@@ -546,6 +551,7 @@ impl EffectName {
             Self::TcpClose | Self::TcpReadLine => Ok(vec![any_ref_ty()]),
             Self::TcpWriteLine => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
+            Self::TcpSendBytes => Ok(vec![any_ref_ty(), ValType::I64, list_int_ref_ty(registry)?]),
             Self::TcpPing => Ok(vec![any_ref_ty(), ValType::I64]),
             // HTTP verbs all take a URL. `Http.get` / `Http.head` /
             // `Http.delete` are arity-1; the body verbs add (body,
@@ -665,6 +671,7 @@ impl EffectName {
             Self::TcpReadLine | Self::TcpSend => {
                 Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
             }
+            Self::TcpSendBytes => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
             Self::TcpWriteLine | Self::TcpClose | Self::TcpPing => {
                 Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
             }
@@ -729,6 +736,18 @@ fn map_string_list_string_ref_ty(registry: &TypeRegistry) -> Result<ValType, Was
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+    }))
+}
+
+fn list_int_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .list_type_idx("List<Int>")
+        .ok_or(WasmGcError::Validation(
+            "Tcp.sendBytes requires List<Int> slot but none was registered".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
     }))
 }
 
@@ -835,6 +854,7 @@ impl EffectName {
                 | EffectName::TcpWriteLine
                 | EffectName::TcpReadLine
                 | EffectName::TcpSend
+                | EffectName::TcpSendBytes
                 | EffectName::TcpClose
                 | EffectName::TcpPing,
         )
