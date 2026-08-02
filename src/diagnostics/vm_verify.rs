@@ -1909,6 +1909,47 @@ mod tests {
         }
     }
 
+    /// Regression: `Tcp.sendBytes` was classified (GenerativeOutput)
+    /// without shipping hostile profiles, so the collector produced no
+    /// combination for it and hostile law verification silently ran with
+    /// the effect unmodelled.
+    #[test]
+    fn collect_effect_profile_covers_tcp_send_bytes() {
+        let src = "module M\n    effects [Tcp.sendBytes]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Tcp.sendBytes]\n    1\n";
+        let items = parse_source(src);
+        let block = VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![],
+            case_spans: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "test".to_string(),
+                givens: vec![],
+                when: None,
+                lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                sample_guards: vec![],
+            })),
+            trace: true,
+            cases_givens: vec![],
+        };
+        let combos = collect_effect_profile_combinations(&block, &items);
+        let profiles =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Tcp.sendBytes");
+        assert!(profiles.len() >= 2);
+        assert_eq!(combos.len(), profiles.len());
+        assert!(
+            combos.iter().any(|combo| combo
+                .iter()
+                .any(|(m, p)| m == "Tcp.sendBytes" && p == "always_err")),
+            "hostile profile must appear among the combinations"
+        );
+    }
+
     #[test]
     fn collect_effect_profile_applies_to_law_form_with_or_without_trace() {
         // Law form is a universal claim. Even without `trace`, the user's
