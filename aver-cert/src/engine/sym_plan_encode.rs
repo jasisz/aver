@@ -113,11 +113,13 @@ impl SymToFragEncoder<'_> {
                 field_ty: _,
                 value,
             } => {
-                // Only opaque reference fields encode: the projected value
-                // flows verbatim through the field-projection face. Scalar
-                // fields have no rendered proof face yet, so they fail-close
-                // the encoding (twin of the Lean encoder arm).
-                if ty != FragTy::AdtRef {
+                // Opaque reference fields flow verbatim through the
+                // field-projection face; stage-1 scalar leaves
+                // (Bool/Int/Float, `frag_ty_is_record_scalar`) flow through the
+                // record-parameter face. Any other field type has no rendered
+                // proof face yet, so it fail-closes the encoding (twin of the
+                // Lean encoder arm at `PlanCheck.lean:949`).
+                if ty != FragTy::AdtRef && !frag_ty_is_record_scalar(ty) {
                     return None;
                 }
                 let ty_idx = self.struct_table.lookup(type_name)?;
