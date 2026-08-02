@@ -780,6 +780,200 @@ def floatBitsRepr (_S : CarrierSpec C) (bits : UInt64) (w : WVal) : Prop := w = 
     exact `WVal` the body returns. This deliberately does not inspect strings. -/
 def verbatimRepr (_S : CarrierSpec C) (v : WVal) (w : WVal) : Prop := w = v
 
+/-! ### User type declarations as certified-Plan members (`typedecl-v1`)
+
+A user record/variant declaration joins the certified Plan exactly as an
+expression node does: the wall LOWERS the declaration to its wasm-gc type-section
+entry (`lowerTypeDecl`) and artifact acceptance pins that entry by EQUALITY, so
+the layout is a checked-by-equality witness, never trusted plan data. The
+representation relation is ONE generic recursive definition (`ReprOf`), audited
+once here; per-type certificates are only instances of it.
+
+Stage 1 admits FLAT records of scalar fields (`Int`/`Bool`/`Float`) with a
+field-READ model. Nested records, variants, `String`/`List` fields and computed
+comparisons are OUT: the lowerer and the representation relation fail closed on
+them (`lowerScalarStorage` returns `none`, the fuel floor rejects recursion, and
+the `variant` representation arm is `False`). -/
+
+/-- A user type declaration carried in the certified Plan. `intCarrier`,
+    `boolScalar` and `floatScalar` are the admitted scalar leaves; `record`
+    carries its wasm struct type index and its source-order fields; `variant`
+    is present but unreachable in stage 1 (its representation arm is `False`).
+    `DecidableEq` is written by hand: the derived handler does not fire through
+    the nested `List TypeDecl` occurrences. -/
+inductive TypeDecl where
+  | intCarrier
+  | boolScalar
+  | floatScalar
+  | record (idx : Nat) (fields : List TypeDecl)
+  | variant (idx root : Nat) (ctors : List TypeDecl)
+deriving Repr
+
+mutual
+  def TypeDecl.decEq : (x y : TypeDecl) → Decidable (x = y)
+    | .intCarrier, .intCarrier => isTrue rfl
+    | .boolScalar, .boolScalar => isTrue rfl
+    | .floatScalar, .floatScalar => isTrue rfl
+    | .record i1 f1, .record i2 f2 =>
+        if h : i1 = i2 then
+          match TypeDecl.decEqList f1 f2 with
+          | isTrue hf => isTrue (by subst h; subst hf; rfl)
+          | isFalse hf => isFalse (by intro he; injection he with h1 h2; exact hf h2)
+        else isFalse (by intro he; injection he with h1 h2; exact h h1)
+    | .variant i1 r1 c1, .variant i2 r2 c2 =>
+        if h : i1 = i2 ∧ r1 = r2 then
+          match TypeDecl.decEqList c1 c2 with
+          | isTrue hc =>
+              isTrue (by obtain ⟨ha, hb⟩ := h; subst ha; subst hb; subst hc; rfl)
+          | isFalse hc => isFalse (by intro he; injection he with h1 h2 h3; exact hc h3)
+        else isFalse (by intro he; injection he with h1 h2 h3; exact h ⟨h1, h2⟩)
+    | .intCarrier, .boolScalar | .intCarrier, .floatScalar | .intCarrier, .record ..
+    | .intCarrier, .variant .. | .boolScalar, .intCarrier | .boolScalar, .floatScalar
+    | .boolScalar, .record .. | .boolScalar, .variant .. | .floatScalar, .intCarrier
+    | .floatScalar, .boolScalar | .floatScalar, .record .. | .floatScalar, .variant ..
+    | .record .., .intCarrier | .record .., .boolScalar | .record .., .floatScalar
+    | .record .., .variant .. | .variant .., .intCarrier | .variant .., .boolScalar
+    | .variant .., .floatScalar | .variant .., .record .. =>
+        isFalse (by intro he; nomatch he)
+  def TypeDecl.decEqList : (x y : List TypeDecl) → Decidable (x = y)
+    | [], [] => isTrue rfl
+    | [], _ :: _ => isFalse (by intro he; nomatch he)
+    | _ :: _, [] => isFalse (by intro he; nomatch he)
+    | x :: xs, y :: ys =>
+        match TypeDecl.decEq x y, TypeDecl.decEqList xs ys with
+        | isTrue hx, isTrue hxs => isTrue (by subst hx; subst hxs; rfl)
+        | isFalse hx, _ => isFalse (by intro he; injection he with h1 h2; exact hx h1)
+        | _, isFalse hxs => isFalse (by intro he; injection he with h1 h2; exact hxs h2)
+end
+
+instance : DecidableEq TypeDecl := TypeDecl.decEq
+
+/-- The wasm-gc field storage a scalar leaf lowers to. `intCarrier` is a
+    nullable reference to the module's Int carrier struct index `C`; `boolScalar`
+    is `i32`; `floatScalar` is `f64`. Record fields are IMMUTABLE (`mutability
+    0`), unlike the carrier's own mutable fields. Non-scalar leaves fail closed. -/
+def lowerScalarStorage (C : Nat) : TypeDecl → Option CertDecode.FieldType
+  | .intCarrier => some ⟨.val (.ref 0x63 (Int.ofNat C)), 0⟩
+  | .boolScalar => some ⟨.val (.numeric 0x7f), 0⟩
+  | .floatScalar => some ⟨.val (.numeric 0x7c), 0⟩
+  | _ => none
+
+/-- Lower a Plan type declaration to its expected wasm-gc type-section entry.
+    Stage 1: a `record` becomes a `.plain` struct whose fields are the pointwise
+    scalar-storage lowering of its source-order fields; a field that is not a
+    scalar leaf makes the whole `mapM` fail closed. `fuel` is the recursion floor
+    for future nested records; at `0`, and for every non-record declaration, the
+    lowering returns `none` (fail-closed). -/
+def lowerTypeDecl (C : Nat) : Nat → TypeDecl → Option CertDecode.TypeEntry
+  | 0, _ => none
+  | _fuel + 1, .record _idx fields =>
+      (fields.mapM (lowerScalarStorage C)).map (fun fts => ⟨.plain, .structType fts⟩)
+  | _fuel + 1, _ => none
+
+/-! The value denotation of a Plan type declaration: scalar leaves denote their
+    source scalar, a record denotes the right-associated product of its fields'
+    denotations (the `FragParams.denote` shape), and the stage-1-unreachable
+    variant denotes `Unit`. -/
+mutual
+  def RecordVal : TypeDecl → Type
+    | .intCarrier => Int
+    | .boolScalar => Bool
+    | .floatScalar => UInt64
+    | .record _ fields => RecordFields fields
+    | .variant _ _ _ => Unit
+  def RecordFields : List TypeDecl → Type
+    | [] => Unit
+    | [f] => RecordVal f
+    | f :: next :: rest => RecordVal f × RecordFields (next :: rest)
+end
+
+/-! The single generic representation relation between a Plan type declaration,
+    the wasm-gc value that stores it, and its denotation. Scalar leaves bottom
+    out at the EXISTING carrier / boolean / float-bits relations; a record is a
+    struct at its declared index whose fields represent the denotation pointwise
+    (`ReprFields`); the stage-1-unreachable variant arm is `False`. Audited once;
+    every per-type certificate is an instance. -/
+mutual
+  def ReprOf (S : CarrierSpec C) :
+      (decl : TypeDecl) → WVal → RecordVal decl → Prop
+    | .intCarrier, w, v => intRepr S v w
+    | .boolScalar, w, v => boolRepr S v w
+    | .floatScalar, w, v => floatBitsRepr S v w
+    | .record idx fields, w, v =>
+        ∃ ws, w = .structv idx ws ∧ ReprFields S fields ws v
+    | .variant _ _ _, _, _ => False
+  def ReprFields (S : CarrierSpec C) :
+      (fields : List TypeDecl) → List WVal → RecordFields fields → Prop
+    | [], ws, _ => ws = []
+    | [f], ws, v => ∃ w, ws = [w] ∧ ReprOf S f w v
+    | f :: next :: rest, ws, v =>
+        ∃ w wrest, ws = w :: wrest ∧ ReprOf S f w v.1 ∧
+          ReprFields S (next :: rest) wrest v.2
+end
+
+/-- The `k`-th component of a heterogeneous record denotation. Defined by
+    induction on the field list so the unread fields are skipped structurally. -/
+def nthField : (fields : List TypeDecl) → RecordFields fields →
+    (k : Nat) → (hk : k < fields.length) → RecordVal (fields[k]'hk)
+  | [f], v, 0, _ => v
+  | _f :: next :: rest, v, 0, _ => v.1
+  | _f :: next :: rest, v, k+1, hk => nthField (next :: rest) v.2 k (by simpa using hk)
+  | [], _, _, hk => absurd hk (by simp)
+  | [_f], _, _k+1, hk => absurd hk (by simp)
+
+/-- GENERIC record-read lemma (the non-flat core of the field-read bridge): the
+    `k`-th stored value of a represented record is `some w`, and `w` represents
+    the `k`-th field of the record denotation. Proved by INDUCTION over the field
+    list — the fields before `k` are framed past, never case-split. -/
+theorem readField_repr (S : CarrierSpec C) :
+    ∀ (fields : List TypeDecl) (ws : List WVal) (v : RecordFields fields)
+      (k : Nat) (hk : k < fields.length),
+      ReprFields S fields ws v →
+      ∃ w, ws[k]? = some w ∧ ReprOf S (fields[k]'hk) w (nthField fields v k hk)
+  | [_f], ws, v, 0, _hk, hrepr => by
+      obtain ⟨w, hws, hr⟩ := hrepr
+      exact ⟨w, by simp [hws], hr⟩
+  | _f :: next :: rest, ws, v, 0, _hk, hrepr => by
+      obtain ⟨w, wrest, hws, hr, _⟩ := hrepr
+      exact ⟨w, by simp [hws], hr⟩
+  | _f :: next :: rest, ws, v, k+1, hk, hrepr => by
+      obtain ⟨w, wrest, hws, _, hrest⟩ := hrepr
+      have hk' : k < (next :: rest).length := by simpa using hk
+      obtain ⟨w', hw', hr'⟩ := readField_repr S (next :: rest) wrest v.2 k hk' hrest
+      exact ⟨w', by simp [hws, hw'], hr'⟩
+
+/-- The emitted scalar-field-read body: `local.get 0; struct.get structIdx field`
+    (`PlanLower` lowers a `structGetUser structIdx field 0` node to exactly this
+    over param 0). -/
+def recordProjTemplate (structIdx field : Nat) : List WInstr :=
+  [.localGet 0, .structGet structIdx field]
+
+/-- LOAD-BEARING generic bridge (template ⟹ model). Running the emitted
+    scalar-field-read body on a value that represents a record yields a `w` that
+    represents the `field`-th component of the record denotation, under the
+    generic `ReprOf`. Generic over the carrier spec, the record's field list, the
+    field index, the declared-local count, the host table (the body makes no host
+    call), the code table (pinned only at the self entry, exactly what byte
+    acceptance certifies), and the fuel. Partial correctness — vacuous on trap or
+    fuel exhaustion, like `Obligation.holds`. The unread fields ride through via
+    the field-list induction `readField_repr`, never a per-field case split. -/
+theorem recordParam_simulates_model
+    (S : CarrierSpec C) (structIdx field nlocals : Nat)
+    (fields : List TypeDecl) (hfield : field < fields.length)
+    (host : HostTbl) (code : CodeTbl) (self : Nat)
+    (hCode : code self = some ⟨1, nlocals, recordProjTemplate structIdx field⟩)
+    (fuel : Nat) (v : RecordFields fields) (ws : List WVal) (w : WVal)
+    (hrepr : ReprFields S fields ws v)
+    (hRun : wFuncN code host fuel self [.structv structIdx ws] = some w) :
+    ReprOf S (fields[field]'hfield) w (nthField fields v field hfield) := by
+  obtain ⟨w', hw', hr'⟩ := readField_repr S fields ws v field hfield hrepr
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      simp [wFuncN, hCode, recordProjTemplate, initLocals, wRunF, hw'] at hRun
+      subst hRun
+      exact hr'
+
 /-- One certified export. `code`/`host`/`self` pin the emitted body and its
     runtime wiring; `Dom`/`Cod` and their representation relations describe the
     typed source-model face the body is proven to simulate. `AcceptedArtifact`
