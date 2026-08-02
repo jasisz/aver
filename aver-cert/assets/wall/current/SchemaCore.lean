@@ -1044,6 +1044,111 @@ def fragTyIsRecordScalar : FragTy → Bool
     identical across the face, the fixtures, and the generated certificates. -/
 abbrev lowerTypeDeclFuel : Nat := 8
 
+/-! ### The pinned declaration is byte-determined (the existential is no choice)
+
+The record face quantifies its `TypeDecl` existentially inside a proof term.
+These inversion lemmas make the soundness argument formal: any declaration the
+equality pin accepts lowers to a `.plain` struct (killing the `.sub`/`.subFinal`
+doppelganger), is a record whose field list lowers pointwise to the decoded
+storages, and can place an `.intCarrier` field exactly where the real entry
+holds a concrete reference — so a reference storage in the pinned entry FORCES
+the declaration to mention the Int carrier, and a scalar-leaf claim about a
+field forces that field's exact storage. Guard-iso probes compose these with
+`typeSectionMatches` monotonicity to refute the whole face on hostile bytes. -/
+
+/-- Everything `lowerTypeDecl` produces is a `.plain` entry. -/
+theorem lowerTypeDecl_plain (C fuel : Nat) (decl : TypeDecl)
+    (e : CertDecode.TypeEntry) (h : lowerTypeDecl C fuel decl = some e) :
+    e.form = .plain := by
+  cases fuel with
+  | zero => simp [lowerTypeDecl] at h
+  | succ fuel =>
+      cases decl <;> simp [lowerTypeDecl] at h
+      case record idx fields =>
+        obtain ⟨fts, -, hentry⟩ := h
+        rw [← hentry]
+
+/-- Everything `lowerTypeDecl` produces comes from a record declaration whose
+    field list lowers pointwise to the entry's storages. -/
+theorem lowerTypeDecl_recordFields (C fuel : Nat) (decl : TypeDecl)
+    (e : CertDecode.TypeEntry) (h : lowerTypeDecl C fuel decl = some e) :
+    ∃ idx fields fts, decl = TypeDecl.record idx fields ∧
+      e = ⟨.plain, .structType fts⟩ ∧
+      fields.mapM (lowerScalarStorage C) = some fts := by
+  cases fuel with
+  | zero => simp [lowerTypeDecl] at h
+  | succ fuel =>
+      cases decl <;> simp [lowerTypeDecl] at h
+      case record idx fields =>
+        obtain ⟨fts, hmap, hentry⟩ := h
+        exact ⟨idx, fields, fts, rfl, hentry.symm, hmap⟩
+
+/-- Pointwise inversion of a successful `mapM`: each produced element is the
+    image of the element at the same position. -/
+theorem mapM_getElem?_inv {α β : Type} (g : α → Option β) :
+    ∀ (xs : List α) (ys : List β) (k : Nat) (y : β),
+      xs.mapM g = some ys → ys[k]? = some y →
+      ∃ x, xs[k]? = some x ∧ g x = some y
+  | [], ys, k, y, hmap, hget => by
+      have hys : ([] : List β) = ys := by simpa using hmap
+      subst hys
+      simp at hget
+  | x :: xs, ys, k, y, hmap, hget => by
+      rw [List.mapM_cons] at hmap
+      cases hx : g x with
+      | none => rw [hx] at hmap; simp at hmap
+      | some b =>
+          cases hxs : xs.mapM g with
+          | none => rw [hx, hxs] at hmap; simp at hmap
+          | some bs =>
+              rw [hx, hxs] at hmap
+              have hys : b :: bs = ys := by simpa using hmap
+              subst hys
+              cases k with
+              | zero =>
+                  simp only [List.getElem?_cons_zero] at hget
+                  injection hget with hy
+                  subst hy
+                  exact ⟨x, by simp, hx⟩
+              | succ k =>
+                  simp only [List.getElem?_cons_succ] at hget
+                  obtain ⟨x', hx', hgx'⟩ := mapM_getElem?_inv g xs bs k y hxs hget
+                  exact ⟨x', by simpa using hx', hgx'⟩
+
+/-- Only the `.intCarrier` leaf lowers to a concrete reference storage. -/
+theorem lowerScalarStorage_ref_intCarrier (C : Nat) (f : TypeDecl)
+    (r : Int) (m : Nat)
+    (h : lowerScalarStorage C f = some ⟨.val (.ref 0x63 r), m⟩) :
+    f = TypeDecl.intCarrier := by
+  cases f <;> simp [lowerScalarStorage] at h ⊢
+
+/-- Only the `.boolScalar` leaf lowers to the `i32` storage. -/
+theorem lowerScalarStorage_i32_boolScalar (C : Nat) (f : TypeDecl) (m : Nat)
+    (h : lowerScalarStorage C f = some ⟨.val (.numeric 0x7f), m⟩) :
+    f = TypeDecl.boolScalar := by
+  cases f <;> simp [lowerScalarStorage] at h ⊢
+
+/-- A field list holding `.intCarrier` at any position mentions the carrier. -/
+theorem typeDeclsMention_of_getElem? :
+    ∀ (fields : List TypeDecl) (k : Nat),
+      fields[k]? = some TypeDecl.intCarrier →
+      typeDeclsMentionIntCarrier fields = true
+  | [], k, h => by simp at h
+  | f :: rest, 0, h => by
+      simp at h
+      subst h
+      simp [typeDeclsMentionIntCarrier, typeDeclMentionsIntCarrier]
+  | f :: rest, k + 1, h => by
+      simp only [List.getElem?_cons_succ] at h
+      have := typeDeclsMention_of_getElem? rest k h
+      simp [typeDeclsMentionIntCarrier, this]
+
+/-- Only `.boolScalar` names the Boolean fragment scalar. -/
+theorem scalarLeafFragTy?_boolI32 (f : TypeDecl)
+    (h : scalarLeafFragTy? f = some FragTy.boolI32) :
+    f = TypeDecl.boolScalar := by
+  cases f <;> simp [scalarLeafFragTy?] at h ⊢
+
 /-- One certified export. `code`/`host`/`self` pin the emitted body and its
     runtime wiring; `Dom`/`Cod` and their representation relations describe the
     typed source-model face the body is proven to simulate. `AcceptedArtifact`

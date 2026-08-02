@@ -148,6 +148,35 @@ def typeSectionMatches (check : CertDecode.TypeEntry → Bool)
       | none => false
   | none => false
 
+/-- Eliminate a satisfied `typeSectionMatches` against a byte-confirmed entry
+    equality at the same index: the abstract check holds of exactly that entry.
+    Guard-iso probes use this to turn a satisfied equality pin over an
+    EXISTENTIAL Plan declaration into a concrete fact about the decoded entry,
+    which inversion of `lowerTypeDecl` then refutes on hostile bytes — the
+    formal shape of "the pinned declaration is byte-determined". -/
+theorem typeSectionMatches_elim
+    (p : CertDecode.TypeEntry → Bool) (e : CertDecode.TypeEntry)
+    (modBytes modLen typeIdx : Nat)
+    (h : typeSectionMatches p modBytes modLen typeIdx = true)
+    (he : typeSectionMatches (fun x => x == e) modBytes modLen typeIdx = true) :
+    p e = true := by
+  unfold typeSectionMatches at h he
+  cases hdec : CertDecode.decodeTypes modBytes modLen with
+  | none =>
+      simp only [hdec] at h
+      exact absurd h (by decide)
+  | some info =>
+      simp only [hdec] at h he
+      cases hent : info.entryIndex[typeIdx]? with
+      | none =>
+          simp only [hent] at h
+          exact absurd h (by decide)
+      | some entry =>
+          simp only [hent] at h he
+          have hentry : entry = e := by simpa using he
+          rw [← hentry]
+          exact h
+
 /-- Whether the module's type-section entry `typeIdx` is exactly the canonical
     certified function type `[(ref null carrier)^arity] → [(ref null carrier)]`.
     This binds a claimed function binding's declared signature to the plan's

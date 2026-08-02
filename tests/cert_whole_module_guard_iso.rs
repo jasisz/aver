@@ -3624,3 +3624,387 @@ example : AverCert.WasmSlice.checkExprProjectionTypes 1 2 0 probeProjFuncEntry
     );
     let _ = std::fs::remove_dir_all(wall_dir);
 }
+
+fn read_uleb_at(bytes: &[u8], cursor: &mut usize) -> usize {
+    let mut value = 0usize;
+    let mut shift = 0usize;
+    loop {
+        let byte = bytes[*cursor];
+        *cursor += 1;
+        value |= usize::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+        shift += 7;
+    }
+}
+
+fn encode_uleb(mut value: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            out.push(byte | 0x80);
+        } else {
+            out.push(byte);
+            return out;
+        }
+    }
+}
+
+/// Split a module into `(section id, payload)` pairs and re-emit them with
+/// re-encoded section sizes, so a tampered type-section payload of any length
+/// reframes correctly.
+fn module_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let mut cursor = 8usize;
+    let mut sections = Vec::new();
+    while cursor < bytes.len() {
+        let id = bytes[cursor];
+        cursor += 1;
+        let size = read_uleb_at(bytes, &mut cursor);
+        sections.push((id, bytes[cursor..cursor + size].to_vec()));
+        cursor += size;
+    }
+    sections
+}
+
+fn rebuild_module(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut out = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    for (id, payload) in sections {
+        out.push(*id);
+        out.extend(encode_uleb(payload.len()));
+        out.extend(payload);
+    }
+    out
+}
+
+/// The compiled person module's layout, read back out of the artifact (never
+/// written down as literals): the record struct index (the readMember export's
+/// declared parameter), the Int carrier index (the record's first field
+/// reference), and the flattened type count (where the duplicate-entry tamper
+/// lands).
+fn person_record_layout(bytes: &[u8]) -> (u32, u32, u32) {
+    let read_member_type = export_func_type_idx(bytes, "readMember");
+    let mut structs: Vec<Option<Vec<wasmparser::FieldType>>> = Vec::new();
+    let mut funcs: Vec<Option<Vec<wasmparser::ValType>>> = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::TypeSection(reader) = payload.expect("person.wasm must parse") {
+            for group in reader {
+                for sub in group.expect("rec group must parse").into_types() {
+                    match &sub.composite_type.inner {
+                        wasmparser::CompositeInnerType::Struct(st) => {
+                            structs.push(Some(st.fields.to_vec()));
+                            funcs.push(None);
+                        }
+                        wasmparser::CompositeInnerType::Func(ft) => {
+                            structs.push(None);
+                            funcs.push(Some(ft.params().to_vec()));
+                        }
+                        _ => {
+                            structs.push(None);
+                            funcs.push(None);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let type_count = structs.len() as u32;
+    let params = funcs[read_member_type as usize]
+        .as_ref()
+        .expect("readMember's type is a function type");
+    assert_eq!(params.len(), 1, "readMember takes exactly the record");
+    let struct_idx = match params[0] {
+        wasmparser::ValType::Ref(rt) => match rt.heap_type() {
+            wasmparser::HeapType::Concrete(idx) => idx
+                .as_module_index()
+                .expect("record parameter names a module type index"),
+            other => panic!("readMember parameter heap type is concrete, got {other:?}"),
+        },
+        other => panic!("readMember parameter is a reference, got {other:?}"),
+    };
+    let fields = structs[struct_idx as usize]
+        .as_ref()
+        .expect("record parameter names a struct type");
+    assert_eq!(fields.len(), 2, "Person is the two-field record");
+    let carrier = match fields[0].element_type {
+        wasmparser::StorageType::Val(wasmparser::ValType::Ref(rt)) => match rt.heap_type() {
+            wasmparser::HeapType::Concrete(idx) => idx
+                .as_module_index()
+                .expect("age field names a module type index"),
+            other => panic!("age field heap type is concrete, got {other:?}"),
+        },
+        other => panic!("age field is a carrier reference, got {other:?}"),
+    };
+    (carrier, struct_idx, type_count)
+}
+
+/// Tamper (a): declare the record entry as a `(sub …)` supertype — the 0A
+/// doppelganger — by inserting the two-byte `sub` header (empty supertype
+/// vector) before the record struct's `0x5f`. The module stays valid wasm.
+fn person_sub_tamper(bytes: &[u8]) -> Vec<u8> {
+    let mut sections = module_sections(bytes);
+    let type_section = sections
+        .iter_mut()
+        .find(|(id, _)| *id == 1)
+        .expect("person.wasm has a type section");
+    let payload = &mut type_section.1;
+    let mut cursor = 0usize;
+    let _rectype_count = read_uleb_at(payload, &mut cursor);
+    assert_eq!(
+        payload[cursor], 0x4e,
+        "person.wasm's first rectype is the shared rec group; refit the tamper"
+    );
+    cursor += 1;
+    let _group_members = read_uleb_at(payload, &mut cursor);
+    assert_eq!(
+        payload[cursor], 0x5f,
+        "the rec group's first entry is the record struct; refit the tamper"
+    );
+    payload.splice(cursor..cursor, [0x50, 0x00]);
+    rebuild_module(&sections)
+}
+
+/// Tamper (c): append a singleton rectype duplicating the record's exact entry
+/// shape at a fresh flattened index. The record equality pin HOLDS at that
+/// index; only the param binding ties the claim back to the function's real
+/// declared parameter type.
+fn person_dup_tamper(bytes: &[u8], carrier: u32) -> Vec<u8> {
+    assert!(carrier < 64, "single-byte s33 heap index expected");
+    let mut sections = module_sections(bytes);
+    let type_section = sections
+        .iter_mut()
+        .find(|(id, _)| *id == 1)
+        .expect("person.wasm has a type section");
+    let payload = &mut type_section.1;
+    let mut cursor = 0usize;
+    let rectype_count = read_uleb_at(payload, &mut cursor);
+    let mut tampered = encode_uleb(rectype_count + 1);
+    tampered.extend(&payload[cursor..]);
+    tampered.extend([0x5f, 0x02, 0x63, carrier as u8, 0x00, 0x7f, 0x00]);
+    *payload = tampered;
+    rebuild_module(&sections)
+}
+
+/// Tamper (d) frame: a minimal record module whose type section holds the REAL
+/// carrier shape at index 0, an identically-shaped carrier DOPPELGANGER at
+/// index 1, the two-field record at index 2 with its Int field referencing
+/// `age_ref`, and the `readMember` function type at index 3. `CertDecode`
+/// derives carrier state `some (some 0)` in both assemblies (first carrier
+/// wins), so a claim whose record declaration cites the doppelganger at 1
+/// satisfies the equality pin and the param binding while the byte-derived
+/// carrier binding rejects it.
+fn pseudo_carrier_record_module(age_ref: u8) -> Vec<u8> {
+    let carrier_entry = [0x5f, 0x03, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00];
+    let mut types = vec![0x04];
+    types.extend(carrier_entry);
+    types.extend(carrier_entry);
+    types.extend([0x5f, 0x02, 0x63, age_ref, 0x00, 0x7f, 0x00]);
+    types.extend([0x60, 0x01, 0x63, 0x02, 0x01, 0x7f]);
+    let funcs = vec![0x01, 0x03];
+    let name = b"readMember";
+    let mut exports = vec![0x01, name.len() as u8];
+    exports.extend(name);
+    exports.extend([0x00, 0x00]);
+    let body = [0x00, 0x20, 0x00, 0xfb, 0x02, 0x02, 0x01, 0x0b];
+    let mut code = vec![0x01, body.len() as u8];
+    code.extend(body);
+    let section = |id: u8, payload: Vec<u8>| -> Vec<u8> {
+        let mut out = vec![id];
+        out.extend(encode_uleb(payload.len()));
+        out.extend(payload);
+        out
+    };
+    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    module.extend(section(1, types));
+    module.extend(section(3, funcs));
+    module.extend(section(7, exports));
+    module.extend(section(10, code));
+    module
+}
+
+/// GuardIso for the record-parameter declared face over the REAL compiled
+/// `person.wasm`: each conjunct of `StandardFace.recordParamDeclaredFace` is
+/// exercised by a hostile artifact rejected at exactly that conjunct, a copy
+/// weakened by exactly that conjunct (cut from the LIVE materialized wall
+/// source with exactly-once surgery) accepts it, the other weakened copies
+/// keep rejecting it, and the honest twin passes everything.
+///
+///   (a) `.sub`-declared record entry (the 0A doppelganger) — rejected at the
+///       type-section EQUALITY PIN via `lowerTypeDecl_plain`;
+///   (b) permuted field declaration over the honest bytes — rejected at the
+///       pin via the storage inversion lemmas; the extra-field declaration is
+///       exhibited at conjunct level plus weakened-copy acceptance (with the
+///       pin cut nothing forces the declaration's field list, so the
+///       pin-retaining rejections are the permuted probe's);
+///   (c) claim pinning a byte-identical DUPLICATE entry at a fresh index —
+///       rejected at the PARAM BINDING;
+///   (d) record declaration citing a carrier doppelganger — rejected at the
+///       byte-derived CARRIER BINDING (forced through the pin's storage
+///       inversion; exhibited against the carrier-weakened copy, with the
+///       param-weakened copy still rejecting).
+#[test]
+fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping record-declaration GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-record-decl-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/person.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile person fixture for record-declaration GuardIso");
+    assert!(
+        compile.status.success(),
+        "person compile failed for record-declaration GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let person = std::fs::read(out_dir.join("person.wasm")).expect("compiled person.wasm");
+    let (carrier, struct_idx, dup_idx) = person_record_layout(&person);
+    let hostile_sub = person_sub_tamper(&person);
+    let hostile_dup = person_dup_tamper(&person, carrier);
+    let pseudo_honest = pseudo_carrier_record_module(0);
+    let pseudo_hostile = pseudo_carrier_record_module(1);
+    for (label, bytes) in [
+        ("honest", &person),
+        ("hostileSub", &hostile_sub),
+        ("hostileDup", &hostile_dup),
+        ("pseudoHonest", &pseudo_honest),
+        ("pseudoHostile", &pseudo_hostile),
+    ] {
+        wasmparser::Validator::new()
+            .validate_all(bytes)
+            .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
+    }
+
+    let wall_dir = temp_dir("cert-record-decl-guard-iso-wall");
+    std::fs::create_dir_all(&wall_dir).unwrap();
+    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
+    for source in wall.sources {
+        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    std::fs::write(
+        wall_dir.join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
+         roots := #[`CertPrelude, `CertDecode, `ArithTemplateDerisk, `SchemaCore, \
+         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering, \
+         `ConstructVerbatimSoundness, `FieldProjectionSoundness, `StringSoundness, \
+         `WidenedEnvelope, `DeclaredIndexEnvelope, `DeclaredEnvelopeAcceptTransport, \
+         `StandardFace]\n",
+    )
+    .unwrap();
+    let build = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("build")
+        .output()
+        .expect("build the wall before the record-declaration GuardIso");
+    assert!(
+        build.status.success(),
+        "wall build failed before the record-declaration GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Literal weakened copies from the LIVE materialized face source: one cuts
+    // EXACTLY the type-section equality pin, one EXACTLY the param binding,
+    // one EXACTLY the byte-derived carrier binding, and nothing else moves.
+    let standard_face = std::fs::read_to_string(wall_dir.join("StandardFace.lean"))
+        .expect("materialized wall has StandardFace.lean");
+    let live_face = extract_wall_def(&standard_face, "recordParamDeclaredFace");
+    let pin_conjunct = "    AverCert.WasmSlice.typeSectionMatches\n      (fun entry =>\n        \
+                        decide (lowerTypeDecl claim.carrier lowerTypeDeclFuel decl = some entry))\n      \
+                        modBytes modLen structIdx = true ∧\n";
+    let param_conjunct = "    AverCert.WasmSlice.recordParamFuncTypeMatches\n      \
+                          modBytes modLen claim.exportNameBytes structIdx = true ∧\n";
+    let carrier_conjunct = "    (typeDeclMentionsIntCarrier decl = true →\n      \
+                            CertDecode.carrierState modBytes modLen = some (some claim.carrier)) ∧\n";
+    let live_with_newline = format!("{live_face}\n");
+    for (conjunct, what) in [
+        (pin_conjunct, "type-section equality pin"),
+        (param_conjunct, "param binding"),
+        (carrier_conjunct, "byte-derived carrier binding"),
+    ] {
+        assert_eq!(
+            live_with_newline.matches(conjunct).count(),
+            1,
+            "the {what} conjunct moved; refit the GuardIso surgery"
+        );
+    }
+    let weak_pin = live_with_newline
+        .replace(pin_conjunct, "")
+        .replace("recordParamDeclaredFace", "weakPinRecordParamDeclaredFace");
+    let weak_param = live_with_newline.replace(param_conjunct, "").replace(
+        "recordParamDeclaredFace",
+        "weakParamRecordParamDeclaredFace",
+    );
+    let weak_carrier = live_with_newline.replace(carrier_conjunct, "").replace(
+        "recordParamDeclaredFace",
+        "weakCarrierRecordParamDeclaredFace",
+    );
+
+    let read_member_name = format!(
+        "[{}]",
+        "readMember"
+            .bytes()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let lean = include_str!("fixtures/cert_record_decl_guard_iso.lean")
+        .replace("%personBytes%", &format!("0x{}", hex_le(&person)))
+        .replace("%personLen%", &person.len().to_string())
+        .replace("%subBytes%", &format!("0x{}", hex_le(&hostile_sub)))
+        .replace("%subLen%", &hostile_sub.len().to_string())
+        .replace("%dupBytes%", &format!("0x{}", hex_le(&hostile_dup)))
+        .replace("%dupLen%", &hostile_dup.len().to_string())
+        .replace(
+            "%pseudoHonestBytes%",
+            &format!("0x{}", hex_le(&pseudo_honest)),
+        )
+        .replace("%pseudoHonestLen%", &pseudo_honest.len().to_string())
+        .replace(
+            "%pseudoHostileBytes%",
+            &format!("0x{}", hex_le(&pseudo_hostile)),
+        )
+        .replace("%pseudoHostileLen%", &pseudo_hostile.len().to_string())
+        .replace("%readMemberName%", &read_member_name)
+        .replace("%carrier%", &carrier.to_string())
+        .replace("%structIdx%", &struct_idx.to_string())
+        .replace("%dupIdx%", &dup_idx.to_string())
+        .replace("%weakPin%", weak_pin.trim_end())
+        .replace("%weakParam%", weak_param.trim_end())
+        .replace("%weakCarrier%", weak_carrier.trim_end());
+    assert!(
+        !lean.contains('%'),
+        "tests/fixtures/cert_record_decl_guard_iso.lean still holds an \
+         unsubstituted placeholder after rendering"
+    );
+    std::fs::write(wall_dir.join("RecordDeclGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("env")
+        .arg("lean")
+        .arg("RecordDeclGuardIso.lean")
+        .output()
+        .expect("run the record-declaration GuardIso check");
+    assert!(
+        check.status.success(),
+        "record-declaration GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+    let _ = std::fs::remove_dir_all(wall_dir);
+}
