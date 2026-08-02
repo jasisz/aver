@@ -1507,9 +1507,17 @@ fn surface_build_failure(text: &str, lines: usize) -> String {
     }
 
     if diagnostics.is_empty() {
-        return tail(text, lines);
+        // No Lean file diagnostic (a lake-level or OOM failure). The relevant
+        // line can sit anywhere in the interleaved output, so keep a generous
+        // window rather than the tight decline window.
+        return tail(text, lines.max(200));
     }
-    diagnostics[diagnostics.len().saturating_sub(lines)..].join("\n")
+    // Keep EVERY file diagnostic, never a trailing window of them: the
+    // pin-named error that identifies the decline can be the first of several
+    // (a tamper often cascades), and parallel module builds make the order
+    // non-deterministic, so windowing the diagnostics drops the one a caller
+    // needs. The set is bounded by the actual Lean errors, not lake chrome.
+    diagnostics.join("\n")
 }
 
 fn display_safe(value: &str) -> String {
