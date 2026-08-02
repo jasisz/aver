@@ -10,14 +10,17 @@
 fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
+    let record_proj = expr_fragment_record_proj_face(plan).is_some();
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
-        || vector_get;
+        || vector_get
+        || record_proj;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
         || expr_fragment_project_face(plan).is_some()
         || tag_dispatch
-        || vector_get;
+        || vector_get
+        || record_proj;
     int_face_ok && adt_face_ok
 }
 

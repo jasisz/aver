@@ -57,6 +57,43 @@ impl TerminationWitness {
     }
 }
 
+/// One field of a stage-1 flat scalar record, as a `TypeDecl` scalar leaf. The
+/// producer derives the ordered leaf list by decoding the module's struct type
+/// section at the projected struct index (`record_leaves_from_bytes`); the wall
+/// re-pins the whole declaration by equality against those same bytes, so this
+/// is byte-derived data, not a trusted layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordLeaf {
+    IntCarrier,
+    BoolScalar,
+    FloatScalar,
+}
+
+impl RecordLeaf {
+    /// The Lean `TypeDecl` scalar-leaf constructor this field lowers to.
+    #[cfg(feature = "engine")]
+    fn lean_ctor(self) -> &'static str {
+        match self {
+            RecordLeaf::IntCarrier => ".intCarrier",
+            RecordLeaf::BoolScalar => ".boolScalar",
+            RecordLeaf::FloatScalar => ".floatScalar",
+        }
+    }
+}
+
+/// The Lean `List TypeDecl` literal of a record's ordered scalar-leaf fields.
+#[cfg(feature = "engine")]
+fn record_leaves_lean_value(leaves: &[RecordLeaf]) -> String {
+    format!(
+        "[{}]",
+        leaves
+            .iter()
+            .map(|leaf| leaf.lean_ctor())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// A certified function and the template holes extracted from its body.
 enum Cert {
     /// Generic non-recursive certificate. The inner shape still carries the
@@ -262,6 +299,12 @@ enum Cert {
         nlocals: usize,
         carrier: u32,
         source_plan: Option<SymPlan>,
+        /// When the plan is a stage-1 record scalar field read, the projected
+        /// wasm struct index and the record's ordered scalar-leaf field list,
+        /// byte-derived from the module type section. `None` for every
+        /// non-record fragment. Renderers pin the whole declaration by equality
+        /// against the bytes and discharge through the wall's record face.
+        record_decl: Option<(u32, Vec<RecordLeaf>)>,
         plan: ExprFragmentPlan,
         ops: Vec<Op>,
     },
