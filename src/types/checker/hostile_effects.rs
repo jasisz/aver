@@ -462,6 +462,24 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Tcp.sendBytes" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: List<Int>) -> Result<List<Int>, String>\n    ? \"honest: tcp sendBytes echoes the payload\"\n    Result.Ok(payload)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: List<Int>) -> Result<List<Int>, String>\n    ? \"hostile: tcp sendBytes fails\"\n    Result.Err(\"hostile: send failed\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Tcp.ping" => vec![
             HostileProfile {
                 name: "normal_ok",
@@ -688,6 +706,7 @@ mod tests {
             "Disk.deleteDir",
             "Disk.makeDir",
             "Tcp.send",
+            "Tcp.sendBytes",
             "Tcp.ping",
             "Tcp.connect",
             "Tcp.readLine",
@@ -720,5 +739,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The injector (`vm_verify::collect_effect_profile_combinations`)
+    /// skips `Output`-dimension effects by design (trace-only, no oracle
+    /// channel for the world to be hostile through) — and then silently
+    /// skips any method whose profile list is empty. This guard makes the
+    /// second skip unreachable: a method added to the classification
+    /// table without profiles fails here, instead of hostile verification
+    /// quietly running with that effect unmodelled.
+    #[test]
+    fn every_classified_non_output_effect_ships_hostile_profiles() {
+        use crate::types::checker::effect_classification::{
+            EffectDimension, classifications_for_proof_subset,
+        };
+        let missing: Vec<&str> = classifications_for_proof_subset()
+            .iter()
+            .filter(|c| !matches!(c.dimension, EffectDimension::Output))
+            .filter(|c| hostile_profiles_for(c.method).is_empty())
+            .map(|c| c.method)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "classified non-Output effects without hostile profiles — the injector would silently skip these during hostile verification: {missing:?}"
+        );
     }
 }

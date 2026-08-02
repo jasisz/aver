@@ -303,6 +303,7 @@ mod tests {
             "Http.get",
             "Http.post",
             "Tcp.send",
+            "Tcp.sendBytes",
             "Tcp.ping",
             "Console.print",
             "Console.error",
