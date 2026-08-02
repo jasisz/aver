@@ -3787,6 +3787,64 @@ fn person_dup_tamper(bytes: &[u8], carrier: u32) -> Vec<u8> {
     rebuild_module(&sections)
 }
 
+/// Tamper (e): flip the record's SECOND field mutability from `const` (0x00) to
+/// `var` (0x01), over otherwise-real person bytes. The byte-side scalar-storage
+/// gate `isRecordScalarStorage` matches mutability with a wildcard, so the param
+/// binding still accepts the module; only the face's type-section equality pin
+/// rejects it, because `lowerTypeDecl` emits every field at mutability 0 and no
+/// declaration lowers to a mutability-1 field. The module stays valid wasm — a
+/// never-written mutable field is well-typed and `struct.get` reads it fine.
+fn person_mut_tamper(bytes: &[u8]) -> Vec<u8> {
+    let mut sections = module_sections(bytes);
+    let type_section = sections
+        .iter_mut()
+        .find(|(id, _)| *id == 1)
+        .expect("person.wasm has a type section");
+    let payload = &mut type_section.1;
+    let mut cursor = 0usize;
+    let _rectype_count = read_uleb_at(payload, &mut cursor);
+    assert_eq!(
+        payload[cursor], 0x4e,
+        "person.wasm's first rectype is the shared rec group; refit the tamper"
+    );
+    cursor += 1;
+    let _group_members = read_uleb_at(payload, &mut cursor);
+    assert_eq!(
+        payload[cursor], 0x5f,
+        "the rec group's first entry is the record struct; refit the tamper"
+    );
+    cursor += 1;
+    let field_count = read_uleb_at(payload, &mut cursor);
+    assert_eq!(
+        field_count, 2,
+        "Person is the two-field record; refit the tamper"
+    );
+    // Field 0: `0x63 <s33 carrier heap index> <mutability>`.
+    assert_eq!(
+        payload[cursor], 0x63,
+        "field 0 is the carrier reference; refit the tamper"
+    );
+    cursor += 1;
+    let _carrier_heap = read_uleb_at(payload, &mut cursor);
+    assert_eq!(
+        payload[cursor], 0x00,
+        "field 0 is declared const; refit the tamper"
+    );
+    cursor += 1;
+    // Field 1: `0x7f <mutability>` — the i32 scalar. Flip its mutability byte.
+    assert_eq!(
+        payload[cursor], 0x7f,
+        "field 1 is the i32 scalar; refit the tamper"
+    );
+    cursor += 1;
+    assert_eq!(
+        payload[cursor], 0x00,
+        "field 1 is declared const; refit the tamper"
+    );
+    payload[cursor] = 0x01;
+    rebuild_module(&sections)
+}
+
 /// Tamper (d) frame: a minimal record module whose type section holds the REAL
 /// carrier shape at index 0, an identically-shaped carrier DOPPELGANGER at
 /// index 1, the two-field record at index 2 with its Int field referencing
@@ -3844,6 +3902,20 @@ fn pseudo_carrier_record_module(age_ref: u8) -> Vec<u8> {
 ///       byte-derived CARRIER BINDING (forced through the pin's storage
 ///       inversion; exhibited against the carrier-weakened copy, with the
 ///       param-weakened copy still rejecting).
+///   (e) record entry with a field's MUTABILITY flipped (`const` -> `var`) over
+///       otherwise-real bytes — the byte-side scalar gate is mutability-blind,
+///       so this is rejected ONLY at the type-section EQUALITY PIN, and by a
+///       DECIDABLE-false pin (`lowerTypeDecl` emits mutability 0 for every
+///       field), not by the HEq residues of shapes (a)/(b)/(d).
+///
+/// This test is the record face's CI coverage: it exercises the acceptance
+/// face's pin/param/carrier conjuncts over the real compiled module through the
+/// `cert_whole_module_guard_iso` lane. The accepted/discharge level of the
+/// record route (`symFragmentMatches` record branch + `recordParam_claim_
+/// discharges`) is exercised only by the orphan fixture
+/// `aver-cert/tests/fixtures/PersonBeachhead.lean` (no harness compiles it) and
+/// awaits the record producer leg; that end-to-end gap is recorded here, not
+/// silently closed.
 #[test]
 fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -3872,12 +3944,14 @@ fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
     let (carrier, struct_idx, dup_idx) = person_record_layout(&person);
     let hostile_sub = person_sub_tamper(&person);
     let hostile_dup = person_dup_tamper(&person, carrier);
+    let hostile_mut = person_mut_tamper(&person);
     let pseudo_honest = pseudo_carrier_record_module(0);
     let pseudo_hostile = pseudo_carrier_record_module(1);
     for (label, bytes) in [
         ("honest", &person),
         ("hostileSub", &hostile_sub),
         ("hostileDup", &hostile_dup),
+        ("hostileMut", &hostile_mut),
         ("pseudoHonest", &pseudo_honest),
         ("pseudoHostile", &pseudo_hostile),
     ] {
@@ -3969,6 +4043,8 @@ fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
         .replace("%subLen%", &hostile_sub.len().to_string())
         .replace("%dupBytes%", &format!("0x{}", hex_le(&hostile_dup)))
         .replace("%dupLen%", &hostile_dup.len().to_string())
+        .replace("%mutBytes%", &format!("0x{}", hex_le(&hostile_mut)))
+        .replace("%mutLen%", &hostile_mut.len().to_string())
         .replace(
             "%pseudoHonestBytes%",
             &format!("0x{}", hex_le(&pseudo_honest)),

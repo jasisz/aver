@@ -18,6 +18,8 @@ def subBytes : Nat := %subBytes%
 def subLen : Nat := %subLen%
 def dupBytes : Nat := %dupBytes%
 def dupLen : Nat := %dupLen%
+def mutBytes : Nat := %mutBytes%
+def mutLen : Nat := %mutLen%
 def pseudoHonestBytes : Nat := %pseudoHonestBytes%
 def pseudoHonestLen : Nat := %pseudoHonestLen%
 def pseudoHostileBytes : Nat := %pseudoHostileBytes%
@@ -39,6 +41,12 @@ def subEntry : CertDecode.TypeEntry :=
 def pseudoPersonEntry : CertDecode.TypeEntry :=
   ⟨.plain, .structType [⟨.val (.ref 0x63 (Int.ofNat 1)), 0⟩,
                        ⟨.val (.numeric 0x7f), 0⟩]⟩
+-- The person entry with field 1's MUTABILITY flipped to `var` (1). The wall
+-- lowering `lowerScalarStorage` emits mutability 0 for every scalar leaf, so no
+-- declaration lowers to this entry — the equality pin is decidably false.
+def mutPersonEntry : CertDecode.TypeEntry :=
+  ⟨.plain, .structType [⟨.val (.ref 0x63 (Int.ofNat %carrier%)), 0⟩,
+                       ⟨.val (.numeric 0x7f), 1⟩]⟩
 
 /-- The record plan reading `field` of struct `si` as `ty`. -/
 def projPlan (si field : Nat) (ty : FragTy) : ExprFragmentRawPlan :=
@@ -108,7 +116,7 @@ example : AverCert.WasmSlice.recordParamFuncTypeMatches subBytes subLen
 example : AverCert.WasmSlice.recordParamFuncTypeMatches dupBytes dupLen
     readMemberName %structIdx% = true := by native_decide
 example : AverCert.WasmSlice.recordParamFuncTypeMatches dupBytes dupLen
-    readMemberName %dupIdx% = false := by native_decide
+    readMemberName %dupIdx% = false := by decide +kernel
 example : AverCert.WasmSlice.recordParamFuncTypeMatches pseudoHostileBytes
     pseudoHostileLen readMemberName 2 = true := by native_decide
 
@@ -119,13 +127,27 @@ example : AverCert.WasmSlice.typeSectionMatches
     dupBytes dupLen %dupIdx% = true := by native_decide
 example : AverCert.WasmSlice.typeSectionMatches
     (fun e => decide (lowerTypeDecl %carrier% lowerTypeDeclFuel (.record %structIdx% personFields) = some e))
-    subBytes subLen %structIdx% = false := by native_decide
+    subBytes subLen %structIdx% = false := by decide +kernel
 example : AverCert.WasmSlice.typeSectionMatches
     (fun e => decide (lowerTypeDecl %carrier% lowerTypeDeclFuel (.record %structIdx% permFields) = some e))
-    personBytes personLen %structIdx% = false := by native_decide
+    personBytes personLen %structIdx% = false := by decide +kernel
 example : AverCert.WasmSlice.typeSectionMatches
     (fun e => decide (lowerTypeDecl %carrier% lowerTypeDeclFuel (.record %structIdx% extFields) = some e))
-    personBytes personLen %structIdx% = false := by native_decide
+    personBytes personLen %structIdx% = false := by decide +kernel
+
+-- (e) The mutability doppelganger: the entry at the record's struct index is
+-- byte-confirmed as `mutPersonEntry` (field 1 declared `var`), the carrier
+-- state and the param binding are untouched (the byte-side scalar gate is
+-- mutability-blind), yet the equality pin specialized to the honest field list
+-- is DECIDABLY false — no declaration lowers to a mutability-1 field.
+example : AverCert.WasmSlice.typeSectionMatches (fun x => x == mutPersonEntry)
+    mutBytes mutLen %structIdx% = true := by native_decide
+example : CertDecode.carrierState mutBytes mutLen = some (some %carrier%) := by native_decide
+example : AverCert.WasmSlice.recordParamFuncTypeMatches mutBytes mutLen
+    readMemberName %structIdx% = true := by native_decide
+example : AverCert.WasmSlice.typeSectionMatches
+    (fun e => decide (lowerTypeDecl %carrier% lowerTypeDeclFuel (.record %structIdx% personFields) = some e))
+    mutBytes mutLen %structIdx% = false := by decide +kernel
 
 -- ==== The weakened copies (live-source cuts) ====
 
@@ -148,26 +170,26 @@ end AverCert.StandardFace
 theorem honestFace :
     AverCert.StandardFace.recordParamDeclaredFace personBytes personLen
       honestClaim honestPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% personFields, 0, 1, personFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% personFields, %structIdx%, 1, personFields, by decide,
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
 
 example : AverCert.StandardFace.weakPinRecordParamDeclaredFace personBytes personLen
     honestClaim honestPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% personFields, 0, 1, personFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% personFields, %structIdx%, 1, personFields, by decide,
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
 example : AverCert.StandardFace.weakParamRecordParamDeclaredFace personBytes personLen
     honestClaim honestPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% personFields, 0, 1, personFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% personFields, %structIdx%, 1, personFields, by decide,
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
 example : AverCert.StandardFace.weakCarrierRecordParamDeclaredFace personBytes personLen
     honestClaim honestPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% personFields, 0, 1, personFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% personFields, %structIdx%, 1, personFields, by decide,
    rfl, rfl, rfl, rfl,
    by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
@@ -194,7 +216,7 @@ theorem subRejected :
 -- weakened by EXACTLY the pin: accepted (every remaining conjunct holds).
 example : AverCert.StandardFace.weakPinRecordParamDeclaredFace subBytes subLen
     honestClaim honestPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% personFields, 0, 1, personFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% personFields, %structIdx%, 1, personFields, by decide,
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
@@ -269,7 +291,7 @@ theorem permRejected :
   obtain ⟨f0, hf0, hlow⟩ := AverCert.Schema.mapM_getElem?_inv
     (lowerScalarStorage %carrier%) fields _ 0 _ hmap (by rfl)
   have hint : f0 = .intCarrier :=
-    AverCert.Schema.lowerScalarStorage_ref_intCarrier 3 f0 _ _ hlow
+    AverCert.Schema.lowerScalarStorage_ref_intCarrier %carrier% f0 _ _ hlow
   have hgot : fields[0]? = some (fields[0]'hfield) := List.getElem?_eq_getElem hfield
   rw [hgot] at hf0
   injection hf0 with hf0
@@ -280,7 +302,7 @@ theorem permRejected :
 -- weakened by EXACTLY the pin: the permuted meaning is accepted.
 example : AverCert.StandardFace.weakPinRecordParamDeclaredFace personBytes personLen
     permClaim permPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% permFields, 0, 0, permFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% permFields, %structIdx%, 0, permFields, by decide,
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
@@ -315,7 +337,7 @@ theorem permRejectedWeakParam :
   obtain ⟨f0, hf0, hlow⟩ := AverCert.Schema.mapM_getElem?_inv
     (lowerScalarStorage %carrier%) fields _ 0 _ hmap (by rfl)
   have hint : f0 = .intCarrier :=
-    AverCert.Schema.lowerScalarStorage_ref_intCarrier 3 f0 _ _ hlow
+    AverCert.Schema.lowerScalarStorage_ref_intCarrier %carrier% f0 _ _ hlow
   have hgot : fields[0]? = some (fields[0]'hfield) := List.getElem?_eq_getElem hfield
   rw [hgot] at hf0
   injection hf0 with hf0
@@ -352,7 +374,7 @@ theorem permRejectedWeakCarrier :
   obtain ⟨f0, hf0, hlow⟩ := AverCert.Schema.mapM_getElem?_inv
     (lowerScalarStorage %carrier%) fields _ 0 _ hmap (by rfl)
   have hint : f0 = .intCarrier :=
-    AverCert.Schema.lowerScalarStorage_ref_intCarrier 3 f0 _ _ hlow
+    AverCert.Schema.lowerScalarStorage_ref_intCarrier %carrier% f0 _ _ hlow
   have hgot : fields[0]? = some (fields[0]'hfield) := List.getElem?_eq_getElem hfield
   rw [hgot] at hf0
   injection hf0 with hf0
@@ -365,7 +387,7 @@ theorem permRejectedWeakCarrier :
 -- over the two-field module.
 example : AverCert.StandardFace.weakPinRecordParamDeclaredFace personBytes personLen
     extClaim extPlan :=
-  ⟨rfl, rfl, rfl, .record %structIdx% extFields, 0, 1, extFields, by decide,
+  ⟨rfl, rfl, rfl, .record %structIdx% extFields, %structIdx%, 1, extFields, by decide,
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
@@ -383,7 +405,7 @@ theorem dupRejected :
   injection hRec with hpair
   injection hpair with hsi hfi
   subst hsi
-  exact absurd hParam (by native_decide)
+  exact absurd hParam (by decide +kernel)
 
 example : AverCert.StandardFace.weakParamRecordParamDeclaredFace dupBytes dupLen
     dupClaim dupPlan :=
@@ -403,7 +425,7 @@ theorem dupRejectedWeakPin :
   injection hRec with hpair
   injection hpair with hsi hfi
   subst hsi
-  exact absurd hParam (by native_decide)
+  exact absurd hParam (by decide +kernel)
 
 theorem dupRejectedWeakCarrier :
     ¬ AverCert.StandardFace.weakCarrierRecordParamDeclaredFace dupBytes dupLen
@@ -416,7 +438,7 @@ theorem dupRejectedWeakCarrier :
   injection hRec with hpair
   injection hpair with hsi hfi
   subst hsi
-  exact absurd hParam (by native_decide)
+  exact absurd hParam (by decide +kernel)
 
 -- ==== (d) Carrier binding: Int field referencing a carrier doppelganger ====
 
@@ -455,7 +477,7 @@ theorem pseudoRejected :
   -- doppelganger index contradicts the decoded carrier state.
   have hcb := hCarrierBind hmention
   rw [show pseudoHostileClaim.carrier = 1 from rfl] at hcb
-  exact absurd hcb (by native_decide)
+  exact absurd hcb (by decide +kernel)
 
 example : AverCert.StandardFace.weakCarrierRecordParamDeclaredFace
     pseudoHostileBytes pseudoHostileLen pseudoHostileClaim pseudoPlan :=
@@ -464,13 +486,39 @@ example : AverCert.StandardFace.weakCarrierRecordParamDeclaredFace
    by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
 
--- EXCLUSIVE: the param-weakened copy keeps BOTH the pin and the carrier
--- binding, so it still rejects the doppelganger claim by the same forcing.
--- (The pin-weakened copy's rejection of this claim is by UNPROVABILITY of the
--- meaning pins rather than by a decidable conjunct: with the pin cut, no
--- byte fact forces the declaration's field list, so neither acceptance nor a
--- refutation of it can be exhibited — the conditional carrier binding is
--- attributable against the carrier-weakened copy and the real face only.)
+-- Pin-weakened copy over shape (d), the DECIDABLE half of the attribution. The
+-- retained carrier binding is a decidable rejector ON THE CARRIER-MENTIONING
+-- branch: cutting the pin removes the byte-side FORCING of that branch (no byte
+-- fact pins the field list), not the branch's rejection. For the honest-shaped
+-- declaration — `personFields` mentions the carrier — the carrier binding still
+-- fires and refutes the doppelganger's claimed carrier `1` against the decoded
+-- `0`, decidably and with no HEq in sight.
+example
+    (hCarrierBind : typeDeclMentionsIntCarrier (.record 2 personFields) = true →
+      CertDecode.carrierState pseudoHostileBytes pseudoHostileLen
+        = some (some pseudoHostileClaim.carrier)) : False := by
+  have hcb := hCarrierBind (by decide)
+  rw [show pseudoHostileClaim.carrier = 1 from rfl] at hcb
+  exact absurd hcb (by decide +kernel)
+
+-- What the pin cut leaves genuinely open is the NON-mentioning branch: a
+-- declaration whose field list omits the carrier dodges the binding above, and
+-- with the pin gone no byte fact forces the field list back to `personFields`.
+-- That branch is fail-closed by UNPROVABILITY of the meaning `HEq` pins
+-- (`HEq claim.obligation.Dom (RecordFields fields)`), and there acceptance cannot
+-- be exhibited AND a decidable refutation cannot either: refuting the residual
+-- type equality `RecordFields personFields = RecordFields fields` under a
+-- carrier-free field list reduces to `Int × Bool ≠ Bool × …`, a type-cardinality
+-- fact the axiom-clean wall does not carry. So the conjunct's full attribution is
+-- decidable on the carrier-mentioning branch (above; the real face reaches it
+-- through the pin) and HEq-fail-closed on the rest — the pin-weakened copy is not
+-- fully refutable by a decidable conjunct, which is exactly why the real face's
+-- rejection of this shape routes THROUGH the pin.
+
+-- EXCLUSIVE: the param-weakened copy keeps BOTH the pin and the carrier binding,
+-- so it rejects the doppelganger outright — the pin forces the field list to
+-- mention the carrier, and the carrier binding then fires. It is the mentioning
+-- branch above made unconditional by the retained pin.
 theorem pseudoRejectedWeakParam :
     ¬ AverCert.StandardFace.weakParamRecordParamDeclaredFace pseudoHostileBytes
       pseudoHostileLen pseudoHostileClaim pseudoPlan := by
@@ -502,7 +550,7 @@ theorem pseudoRejectedWeakParam :
     exact AverCert.Schema.typeDeclsMention_of_getElem? flds 0 hf0
   have hcb := hCarrierBind hmention
   rw [show pseudoHostileClaim.carrier = 1 from rfl] at hcb
-  exact absurd hcb (by native_decide)
+  exact absurd hcb (by decide +kernel)
 
 -- Honest pseudo twin: the real face accepts the claim naming the REAL carrier.
 theorem pseudoHonestFace :
@@ -512,3 +560,95 @@ theorem pseudoHonestFace :
    rfl, rfl, rfl, rfl,
    fun _ => by native_decide, by native_decide, by native_decide,
    HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
+
+-- ==== (e) Mutability doppelganger over otherwise-real bytes ====
+
+-- The REAL face rejects it at the equality pin, and DECIDABLY: `lowerTypeDecl`
+-- emits mutability 0 for every scalar leaf, so no declaration lowers to the
+-- pinned entry whose field 1 carries mutability 1. Unlike shapes (a)/(b)/(d)
+-- this rejection rests on no HEq type-inequality — it is a `mapM` inversion that
+-- closes by `simp` on `lowerScalarStorage`, and the pin conjunct specialized to
+-- the honest field list is already `decide +kernel`-false on these bytes above.
+theorem mutRejected :
+    ¬ AverCert.StandardFace.recordParamDeclaredFace mutBytes mutLen
+      honestClaim honestPlan := by
+  intro h
+  obtain ⟨-, -, -, decl, structIdx, field, fields, hfield, hdecl, hRec, -, -, -,
+    hPin, -, -, -, -, -, -⟩ := h
+  have hconc : AverCert.WasmSlice.exprRecordProjFace? honestPlan = some (%structIdx%, 1) := rfl
+  rw [hconc] at hRec
+  injection hRec with hpair
+  injection hpair with hsi hfi
+  subst hsi
+  have hp := AverCert.WasmSlice.typeSectionMatches_elim _ mutPersonEntry
+    mutBytes mutLen %structIdx% hPin (by native_decide)
+  simp only [decide_eq_true_eq] at hp
+  obtain ⟨idx, flds, fts, hd, he, hmap⟩ :=
+    AverCert.Schema.lowerTypeDecl_recordFields _ _ _ _ hp
+  have hcomp := congrArg CertDecode.TypeEntry.composite he
+  have hlist : [(⟨.val (.ref 0x63 (Int.ofNat %carrier%)), 0⟩ : CertDecode.FieldType),
+      ⟨.val (.numeric 0x7f), 1⟩] = fts := by injection hcomp
+  subst hlist
+  obtain ⟨f1, -, hlow⟩ := AverCert.Schema.mapM_getElem?_inv
+    (lowerScalarStorage %carrier%) flds _ 1 _ hmap (by rfl)
+  cases f1 <;> simp [lowerScalarStorage] at hlow
+
+-- weakened by EXACTLY the pin: the mutability doppelganger is accepted (every
+-- remaining conjunct holds, the param binding included — the byte gate matches
+-- mutability with a wildcard, so cutting the pin removes the only rejector).
+example : AverCert.StandardFace.weakPinRecordParamDeclaredFace mutBytes mutLen
+    honestClaim honestPlan :=
+  ⟨rfl, rfl, rfl, .record %structIdx% personFields, %structIdx%, 1, personFields, by decide,
+   rfl, rfl, rfl, rfl,
+   fun _ => by native_decide, by native_decide,
+   HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
+
+-- EXCLUSIVE: the copies weakened by the OTHER conjuncts keep the pin, so they
+-- still reject the mutability doppelganger by the same lowering inversion.
+theorem mutRejectedWeakParam :
+    ¬ AverCert.StandardFace.weakParamRecordParamDeclaredFace mutBytes mutLen
+      honestClaim honestPlan := by
+  intro h
+  obtain ⟨-, -, -, decl, structIdx, field, fields, hfield, hdecl, hRec, -, -, -,
+    hPin, -, -, -, -, -⟩ := h
+  have hconc : AverCert.WasmSlice.exprRecordProjFace? honestPlan = some (%structIdx%, 1) := rfl
+  rw [hconc] at hRec
+  injection hRec with hpair
+  injection hpair with hsi hfi
+  subst hsi
+  have hp := AverCert.WasmSlice.typeSectionMatches_elim _ mutPersonEntry
+    mutBytes mutLen %structIdx% hPin (by native_decide)
+  simp only [decide_eq_true_eq] at hp
+  obtain ⟨idx, flds, fts, hd, he, hmap⟩ :=
+    AverCert.Schema.lowerTypeDecl_recordFields _ _ _ _ hp
+  have hcomp := congrArg CertDecode.TypeEntry.composite he
+  have hlist : [(⟨.val (.ref 0x63 (Int.ofNat %carrier%)), 0⟩ : CertDecode.FieldType),
+      ⟨.val (.numeric 0x7f), 1⟩] = fts := by injection hcomp
+  subst hlist
+  obtain ⟨f1, -, hlow⟩ := AverCert.Schema.mapM_getElem?_inv
+    (lowerScalarStorage %carrier%) flds _ 1 _ hmap (by rfl)
+  cases f1 <;> simp [lowerScalarStorage] at hlow
+
+theorem mutRejectedWeakCarrier :
+    ¬ AverCert.StandardFace.weakCarrierRecordParamDeclaredFace mutBytes mutLen
+      honestClaim honestPlan := by
+  intro h
+  obtain ⟨-, -, -, decl, structIdx, field, fields, hfield, hdecl, hRec, -, -,
+    hPin, -, -, -, -, -, -⟩ := h
+  have hconc : AverCert.WasmSlice.exprRecordProjFace? honestPlan = some (%structIdx%, 1) := rfl
+  rw [hconc] at hRec
+  injection hRec with hpair
+  injection hpair with hsi hfi
+  subst hsi
+  have hp := AverCert.WasmSlice.typeSectionMatches_elim _ mutPersonEntry
+    mutBytes mutLen %structIdx% hPin (by native_decide)
+  simp only [decide_eq_true_eq] at hp
+  obtain ⟨idx, flds, fts, hd, he, hmap⟩ :=
+    AverCert.Schema.lowerTypeDecl_recordFields _ _ _ _ hp
+  have hcomp := congrArg CertDecode.TypeEntry.composite he
+  have hlist : [(⟨.val (.ref 0x63 (Int.ofNat %carrier%)), 0⟩ : CertDecode.FieldType),
+      ⟨.val (.numeric 0x7f), 1⟩] = fts := by injection hcomp
+  subst hlist
+  obtain ⟨f1, -, hlow⟩ := AverCert.Schema.mapM_getElem?_inv
+    (lowerScalarStorage %carrier%) flds _ 1 _ hmap (by rfl)
+  cases f1 <;> simp [lowerScalarStorage] at hlow
