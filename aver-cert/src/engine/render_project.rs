@@ -273,6 +273,25 @@ fn render_expr_fragment_plans(
             plan_value = expr_fragment_plan_lean_value(plan),
             sym_plan = sym_plan,
         ));
+        // Stage-1 record scalar field read: the record's ordered scalar-leaf
+        // declaration as `Plans` data. The wall re-derives the same layout from
+        // the bytes and pins it by equality inside the checked record face; the
+        // obligation and face both read these defs, and the recognizer pin below
+        // documents that the encoded plan fires the record recognizer.
+        if let (Some(face), Some((_struct_idx, leaves))) =
+            (c.record_param_face(), c.record_decl())
+        {
+            s.push_str(&format!(
+                "/-- The Plan record declaration for `{name}` as ordered scalar leaves. -/\n\
+                 def {name}RecordFields : List TypeDecl := {fields_value}\n\n\
+                 def {name}RecordDecl : TypeDecl := .record {struct_idx} {name}RecordFields\n\n\
+                 /-- The shared record-projection recognizer fires on `{name}`'s encoded plan. -/\n\
+                 example : AverCert.WasmSlice.exprRecordProjFace? {name}Plan = some ({struct_idx}, {field}) := rfl\n\n",
+                fields_value = record_leaves_lean_value(leaves),
+                struct_idx = face.struct_idx,
+                field = face.field_idx,
+            ));
+        }
     }
     for c in &analysis.certs {
         let Cert::FieldProjection {
@@ -902,6 +921,13 @@ struct RenderedArtifactClaims {
     string_concat_face_proof: String,
     construct_face_proof: String,
     int_dispatch_face_proof: String,
+    /// Aggregate proof of the `sym` family's `symFragmentMatches` face slot. Only
+    /// meaningful when `sym_faces_have_record` is set; otherwise the slot keeps
+    /// its inline `repeat' constructor` and this stays empty.
+    sym_face_proof: String,
+    /// Whether any `sym` claim carries a record-parameter face, so the face slot
+    /// must route through `sym_face_proof` instead of `repeat' constructor`.
+    sym_faces_have_record: bool,
 }
 
 /// Render one opaque declared-envelope face theorem per claim plus the
@@ -1874,6 +1900,10 @@ fn render_artifact_expr_fragment_claims(
     let mut string_concat_faces: Vec<Option<(String, String)>> = Vec::new();
     let mut construct_faces: Vec<Option<(String, String)>> = Vec::new();
     let mut int_dispatch_faces: Vec<Option<(String, String)>> = Vec::new();
+    // One entry per `sym` claim, in `symFragmentClaims` order: `Some` carries a
+    // record-parameter face witness, `None` is a known-face claim closed inline
+    // by `repeat' constructor`.
+    let mut sym_faces: Vec<Option<(String, String)>> = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -1911,6 +1941,33 @@ fn render_artifact_expr_fragment_claims(
                         type_idx: *type_idx,
                         carrier: *carrier,
                     });
+                    // A stage-1 record scalar field read routes through the
+                    // wall's record-parameter face: `symFragmentFace` yields
+                    // `none` on the recognized record plan (proved once and for
+                    // all by `symFragmentFace_none_of_recordProj`), so this arm
+                    // is the record shape's only route. The witness pins the
+                    // Plan declaration, the equality pin against the decoded
+                    // type entry, the export's parameter binding, and the `HEq`
+                    // meaning fields — the exact structure of the hand-checked
+                    // `PersonBeachhead.isMemberFace`.
+                    sym_faces.push(c.record_param_face().map(|face| {
+                        // The three byte pins (carrier state, type-section
+                        // equality, parameter binding) discharge by kernel `rfl`,
+                        // never `native_decide`: the checker-owned witness admits
+                        // only `[propext, Classical.choice, Quot.sound]`, so a
+                        // compiled-reduction axiom would be rejected. The
+                        // accepted-conjunction's byte scans reduce by `rfl` the
+                        // same way.
+                        let witness = format!(
+                            "⟨rfl, rfl, rfl, AverCert.Plans.{name}RecordDecl, {si}, {fi}, \
+                             AverCert.Plans.{name}RecordFields, by decide, rfl, rfl, rfl, rfl, \
+                             fun _ => by rfl, by rfl, by rfl, \
+                             HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩",
+                            si = face.struct_idx,
+                            fi = face.field_idx,
+                        );
+                        (format!("AverCert.Plans.{name}Plan"), witness)
+                    }));
                 }
             }
             Cert::StringConcatVerbatimMatch {
@@ -2462,6 +2519,26 @@ fn render_artifact_expr_fragment_claims(
         true,
         &int_dispatch_faces,
     );
+    // The `sym` family's face slot (`symFragmentMatches`). Every known-face
+    // claim closes inline by `repeat' constructor` (a `None` element); a
+    // record-parameter claim carries an explicit `recordParamDeclaredFace`
+    // witness, routed exactly like the declared-index envelope faces. The slot
+    // only switches away from the inline `repeat' constructor` when at least one
+    // record claim is present, so non-record modules render byte-for-byte as
+    // before.
+    let sym_faces_have_record = sym_faces.iter().any(Option::is_some);
+    let (sym_face_bundles, sym_face_proof) = if sym_faces_have_record {
+        render_face_bundles(
+            "symFragment",
+            "recordParamDeclaredFace",
+            "symFragmentClaims",
+            "",
+            true,
+            &sym_faces,
+        )
+    } else {
+        (String::new(), String::new())
+    };
     let claim_proof_bundles = [
         sym_bundles,
         string_eq_bundles,
@@ -2476,6 +2553,7 @@ fn render_artifact_expr_fragment_claims(
         string_concat_face_bundles,
         construct_face_bundles,
         int_dispatch_face_bundles,
+        sym_face_bundles,
     ]
     .concat();
     RenderedArtifactClaims {
@@ -2505,6 +2583,8 @@ fn render_artifact_expr_fragment_claims(
         string_concat_face_proof,
         construct_face_proof,
         int_dispatch_face_proof,
+        sym_face_proof,
+        sym_faces_have_record,
     }
 }
 
@@ -2712,7 +2792,7 @@ fn render_artifact(
             "theorem standardFacesChecked : AverCert.StandardFace.checkedFaces data := by\n",
             "{face_dsimp}",
             "  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩\n",
-            "  · repeat' constructor\n",
+            "{sym_face_step}",
             "  · repeat' constructor\n",
             "  · exact {string_concat_face_proof}\n",
             "  · exact {construct_face_proof}\n",
@@ -2787,6 +2867,11 @@ fn render_artifact(
         string_concat_face_proof = claims.string_concat_face_proof,
         construct_face_proof = claims.construct_face_proof,
         int_dispatch_face_proof = claims.int_dispatch_face_proof,
+        sym_face_step = if claims.sym_faces_have_record {
+            format!("  · exact {}\n", claims.sym_face_proof)
+        } else {
+            "  · repeat' constructor\n".to_string()
+        },
     );
     // The whole-module arith host-role pin (`decodedHostRoleTable`) is the one
     // per-module conjunct whose `decide +kernel` reduction sits well above the

@@ -12,6 +12,14 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     if c.project_face().is_some() {
         return String::new();
     }
+    // Record-parameter fragments discharge through the wall's checked record
+    // face (`recordParam_claim_discharges`) and emit no bespoke proof
+    // declarations. Falling to the generic body renderer would emit a bogus
+    // `{name}_simulates` over `verbatimRepr` (and, for an Int-carrier field
+    // read, panic in the value renderer on the user struct projection).
+    if c.record_param_face().is_some() {
+        return String::new();
+    }
     if let Some(face) = c.vector_get_face() {
         return render_expr_fragment_vector_get_cert(c, face);
     }

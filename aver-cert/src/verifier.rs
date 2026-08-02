@@ -337,7 +337,7 @@ fn trusted_check(
     if !data_build.status.success() {
         return Err(format!(
             "certificate data did not build:\n{}",
-            tail(&data_build.combined, 30)
+            surface_build_failure(&data_build.combined, 30)
         ));
     }
     cache.publish(&build.path);
@@ -1464,6 +1464,60 @@ fn run_lake(
 fn tail(text: &str, lines: usize) -> String {
     let all = text.lines().collect::<Vec<_>>();
     all[all.len().saturating_sub(lines)..].join("\n")
+}
+
+/// Surface a failed cert `lake build` so the decline reason names the failing
+/// pins. Lake builds independent modules in parallel, so the offending
+/// `error: <file>.lean:` diagnostics can be trailed by an unbounded run of
+/// build-progress (`✔`/`ℹ`), axiom-`info:` and roll-up lines from modules that
+/// happened to finish afterwards; a fixed line window can then bury the
+/// diagnostics entirely (which pins failed becomes invisible). Keep the Lean
+/// file-diagnostic blocks — each `error: *.lean:` line and its message body —
+/// and window those, so the decline stays diagnosable regardless of the
+/// parallel-build interleaving. Fall back to the raw tail when the failure
+/// carried no file diagnostic (e.g. a lake-level or out-of-memory failure).
+fn surface_build_failure(text: &str, lines: usize) -> String {
+    let is_progress_or_rollup = |trimmed: &str| {
+        trimmed.starts_with('✔')
+            || trimmed.starts_with('ℹ')
+            || trimmed.starts_with('⚠')
+            || trimmed.starts_with("info:")
+            || trimmed.starts_with("warning:")
+            || trimmed.starts_with("Some required targets")
+    };
+    let is_file_diagnostic =
+        |trimmed: &str| trimmed.starts_with("error:") && trimmed.contains(".lean:");
+
+    let mut diagnostics: Vec<&str> = Vec::new();
+    let mut capturing = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if is_file_diagnostic(trimmed) {
+            capturing = true;
+            diagnostics.push(line);
+        } else if is_progress_or_rollup(trimmed)
+            || (trimmed.starts_with("error:") && !is_file_diagnostic(trimmed))
+        {
+            // Non-diagnostic lake chrome (`error: build failed`, `error: Lean
+            // exited …`) ends the current file-diagnostic block.
+            capturing = false;
+        } else if capturing {
+            diagnostics.push(line);
+        }
+    }
+
+    if diagnostics.is_empty() {
+        // No Lean file diagnostic (a lake-level or OOM failure). The relevant
+        // line can sit anywhere in the interleaved output, so keep a generous
+        // window rather than the tight decline window.
+        return tail(text, lines.max(200));
+    }
+    // Keep EVERY file diagnostic, never a trailing window of them: the
+    // pin-named error that identifies the decline can be the first of several
+    // (a tamper often cascades), and parallel module builds make the order
+    // non-deterministic, so windowing the diagnostics drops the one a caller
+    // needs. The set is bounded by the actual Lean errors, not lake chrome.
+    diagnostics.join("\n")
 }
 
 fn display_safe(value: &str) -> String {

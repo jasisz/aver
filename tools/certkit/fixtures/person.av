@@ -1,0 +1,24 @@
+module PersonBeachhead
+    intent =
+        "Flat scalar record beachhead: certified reads of Person fields."
+    exposes [Person, readMember, readAge]
+    effects []
+
+record Person
+  age: Int
+  isMember: Bool
+
+fn readMember(p: Person) -> Bool
+    ? "Read the isMember field of a Person."
+    p.isMember
+
+fn readAge(p: Person) -> Int
+    ? "Read the age field of a Person."
+    p.age
+
+verify readMember
+    readMember(Person(age = 42, isMember = true)) => true
+    readMember(Person(age = 7, isMember = false)) => false
+
+verify readAge
+    readAge(Person(age = 42, isMember = true)) => 42

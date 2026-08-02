@@ -68,6 +68,15 @@ fn render_expr_side_arm(c: &Cert) -> String {
             face.field_idx,
         );
     }
+    // The record-parameter arm sits at position six of six: its side condition
+    // is purely the routing discriminator `exprFragmentIsRecordParam claim`, and
+    // the discharge derives the obligation from the checked record face — no
+    // producer semantic premise participates.
+    if c.record_param_face().is_some() {
+        return String::from(
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl))))",
+        );
+    }
     let Cert::ExprFragment { plan, .. } = c.inner() else {
         unreachable!()
     };
@@ -75,8 +84,10 @@ fn render_expr_side_arm(c: &Cert) -> String {
         plan.params.contains(&FragTy::F64) || plan.result == FragTy::F64,
         "only float expression claims may use the bespoke residual: {name}"
     );
+    // The float arm sits at position five of six: the record-parameter arm
+    // was appended after it, so the float payload gains one `Or.inl`.
     format!(
-        "exact Or.inr (Or.inr (Or.inr (Or.inr ⟨rfl, CertProofs.{name}_simulates⟩)))"
+        "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, CertProofs.{name}_simulates⟩))))"
     )
 }
 

@@ -349,15 +349,17 @@ fn check_expr_fragment_plan_object(
         .map_err(|e| format!("plan for `{export_name}`: {e}"))?;
     let tag_dispatch = expr_fragment_is_tag_dispatch(&plan);
     let vector_get = expr_fragment_vector_get_face(&plan).is_some();
+    let record_proj = expr_fragment_record_proj_face(&plan).is_some();
     if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
+        && !record_proj
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
-             are supported only through the straight-line integer, tag-dispatch, or \
-             fused vector-read face"
+             are supported only through the straight-line integer, tag-dispatch, \
+             fused vector-read, or record field-read face"
         ));
     }
     // Face-gated AdtRef admission (the FIX-1 pattern): plans touching opaque
@@ -367,10 +369,12 @@ fn check_expr_fragment_plan_object(
         && expr_fragment_project_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
+        && !record_proj
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: user-ADT references \
-             are supported only through the field-projection or fused vector-read face"
+             are supported only through the field-projection, fused vector-read, or \
+             record field-read face"
         ));
     }
     if plan.params != params {
@@ -412,6 +416,7 @@ fn check_expr_fragment_plan_object(
         nlocals: f.nlocals,
         carrier,
         source_plan: None,
+        record_decl: None,
         plan: plan.clone(),
         ops: canonical_ops,
     };
@@ -485,6 +490,132 @@ fn prim_has_nan_nondeterministic_float_result(op: &FragPrim) -> bool {
         | FragPrim::I32LtS
         | FragPrim::I32GtS
         | FragPrim::I32And => false,
+    }
+}
+
+/// Decode the ordered scalar-leaf field list of a stage-1 flat scalar record at
+/// `struct_idx` from the module type section, byte-for-byte the inverse of the
+/// wall's `lowerTypeDecl`: an immutable `(ref null carrier)` field is the Int
+/// carrier leaf, an immutable `i32` is the Bool scalar, an immutable `f64` is
+/// the Float scalar. Any other shape (a nullary/exact ref, a mutable field, a
+/// supertype `.sub` form, a non-carrier reference, an unexpected storage, or a
+/// missing/oversized index) makes the struct NOT a flat scalar record, so the
+/// projection declines fail-closed rather than emitting a record face the wall
+/// equality pin would refuse.
+fn record_leaves_from_bytes(
+    wasm_bytes: &[u8],
+    carrier: u32,
+    struct_idx: u32,
+) -> Option<Vec<RecordLeaf>> {
+    use wasmparser::{CompositeInnerType, Parser, Payload, StorageType, ValType};
+    let mut next_type_idx: u32 = 0;
+    for payload in Parser::new(0).parse_all(wasm_bytes) {
+        let Payload::TypeSection(reader) = payload.ok()? else {
+            continue;
+        };
+        for rg in reader {
+            for sub in rg.ok()?.into_types() {
+                let idx = next_type_idx;
+                next_type_idx += 1;
+                if idx != struct_idx {
+                    continue;
+                }
+                // `lowerTypeDecl` only ever produces a `.plain` struct: a
+                // supertyped `.sub`/`.subFinal` form cannot satisfy the
+                // equality pin, so decline it here rather than at the kernel.
+                if sub.supertype_idx.is_some() {
+                    return None;
+                }
+                let CompositeInnerType::Struct(st) = &sub.composite_type.inner else {
+                    return None;
+                };
+                let mut leaves = Vec::with_capacity(st.fields.len());
+                for field in st.fields.iter() {
+                    // Records lower to immutable fields; a mutable storage never
+                    // matches `lowerTypeDecl`'s immutable leaf.
+                    if field.mutable {
+                        return None;
+                    }
+                    let leaf = match field.element_type {
+                        StorageType::Val(ValType::I32) => RecordLeaf::BoolScalar,
+                        StorageType::Val(ValType::F64) => RecordLeaf::FloatScalar,
+                        StorageType::Val(ValType::Ref(rt)) => {
+                            // The Int carrier leaf lowers to `(ref null carrier)`
+                            // exactly: a nullable concrete reference at the
+                            // module's carrier index.
+                            if !rt.is_nullable() || heap_type_index(rt.heap_type()) != Some(carrier)
+                            {
+                                return None;
+                            }
+                            RecordLeaf::IntCarrier
+                        }
+                        _ => return None,
+                    };
+                    leaves.push(leaf);
+                }
+                return Some(leaves);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(all(test, feature = "engine"))]
+mod record_leaves_tests {
+    use super::*;
+
+    /// A module whose type section holds: index 0 the Int carrier
+    /// `{i64, anyref, i32}`, index 1 a Person-shaped record
+    /// `{(ref null carrier), i32}`, index 2 a `{f64, (ref null carrier)}`
+    /// record, index 3 a struct with a mutable field.
+    fn fixture() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+                 (type $carrier (struct (field i64) (field anyref) (field i32)))
+                 (type $person (struct (field (ref null $carrier)) (field i32)))
+                 (type $floaty (struct (field f64) (field (ref null $carrier))))
+                 (type $mutrec (struct (field (mut i32)))))"#,
+        )
+        .expect("fixture module assembles")
+    }
+
+    #[test]
+    fn decodes_flat_scalar_records() {
+        let bytes = fixture();
+        assert_eq!(
+            record_leaves_from_bytes(&bytes, 0, 1),
+            Some(vec![RecordLeaf::IntCarrier, RecordLeaf::BoolScalar])
+        );
+        assert_eq!(
+            record_leaves_from_bytes(&bytes, 0, 2),
+            Some(vec![RecordLeaf::FloatScalar, RecordLeaf::IntCarrier])
+        );
+    }
+
+    #[test]
+    fn declines_wrong_struct_index() {
+        let bytes = fixture();
+        // Out of range.
+        assert_eq!(record_leaves_from_bytes(&bytes, 0, 99), None);
+        // The carrier struct itself is not a flat scalar record (its first
+        // field is a raw `i64`, not a leaf storage).
+        assert_eq!(record_leaves_from_bytes(&bytes, 0, 0), None);
+    }
+
+    #[test]
+    fn declines_scalar_leaf_type_mismatch() {
+        let bytes = fixture();
+        // A reference field that does NOT point at the claimed carrier index is
+        // not the Int carrier leaf: the record decodes to nothing (fail-closed),
+        // so the equality pin can never ride a doppelganger carrier.
+        assert_eq!(record_leaves_from_bytes(&bytes, 5, 1), None);
+    }
+
+    #[test]
+    fn declines_mutable_field() {
+        let bytes = fixture();
+        // Records lower to immutable fields; a mutable storage never matches.
+        assert_eq!(record_leaves_from_bytes(&bytes, 0, 3), None);
     }
 }
 
@@ -568,10 +699,35 @@ fn check_sym_fragment_plan_object(
         })?;
     let (func_order, mut cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
         check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
-    let Cert::ExprFragment { source_plan, .. } = &mut cert else {
+    let Cert::ExprFragment {
+        source_plan,
+        record_decl,
+        plan,
+        carrier,
+        ..
+    } = &mut cert
+    else {
         unreachable!("expr-fragment plan checker must return an expr-fragment cert")
     };
     *source_plan = Some(sym_plan.clone());
+    // Stage-1 record scalar field read: derive the record's ordered scalar-leaf
+    // declaration from the module type section at the projected struct index, so
+    // the wall pins the whole declaration by equality against those same bytes.
+    // A recognized record projection whose struct is not a flat scalar record
+    // declines fail-closed here rather than rendering a record face the wall
+    // equality pin would refuse.
+    if let Some(face) = expr_fragment_record_proj_face(plan) {
+        match record_leaves_from_bytes(wasm_bytes, *carrier, face.struct_idx) {
+            Some(leaves) => *record_decl = Some((face.struct_idx, leaves)),
+            None => {
+                return Err(format!(
+                    "source plan for `{export_name}` reads a record field, but struct index {} \
+                     does not decode to a flat scalar record",
+                    face.struct_idx
+                ));
+            }
+        }
+    }
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     Ok((
         func_order,

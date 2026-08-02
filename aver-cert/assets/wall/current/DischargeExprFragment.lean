@@ -12,6 +12,7 @@ missing host result; the audited generic still identifies the evaluator result
 with the byte result.
 -/
 import AcceptanceSoundnessCore
+import StandardFace
 
 open AverCert
 open AverCert.Schema
@@ -120,10 +121,25 @@ def exprFragmentIsVectorGetOrDefault (claim : SymFragmentClaim) : Bool :=
       | none => false
   | none => false
 
+/-- Record-parameter field-read fragments (`isMember(p) = p.isMember`) carry
+no producer semantic premise at all: the checked record face
+(`StandardFace.recordParamDeclaredFace`, a conjunct of `checkedFaces`) pins the
+type-section entry by equality against the wall lowering of the Plan record
+declaration, and the discharge below derives the obligation from
+`recordParam_simulates_model` plus byte acceptance. The gate is the encoded
+representation shape: exactly the recognized two-node scalar field read. -/
+def exprFragmentIsRecordParam (claim : SymFragmentClaim) : Bool :=
+  match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan with
+  | some plan => (AverCert.WasmSlice.exprRecordProjFace? plan).isSome
+  | none => false
+
 /-- Side condition for one source expression claim.  In-model claims must use
 the symbolic generic. Projection claims may use the audited projection
 generic. Fused vector-read claims discharge through the audited template
-theorem. Only float-boundary claims may use a bespoke direct discharge. -/
+theorem. Only float-boundary claims may use a bespoke direct discharge.
+Record-parameter claims contribute NO semantic premise: the arm only routes,
+and the discharge derives their obligation from the checked record face. -/
 def exprFragmentSideCondition (claim : SymFragmentClaim) : Prop :=
   (exprFragmentUsesAuditedGeneric claim = true ∧
     ∀ plan,
@@ -140,7 +156,8 @@ def exprFragmentSideCondition (claim : SymFragmentClaim) : Prop :=
   (exprFragmentHasFieldProjection claim = true ∧
     obligationHolds claim.obligation) ∨
   (exprFragmentHasFloatBoundary claim = true ∧
-    obligationHolds claim.obligation)
+    obligationHolds claim.obligation) ∨
+  (exprFragmentIsRecordParam claim = true)
 
 def exprFragmentSemanticBridges (artifact : ArtifactData) : Prop :=
   ∀ claim ∈ artifact.symFragmentClaims, exprFragmentSideCondition claim
@@ -208,28 +225,114 @@ theorem exprFragment_claim_discharges_generic
           have hResult : result = w := Option.some.inj hRun
           simpa [hResult] using hCod
 
+/-- Face-derived discharge of one record-parameter claim, mirroring the
+declared-index envelope columns: the checked record face
+(`StandardFace.recordParamDeclaredFace`) supplies the equality-pinned Plan
+declaration and the `HEq` meaning pins, byte acceptance supplies the exact
+canonical body at the obligation's own code/self, and
+`recordParam_simulates_model` (through `recordParam_transport`) closes the run.
+No producer semantic premise participates. -/
+theorem recordParam_claim_discharges
+    (artifact : ArtifactData)
+    (hAcc : acceptedSymFragments artifact)
+    (claim : SymFragmentClaim)
+    (hMem : claim ∈ artifact.symFragmentClaims)
+    (hFace : AverCert.StandardFace.symFragmentMatches
+      artifact.modBytes artifact.modLen artifact.manifest.subject.hostRoles claim)
+    (hIs : exprFragmentIsRecordParam claim = true) :
+    obligationHolds claim.obligation := by
+  have hClaim : symFragmentClaimAccepted artifact.modBytes artifact.modLen claim :=
+    allClaims_of_mem
+      (symFragmentClaimAccepted artifact.modBytes artifact.modLen)
+      artifact.symFragmentClaims hAcc claim hMem
+  unfold symFragmentClaimAccepted symFragmentPlanAccepted at hClaim
+  unfold exprFragmentIsRecordParam at hIs
+  cases hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan with
+  | none => simp [hEncode] at hIs
+  | some plan =>
+      simp only [hEncode, Option.isSome_iff_exists] at hIs
+      obtain ⟨⟨structIdx, field⟩, hRec⟩ := hIs
+      have hNone := AverCert.StandardFace.symFragmentFace_none_of_recordProj
+        claim plan hEncode structIdx field hRec
+      unfold AverCert.StandardFace.symFragmentMatches at hFace
+      obtain ⟨-, hMatch⟩ := hFace
+      simp only [hNone, hEncode, hRec] at hMatch
+      have hAccepted : symFragmentCarrierBound artifact.modBytes artifact.modLen
+            claim.carrier claim.hostTable plan = true ∧
+          AverCert.WasmSlice.hostTableFuncTypesMatch artifact.modBytes artifact.modLen
+            claim.carrier claim.hostTable = true ∧
+          exprFragmentPlanAccepted artifact.modBytes artifact.modLen
+            claim.exportNameBytes claim.exportName claim.carrier plan
+            claim.obligation := by
+        simpa [hEncode] using hClaim
+      obtain ⟨-, -, hExpr⟩ := hAccepted
+      obtain ⟨-, hCarrier, body, codeEntry, binding, hByteAccepted, -, -,
+        hSelf, hCode⟩ := hExpr
+      obtain ⟨hCheck, hLowerExpr, -, -⟩ := hByteAccepted
+      obtain ⟨hparams, -, hplanBody⟩ :=
+        AverCert.WasmSlice.exprRecordProjFace?_spec plan structIdx field hRec
+      have hLower : AverCert.PlanLower.lowerBlock claim.carrier plan.body
+          = some body := by
+        simp only [AverCert.PlanLower.lowerExprFragmentBody, hCheck, if_true]
+          at hLowerExpr
+        exact hLowerExpr
+      have hBody : body = recordProjTemplate structIdx field := by
+        rw [hplanBody, AverCert.StandardFace.lowerBlock_recordProj] at hLower
+        exact (Option.some.inj hLower).symm
+      have hCodeSelf : claim.obligation.code claim.obligation.self =
+          some ⟨1, exprFragmentNLocals plan, recordProjTemplate structIdx field⟩ := by
+        rw [hSelf, hCode, hBody, hparams]
+        rfl
+      obtain ⟨hPolicy, -, hCarrierEq, decl, structIdx', field', fields, hfield,
+        hdecl, hRec', -, -, -, -, -, hDomP, hCodP, hdomReprP, hcodReprP,
+        hmodelP⟩ := hMatch
+      rw [hRec] at hRec'
+      injection hRec' with hpair
+      injection hpair with hsi hfi
+      subst hsi
+      subst hfi
+      rw [obligationHolds, hPolicy]
+      intro S add sub mul stringEq stringConcat toIndex
+        _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+      exact AverCert.StandardFace.recordParam_transport claim.carrier fields
+        structIdx field hfield claim.obligation.carrier claim.obligation.Dom
+        claim.obligation.Cod claim.obligation.domRepr claim.obligation.codRepr
+        claim.obligation.model hCarrierEq hDomP hCodP hdomReprP hcodReprP hmodelP
+        claim.obligation.code
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        claim.obligation.self (exprFragmentNLocals plan) hCodeSelf
+        S fuel x vs w hDom hRun
+
 theorem exprFragment_claim_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedSymFragments artifact)
     (claim : SymFragmentClaim)
     (hMem : claim ∈ artifact.symFragmentClaims)
+    (hFace : AverCert.StandardFace.symFragmentMatches
+      artifact.modBytes artifact.modLen artifact.manifest.subject.hostRoles claim)
     (hSide : exprFragmentSideCondition claim) :
     obligationHolds claim.obligation := by
-  rcases hSide with hGeneric | hTagDispatch | hVectorGet | hProjection | hFloat
+  rcases hSide with hGeneric | hTagDispatch | hVectorGet | hProjection | hFloat | hRecord
   · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hGeneric.2
   · exact exprFragment_claim_discharges_generic artifact hAcc claim hMem hTagDispatch.2
   · exact hVectorGet.2
   · exact hProjection.2
   · exact hFloat.2
+  · exact recordParam_claim_discharges artifact hAcc claim hMem hFace hRecord
 
 theorem exprFragment_discharges
     (artifact : ArtifactData)
     (hAcc : acceptedSymFragments artifact)
+    (hFaces : allClaims (AverCert.StandardFace.symFragmentMatches
+      artifact.modBytes artifact.modLen artifact.manifest.subject.hostRoles)
+      artifact.symFragmentClaims)
     (hSemantic : exprFragmentSemanticBridges artifact) :
     ∀ o ∈ artifact.symFragmentClaims.map (·.obligation), obligationHolds o := by
   intro o hObligation
   rcases List.mem_map.mp hObligation with ⟨claim, hMem, rfl⟩
   exact exprFragment_claim_discharges artifact hAcc claim hMem
+    (allClaims_of_mem _ artifact.symFragmentClaims hFaces claim hMem)
     (hSemantic claim hMem)
 
 end AcceptanceSoundness

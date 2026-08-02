@@ -1002,9 +1002,12 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         "floatGtGoal",
         "floatEqGoal",
     ] {
+        // The float arm sits at position five of six in
+        // `exprFragmentSideCondition` (the record-parameter arm follows it),
+        // so its payload carries one `Or.inl` inside the four `Or.inr`s.
         assert!(
             artifact_lean.contains(&format!(
-                "Or.inr (Or.inr ⟨rfl, CertProofs.{float_name}_simulates⟩)"
+                "Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, CertProofs.{float_name}_simulates⟩))))"
             )),
             "certified Float comparison must use the bespoke accept-sound residual: {float_name}\n{artifact_lean}"
         );

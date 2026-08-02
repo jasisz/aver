@@ -223,16 +223,26 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
         | .constF64Bits _ => some .f64
         | .structGet field receiver =>
             if hasTy checked receiver .intCarrier then carrierFieldTy? field else none
-        -- v1 admits two field reads out of a user struct: the opaque
+        -- v1 admits three field reads out of a user struct: the opaque
         -- reference-field projection (`adtRef`, flowed verbatim through the
-        -- field-projection face) and the scalar `i32` tag/discriminant read
+        -- field-projection face), the scalar `i32` tag/discriminant read
         -- (`rawI32`, e.g. the Option/Result tag) that a tag-dispatch feeds into
-        -- `i32`-typed primitives. The plan DECLARES which via `node.ty`; the
-        -- byte-exact gate and decoded struct context bind `tyIdx`/`field` and
-        -- confirm the field's real storage. A wrong declaration lowers to bytes
-        -- whose read yields the wrong `WVal` kind and traps (fail-closed).
+        -- `i32`-typed primitives, and the record-declaration scalar field read
+        -- (`intCarrier`/`boolI32`/`f64` via `fragTyIsRecordScalar`), whose
+        -- declared type is confirmed against the module's type section by the
+        -- record face's equality pin over the certified Plan declaration. The
+        -- plan DECLARES which via `node.ty`; the byte-exact gate and decoded
+        -- struct context bind `tyIdx`/`field` and confirm the field's real
+        -- storage. A wrong declaration lowers to bytes whose read yields the
+        -- wrong `WVal` kind and traps (fail-closed). The scalar admission
+        -- cannot leak into the generic path: `genericFragmentAllowedFuel`
+        -- rejects EVERY `structGetUser` node outright, so a scalar-typed read
+        -- is only acceptable through the record-parameter classify branch,
+        -- whose exact two-node shape and byte pins gate it.
         | .structGetUser _tyIdx _field value =>
-            if hasTy checked value .adtRef && (node.ty = .adtRef || node.ty = .rawI32)
+            if hasTy checked value .adtRef &&
+                (node.ty = .adtRef || node.ty = .rawI32 ||
+                  fragTyIsRecordScalar node.ty)
             then some node.ty else none
         | .refIsNull value =>
             if hasTy checked value .ref && isCarrierLimbField checked value
@@ -930,10 +940,13 @@ def encodeSymBlockFuel :
           | .construct _ _ _ => none
           | .emptyList _ => none
           | .projectField typeName field _fieldTy value =>
-              -- Only opaque reference fields encode: the projected value flows
-              -- verbatim through the field-projection face. Scalar fields have
-              -- no rendered proof face yet, so they fail-close the encoding.
-              if fragTy = FragTy.adtRef then
+              -- Opaque reference fields encode for the field-projection face;
+              -- scalar fields (`Int`/`Bool`/`Float`) encode for the
+              -- record-parameter face, whose equality pin over the certified
+              -- Plan declaration confirms the declared scalar against the
+              -- module's real type-section entry. Every other field type
+              -- fail-closes the encoding.
+              if fragTy = FragTy.adtRef || fragTyIsRecordScalar fragTy then
                 let tyIdx ← structTyIdx? structTable typeName
                 let value ← encodedValue? st value
                 let (st, id) :=

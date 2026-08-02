@@ -148,6 +148,35 @@ def typeSectionMatches (check : CertDecode.TypeEntry → Bool)
       | none => false
   | none => false
 
+/-- Eliminate a satisfied `typeSectionMatches` against a byte-confirmed entry
+    equality at the same index: the abstract check holds of exactly that entry.
+    Guard-iso probes use this to turn a satisfied equality pin over an
+    EXISTENTIAL Plan declaration into a concrete fact about the decoded entry,
+    which inversion of `lowerTypeDecl` then refutes on hostile bytes — the
+    formal shape of "the pinned declaration is byte-determined". -/
+theorem typeSectionMatches_elim
+    (p : CertDecode.TypeEntry → Bool) (e : CertDecode.TypeEntry)
+    (modBytes modLen typeIdx : Nat)
+    (h : typeSectionMatches p modBytes modLen typeIdx = true)
+    (he : typeSectionMatches (fun x => x == e) modBytes modLen typeIdx = true) :
+    p e = true := by
+  unfold typeSectionMatches at h he
+  cases hdec : CertDecode.decodeTypes modBytes modLen with
+  | none =>
+      simp only [hdec] at h
+      exact absurd h (by decide)
+  | some info =>
+      simp only [hdec] at h he
+      cases hent : info.entryIndex[typeIdx]? with
+      | none =>
+          simp only [hent] at h
+          exact absurd h (by decide)
+      | some entry =>
+          simp only [hent] at h he
+          have hentry : entry = e := by simpa using he
+          rw [← hentry]
+          exact h
+
 /-- Whether the module's type-section entry `typeIdx` is exactly the canonical
     certified function type `[(ref null carrier)^arity] → [(ref null carrier)]`.
     This binds a claimed function binding's declared signature to the plan's
@@ -370,11 +399,113 @@ def exprVectorGetTypesMatch
       | _, _ => false
   | none => false
 
-/-- Opaque references fail closed unless the plan has one of the three admitted
+/-- Byte-level recognizer of the record-parameter scalar field read (mirror of
+    the representation plan; the record face in `StandardFace` reuses this same
+    recognizer, so the byte gate and the face fire on exactly one shape):
+    `local 0 : adtRef; structGetUser structIdx field 0 : <scalar>`, with the
+    plan result the same scalar. The node ids are matched literally so the
+    canonical lowering of a recognized plan is exactly the two-instruction
+    `recordProjTemplate`. Unlike `exprProjectionFace?` the projected field is a
+    SCALAR, and the field index is not capped: the record face's equality pin
+    (`lowerTypeDecl` against the decoded entry) fixes the whole ordered field
+    list. -/
+def exprRecordProjFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
+    Option (Nat × Nat) :=
+  if plan.params = [.adtRef] &&
+      AverCert.Schema.fragTyIsRecordScalar plan.result &&
+      plan.body.result = 1 then
+    match plan.body.nodes with
+    | [{ id := 0, ty := ty0, kind := .local 0 },
+       { id := 1, ty := ty1, kind := .structGetUser structIdx field 0 }] =>
+        if ty0 = .adtRef && ty1 = plan.result then some (structIdx, field)
+        else none
+    | _ => none
+  else none
+
+/-- Structural content of a fired record-projection recognizer: the parameter
+    is the single opaque record reference, the declared result is a stage-1
+    scalar, and the body is EXACTLY the two-node field read (ids, types and
+    kinds all pinned by the literal match). -/
+theorem exprRecordProjFace?_spec
+    (plan : AverCert.Schema.ExprFragmentRawPlan) (structIdx field : Nat)
+    (h : exprRecordProjFace? plan = some (structIdx, field)) :
+    plan.params = [.adtRef] ∧
+    AverCert.Schema.fragTyIsRecordScalar plan.result = true ∧
+    plan.body = { nodes := [{ id := 0, ty := .adtRef, kind := .local 0 },
+                            { id := 1, ty := plan.result,
+                              kind := .structGetUser structIdx field 0 }],
+                  result := 1 } := by
+  unfold exprRecordProjFace? at h
+  split at h
+  case isFalse => exact absurd h (by simp)
+  case isTrue hcond =>
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hcond
+    obtain ⟨⟨hparams, hscalar⟩, hres⟩ := hcond
+    split at h
+    case h_2 => exact absurd h (by simp)
+    case h_1 ty0 ty1 si fi heq =>
+      split at h
+      case isFalse => exact absurd h (by simp)
+      case isTrue htys =>
+        simp only [Bool.and_eq_true, decide_eq_true_eq] at htys
+        obtain ⟨hty0, hty1⟩ := htys
+        injection h with hpair
+        injection hpair with hsi hfi
+        subst hsi; subst hfi; subst hty0; subst hty1
+        refine ⟨hparams, hscalar, ?_⟩
+        have hblock : plan.body = ⟨plan.body.nodes, plan.body.result⟩ := by
+          cases plan.body
+          rfl
+        rw [hblock, heq, hres]
+
+/-- Storage shape a stage-1 record field may carry: `i32` (Bool), `f64`
+    (Float), or a nullable concrete reference (the Int carrier field). The
+    record face's equality pin compares the FULL decoded entry — form, ordered
+    fields, storages and mutabilities — against the wall lowering of the Plan
+    declaration; the declaration is not in scope on the byte side, so this
+    check admits only the SHAPE. -/
+def isRecordScalarStorage : CertDecode.FieldType → Bool
+  | ⟨.val (.numeric 0x7f), _⟩ => true
+  | ⟨.val (.numeric 0x7c), _⟩ => true
+  | ⟨.val (.ref 0x63 _), _⟩ => true
+  | _ => false
+
+/-- Byte-side admission of the record-parameter shape: the exported function's
+    single parameter names EXACTLY the projected struct index (the same move
+    `checkExprProjectionTypes` makes — this closes the param-type/struct-index
+    confusion channel on the byte side as well as in the face), the projected
+    entry is a `.plain` struct of scalar storages only, and the projected field
+    exists. Deep equality with the Plan declaration lives in the record face,
+    where the declaration exists. -/
+def checkRecordProjTypes
+    (carrier structIdx field : Nat)
+    (funcEntry structEntry : CertDecode.TypeEntry) : Bool :=
+  if structIdx == carrier then false else
+    match funcEntry.form, funcEntry.composite,
+        structEntry.form, structEntry.composite with
+    | .plain, .funcType [param] [_result], .plain, .structType fields =>
+        decide (param = nullableRefType structIdx) &&
+          fields.all isRecordScalarStorage &&
+          (fields[field]?).isSome
+    | _, _, _, _ => false
+
+def exprRecordProjTypesMatch
+    (modBytes modLen typeIdx carrier structIdx field : Nat) : Bool :=
+  match CertDecode.decodeTypes modBytes modLen with
+  | some info =>
+      match info.entryIndex[typeIdx]?, info.entryIndex[structIdx]? with
+      | some funcEntry, some structEntry =>
+          checkRecordProjTypes carrier structIdx field funcEntry structEntry
+      | _, _ => false
+  | none => false
+
+/-- Opaque references fail closed unless the plan has one of the four admitted
     faces: the field-projection face (whose nominal signature and field type are
     decoded above), the tag-dispatch face (whose i32 tag field is decoded
-    below), or the fused vector-read face (whose array element type is decoded
-    above). -/
+    below), the fused vector-read face (whose array element type is decoded
+    above), or the record-parameter scalar field read (whose param binding and
+    scalar struct shape are decoded above; the deep entry equality lives in the
+    record face's pin). -/
 def exprFragmentNominalTypesMatch
     (modBytes modLen typeIdx carrier : Nat)
     (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
@@ -389,7 +520,12 @@ def exprFragmentNominalTypesMatch
         | none =>
             match exprVectorGetOrDefaultArrTy? plan with
             | some arrTy => exprVectorGetTypesMatch modBytes modLen typeIdx carrier arrTy
-            | none => false
+            | none =>
+                match exprRecordProjFace? plan with
+                | some (structIdx, field) =>
+                    exprRecordProjTypesMatch
+                      modBytes modLen typeIdx carrier structIdx field
+                | none => false
   else true
 
 def isNonnegativeNullableRef : CertDecode.ValType → Bool
@@ -625,6 +761,27 @@ def exactFuncBindingForExport
     (modBytes modLen : Nat) (targetName expectedCode : ByteSeq) : Option FuncBinding :=
   (funcBindingForExport modBytes modLen targetName).filter
     (fun binding => binding.codeEntry = expectedCode)
+
+/-- The record face's PARAM BINDING check over one decoded function type: a
+    single parameter, and that parameter is EXACTLY the nullable reference to
+    the record's pinned struct index (`checkExprProjectionTypes`'s move). -/
+def checkRecordParamFuncType (structIdx : Nat) (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType [param] [_result] => decide (param = nullableRefType structIdx)
+  | _, _ => false
+
+/-- The record face's PARAM BINDING against the module bytes: resolve the
+    certified export's own function binding and require its declared single
+    parameter to name exactly the pinned struct index. Without it, a claim
+    could pin (and lower against) one struct index while the certified function
+    is declared over a different one — the param/struct confusion class. -/
+def recordParamFuncTypeMatches
+    (modBytes modLen : Nat) (exportName : ByteSeq) (structIdx : Nat) : Bool :=
+  match funcBindingForExport modBytes modLen exportName with
+  | some binding =>
+      typeSectionMatches (checkRecordParamFuncType structIdx)
+        modBytes modLen binding.typeIdx
+  | none => false
 
 /-- Whether the module function `funcIdx` declares exactly the certified
     function type its host role fixes. The index resolves through the function

@@ -114,6 +114,37 @@ impl Cert {
         }
     }
 
+    /// The stage-1 record scalar field-read face of an ADT-ref expr fragment,
+    /// when this cert is an `ExprFragment` whose plan is exactly
+    /// `struct.get structIdx field` yielding a scalar leaf AND whose struct
+    /// decoded to a flat scalar record declaration (`record_decl`). Renderers
+    /// branch on this to state the wall's record-parameter obligation and
+    /// discharge through `recordParam_claim_discharges`. The `record_decl`
+    /// guard means a surviving record-projection cert always has its ordered
+    /// leaf list available.
+    fn record_param_face(&self) -> Option<FragRecordProjFace> {
+        match self.inner() {
+            Cert::ExprFragment {
+                plan,
+                record_decl: Some(_),
+                ..
+            } => expr_fragment_record_proj_face(plan),
+            _ => None,
+        }
+    }
+
+    /// The projected struct index and ordered scalar-leaf field list of a record
+    /// projection cert, byte-derived at check time.
+    fn record_decl(&self) -> Option<(u32, &[RecordLeaf])> {
+        match self.inner() {
+            Cert::ExprFragment {
+                record_decl: Some((struct_idx, leaves)),
+                ..
+            } => Some((*struct_idx, leaves.as_slice())),
+            _ => None,
+        }
+    }
+
     fn vector_get_face(&self) -> Option<FragVectorGetOrDefaultFace> {
         match self.inner() {
             Cert::ExprFragment { plan, .. } => expr_fragment_vector_get_face(plan),

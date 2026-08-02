@@ -75,6 +75,27 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             struct_idx = face.struct_idx,
         );
     }
+    // A stage-1 record scalar field read states the wall's record-parameter
+    // obligation: the domain is the record denotation, the codomain the
+    // projected scalar leaf under the single generic `ReprOf`, and the model the
+    // field read — every meaning field is the wall term the checked record face
+    // pins by `HEq`, exactly like `intDispatchDeclaredFace`.
+    if let Some(face) = c.record_param_face() {
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := AverCert.StandardFace.emptyHost, self := {self_idx},\n    \
+             Dom := AverCert.Schema.RecordFields Plans.{name}RecordFields,\n    \
+             Cod := AverCert.Schema.RecordVal (Plans.{name}RecordFields[{field}]'(by decide)),\n    \
+             domRepr := AverCert.StandardFace.recordParamDomRepr {carrier} {struct_idx} Plans.{name}RecordFields,\n    \
+             codRepr := AverCert.StandardFace.recordParamCodRepr {carrier} Plans.{name}RecordFields {field} (by decide),\n    \
+             model := AverCert.StandardFace.recordParamModel Plans.{name}RecordFields {field} (by decide) }}\n\n",
+            carrier = c.carrier(),
+            self_idx = c.self_idx(),
+            struct_idx = face.struct_idx,
+            field = face.field_idx,
+        );
+    }
     match c.inner() {
         Cert::AdtConstructor { struct_idx, .. }
             if adt_constructor_uses_model(c, model_info) =>
@@ -718,6 +739,8 @@ fn render_manifest(
             "AverCert.StandardFace.vectorGetOrDefault_simulates_model".to_string()
         } else if c.project_face().is_some() {
             "AcceptanceSoundness.fieldProjection_direct_canonical_discharges".to_string()
+        } else if c.record_param_face().is_some() {
+            "AcceptanceSoundness.recordParam_claim_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {
             "AcceptanceSoundness.fieldProjection_canonical_discharges".to_string()
         } else if matches!(c.inner(), Cert::AdtConstructor { .. })
