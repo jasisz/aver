@@ -32,18 +32,18 @@ def exprFragmentSemanticBridge
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
     (toIndex : List WVal → Option WVal)
-    (_hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+    (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
       add [va, vb] = some w → S.Repr (a + b) w)
-    (_hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+    (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
       sub [va, vb] = some w → S.Repr (a - b) w)
-    (_hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
+    (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
       mul [va, vb] = some w → S.Repr (a * b) w)
-    (_hStringEq : ∀ a b w, stringEq [a, b] = some w →
+    (hStringEq : ∀ a b w, stringEq [a, b] = some w →
       w = b32 (stringEqW a b))
-    (_hStringConcat : ∀ resultTy parts c,
+    (hStringConcat : ∀ resultTy parts c,
       stringConcat resultTy [parts] = some c →
         stringConcatW resultTy parts = some c)
-    (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
+    (hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
       r = .i32v (toIndexW n))
     (fuel : Nat) (x : claim.obligation.Dom) (vs : List WVal) (w : WVal),
     claim.obligation.domRepr S x vs →
