@@ -162,7 +162,8 @@ theorem hClaims_of_accepted
             · rcases ho with ho | ho
               · rcases ho with ho | ho
                 · rcases ho with ho | ho
-                  · exact exprFragment_discharges artifact hSym hExprSemantic o ho
+                  · exact exprFragment_discharges artifact hSym hFaces.2.1
+                      hExprSemantic o ho
                   · exact stringEq_discharges artifact hStringEq hStringSemantic o ho
                 · exact stringConcat_discharges artifact hStringConcat
                     hStringSemantic o ho

@@ -385,6 +385,92 @@ def classifyVectorGetOrDefault
     | _ => none
   else none
 
+/-! ### Record-parameter face (a Plan type declaration typed the parameter)
+
+The certified Plan carries the user record declaration (`SchemaCore.TypeDecl`);
+the wall LOWERS it (`lowerTypeDecl`) and the face pins the module's type-section
+entry at the projected struct index to that lowering BY EQUALITY, so the layout
+is a checked-by-equality witness, never trusted plan data. The declaration
+itself sits under an existential, which is sound for the same reason the
+declared-index envelope's existentials are: the equality pin forces the
+declared bytes to be the module's real bytes, so the witness is not a free
+choice — an Int field can only be declared where the real entry holds the
+nullable carrier reference, a Bool field only at `i32`, a Float field only at
+`f64`, and `.plain` kills the `.sub`/`.subFinal` doppelganger outright. The
+meaning terms (`Dom`/`domRepr`/`Cod`/`codRepr`/`model`) are wall terms over the
+declaration (`RecordFields`/`ReprFields`/`nthField`), pinned by `HEq` exactly
+like `intDispatchDeclaredFace`. -/
+
+/-- Domain representation of the record-parameter face: the machine state is
+    exactly one struct at the pinned index whose fields represent the record
+    denotation pointwise (`ReprFields`). -/
+def recordParamDomRepr (carrier structIdx : Nat) (fields : List TypeDecl) :
+    CarrierSpec carrier → RecordFields fields → List WVal → Prop :=
+  fun S v vs => ∃ ws, vs = [.structv structIdx ws] ∧ ReprFields S fields ws v
+
+/-- Codomain representation: the result represents the projected field under
+    the single generic wall relation `ReprOf` (definitionally the scalar
+    `intRepr`/`boolRepr`/`floatBitsRepr` at the admitted leaves). -/
+def recordParamCodRepr (carrier : Nat) (fields : List TypeDecl)
+    (field : Nat) (hfield : field < fields.length) :
+    CarrierSpec carrier → RecordVal (fields[field]'hfield) → WVal → Prop :=
+  fun S c w => ReprOf S (fields[field]'hfield) w c
+
+/-- The source model of a record field read: the `field`-th component of the
+    record denotation. -/
+def recordParamModel (fields : List TypeDecl) (field : Nat)
+    (hfield : field < fields.length) :
+    RecordFields fields → RecordVal (fields[field]'hfield) :=
+  fun v => nthField fields v field hfield
+
+/-- The declared-record face carried by a record-parameter field-read claim.
+    Every conjunct is load-bearing:
+
+    * `checkRecordDecl` — the declaration is a stage-1 flat scalar record;
+    * the TYPE-SECTION EQUALITY PIN — the module's entry at the projected
+      struct index IS the wall lowering of the declaration (form `.plain`,
+      full ordered field list, every storage, every mutability);
+    * the PARAM BINDING — the certified export's declared parameter names
+      exactly the pinned struct index (`recordParamFuncTypeMatches`);
+    * the PLAN BINDING — the recognizer fires on this plan at the same
+      `(structIdx, field)`, the field is in range, and the plan's declared
+      result is the declared field's scalar fragment type;
+    * the CARRIER BINDING — a declaration that mentions the Int carrier makes
+      the face's meaning read the claimed carrier index (through
+      `lowerTypeDecl` and `ReprFields`' `intRepr` leaf) even when the plan and
+      host table never name it, so the claimed index must then be the decoded
+      `CertDecode.carrierState` (the #767 lesson applied to declarations);
+    * the `HEq` pins — the obligation's meaning fields are the wall terms over
+      the declaration, exactly like `intDispatchDeclaredFace`;
+    * `decl = .record structIdx fields` — the declaration's own index is bound
+      to the pinned struct index (`lowerTypeDecl` never reads it, so leaving it
+      free would be an unconstrained-witness label). -/
+def recordParamDeclaredFace
+    (modBytes modLen : Nat) (claim : SymFragmentClaim)
+    (plan : ExprFragmentRawPlan) : Prop :=
+  claim.obligation.policy = .simulatesModel ∧
+  claim.obligation.host = emptyHost ∧
+  claim.obligation.carrier = claim.carrier ∧
+  ∃ (decl : TypeDecl) (structIdx field : Nat) (fields : List TypeDecl)
+    (hfield : field < fields.length),
+    decl = .record structIdx fields ∧
+    AverCert.WasmSlice.exprRecordProjFace? plan = some (structIdx, field) ∧
+    checkRecordDecl decl = true ∧
+    scalarLeafFragTy? (fields[field]'hfield) = some plan.result ∧
+    (typeDeclMentionsIntCarrier decl = true →
+      CertDecode.carrierState modBytes modLen = some (some claim.carrier)) ∧
+    AverCert.WasmSlice.typeSectionMatches
+      (fun entry =>
+        decide (lowerTypeDecl claim.carrier lowerTypeDeclFuel decl = some entry))
+      modBytes modLen structIdx = true ∧
+    AverCert.WasmSlice.recordParamFuncTypeMatches
+      modBytes modLen claim.exportNameBytes structIdx = true ∧
+    HEq claim.obligation.Dom (RecordFields fields) ∧
+    HEq claim.obligation.Cod (RecordVal (fields[field]'hfield)) ∧
+    HEq claim.obligation.domRepr (recordParamDomRepr claim.carrier structIdx fields) ∧
+    HEq claim.obligation.codRepr (recordParamCodRepr claim.carrier fields field hfield) ∧
+    HEq claim.obligation.model (recordParamModel fields field hfield)
+
 def genericFragmentAllowedFuel : Nat → FragBlock → Bool
   | 0, _ => false
   | fuel + 1, block =>
@@ -432,12 +518,66 @@ noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFa
                         some (.known (fragment claim.carrier plan.params plan.result))
                       else none
 
+/-- No `FaceSpec` branch of the classify chain fires on a record-projection
+    plan, so appending the record face on the chain's `none` arm neither
+    shadows nor reorders any existing face. Shape by shape: `classifyIntAdd`
+    needs an `.intCarrier` parameter list, `exprProjectionFace?` an `.adtRef`
+    result, `classifyTagDispatch` a five-node body, `classifyVectorGetOrDefault`
+    a two-parameter list, and the generic gate forbids `.adtRef` parameters —
+    each contradicted by the recognized record shape. -/
+theorem symFragmentFace_none_of_recordProj
+    (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan)
+    (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan = some plan)
+    (structIdx field : Nat)
+    (hRecord : AverCert.WasmSlice.exprRecordProjFace? plan
+      = some (structIdx, field)) :
+    symFragmentFace claim = none := by
+  obtain ⟨hparams, hscalar, hbody⟩ :=
+    AverCert.WasmSlice.exprRecordProjFace?_spec plan structIdx field hRecord
+  have hresultNe : plan.result ≠ .adtRef := by
+    intro h
+    rw [h] at hscalar
+    simp [AverCert.Schema.fragTyIsRecordScalar] at hscalar
+  have hbodyResult : plan.body.result = 1 := by rw [hbody]
+  unfold symFragmentFace
+  rw [hEncode]
+  have hIntAdd : classifyIntAdd plan = none := by
+    unfold classifyIntAdd
+    simp [hparams]
+  have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
+    unfold AverCert.WasmSlice.exprProjectionFace?
+    simp [hresultNe]
+  have hTagDispatch : classifyTagDispatch plan = none := by
+    unfold classifyTagDispatch
+    simp [hbodyResult]
+  have hVectorGet : classifyVectorGetOrDefault plan = none := by
+    unfold classifyVectorGetOrDefault
+    simp [hparams]
+  have hGeneric : genericFragmentAllowed plan = false := by
+    unfold genericFragmentAllowed
+    simp [hparams]
+  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hGeneric]
+
 def symFragmentMatches
+    (modBytes modLen : Nat)
     (roles : CertDecode.AddSub.Roles) (claim : SymFragmentClaim) : Prop :=
   hostTableBound roles claim.hostTable = true ∧
     match symFragmentFace claim with
     | some face => face.Matches claim.obligation
-    | none => False
+    | none =>
+        -- The record-parameter face fires strictly AFTER every `FaceSpec`
+        -- branch (provably non-overlapping — `symFragmentFace_none_of_recordProj`
+        -- shows the chain yields `none` on every recognized record plan, so
+        -- this arm is the record shape's ONLY route). A plan matching neither
+        -- remains `False`, exactly as before.
+        match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+            claim.hostTable claim.structTable claim.plan with
+        | some plan =>
+            match AverCert.WasmSlice.exprRecordProjFace? plan with
+            | some _ => recordParamDeclaredFace modBytes modLen claim plan
+            | none => False
+        | none => False
 
 /-! ### Declared-index envelope faces (user ADT claims)
 
@@ -661,8 +801,8 @@ def reportEntries (artifact : ArtifactData) : Option (List (String × String)) :
     not remove any existing acceptance gate. -/
 def checkedFaces (artifact : ArtifactData) : Prop :=
   claimExportsUnique artifact = true ∧
-  allClaims (symFragmentMatches artifact.manifest.subject.hostRoles)
-    artifact.symFragmentClaims ∧
+  allClaims (symFragmentMatches artifact.modBytes artifact.modLen
+    artifact.manifest.subject.hostRoles) artifact.symFragmentClaims ∧
   allClaims (stringEqMatches artifact.manifest) artifact.stringEqClaims ∧
   allClaims (stringConcatMatches artifact.modBytes artifact.modLen
     artifact.manifest) artifact.stringConcatClaims ∧
@@ -782,5 +922,68 @@ theorem vectorGetOrDefault_simulates_model
                 htix, ht, hbox, boxRef] at hRun
               subst hRun
               exact S.smallIntro d
+
+/-! ### The record-parameter transport (HEq pins onto the obligation fields)
+
+Same discipline as `DeclaredEnvelopeAcceptTransport`: the obligation's field
+values are supplied as ordinary universally quantified variables so `subst`
+applies once each pin is turned into an `Eq`, and no cast residue survives. The
+core is `SchemaCore.recordParam_simulates_model` — the single generic
+template-implies-model theorem the certified Plan's record declarations
+instantiate. -/
+
+/-- The canonical lowering of the recognized record-projection body is exactly
+    the two-instruction `recordProjTemplate` — by computation, for every
+    carrier, struct index, field and declared node types. -/
+theorem lowerBlock_recordProj (carrier structIdx field : Nat) (ty0 ty1 : FragTy) :
+    AverCert.PlanLower.lowerBlock carrier
+      { nodes := [{ id := 0, ty := ty0, kind := .local 0 },
+                  { id := 1, ty := ty1, kind := .structGetUser structIdx field 0 }],
+        result := 1 } =
+    some (recordProjTemplate structIdx field) := rfl
+
+/-- The dependent-cast core for the record-parameter face: with the obligation
+    field values as free variables and the face's pins as `Eq`/`HEq`, a
+    successful run of the pinned template on a represented record yields a
+    represented model value — exactly `recordParam_simulates_model`, carried
+    onto the pinned fields. Generic over the host table (the template makes no
+    host call) and the declared-locals count. -/
+theorem recordParam_transport
+    (claimCarrier : Nat)
+    (fields : List TypeDecl) (structIdx field : Nat)
+    (hfield : field < fields.length)
+    (carrier : Nat) (Dom Cod : Type)
+    (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
+    (codRepr : CarrierSpec carrier → Cod → WVal → Prop)
+    (model : Dom → Cod)
+    (hcar : carrier = claimCarrier)
+    (hDom : HEq Dom (RecordFields fields))
+    (hCod : HEq Cod (RecordVal (fields[field]'hfield)))
+    (hdomRepr : HEq domRepr (recordParamDomRepr claimCarrier structIdx fields))
+    (hcodRepr : HEq codRepr (recordParamCodRepr claimCarrier fields field hfield))
+    (hmodel : HEq model (recordParamModel fields field hfield))
+    (code : CodeTbl) (host : HostTbl) (self nlocals : Nat)
+    (hCode : code self = some ⟨1, nlocals, recordProjTemplate structIdx field⟩)
+    (S : CarrierSpec carrier) (fuel : Nat) (x : Dom) (vs : List WVal) (w : WVal)
+    (hdom : domRepr S x vs)
+    (hRun : wFuncN code host fuel self vs = some w) :
+    codRepr S (model x) w := by
+  subst hcar
+  have hDomEq : Dom = RecordFields fields := eq_of_heq hDom
+  subst hDomEq
+  have hCodEq : Cod = RecordVal (fields[field]'hfield) := eq_of_heq hCod
+  subst hCodEq
+  have e1 : domRepr = recordParamDomRepr carrier structIdx fields := eq_of_heq hdomRepr
+  subst e1
+  have e2 : codRepr = recordParamCodRepr carrier fields field hfield := eq_of_heq hcodRepr
+  subst e2
+  have e3 : model = recordParamModel fields field hfield := eq_of_heq hmodel
+  subst e3
+  obtain ⟨ws, rfl, hrepr⟩ := hdom
+  exact recordParam_simulates_model S structIdx field nlocals fields hfield
+    host code self hCode fuel x ws w hrepr hRun
+
+#print axioms symFragmentFace_none_of_recordProj
+#print axioms recordParam_transport
 
 end AverCert.StandardFace

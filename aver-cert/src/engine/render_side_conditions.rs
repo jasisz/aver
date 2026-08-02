@@ -75,8 +75,10 @@ fn render_expr_side_arm(c: &Cert) -> String {
         plan.params.contains(&FragTy::F64) || plan.result == FragTy::F64,
         "only float expression claims may use the bespoke residual: {name}"
     );
+    // The float arm sits at position five of six: the record-parameter arm
+    // was appended after it, so the float payload gains one `Or.inl`.
     format!(
-        "exact Or.inr (Or.inr (Or.inr (Or.inr ⟨rfl, CertProofs.{name}_simulates⟩)))"
+        "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, CertProofs.{name}_simulates⟩))))"
     )
 }
 

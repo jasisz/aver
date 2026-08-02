@@ -1,5 +1,6 @@
 import SchemaCore
 import WasmSlice
+import StandardFace
 
 set_option linter.unusedVariables false
 set_option maxRecDepth 200000
@@ -136,8 +137,112 @@ def demoRun (isMem : Bool) : Option WVal :=
 example : (demoRun true).bind i32Of = some 1 := by native_decide
 example : (demoRun false).bind i32Of = some 0 := by native_decide
 
+/-! ## The acceptance surface (record-parameter face over the REAL bytes)
+
+The wall face `StandardFace.recordParamDeclaredFace` now binds this exact
+shape on every acceptance path: the source plan encodes to the recognized
+two-node field read, the byte gate's nominal branch admits it, and the face
+pins the Plan declaration by equality against the real type-section entry,
+binds the export's declared parameter to the pinned struct index, and pins the
+obligation's meaning fields to the wall terms the generic bridge discharges. -/
+
+/-- The source-level claim: `readMember(p: Person) -> Bool = p.isMember`. -/
+def isMemberSym : SymRawPlan :=
+  { profile := "sym-fragment-v1",
+    params := [.named "Person"],
+    result := .bool,
+    body :=
+      { nodes :=
+          [{ id := 0, ty := .named "Person", kind := .param 0 },
+           { id := 1, ty := .bool, kind := .projectField "Person" 1 .bool 0 }],
+        result := 1 } }
+
+/-- The encoded representation plan the audited encoder produces for it. -/
+def isMemberPlan : ExprFragmentRawPlan :=
+  { profile := "expr-fragment-v1", params := [.adtRef], result := .boolI32,
+    body :=
+      { nodes :=
+          [{ id := 0, ty := .adtRef, kind := .local 0 },
+           { id := 1, ty := .boolI32, kind := .structGetUser 0 1 0 }],
+        result := 1 } }
+
+example : AverCert.PlanCheck.checkSymRawPlan isMemberSym = true := by rfl
+example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+    [] [("Person", 0)] isMemberSym = some isMemberPlan := by rfl
+example : AverCert.PlanCheck.checkExprFragmentRawPlan isMemberPlan = true := by rfl
+
+-- The shared recognizer fires (once, at the record shape), and the canonical
+-- lowering of the recognized plan is exactly the pinned template.
+example : AverCert.WasmSlice.exprRecordProjFace? isMemberPlan = some (0, 1) := by rfl
+example : AverCert.PlanLower.lowerExprFragmentBody 3 isMemberPlan
+    = some (recordProjTemplate 0 1) := by rfl
+
+/-- `readMember` as export-name bytes. -/
+def readMemberName : AverCert.WasmSlice.ByteSeq :=
+  [114, 101, 97, 100, 77, 101, 109, 98, 101, 114]
+
+-- Byte-side admission on the real module: the export's declared function type
+-- (type index 6) takes exactly `(ref null 0)`, and the entry at struct index 0
+-- is a `.plain` struct of scalar storages with field 1 present.
+example : AverCert.WasmSlice.exprRecordProjTypesMatch modBytes modLen 6 3 0 1
+    = true := by native_decide
+example : AverCert.WasmSlice.recordParamFuncTypeMatches
+    modBytes modLen readMemberName 0 = true := by native_decide
+
+/-- The obligation whose meaning fields are EXACTLY the wall terms the face
+    pins: `Dom`/`domRepr` over the Plan record declaration, `Cod`/`codRepr`
+    the projected field under the generic `ReprOf`, and `model` the field
+    read. -/
+def isMemberOb : Obligation :=
+  { export_ := "readMember", policy := .simulatesModel, carrier := 3,
+    code := isMemberCode, host := AverCert.StandardFace.emptyHost, self := 1,
+    Dom := RecordFields personFields,
+    Cod := RecordVal (personFields[1]'(by decide)),
+    domRepr := AverCert.StandardFace.recordParamDomRepr 3 0 personFields,
+    codRepr := AverCert.StandardFace.recordParamCodRepr 3 personFields 1 (by decide),
+    model := AverCert.StandardFace.recordParamModel personFields 1 (by decide) }
+
+def isMemberClaim : AverCert.AcceptedArtifact.SymFragmentClaim :=
+  { exportNameBytes := readMemberName, exportName := "readMember", carrier := 3,
+    hostTable := [], structTable := [("Person", 0)], plan := isMemberSym,
+    obligation := isMemberOb }
+
+/-- The record-parameter face HOLDS of the honest claim over the real compiled
+    bytes: the Plan declaration is the stage-1 record, the equality pin and the
+    param binding confirm it against `person.wasm`, the Int field forces the
+    byte-derived carrier binding (satisfied at index 3), and every meaning pin
+    is definitional. -/
+theorem isMemberFace :
+    AverCert.StandardFace.recordParamDeclaredFace modBytes modLen
+      isMemberClaim isMemberPlan :=
+  ⟨rfl, rfl, rfl, personDecl, 0, 1, personFields, by decide,
+   rfl, rfl, rfl, rfl,
+   fun _ => by native_decide,
+   by native_decide,
+   by native_decide,
+   HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩
+
+/-- The whole-claim face check (`symFragmentMatches`) accepts the honest claim
+    through EXACTLY the record branch: every `FaceSpec` classifier yields
+    `none` on the recognized record shape, so the record face is this claim's
+    only route. -/
+example (roles : CertDecode.AddSub.Roles) :
+    AverCert.StandardFace.symFragmentMatches modBytes modLen roles
+      isMemberClaim := by
+  refine ⟨rfl, ?_⟩
+  have hNone := AverCert.StandardFace.symFragmentFace_none_of_recordProj
+    isMemberClaim isMemberPlan (by rfl) 0 1 (by rfl)
+  simp only [hNone,
+    show AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      isMemberClaim.hostTable isMemberClaim.structTable isMemberClaim.plan
+      = some isMemberPlan from rfl,
+    show AverCert.WasmSlice.exprRecordProjFace? isMemberPlan
+      = some (0, 1) from rfl]
+  exact isMemberFace
+
 #print axioms AverCert.Schema.recordParam_simulates_model
 #print axioms AverCert.Schema.readField_repr
 #print axioms isMember_recordSemanticBridge
+#print axioms isMemberFace
 
 end PersonDev

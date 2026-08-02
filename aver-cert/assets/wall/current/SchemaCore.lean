@@ -974,6 +974,76 @@ theorem recordParam_simulates_model
       subst hRun
       exact hr'
 
+/-- Whether a Plan type declaration is one of the three admitted scalar leaves.
+    Every `TypeDecl` constructor is listed: a future constructor makes this
+    match non-exhaustive and stops the wall building rather than silently
+    classifying it. -/
+def typeDeclIsScalarLeaf : TypeDecl → Bool
+  | .intCarrier => true
+  | .boolScalar => true
+  | .floatScalar => true
+  | .record _ _ => false
+  | .variant _ _ _ => false
+
+/-- Stage-1 record admission: a `record` head whose every field is a scalar
+    leaf, with at least one field. Explicit arms over every constructor
+    (fail-closed, no wildcard), so extending `TypeDecl` forces a decision
+    here before any new shape can reach the record-parameter face. -/
+def checkRecordDecl : TypeDecl → Bool
+  | .record _ fields => !fields.isEmpty && fields.all typeDeclIsScalarLeaf
+  | .intCarrier => false
+  | .boolScalar => false
+  | .floatScalar => false
+  | .variant _ _ _ => false
+
+/-! Whether a Plan type declaration mentions the Int carrier ANYWHERE. Explicit
+    arms over every constructor; the list walk is structural, so there is no
+    fuel to exhaust — a fuel-based variant would have to answer `true`
+    (REQUIRE the byte-derived carrier binding) on exhaustion, never `false`.
+    A declaration that mentions the carrier makes the record face's meaning
+    read the claimed carrier index, so acceptance must pin that index to the
+    decoded `CertDecode.carrierState`. -/
+mutual
+  def typeDeclMentionsIntCarrier : TypeDecl → Bool
+    | .intCarrier => true
+    | .boolScalar => false
+    | .floatScalar => false
+    | .record _ fields => typeDeclsMentionIntCarrier fields
+    | .variant _ _ ctors => typeDeclsMentionIntCarrier ctors
+  def typeDeclsMentionIntCarrier : List TypeDecl → Bool
+    | [] => false
+    | decl :: rest =>
+        typeDeclMentionsIntCarrier decl || typeDeclsMentionIntCarrier rest
+end
+
+/-- The representation-level fragment type a scalar leaf reads back as:
+    `intCarrier` fields flow as the boxed carrier reference, `boolScalar` as
+    the Boolean i32, `floatScalar` as raw f64 bits. Non-leaves have no scalar
+    fragment type (fail-closed). -/
+def scalarLeafFragTy? : TypeDecl → Option FragTy
+  | .intCarrier => some FragTy.intCarrier
+  | .boolScalar => some FragTy.boolI32
+  | .floatScalar => some FragTy.f64
+  | .record _ _ => none
+  | .variant _ _ _ => none
+
+/-- The fragment result types a stage-1 record field read may declare — exactly
+    the range of `scalarLeafFragTy?`. Every `FragTy` constructor is listed. -/
+def fragTyIsRecordScalar : FragTy → Bool
+  | .intCarrier => true
+  | .boolI32 => true
+  | .f64 => true
+  | .i64 => false
+  | .rawI32 => false
+  | .ref => false
+  | .adtRef => false
+
+/-- The one canonical recursion budget for `lowerTypeDecl` wherever acceptance
+    states the type-section equality pin. Stage 1 lowers only flat records, so
+    any positive fuel suffices; naming one value keeps the pin's statement
+    identical across the face, the fixtures, and the generated certificates. -/
+abbrev lowerTypeDeclFuel : Nat := 8
+
 /-- One certified export. `code`/`host`/`self` pin the emitted body and its
     runtime wiring; `Dom`/`Cod` and their representation relations describe the
     typed source-model face the body is proven to simulate. `AcceptedArtifact`
