@@ -1610,18 +1610,19 @@ mod tests {
     }
 
     #[test]
-    fn record_int_field_projection_stays_unplanned_without_a_face() {
-        // `pairFst`-style Int-field reads have no verbatim projection face:
-        // the SymPlan exists, but the encoder fail-closes (scalar field), so
-        // the export keeps its MIR-emitted body and legacy classification.
+    fn record_int_field_projection_plans_through_the_record_face() {
+        // `pairFst`-style Int-field reads now plan: the record-parameter face
+        // (stage-1 flat scalar records) admits a single scalar field read over
+        // a known layout, so the encoder no longer fail-closes on a scalar
+        // field and the export gets a certified record-projection plan.
         let mut mir_fn = user_name_projection_fn();
         mir_fn.return_type = "Int".to_string();
         let record_fields = |record: &str, field: &str| -> Option<(u32, String)> {
             (record == "User" && field == "name").then(|| (0, "Int".to_string()))
         };
         assert!(
-            fragment_plan_from_mir_fn(&mir_fn, &record_fields, &[]).is_none(),
-            "scalar-field projection must stay unplanned"
+            fragment_plan_from_mir_fn(&mir_fn, &record_fields, &[]).is_some(),
+            "scalar-field projection over a known layout must plan through the record face"
         );
     }
 
