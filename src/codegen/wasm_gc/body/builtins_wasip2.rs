@@ -648,6 +648,33 @@ pub(super) fn emit_tcp_send_wasip2(
     Ok(())
 }
 
+pub(super) fn emit_tcp_send_bytes_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.sendBytes on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 3 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.sendBytes on `--target wasip2` expects 3 args (host, port, data), got {}",
+            args.len()
+        )));
+    }
+    let send_fn = lowering.tcp_send_bytes_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.sendBytes on wasip2: __rt_tcp_send_bytes fn idx missing".into(),
+        )
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_aint_arg_as_i64_wasip2(func, &args[1], slots, ctx)?;
+    emit_mir_expr(func, &args[2], slots, ctx)?;
+    func.instruction(&Instruction::Call(send_fn));
+    Ok(())
+}
+
 /// Phase 4.4b (0.20) — `Tcp.readLine(conn) -> Result<String, String>`
 /// on `--target wasip2`. Pushes conn and calls the helper.
 pub(super) fn emit_tcp_read_line_wasip2(

@@ -16,11 +16,12 @@
 use super::RunWasmGcHost;
 use super::imports::{
     host_http_response_make, host_map_string_list_string_empty, host_option_string_none,
-    host_option_string_some, host_result_err_list_string, host_result_err_string,
-    host_result_err_unit_string, host_result_http_response_err, host_result_http_response_ok,
-    host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
-    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_make,
-    host_terminal_size_make, lm_string_from_host,
+    host_option_string_some, host_result_err_list_int, host_result_err_list_string,
+    host_result_err_string, host_result_err_unit_string, host_result_http_response_err,
+    host_result_http_response_ok, host_result_ok_list_int, host_result_ok_list_string,
+    host_result_ok_string, host_result_ok_unit, host_result_tcp_connection_err,
+    host_result_tcp_connection_ok, host_tcp_connection_make, host_terminal_size_make,
+    lm_string_from_host,
 };
 
 pub(crate) fn decode_main_return_typed(
@@ -469,6 +470,34 @@ pub(crate) fn decode_result_list_string(
         ("$err", aver::replay::JsonValue::String(s)) => host_result_err_list_string(caller, s),
         _ => Err(wasmtime::Error::msg(
             "replay decode Result<List<String>, String>: unexpected payload",
+        )),
+    }
+}
+
+/// Decode a `Result<List<Int>, String>` value. This is the replay
+/// return shape for `Tcp.sendBytes`.
+pub(crate) fn decode_result_list_int(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, inner) = expect_marker(json, &["$ok", "$err"])?;
+    match (marker, inner) {
+        ("$ok", aver::replay::JsonValue::Array(items)) => {
+            let ints: Vec<i64> = items
+                .iter()
+                .map(|v| match v {
+                    aver::replay::JsonValue::Int(n) => Ok(*n),
+                    other => Err(wasmtime::Error::msg(format!(
+                        "replay decode List<Int>: element is {:?}",
+                        other
+                    ))),
+                })
+                .collect::<Result<_, _>>()?;
+            host_result_ok_list_int(caller, &ints)
+        }
+        ("$err", aver::replay::JsonValue::String(s)) => host_result_err_list_int(caller, s),
+        _ => Err(wasmtime::Error::msg(
+            "replay decode Result<List<Int>, String>: unexpected payload",
         )),
     }
 }

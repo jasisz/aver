@@ -461,6 +461,11 @@ pub(super) struct Wasip2Lowering {
     /// ref Result<String, String>` helper wasm fn idx. One-shot
     /// orchestrator: connect + writeLine + readLine + close.
     pub(super) tcp_send_fn_idx: Option<u32>,
+    /// `__rt_tcp_send_bytes(host, port, data) ->
+    /// ref Result<List<Int>, String>` helper wasm fn idx. Uses the
+    /// same ephemeral socket pipeline as `Tcp.send`, with raw-byte
+    /// list marshalling in both directions.
+    pub(super) tcp_send_bytes_fn_idx: Option<u32>,
     /// Phase 4.5b (0.20) — `__rt_tcp_ping(host, port) -> ref
     /// Result<Unit, String>` helper wasm fn idx. Light connect +
     /// close wrapper; no in-line 1s timeout for v1.

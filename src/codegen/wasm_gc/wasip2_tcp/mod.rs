@@ -33,8 +33,9 @@ pub(super) use io::{
     emit_tcp_read_line, emit_tcp_write_line,
 };
 pub(super) use lifecycle::{
-    TcpCloseHelperFns, TcpCloseIndices, TcpPingHelperFns, TcpPingIndices, TcpSendHelperFns,
-    TcpSendIndices, emit_tcp_close, emit_tcp_ping, emit_tcp_send,
+    TcpCloseHelperFns, TcpCloseIndices, TcpPingHelperFns, TcpPingIndices, TcpSendBytesHelperFns,
+    TcpSendBytesIndices, TcpSendHelperFns, TcpSendIndices, emit_tcp_close, emit_tcp_ping,
+    emit_tcp_send, emit_tcp_send_bytes,
 };
 
 /// Phase 4.2.2f — restore the `bump_alloc_ptr` global to the

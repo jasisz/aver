@@ -368,6 +368,85 @@ pub(crate) fn host_result_err_list_string(
     })
 }
 
+/// Build a `Result<List<Int>, String>::Ok(list)` ref. Each response
+/// byte is lifted through the module's canonical `$AverInt`
+/// constructor before the list is assembled bottom-up.
+pub(crate) fn host_result_ok_list_int(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    items: &[i64],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let nil = caller
+        .get_export("__rt_list_int_nil")
+        .and_then(|e| e.into_func());
+    let cons = caller
+        .get_export("__rt_list_int_cons")
+        .and_then(|e| e.into_func());
+    let from_i64 = caller
+        .get_export("__rt_aint_from_i64")
+        .and_then(|e| e.into_func());
+    let factory = caller
+        .get_export("__rt_result_list_int_string_ok")
+        .and_then(|e| e.into_func());
+    let (Some(nil), Some(cons), Some(from_i64), Some(factory)) = (nil, cons, from_i64, factory)
+    else {
+        return Ok(None);
+    };
+    let mut tail_out = [Val::AnyRef(None)];
+    nil.call(&mut *caller, &[], &mut tail_out)?;
+    let mut current = match &tail_out[0] {
+        Val::AnyRef(r) => *r,
+        _ => None,
+    };
+    for item in items.iter().rev() {
+        let mut head_out = [Val::AnyRef(None)];
+        from_i64.call(&mut *caller, &[Val::I64(*item)], &mut head_out)?;
+        let head = match &head_out[0] {
+            Val::AnyRef(r) => *r,
+            _ => None,
+        };
+        let mut next = [Val::AnyRef(None)];
+        cons.call(
+            &mut *caller,
+            &[Val::AnyRef(head), Val::AnyRef(current)],
+            &mut next,
+        )?;
+        current = match &next[0] {
+            Val::AnyRef(r) => *r,
+            _ => None,
+        };
+    }
+    let mut wrapped = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(current)], &mut wrapped)?;
+    Ok(match &wrapped[0] {
+        Val::AnyRef(r) => *r,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_err_list_int(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_list_int_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => *r,
+        _ => None,
+    })
+}
+
 /// Build a `Result<String,String>::Ok(text)` ref by calling the
 /// module's exported factory `__rt_result_string_string_ok`. Returns
 /// `Ok(None)` if the factory or string bridge isn't exported (the

@@ -295,7 +295,7 @@ fn effect_int_arg_positions(dotted: &str) -> &'static [usize] {
         "Time.sleep" => &[0],
         "Response.text" => &[0],
         // Network port / server bind port / terminal coordinates.
-        "Tcp.send" | "Tcp.ping" | "Tcp.connect" => &[1],
+        "Tcp.send" | "Tcp.sendBytes" | "Tcp.ping" | "Tcp.connect" => &[1],
         "HttpServer.listen" | "HttpServer.listenWith" => &[0],
         "Terminal.moveTo" => &[0, 1],
         _ => &[],

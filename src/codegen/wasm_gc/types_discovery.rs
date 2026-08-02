@@ -122,15 +122,16 @@ pub(super) fn collect_results_from_builtin_uses(
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
                         "Tcp.readLine" => intern("Result<String,String>"),
                         "Tcp.writeLine" | "Tcp.close" => intern("Result<Unit,String>"),
-                        // `Tcp.send` and `Tcp.ping` are ephemeral
-                        // (Phase 4.7+ passes 4 / 5) — neither calls
-                        // `__rt_tcp_connect` or returns a
+                        // `Tcp.send`, `Tcp.sendBytes`, and `Tcp.ping`
+                        // are ephemeral (Phase 4.7+ passes 4 / 5) —
+                        // none calls `__rt_tcp_connect` or returns a
                         // `Tcp.Connection`, so they only need their
                         // own return-shape slot. Earlier wrappers
                         // also interned `Result<Tcp.Connection,String>`
                         // and `Result<Unit,String>`; both are dead
                         // weight on the ephemeral path.
                         "Tcp.send" => intern("Result<String,String>"),
+                        "Tcp.sendBytes" => intern("Result<List<Int>,String>"),
                         "Tcp.ping" => intern("Result<Unit,String>"),
                         "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put"
                         | "Http.patch" => intern("Result<HttpResponse,String>"),

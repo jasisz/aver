@@ -140,6 +140,46 @@ fn main() -> Unit
     );
 }
 
+#[test]
+fn tcp_send_bytes_out_of_range_is_a_catchable_result() {
+    let src = r#"module M
+    intent =
+        "Tcp.sendBytes validates byte values before touching the socket"
+    effects [Tcp, Console]
+
+fn main() -> Unit
+    ! [Tcp.sendBytes, Console.print]
+    match Tcp.sendBytes("127.0.0.1", 1, [65, 256])
+        Result.Ok(_) -> Console.print("unexpected ok")
+        Result.Err(e) -> Console.print(e)
+"#;
+    let out = run_wasm_gc(src).expect("byte-range failure must be a catchable Result.Err");
+    assert_eq!(
+        out,
+        "Tcp.sendBytes: byte 256 at index 1 is out of range (0–255)\n"
+    );
+}
+
+#[test]
+fn tcp_send_bytes_bigint_is_a_catchable_result() {
+    let src = r#"module M
+    intent =
+        "Tcp.sendBytes preserves a large byte value in its range error"
+    effects [Tcp, Console]
+
+fn main() -> Unit
+    ! [Tcp.sendBytes, Console.print]
+    match Tcp.sendBytes("127.0.0.1", 1, [65, 1208925819614629174706176])
+        Result.Ok(_) -> Console.print("unexpected ok")
+        Result.Err(e) -> Console.print(e)
+"#;
+    let out = run_wasm_gc(src).expect("big byte-range failure must be a catchable Result.Err");
+    assert_eq!(
+        out,
+        "Tcp.sendBytes: byte 1208925819614629174706176 at index 1 is out of range (0–255)\n"
+    );
+}
+
 /// PURE-builtin saturation is UNCHANGED: `String.charAt` with an out-of-i64
 /// index past the string end must SATURATE to `Option.None` on wasm-gc (the
 /// VM's clamp), NOT trap. This pins that the fix touched only the EFFECT-arg

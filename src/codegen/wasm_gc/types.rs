@@ -565,6 +565,18 @@ impl TypeRegistry {
             list_order.push("List<String>".to_string());
             next_idx += 1;
         }
+        // `Tcp.sendBytes` consumes and returns `List<Int>` across the
+        // host boundary, so its concrete list slot is required even
+        // when the payload expression is an empty list.
+        let needs_list_int_for_tcp_send_bytes = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node == "Tcp.sendBytes"),
+            _ => false,
+        });
+        if needs_list_int_for_tcp_send_bytes && !list_types.contains_key("List<Int>") {
+            list_types.insert("List<Int>".to_string(), next_idx);
+            list_order.push("List<Int>".to_string());
+            next_idx += 1;
+        }
 
         // Eager `Vector<T>` registration for every discovered
         // `List<T>` — `Vector.fromList(list_call())` is the canonical
@@ -1650,9 +1662,10 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Vector.set"
             | "Vector.new"
             | "List.len"
-            // Effect builtins returning Int.
+            // Effect builtins touching Int.
             | "Random.int"
             | "Time.unixMs"
+            | "Tcp.sendBytes"
     )
 }
 

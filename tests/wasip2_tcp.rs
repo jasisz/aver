@@ -1,6 +1,6 @@
 //! Wasip2 `Tcp.*` end-to-end tests (Phase 4 / 0.20 "Pulse").
 //!
-//! Five scenarios share a tiny Python TCP server bound on an
+//! Six scenarios share a tiny Python TCP server bound on an
 //! OS-assigned port (avoids fixed-port flakes in parallel runs):
 //!
 //! - `tcp_connect_close_round_trip` — connect + close, verify
@@ -12,6 +12,8 @@
 //!   echo server, assert the line round-trips byte-for-byte.
 //! - `tcp_send_one_shot` — `Tcp.send` orchestrator: connect +
 //!   write + read + close in one call, return the response line.
+//! - `tcp_send_bytes_one_shot` — the byte-clean sibling round-trips
+//!   a non-UTF-8 payload without decoding it as text.
 //! - `tcp_ping_live_and_closed` — `Tcp.ping` returns Ok against
 //!   the listener and Err against a closed port.
 //!
@@ -370,6 +372,73 @@ fn main() -> Unit
     assert!(
         s.contains("got: pong"),
         "expected `got: pong` from Tcp.send orchestrator, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tcp_send_bytes_one_shot() {
+    let dir = tempdir("send-bytes");
+    let Some((mut server, port)) = spawn_python_server(&dir, ECHO_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping wasip2_tcp sendBytes test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn renderBytes(bytes: List<Int>) -> String
+    match bytes
+        [] -> ""
+        [head, ..tail] -> "{{head}},{{renderBytes(tail)}}"
+
+fn main() -> Unit
+    ! [Tcp.sendBytes, Console.print]
+    match Tcp.sendBytes("127.0.0.1", {port}, [249, 190, 180, 217])
+        Result.Ok(r) -> Console.print("got: {{renderBytes(r)}}")
+        Result.Err(e) -> Console.print("err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "send_bytes.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wasip2_tcp sendBytes failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("got: 249,190,180,217,"),
+        "expected non-UTF-8 bytes from Tcp.sendBytes, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tcp_send_bytes_out_of_range_is_catchable() {
+    let dir = tempdir("send-bytes-range");
+    let src = r#"
+fn main() -> Unit
+    ! [Tcp.sendBytes, Console.print]
+    match Tcp.sendBytes("127.0.0.1", 1, [65, 256])
+        Result.Ok(_) -> Console.print("unexpected ok")
+        Result.Err(e) -> Console.print(e)
+"#;
+    let fixture = write_fixture(&dir, "send_bytes_range.av", src);
+    let out = run_wasip2(&dir, &fixture);
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wasip2_tcp sendBytes range check failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        s,
+        "Tcp.sendBytes: byte 256 at index 1 is out of range (0–255)\n"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
