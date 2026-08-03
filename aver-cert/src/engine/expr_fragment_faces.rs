@@ -299,6 +299,186 @@ pub fn expr_fragment_vector_get_face(
     })
 }
 
+/// The comparison operator of an admitted Int value-versus-value face. Exact
+/// Rust twin of the wall's `StandardFace.IntCmpOp`: `le` is absent by
+/// construction, because the plan grammar has no `i32.le_s` to lower it to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FragIntCmpOp {
+    Lt,
+    Gt,
+    Ge,
+    Eq,
+}
+
+impl FragIntCmpOp {
+    /// The wall constructor naming this operator (`StandardFace.IntCmpOp`).
+    pub fn lean_ctor(self) -> &'static str {
+        match self {
+            FragIntCmpOp::Lt => ".lt",
+            FragIntCmpOp::Gt => ".gt",
+            FragIntCmpOp::Ge => ".ge",
+            FragIntCmpOp::Eq => ".eq",
+        }
+    }
+}
+
+/// Face data of both Int comparison shapes: which operator, and the resolved
+/// index of the single runtime helper it reads (`__aint_cmp` for the three
+/// relational operators, `__aint_eq` for equality). Exact Rust twin of
+/// `StandardFace.IntCmpFace`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FragIntCmpFace {
+    pub op: FragIntCmpOp,
+    pub helper_idx: u32,
+}
+
+/// Twin of `StandardFace.intCmpOfPrim?`: the signed relational primitive each
+/// operator's tail uses. Every other primitive declines, which keeps an
+/// `i32.and`- or `i32.eq`-tailed body out of these faces.
+fn frag_int_cmp_of_prim(op: FragPrim) -> Option<FragIntCmpOp> {
+    match op {
+        FragPrim::I32LtS => Some(FragIntCmpOp::Lt),
+        FragPrim::I32GtS => Some(FragIntCmpOp::Gt),
+        FragPrim::I32GeS => Some(FragIntCmpOp::Ge),
+        _ => None,
+    }
+}
+
+/// The pinned comparison prefix shared by both faces: `local 0`, `local 1`, and
+/// either the `__aint_eq` call alone (3 nodes) or the `__aint_cmp` call plus
+/// `i32.const 0` plus a signed relational operator (5 nodes). Returns the face
+/// and the number of nodes the prefix occupies.
+fn frag_int_cmp_prefix(nodes: &[FragNode]) -> Option<(FragIntCmpFace, usize)> {
+    let [n0, n1, rest @ ..] = nodes else {
+        return None;
+    };
+    if n0.id != FragValueId(0)
+        || n1.id != FragValueId(1)
+        || n0.ty != FragTy::IntCarrier
+        || n1.ty != FragTy::IntCarrier
+    {
+        return None;
+    }
+    let (FragNodeKind::Local { index: 0 }, FragNodeKind::Local { index: 1 }) = (&n0.kind, &n1.kind)
+    else {
+        return None;
+    };
+    let [n2, tail @ ..] = rest else {
+        return None;
+    };
+    if n2.id != FragValueId(2) {
+        return None;
+    }
+    match &n2.kind {
+        FragNodeKind::HostCall {
+            role: FragHostRole::Eq,
+            func_idx,
+            args,
+        } if n2.ty == FragTy::BoolI32
+            && args.as_slice() == [FragValueId(0), FragValueId(1)] =>
+        {
+            Some((
+                FragIntCmpFace {
+                    op: FragIntCmpOp::Eq,
+                    helper_idx: *func_idx,
+                },
+                3,
+            ))
+        }
+        FragNodeKind::HostCall {
+            role: FragHostRole::Cmp,
+            func_idx,
+            args,
+        } if n2.ty == FragTy::RawI32
+            && args.as_slice() == [FragValueId(0), FragValueId(1)] =>
+        {
+            let [n3, n4, ..] = tail else {
+                return None;
+            };
+            if n3.id != FragValueId(3)
+                || n4.id != FragValueId(4)
+                || n3.ty != FragTy::RawI32
+                || n4.ty != FragTy::BoolI32
+            {
+                return None;
+            }
+            let FragNodeKind::ConstI32(0) = n3.kind else {
+                return None;
+            };
+            let FragNodeKind::Prim { op, args } = &n4.kind else {
+                return None;
+            };
+            if args.as_slice() != [FragValueId(2), FragValueId(3)] {
+                return None;
+            }
+            Some((
+                FragIntCmpFace {
+                    op: frag_int_cmp_of_prim(*op)?,
+                    helper_idx: *func_idx,
+                },
+                5,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Exact Rust twin of `StandardFace.classifyIntCmpBool`: two Int-carrier
+/// parameters, a Boolean result, and exactly the pinned comparison nodes.
+pub fn expr_fragment_int_cmp_bool_face(plan: &ExprFragmentPlan) -> Option<FragIntCmpFace> {
+    if plan.params.as_slice() != [FragTy::IntCarrier, FragTy::IntCarrier]
+        || plan.result != FragTy::BoolI32
+    {
+        return None;
+    }
+    let (face, len) = frag_int_cmp_prefix(&plan.body.nodes)?;
+    (plan.body.nodes.len() == len && plan.body.result == FragValueId(len - 1)).then_some(face)
+}
+
+/// One arm of the selection: a bare argument read, no box and no host call.
+/// Twin of `StandardFace.intSelectArm`.
+fn frag_int_select_arm(block: &FragBlock, local: u32) -> bool {
+    let [node] = block.nodes.as_slice() else {
+        return false;
+    };
+    block.result == FragValueId(0)
+        && node.id == FragValueId(0)
+        && node.ty == FragTy::IntCarrier
+        && node.kind == FragNodeKind::Local { index: local }
+}
+
+/// Exact Rust twin of `StandardFace.classifyIntSelect`: the comparison above
+/// followed by an `if` whose two arms are the bare reads of parameter 0 and
+/// parameter 1 in that order — so the result is a passthrough of an input, never
+/// a freshly boxed value.
+pub fn expr_fragment_int_select_face(plan: &ExprFragmentPlan) -> Option<FragIntCmpFace> {
+    if plan.params.as_slice() != [FragTy::IntCarrier, FragTy::IntCarrier]
+        || plan.result != FragTy::IntCarrier
+    {
+        return None;
+    }
+    let (face, len) = frag_int_cmp_prefix(&plan.body.nodes)?;
+    if plan.body.nodes.len() != len + 1 || plan.body.result != FragValueId(len) {
+        return None;
+    }
+    let node = &plan.body.nodes[len];
+    if node.id != FragValueId(len) || node.ty != FragTy::IntCarrier {
+        return None;
+    }
+    let FragNodeKind::If {
+        cond,
+        then_block,
+        else_block,
+    } = &node.kind
+    else {
+        return None;
+    };
+    (*cond == FragValueId(len - 1)
+        && frag_int_select_arm(then_block, 0)
+        && frag_int_select_arm(else_block, 1))
+    .then_some(face)
+}
+
 fn frag_block_has_user_struct_get(block: &FragBlock) -> bool {
     block.nodes.iter().any(|node| match &node.kind {
         FragNodeKind::StructGetUser { .. } => true,

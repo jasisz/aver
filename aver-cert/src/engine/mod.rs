@@ -62,6 +62,11 @@ pub const STRING_CONCAT_CONTRACT: &str =
     "String.concat (container-of-string-arrays -> byte-concatenated array)";
 pub const TO_INDEX_CONTRACT: &str =
     "__aint_to_index (carrier -> i32 array index; [0, 2^31) passes, else -1)";
+/// The two Int comparison helper contracts. Byte-identical twins of
+/// `ClaimAxes.cmpContract` / `ClaimAxes.eqContract`; `contractsMatch` compares
+/// the manifest list against the wall's own, so a drift here fails closed.
+pub const CMP_CONTRACT: &str = "__aint_cmp (carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)";
+pub const EQ_CONTRACT: &str = "__aint_eq (carrier pair -> i32 boolean; 1 when equal, else 0)";
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.

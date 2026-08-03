@@ -111,7 +111,11 @@ enum StringHostRole {
     Concat,
 }
 
+/// The declared role indices in fixed `(box, add, mul, sub, toIndex, cmp, eq)`
+/// order — the same order the producer's `FragHostRoleIndices` uses.
 type HostRoleTable = (
+    Option<u32>,
+    Option<u32>,
     Option<u32>,
     Option<u32>,
     Option<u32>,
@@ -463,15 +467,20 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let capabilities = lean_string_pair_list(&candidates.capabilities);
     let start = lean_option_nat(candidates.start);
     let roles = match candidates.host_role_table {
-        Some((box_role, add_role, mul_role, sub_role, to_index_role)) => format!(
-            "some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {} }} : \
+        Some((box_role, add_role, mul_role, sub_role, to_index_role, cmp_role, eq_role)) => {
+            format!(
+                "some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
+             cmp := {}, eq := {} }} : \
              CertDecode.AddSub.Roles)",
-            lean_option_nat(box_role),
-            lean_option_nat(add_role),
-            lean_option_nat(mul_role),
-            lean_option_nat(sub_role),
-            lean_option_nat(to_index_role),
-        ),
+                lean_option_nat(box_role),
+                lean_option_nat(add_role),
+                lean_option_nat(mul_role),
+                lean_option_nat(sub_role),
+                lean_option_nat(to_index_role),
+                lean_option_nat(cmp_role),
+                lean_option_nat(eq_role),
+            )
+        }
         None => "(none : Option CertDecode.AddSub.Roles)".to_string(),
     };
     let string_roles = format!(
@@ -641,7 +650,7 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
         exact_object_fields(
             host_roles,
             "hostRoleTable",
-            &["box", "add", "mul", "sub", "toIndex"],
+            &["box", "add", "mul", "sub", "toIndex", "cmp", "eq"],
         )?;
         let optional_index = |key: &str| -> Result<Option<u32>, String> {
             match &host_roles[key] {
@@ -655,6 +664,8 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
             optional_index("mul")?,
             optional_index("sub")?,
             optional_index("toIndex")?,
+            optional_index("cmp")?,
+            optional_index("eq")?,
         ))
     };
 

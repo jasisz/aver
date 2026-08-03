@@ -143,6 +143,17 @@ pub enum SymNodeKind {
         value: SymValueId,
         constant: i64,
     },
+    /// Source-level comparison of two Int VALUES (`a >= b`, `a == b`). Unlike
+    /// `IntConstCmp`, which compares one parameter against a LITERAL and
+    /// encodes to a carrier-shape test, this encodes to the runtime helper call
+    /// the emitter really produces: `__aint_cmp` plus a signed relational tail,
+    /// or `__aint_eq` alone. `Le` has no admitted encoding (the plan grammar
+    /// has no `i32.le_s`), so it fail-closes. Twin of `SymNodeKind.intCmp`.
+    IntCmp {
+        op: SymIntCmp,
+        lhs: SymValueId,
+        rhs: SymValueId,
+    },
     /// Operational discriminant dispatch over an ADT value. The encoded plan
     /// reads field 0 of the struct named by `type_name`, compares it with
     /// `tag`, and evaluates `hit` on equality or `miss` otherwise. This does
@@ -676,6 +687,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
                 | FragPrim::I32Eq
                 | FragPrim::I32LtS
                 | FragPrim::I32GtS
+                | FragPrim::I32GeS
                 // The source-subset lift stays float-only; `Bool.and` certs
                 // carry their SymPlan forward from the producer instead.
                 | FragPrim::I32And => return None,

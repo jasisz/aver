@@ -11,11 +11,15 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
     let record_proj = expr_fragment_record_proj_face(plan).is_some();
+    // The Int selection face also returns an Int carrier; its result is a
+    // passthrough of an input local rather than a fresh box.
+    let int_select = expr_fragment_int_select_face(plan).is_some();
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
-        || record_proj;
+        || record_proj
+        || int_select;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
         || expr_fragment_project_face(plan).is_some()
         || tag_dispatch
@@ -415,7 +419,9 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
                 )
             }
             crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
-            crate::ir::mir::MirExpr::Match(m) => self.lower_tag_match(&m.node),
+            crate::ir::mir::MirExpr::Match(m) => self
+                .lower_bool_match(&m.node)
+                .or_else(|| self.lower_tag_match(&m.node)),
             crate::ir::mir::MirExpr::Call(call) => self.lower_call(&call.node),
             _ => None,
         }
@@ -585,6 +591,15 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
 
         let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
         let (rhs, rhs_ty) = self.lower_expr(&binop.rhs)?;
+        // Int VALUE versus Int VALUE. The emitter calls `__aint_cmp` (or
+        // `__aint_eq`) here, which the two exact-pinned comparison faces
+        // recognize. Placed before the Float bail so a Float comparison keeps
+        // its existing primitive lowering untouched. `<=` and `!=` decline:
+        // neither has an admitted plan primitive behind it.
+        if lhs_ty == SymTy::Int && rhs_ty == SymTy::Int {
+            let op = sym_int_cmp_op(binop.op)?;
+            return self.push_node(SymTy::Bool, SymNodeKind::IntCmp { op, lhs, rhs });
+        }
         if lhs_ty == SymTy::String && rhs_ty == SymTy::String {
             if binop.op != crate::ast::BinOp::Add {
                 return None;
@@ -734,6 +749,74 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
                 else_block: Box::new(else_block),
             },
         )
+    }
+
+    /// `match <bool> { true -> …; false -> … }` — the source shape the Int
+    /// selection face is written in. It denotes exactly the two-armed
+    /// conditional `lower_if` already plans, so it lowers to the same `If`
+    /// node rather than to a tag dispatch (whose scrutinee must be an
+    /// Option/Result reference). Arms are matched by their patterns, never by
+    /// position: a `false`-first source order still yields the `true` arm as
+    /// the `then` block.
+    fn lower_bool_match(
+        &mut self,
+        m: &'e crate::ir::mir::MirMatch,
+    ) -> Option<(SymValueId, SymTy)> {
+        let [first, second] = m.arms.as_slice() else {
+            return None;
+        };
+        let arm_bool = |pattern: &crate::ir::mir::MirPattern| match pattern {
+            crate::ir::mir::MirPattern::Literal(crate::ast::Literal::Bool(value)) => {
+                Some(Some(*value))
+            }
+            crate::ir::mir::MirPattern::Wildcard => Some(None),
+            _ => None,
+        };
+        // Exactly one arm per truth value, with an optional trailing wildcard
+        // standing for whichever value the first arm did not name.
+        let (then_arm, else_arm) = match (arm_bool(&first.pattern)?, arm_bool(&second.pattern)?) {
+            (Some(true), Some(false)) | (Some(true), None) => (first, second),
+            (Some(false), Some(true)) | (Some(false), None) => (second, first),
+            _ => return None,
+        };
+
+        let (cond, cond_ty) = self.lower_expr(&m.subject)?;
+        if cond_ty != SymTy::Bool {
+            return None;
+        }
+        let then_block = self.lower_branch_block(&then_arm.body)?;
+        let else_block = self.lower_branch_block(&else_arm.body)?;
+        let ty = then_block.result_ty()?;
+        if Some(&ty) != else_block.result_ty().as_ref() {
+            return None;
+        }
+        self.push_node(
+            ty,
+            SymNodeKind::If {
+                cond,
+                then_block: Box::new(then_block),
+                else_block: Box::new(else_block),
+            },
+        )
+    }
+
+    /// Lower one conditional branch into its own block, in a fresh builder that
+    /// inherits the enclosing parameter and alias scope (the same discipline
+    /// `lower_if` uses for its two arms).
+    fn lower_branch_block(
+        &mut self,
+        body: &'e crate::ast::Spanned<crate::ir::mir::MirExpr>,
+    ) -> Option<SymBlock> {
+        let mut builder = MirSymPlanBuilder {
+            params_by_slot: self.params_by_slot,
+            record_fields: self.record_fields,
+            builtins: self.builtins,
+            aliases: self.aliases.clone(),
+            alias_hops: self.alias_hops,
+            nodes: Vec::new(),
+        };
+        let (root, _) = builder.lower_expr(body)?;
+        builder.finish(root)
     }
 
     fn lower_tag_match(
@@ -1180,6 +1263,21 @@ fn sym_int_const_cmp_op(op: crate::ast::BinOp) -> Option<SymIntCmp> {
         // Kept aligned with the representation encoder: `Neq` needs
         // `i64.ne` in the wall's measured instruction set first.
         crate::ast::BinOp::Neq => None,
+        _ => None,
+    }
+}
+
+/// The source operators an Int value-versus-value comparison admits. `Lte` is
+/// absent because the plan grammar has no `i32.le_s` to lower its `__aint_cmp`
+/// tail to, and `Neq` because nothing needs it: admitting either would widen
+/// the checker with no certifiable export behind it.
+fn sym_int_cmp_op(op: crate::ast::BinOp) -> Option<SymIntCmp> {
+    match op {
+        crate::ast::BinOp::Eq => Some(SymIntCmp::Eq),
+        crate::ast::BinOp::Lt => Some(SymIntCmp::Lt),
+        crate::ast::BinOp::Gt => Some(SymIntCmp::Gt),
+        crate::ast::BinOp::Gte => Some(SymIntCmp::Ge),
+        crate::ast::BinOp::Lte | crate::ast::BinOp::Neq => None,
         _ => None,
     }
 }

@@ -339,6 +339,12 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
             if hasSymTy checked value (.named typeName) then some fieldTy else none
         | .intConstCmp _ value _ =>
             if hasSymTy checked value .int && isSymParam checked value then some .bool else none
+        -- Both operands are ordinary Int VALUES; nothing here demands they be
+        -- parameters. The two comparison faces pin the encoded node list
+        -- literally to reads of locals 0 and 1, so a comparison of anything
+        -- else encodes to a plan no face recognizes and declines there.
+        | .intCmp _ lhs rhs =>
+            if hasSymTy checked lhs .int && hasSymTy checked rhs .int then some .bool else none
         | .tagMatch _typeName scrutinee _tag hit miss =>
             -- The scrutinee must be an ADT/record value (encodes to `adtRef`, so
             -- `struct.get.user` is well-typed); both arms must check under the
@@ -842,6 +848,17 @@ def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
   | .ge => some .i64GeS
   | .gt => some .i64GtS
 
+/-- The signed relational primitive that reads the three-way `__aint_cmp`
+    verdict for one source operator. `eq` is absent because it reads a
+    DIFFERENT helper (`__aint_eq`, which needs no tail at all), and `le` is
+    absent because the plan grammar has no `i32.le_s` to lower it to. -/
+def symIntCmpTailPrim? : SymIntCmp → Option FragPrim
+  | .lt => some .i32LtS
+  | .gt => some .i32GtS
+  | .ge => some .i32GeS
+  | .eq => none
+  | .le => none
+
 inductive SymBigIntConstCmpKind where
   | always (value : Bool)
   | signLtZero
@@ -980,6 +997,27 @@ def encodeSymBlockFuel :
               let elseBlock ← encodeIntBigConstCmpBlock? index op
               let (st, id) := pushEncodedNode st .boolI32 (.ifElse isSmall thenBlock elseBlock)
               some { st with symToFrag := st.symToFrag ++ [id] }
+          | .intCmp op lhs rhs =>
+              -- The emitted comparison: read both operands, call the helper the
+              -- operator names, and — for the three relational operators —
+              -- compare the raw verdict against `i32.const 0`. Equality reads
+              -- `__aint_eq`, whose `0`/`1` result IS the source Boolean.
+              let lhsId ← encodedValue? st lhs
+              let rhsId ← encodedValue? st rhs
+              match op with
+              | .eq =>
+                  let eqIdx ← hostRoleIdx? hostTable .eq
+                  let (st, id) :=
+                    pushEncodedNode st .boolI32 (.hostCall .eq eqIdx [lhsId, rhsId])
+                  some { st with symToFrag := st.symToFrag ++ [id] }
+              | op =>
+                  let prim ← symIntCmpTailPrim? op
+                  let cmpIdx ← hostRoleIdx? hostTable .cmp
+                  let (st, verdict) :=
+                    pushEncodedNode st .rawI32 (.hostCall .cmp cmpIdx [lhsId, rhsId])
+                  let (st, zero) := pushEncodedNode st .rawI32 (.constI32 0)
+                  let (st, id) := pushEncodedNode st .boolI32 (.prim prim [verdict, zero])
+                  some { st with symToFrag := st.symToFrag ++ [id] }
           | .tagMatch typeName scrutinee tag hitBlock missBlock =>
               -- Canonical tag-dispatch lowering: read field 0 (i32 tag) of the
               -- scrutinee's struct, compare to the literal discriminant, and

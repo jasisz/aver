@@ -3104,9 +3104,11 @@ pub(super) fn emit_module_with(
         mul_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintMul),
         sub_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintSub),
         to_index_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToIndex),
+        cmp_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintCmp),
+        eq_idx: builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq),
         // The declared arith template indices matter only for the certificate
         // manifest, which the checker re-derives from the emitted bytes; the
-        // plan encoder here needs only the four call-target roles above.
+        // plan encoder here needs only the call-target roles above.
         ..Default::default()
     };
     for (i, _fd) in fn_defs.iter().enumerate() {

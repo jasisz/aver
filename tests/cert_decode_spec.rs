@@ -577,7 +577,7 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
     let mut carrierless_seen = 0usize;
     for (name, av_path) in corpus {
         let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
-        let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
+        let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
             aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
                 .unwrap_or_else(|error| panic!("{name}: Rust role classifier failed: {error}"));
         // The production acceptance pin binds exactly the two name-derived

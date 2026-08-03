@@ -251,6 +251,14 @@ mutual
         wasm struct type index through the byte-derived struct table. -/
     | projectField (typeName : String) (field : Nat) (fieldTy : SymTy) (value : Nat)
     | intConstCmp (op : SymIntCmp) (value : Nat) (constant : Int)
+    /-- Source-level comparison of two Int VALUES (`a >= b`, `a == b`). Unlike
+        `intConstCmp`, which compares one parameter against a LITERAL and
+        encodes to a carrier-shape test, this encodes to the runtime helper call
+        the emitter really produces: the three-way `__aint_cmp` followed by a
+        signed relational operator against `i32.const 0`, or `__aint_eq` alone.
+        `le` has no admitted encoding — the plan grammar carries no `i32.le_s`
+        primitive — so it fail-closes. -/
+    | intCmp (op : SymIntCmp) (lhs rhs : Nat)
     /-- Operational tag-field dispatch over an ADT value (Option/Result). Reads
         the i32 discriminant in field 0 of the `typeName` struct that `scrutinee`
         holds, compares it to the literal `tag`, and evaluates `hit` when equal

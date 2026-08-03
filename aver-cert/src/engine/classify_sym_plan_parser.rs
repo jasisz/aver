@@ -224,6 +224,20 @@ impl<'a> SymPlanParser<'a> {
                     constant,
                 }
             }
+            "int.cmp" => {
+                let op = attrs
+                    .get("op")
+                    .and_then(|raw| SymIntCmp::from_plan_tag(raw))
+                    .ok_or_else(|| {
+                        format!("source plan node v{} has unknown int comparison op", id.0)
+                    })?;
+                let lhs = sym_plan_attr_value(id, &attrs, "lhs")?;
+                let rhs = sym_plan_attr_value(id, &attrs, "rhs")?;
+                require_sym_plan_node_ty(nodes, lhs, &SymTy::Int)?;
+                require_sym_plan_node_ty(nodes, rhs, &SymTy::Int)?;
+                require_sym_plan_ty(id, &ty, &SymTy::Bool)?;
+                SymNodeKind::IntCmp { op, lhs, rhs }
+            }
             "tag.match" => {
                 let type_name = plan_attr(FragValueId(id.0), &attrs, "type")?.to_string();
                 require_sym_plan_token(id, "type", &type_name)?;

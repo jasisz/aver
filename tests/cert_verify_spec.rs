@@ -3946,7 +3946,7 @@ fn cert_goals_layout(out_dir: &Path) -> CertGoalsLayout {
     );
     let (body_box_idx, body_add_idx) = (calls[0], calls[1]);
 
-    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx, _cmp_idx, _eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm)
             .expect("cert_goals module must expose a byte-derived host-role table");
     let box_idx = box_idx.expect("cert_goals box role");
@@ -5755,7 +5755,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := ");
     lean.push_str(&carrier);
     lean.push_str(", code := fun _ => none,\n    host := fun _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none, cmp := none, eq := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str(
         "def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := ",
     );

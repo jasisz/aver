@@ -462,6 +462,7 @@ fn plan_prim_from_tag(tag: &str) -> Option<FragPrim> {
         "i32.eq" => Some(FragPrim::I32Eq),
         "i32.lt_s" => Some(FragPrim::I32LtS),
         "i32.gt_s" => Some(FragPrim::I32GtS),
+        "i32.ge_s" => Some(FragPrim::I32GeS),
         "i32.and" => Some(FragPrim::I32And),
         _ => None,
     }
@@ -486,7 +487,7 @@ fn check_plan_prim_args(
         | FragPrim::I64LtS
         | FragPrim::I64GeS
         | FragPrim::I64GtS => &[FragTy::I64, FragTy::I64],
-        FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS => {
+        FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS | FragPrim::I32GeS => {
             &[FragTy::RawI32, FragTy::RawI32]
         }
         // SOUNDNESS: the loose "raw OR bool i32" admission of the comparisons
@@ -503,7 +504,10 @@ fn check_plan_prim_args(
         ));
     }
     for (arg, expected) in args.iter().zip(expected_args) {
-        if matches!(op, FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS) {
+        if matches!(
+            op,
+            FragPrim::I32Eq | FragPrim::I32LtS | FragPrim::I32GtS | FragPrim::I32GeS
+        ) {
             let got = nodes
                 .get(arg.0)
                 .ok_or_else(|| format!("plan references missing node v{}", arg.0))?
@@ -535,6 +539,7 @@ fn check_plan_prim_args(
         | FragPrim::I32Eq
         | FragPrim::I32LtS
         | FragPrim::I32GtS
+        | FragPrim::I32GeS
         | FragPrim::I32And => FragTy::BoolI32,
     })
 }

@@ -139,6 +139,15 @@ pub enum FragHostRole {
     /// to the `-1` out-of-bounds sentinel. Consumed only inside the monolithic
     /// fused vector-read node, never as a standalone `hostCall`.
     ToIndex,
+    /// The `__aint_cmp` three-way comparison contract: two represented integers
+    /// in, the raw `i32` sentinel `-1`/`0`/`1` out. The result is NOT a Boolean
+    /// — the emitter always follows the call with `i32.const 0` and a signed
+    /// relational operator — so its node type is `RawI32`.
+    Cmp,
+    /// The `__aint_eq` equality contract: two represented integers in, the
+    /// `0`/`1` wasm Boolean out. Unlike `Cmp` the result IS the source-level
+    /// Boolean, so its node type is `BoolI32` and no comparison tail follows.
+    Eq,
 }
 
 impl FragHostRole {
@@ -150,6 +159,8 @@ impl FragHostRole {
             FragHostRole::Mul => "mul",
             FragHostRole::Sub => "sub",
             FragHostRole::ToIndex => "to_index",
+            FragHostRole::Cmp => "cmp",
+            FragHostRole::Eq => "eq",
         }
     }
 
@@ -161,6 +172,8 @@ impl FragHostRole {
             FragHostRole::Mul => ".mul",
             FragHostRole::Sub => ".sub",
             FragHostRole::ToIndex => ".toIndex",
+            FragHostRole::Cmp => ".cmp",
+            FragHostRole::Eq => ".eq",
         }
     }
 
@@ -171,6 +184,8 @@ impl FragHostRole {
             "mul" => Some(FragHostRole::Mul),
             "sub" => Some(FragHostRole::Sub),
             "to_index" => Some(FragHostRole::ToIndex),
+            "cmp" => Some(FragHostRole::Cmp),
+            "eq" => Some(FragHostRole::Eq),
             _ => None,
         }
     }
@@ -186,6 +201,11 @@ impl FragHostRole {
             // Twin of `PlanCheck.hostCallResultTy?` returning `none`: the
             // to-index role has no standalone `hostCall` signature.
             FragHostRole::ToIndex => (&[], FragTy::RawI32),
+            // Both comparison helpers leave the carrier: two represented
+            // integers in, a raw i32 verdict out. The three-way one is NOT a
+            // Boolean (`-1` is a legitimate result), the equality one is.
+            FragHostRole::Cmp => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::RawI32),
+            FragHostRole::Eq => (&[FragTy::IntCarrier, FragTy::IntCarrier], FragTy::BoolI32),
         }
     }
 }
@@ -205,6 +225,12 @@ pub struct FragHostTable {
     /// The `__aint_to_index` binding, byte-derived from the named helper
     /// export exactly like `box`.
     pub to_index_idx: Option<u32>,
+    /// The `__aint_cmp` and `__aint_eq` bindings, byte-derived from their named
+    /// helper exports exactly like `box` and `to_index`. The two helpers
+    /// declare the SAME function type, so the export name is the only thing
+    /// that tells them apart — which is why neither is derived by body shape.
+    pub cmp_idx: Option<u32>,
+    pub eq_idx: Option<u32>,
     /// The limb array type index the Int carrier's middle field references.
     pub limb_idx: Option<u32>,
     /// The four bignum sub-routine FUNCTION indices the arith helper bodies
@@ -217,9 +243,11 @@ pub struct FragHostTable {
     pub umag_cmp_idx: Option<u32>,
 }
 
-/// Public differential surface for the five module-level roles, in fixed
-/// `(box, add, mul, sub, toIndex)` order.
+/// Public differential surface for the seven module-level roles, in fixed
+/// `(box, add, mul, sub, toIndex, cmp, eq)` order.
 pub type FragHostRoleIndices = (
+    Option<u32>,
+    Option<u32>,
     Option<u32>,
     Option<u32>,
     Option<u32>,
@@ -235,6 +263,8 @@ impl FragHostTable {
             FragHostRole::Mul => self.mul_idx,
             FragHostRole::Sub => self.sub_idx,
             FragHostRole::ToIndex => self.to_index_idx,
+            FragHostRole::Cmp => self.cmp_idx,
+            FragHostRole::Eq => self.eq_idx,
         }
     }
 
@@ -257,6 +287,12 @@ impl FragHostTable {
         if let Some(idx) = self.to_index_idx {
             entries.push(format!("(.toIndex, {idx})"));
         }
+        if let Some(idx) = self.cmp_idx {
+            entries.push(format!("(.cmp, {idx})"));
+        }
+        if let Some(idx) = self.eq_idx {
+            entries.push(format!("(.eq, {idx})"));
+        }
         format!("[{}]", entries.join(", "))
     }
 
@@ -269,13 +305,16 @@ impl FragHostTable {
             None => "none".to_string(),
         };
         format!(
-            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {} }} : \
+            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
+             cmp := {}, eq := {} }} : \
              CertDecode.AddSub.Roles)",
             option(self.box_idx),
             option(self.add_idx),
             option(self.mul_idx),
             option(self.sub_idx),
             option(self.to_index_idx),
+            option(self.cmp_idx),
+            option(self.eq_idx),
         )
     }
 
@@ -294,6 +333,8 @@ impl FragHostTable {
             mul_idx: Some(2),
             sub_idx: Some(3),
             to_index_idx: Some(4),
+            cmp_idx: Some(5),
+            eq_idx: Some(6),
             limb_idx: Some(0),
             decompose_idx: Some(0),
             normalize_idx: Some(0),
@@ -462,6 +503,10 @@ pub enum FragPrim {
     I32Eq,
     I32LtS,
     I32GtS,
+    /// `i32.ge_s`: the tail the emitter appends to a `__aint_cmp` call for a
+    /// source-level `>=`. Twin of the wall's `FragPrim.i32GeS`; `i32.le_s` is
+    /// deliberately absent on both sides, since no admitted plan produces it.
+    I32GeS,
     /// `i32.and` restricted to the Boolean domain: the checker types it only
     /// over two `BoolI32` operands, because bitwise AND of arbitrary raw i32
     /// values can produce a non-Boolean result (`2 and 2 = 2`).
@@ -487,6 +532,7 @@ impl FragPrim {
             FragPrim::I32Eq => "i32.eq",
             FragPrim::I32LtS => "i32.lt_s",
             FragPrim::I32GtS => "i32.gt_s",
+            FragPrim::I32GeS => "i32.ge_s",
             FragPrim::I32And => "i32.and",
         }
     }
@@ -509,6 +555,7 @@ impl FragPrim {
             FragPrim::I32Eq => ".i32Eq",
             FragPrim::I32LtS => ".i32LtS",
             FragPrim::I32GtS => ".i32GtS",
+            FragPrim::I32GeS => ".i32GeS",
             FragPrim::I32And => ".i32And",
         }
     }

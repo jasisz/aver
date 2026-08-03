@@ -259,6 +259,7 @@ fn push_prim_opcode(out: &mut Vec<u8>, op: FragPrim) {
         FragPrim::I32Eq => 0x46,
         FragPrim::I32LtS => 0x48,
         FragPrim::I32GtS => 0x4a,
+        FragPrim::I32GeS => 0x4e,
         FragPrim::I32And => 0x71,
     });
 }

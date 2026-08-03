@@ -231,8 +231,8 @@ theorem {name}_exprFragmentSemanticBridge :
     AcceptanceSoundness.exprFragmentSemanticBridge {claim_name}
       AverCert.Plans.{name}Plan := by
   refine ⟨rfl, ?_⟩
-  intro S add sub mul stringEq stringConcat toIndex hAdd hSub hMul hStringEq hStringConcat
-    _hToIndex fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq hAdd hSub hMul hStringEq hStringConcat
+    _hToIndex _hCmp _hEq fuel x vs w hDom hRun
   dsimp only [{claim_name}, AverCert.{name}Ob] at x hDom ⊢
   subst hDom
   by_cases hx : x.1 = {tag}
@@ -264,8 +264,8 @@ theorem {name}_exprFragmentSemanticBridge :
     AcceptanceSoundness.exprFragmentSemanticBridge {claim}
       AverCert.Plans.{name}Plan := by
   refine ⟨rfl, ?_⟩
-  intro S add sub mul stringEq stringConcat toIndex
-    hAdd hSub hMul hStringEq hStringConcat _hToIndex fuel ns vs out hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    hAdd hSub hMul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel ns vs out hDom hRun
   dsimp [AverCert.{name}Ob] at ns vs hDom hRun ⊢
   rcases hDom with ⟨hRepr, hLen⟩
   cases hRepr with
@@ -531,8 +531,8 @@ theorem {name}_exprFragmentSemanticBridge :
     AcceptanceSoundness.exprFragmentSemanticBridge {claim}
       AverCert.Plans.{name}Plan := by
   refine ⟨rfl, ?_⟩
-  intro S add sub mul stringEq stringConcat toIndex
-    hAdd hSub hMul hStringEq hStringConcat _hToIndex fuel {dom_name} vs out hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    hAdd hSub hMul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel {dom_name} vs out hDom hRun
   dsimp [AverCert.{name}Ob] at {dom_name} vs hDom hRun ⊢
 {unpack}  subst vs
   refine ⟨{inputs}, {locals}, {result}, rfl, rfl, ?_, ?_, ?_⟩

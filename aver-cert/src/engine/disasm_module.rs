@@ -542,6 +542,29 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         .find(|(n, _)| n == "__aint_to_index")
         .map(|(_, i)| *i);
 
+    // The two Int comparison helpers, likewise exact by export name (twins of
+    // `CertDecode.AddSub.cmpIdx`/`eqIdx`). They are NOT derived from body shape
+    // like add/sub/mul: both declare the same function type and return a raw
+    // `i32`, so `is_carrier_binop` rightly excludes them and nothing but the
+    // export name separates the three-way helper from the equality one.
+    let cmp_idx = exports
+        .iter()
+        .find(|(n, _)| n == "__aint_cmp")
+        .map(|(_, i)| *i);
+    let eq_idx = exports
+        .iter()
+        .find(|(n, _)| n == "__aint_eq")
+        .map(|(_, i)| *i);
+
+    // No behavioural (body-shape) scan is added for `cmp`/`eq`, and the
+    // carrier-binop signature test below deliberately keeps excluding them:
+    // both return a raw `i32` rather than a carrier, so they are not carrier
+    // binops, and their two bodies would need a role classifier of their own.
+    // Their roles are export-name-derived instead, which is also what the
+    // wall's `cmpIdx`/`eqIdx` decoders read. Nothing else is needed for the
+    // refusal path either: the two exports only ever appear alongside the Int
+    // box helper, so the `box_idx.is_some()` block below already refuses every
+    // module whose role table the certificate decoder cannot resolve.
     let is_carrier_binop = |def_idx: usize| -> bool {
         let Some(c) = carrier else {
             return false;
@@ -706,6 +729,8 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
             mul_idx,
             sub_idx,
             to_index_idx,
+            cmp_idx,
+            eq_idx,
             limb_idx: limb,
             decompose_idx,
             normalize_idx,

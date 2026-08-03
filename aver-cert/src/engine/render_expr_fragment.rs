@@ -1,4 +1,14 @@
 fn render_expr_fragment_cert(c: &Cert) -> String {
+    // The two Int comparison faces discharge entirely inside the wall
+    // (`intCmpBool_claim_discharges` / `intSelect_claim_discharges`): the
+    // checked face pins their whole meaning, so there is no producer semantic
+    // premise and no bespoke proof declaration to emit. This test precedes the
+    // audited-generic one because their source types (Int, Int -> Bool) sit
+    // inside that gate while their PLAN calls a runtime helper the generic
+    // fragment grammar refuses.
+    if c.int_cmp_face().is_some() {
+        return String::new();
+    }
     // Audited integer/Bool source fragments emit only their option-(b)
     // semantic bridge in `Certificate.lean`.
     if expr_fragment_uses_audited_generic(c) {
@@ -77,7 +87,7 @@ theorem {name}_wasm_certified (S : CarrierSpec {carrier}) :
 def {name}HostRef : HostTbl := {name}Host
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq hStringConcat _hToIndex fuel p vs w hrepr hrun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq hadd hsub hmul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel p vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   subst hrepr
   cases fuel with
@@ -104,8 +114,8 @@ fn render_expr_fragment_vector_get_cert(c: &Cert, face: FragVectorGetOrDefaultFa
         r#"/-! ### {name} — fused vector-read certificate (carrier type {carrier}) -/
 
 theorem {name}_simulates : AverCert.Schema.Obligation.holds AverCert.{name}Ob := by
-  intro S add sub mul stringEq stringConcat toIndex _hadd _hsub _hmul _hStringEq
-    _hStringConcat hToIndex fuel p vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq _hadd _hsub _hmul _hStringEq
+    _hStringConcat hToIndex _hCmp _hEq fuel p vs w hDom hRun
   obtain ⟨v, i⟩ := p
   exact AverCert.StandardFace.vectorGetOrDefault_simulates_model
     {carrier} {to_index_idx} {box_idx} {arr_ty} ({d} : Int) (by decide) S toIndex hToIndex
@@ -183,7 +193,7 @@ example :
 /-- Schema-shaped simulation obligation for `{name}` (composed by the single
     final theorem). Partial correctness over any fuel and representation. -/
 theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq hStringConcat _hToIndex fuel ns vs w hrepr hrun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq hadd hsub hmul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel ns vs w hrepr hrun
   simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
   obtain ⟨hrepr, harity⟩ := hrepr
   cases hrepr with
@@ -384,6 +394,11 @@ where
                     let rhs = expr_fragment_i32_expr(block, args[1], local);
                     format!("({lhs}) > ({rhs})")
                 }
+                FragPrim::I32GeS => {
+                    let lhs = expr_fragment_i32_expr(block, args[0], local);
+                    let rhs = expr_fragment_i32_expr(block, args[1], local);
+                    format!("({lhs}) \u{2265} ({rhs})")
+                }
                 FragPrim::I32And => {
                     let lhs = expr_fragment_value_expr(block, args[0], local);
                     let rhs = expr_fragment_value_expr(block, args[1], local);
@@ -494,6 +509,11 @@ where
                 let lhs = expr_fragment_i32_expr(block, args[0], local);
                 let rhs = expr_fragment_i32_expr(block, args[1], local);
                 format!("({lhs}) > ({rhs})")
+            }
+            FragPrim::I32GeS => {
+                let lhs = expr_fragment_i32_expr(block, args[0], local);
+                let rhs = expr_fragment_i32_expr(block, args[1], local);
+                format!("({lhs}) \u{2265} ({rhs})")
             }
             // Both operands are `BoolI32` by the checker's strict typing, so
             // the source reading is plain conjunction of the operand readings

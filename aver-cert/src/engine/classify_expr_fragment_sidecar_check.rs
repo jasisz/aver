@@ -350,11 +350,17 @@ fn check_expr_fragment_plan_object(
     let tag_dispatch = expr_fragment_is_tag_dispatch(&plan);
     let vector_get = expr_fragment_vector_get_face(&plan).is_some();
     let record_proj = expr_fragment_record_proj_face(&plan).is_some();
+    // Both Int comparison faces call a runtime helper, and the selection face
+    // additionally returns an Int carrier, so each would trip the gate below
+    // without its own admission.
+    let int_cmp = expr_fragment_int_cmp_bool_face(&plan).is_some()
+        || expr_fragment_int_select_face(&plan).is_some();
     if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
         && !record_proj
+        && !int_cmp
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
@@ -489,6 +495,7 @@ fn prim_has_nan_nondeterministic_float_result(op: &FragPrim) -> bool {
         | FragPrim::I32Eq
         | FragPrim::I32LtS
         | FragPrim::I32GtS
+        | FragPrim::I32GeS
         | FragPrim::I32And => false,
     }
 }

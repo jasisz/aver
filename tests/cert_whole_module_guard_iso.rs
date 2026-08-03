@@ -407,12 +407,21 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
     let to_index = match to_index_idx {
         Some(index) => format!("some {index}"),
         None => "none".to_string(),
     };
+    // The two comparison roles are declared honestly in every table below: this
+    // test attacks the `add` and `toIndex` bindings, and a hostile comparison
+    // declaration is the separate per-role guard-iso probe.
+    let lean_role = |index: Option<u32>| match index {
+        Some(index) => format!("some {index}"),
+        None => "none".to_string(),
+    };
+    let cmp = lean_role(cmp_idx);
+    let eq = lean_role(eq_idx);
     let (box_idx, add_idx, mul_idx, sub_idx) = (
         box_idx.expect("json box role"),
         add_idx.expect("json add role"),
@@ -444,7 +453,7 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
 -- contract exists at all.
 def absentToIndexTable : CertDecode.AddSub.Roles :=
   {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := none }}
+     toIndex := none, cmp := {cmp}, eq := {eq} }}
 def absentToIndexManifest : Manifest :=
   {{ manifest with subject :=
       {{ manifest.subject with hostRoleTable := some absentToIndexTable }} }}
@@ -517,7 +526,7 @@ def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
 -- Same bytes and claims; only the manifest's add index is hostile.
 def hostileRoleTable : CertDecode.AddSub.Roles :=
   {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := {to_index} }}
+     toIndex := {to_index}, cmp := {cmp}, eq := {eq} }}
 def hostileManifest : Manifest :=
   {{ manifest with subject :=
       {{ manifest.subject with hostRoleTable := some hostileRoleTable }} }}
@@ -549,7 +558,7 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
 -- `__aint_to_index` export or the contract could be wired to any function.
 def hostileToIndexTable : CertDecode.AddSub.Roles :=
   {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := {hostile_to_index} }}
+     toIndex := {hostile_to_index}, cmp := {cmp}, eq := {eq} }}
 def hostileToIndexManifest : Manifest :=
   {{ manifest with subject :=
       {{ manifest.subject with hostRoleTable := some hostileToIndexTable }} }}
@@ -718,7 +727,7 @@ fn a_carriered_module_cannot_claim_the_carrierless_null_table() {
 
     // Healthy control: the identical module without the unscannable function
     // resolves its box and add roles.
-    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx, _cmp_idx, _eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&healthy)
             .expect("the healthy control must classify");
     let (box_idx, add_idx) = (
@@ -1523,7 +1532,7 @@ fn inkernel_vector_get_nominal_type_guard_is_isolated_and_weaken_confirmed() {
 
     let wasm = std::fs::read(out_dir.join("cell_at.wasm")).unwrap();
     let type_idx = export_func_type_idx(&wasm, "cellAt");
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
     let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) = (
         box_idx.expect("cell_at box role"),
@@ -2128,7 +2137,8 @@ def visibleLen : Nat := {visible_len}
 def params : ArithTemplateDerisk.ArithHostParams :=
   {{ carrier := 1, limb := 0, decompose := 0, normalize := 0, strip := 0, umagCmp := 0 }}
 def roles : CertDecode.AddSub.Roles :=
-  {{ box := some 0, add := none, mul := none, sub := none, toIndex := none }}
+  {{ box := some 0, add := none, mul := none, sub := none, toIndex := none,
+     cmp := none, eq := none }}
 
 -- (d) The exploit's links, pinned rather than asserted.
 -- The Int runtime is genuinely present in BOTH modules...

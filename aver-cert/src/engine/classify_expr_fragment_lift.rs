@@ -57,6 +57,8 @@ pub fn byte_derived_frag_host_role_indices(
         host_table.mul_idx,
         host_table.sub_idx,
         host_table.to_index_idx,
+        host_table.cmp_idx,
+        host_table.eq_idx,
     ))
 }
 
@@ -90,6 +92,8 @@ fn frag_calls_resolvable(calls: &[u32], table: &FragHostTable) -> bool {
                 || Some(*idx) == table.mul_idx
                 || Some(*idx) == table.sub_idx
                 || Some(*idx) == table.to_index_idx
+                || Some(*idx) == table.cmp_idx
+                || Some(*idx) == table.eq_idx
         })
 }
 

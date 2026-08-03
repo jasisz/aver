@@ -152,6 +152,33 @@ impl Cert {
         }
     }
 
+    /// The Int value-versus-value comparison face (`a >= b`, `a == b`), when
+    /// this cert is an `ExprFragment` whose plan is exactly the pinned
+    /// comparison node list. The wall fixes the whole meaning of this face —
+    /// domain, codomain, both representation relations, the single host slot
+    /// AND the model — so renderers emit no bespoke proof for it.
+    fn int_cmp_bool_face(&self) -> Option<FragIntCmpFace> {
+        match self.inner() {
+            Cert::ExprFragment { plan, .. } => expr_fragment_int_cmp_bool_face(plan),
+            _ => None,
+        }
+    }
+
+    /// The Int selection face (`match a < b { true -> a; false -> b }`), the
+    /// same way. Its result is a passthrough of an input local.
+    fn int_select_face(&self) -> Option<FragIntCmpFace> {
+        match self.inner() {
+            Cert::ExprFragment { plan, .. } => expr_fragment_int_select_face(plan),
+            _ => None,
+        }
+    }
+
+    /// Either comparison face, for the many sites that only need to know that
+    /// the wall owns this claim's meaning.
+    fn int_cmp_face(&self) -> Option<FragIntCmpFace> {
+        self.int_cmp_bool_face().or_else(|| self.int_select_face())
+    }
+
     fn name(&self) -> &str {
         match self.inner() {
             Cert::Recursive { name, .. }
@@ -275,13 +302,20 @@ impl Cert {
     fn host_expr(&self) -> String {
         if let Some(_face) = self.int_add_face() {
             let name = self.name();
-            return format!("fun add _ _ _ _ _ => CertModule.{name}Host add");
+            return format!("fun add _ _ _ _ _ _ _ => CertModule.{name}Host add");
         }
         if let Some(face) = self.tag_dispatch_face() {
             return format!(
                 "AverCert.StandardFace.tagDispatchHost {} {}",
                 self.carrier(),
                 face.box_idx
+            );
+        }
+        if let Some(face) = self.int_cmp_face() {
+            return format!(
+                "AverCert.StandardFace.intCmpHost {{ op := {}, helperIdx := {} }}",
+                face.op.lean_ctor(),
+                face.helper_idx
             );
         }
         if let Some(face) = self.vector_get_face() {
@@ -301,38 +335,38 @@ impl Cert {
             } => {
                 // Draw the combinator slot (`add` or `mul`) from the obligation.
                 format!(
-                    "fun add sub mul _ _ _ => CertModule.{name}Host {} sub",
+                    "fun add sub mul _ _ _ _ _ => CertModule.{name}Host {} sub",
                     combinator.param()
                 )
             }
             Cert::AccumulatorRecursive { name, .. } | Cert::Composition { name, .. } => {
-                format!("fun add sub _ _ _ _ => CertModule.{name}Host add sub")
+                format!("fun add sub _ _ _ _ _ _ => CertModule.{name}Host add sub")
             }
             // The whole SCC shares one host (box + sub only), named after the
             // primary (lowest-`self_idx`) member; every member's obligation points
             // at it. `add`/`mul` are ignored (mutual has no combinator).
             Cert::MutualRecursion { scc, .. } => {
-                format!("fun _ sub _ _ _ _ => CertModule.{}Host sub", scc[0].name)
+                format!("fun _ sub _ _ _ _ _ _ => CertModule.{}Host sub", scc[0].name)
             }
             Cert::AdtConstructor { name, .. } | Cert::FieldProjection { name, .. } => {
-                format!("fun _ _ _ _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ _ _ _ _ => CertModule.{name}Host")
             }
             Cert::WidenedIntMatch { name, .. }
             | Cert::VerbatimWidenedMatch { name, .. }
             | Cert::VerbatimVariantDispatch { name, .. } => {
-                format!("fun _ _ _ _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ _ _ _ _ => CertModule.{name}Host")
             }
             Cert::ExprFragment { name, .. } => {
-                format!("fun _ _ _ _ _ _ => CertModule.{name}Host")
+                format!("fun _ _ _ _ _ _ _ _ => CertModule.{name}Host")
             }
             Cert::StringEqVerbatimMatch { name, .. } => {
-                format!("fun _ _ _ stringEq _ _ => CertModule.{name}Host stringEq")
+                format!("fun _ _ _ stringEq _ _ _ _ => CertModule.{name}Host stringEq")
             }
             Cert::StringConcatVerbatimMatch { name, .. } => {
-                format!("fun _ _ _ _ stringConcat _ => CertModule.{name}Host stringConcat")
+                format!("fun _ _ _ _ stringConcat _ _ _ => CertModule.{name}Host stringConcat")
             }
             Cert::VariantDispatch { name, .. } => {
-                format!("fun add sub _ _ _ _ => CertModule.{name}Host add sub")
+                format!("fun add sub _ _ _ _ _ _ => CertModule.{name}Host add sub")
             }
             Cert::NonRecursive { .. } => unreachable!(),
         }
@@ -354,6 +388,12 @@ impl Cert {
         }
         if self.vector_get_face().is_some() {
             return ("List Int x Int".to_string(), "Int".to_string());
+        }
+        if self.int_cmp_bool_face().is_some() {
+            return ("Int x Int".to_string(), "Bool".to_string());
+        }
+        if self.int_select_face().is_some() {
+            return ("Int x Int".to_string(), "Int".to_string());
         }
         match self.inner() {
             Cert::Recursive { .. }
