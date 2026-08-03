@@ -49,6 +49,8 @@ private def intDispatchExpectedSlot
   | .mul => (2, mul)
   | .sub => (2, sub)
   | .toIndex => (1, fun _ => none)
+  | .cmp => (2, fun _ => none)
+  | .eq => (2, fun _ => none)
 
 private theorem canonicalSlot_of_lookup
     (C : Nat) (add sub mul : List WVal → Option WVal)
@@ -139,7 +141,7 @@ theorem intDispatch_accepted_call
       ∀ (S : CarrierSpec claim.obligation.carrier)
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
-        (toIndex : List WVal → Option WVal),
+        (toIndex cmp eq : List WVal → Option WVal),
         (∀ a b va vb w, S.Repr a va → S.Repr b vb →
           add [va, vb] = some w → S.Repr (a + b) w) →
         (∀ a b va vb w, S.Repr a va → S.Repr b vb →
@@ -147,7 +149,7 @@ theorem intDispatch_accepted_call
         ∀ fuel tag fields n w,
           IntDispatchSoundness.EvalCascade S plan.body tag fields n →
           wFuncN claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
               (fuel + 1) claim.obligation.self [.structv tag fields] = some w →
             S.Repr n w := by
   have hClaim : intDispatchClaimAccepted artifact.modBytes artifact.modLen
@@ -176,17 +178,17 @@ theorem intDispatch_accepted_call
           intDispatchCanonicalHost claim.obligation.carrier claim.hostTable := by
         simpa [hCarrier] using hHost
       refine ⟨plan, rfl, ?_⟩
-      intro S add sub mul stringEq stringConcat toIndex hAdd hSub
+      intro S add sub mul stringEq stringConcat toIndex cmp eq hAdd hSub
         fuel tag fields n w hSem hRun
       have hSlots : IntDispatchSoundness.HostSlots claim.obligation.carrier
-          (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+          (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
           claim.hostTable add sub := by
         rw [hHost']
         exact canonicalHostSlots claim.obligation.carrier add sub mul
           claim.hostTable hDistinct
       exact IntDispatchSoundness.generic_int_dispatch_certified
         S plan claim.obligation.code
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         claim.obligation.self claim.hostTable add sub hSlots hAdd hSub
         (intDispatchRoot_of_raw plan hRaw) body hLow hCodeSelf
         fuel tag fields n w hSem hRun
@@ -205,15 +207,15 @@ theorem intDispatch_claim_discharges
   rcases hCall with ⟨plan, hPlan, hGeneric⟩
   rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
-  intro S add sub mul stringEq stringConcat toIndex
-    hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
   rcases hSemantic S x vs hDom with
     ⟨tag, fields, n, hVs, hCascade, hCod⟩
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      exact hCod w (hGeneric S add sub mul stringEq stringConcat toIndex hAdd hSub
+      exact hCod w (hGeneric S add sub mul stringEq stringConcat toIndex cmp eq hAdd hSub
         fuel tag fields n w hCascade hRun)
 
 /-- Per-obligation option-(b) discharge for a concrete Int-dispatch export.
@@ -234,16 +236,18 @@ theorem intDispatch_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
       (List WVal → Option WVal) → HostTbl)
     (Dom : Type)
     (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
     (model : Dom → Int)
     (hRaw : AverCert.PlanCheck.checkIntDispatchRawPlan plan = true)
     (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true)
-    (hHost : ∀ add sub mul stringEq stringConcat toIndex,
-      host add sub mul stringEq stringConcat toIndex =
+    (hHost : ∀ add sub mul stringEq stringConcat toIndex cmp eq,
+      host add sub mul stringEq stringConcat toIndex cmp eq =
         intDispatchCanonicalHost carrier hostTable
-          add sub mul stringEq stringConcat toIndex)
+          add sub mul stringEq stringConcat toIndex cmp eq)
     (body : List WInstr)
     (hLow : AverCert.PlanLower.lowerIntDispatchBody hostTable plan = some body)
     (hCode : code self = some {
@@ -268,8 +272,8 @@ theorem intDispatch_canonical_discharges
          domRepr := domRepr
          codRepr := fun S n w => intRepr S n w
          model := model } : Obligation) := by
-  intro S add sub mul stringEq stringConcat toIndex
-    hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
   rcases hSemantic S x vs hDom with
     ⟨tag, fields, n, hVs, hCascade, hCod⟩
   subst vs
@@ -277,11 +281,11 @@ theorem intDispatch_canonical_discharges
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hSlots : IntDispatchSoundness.HostSlots carrier
-          (host add sub mul stringEq stringConcat toIndex) hostTable add sub := by
+          (host add sub mul stringEq stringConcat toIndex cmp eq) hostTable add sub := by
         rw [hHost]
         exact canonicalHostSlots carrier add sub mul hostTable hDistinct
       have hGeneric := IntDispatchSoundness.generic_int_dispatch_certified
-        S plan code (host add sub mul stringEq stringConcat toIndex) self
+        S plan code (host add sub mul stringEq stringConcat toIndex cmp eq) self
         hostTable add sub hSlots hAdd hSub
         (intDispatchRoot_of_raw plan hRaw) body hLow hCode
       exact hCod w (hGeneric fuel tag fields n w hCascade hRun)

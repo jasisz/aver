@@ -31,7 +31,7 @@ def exprFragmentSemanticBridge
   ∀ (S : CarrierSpec claim.obligation.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
-    (toIndex : List WVal → Option WVal)
+    (toIndex cmp eq : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
       add [va, vb] = some w → S.Repr (a + b) w)
     (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
@@ -45,24 +45,28 @@ def exprFragmentSemanticBridge
         stringConcatW resultTy parts = some c)
     (hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
       r = .i32v (toIndexW n))
+      (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+        cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+      (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+        eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
     (fuel : Nat) (x : claim.obligation.Dom) (vs : List WVal) (w : WVal),
     claim.obligation.domRepr S x vs →
     wFuncN claim.obligation.code
-      (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+      (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
       (fuel + 1) claim.obligation.self vs = some w →
     ∃ (inputs : List WVal) (modelLocals : List WVal) (result : WVal),
       vs = inputs ∧
       inputs.length = plan.params.length ∧
       ExprFragmentSoundness.blockCallsOK
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         (fun g => (claim.obligation.code g).map (fun c => c.arity))
         plan.body ∧
       ExprFragmentSemantics.evalSymRawPlan
         claim.hostTable claim.structTable
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         (fun g => (claim.obligation.code g).map (fun c => c.arity))
         (fun g args => wFuncN claim.obligation.code
-          (claim.obligation.host add sub mul stringEq stringConcat toIndex) fuel g args)
+          (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq) fuel g args)
         claim.obligation.carrier claim.plan
         (initLocals ⟨plan.params.length, exprFragmentNLocals plan, []⟩
           inputs) =
@@ -207,17 +211,17 @@ theorem exprFragment_claim_discharges_generic
           some ⟨plan.params.length, exprFragmentNLocals plan, body⟩ := by
         simpa [← hSelf] using hCode
       rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat toIndex
-        hAdd hSub hMul hStringEq hStringConcat _hToIndex fuel x vs w hDom hRun
+      intro S add sub mul stringEq stringConcat toIndex cmp eq
+        hAdd hSub hMul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
       cases fuel with
       | zero => simp [wFuncN] at hRun
       | succ fuel =>
-          rcases hSemantic S add sub mul stringEq stringConcat toIndex
-              hAdd hSub hMul hStringEq hStringConcat _hToIndex fuel x vs w hDom hRun with
+          rcases hSemantic S add sub mul stringEq stringConcat toIndex cmp eq
+              hAdd hSub hMul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun with
             ⟨inputs, modelLocals, result, rfl, hArity, hCalls, hEval, hCod⟩
           have hGeneric := ExprFragmentSoundness.exprfragment_generic_certified
             S claim.hostTable claim.structTable claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+            (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
             claim.plan plan hEncode hCheck body hLower claim.obligation.self
             (exprFragmentNLocals plan) fuel hCodeSelf vs hArity hCalls
             modelLocals result hEval
@@ -293,14 +297,14 @@ theorem recordParam_claim_discharges
       subst hsi
       subst hfi
       rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat toIndex
-        _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+      intro S add sub mul stringEq stringConcat toIndex cmp eq
+        _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
       exact AverCert.StandardFace.recordParam_transport claim.carrier fields
         structIdx field hfield claim.obligation.carrier claim.obligation.Dom
         claim.obligation.Cod claim.obligation.domRepr claim.obligation.codRepr
         claim.obligation.model hCarrierEq hDomP hCodP hdomReprP hcodReprP hmodelP
         claim.obligation.code
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         claim.obligation.self (exprFragmentNLocals plan) hCodeSelf
         S fuel x vs w hDom hRun
 

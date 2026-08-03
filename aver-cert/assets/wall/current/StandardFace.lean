@@ -25,9 +25,11 @@ abbrev HostBuilder :=
   (List WVal → Option WVal) →
   (List WVal → Option WVal) →
   (Nat → List WVal → Option WVal) →
+  (List WVal → Option WVal) →
+  (List WVal → Option WVal) →
   (List WVal → Option WVal) → HostTbl
 
-def emptyHost : HostBuilder := fun _ _ _ _ _ _ _ => none
+def emptyHost : HostBuilder := fun _ _ _ _ _ _ _ _ _ => none
 
 def decodedRoleIdx (roles : CertDecode.AddSub.Roles) : HostRole → Option Nat
   | .box => roles.box
@@ -35,6 +37,8 @@ def decodedRoleIdx (roles : CertDecode.AddSub.Roles) : HostRole → Option Nat
   | .mul => roles.mul
   | .sub => roles.sub
   | .toIndex => roles.toIndex
+  | .cmp => roles.cmp
+  | .eq => roles.eq
 
 /-- Every role/index pair used by a claim must agree with the unique table
     decoded from the module. Family checkers already require every role their
@@ -209,7 +213,7 @@ structure IntAddFace where
 deriving Repr, DecidableEq
 
 def intAddHost (carrier : Nat) (face : IntAddFace) : HostBuilder :=
-  fun add _ _ _ _ _ fn =>
+  fun add _ _ _ _ _ _ _ fn =>
     if fn = face.boxIdx then some (1, boxRef carrier)
     else if fn = face.addIdx then some (2, add)
     else none
@@ -250,7 +254,7 @@ structure TagDispatchFace where
 deriving Repr, DecidableEq
 
 def tagDispatchHost (carrier boxIdx : Nat) : HostBuilder :=
-  fun _add _sub _mul _stringEq _stringConcat _toIndex fn =>
+  fun _add _sub _mul _stringEq _stringConcat _toIndex _cmp _eq fn =>
     if fn = boxIdx then some (1, boxRef carrier) else none
 
 /-- The complete operational face of a tag-dispatch obligation. `Dom` carries the
@@ -333,7 +337,7 @@ def vectorGetOrDefaultHostSlots
 
 def vectorGetOrDefaultHost
     (carrier : Nat) (face : VectorGetOrDefaultFace) : HostBuilder :=
-  fun _add _sub _mul _stringEq _stringConcat toIndex =>
+  fun _add _sub _mul _stringEq _stringConcat toIndex _cmp _eq =>
     vectorGetOrDefaultHostSlots carrier face.toIndexIdx face.boxIdx toIndex
 
 /-- Domain representation of the fused-read face: the machine state is exactly

@@ -957,12 +957,32 @@ def toIndexIdx (n len : Nat) : Option Nat :=
   | none => none
   | some es => (es.find? (fun e => e.1 == "__aint_to_index")).map Prod.snd
 
+/-- The `__aint_cmp` helper role, bound exactly like `box` and `toIndex`: by its
+    named runtime export. Its semantics stay an assumed runtime contract
+    (`cmpW` in the obligation denotation); the byte-derived index only prevents
+    a claim from wiring the contract to an arbitrary function. That matters more
+    here than for the arithmetic roles, because `cmp` and `eq` DECLARE THE SAME
+    function type, so nothing else in the type section distinguishes them. -/
+def cmpIdx (n len : Nat) : Option Nat :=
+  match decodeExports n len with
+  | none => none
+  | some es => (es.find? (fun e => e.1 == "__aint_cmp")).map Prod.snd
+
+/-- The `__aint_eq` helper role, bound by its named runtime export; see
+    `cmpIdx`. -/
+def eqIdx (n len : Nat) : Option Nat :=
+  match decodeExports n len with
+  | none => none
+  | some es => (es.find? (fun e => e.1 == "__aint_eq")).map Prod.snd
+
 structure Roles where
   box : Option Nat
   add : Option Nat
   mul : Option Nat
   sub : Option Nat
   toIndex : Option Nat
+  cmp : Option Nat
+  eq : Option Nat
   deriving DecidableEq, Repr
 
 /-- Byte-derived proof that the module carries no Int-carrier box helper: the

@@ -511,16 +511,25 @@ def toIndexRef : List WVal → Option WVal
   | [.structv _ [.i64v _, .arr _ _, .i32v _]] => some (.i32v (-1))
   | _ => none
 
-/-- Int comparison contract faces: decode both carriers, compare in ℤ, return
-    the i32 boolean the wasm helper produces (`<= < >= > ==`). -/
-def cmpRef (p : Int → Int → Bool) : List WVal → Option WVal
-  | [a, b] => do let x ← carrierToInt a; let y ← carrierToInt b; some (.i32v (if p x y then 1 else 0))
-  | _ => none
+/-- The `__aint_cmp` contract at the ℤ level (read off `wat/cmp.wat`): the
+    three-way comparison of two represented integers, `-1` when the first is
+    smaller, `0` when they are equal, `1` when the first is larger. The emitter
+    never consumes this value directly — it compares it against `i32.const 0`
+    with a signed relational operator — so the exact sentinel values matter and
+    a boolean-valued model would not do.
 
-def leRef : List WVal → Option WVal := cmpRef (fun x y => decide (x ≤ y))
-def ltRef : List WVal → Option WVal := cmpRef (fun x y => decide (x < y))
-def geRef : List WVal → Option WVal := cmpRef (fun x y => decide (x ≥ y))
-def gtRef : List WVal → Option WVal := cmpRef (fun x y => decide (x > y))
-def eqRef : List WVal → Option WVal := cmpRef (fun x y => decide (x = y))
+    An earlier revision of this file carried a `cmpRef` family that returned
+    `0`/`1` for five derived predicates. It was wired to nothing, and its ABI
+    disagreed with the helper this contract describes; it has been deleted
+    rather than adapted. -/
+def cmpW (a b : Int) : Int :=
+  if a < b then -1 else if a = b then 0 else 1
+
+/-- The `__aint_eq` contract at the ℤ level (`wat/eq.wat`): `1` when the two
+    represented integers are equal, `0` otherwise. Unlike `cmpW` this helper
+    already yields the wasm Boolean the source `==` denotes, which is why the
+    emitter appends no comparison tail after the call. -/
+def eqW (a b : Int) : Int :=
+  if a = b then 1 else 0
 
 end CertPrelude

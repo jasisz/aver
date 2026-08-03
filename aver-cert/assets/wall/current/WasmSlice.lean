@@ -185,14 +185,30 @@ theorem typeSectionMatches_elim
 def funcTypeMatches (modBytes modLen typeIdx arity carrier : Nat) : Bool :=
   typeSectionMatches (checkCanonicalFuncType arity carrier) modBytes modLen typeIdx
 
+/-- The declared function type shared by the two comparison helpers: two
+    nullable carrier references in, one raw `i32` out. Neither helper returns a
+    carrier, so `checkCanonicalFuncType` (which fixes the carrier as the RESULT)
+    cannot state this shape and a separate check is needed. -/
+def checkComparisonFuncType (carrier : Nat) (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType params results =>
+      decide (params = [nullableRefType carrier, nullableRefType carrier]) &&
+        decide (results = [.numeric 0x7f])
+  | _, _ => false
+
 /-- The exact declared function type fixed by one certified host-helper role:
     `box` wraps a raw `i64` into the carrier, `toIndex` extracts a raw `i32`
-    array index from the carrier, and the arithmetic combinators carry the
-    canonical two-argument carrier signature. Helper BODIES are pinned
+    array index from the carrier, `cmp` and `eq` take two carriers and return a
+    raw `i32` verdict, and the arithmetic combinators carry the canonical
+    two-argument carrier signature. Helper BODIES are pinned
     elsewhere by template byte equality, which leaves the declared type free:
     a helper declared at a strict supertype of the carrier reference still
     wasm-validates by subtyping while the proof faces model the exact claimed
-    carrier. This check closes that declared-type channel. -/
+    carrier. This check closes that declared-type channel.
+
+    `cmp` and `eq` share a signature, which is exactly why the SEPARATE
+    export-name pin on each of them is load-bearing: the declared type alone
+    cannot tell the two helpers apart. -/
 def checkHostRoleFuncType (carrier : Nat) :
     AverCert.Schema.HostRole → CertDecode.TypeEntry → Bool
   | .box, entry =>
@@ -210,6 +226,8 @@ def checkHostRoleFuncType (carrier : Nat) :
   | .add, entry => checkCanonicalFuncType 2 carrier entry
   | .sub, entry => checkCanonicalFuncType 2 carrier entry
   | .mul, entry => checkCanonicalFuncType 2 carrier entry
+  | .cmp, entry => checkComparisonFuncType carrier entry
+  | .eq, entry => checkComparisonFuncType carrier entry
 
 def fragValTypeMatches (carrier : Nat) :
     AverCert.Schema.FragTy → CertDecode.ValType → Bool

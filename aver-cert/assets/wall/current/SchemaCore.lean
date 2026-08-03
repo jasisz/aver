@@ -121,7 +121,7 @@ def Subject.hostRoles (s : Subject) : CertDecode.AddSub.Roles :=
   match s.hostRoleTable with
   | some roles => roles
   | none => { box := none, add := none, mul := none, sub := none,
-              toIndex := none }
+              toIndex := none, cmp := none, eq := none }
 
 /-- The certification policy attached to a certified export. Partial simulation
     remains the default; the total preset additionally promises return at the
@@ -330,6 +330,17 @@ inductive HostRole where
       collapses to the `-1` out-of-bounds sentinel). Consumed only by the
       monolithic fused vector-read node, never as a standalone `hostCall`. -/
   | toIndex
+  /-- `__aint_cmp`: three-way comparison of two represented integers, yielding
+      the raw `i32` sentinel `-1`/`0`/`1` (`CertPrelude.cmpW`). The emitter never
+      reads it as a Boolean: it always follows the call with `i32.const 0` and a
+      signed relational operator, so the node's result type is `rawI32`, not
+      `boolI32`. -/
+  | cmp
+  /-- `__aint_eq`: equality of two represented integers, yielding the `0`/`1`
+      wasm Boolean directly (`CertPrelude.eqW`). Unlike `cmp` its result IS the
+      source-level Boolean, so the node's result type is `boolI32` and the
+      emitter appends no comparison tail. -/
+  | eq
 deriving Repr, DecidableEq
 
 mutual
@@ -1168,6 +1179,8 @@ structure Obligation where
     (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
     (List WVal → Option WVal) →
+    (List WVal → Option WVal) →
+    (List WVal → Option WVal) →
     HostTbl
   self    : Nat
   Dom     : Type
@@ -1177,26 +1190,39 @@ structure Obligation where
   model   : Dom → Cod
 
 /-- Denotation of `simulatesModel`: under any representation `S` and host
-    contracts obeying the named laws (integer add/sub/mul, String.eq byte
-    equality, and String.concat byte concatenation), the emitted body run on a
-    represented domain value yields a represented result of `model x`. Partial
-    correctness — vacuous on trap or fuel exhaustion. Each contract is an
-    assumed runtime law: the host helper wired to that slot computes the named
-    operation on represented values. -/
+    contracts obeying the named laws (integer add/sub/mul, integer three-way
+    comparison and equality, String.eq byte equality, and String.concat byte
+    concatenation), the emitted body run on a represented domain value yields a
+    represented result of `model x`. Partial correctness — vacuous on trap or
+    fuel exhaustion. Each contract is an assumed runtime law: the host helper
+    wired to that slot computes the named operation on represented values.
+
+    The two comparison premises are shaped like `_hToIndex`, not like `_hadd`:
+    relational over `S.Repr` on the ARGUMENTS and EXACT on the result, because
+    the helpers leave the carrier — they return a raw `i32` that no
+    representation relation describes. Neither premise demands trap-freedom; a
+    helper that returns `none` makes the premise vacuous and the run yields
+    nothing, exactly as everywhere else in this denotation. Like `_hToIndex`,
+    the exactness rests on the carrier being canonical: two carriers that both
+    represent the same integer must compare equal for the assumed law to be
+    satisfiable by the real helper. That is a trusted-computing-base note for
+    the H4a ledger, not something acceptance establishes. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
-    (toIndex : List WVal → Option WVal)
+    (toIndex cmp eq : List WVal → Option WVal)
     (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
     (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
     (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
     (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
     (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
+    (_hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+    (_hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
-    wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex) fuel o.self vs = some w →
+    wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex cmp eq) fuel o.self vs = some w →
     o.codRepr S (o.model x) w
 
 /-- Denotation of `simulatesModelTotally`, with its totality assumptions selected
@@ -1213,37 +1239,41 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
       ∀ (S : CarrierSpec o.carrier)
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
-        (toIndex : List WVal → Option WVal)
+        (toIndex cmp eq : List WVal → Option WVal)
         (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
         (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
         (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
         (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
+        (_hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+        (_hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
         ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
-          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex)
+          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex cmp eq)
               (n.natAbs + 1) o.self vs = some w ∧
             o.codRepr S (o.model x) w
   | .mul =>
       ∀ (S : CarrierSpec o.carrier)
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
-        (toIndex : List WVal → Option WVal)
+        (toIndex cmp eq : List WVal → Option WVal)
         (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
         (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
         (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
         (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
+        (_hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+        (_hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (_hMulTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
         (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
         ∃ n v tail, vs = v :: tail ∧ S.Repr n v ∧
-          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex)
+          ∃ w, wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex cmp eq)
               (n.natAbs + 1) o.self vs = some w ∧
             o.codRepr S (o.model x) w
 

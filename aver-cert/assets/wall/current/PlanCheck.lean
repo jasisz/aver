@@ -165,6 +165,18 @@ def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat
   -- `__aint_to_index` is consumed only inside the monolithic fused
   -- vector-read node; a standalone host call to it has no admitted face.
   | .toIndex => none
+  -- `__aint_cmp` leaves the carrier: it takes two represented integers and
+  -- returns the raw three-way sign, which the emitter always feeds into a
+  -- signed comparison against `i32.const 0`. Typing it `rawI32` rather than
+  -- `boolI32` is load-bearing: `-1` is a perfectly good result here and would
+  -- be a lie as a Boolean, and the `boolI32`-only consumers (`i32.and`, the
+  -- fragment's `if` condition) must not accept it unfiltered.
+  | .cmp =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .rawI32 else none
+  -- `__aint_eq` already yields the source-level Boolean (`0`/`1`), so its
+  -- result IS `boolI32` and needs no comparison tail.
+  | .eq =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .boolI32 else none
 
 /-- All arguments of a self-call must be Int carriers; the recursion class only
     threads Int values through its recursive descent. -/

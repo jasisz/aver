@@ -89,6 +89,8 @@ structure ContractUse where
   stringEq : Bool := false
   stringConcat : Bool := false
   toIndex : Bool := false
+  cmp : Bool := false
+  eq : Bool := false
   addTotal : Bool := false
   subTotal : Bool := false
   mulTotal : Bool := false
@@ -102,6 +104,8 @@ def ContractUse.merge (left right : ContractUse) : ContractUse :=
     stringEq := left.stringEq || right.stringEq
     stringConcat := left.stringConcat || right.stringConcat
     toIndex := left.toIndex || right.toIndex
+    cmp := left.cmp || right.cmp
+    eq := left.eq || right.eq
     addTotal := left.addTotal || right.addTotal
     subTotal := left.subTotal || right.subTotal
     mulTotal := left.mulTotal || right.mulTotal }
@@ -112,6 +116,8 @@ def useHostRole : HostRole → ContractUse
   | .sub => { sub := true }
   | .mul => { mul := true }
   | .toIndex => { toIndex := true }
+  | .cmp => { cmp := true }
+  | .eq => { eq := true }
 
 def useFragBlockFuel : Nat → FragBlock → ContractUse
   | 0, _ => {}
@@ -213,6 +219,10 @@ def stringConcatContract : String :=
   "String.concat (container-of-string-arrays -> byte-concatenated array)"
 def toIndexContract : String :=
   "__aint_to_index (carrier -> i32 array index; [0, 2^31) passes, else -1)"
+def cmpContract : String :=
+  "__aint_cmp (carrier pair -> i32 three-way sign: -1 less, 0 equal, 1 greater)"
+def eqContract : String :=
+  "__aint_eq (carrier pair -> i32 boolean: 1 when the represented integers are equal, else 0)"
 def addTotalContract : String :=
   "Int.add (carrier add = exact integer addition on represented values); total on represented values"
 def subTotalContract : String :=
@@ -228,6 +238,8 @@ def ContractUse.contracts (use : ContractUse) : List String :=
   (if use.stringEq then [stringEqContract] else []) ++
   (if use.stringConcat then [stringConcatContract] else []) ++
   (if use.toIndex then [toIndexContract] else []) ++
+  (if use.cmp then [cmpContract] else []) ++
+  (if use.eq then [eqContract] else []) ++
   (if use.addTotal then [addTotalContract] else []) ++
   (if use.subTotal then [subTotalContract] else []) ++
   (if use.mulTotal then [mulTotalContract] else [])

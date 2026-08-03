@@ -27,8 +27,8 @@ def unaryRecursionSemanticBridge
     RecursionSoundness.parseRecShapeU combineOp claim.obligation.self boxIdx combineIdx subIdx plan = some sh ∧
     claim.obligation.totalityRole =
       (match combineOp with | .add => .addSub | .mul => .mul) ∧
-    (∀ add sub mul stringEq stringConcat toIndex,
-      let host := claim.obligation.host add sub mul stringEq stringConcat toIndex
+    (∀ add sub mul stringEq stringConcat toIndex cmp eq,
+      let host := claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq
       host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
       (match combineOp with
        | .add => host combineIdx = some (2, add)
@@ -49,8 +49,8 @@ def accumulatorRecursionSemanticBridge
   ∃ boxIdx addIdx subIdx sh,
     RecursionSoundness.parseRecShapeA claim.obligation.self boxIdx addIdx subIdx plan = some sh ∧
     claim.obligation.totalityRole = .addSub ∧
-    (∀ add sub mul stringEq stringConcat toIndex,
-      let host := claim.obligation.host add sub mul stringEq stringConcat toIndex
+    (∀ add sub mul stringEq stringConcat toIndex cmp eq,
+      let host := claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq
       host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
       host addIdx = some (2, add) ∧
       host subIdx = some (2, sub) ∧
@@ -105,10 +105,10 @@ theorem unary_recursion_claim_discharges
   cases hPolicy : claim.obligation.policy with
   | simulatesModel =>
       rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat toIndex
-        hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+      intro S add sub mul stringEq stringConcat toIndex cmp eq
+        hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
       rcases hModel S x vs hDom with ⟨n, v, rfl, hv, hCod⟩
-      rcases hHost add sub mul stringEq stringConcat toIndex with
+      rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
         ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
       apply hCod w
       cases combineOp with
@@ -116,14 +116,14 @@ theorem unary_recursion_claim_discharges
           exact RecursionSoundness.recursion_generic_certified
             claim.obligation.carrier .add claim.obligation.self boxIdx
             combineIdx subIdx 1 S claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+            (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
             add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub plan sh
             hParse body hLower hCodeSelf fuel n v w hv hRun
       | mul =>
           exact RecursionSoundness.recursion_generic_certified
             claim.obligation.carrier .mul claim.obligation.self boxIdx
             combineIdx subIdx 1 S claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+            (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
             mul sub hBox hCombineHost hSubHost hSelfHost _hMul hSub plan sh
             hParse body hLower hCodeSelf fuel n v w hv hRun
   | simulatesModelTotally =>
@@ -131,34 +131,34 @@ theorem unary_recursion_claim_discharges
       | add =>
           rw [obligationHolds, hPolicy]
           simp only [Obligation.holdsTotal, hTotalityRole]
-          intro S add sub mul stringEq stringConcat toIndex
-            hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex
+          intro S add sub mul stringEq stringConcat toIndex cmp eq
+            hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq
             hAddTot hSubTot x vs hDom
           rcases hModel S x vs hDom with ⟨n, v, rfl, hv, hCod⟩
-          rcases hHost add sub mul stringEq stringConcat toIndex with
+          rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
             ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
           obtain ⟨w, hRun, hRepr⟩ :=
             RecursionSoundness.recursion_generic_certified_total
               claim.obligation.carrier .add claim.obligation.self boxIdx
               combineIdx subIdx 1 S claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
               add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub
               hAddTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
           exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
       | mul =>
           rw [obligationHolds, hPolicy]
           simp only [Obligation.holdsTotal, hTotalityRole]
-          intro S add sub mul stringEq stringConcat toIndex
-            _hAdd hSub hMul _hStringEq _hStringConcat _hToIndex
+          intro S add sub mul stringEq stringConcat toIndex cmp eq
+            _hAdd hSub hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq
             _hAddTot hSubTot hMulTot x vs hDom
           rcases hModel S x vs hDom with ⟨n, v, rfl, hv, hCod⟩
-          rcases hHost add sub mul stringEq stringConcat toIndex with
+          rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
             ⟨hBox, hCombineHost, hSubHost, hSelfHost⟩
           obtain ⟨w, hRun, hRepr⟩ :=
             RecursionSoundness.recursion_generic_certified_total
               claim.obligation.carrier .mul claim.obligation.self boxIdx
               combineIdx subIdx 1 S claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
               mul sub hBox hCombineHost hSubHost hSelfHost hMul hSub
               hMulTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
           exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
@@ -192,34 +192,34 @@ theorem accumulator_recursion_claim_discharges
   cases hPolicy : claim.obligation.policy with
   | simulatesModel =>
       rw [obligationHolds, hPolicy]
-      intro S add sub mul stringEq stringConcat toIndex
-        hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+      intro S add sub mul stringEq stringConcat toIndex cmp eq
+        hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
       rcases hModel S x vs hDom with
         ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
-      rcases hHost add sub mul stringEq stringConcat toIndex with
+      rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
         ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
       apply hCod w
       exact RecursionSoundness.recursion_accumulator_generic_certified
         claim.obligation.carrier claim.obligation.self boxIdx addIdx
         subIdx 1 S claim.obligation.code
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         add sub hBox hAddHost hSubHost hSelfHost hAdd hSub plan sh
         hParse body hLower hCodeSelf fuel n acc vn vacc w hvn hvacc hRun
   | simulatesModelTotally =>
       rw [obligationHolds, hPolicy]
       simp only [Obligation.holdsTotal, hTotalityRole]
-      intro S add sub mul stringEq stringConcat toIndex
-        hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex
+      intro S add sub mul stringEq stringConcat toIndex cmp eq
+        hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq
         hAddTot hSubTot x vs hDom
       rcases hModel S x vs hDom with
         ⟨n, acc, vn, vacc, rfl, hvn, hvacc, hCod⟩
-      rcases hHost add sub mul stringEq stringConcat toIndex with
+      rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
         ⟨hBox, hAddHost, hSubHost, hSelfHost⟩
       obtain ⟨w, hRun, hRepr⟩ :=
         RecursionSoundness.recursion_accumulator_generic_certified_total
           claim.obligation.carrier claim.obligation.self boxIdx addIdx
           subIdx 1 S claim.obligation.code
-          (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+          (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
           add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
           hAddTot hSubTot plan sh hParse body hLower hCodeSelf
           n acc vn vacc hvn hvacc
@@ -284,8 +284,8 @@ def mutualSemanticBridge
     (∀ j, j ≠ i → claim.obligation.code (scc.members j).self =
       some ⟨1, 1, MutualRecursionSoundness.mutualInstrs claim.obligation.carrier
         boxIdx subIdx scc.members j⟩) ∧
-    (∀ add sub mul stringEq stringConcat toIndex,
-      let host := claim.obligation.host add sub mul stringEq stringConcat toIndex
+    (∀ add sub mul stringEq stringConcat toIndex cmp eq,
+      let host := claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq
       host boxIdx = some (1, boxRef claim.obligation.carrier) ∧
       host subIdx = some (2, sub) ∧
       (∀ j, host (scc.members j).self = none)) ∧
@@ -365,33 +365,33 @@ theorem mutual_claim_discharges
       cases hPolicy : claim.obligation.policy with
       | simulatesModel =>
           rw [obligationHolds, hPolicy]
-          intro S add sub mul stringEq stringConcat toIndex
-            _hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+          intro S add sub mul stringEq stringConcat toIndex cmp eq
+            _hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
           rcases hModel S x vs hDom with ⟨n, v, rfl, hv, hCod⟩
-          rcases hHost add sub mul stringEq stringConcat toIndex with
+          rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
             ⟨hBox, hSubHost, hMemberHost⟩
           have hRun' : wFuncN claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
               fuel (scc.members i).self [v] = some w := by
             simpa [hSccSelf] using hRun
           apply hCod w
           simpa [hSccSelf] using MutualRecursionSoundness.mutual_generic_certified
             k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
-            (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+            (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
             sub hBox hSubHost hMemberHost hCodeAll hSub fuel i n v w hv hRun'
       | simulatesModelTotally =>
           rw [obligationHolds, hPolicy]
           simp only [Obligation.holdsTotal, hTotalityRole]
-          intro S add sub mul stringEq stringConcat toIndex
-            _hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex
+          intro S add sub mul stringEq stringConcat toIndex cmp eq
+            _hAdd hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq
             _hAddTot hSubTot x vs hDom
           rcases hModel S x vs hDom with ⟨n, v, rfl, hv, hCod⟩
-          rcases hHost add sub mul stringEq stringConcat toIndex with
+          rcases hHost add sub mul stringEq stringConcat toIndex cmp eq with
             ⟨hBox, hSubHost, hMemberHost⟩
           obtain ⟨w, hRun, hRepr⟩ :=
             MutualRecursionSoundness.mutual_generic_certified_total
               k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
-              (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+              (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
               sub hBox hSubHost hMemberHost hCodeAll hSub hSubTot i n v hv
           exact ⟨n, v, [], rfl, hv, w,
             by simpa [hSccSelf] using hRun, hCod w hRepr⟩
