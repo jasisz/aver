@@ -45,10 +45,16 @@ def exprFragmentSemanticBridge
         stringConcatW resultTy parts = some c)
     (hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
       r = .i32v (toIndexW n))
-      (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-        cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-      (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-        eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+      (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+        -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+        cmp [carrierSmall claim.obligation.carrier k1,
+             carrierSmall claim.obligation.carrier k2] = some r →
+          r = .i32v (cmpW k1 k2))
+      (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+        -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+        eq [carrierSmall claim.obligation.carrier k1,
+            carrierSmall claim.obligation.carrier k2] = some r →
+          r = .i32v (eqW k1 k2))
     (fuel : Nat) (x : claim.obligation.Dom) (vs : List WVal) (w : WVal),
     claim.obligation.domRepr S x vs →
     wFuncN claim.obligation.code
@@ -401,7 +407,7 @@ theorem intCmpBool_claim_discharges
           HEq claim.obligation.Dom (Int × Int) ∧
           HEq claim.obligation.Cod Bool ∧
           HEq claim.obligation.domRepr
-            (AverCert.StandardFace.intPairDomRepr claim.carrier) ∧
+            (AverCert.StandardFace.intPairSmallBandDomRepr claim.carrier) ∧
           HEq claim.obligation.codRepr (boolRepr (C := claim.carrier)) ∧
           claim.obligation.host = AverCert.StandardFace.intCmpHost face ∧
           HEq claim.obligation.model
@@ -478,7 +484,7 @@ theorem intSelect_claim_discharges
           HEq claim.obligation.Dom (Int × Int) ∧
           HEq claim.obligation.Cod Int ∧
           HEq claim.obligation.domRepr
-            (AverCert.StandardFace.intPairDomRepr claim.carrier) ∧
+            (AverCert.StandardFace.intPairSmallBandDomRepr claim.carrier) ∧
           HEq claim.obligation.codRepr (intRepr (C := claim.carrier)) ∧
           claim.obligation.host = AverCert.StandardFace.intCmpHost face ∧
           HEq claim.obligation.model

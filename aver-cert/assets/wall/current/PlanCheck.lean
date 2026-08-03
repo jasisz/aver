@@ -178,7 +178,11 @@ def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat
   | .cmp =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .rawI32 else none
   -- `__aint_eq` already yields the source-level Boolean (`0`/`1`), so its
-  -- result IS `boolI32` and needs no comparison tail.
+  -- result IS `boolI32` and needs no comparison tail. Read this as a TYPING
+  -- rule, not as a proved range: the `{0, 1}` guarantee is contract-backed
+  -- only inside the certified small band (`Obligation.holds`'s `_hEq` is
+  -- quantified over literal small carriers), and outside it the typing rests
+  -- on the pinned helper body alone.
   | .eq =>
       if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .boolI32 else none
 

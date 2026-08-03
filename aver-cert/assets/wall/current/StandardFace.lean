@@ -399,12 +399,17 @@ runtime comparison helper and reads its raw `i32` verdict.
 plans need an exact-pinned face — the same node-by-node discipline
 `classifyIntAdd` uses — and NOT a widened generic gate.
 
-Both faces are stated over the full representation relation
-(`intPairDomRepr`: `S.Repr` on each argument), never over the small-value
-`carrierSmall` encoding the generic `fragment` face uses. A comparison
-certificate that said nothing about limb-carrying operands would be hollow
-exactly where `__aint_cmp` does its work; this is the same choice `intList`
-makes for the `classifyIntAdd` family.
+Both faces are stated over the SMALL BAND (`intPairSmallBandDomRepr`: each
+argument is the literal `carrierSmall` encoding of an integer in `[-2^63,
+2^63)`), which is exactly the domain the two assumed helper contracts in
+`Obligation.holds` are quantified over. That is not a convenience: a face
+stated over the full representation relation would need a relational contract,
+and a relational contract is REFUTABLE here — `CarrierSpec.smallIntro` admits
+`carrierSmall C k` as a representation of `k` for every `k`, while `__aint_eq`
+decides a `Small` against a limb-carrying `Big` structurally and `__aint_cmp`
+decides on raw sign fields `CarrierSpec.bigElim` does not constrain. Widening
+the certified domain to limb-carrying operands needs a carrier specification
+that pins those fields, not a wider premise.
 
 The three relational operators read `__aint_cmp`, whose `-1`/`0`/`1` verdict is
 typed `rawI32` and is always consumed by `i32.const 0` plus a signed relational
@@ -460,8 +465,11 @@ def intCmpHelper (op : IntCmpOp) (cmp eq : List WVal → Option WVal) :
 
 /-- The single host slot both faces present: the claimed helper index, arity 2,
     wired to the contract-bound helper its operator names. Every other index is
-    absent, so a body calling anything else cannot run and the obligation is
-    vacuous rather than wrong. -/
+    absent from this table — which is not what makes the face safe (a body
+    calling an absent index is merely stuck, and a stuck run says nothing). The
+    guarantee comes from the PINNED BODY: the classifiers admit exactly one
+    node list, whose only call is to the claimed helper index, so the emitted
+    body cannot call anything else in the first place. -/
 def intCmpHostSlots (op : IntCmpOp) (helperIdx : Nat)
     (cmp eq : List WVal → Option WVal) : HostTbl :=
   fun fn => if fn = helperIdx then some (2, intCmpHelper op cmp eq) else none
@@ -471,11 +479,16 @@ def intCmpHost (face : IntCmpFace) : HostBuilder :=
     intCmpHostSlots face.op face.helperIdx cmp eq
 
 /-- Domain representation of both comparison faces: the machine state is exactly
-    the two argument values, each representing its integer under the FULL
-    carrier relation — small or limb-carrying, no restriction. -/
-def intPairDomRepr (carrier : Nat) (S : CarrierSpec carrier)
+    the two LITERAL small carriers of two band-bounded integers. This is the
+    same domain the `_hCmp` / `_hEq` premises of `Obligation.holds` are
+    quantified over, and it is deliberately narrower than `S.Repr`: see the
+    section note above for why a relational domain would be unsound to assume
+    here. The carrier specification is still a parameter — `S` is used, through
+    `smallIntro`, to represent the selection face's passthrough result. -/
+def intPairSmallBandDomRepr (carrier : Nat) (_S : CarrierSpec carrier)
     (p : Int × Int) (vs : List WVal) : Prop :=
-  ∃ va vb, vs = [va, vb] ∧ S.Repr p.1 va ∧ S.Repr p.2 vb
+  vs = [carrierSmall carrier p.1, carrierSmall carrier p.2] ∧
+    -(2 ^ 63 : Int) ≤ p.1 ∧ p.1 < 2 ^ 63 ∧ -(2 ^ 63 : Int) ≤ p.2 ∧ p.2 < 2 ^ 63
 
 /-- The emitted comparison body: read both arguments, call the helper, and —
     for the three relational operators — compare the verdict against
@@ -708,7 +721,7 @@ def intCmpBoolFace (carrier : Nat) (face : IntCmpFace) : FaceSpec where
   carrier := carrier
   Dom := Int × Int
   Cod := Bool
-  domRepr := intPairDomRepr carrier
+  domRepr := intPairSmallBandDomRepr carrier
   codRepr := boolRepr
   host := intCmpHost face
   model? := some (intCmpModel face.op)
@@ -720,7 +733,7 @@ def intSelectFace (carrier : Nat) (face : IntCmpFace) : FaceSpec where
   carrier := carrier
   Dom := Int × Int
   Cod := Int
-  domRepr := intPairDomRepr carrier
+  domRepr := intPairSmallBandDomRepr carrier
   codRepr := intRepr
   host := intCmpHost face
   model? := some (intSelectModel face.op)
@@ -1354,9 +1367,9 @@ The two `simulates_model` theorems are the audited content of this leg: generic
 over the carrier spec, the helper index, the declared-local count, the code
 table (pinned only at the self entry, exactly what byte acceptance certifies),
 the fuel, and ANY helper obeying the `__aint_cmp` / `__aint_eq` contract,
-running the emitted body on two represented integers yields a represented
-model value. Partial correctness — vacuous on trap or fuel exhaustion, like
-`Obligation.holds`. -/
+running the emitted body on the small carriers of two band-bounded integers
+yields a represented model value. Partial correctness — vacuous on trap or fuel
+exhaustion, like `Obligation.holds`. -/
 
 theorem symFragmentFace_intCmpBool
     (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan) (face : IntCmpFace)
@@ -1500,61 +1513,65 @@ theorem intCmp_simulates_model
     (carrier helperIdx : Nat) (op : IntCmpOp)
     (S : CarrierSpec carrier)
     (cmp eq : List WVal → Option WVal)
-    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      cmp [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (cmpW k1 k2))
+    (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      eq [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (eqW k1 k2))
     (code : CodeTbl) (self nlocals : Nat)
     (hCode : code self = some ⟨2, nlocals, intCmpTemplate op helperIdx⟩)
     (fuel : Nat) (p : Int × Int) (vs : List WVal) (w : WVal)
-    (hDom : intPairDomRepr carrier S p vs)
+    (hDom : intPairSmallBandDomRepr carrier S p vs)
     (hRun : wFuncN code (intCmpHostSlots op helperIdx cmp eq) fuel self vs = some w) :
     boolRepr S (intCmpModel op p) w := by
-  obtain ⟨va, vb, rfl, ha, hb⟩ := hDom
+  obtain ⟨rfl, hlo1, hhi1, hlo2, hhi2⟩ := hDom
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       cases op with
       | lt =>
-          cases hc : cmp [va, vb] with
+          cases hc : cmp [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              have hr := hCmp p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
               simp [boolRepr, intCmpModel, ← hRun, b32, cmpW_lt_iff]
       | gt =>
-          cases hc : cmp [va, vb] with
+          cases hc : cmp [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              have hr := hCmp p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
               simp [boolRepr, intCmpModel, ← hRun, b32, cmpW_gt_iff]
       | ge =>
-          cases hc : cmp [va, vb] with
+          cases hc : cmp [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              have hr := hCmp p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
               simp [boolRepr, intCmpModel, ← hRun, b32, cmpW_ge_iff]
       | eq =>
-          cases hc : eq [va, vb] with
+          cases hc : eq [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hEq p.1 va p.2 vb r ha hb hc
+              have hr := hEq p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
                 initLocals, wRunF, popArgs, hc] at hRun
@@ -1564,89 +1581,97 @@ theorem intSelect_simulates_model
     (carrier helperIdx : Nat) (op : IntCmpOp)
     (S : CarrierSpec carrier)
     (cmp eq : List WVal → Option WVal)
-    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      cmp [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (cmpW k1 k2))
+    (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      eq [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (eqW k1 k2))
     (code : CodeTbl) (self nlocals : Nat)
     (hCode : code self = some ⟨2, nlocals, intSelectTemplate op helperIdx⟩)
     (fuel : Nat) (p : Int × Int) (vs : List WVal) (w : WVal)
-    (hDom : intPairDomRepr carrier S p vs)
+    (hDom : intPairSmallBandDomRepr carrier S p vs)
     (hRun : wFuncN code (intCmpHostSlots op helperIdx cmp eq) fuel self vs = some w) :
     intRepr S (intSelectModel op p) w := by
-  obtain ⟨va, vb, rfl, ha, hb⟩ := hDom
+  obtain ⟨rfl, hlo1, hhi1, hlo2, hhi2⟩ := hDom
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       cases op with
       | lt =>
-          cases hc : cmp [va, vb] with
+          cases hc : cmp [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                 intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              have hr := hCmp p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               by_cases hrel : p.1 < p.2
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_lt_iff,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.1
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_lt_iff,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.2
       | gt =>
-          cases hc : cmp [va, vb] with
+          cases hc : cmp [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                 intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              have hr := hCmp p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               by_cases hrel : p.2 < p.1
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_gt_iff,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.1
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_gt_iff,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.2
       | ge =>
-          cases hc : cmp [va, vb] with
+          cases hc : cmp [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                 intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              have hr := hCmp p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               by_cases hrel : p.2 ≤ p.1
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_ge_iff,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.1
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_ge_iff,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.2
       | eq =>
-          cases hc : eq [va, vb] with
+          cases hc : eq [carrierSmall carrier p.1, carrierSmall carrier p.2] with
           | none =>
               simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                 intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
           | some r =>
-              have hr := hEq p.1 va p.2 vb r ha hb hc
+              have hr := hEq p.1 p.2 r hlo1 hhi1 hlo2 hhi2 hc
               subst hr
               by_cases hrel : p.1 = p.2
+              · -- `hrel` is an equation between the two operands, so it also
+                -- rewrites the host-call ARGUMENTS; `hc` has to be moved to the
+                -- same normal form or it stops matching the run.
+                rw [hrel] at hc
+                simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, eqW,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.1
               · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
                   intCmpHelper, initLocals, wRunF, popArgs, hc, eqW,
                   hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
-              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
-                  intCmpHelper, initLocals, wRunF, popArgs, hc, eqW,
-                  hrel] at hRun
-                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using S.smallIntro p.2
 
 /-! ### The Int comparison transports (`HEq` pins onto the obligation fields)
 
@@ -1663,15 +1688,19 @@ theorem intCmp_transport
     (hcar : carrier = claimCarrier)
     (hDomT : HEq Dom (Int × Int))
     (hCodT : HEq Cod Bool)
-    (hdomRepr : HEq domRepr (intPairDomRepr claimCarrier))
+    (hdomRepr : HEq domRepr (intPairSmallBandDomRepr claimCarrier))
     (hcodRepr : HEq codRepr (boolRepr (C := claimCarrier)))
     (hmodel : HEq model (intCmpModel op))
     (S : CarrierSpec carrier)
     (cmp eq : List WVal → Option WVal)
-    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      cmp [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (cmpW k1 k2))
+    (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      eq [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (eqW k1 k2))
     (code : CodeTbl) (self nlocals : Nat)
     (hCode : code self = some ⟨2, nlocals, intCmpTemplate op helperIdx⟩)
     (fuel : Nat) (x : Dom) (vs : List WVal) (w : WVal)
@@ -1683,7 +1712,7 @@ theorem intCmp_transport
   subst hD
   have hC : Cod = Bool := eq_of_heq hCodT
   subst hC
-  have e1 : domRepr = intPairDomRepr carrier := eq_of_heq hdomRepr
+  have e1 : domRepr = intPairSmallBandDomRepr carrier := eq_of_heq hdomRepr
   subst e1
   have e2 : codRepr = boolRepr := eq_of_heq hcodRepr
   subst e2
@@ -1701,15 +1730,19 @@ theorem intSelect_transport
     (hcar : carrier = claimCarrier)
     (hDomT : HEq Dom (Int × Int))
     (hCodT : HEq Cod Int)
-    (hdomRepr : HEq domRepr (intPairDomRepr claimCarrier))
+    (hdomRepr : HEq domRepr (intPairSmallBandDomRepr claimCarrier))
     (hcodRepr : HEq codRepr (intRepr (C := claimCarrier)))
     (hmodel : HEq model (intSelectModel op))
     (S : CarrierSpec carrier)
     (cmp eq : List WVal → Option WVal)
-    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
-      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      cmp [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (cmpW k1 k2))
+    (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
+      -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      eq [carrierSmall carrier k1, carrierSmall carrier k2] = some r →
+        r = .i32v (eqW k1 k2))
     (code : CodeTbl) (self nlocals : Nat)
     (hCode : code self = some ⟨2, nlocals, intSelectTemplate op helperIdx⟩)
     (fuel : Nat) (x : Dom) (vs : List WVal) (w : WVal)
@@ -1721,7 +1754,7 @@ theorem intSelect_transport
   subst hD
   have hC : Cod = Int := eq_of_heq hCodT
   subst hC
-  have e1 : domRepr = intPairDomRepr carrier := eq_of_heq hdomRepr
+  have e1 : domRepr = intPairSmallBandDomRepr carrier := eq_of_heq hdomRepr
   subst e1
   have e2 : codRepr = intRepr := eq_of_heq hcodRepr
   subst e2

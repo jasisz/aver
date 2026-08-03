@@ -65,7 +65,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
              code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
              Dom := Int × Int, Cod := Bool,\n    \
-             domRepr := AverCert.StandardFace.intPairDomRepr {carrier},\n    \
+             domRepr := AverCert.StandardFace.intPairSmallBandDomRepr {carrier},\n    \
              codRepr := boolRepr,\n    \
              model := AverCert.StandardFace.intCmpModel {op} }}\n\n",
             carrier = c.carrier(),
@@ -80,7 +80,7 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
              {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
              code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
              Dom := Int × Int, Cod := Int,\n    \
-             domRepr := AverCert.StandardFace.intPairDomRepr {carrier},\n    \
+             domRepr := AverCert.StandardFace.intPairSmallBandDomRepr {carrier},\n    \
              codRepr := intRepr,\n    \
              model := AverCert.StandardFace.intSelectModel {op} }}\n\n",
             carrier = c.carrier(),

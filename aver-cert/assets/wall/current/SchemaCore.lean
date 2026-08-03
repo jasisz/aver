@@ -344,16 +344,19 @@ inductive HostRole where
       collapses to the `-1` out-of-bounds sentinel). Consumed only by the
       monolithic fused vector-read node, never as a standalone `hostCall`. -/
   | toIndex
-  /-- `__aint_cmp`: three-way comparison of two represented integers, yielding
-      the raw `i32` sentinel `-1`/`0`/`1` (`CertPrelude.cmpW`). The emitter never
-      reads it as a Boolean: it always follows the call with `i32.const 0` and a
+  /-- `__aint_cmp`: three-way comparison of two Int carriers, yielding the raw
+      `i32` sentinel `-1`/`0`/`1` (`CertPrelude.cmpW`). The emitter never reads
+      it as a Boolean: it always follows the call with `i32.const 0` and a
       signed relational operator, so the node's result type is `rawI32`, not
-      `boolI32`. -/
+      `boolI32`. The ASSUMED CONTRACT covers small-band carrier operands only —
+      see the note on `Obligation.holds`. -/
   | cmp
-  /-- `__aint_eq`: equality of two represented integers, yielding the `0`/`1`
-      wasm Boolean directly (`CertPrelude.eqW`). Unlike `cmp` its result IS the
+  /-- `__aint_eq`: equality of two Int carriers, yielding the `0`/`1` wasm
+      Boolean directly (`CertPrelude.eqW`). Unlike `cmp` its result IS the
       source-level Boolean, so the node's result type is `boolI32` and the
-      emitter appends no comparison tail. -/
+      emitter appends no comparison tail. Its assumed contract is small-band
+      for the same reason `cmp`'s is, and for one more: `__aint_eq` decides a
+      `Small`/`Big` pair structurally. -/
   | eq
 deriving Repr, DecidableEq
 
@@ -1211,16 +1214,33 @@ structure Obligation where
     fuel exhaustion. Each contract is an assumed runtime law: the host helper
     wired to that slot computes the named operation on represented values.
 
-    The two comparison premises are shaped like `_hToIndex`, not like `_hadd`:
-    relational over `S.Repr` on the ARGUMENTS and EXACT on the result, because
-    the helpers leave the carrier — they return a raw `i32` that no
-    representation relation describes. Neither premise demands trap-freedom; a
-    helper that returns `none` makes the premise vacuous and the run yields
-    nothing, exactly as everywhere else in this denotation. Like `_hToIndex`,
-    the exactness rests on the carrier being canonical: two carriers that both
-    represent the same integer must compare equal for the assumed law to be
-    satisfiable by the real helper. That is a trusted-computing-base note for
-    the H4a ledger, not something acceptance establishes. -/
+    The two comparison premises are EXACT on the result, like `_hToIndex`,
+    because the helpers leave the carrier — they return a raw `i32` that no
+    representation relation describes. Unlike `_hToIndex` they are quantified
+    over LITERAL `carrierSmall` operands inside the i64 band, not over the
+    representation relation, and that scoping is load-bearing rather than
+    stylistic:
+
+    * `CarrierSpec.smallIntro` gives `S.Repr k (carrierSmall C k)` for EVERY
+      `k`, so a relational premise would demand agreement between a `Small`
+      operand and a limb-carrying `Big` operand representing the same integer.
+      `__aint_eq` decides that pair STRUCTURALLY (a `Small` against a `Big` is
+      unequal outright), so the relational form is refutable at any carrier
+      specification that models `Big` carriers at all — it would make every
+      comparison obligation vacuous.
+    * `__aint_cmp` decides on the raw sign FIELDS of its operands, which
+      `CarrierSpec.bigElim` leaves unconstrained beyond the sign/zero facts, so
+      a relational premise is not satisfiable there either.
+
+    Both helpers therefore certify over the SMALL BAND ONLY: the two literal
+    three-field carriers `carrierSmall C k` with `k` in `[-2^63, 2^63)`, which
+    is what the emitter's own boxing produces for an i64-sized value. A
+    limb-carrying input is OUTSIDE THE CERTIFIED DOMAIN — the same epistemic
+    position as `toIndexW`'s `-1` region, stated rather than assumed away: the
+    obligation says nothing about it, and the faces' `domRepr` restricts to the
+    same band so the two line up exactly. Neither premise demands trap-freedom;
+    a helper that returns `none` makes the premise vacuous and the run yields
+    nothing, exactly as everywhere else in this denotation. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
@@ -1232,8 +1252,10 @@ def Obligation.holds (o : Obligation) : Prop :=
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
     (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
     (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
-    (_hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-    (_hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (_hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      cmp [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (cmpW k1 k2))
+    (_hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      eq [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (eqW k1 k2))
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
     wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex cmp eq) fuel o.self vs = some w →
@@ -1260,8 +1282,10 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
         (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
-        (_hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-        (_hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+        (_hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+          cmp [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (cmpW k1 k2))
+        (_hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+          eq [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (eqW k1 k2))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
@@ -1280,8 +1304,10 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
         (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
-        (_hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
-        (_hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 → eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+        (_hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+          cmp [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (cmpW k1 k2))
+        (_hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+          eq [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (eqW k1 k2))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (_hMulTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)

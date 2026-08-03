@@ -3,9 +3,9 @@
 //! Differential harness for the two Int value-comparison host contracts,
 //! `__aint_cmp` and `__aint_eq`.
 //!
-//! The certificate wall assumes ONE relational law per helper
-//! (`CertPrelude.cmpW` / `CertPrelude.eqW`): applied to two carriers that
-//! REPRESENT the integers `a` and `b`, the three-way helper returns exactly
+//! The certificate wall assumes ONE law per helper (`CertPrelude.cmpW` /
+//! `CertPrelude.eqW`): applied to the two LITERAL SMALL carriers of integers
+//! `a` and `b` inside the i64 band, the three-way helper returns exactly
 //! `-1`/`0`/`1` according to `a < b` / `a = b` / `a > b`, and the equality
 //! helper returns exactly `1`/`0`. Nothing in the wall interprets either
 //! body: the bodies are pinned to a byte template and the laws are assumed of
@@ -13,14 +13,20 @@
 //! the real machine, and this is where that happens.
 //!
 //! The harness runs the REAL compiled artifact under wasmtime over a value set
-//! that crosses every boundary the two-limb-plus-sign carrier has:
+//! that crosses every boundary the two-limb-plus-sign carrier has. Only the
+//! Small/Small rows inside the band correspond to an assumed law; every other
+//! row exercises the helpers BEYOND THE CERTIFIED BAND and is kept as a plain
+//! runtime regression on the helper bodies — valuable (the helpers are shared
+//! runtime code and their limb paths are where the interesting bugs live) but
+//! not evidence about any certificate:
 //!  * Small/Small, Small/Big and Big/Big operand pairs (the class of each
 //!    operand is READ OFF the carrier, not assumed, and the test asserts that
-//!    all three combinations really occur);
+//!    all three combinations really occur); of these only Small/Small is
+//!    inside the certified domain;
 //!  * negatives, zero, and equal-magnitude-opposite-sign pairs (the arm of
 //!    `__aint_cmp` that negates the unsigned magnitude verdict);
-//!  * `±2^63 ± 1` — the exact Small/Big cut, where a one-off in the carrier's
-//!    normalisation would flip a class.
+//!  * `±2^63 ± 1` — the exact Small/Big cut, i.e. the edge of the certified
+//!    band, where a one-off in the carrier's normalisation would flip a class.
 //!
 //! The three faces built on the two roles are checked the same way: `atLeast`
 //! (cmp + `i32.ge_s`), `sameKey` (eq alone) and `minInt` (cmp + select) are run
@@ -212,7 +218,10 @@ fn is_small(store: &mut wasmtime::Store<()>, val: &wasmtime::Val) -> bool {
 }
 
 /// The value set: zero, small magnitudes, both signs, the `2^62` limb cut, the
-/// `±2^63 ± 1` Small/Big cut, and values two and six limbs wide.
+/// `±2^63 ± 1` Small/Big cut, and values two and six limbs wide. Everything up
+/// to `i64::MIN` is inside the certified small band; from `1 << 63` down the
+/// rows exercise the helper bodies BEYOND that band, where the wall assumes
+/// nothing and this harness is a plain runtime regression.
 const VALUES: &[i128] = &[
     0,
     1,
@@ -238,8 +247,9 @@ const VALUES: &[i128] = &[
     (1 << 100) + 1,
 ];
 
-/// The carrier's Small band is exactly the i64 range; everything else carries
-/// a magnitude array. Stated here so the class assertions below are a CHECK of
+/// The carrier's Small band is exactly the i64 range — the same band the two
+/// assumed contracts are quantified over — and everything else carries a
+/// magnitude array. Stated here so the class assertions below are a CHECK of
 /// the normalisation, not a restatement of it.
 fn expected_small(v: i128) -> bool {
     i64::try_from(v).is_ok()
@@ -272,7 +282,7 @@ fn the_value_set_really_covers_all_three_operand_class_pairs() {
 }
 
 #[test]
-fn cmp_helper_matches_the_relational_contract_on_every_pair() {
+fn cmp_helper_matches_the_contract_on_every_pair() {
     let mut h = harness();
     for &a in VALUES {
         for &b in VALUES {
@@ -289,7 +299,7 @@ fn cmp_helper_matches_the_relational_contract_on_every_pair() {
 }
 
 #[test]
-fn eq_helper_matches_the_relational_contract_on_every_pair() {
+fn eq_helper_matches_the_contract_on_every_pair() {
     let mut h = harness();
     for &a in VALUES {
         for &b in VALUES {
@@ -337,6 +347,9 @@ fn cmp_helper_orders_equal_magnitudes_by_sign() {
     }
 }
 
+/// The three faces against their models. Same reading as the helper tests: the
+/// Small/Small rows are the certified domain, and everything wider is a runtime
+/// regression on the emitted bodies, not evidence about the certificates.
 #[test]
 fn the_three_faces_match_their_models_on_every_pair() {
     let mut h = harness();
