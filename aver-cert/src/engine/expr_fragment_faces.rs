@@ -529,14 +529,17 @@ pub fn expr_fragment_plan_touches_adt_ref(plan: &ExprFragmentPlan) -> bool {
         || frag_block_touches_adt_ref(&plan.body)
 }
 
-fn frag_block_has_host_calls(block: &FragBlock) -> bool {
+fn frag_block_has_host_call_where(block: &FragBlock, want: &dyn Fn(FragHostRole) -> bool) -> bool {
     block.nodes.iter().any(|node| match &node.kind {
-        FragNodeKind::HostCall { .. } => true,
+        FragNodeKind::HostCall { role, .. } => want(*role),
         FragNodeKind::If {
             then_block,
             else_block,
             ..
-        } => frag_block_has_host_calls(then_block) || frag_block_has_host_calls(else_block),
+        } => {
+            frag_block_has_host_call_where(then_block, want)
+                || frag_block_has_host_call_where(else_block, want)
+        }
         _ => false,
     })
 }
@@ -547,7 +550,16 @@ fn frag_block_has_host_calls(block: &FragBlock) -> bool {
 /// wall (`genericFragmentAllowedFuel`) rejects every `.hostCall` node outright.
 /// Producer and verifier read this same predicate so the two gates cannot drift.
 pub fn expr_fragment_plan_has_host_calls(plan: &ExprFragmentPlan) -> bool {
-    frag_block_has_host_calls(&plan.body)
+    frag_block_has_host_call_where(&plan.body, &|_| true)
+}
+
+/// Whether a plan calls one PARTICULAR host role. The producer reads this to
+/// decide whether the module it is about to emit really calls a helper, which
+/// is what gates the helper's named export (and with it the role's certificate
+/// binding) — a plan is the exact body its canonical lowering emits, so the
+/// roles it names are the calls the bytes will carry.
+pub fn expr_fragment_plan_calls_host_role(plan: &ExprFragmentPlan, role: FragHostRole) -> bool {
+    frag_block_has_host_call_where(&plan.body, &|candidate| candidate == role)
 }
 
 #[cfg(all(test, feature = "engine"))]

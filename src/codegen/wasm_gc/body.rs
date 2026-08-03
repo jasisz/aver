@@ -50,6 +50,7 @@ use slots::SlotTable;
 /// field was `by_name: HashMap<String, FnEntry>`, which happened to
 /// work post-flatten only because every dep fn carried a module
 /// prefix in its name.
+#[derive(Default)]
 pub(super) struct FnMap {
     /// FnId → wasm fn entry. `Call(Fn(id))` and the
     /// `ResolvedExpr::TailCall { target }` dispatch read this
@@ -95,9 +96,32 @@ pub(super) struct FnMap {
     /// and must hit the SAME entry the module-assembly registration
     /// recorded (both derive the key from `fn_sig_wasm` + `fn_sig_key`).
     pub(super) call_indirect_types: std::collections::HashMap<String, u32>,
+    /// Set the first time a body emit resolves `__aint_cmp` / `__aint_eq` to
+    /// put a `call` in front of it. Module assembly exports the two Int
+    /// comparison helpers only when the emitted code really calls them — an
+    /// export is a DCE root, so an unconditional one would keep the helper in
+    /// every Int module. Interior mutability because `FnMap` is shared as `&`
+    /// across the body pre-pass, the locals dry run and the real emit; the
+    /// flags are monotonic, so the repeated passes agree by construction.
+    pub(super) aint_cmp_called: std::cell::Cell<bool>,
+    pub(super) aint_eq_called: std::cell::Cell<bool>,
 }
 
 impl FnMap {
+    /// Resolve an `$AverInt` runtime helper by name, recording the two
+    /// comparison helpers as called. Every `__aint_cmp` / `__aint_eq` call
+    /// site in the body emitter goes through here, so the recording cannot
+    /// drift from the emitted `call` it stands for.
+    pub(super) fn aint_helper_idx(&self, name: &str) -> Option<u32> {
+        let idx = self.builtins.get(name).copied()?;
+        match name {
+            "__aint_cmp" => self.aint_cmp_called.set(true),
+            "__aint_eq" => self.aint_eq_called.set(true),
+            _ => {}
+        }
+        Some(idx)
+    }
+
     /// Lookup a `List<T>` helper triple, falling back to the bare-name
     /// form when the canonical carries a module qualifier (`List<Mod.X>`
     /// → `List<X>`). Multi-module flatten can leave inner type strings

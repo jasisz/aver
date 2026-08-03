@@ -255,7 +255,11 @@ def skip_blocktype(b, i):
 SIMPLE = {
     0x50: ".i64Eqz", 0x51: ".i64Eq", 0x57: ".i64LeS", 0x53: ".i64LtS",
     0x59: ".i64GeS", 0x55: ".i64GtS", 0x46: ".i32Eq", 0x71: ".i32And",
-    0x48: ".i32LtS", 0x4c: ".i32LeS", 0x4a: ".i32GtS", 0xa0: ".f64Add",
+    # `i32.ge_s` closes the signed relational family this oracle reads; it is
+    # the tail the `>=` comparison face emits after `call __aint_cmp`. Twin of
+    # the `0x4e` arm in `CertDecode.decodeInstr`.
+    0x48: ".i32LtS", 0x4c: ".i32LeS", 0x4a: ".i32GtS", 0x4e: ".i32GeS",
+    0xa0: ".f64Add",
     0xa1: ".f64Sub", 0xa2: ".f64Mul", 0xa3: ".f64Div", 0x61: ".f64Eq",
     0x63: ".f64Lt", 0x65: ".f64Le", 0x66: ".f64Ge", 0x64: ".f64Gt",
     0xd1: ".refIsNull", 0x0f: ".ret",

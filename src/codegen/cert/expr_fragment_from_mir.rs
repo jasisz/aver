@@ -87,16 +87,31 @@ pub(crate) fn fragment_plan_from_mir_fn(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn expr_fragment_plan_from_mir_fn(
-    mir_fn: &crate::ir::mir::MirFn,
-) -> Option<ExprFragmentPlan> {
-    let plan = fragment_plan_from_mir_fn(mir_fn, &|_, _| None, &[])?;
-    let struct_table = match &plan {
+/// The plan as the representation-level fragment it will lower to, encoded
+/// against placeholder tables. Indices do not affect the encoding SHAPE, so
+/// this answers structural questions (which host roles does the body call?)
+/// without needing the module's byte-derived tables.
+fn placeholder_expr_fragment_plan(plan: &FragmentPlan) -> Option<ExprFragmentPlan> {
+    let struct_table = match plan {
         FragmentPlan::Sym(sym) => FragStructTable::placeholder_for(sym),
         FragmentPlan::Expr(_) => FragStructTable::default(),
     };
     plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &struct_table)
+}
+
+/// Whether the body this plan lowers to calls a particular host helper role.
+/// The wasm-gc emitter reads it to decide which runtime helpers the module it
+/// is about to emit really calls, which gates their named exports.
+pub(crate) fn fragment_plan_calls_host_role(plan: &FragmentPlan, role: FragHostRole) -> bool {
+    placeholder_expr_fragment_plan(plan)
+        .is_some_and(|frag| expr_fragment_plan_calls_host_role(&frag, role))
+}
+
+#[cfg(test)]
+pub(crate) fn expr_fragment_plan_from_mir_fn(
+    mir_fn: &crate::ir::mir::MirFn,
+) -> Option<ExprFragmentPlan> {
+    placeholder_expr_fragment_plan(&fragment_plan_from_mir_fn(mir_fn, &|_, _| None, &[])?)
 }
 
 /// Fail-closed representation guard. The plan lowerer emits the ALL-BOXED

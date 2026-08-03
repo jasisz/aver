@@ -2077,15 +2077,22 @@ fn inkernel_vector_get_nominal_type_guard_is_isolated_and_weaken_confirmed() {
     let type_idx = export_func_type_idx(&wasm, "cellAt");
     let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) = (
+    // `cellAt` reads a vector; it compares no two Int VALUES, so the module
+    // calls neither comparison helper and exports neither. The honest claim
+    // table below therefore names the roles this module really binds — the
+    // producer's table is byte-derived, and an absent role is simply not in
+    // the list.
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) = (
         box_idx.expect("cell_at box role"),
         add_idx.expect("cell_at add role"),
         mul_idx.expect("cell_at mul role"),
         sub_idx.expect("cell_at sub role"),
         to_index_idx.expect("cell_at to-index role"),
-        cmp_idx.expect("cell_at comparison role"),
-        eq_idx.expect("cell_at equality role"),
     );
+    let comparison_roles = [(".cmp", cmp_idx), (".eq", eq_idx)]
+        .into_iter()
+        .filter_map(|(role, index)| index.map(|index| format!(", ({role}, {index})")))
+        .collect::<String>();
 
     let cert = out_dir.join("cert");
     // The manifest's fused-read host call carries the claim's carrier and
@@ -2191,7 +2198,7 @@ example : WasmSlice.exprVectorGetTypesMatch ArtifactBytes.modBytes ArtifactBytes
 -- The claim really carries exactly those surfaces...
 def honestHostTable : List (HostRole × Nat) :=
   [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx}),
-   (.toIndex, {to_index_idx}), (.cmp, {cmp_idx}), (.eq, {eq_idx})]
+   (.toIndex, {to_index_idx}){comparison_roles}]
 def honestStructTable : List (String × Nat) := [("Vector<Int>", {arr_ty})]
 example : Artifact.symFragmentClaims.map (fun c => (c.carrier, c.hostTable, c.structTable)) =
     [({carrier}, honestHostTable, honestStructTable)] := rfl

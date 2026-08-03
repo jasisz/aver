@@ -2609,159 +2609,15 @@ pub(super) fn emit_module_with(
         eq_helpers: eq_helpers_lookup,
         funcref_table,
         call_indirect_types,
+        ..FnMap::default()
     };
 
-    // ── Export section ─────────────────────────────────────────────
+    // The body pre-pass runs BEFORE the export section because two exports
+    // depend on what the bodies turn out to call: `__aint_cmp` / `__aint_eq`
+    // are exported only when the emitted user code really calls them (an
+    // export is a DCE root, so exporting an uncalled helper would pin ~200
+    // bytes of comparison helper into every Int module).
     //
-    // Entry-point export name follows the `target`. AverBridge keeps
-    // `_start` (the convention every JS host the wasm-gc backend
-    // serves understands). Wasip2 exports `wasi:cli/run@0.2.4#run`
-    // — the canonical-ABI export name for the WIT function
-    // `wasi:cli/run.run`. `wit_component::ComponentEncoder` matches
-    // this name against the `wasi:cli/command` world's required
-    // `run` export when binding the metadata-declared component
-    // surface to the core module.
-    let mut exports = ExportSection::new();
-    let start_export_name: &str = match (target, proxy_mode) {
-        (super::TargetMode::AverBridge, _) => "_start",
-        (super::TargetMode::Wasip2, false) => "wasi:cli/run@0.2.4#run",
-        // `wasi:http/incoming-handler.handle` — the proxy world's
-        // sole required export. `wasmtime serve` / Spin / wasmCloud
-        // route every inbound HTTP request through this.
-        (super::TargetMode::Wasip2, true) => "wasi:http/incoming-handler@0.2.4#handle",
-    };
-    exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
-    for (i, fd) in fn_defs.iter().enumerate() {
-        let wasm_idx = import_count + 1 + (i as u32);
-        exports.export(&fd.name, ExportKind::Func, wasm_idx);
-    }
-    if let Some(b) = &bridge {
-        // The four `__rt_*` exports are JS-host-callable only — wasip2
-        // hosts (wasmtime / Spin / wasmCloud) consume the canonical-
-        // ABI surface, never these names. Skip them when target is
-        // Wasip2 to keep the component contract clean (no leaked JS
-        // runtime names in a non-JS world).
-        if matches!(target, super::TargetMode::AverBridge) {
-            exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
-            exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
-            exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
-            exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
-            // `Int = ℤ`: `Int` entry params are the `$AverInt` carrier, so
-            // the host (`aver run --wasm-gc --expr`, record/replay) needs a
-            // way to build one from a machine-range i64 it parsed. Re-export
-            // the canonical Small constructor under a stable bridge name.
-            if let Some(idx) = registry.aint_from_i64_fn_idx {
-                exports.export("__rt_aint_from_i64", ExportKind::Func, idx);
-            }
-            // The certificate wall identifies the `__aint_to_index` host
-            // role by this named export, exactly like the box helper above.
-            // Present only when a Vector/List index extraction instantiated
-            // the helper.
-            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToIndex) {
-                exports.export("__aint_to_index", ExportKind::Func, idx);
-            }
-            // The two Int value-vs-value comparison helpers, named exports on
-            // the same rule as the box and index helpers above: the wall reads
-            // the helper's function index off the export name, and pins the
-            // bytes at that index against a fixed body template.
-            //
-            // `__aint_cmp` renders its shared sub-routines (`decompose`,
-            // `strip`, `umag_cmp`) either as a `call` to a registered helper
-            // or as an inlined loop, and the two shapes have different bytes.
-            // Only the call shape is pinned by the wall, so the export and the
-            // inline shape must never coexist: refuse to emit the module at
-            // all rather than ship an export whose body the wall cannot
-            // recognise. The sub-routines are registered unconditionally
-            // alongside `AintCmp` under the same `registry.bignum` gate (see
-            // the bignum registration block above), so this is unreachable
-            // today by construction — it is a guard against a future
-            // registration change silently flipping the emitted shape.
-            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintCmp) {
-                if registry.aint_decompose_fn_idx.is_none()
-                    || registry.aint_strip_fn_idx.is_none()
-                    || registry.aint_umag_cmp_fn_idx.is_none()
-                {
-                    return Err(WasmGcError::Validation(
-                        "__aint_cmp is exported as a certified host role but its shared \
-                         sub-routines (decompose / strip / umag_cmp) are unregistered, so \
-                         the helper body would be emitted in the inlined shape the \
-                         certificate wall does not recognise"
-                            .to_string(),
-                    ));
-                }
-                exports.export("__aint_cmp", ExportKind::Func, idx);
-            }
-            // `__aint_eq` is self-contained (no inter-helper `call`), so it has
-            // a single fixed shape and needs no such guard.
-            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq) {
-                exports.export("__aint_eq", ExportKind::Func, idx);
-            }
-        }
-        exports.export("memory", ExportKind::Memory, 0);
-    } else if cabi_realloc.is_some() {
-        // wasip2 path with no bridge (theoretical — cabi_realloc
-        // gates on `wasip2_imports.import_count() > 0` which only
-        // fires when an effect that needs LM is registered, and
-        // every such effect today implies a String). Defensive
-        // export so the host can find memory regardless.
-        exports.export("memory", ExportKind::Memory, 0);
-    }
-    if let Some(c) = &cabi_realloc {
-        // Required by Component Model canonical ABI as the guest's
-        // realloc callback. Phase 1.3.1 ships the impl; consumers
-        // (Args.get / Env.get / Console.readLine / Disk.readText)
-        // start landing in 1.3.2.
-        exports.export("cabi_realloc", ExportKind::Func, c.fn_idx);
-    }
-    factory_exports.emit_exports(&mut exports);
-    if let Some(hw) = &handler_wrapper {
-        exports.export("aver_http_handle", ExportKind::Func, hw.wrapper_fn);
-        exports.export("__rt_list_string_cons", ExportKind::Func, hw.list_cons_fn);
-        // Map<String,List<String>> bridge: the JS host needs to build
-        // a request-headers map to satisfy `request_headers_load`.
-        // Re-export the per-instance Map helper slots under stable
-        // bridge names.
-        if let Some(map_h) = map_helpers.kv_helpers("Map<String,List<String>>") {
-            exports.export(
-                "__rt_map_string_list_string_empty",
-                ExportKind::Func,
-                map_h.empty,
-            );
-            exports.export(
-                "__rt_map_string_list_string_set",
-                ExportKind::Func,
-                map_h.set,
-            );
-        }
-    }
-    if let Some((count_fn_idx, name_fn_idx)) = caller_fn_table_fns {
-        exports.export("__caller_fn_count", ExportKind::Func, count_fn_idx);
-        exports.export("__caller_fn_name", ExportKind::Func, name_fn_idx);
-    }
-    module.section(&exports);
-
-    // ── Element section (active funcref-table init) ────────────────
-    //
-    // Active segment at table 0, offset 0, initialising every slot with
-    // the wasm fn idx of the i-th address-taken user fn (so table[i]
-    // points at the fn whose `Fn` value carries index `i`). Emitted
-    // only when the funcref table exists. Binary section order: Element
-    // (id 9) follows Export (id 7) and precedes the DataCount / Code
-    // sections below.
-    if !funcref_wasm_idxs.is_empty() {
-        let mut elements = ElementSection::new();
-        elements.active(
-            None,
-            &ConstExpr::i32_const(0),
-            Elements::Functions((&funcref_wasm_idxs[..]).into()),
-        );
-        module.section(&elements);
-    }
-
-    // (No StartSection — 0.16.2's caller_fn globals init is gone;
-    // host reads the caller_fn name table via `__caller_fn_count`
-    // + `__caller_fn_name(i)` exports at instantiation instead.)
-
     // Pre-register the synthesised `aver_http_handle` wrapper as a
     // caller_fn entry — `emit_handler_wrapper` (much later in the
     // code section) pushes this idx as the trailing `caller_fn_idx`
@@ -2838,9 +2694,30 @@ pub(super) fn emit_module_with(
     // the chosen emitter runs here so its caller_fn registrations match
     // the real code-emit loop. Plan fragments and trap-stub bodies emit no
     // calls, so the pre-pass simply skips caller_fn collection for those fns.
+    //
+    // It doubles as the liveness signal for the two comparison helper
+    // exports. Both emit paths report through the body they are about to
+    // emit and nothing else: the MIR emitter sets a flag on `fn_map` at the
+    // one lookup every `__aint_cmp` / `__aint_eq` call site goes through,
+    // and a plan fragment is read for the host-call roles its canonical
+    // lowering will emit. Neither is a second reachability analysis over the
+    // module — a helper only reachable from another runtime helper (a
+    // `List<Int>` element eq, say) is deliberately NOT live for this
+    // purpose: no certified body cites it, so no certificate can bind it,
+    // and `wasm-opt -Oz` is free to fold it away with its caller.
+    let mut aint_cmp_called = false;
+    let mut aint_eq_called = false;
     for (i, _fd) in fn_defs.iter().enumerate() {
-        if fragment_plan_for[i].is_some() {
+        if let Some(plan) = fragment_plan_for[i].as_ref() {
             mir_dispatch[i] = true;
+            aint_cmp_called |= crate::codegen::cert::fragment_plan_calls_host_role(
+                plan,
+                crate::codegen::cert::FragHostRole::Cmp,
+            );
+            aint_eq_called |= crate::codegen::cert::fragment_plan_calls_host_role(
+                plan,
+                crate::codegen::cert::FragHostRole::Eq,
+            );
             continue;
         }
         let self_wasm_idx = import_count + 1 + (i as u32);
@@ -2864,6 +2741,12 @@ pub(super) fn emit_module_with(
         };
         mir_dispatch[i] = used_mir;
     }
+    // `fn_map` records a helper the moment the emitter resolves its index to
+    // put a `call` in front of it. A fn that later bails to a trap stub can
+    // therefore leave the flag set for a call the module never ships; that
+    // direction only keeps an export (and its helper) alive, never drops one.
+    aint_cmp_called |= fn_map.aint_cmp_called.get();
+    aint_eq_called |= fn_map.aint_eq_called.get();
 
     // `AVER_WASMGC_REQUIRE_MIR=1` turns the per-fn trap-stub fallback
     // into a hard error that lists every fn which did NOT emit from MIR
@@ -2885,6 +2768,174 @@ pub(super) fn emit_module_with(
             )));
         }
     }
+
+    // ── Export section ─────────────────────────────────────────────
+    //
+    // Entry-point export name follows the `target`. AverBridge keeps
+    // `_start` (the convention every JS host the wasm-gc backend
+    // serves understands). Wasip2 exports `wasi:cli/run@0.2.4#run`
+    // — the canonical-ABI export name for the WIT function
+    // `wasi:cli/run.run`. `wit_component::ComponentEncoder` matches
+    // this name against the `wasi:cli/command` world's required
+    // `run` export when binding the metadata-declared component
+    // surface to the core module.
+    let mut exports = ExportSection::new();
+    let start_export_name: &str = match (target, proxy_mode) {
+        (super::TargetMode::AverBridge, _) => "_start",
+        (super::TargetMode::Wasip2, false) => "wasi:cli/run@0.2.4#run",
+        // `wasi:http/incoming-handler.handle` — the proxy world's
+        // sole required export. `wasmtime serve` / Spin / wasmCloud
+        // route every inbound HTTP request through this.
+        (super::TargetMode::Wasip2, true) => "wasi:http/incoming-handler@0.2.4#handle",
+    };
+    exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
+    for (i, fd) in fn_defs.iter().enumerate() {
+        let wasm_idx = import_count + 1 + (i as u32);
+        exports.export(&fd.name, ExportKind::Func, wasm_idx);
+    }
+    if let Some(b) = &bridge {
+        // The four `__rt_*` exports are JS-host-callable only — wasip2
+        // hosts (wasmtime / Spin / wasmCloud) consume the canonical-
+        // ABI surface, never these names. Skip them when target is
+        // Wasip2 to keep the component contract clean (no leaked JS
+        // runtime names in a non-JS world).
+        if matches!(target, super::TargetMode::AverBridge) {
+            exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
+            exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
+            exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
+            exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+            // `Int = ℤ`: `Int` entry params are the `$AverInt` carrier, so
+            // the host (`aver run --wasm-gc --expr`, record/replay) needs a
+            // way to build one from a machine-range i64 it parsed. Re-export
+            // the canonical Small constructor under a stable bridge name.
+            if let Some(idx) = registry.aint_from_i64_fn_idx {
+                exports.export("__rt_aint_from_i64", ExportKind::Func, idx);
+            }
+            // The certificate wall identifies the `__aint_to_index` host
+            // role by this named export, exactly like the box helper above.
+            // Present only when a Vector/List index extraction instantiated
+            // the helper.
+            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToIndex) {
+                exports.export("__aint_to_index", ExportKind::Func, idx);
+            }
+            // The two Int value-vs-value comparison helpers, named exports on
+            // the same rule as the box and index helpers above: the wall reads
+            // the helper's function index off the export name, and pins the
+            // bytes at that index against a fixed body template.
+            //
+            // Exported only when the emitted user code actually calls them
+            // (`aint_cmp_called` / `aint_eq_called`, decided by the body
+            // pre-pass above), and each helper decides on its own: an
+            // equality-only module exports `__aint_eq` and not `__aint_cmp`.
+            // An export is a liveness root, so exporting a helper nothing
+            // calls would stop `wasm-opt -Oz` from tree-shaking it and grow
+            // every Int module that never compares two values. Nothing is
+            // lost on the certificate side: a comparison certificate can only
+            // exist for a body that calls the helper, and such a body makes
+            // it live here.
+            //
+            // `__aint_cmp` renders its shared sub-routines (`decompose`,
+            // `strip`, `umag_cmp`) either as a `call` to a registered helper
+            // or as an inlined loop, and the two shapes have different bytes.
+            // Only the call shape is pinned by the wall, so the export and the
+            // inline shape must never coexist: refuse to emit the module at
+            // all rather than ship an export whose body the wall cannot
+            // recognise. The sub-routines are registered unconditionally
+            // alongside `AintCmp` under the same `registry.bignum` gate (see
+            // the bignum registration block above), so this is unreachable
+            // today by construction — it is a guard against a future
+            // registration change silently flipping the emitted shape.
+            if let Some(idx) = builtin_registry
+                .lookup_wasm_fn_idx(BuiltinName::AintCmp)
+                .filter(|_| aint_cmp_called)
+            {
+                if registry.aint_decompose_fn_idx.is_none()
+                    || registry.aint_strip_fn_idx.is_none()
+                    || registry.aint_umag_cmp_fn_idx.is_none()
+                {
+                    return Err(WasmGcError::Validation(
+                        "__aint_cmp is exported as a certified host role but its shared \
+                         sub-routines (decompose / strip / umag_cmp) are unregistered, so \
+                         the helper body would be emitted in the inlined shape the \
+                         certificate wall does not recognise"
+                            .to_string(),
+                    ));
+                }
+                exports.export("__aint_cmp", ExportKind::Func, idx);
+            }
+            // `__aint_eq` is self-contained (no inter-helper `call`), so it has
+            // a single fixed shape and needs no such guard.
+            if let Some(idx) = builtin_registry
+                .lookup_wasm_fn_idx(BuiltinName::AintEq)
+                .filter(|_| aint_eq_called)
+            {
+                exports.export("__aint_eq", ExportKind::Func, idx);
+            }
+        }
+        exports.export("memory", ExportKind::Memory, 0);
+    } else if cabi_realloc.is_some() {
+        // wasip2 path with no bridge (theoretical — cabi_realloc
+        // gates on `wasip2_imports.import_count() > 0` which only
+        // fires when an effect that needs LM is registered, and
+        // every such effect today implies a String). Defensive
+        // export so the host can find memory regardless.
+        exports.export("memory", ExportKind::Memory, 0);
+    }
+    if let Some(c) = &cabi_realloc {
+        // Required by Component Model canonical ABI as the guest's
+        // realloc callback. Phase 1.3.1 ships the impl; consumers
+        // (Args.get / Env.get / Console.readLine / Disk.readText)
+        // start landing in 1.3.2.
+        exports.export("cabi_realloc", ExportKind::Func, c.fn_idx);
+    }
+    factory_exports.emit_exports(&mut exports);
+    if let Some(hw) = &handler_wrapper {
+        exports.export("aver_http_handle", ExportKind::Func, hw.wrapper_fn);
+        exports.export("__rt_list_string_cons", ExportKind::Func, hw.list_cons_fn);
+        // Map<String,List<String>> bridge: the JS host needs to build
+        // a request-headers map to satisfy `request_headers_load`.
+        // Re-export the per-instance Map helper slots under stable
+        // bridge names.
+        if let Some(map_h) = map_helpers.kv_helpers("Map<String,List<String>>") {
+            exports.export(
+                "__rt_map_string_list_string_empty",
+                ExportKind::Func,
+                map_h.empty,
+            );
+            exports.export(
+                "__rt_map_string_list_string_set",
+                ExportKind::Func,
+                map_h.set,
+            );
+        }
+    }
+    if let Some((count_fn_idx, name_fn_idx)) = caller_fn_table_fns {
+        exports.export("__caller_fn_count", ExportKind::Func, count_fn_idx);
+        exports.export("__caller_fn_name", ExportKind::Func, name_fn_idx);
+    }
+    module.section(&exports);
+
+    // ── Element section (active funcref-table init) ────────────────
+    //
+    // Active segment at table 0, offset 0, initialising every slot with
+    // the wasm fn idx of the i-th address-taken user fn (so table[i]
+    // points at the fn whose `Fn` value carries index `i`). Emitted
+    // only when the funcref table exists. Binary section order: Element
+    // (id 9) follows Export (id 7) and precedes the DataCount / Code
+    // sections below.
+    if !funcref_wasm_idxs.is_empty() {
+        let mut elements = ElementSection::new();
+        elements.active(
+            None,
+            &ConstExpr::i32_const(0),
+            Elements::Functions((&funcref_wasm_idxs[..]).into()),
+        );
+        module.section(&elements);
+    }
+
+    // (No StartSection — 0.16.2's caller_fn globals init is gone;
+    // host reads the caller_fn name table via `__caller_fn_count`
+    // + `__caller_fn_name(i)` exports at instantiation instead.)
 
     let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
 

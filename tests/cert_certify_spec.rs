@@ -288,8 +288,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        18,
-        "all 44 module exports must be certified or explicitly declared"
+        16,
+        "all 42 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {
@@ -3776,6 +3776,118 @@ fn certify_then_verify_carrierless_module_acceptance_pin_closes() {
 #[cfg(test)]
 const _ADMISSION_ONLY_COVERAGE_NOTE: () = ();
 
+/// The two Int comparison helpers are exported exactly when the emitted code
+/// calls them, and each role decides on its own. A named export is a
+/// tree-shaking root, so an unconditional export would keep the comparison
+/// helper (and, for `__aint_cmp`, its shared sub-routines) in every module
+/// that touches `Int` — `const_cmp_bound_check_dces_aint_cmp_helpers` in
+/// `tests/wasm_gc_carrier_i64_differential.rs` measures that side in bytes.
+/// What this pins is the certificate surface: the declared role table follows
+/// the exports, so a module that compares nothing declares both roles `null`
+/// truthfully, and a module that compares binds exactly the helpers it calls.
+///
+/// The literal case is the load-bearing one for the size claim: `a >= 100`
+/// lowers to the specialized carrier-shape test with no call at all, so it
+/// must not export the helper the general `a >= b` does.
+#[test]
+fn comparison_helper_exports_follow_the_emitted_calls() {
+    let cases: [(&str, &str, bool, bool); 5] = [
+        (
+            "nocompare",
+            "fn f(a: Int, b: Int) -> Int\n    a + b\n",
+            false,
+            false,
+        ),
+        (
+            "eqonly",
+            "fn f(a: Int, b: Int) -> Bool\n    a == b\n",
+            false,
+            true,
+        ),
+        (
+            "cmponly",
+            "fn f(a: Int, b: Int) -> Bool\n    a >= b\n",
+            true,
+            false,
+        ),
+        (
+            "bothcompare",
+            "fn f(a: Int, b: Int) -> Bool\n    a >= b\n\nfn g(a: Int, b: Int) -> Bool\n    a == b\n",
+            true,
+            true,
+        ),
+        (
+            "literalcompare",
+            "fn f(a: Int) -> Bool\n    a >= 100\n",
+            false,
+            false,
+        ),
+    ];
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-comparison-export-liveness");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    for (name, body, wants_cmp, wants_eq) in cases {
+        let source = format!(
+            "module Probe\n    intent =\n        \"Comparison host-role export liveness probe.\"\n    effects []\n\n{body}"
+        );
+        let av = out_dir.join(format!("{name}.av"));
+        std::fs::write(&av, source).unwrap();
+        let build = out_dir.join(name);
+        let compile = aver_command()
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(&av)
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&build)
+            .output()
+            .expect("aver compile --certify runs");
+        assert!(
+            compile.status.success(),
+            "{name} --certify failed:\n{}{}",
+            String::from_utf8_lossy(&compile.stdout),
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let wasm = std::fs::read(build.join(format!("{name}.wasm"))).unwrap();
+        let (box_idx, _, _, _, _, cmp_idx, eq_idx) =
+            aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+        assert!(
+            box_idx.is_some(),
+            "{name} touches Int, so the carrier box helper must stay exported"
+        );
+        assert_eq!(
+            cmp_idx.is_some(),
+            wants_cmp,
+            "{name}: `__aint_cmp` export must follow whether the emitted code calls it"
+        );
+        assert_eq!(
+            eq_idx.is_some(),
+            wants_eq,
+            "{name}: `__aint_eq` export must follow whether the emitted code calls it"
+        );
+        // The certificate's declared table is byte-derived, so it says exactly
+        // the same thing — an unexported helper is an honestly absent role,
+        // never a role bound to a function nothing names.
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(build.join("cert").join("cert-manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            manifest["hostRoleTable"]["cmp"],
+            cmp_idx.map_or(serde_json::Value::Null, |index| serde_json::json!(index)),
+            "{name}: declared `cmp` role must match the export section"
+        );
+        assert_eq!(
+            manifest["hostRoleTable"]["eq"],
+            eq_idx.map_or(serde_json::Value::Null, |index| serde_json::json!(index)),
+            "{name}: declared `eq` role must match the export section"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 #[test]
 fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     // Regression guard for the optional-helper change: a module that DOES
@@ -3843,7 +3955,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     );
 
     // The host-role table stays the exact byte-derived OBJECT — never `null`
-    // — and every role is bound for the full Int runtime.
+    // — and every arithmetic role is bound for the full Int runtime.
     let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
     let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
@@ -3852,10 +3964,16 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
             && add_idx.is_some()
             && mul_idx.is_some()
             && sub_idx.is_some()
-            && to_index_idx.is_some()
-            && cmp_idx.is_some()
-            && eq_idx.is_some(),
-        "add_one carries the full Int runtime; every role must bind"
+            && to_index_idx.is_some(),
+        "add_one carries the full Int arithmetic runtime; every arithmetic role must bind"
+    );
+    // `addOne` compares nothing, so the module never calls either comparison
+    // helper and therefore does not export one. Both roles are declared absent
+    // — truthfully, against bytes that really lack the export — which is the
+    // only reading the wall accepts.
+    assert!(
+        cmp_idx.is_none() && eq_idx.is_none(),
+        "add_one has no Int comparison; both comparison roles must be absent"
     );
     assert!(
         manifest["carrier_type_index"].is_u64(),
@@ -3871,6 +3989,10 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     // equality for carriered modules is exactly as strong as before.
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    let optional = |idx: Option<u32>| match idx {
+        Some(index) => format!("some {index}"),
+        None => "none".to_string(),
+    };
     let expected_roles = format!(
         "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := {}, eq := {} }} : CertDecode.AddSub.Roles),",
         box_idx.unwrap(),
@@ -3878,8 +4000,8 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         mul_idx.unwrap(),
         sub_idx.unwrap(),
         to_index_idx.unwrap(),
-        format!("some {}", cmp_idx.unwrap()),
-        format!("some {}", eq_idx.unwrap()),
+        optional(cmp_idx),
+        optional(eq_idx),
     );
     assert!(
         manifest_lean.contains(&expected_roles),
