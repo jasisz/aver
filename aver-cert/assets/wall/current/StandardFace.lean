@@ -389,6 +389,342 @@ def classifyVectorGetOrDefault
     | _ => none
   else none
 
+/-! ### Int value-versus-value comparison faces (`__aint_cmp` / `__aint_eq`)
+
+Two Int VALUES compared against each other — `a >= b`, `a == b`, and the
+`match a < b { true -> a; false -> b }` selection — leave the part of the
+fragment grammar that lowers without a helper: the wasm-gc emitter calls a
+runtime comparison helper and reads its raw `i32` verdict.
+`genericFragmentAllowedFuel` rejects EVERY `.hostCall` node outright, so these
+plans need an exact-pinned face — the same node-by-node discipline
+`classifyIntAdd` uses — and NOT a widened generic gate.
+
+Both faces are stated over the full representation relation
+(`intPairDomRepr`: `S.Repr` on each argument), never over the small-value
+`carrierSmall` encoding the generic `fragment` face uses. A comparison
+certificate that said nothing about limb-carrying operands would be hollow
+exactly where `__aint_cmp` does its work; this is the same choice `intList`
+makes for the `classifyIntAdd` family.
+
+The three relational operators read `__aint_cmp`, whose `-1`/`0`/`1` verdict is
+typed `rawI32` and is always consumed by `i32.const 0` plus a signed relational
+operator; `==` reads `__aint_eq`, whose `0`/`1` result IS the source Boolean and
+carries no tail. `<=` is deliberately absent: no admitted plan produces
+`i32.le_s` (see the `FragPrim` note), so a `le` arm would be reachable by
+nothing.
+
+The result of the SELECTION face is a PASSTHROUGH of an input local — the
+emitted `if` yields `local.get 0` or `local.get 1`, boxes nothing, and calls no
+helper in either arm — so its codomain relation is carried straight from the
+chosen argument's `S.Repr` premise. -/
+
+/-- Comparison operators admitted on two Int VALUES. `le` is absent by
+    construction: the plan grammar has no `i32.le_s` primitive to lower it to. -/
+inductive IntCmpOp where
+  | lt
+  | gt
+  | ge
+  | eq
+deriving Repr, DecidableEq
+
+/-- Face data of both comparison shapes: which operator, and the resolved index
+    of the single runtime helper it reads (`__aint_cmp` for the relational
+    operators, `__aint_eq` for equality). Acceptance binds that index to the
+    module bytes and to the decoded role table; `hostTableBound` additionally
+    forces the role/index pair to be the decoded one and every claimed index to
+    be distinct. -/
+structure IntCmpFace where
+  op        : IntCmpOp
+  helperIdx : Nat
+deriving Repr, DecidableEq
+
+/-- The Boolean the source operator denotes on two exact integers. -/
+def intCmpModel : IntCmpOp → Int × Int → Bool
+  | .lt, p => decide (p.1 < p.2)
+  | .gt, p => decide (p.2 < p.1)
+  | .ge, p => decide (p.2 ≤ p.1)
+  | .eq, p => decide (p.1 = p.2)
+
+/-- The Int the source selection denotes: one of its own two arguments. -/
+def intSelectModel (op : IntCmpOp) (p : Int × Int) : Int :=
+  if intCmpModel op p then p.1 else p.2
+
+/-- Which contract slot the operator's helper occupies. Equality reads the
+    `__aint_eq` contract (`eqW`), the three relational operators read the
+    `__aint_cmp` contract (`cmpW`); nothing reads both. -/
+def intCmpHelper (op : IntCmpOp) (cmp eq : List WVal → Option WVal) :
+    List WVal → Option WVal :=
+  match op with
+  | .eq => eq
+  | .lt | .gt | .ge => cmp
+
+/-- The single host slot both faces present: the claimed helper index, arity 2,
+    wired to the contract-bound helper its operator names. Every other index is
+    absent, so a body calling anything else cannot run and the obligation is
+    vacuous rather than wrong. -/
+def intCmpHostSlots (op : IntCmpOp) (helperIdx : Nat)
+    (cmp eq : List WVal → Option WVal) : HostTbl :=
+  fun fn => if fn = helperIdx then some (2, intCmpHelper op cmp eq) else none
+
+def intCmpHost (face : IntCmpFace) : HostBuilder :=
+  fun _add _sub _mul _stringEq _stringConcat _toIndex cmp eq =>
+    intCmpHostSlots face.op face.helperIdx cmp eq
+
+/-- Domain representation of both comparison faces: the machine state is exactly
+    the two argument values, each representing its integer under the FULL
+    carrier relation — small or limb-carrying, no restriction. -/
+def intPairDomRepr (carrier : Nat) (S : CarrierSpec carrier)
+    (p : Int × Int) (vs : List WVal) : Prop :=
+  ∃ va vb, vs = [va, vb] ∧ S.Repr p.1 va ∧ S.Repr p.2 vb
+
+/-- The emitted comparison body: read both arguments, call the helper, and —
+    for the three relational operators — compare the verdict against
+    `i32.const 0`. This is `PlanLower.lowerBlock` of the pinned node list
+    (`lowerBlock_intCmp`), not an independent claim about the emitter. -/
+def intCmpTemplate (op : IntCmpOp) (helperIdx : Nat) : List WInstr :=
+  match op with
+  | .eq => [.localGet 0, .localGet 1, .call helperIdx]
+  | .lt => [.localGet 0, .localGet 1, .call helperIdx, .i32Const 0, .i32LtS]
+  | .gt => [.localGet 0, .localGet 1, .call helperIdx, .i32Const 0, .i32GtS]
+  | .ge => [.localGet 0, .localGet 1, .call helperIdx, .i32Const 0, .i32GeS]
+
+/-- The emitted selection body: the comparison above followed by an `if` whose
+    arms are bare argument reads. -/
+def intSelectTemplate (op : IntCmpOp) (helperIdx : Nat) : List WInstr :=
+  intCmpTemplate op helperIdx ++ [.ifElse [.localGet 0] [.localGet 1]]
+
+/-- The three-way verdict is negative exactly below, positive exactly above and
+    non-negative exactly at-or-above. These are the only facts about `cmpW` the
+    faces need, and they are what makes the `i32.const 0` tail meaningful. -/
+theorem cmpW_lt_iff (a b : Int) : cmpW a b < 0 ↔ a < b := by
+  unfold cmpW
+  split
+  · omega
+  · split <;> omega
+
+theorem cmpW_gt_iff (a b : Int) : 0 < cmpW a b ↔ b < a := by
+  unfold cmpW
+  split
+  · omega
+  · split <;> omega
+
+theorem cmpW_ge_iff (a b : Int) : 0 ≤ cmpW a b ↔ b ≤ a := by
+  unfold cmpW
+  split
+  · omega
+  · split <;> omega
+
+/-- The signed relational primitive each operator's tail uses. The map is
+    injective and total on the admitted operators; every other primitive
+    declines, which is what keeps a `i32.and`- or `i32.eq`-tailed body out of
+    this face. -/
+def intCmpOfPrim? : FragPrim → Option IntCmpOp
+  | .i32LtS => some .lt
+  | .i32GtS => some .gt
+  | .i32GeS => some .ge
+  | _ => none
+
+/-- Pinned node list of a relational comparison: both arguments, the
+    `__aint_cmp` call typed `rawI32`, the `i32.const 0`, and the signed tail. -/
+def intCmpRelBlock (prim : FragPrim) (helperIdx : Nat) : FragBlock :=
+  { nodes :=
+      [{ id := 0, ty := .intCarrier, kind := .local 0 },
+       { id := 1, ty := .intCarrier, kind := .local 1 },
+       { id := 2, ty := .rawI32, kind := .hostCall .cmp helperIdx [0, 1] },
+       { id := 3, ty := .rawI32, kind := .constI32 0 },
+       { id := 4, ty := .boolI32, kind := .prim prim [2, 3] }],
+    result := 4 }
+
+/-- Pinned node list of the equality comparison: both arguments and the
+    `__aint_eq` call, whose result is already the source Boolean. -/
+def intCmpEqBlock (helperIdx : Nat) : FragBlock :=
+  { nodes :=
+      [{ id := 0, ty := .intCarrier, kind := .local 0 },
+       { id := 1, ty := .intCarrier, kind := .local 1 },
+       { id := 2, ty := .boolI32, kind := .hostCall .eq helperIdx [0, 1] }],
+    result := 2 }
+
+def intCmpBlock (op : IntCmpOp) (helperIdx : Nat) : FragBlock :=
+  match op with
+  | .lt => intCmpRelBlock .i32LtS helperIdx
+  | .gt => intCmpRelBlock .i32GtS helperIdx
+  | .ge => intCmpRelBlock .i32GeS helperIdx
+  | .eq => intCmpEqBlock helperIdx
+
+/-- Exact Int-comparison classifier over two Int parameters yielding a Bool.
+    Node ids, declared types, argument lists and the block result are all pinned
+    by the literal patterns; only the operator and the helper index are read out
+    of the plan. -/
+def classifyIntCmpBool (plan : ExprFragmentRawPlan) : Option IntCmpFace :=
+  if plan.params = [.intCarrier, .intCarrier] && plan.result = .boolI32 then
+    match plan.body with
+    | { nodes :=
+          [{ id := 0, ty := .intCarrier, kind := .local 0 },
+           { id := 1, ty := .intCarrier, kind := .local 1 },
+           { id := 2, ty := .boolI32, kind := .hostCall .eq helperIdx [0, 1] }],
+        result := 2 } => some { op := .eq, helperIdx := helperIdx }
+    | { nodes :=
+          [{ id := 0, ty := .intCarrier, kind := .local 0 },
+           { id := 1, ty := .intCarrier, kind := .local 1 },
+           { id := 2, ty := .rawI32, kind := .hostCall .cmp helperIdx [0, 1] },
+           { id := 3, ty := .rawI32, kind := .constI32 0 },
+           { id := 4, ty := .boolI32, kind := .prim prim [2, 3] }],
+        result := 4 } =>
+        match intCmpOfPrim? prim with
+        | some op => some { op := op, helperIdx := helperIdx }
+        | none => none
+    | _ => none
+  else none
+
+/-- Structural content of a fired comparison recognizer: the parameters, the
+    declared result, and the body ARE the pinned shape the face is proven over. -/
+theorem classifyIntCmpBool_spec
+    (plan : ExprFragmentRawPlan) (face : IntCmpFace)
+    (h : classifyIntCmpBool plan = some face) :
+    plan.params = [.intCarrier, .intCarrier] ∧ plan.result = .boolI32 ∧
+      plan.body = intCmpBlock face.op face.helperIdx := by
+  unfold classifyIntCmpBool at h
+  split at h
+  case isFalse => exact absurd h (by simp)
+  case isTrue hcond =>
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hcond
+    obtain ⟨hparams, hresult⟩ := hcond
+    split at h
+    case h_1 helperIdx heq =>
+      injection h with hface
+      subst hface
+      exact ⟨hparams, hresult, by rw [heq]; rfl⟩
+    case h_2 helperIdx prim heq =>
+      split at h
+      case h_2 => exact absurd h (by simp)
+      case h_1 op hop =>
+        injection h with hface
+        subst hface
+        refine ⟨hparams, hresult, ?_⟩
+        rw [heq]
+        cases prim <;> simp [intCmpOfPrim?] at hop <;> subst hop <;> rfl
+    case h_3 => exact absurd h (by simp)
+
+/-- One arm of the selection: a bare argument read, no box and no host call. -/
+def intSelectArm (localIdx : Nat) : FragBlock :=
+  { nodes := [{ id := 0, ty := .intCarrier, kind := .local localIdx }], result := 0 }
+
+def intSelectRelBlock (prim : FragPrim) (helperIdx : Nat) : FragBlock :=
+  { nodes :=
+      [{ id := 0, ty := .intCarrier, kind := .local 0 },
+       { id := 1, ty := .intCarrier, kind := .local 1 },
+       { id := 2, ty := .rawI32, kind := .hostCall .cmp helperIdx [0, 1] },
+       { id := 3, ty := .rawI32, kind := .constI32 0 },
+       { id := 4, ty := .boolI32, kind := .prim prim [2, 3] },
+       { id := 5, ty := .intCarrier,
+         kind := .ifElse 4 (intSelectArm 0) (intSelectArm 1) }],
+    result := 5 }
+
+def intSelectEqBlock (helperIdx : Nat) : FragBlock :=
+  { nodes :=
+      [{ id := 0, ty := .intCarrier, kind := .local 0 },
+       { id := 1, ty := .intCarrier, kind := .local 1 },
+       { id := 2, ty := .boolI32, kind := .hostCall .eq helperIdx [0, 1] },
+       { id := 3, ty := .intCarrier,
+         kind := .ifElse 2 (intSelectArm 0) (intSelectArm 1) }],
+    result := 3 }
+
+def intSelectBlock (op : IntCmpOp) (helperIdx : Nat) : FragBlock :=
+  match op with
+  | .lt => intSelectRelBlock .i32LtS helperIdx
+  | .gt => intSelectRelBlock .i32GtS helperIdx
+  | .ge => intSelectRelBlock .i32GeS helperIdx
+  | .eq => intSelectEqBlock helperIdx
+
+/-- Exact Int-selection classifier: the comparison above, followed by an `if`
+    whose two arms are pinned — LITERALLY, inside the pattern — to the bare
+    reads of parameter 0 and parameter 1 in that order. Nothing else is
+    admitted in an arm, so the result cannot be a freshly boxed value. -/
+def classifyIntSelect (plan : ExprFragmentRawPlan) : Option IntCmpFace :=
+  if plan.params = [.intCarrier, .intCarrier] && plan.result = .intCarrier then
+    match plan.body with
+    | { nodes :=
+          [{ id := 0, ty := .intCarrier, kind := .local 0 },
+           { id := 1, ty := .intCarrier, kind := .local 1 },
+           { id := 2, ty := .boolI32, kind := .hostCall .eq helperIdx [0, 1] },
+           { id := 3, ty := .intCarrier,
+             kind := .ifElse 2
+               { nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }],
+                 result := 0 }
+               { nodes := [{ id := 0, ty := .intCarrier, kind := .local 1 }],
+                 result := 0 } }],
+        result := 3 } => some { op := .eq, helperIdx := helperIdx }
+    | { nodes :=
+          [{ id := 0, ty := .intCarrier, kind := .local 0 },
+           { id := 1, ty := .intCarrier, kind := .local 1 },
+           { id := 2, ty := .rawI32, kind := .hostCall .cmp helperIdx [0, 1] },
+           { id := 3, ty := .rawI32, kind := .constI32 0 },
+           { id := 4, ty := .boolI32, kind := .prim prim [2, 3] },
+           { id := 5, ty := .intCarrier,
+             kind := .ifElse 4
+               { nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }],
+                 result := 0 }
+               { nodes := [{ id := 0, ty := .intCarrier, kind := .local 1 }],
+                 result := 0 } }],
+        result := 5 } =>
+        match intCmpOfPrim? prim with
+        | some op => some { op := op, helperIdx := helperIdx }
+        | none => none
+    | _ => none
+  else none
+
+theorem classifyIntSelect_spec
+    (plan : ExprFragmentRawPlan) (face : IntCmpFace)
+    (h : classifyIntSelect plan = some face) :
+    plan.params = [.intCarrier, .intCarrier] ∧ plan.result = .intCarrier ∧
+      plan.body = intSelectBlock face.op face.helperIdx := by
+  unfold classifyIntSelect at h
+  split at h
+  case isFalse => exact absurd h (by simp)
+  case isTrue hcond =>
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hcond
+    obtain ⟨hparams, hresult⟩ := hcond
+    split at h
+    case h_1 helperIdx heq =>
+      injection h with hface
+      subst hface
+      exact ⟨hparams, hresult, by rw [heq]; rfl⟩
+    case h_2 helperIdx prim heq =>
+      split at h
+      case h_2 => exact absurd h (by simp)
+      case h_1 op hop =>
+        injection h with hface
+        subst hface
+        refine ⟨hparams, hresult, ?_⟩
+        rw [heq]
+        cases prim <;> simp [intCmpOfPrim?] at hop <;> subst hop <;> rfl
+    case h_3 => exact absurd h (by simp)
+
+/-- The complete face of an Int comparison: the two represented arguments in,
+    the Boolean the operator denotes out, the single helper slot, and — unlike
+    the `classifyIntAdd` family — the MODEL fixed by the wall rather than
+    declared by the certificate. -/
+def intCmpBoolFace (carrier : Nat) (face : IntCmpFace) : FaceSpec where
+  carrier := carrier
+  Dom := Int × Int
+  Cod := Bool
+  domRepr := intPairDomRepr carrier
+  codRepr := boolRepr
+  host := intCmpHost face
+  model? := some (intCmpModel face.op)
+
+/-- The complete face of an Int selection. The codomain relation is the
+    ordinary `intRepr`, satisfied by the CHOSEN ARGUMENT's own representation
+    premise — the body boxes nothing. -/
+def intSelectFace (carrier : Nat) (face : IntCmpFace) : FaceSpec where
+  carrier := carrier
+  Dom := Int × Int
+  Cod := Int
+  domRepr := intPairDomRepr carrier
+  codRepr := intRepr
+  host := intCmpHost face
+  model? := some (intSelectModel face.op)
+
 /-! ### Record-parameter face (a Plan type declaration typed the parameter)
 
 The certified Plan carries the user record declaration (`SchemaCore.TypeDecl`);
@@ -518,17 +854,27 @@ noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFa
                   | some face =>
                       some (.known (vectorGetOrDefault claim.carrier face))
                   | none =>
-                      if genericFragmentAllowed plan then
-                        some (.known (fragment claim.carrier plan.params plan.result))
-                      else none
+                      match classifyIntCmpBool plan with
+                      | some face =>
+                          some (.known (intCmpBoolFace claim.carrier face))
+                      | none =>
+                          match classifyIntSelect plan with
+                          | some face =>
+                              some (.known (intSelectFace claim.carrier face))
+                          | none =>
+                              if genericFragmentAllowed plan then
+                                some (.known
+                                  (fragment claim.carrier plan.params plan.result))
+                              else none
 
 /-- No `FaceSpec` branch of the classify chain fires on a record-projection
     plan, so appending the record face on the chain's `none` arm neither
     shadows nor reorders any existing face. Shape by shape: `classifyIntAdd`
     needs an `.intCarrier` parameter list, `exprProjectionFace?` an `.adtRef`
     result, `classifyTagDispatch` a five-node body, `classifyVectorGetOrDefault`
-    a two-parameter list, and the generic gate forbids `.adtRef` parameters —
-    each contradicted by the recognized record shape. -/
+    a two-parameter list, the two Int comparison classifiers a two-Int-carrier
+    parameter list, and the generic gate forbids `.adtRef` parameters — each
+    contradicted by the recognized record shape. -/
 theorem symFragmentFace_none_of_recordProj
     (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan)
     (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
@@ -558,10 +904,17 @@ theorem symFragmentFace_none_of_recordProj
   have hVectorGet : classifyVectorGetOrDefault plan = none := by
     unfold classifyVectorGetOrDefault
     simp [hparams]
+  have hIntCmpBool : classifyIntCmpBool plan = none := by
+    unfold classifyIntCmpBool
+    simp [hparams]
+  have hIntSelect : classifyIntSelect plan = none := by
+    unfold classifyIntSelect
+    simp [hparams]
   have hGeneric : genericFragmentAllowed plan = false := by
     unfold genericFragmentAllowed
     simp [hparams]
-  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hGeneric]
+  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hIntSelect,
+    hGeneric]
 
 def symFragmentMatches
     (modBytes modLen : Nat)
@@ -987,7 +1340,403 @@ theorem recordParam_transport
   exact recordParam_simulates_model S structIdx field nlocals fields hfield
     host code self hCode fuel x ws w hrepr hRun
 
+/-! ### The Int comparison faces: chain selection, lowering, and the two
+template-implies-model theorems
+
+The classifiers fire strictly after every earlier `FaceSpec` branch and are
+mutually exclusive with all of them by PARAMETER LIST alone (`classifyIntAdd`
+takes one Int carrier; the projection, tag-dispatch and fused-read shapes all
+take an `.adtRef`), and with each other by declared RESULT (`.boolI32` versus
+`.intCarrier`). The generic gate below them still rejects both, because it
+rejects every `.hostCall` node.
+
+The two `simulates_model` theorems are the audited content of this leg: generic
+over the carrier spec, the helper index, the declared-local count, the code
+table (pinned only at the self entry, exactly what byte acceptance certifies),
+the fuel, and ANY helper obeying the `__aint_cmp` / `__aint_eq` contract,
+running the emitted body on two represented integers yields a represented
+model value. Partial correctness — vacuous on trap or fuel exhaustion, like
+`Obligation.holds`. -/
+
+theorem symFragmentFace_intCmpBool
+    (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan) (face : IntCmpFace)
+    (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan = some plan)
+    (hCls : classifyIntCmpBool plan = some face) :
+    symFragmentFace claim = some (.known (intCmpBoolFace claim.carrier face)) := by
+  obtain ⟨hparams, _hresult, _hbody⟩ := classifyIntCmpBool_spec plan face hCls
+  unfold symFragmentFace
+  rw [hEncode]
+  have hIntAdd : classifyIntAdd plan = none := by
+    unfold classifyIntAdd
+    simp [hparams]
+  have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
+    unfold AverCert.WasmSlice.exprProjectionFace?
+    simp [hparams]
+  have hTagDispatch : classifyTagDispatch plan = none := by
+    unfold classifyTagDispatch
+    simp [hparams]
+  have hVectorGet : classifyVectorGetOrDefault plan = none := by
+    unfold classifyVectorGetOrDefault
+    simp [hparams]
+  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hCls]
+
+theorem symFragmentFace_intSelect
+    (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan) (face : IntCmpFace)
+    (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan = some plan)
+    (hCls : classifyIntSelect plan = some face) :
+    symFragmentFace claim = some (.known (intSelectFace claim.carrier face)) := by
+  obtain ⟨hparams, hresult, _hbody⟩ := classifyIntSelect_spec plan face hCls
+  unfold symFragmentFace
+  rw [hEncode]
+  have hIntAdd : classifyIntAdd plan = none := by
+    unfold classifyIntAdd
+    simp [hparams]
+  have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
+    unfold AverCert.WasmSlice.exprProjectionFace?
+    simp [hparams]
+  have hTagDispatch : classifyTagDispatch plan = none := by
+    unfold classifyTagDispatch
+    simp [hparams]
+  have hVectorGet : classifyVectorGetOrDefault plan = none := by
+    unfold classifyVectorGetOrDefault
+    simp [hparams]
+  have hIntCmpBool : classifyIntCmpBool plan = none := by
+    unfold classifyIntCmpBool
+    simp [hresult]
+  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hCls]
+
+/-- The carrier binding is NOT optional for either face, and does not depend on
+    the host table being non-empty. Both faces pin an `.intCarrier` parameter
+    list, which makes `fragPlanMentionsIntCarrier` — and therefore
+    `symFragmentCarrierBindingRequired` — true whatever the table holds, so
+    acceptance's `symFragmentCarrierBound` must present the DECODED carrier
+    state (`CertDecode.carrierState`) and not a claimed index. The table trigger
+    fires too (the encoder resolves a `hostCall` role only through the table, so
+    a plan carrying one cannot come from an empty table), but this statement
+    stands without it. -/
+theorem classifyIntCmpBool_forcesCarrierBinding
+    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan)
+    (face : IntCmpFace) (h : classifyIntCmpBool plan = some face) :
+    symFragmentCarrierBindingRequired hostTable plan = true := by
+  obtain ⟨hparams, -, -⟩ := classifyIntCmpBool_spec plan face h
+  simp [symFragmentCarrierBindingRequired, fragPlanMentionsIntCarrier, hparams,
+    fragTyIsIntCarrier]
+
+theorem classifyIntSelect_forcesCarrierBinding
+    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan)
+    (face : IntCmpFace) (h : classifyIntSelect plan = some face) :
+    symFragmentCarrierBindingRequired hostTable plan = true := by
+  obtain ⟨hparams, -, -⟩ := classifyIntSelect_spec plan face h
+  simp [symFragmentCarrierBindingRequired, fragPlanMentionsIntCarrier, hparams,
+    fragTyIsIntCarrier]
+
+/-- The canonical lowering of each pinned comparison body is exactly its
+    template — by computation, for every carrier, operator and helper index. -/
+theorem lowerBlock_intCmp (carrier : Nat) (op : IntCmpOp) (helperIdx : Nat) :
+    AverCert.PlanLower.lowerBlock carrier (intCmpBlock op helperIdx)
+      = some (intCmpTemplate op helperIdx) := by
+  cases op <;> rfl
+
+theorem lowerBlock_intSelect (carrier : Nat) (op : IntCmpOp) (helperIdx : Nat) :
+    AverCert.PlanLower.lowerBlock carrier (intSelectBlock op helperIdx)
+      = some (intSelectTemplate op helperIdx) := by
+  cases op <;> rfl
+
+/-! ### The pinned node lists reproduce the measured witness bytes
+
+`PlanBytes` lowers the pinned blocks to the exact code-entry bodies read off
+the real modules in this leg's empirical stage: the ONE-element locals vector
+holding an UNUSED carrier-typed local (not optional padding — the emitter
+declares it), the two argument reads, the helper call, the `i32.const 0` and
+signed tail, and — for the selection — an `if` whose block type is the INLINE
+nullable-carrier-reference value type `63 <s33 carrier>`, never an empty or
+`i32` block-type byte. The wide instantiation exercises the multi-byte
+`uleb32`/`s33` splices that every measured module leaves untouched (all their
+holes are below `0x80`). -/
+
+/-- `nowMs >= deadlineMs` at carrier 2, helper index 9: the 14-byte body. -/
+theorem intCmpBoolBytes_relational :
+    AverCert.PlanBytes.lowerExprFragmentBodyBytes 2
+        { profile := "expr-fragment-v1", params := [.intCarrier, .intCarrier],
+          result := .boolI32, body := intCmpBlock .ge 9 } =
+      some [0x01, 0x01, 0x63, 0x02, 0x20, 0x00, 0x20, 0x01, 0x10, 0x09,
+            0x41, 0x00, 0x4e, 0x0b] := by
+  rfl
+
+/-- `a == b` at carrier 2, helper index 10: the 11-byte body, no tail. -/
+theorem intCmpBoolBytes_equality :
+    AverCert.PlanBytes.lowerExprFragmentBodyBytes 2
+        { profile := "expr-fragment-v1", params := [.intCarrier, .intCarrier],
+          result := .boolI32, body := intCmpBlock .eq 10 } =
+      some [0x01, 0x01, 0x63, 0x02, 0x20, 0x00, 0x20, 0x01, 0x10, 0x0a,
+            0x0b] := by
+  rfl
+
+/-- `match a < b { true -> a; false -> b }` at carrier 2, helper index 9: the
+    23-byte body, both arms bare argument reads. -/
+theorem intSelectBytes_relational :
+    AverCert.PlanBytes.lowerExprFragmentBodyBytes 2
+        { profile := "expr-fragment-v1", params := [.intCarrier, .intCarrier],
+          result := .intCarrier, body := intSelectBlock .lt 9 } =
+      some [0x01, 0x01, 0x63, 0x02, 0x20, 0x00, 0x20, 0x01, 0x10, 0x09,
+            0x41, 0x00, 0x48, 0x04, 0x63, 0x02, 0x20, 0x00, 0x05, 0x20, 0x01,
+            0x0b, 0x0b] := by
+  rfl
+
+/-- The same shape at carrier 200 and helper index 300, where both the block
+    type and the call immediate need two bytes. -/
+theorem intSelectBytes_wideIndices :
+    AverCert.PlanBytes.lowerExprFragmentBodyBytes 200
+        { profile := "expr-fragment-v1", params := [.intCarrier, .intCarrier],
+          result := .intCarrier, body := intSelectBlock .gt 300 } =
+      some [0x01, 0x01, 0x63, 0xc8, 0x01, 0x20, 0x00, 0x20, 0x01, 0x10, 0xac,
+            0x02, 0x41, 0x00, 0x4a, 0x04, 0x63, 0xc8, 0x01, 0x20, 0x00, 0x05,
+            0x20, 0x01, 0x0b, 0x0b] := by
+  rfl
+
+theorem intCmp_simulates_model
+    (carrier helperIdx : Nat) (op : IntCmpOp)
+    (S : CarrierSpec carrier)
+    (cmp eq : List WVal → Option WVal)
+    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (code : CodeTbl) (self nlocals : Nat)
+    (hCode : code self = some ⟨2, nlocals, intCmpTemplate op helperIdx⟩)
+    (fuel : Nat) (p : Int × Int) (vs : List WVal) (w : WVal)
+    (hDom : intPairDomRepr carrier S p vs)
+    (hRun : wFuncN code (intCmpHostSlots op helperIdx cmp eq) fuel self vs = some w) :
+    boolRepr S (intCmpModel op p) w := by
+  obtain ⟨va, vb, rfl, ha, hb⟩ := hDom
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      cases op with
+      | lt =>
+          cases hc : cmp [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              subst hr
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+              simp [boolRepr, intCmpModel, ← hRun, b32, cmpW_lt_iff]
+      | gt =>
+          cases hc : cmp [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              subst hr
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+              simp [boolRepr, intCmpModel, ← hRun, b32, cmpW_gt_iff]
+      | ge =>
+          cases hc : cmp [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              subst hr
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+              simp [boolRepr, intCmpModel, ← hRun, b32, cmpW_ge_iff]
+      | eq =>
+          cases hc : eq [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hEq p.1 va p.2 vb r ha hb hc
+              subst hr
+              simp [wFuncN, hCode, intCmpTemplate, intCmpHostSlots, intCmpHelper,
+                initLocals, wRunF, popArgs, hc] at hRun
+              simp [boolRepr, intCmpModel, ← hRun, b32, eqW]
+
+theorem intSelect_simulates_model
+    (carrier helperIdx : Nat) (op : IntCmpOp)
+    (S : CarrierSpec carrier)
+    (cmp eq : List WVal → Option WVal)
+    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (code : CodeTbl) (self nlocals : Nat)
+    (hCode : code self = some ⟨2, nlocals, intSelectTemplate op helperIdx⟩)
+    (fuel : Nat) (p : Int × Int) (vs : List WVal) (w : WVal)
+    (hDom : intPairDomRepr carrier S p vs)
+    (hRun : wFuncN code (intCmpHostSlots op helperIdx cmp eq) fuel self vs = some w) :
+    intRepr S (intSelectModel op p) w := by
+  obtain ⟨va, vb, rfl, ha, hb⟩ := hDom
+  cases fuel with
+  | zero => simp [wFuncN] at hRun
+  | succ fuel =>
+      cases op with
+      | lt =>
+          cases hc : cmp [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              subst hr
+              by_cases hrel : p.1 < p.2
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_lt_iff,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_lt_iff,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+      | gt =>
+          cases hc : cmp [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              subst hr
+              by_cases hrel : p.2 < p.1
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_gt_iff,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_gt_iff,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+      | ge =>
+          cases hc : cmp [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hCmp p.1 va p.2 vb r ha hb hc
+              subst hr
+              by_cases hrel : p.2 ≤ p.1
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_ge_iff,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, b32, cmpW_ge_iff,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+      | eq =>
+          cases hc : eq [va, vb] with
+          | none =>
+              simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                intCmpHelper, initLocals, wRunF, popArgs, hc] at hRun
+          | some r =>
+              have hr := hEq p.1 va p.2 vb r ha hb hc
+              subst hr
+              by_cases hrel : p.1 = p.2
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, eqW,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using ha
+              · simp [wFuncN, hCode, intSelectTemplate, intCmpTemplate, intCmpHostSlots,
+                  intCmpHelper, initLocals, wRunF, popArgs, hc, eqW,
+                  hrel] at hRun
+                simpa [intRepr, intSelectModel, intCmpModel, hrel, ← hRun] using hb
+
+/-! ### The Int comparison transports (`HEq` pins onto the obligation fields)
+
+Same discipline as `recordParam_transport`: the obligation's field values are
+supplied as ordinary universally quantified variables so `subst` applies once
+each pin is turned into an `Eq`, and no cast residue survives. -/
+
+theorem intCmp_transport
+    (claimCarrier helperIdx : Nat) (op : IntCmpOp)
+    (carrier : Nat) (Dom Cod : Type)
+    (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
+    (codRepr : CarrierSpec carrier → Cod → WVal → Prop)
+    (model : Dom → Cod)
+    (hcar : carrier = claimCarrier)
+    (hDomT : HEq Dom (Int × Int))
+    (hCodT : HEq Cod Bool)
+    (hdomRepr : HEq domRepr (intPairDomRepr claimCarrier))
+    (hcodRepr : HEq codRepr (boolRepr (C := claimCarrier)))
+    (hmodel : HEq model (intCmpModel op))
+    (S : CarrierSpec carrier)
+    (cmp eq : List WVal → Option WVal)
+    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (code : CodeTbl) (self nlocals : Nat)
+    (hCode : code self = some ⟨2, nlocals, intCmpTemplate op helperIdx⟩)
+    (fuel : Nat) (x : Dom) (vs : List WVal) (w : WVal)
+    (hdom : domRepr S x vs)
+    (hRun : wFuncN code (intCmpHostSlots op helperIdx cmp eq) fuel self vs = some w) :
+    codRepr S (model x) w := by
+  subst hcar
+  have hD : Dom = (Int × Int) := eq_of_heq hDomT
+  subst hD
+  have hC : Cod = Bool := eq_of_heq hCodT
+  subst hC
+  have e1 : domRepr = intPairDomRepr carrier := eq_of_heq hdomRepr
+  subst e1
+  have e2 : codRepr = boolRepr := eq_of_heq hcodRepr
+  subst e2
+  have e3 : model = intCmpModel op := eq_of_heq hmodel
+  subst e3
+  exact intCmp_simulates_model carrier helperIdx op S cmp eq hCmp hEq code self
+    nlocals hCode fuel x vs w hdom hRun
+
+theorem intSelect_transport
+    (claimCarrier helperIdx : Nat) (op : IntCmpOp)
+    (carrier : Nat) (Dom Cod : Type)
+    (domRepr : CarrierSpec carrier → Dom → List WVal → Prop)
+    (codRepr : CarrierSpec carrier → Cod → WVal → Prop)
+    (model : Dom → Cod)
+    (hcar : carrier = claimCarrier)
+    (hDomT : HEq Dom (Int × Int))
+    (hCodT : HEq Cod Int)
+    (hdomRepr : HEq domRepr (intPairDomRepr claimCarrier))
+    (hcodRepr : HEq codRepr (intRepr (C := claimCarrier)))
+    (hmodel : HEq model (intSelectModel op))
+    (S : CarrierSpec carrier)
+    (cmp eq : List WVal → Option WVal)
+    (hCmp : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      cmp [v1, v2] = some r → r = .i32v (cmpW n1 n2))
+    (hEq : ∀ n1 v1 n2 v2 r, S.Repr n1 v1 → S.Repr n2 v2 →
+      eq [v1, v2] = some r → r = .i32v (eqW n1 n2))
+    (code : CodeTbl) (self nlocals : Nat)
+    (hCode : code self = some ⟨2, nlocals, intSelectTemplate op helperIdx⟩)
+    (fuel : Nat) (x : Dom) (vs : List WVal) (w : WVal)
+    (hdom : domRepr S x vs)
+    (hRun : wFuncN code (intCmpHostSlots op helperIdx cmp eq) fuel self vs = some w) :
+    codRepr S (model x) w := by
+  subst hcar
+  have hD : Dom = (Int × Int) := eq_of_heq hDomT
+  subst hD
+  have hC : Cod = Int := eq_of_heq hCodT
+  subst hC
+  have e1 : domRepr = intPairDomRepr carrier := eq_of_heq hdomRepr
+  subst e1
+  have e2 : codRepr = intRepr := eq_of_heq hcodRepr
+  subst e2
+  have e3 : model = intSelectModel op := eq_of_heq hmodel
+  subst e3
+  exact intSelect_simulates_model carrier helperIdx op S cmp eq hCmp hEq code self
+    nlocals hCode fuel x vs w hdom hRun
+
 #print axioms symFragmentFace_none_of_recordProj
 #print axioms recordParam_transport
+#print axioms classifyIntCmpBool_forcesCarrierBinding
+#print axioms classifyIntSelect_forcesCarrierBinding
+#print axioms intCmp_simulates_model
+#print axioms intSelect_simulates_model
+#print axioms intCmp_transport
+#print axioms intSelect_transport
 
 end AverCert.StandardFace
