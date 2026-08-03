@@ -437,6 +437,65 @@ fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
         Some(index) => format!("some {}", index + 1),
         None => "some 0".to_string(),
     };
+
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build json certificate before S3 GuardIso");
+    assert!(
+        build.status.success(),
+        "json certificate failed before S3 GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // The two weakened checks below are CUT FROM THE LIVE acceptance source the
+    // certificate just elaborated against, not hand-transcribed: a hand copy
+    // silently stops being a one-conjunct weakening the moment the real check
+    // grows a conjunct, and then it attributes a rejection to less than it
+    // claims.
+    let accepted_core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
+        .expect("materialized wall has AcceptedArtifactCore.lean");
+    let live_table_check = extract_wall_def(&accepted_core, "arithTableCheck");
+    let to_index_name = "      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&\n";
+    let to_index_template = "      arithRoleCheck n len .toIndex roles.toIndex p &&\n";
+    for (conjunct, what) in [
+        (to_index_name, "toIndex export-name"),
+        (to_index_template, "toIndex template"),
+    ] {
+        assert_eq!(
+            live_table_check.matches(conjunct).count(),
+            1,
+            "the {what} conjunct moved; refit the GuardIso surgery"
+        );
+    }
+    assert_eq!(
+        live_table_check.matches("arithTableCheck").count(),
+        1,
+        "`arithTableCheck` is not a single top-level definition; refit the surgery"
+    );
+    let weakened_table_check = |name: &str, drop: &[&str]| {
+        let mut text = live_table_check.clone();
+        for conjunct in drop {
+            text = text.replace(conjunct, "");
+        }
+        text.replace("arithTableCheck", name)
+    };
+    let to_index_weak_copies = format!(
+        "namespace AverCert.AcceptedArtifact\n\n\
+         /-! Live acceptance check weakened by EXACTLY the two `toIndex` conjuncts. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `toIndex` export-name\n    \
+         equality; the template equality it keeps is vacuous on an absent role. -/\n{}\n\n\
+         end AverCert.AcceptedArtifact\n",
+        weakened_table_check(
+            "arithTableCheckWithoutToIndex",
+            &[to_index_name, to_index_template]
+        ),
+        weakened_table_check("arithTableCheckWithoutToIndexName", &[to_index_name]),
+    );
     // The second toIndex attack, available only when the module really does
     // export the helper: declare the role ABSENT. `arithRoleCheck` is vacuous on
     // `none`, so the template equality accepts this and the export-name equality
@@ -476,42 +535,13 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts absentToIndexArtifact := by
 -- the export-name equality ACCEPTS the absent declaration. The template pin is
 -- blind to this attack by construction — it is vacuous on `none` — so the name
 -- pin is load-bearing on its own and must not be replaced by the template one.
-def arithTableCheckWithoutToIndexName (n len : Nat)
-    (roles? : Option CertDecode.AddSub.Roles)
-    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
-  match roles?, params? with
-  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
-  | some roles, some p =>
-      !CertDecode.AddSub.carrierHelperAbsent n len &&
-      (roles.box == CertDecode.AddSub.boxIdx n len) &&
-      ArithTemplateDerisk.checkArithHostParams p &&
-      AcceptedArtifact.arithRoleCheck n len .box roles.box p &&
-      AcceptedArtifact.arithRoleCheck n len .toIndex roles.toIndex p &&
-      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
-      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
-      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
-  | _, _ => false
-
-example : arithTableCheckWithoutToIndexName ArtifactBytes.modBytes ArtifactBytes.modLen
+example : AcceptedArtifact.arithTableCheckWithoutToIndexName ArtifactBytes.modBytes
+    ArtifactBytes.modLen
     (some absentToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
   decide +kernel
 "#
         ),
     };
-
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build json certificate before S3 GuardIso");
-    assert!(
-        build.status.success(),
-        "json certificate failed before S3 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
 
     let lean = format!(
         r#"import ArtifactCertificate
@@ -585,22 +615,9 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileToIndexArtifact := by
 -- have to come out: a hostile INDEX is refused by the export-name equality and
 -- again by the template equality, since the function at the hostile index does
 -- not carry the canonical index-helper body either.
-def arithTableCheckWithoutToIndex (n len : Nat)
-    (roles? : Option CertDecode.AddSub.Roles)
-    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
-  match roles?, params? with
-  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
-  | some roles, some p =>
-      !CertDecode.AddSub.carrierHelperAbsent n len &&
-      (roles.box == CertDecode.AddSub.boxIdx n len) &&
-      ArithTemplateDerisk.checkArithHostParams p &&
-      AcceptedArtifact.arithRoleCheck n len .box roles.box p &&
-      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
-      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
-      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
-  | _, _ => false
-
-example : arithTableCheckWithoutToIndex ArtifactBytes.modBytes ArtifactBytes.modLen
+{to_index_weak_copies}
+example : AcceptedArtifact.arithTableCheckWithoutToIndex ArtifactBytes.modBytes
+    ArtifactBytes.modLen
     (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
   decide +kernel
 {to_index_none_block}
@@ -629,6 +646,314 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts absentTableArtifact := by
     assert!(
         check.status.success(),
         "S3 host-role GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
+/// Per-role GuardIso for the two Int value-comparison host roles, with
+/// EXCLUSIVE attribution. For each of `cmp` and `eq` the same three-part
+/// pattern is exhibited rather than asserted:
+///   * the hostile declaration is rejected by the REAL wall;
+///   * it is ACCEPTED by a literal copy of the live acceptance check weakened
+///     by exactly THAT role's two conjuncts;
+///   * it is STILL REJECTED by the copy weakened by the OTHER role's two
+///     conjuncts — so neither role's pins are doing the other's work.
+///
+/// Both attacks are run twice: once with a hostile INDEX, and once with the
+/// role declared ABSENT while the module exports the helper. The second is the
+/// case the template equality is blind to by construction (it is vacuous on
+/// `none`), so it is what makes the export-name equality load-bearing on its
+/// own. The swapped table — `cmp` declared at the `eq` export's index and vice
+/// versa — is the attack that only the name pin can see at all, since the two
+/// helpers declare the SAME function type; that fact is stated against the
+/// module's own type section rather than assumed.
+///
+/// Every weakened copy is CUT FROM THE LIVE materialized wall source, with the
+/// removed conjunct asserted to occur exactly once first, so a moved or
+/// renamed conjunct fails this test loudly instead of leaving a stale hand
+/// copy quietly passing.
+#[test]
+fn inkernel_int_comparison_roles_guard_is_isolated_and_weaken_confirmed() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Int-comparison role GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-intcmp-role-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/certprobe.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile certprobe fixture for the Int-comparison role GuardIso");
+    assert!(
+        compile.status.success(),
+        "certprobe compile failed for the Int-comparison role GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = std::fs::read(out_dir.join("certprobe.wasm")).unwrap();
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
+        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    let (box_idx, add_idx, mul_idx, sub_idx) = (
+        box_idx.expect("certprobe box role"),
+        add_idx.expect("certprobe add role"),
+        mul_idx.expect("certprobe mul role"),
+        sub_idx.expect("certprobe sub role"),
+    );
+    // The whole point of the fixture: both comparison helpers really are
+    // exported, at distinct indices, so "declared absent" is a lie about the
+    // bytes rather than a description of them.
+    let cmp_idx = cmp_idx.expect("certprobe must export __aint_cmp");
+    let eq_idx = eq_idx.expect("certprobe must export __aint_eq");
+    assert_ne!(
+        cmp_idx, eq_idx,
+        "the two helpers must be distinct functions"
+    );
+    let to_index = match to_index_idx {
+        Some(index) => format!("some {index}"),
+        None => "none".to_string(),
+    };
+    let wrong_cmp = cmp_idx + 1;
+    let wrong_eq = eq_idx + 1;
+
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build certprobe certificate before the Int-comparison role GuardIso");
+    assert!(
+        build.status.success(),
+        "certprobe certificate failed before the Int-comparison role GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Literal weakened copies, cut from the LIVE acceptance source the
+    // certificate just elaborated against. Four of them: each role's PAIR of
+    // conjuncts, and each role's export-name equality alone.
+    let accepted_core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
+        .expect("materialized wall has AcceptedArtifactCore.lean");
+    let live = extract_wall_def(&accepted_core, "arithTableCheck");
+    let cmp_name = "      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&\n";
+    let eq_name = "      (roles.eq == CertDecode.AddSub.eqIdx n len) &&\n";
+    let cmp_template = "      arithRoleCheck n len .cmp roles.cmp p &&\n";
+    let eq_template = " &&\n      arithRoleCheck n len .eq roles.eq p";
+    for (conjunct, what) in [
+        (cmp_name, "cmp export-name"),
+        (eq_name, "eq export-name"),
+        (cmp_template, "cmp template"),
+        (eq_template, "eq template"),
+    ] {
+        assert_eq!(
+            live.matches(conjunct).count(),
+            1,
+            "the {what} conjunct moved; refit the GuardIso surgery"
+        );
+    }
+    assert_eq!(
+        live.matches("arithTableCheck").count(),
+        1,
+        "`arithTableCheck` is not a single top-level definition; refit the surgery"
+    );
+    let weakened = |name: &str, drop: &[&str]| {
+        let mut text = live.clone();
+        for conjunct in drop {
+            text = text.replace(conjunct, "");
+        }
+        text.replace("arithTableCheck", name)
+    };
+    let weak_copies = format!(
+        "namespace AverCert.AcceptedArtifact\n\n\
+         /-! Live acceptance check weakened by EXACTLY the two `cmp` conjuncts. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the two `eq` conjuncts. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `cmp` export-name equality. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `eq` export-name equality. -/\n{}\n\n\
+         end AverCert.AcceptedArtifact",
+        weakened("weakCmpArithTableCheck", &[cmp_name, cmp_template]),
+        weakened("weakEqArithTableCheck", &[eq_name, eq_template]),
+        weakened("weakCmpNameArithTableCheck", &[cmp_name]),
+        weakened("weakEqNameArithTableCheck", &[eq_name]),
+    );
+
+    // One hostile manifest per attack: same bytes, same claims, only the two
+    // comparison fields of the declared role table move.
+    let mut tables = String::new();
+    let mut attack = |name: &str, cmp: String, eq: String, note: &str| {
+        tables.push_str(&format!(
+            r#"
+-- {note}
+def {name}Table : CertDecode.AddSub.Roles :=
+  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
+     toIndex := {to_index}, cmp := {cmp}, eq := {eq} }}
+def {name}Artifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest :=
+      {{ manifest with subject :=
+          {{ manifest.subject with hostRoleTable := some {name}Table }} }} }}
+
+-- Isolation: every sibling decoded fact still accepts it.
+example : withoutHostRoleTable {name}Artifact := by
+  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
+    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
+  exact honestDecoded.2
+
+-- The REAL wall rejects it, at the host-role table pin.
+example : ¬ AcceptedArtifact.decodedNonExprFacts {name}Artifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      (some {name}Table) Artifact.data.manifest.subject.arithParams = true := h.1
+  exact absurd bad (by decide +kernel)
+"#
+        ));
+    };
+    attack(
+        "hostileCmp",
+        format!("some {wrong_cmp}"),
+        format!("some {eq_idx}"),
+        "A hostile `cmp` INDEX: any function other than the one the export section binds.",
+    );
+    attack(
+        "hostileEq",
+        format!("some {cmp_idx}"),
+        format!("some {wrong_eq}"),
+        "The mirror attack on `eq`.",
+    );
+    attack(
+        "absentCmp",
+        "none".to_string(),
+        format!("some {eq_idx}"),
+        "`cmp` declared ABSENT while the module exports `__aint_cmp`. The template \
+         equality is vacuous on `none`, so only the export-name equality can see this.",
+    );
+    attack(
+        "absentEq",
+        format!("some {cmp_idx}"),
+        "none".to_string(),
+        "The mirror absent-declaration attack on `eq`.",
+    );
+    attack(
+        "swapped",
+        format!("some {eq_idx}"),
+        format!("some {cmp_idx}"),
+        "Each role declared at the OTHER helper's index. The two helpers declare the \
+         same function type, so the declared-type gate is blind to this by construction \
+         (exhibited below).",
+    );
+
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
+  have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
+  exact accepted.2.2.2.2.2.2.1
+
+-- Literal one-conjunct-weakened copy of the decoded-facts bundle: only the
+-- role-table equality is absent.
+def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.decodedStringHostRoles artifact ∧
+  AcceptedArtifact.decodedNonExprClaimFacts artifact
+
+-- BYTE-DERIVED GROUND TRUTH. Both helpers are exported, at distinct indices.
+example : CertDecode.AddSub.cmpIdx ArtifactBytes.modBytes ArtifactBytes.modLen
+    = some {cmp_idx} := by decide +kernel
+example : CertDecode.AddSub.eqIdx ArtifactBytes.modBytes ArtifactBytes.modLen
+    = some {eq_idx} := by decide +kernel
+example : ({cmp_idx} : Nat) ≠ {eq_idx} := by decide
+
+-- The declared-type gate CANNOT separate the two roles: the swapped table
+-- passes it against this module's own type section. So the export-name
+-- equality is not a redundant second opinion here — it is the only conjunct
+-- with any power to say which helper is which.
+example : (match CertDecode.carrierState ArtifactBytes.modBytes ArtifactBytes.modLen with
+    | some (some c) =>
+        AverCert.WasmSlice.hostTableFuncTypesMatch ArtifactBytes.modBytes ArtifactBytes.modLen
+          c [(.cmp, {eq_idx}), (.eq, {cmp_idx})]
+    | _ => false) = true := by decide +kernel
+
+-- The HONEST control: the byte-derived declaration the certificate really
+-- carries, accepted by the real check, so no rejection below is an artefact of
+-- the framing.
+def honestTable : CertDecode.AddSub.Roles :=
+  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
+     toIndex := {to_index}, cmp := some {cmp_idx}, eq := some {eq_idx} }}
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+{tables}
+{weak_copies}
+
+-- Every weakened copy still accepts the HONEST table, so each acceptance flip
+-- below is caused by the hostile declaration and not by the surgery.
+example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+
+-- ATTRIBUTION, hostile `cmp` index: accepted by the copy weakened by the two
+-- `cmp` conjuncts, and STILL REJECTED by the copy weakened by the two `eq`
+-- conjuncts. Both pins have to come out: a hostile index is refused by the
+-- export-name equality and again by the template equality, since the function
+-- at the hostile index carries some other body.
+example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileCmpTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileCmpTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+
+-- ATTRIBUTION, hostile `eq` index: the exact mirror.
+example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileEqTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileEqTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+
+-- ATTRIBUTION, `cmp` DECLARED ABSENT while exported: dropping the export-name
+-- equality ALONE admits it — the template equality it keeps is vacuous on
+-- `none` — while the `eq` name equality still rejects it. So the `cmp` name
+-- pin is load-bearing on its own and cannot be replaced by the template one.
+example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some absentCmpTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some absentCmpTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+
+-- ATTRIBUTION, `eq` DECLARED ABSENT while exported: the exact mirror.
+example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some absentEqTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some absentEqTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+
+-- The SWAP is caught twice over, once per role: each singly-weakened copy
+-- still rejects it, so the two roles' pins are complementary here too.
+example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some swappedTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some swappedTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+"#
+    );
+    std::fs::write(cert.join("IntCmpRoleGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("IntCmpRoleGuardIso.lean")
+        .output()
+        .expect("run the Int-comparison role GuardIso");
+    assert!(
+        check.status.success(),
+        "Int-comparison role GuardIso failed:\n{}{}",
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
@@ -1120,6 +1445,171 @@ example : arithRoleCheckRawSplice (natOfBytes honestModuleBytes)
     let _ = std::fs::remove_dir_all(wall_dir);
 }
 
+/// The two comparison helper templates at WIDE declared indices, where every
+/// splice needs two bytes.
+///
+/// Every hole in every module the corpus measured is below `0x80`, so the
+/// multi-byte branch of both encoders is empirically unexercised: the corpus
+/// proves the templates only in the narrow regime, and the `boxTemplateBody`
+/// doc block warns about exactly this class ("splicing either hole as a raw
+/// byte would synthesize a body no emitter produces the moment the index
+/// outgrows one byte"). This check closes the gap by construction rather than
+/// by hoping a module grows large enough.
+///
+/// The splice check is LENGTH ARITHMETIC plus position: `cmp` has seven holes
+/// (limb twice, decompose twice, strip twice, umag_cmp once) and `eq` has nine
+/// (limb three times, carrier six), so the body grows by exactly the hole count
+/// if and only if EVERY hole went through an encoder — a raw-spliced hole would
+/// leave the length short. The whole pin path is then exercised at those
+/// widths: a module framed around each wide body is accepted at its own role
+/// and refused at the other one's.
+#[test]
+fn comparison_templates_splice_wide_indices_through_their_encoders() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping wide-index template check: `lake` not available");
+        return;
+    }
+    let wall_dir = temp_dir("cert-intcmp-wide-template");
+    std::fs::create_dir_all(&wall_dir).unwrap();
+    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
+    for source in wall.sources {
+        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    std::fs::write(
+        wall_dir.join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
+         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
+         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `AcceptedArtifactCore]\n",
+    )
+    .unwrap();
+    let build = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("build")
+        .output()
+        .expect("build the wall before the wide-index template check");
+    assert!(
+        build.status.success(),
+        "wall build failed before the wide-index template check:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let lean = r#"import AcceptedArtifactCore
+
+open AverCert ArithTemplateDerisk CertPrelude
+set_option maxRecDepth 300000
+
+-- The regime every measured module sits in: each hole below 0x80, one byte
+-- per splice. These are the smallest module's real declared indices.
+def narrowParams : ArithHostParams :=
+  { carrier := 2, limb := 1, decompose := 5, normalize := 6, strip := 7, umagCmp := 8 }
+
+-- The regime no module has reached yet: every hole either comparison template
+-- mentions needs two bytes. `normalize` occurs in neither body and is only
+-- here because the record has the field.
+def wideParams : ArithHostParams :=
+  { carrier := 200, limb := 130, decompose := 300, normalize := 600,
+    strip := 400, umagCmp := 500 }
+
+-- Both declarations are inside the u32 band the pin admits, so nothing below
+-- is decided by the bound.
+example : checkArithHostParams narrowParams = true := by decide
+example : checkArithHostParams wideParams = true := by decide
+
+-- Each hole is spliced through the encoder its POSITION demands: a signed s33
+-- in heap-type positions, an unsigned uleb32 everywhere else. At these indices
+-- the two disagree in width as well as in bytes.
+example : s33Bytes 130 = [0x82, 0x01] := by decide
+example : uleb32Bytes 130 = [0x82, 0x01] := by decide
+example : uleb32Bytes 200 = [0xc8, 0x01] := by decide
+example : uleb32Bytes 300 = [0xac, 0x02] := by decide
+example : uleb32Bytes 400 = [0x90, 0x03] := by decide
+example : uleb32Bytes 500 = [0xf4, 0x03] := by decide
+
+-- LENGTH ARITHMETIC: seven holes in `cmp`, nine in `eq`, and each one grows by
+-- exactly one byte. A hole spliced as a raw byte would not move at all.
+example : (cmpTemplateBody narrowParams).length = 101 := by decide
+example : (cmpTemplateBody wideParams).length = 101 + 7 := by decide
+example : (eqTemplateBody narrowParams).length = 157 := by decide
+example : (eqTemplateBody wideParams).length = 157 + 9 := by decide
+
+-- POSITION, first hole: the locals vector of each body, where the limb index
+-- sits at a SIGNED heap-type position inside `(ref null $mag)`.
+example : (cmpTemplateBody wideParams).take 5 = [0x05, 0x01, 0x63, 0x82, 0x01] := by decide
+example : (eqTemplateBody wideParams).take 5 = [0x02, 0x02, 0x63, 0x82, 0x01] := by decide
+
+-- POSITION, last call hole of `cmp`: `call $umag_cmp` followed by the store to
+-- the verdict local, so the two-byte target did not displace the instruction
+-- after it.
+example : ((cmpTemplateBody wideParams).drop 84).take 5 = [0x10, 0xf4, 0x03, 0x21, 0x08] := by
+  decide
+
+-- POSITION, first carrier hole of `eq`: `struct.get $aint $magf` reads the
+-- carrier at an UNSIGNED type-index position, field index right behind it.
+example : ((eqTemplateBody wideParams).drop 7).take 7 = [0x20, 0x00, 0xfb, 0x02, 0xc8, 0x01, 0x01]
+    := by decide
+
+-- The fixed tail of `eq` still closes five nested blocks and the function.
+example : (eqTemplateBody wideParams).drop 159 = [0x20, 0x06, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b] := by
+  decide
+
+-- Little-endian byte list -> the big-Nat representation the decoders read, and
+-- the minimal wasm framing `bodyBytesAtFuncIndex` consumes (header + code
+-- section with one entry).
+def natOfBytes (bytes : List Nat) : Nat :=
+  bytes.foldr (fun b acc => b + 256 * acc) 0
+
+def frame (body : List Nat) : List Nat :=
+  let entry := uleb32Bytes body.length ++ body
+  let payload := 0x01 :: entry
+  [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x0a] ++
+    uleb32Bytes payload.length ++ payload
+
+def cmpModule : List Nat := frame (arithHelperBody .cmp wideParams)
+def eqModule : List Nat := frame (arithHelperBody .eq wideParams)
+
+-- The whole pin path runs at these widths: the wide body is ACCEPTED at the
+-- index its role is declared at. This is the statement the corpus cannot make.
+example : AcceptedArtifact.arithRoleCheck (natOfBytes cmpModule) cmpModule.length
+    .cmp (some 0) wideParams = true := by decide +kernel
+example : AcceptedArtifact.arithRoleCheck (natOfBytes eqModule) eqModule.length
+    .eq (some 0) wideParams = true := by decide +kernel
+
+-- ...and the two roles stay distinguishable at wide indices, where the naive
+-- worry is that a longer body blurs them: each module is refused at the other
+-- role.
+example : AcceptedArtifact.arithRoleCheck (natOfBytes cmpModule) cmpModule.length
+    .eq (some 0) wideParams = false := by decide +kernel
+example : AcceptedArtifact.arithRoleCheck (natOfBytes eqModule) eqModule.length
+    .cmp (some 0) wideParams = false := by decide +kernel
+
+-- ...and neither is accepted under the narrow declaration, which is what a
+-- raw-spliced (truncated) synthesis would have produced.
+example : AcceptedArtifact.arithRoleCheck (natOfBytes cmpModule) cmpModule.length
+    .cmp (some 0) narrowParams = false := by decide +kernel
+example : AcceptedArtifact.arithRoleCheck (natOfBytes eqModule) eqModule.length
+    .eq (some 0) narrowParams = false := by decide +kernel
+"#;
+    std::fs::write(wall_dir.join("WideTemplateSplice.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("env")
+        .arg("lean")
+        .arg("WideTemplateSplice.lean")
+        .output()
+        .expect("run the wide-index template check");
+    assert!(
+        check.status.success(),
+        "wide-index template check failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(wall_dir);
+}
+
 /// F5 GuardIso: bytes and every sibling binding are identical, while only the
 /// claimed String.eq index changes. Full acceptance fails at the decode-once
 /// string-role equality and its literal one-conjunct-weakened copy accepts.
@@ -1212,8 +1702,9 @@ example : quoteOrSelfOb.host =
 example : nerfedStringHost ≠
     AcceptedArtifact.stringEqCanonicalHost {eq_idx} := by
   intro h
-  have bad := congrFun (congrFun (congrFun (congrFun (congrFun (congrFun (congrFun h
-    deadHost) deadHost) deadHost) deadHost) deadConcat) deadHost) {eq_idx}
+  have bad := congrFun (congrFun (congrFun (congrFun (congrFun (congrFun (congrFun
+    (congrFun (congrFun h
+    deadHost) deadHost) deadHost) deadHost) deadConcat) deadHost) deadHost) deadHost) {eq_idx}
   simp [nerfedStringHost, AcceptedArtifact.stringEqCanonicalHost] at bad
 
 -- Every sibling decode accepts the hostile manifest.
@@ -1535,12 +2026,14 @@ fn inkernel_vector_get_nominal_type_guard_is_isolated_and_weaken_confirmed() {
     let type_idx = export_func_type_idx(&wasm, "cellAt");
     let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
         aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) = (
+    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) = (
         box_idx.expect("cell_at box role"),
         add_idx.expect("cell_at add role"),
         mul_idx.expect("cell_at mul role"),
         sub_idx.expect("cell_at sub role"),
         to_index_idx.expect("cell_at to-index role"),
+        cmp_idx.expect("cell_at comparison role"),
+        eq_idx.expect("cell_at equality role"),
     );
 
     let cert = out_dir.join("cert");
@@ -1646,7 +2139,8 @@ example : WasmSlice.exprVectorGetTypesMatch ArtifactBytes.modBytes ArtifactBytes
 
 -- The claim really carries exactly those surfaces...
 def honestHostTable : List (HostRole × Nat) :=
-  [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx}), (.toIndex, {to_index_idx})]
+  [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx}),
+   (.toIndex, {to_index_idx}), (.cmp, {cmp_idx}), (.eq, {eq_idx})]
 def honestStructTable : List (String × Nat) := [("Vector<Int>", {arr_ty})]
 example : Artifact.symFragmentClaims.map (fun c => (c.carrier, c.hostTable, c.structTable)) =
     [({carrier}, honestHostTable, honestStructTable)] := rfl

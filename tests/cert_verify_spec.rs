@@ -4258,8 +4258,8 @@ def duplicateOb : Obligation :=
   { AverCert.addTwoOb with code := inertCode, self := 999 }
 
 theorem duplicateObHolds : duplicateOb.holds := by
-  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq
-    hStringConcat _hToIndex fuel x vs w hdom hrun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq hadd hsub hmul hStringEq
+    hStringConcat _hToIndex _hCmp _hEq fuel x vs w hdom hrun
   cases fuel <;> simp [duplicateOb, inertCode, wFuncN] at hrun
 
 def duplicateManifest : Manifest :=
@@ -4492,14 +4492,15 @@ def addProbe : List WVal → Option WVal := fun _ => some .null
 example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe
       addProbe) 9 ≠
     (AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
-      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe) 9 := by
+      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe addProbe) 9 := by
   simp [badHost, addProbe, hosts, AverCert.AcceptedArtifact.intDispatchCanonicalHost,
     AverCert.AcceptedArtifact.intDispatchCanonicalSlots]
 def weakHostEquality (_ _ : HostTbl) : Bool := true
 example : weakHostEquality
-    ((badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe))
+    ((badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe addProbe))
     ((AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
-      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe)) = true := rfl
+      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe addProbe))
+      = true := rfl
 
 -- Manifest/claim plan-pair equality guard.
 def relabeledMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim :=
@@ -5359,8 +5360,8 @@ fn cert_verify_declines_tampered_mutual_plan() {
         copy_dir(&out_dir, &dir);
         let manifest = dir.join("cert/Manifest.lean");
         let source = std::fs::read_to_string(&manifest).unwrap();
-        let honest = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ => CertModule.isEvenHost sub, self := 1,";
-        let hostile = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ => CertModule.isEvenHost sub, self := 5,";
+        let honest = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ _ _ => CertModule.isEvenHost sub, self := 1,";
+        let hostile = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ _ _ => CertModule.isEvenHost sub, self := 5,";
         let edited = source.replacen(honest, hostile, 1);
         assert_ne!(source, edited, "isEven obligation self field changed");
         std::fs::write(&manifest, edited).unwrap();
@@ -7189,9 +7190,10 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "    (h : (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "         (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "         (Nat → List WVal → Option WVal) →\n",
+        "         (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "         (List WVal → Option WVal) → CertPrelude.HostTbl)\n",
         "    (idx : Nat) (args : List WVal) : Option Int :=\n",
-        "  match h (fun _ => some (.i64v 1)) (fun _ => some (.i64v 2)) (fun _ => some (.i64v 3)) (fun _ => some (.i64v 4)) (fun _ _ => some (.i64v 5)) (fun _ => some (.i64v 6)) idx with\n",
+        "  match h (fun _ => some (.i64v 1)) (fun _ => some (.i64v 2)) (fun _ => some (.i64v 3)) (fun _ => some (.i64v 4)) (fun _ _ => some (.i64v 5)) (fun _ => some (.i64v 6)) (fun _ => some (.i64v 7)) (fun _ => some (.i64v 8)) idx with\n",
         "  | some (_, f) =>\n",
         "      match f args with\n",
         "      | some (.i64v k) => some k\n",
@@ -7230,6 +7232,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (Nat → List WVal → Option WVal) →\n",
+        "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
         "  fun _ _ _ _ _ _ _ _ => fun fn =>\n",
         "    if fn = 7 then\n",
@@ -7418,6 +7421,179 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
             &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx}"),
             &format!(".vectorGetOrDefault {arr_ty} {box_idx} {to_index_idx}"),
         )
+    });
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The five real source functions the Int value-comparison faces were built
+/// for, each certified out of the example module it actually lives in and then
+/// VERIFIED — the full kernel replay of the emitted certificate, not the
+/// producer's own say-so. Between them they cover all three shapes: the
+/// comparison helper plus a signed relational tail (`isExpired`, `atLeast`),
+/// the equality helper alone (`sameKey`), and the selection whose result is a
+/// passthrough of an input local (`minInt`, `bigger`).
+#[test]
+fn cert_verify_certifies_the_five_int_comparison_witnesses() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Int-comparison witness verify test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for (source, artifact, witnesses) in [
+        (
+            "examples/formal/int_comparison_laws.av",
+            "int_comparison_laws.wasm",
+            &["sameKey", "atLeast"][..],
+        ),
+        (
+            "examples/formal/clock_as_data.av",
+            "clock_as_data.wasm",
+            &["isExpired"][..],
+        ),
+        (
+            "examples/apps/status_board.av",
+            "status_board.wasm",
+            &["minInt"][..],
+        ),
+        (
+            "examples/data/fibonacci.av",
+            "fibonacci.wasm",
+            &["bigger"][..],
+        ),
+    ] {
+        let out_dir = temp_dir("cert-intcmp-witness");
+        let compile = aver_command()
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(source)
+            .arg("--target")
+            .arg("wasm-gc")
+            .arg("--certify")
+            .arg("-o")
+            .arg(&out_dir)
+            .output()
+            .expect("aver compile --certify runs");
+        assert!(
+            compile.status.success(),
+            "compile --certify {source} failed:\n{}{}",
+            String::from_utf8_lossy(&compile.stdout),
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let (ok, report) = aver_verify(&out_dir.join(artifact), &out_dir.join("cert"));
+        assert!(ok, "{source} must verify CERTIFIED:\n{report}");
+        assert!(
+            report.contains("CERTIFIED"),
+            "{source} must reach a CERTIFIED verdict:\n{report}"
+        );
+        for witness in witnesses {
+            assert!(
+                report.contains(witness),
+                "the verdict for {source} must credit `{witness}`:\n{report}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+}
+
+/// Fail-closed tamper coverage for the two comparison host roles, on the
+/// module that carries one face of each. The attacker-editable surface is the
+/// emitted plan data, and both edits below are CONSISTENT rewrites of it — the
+/// kind that a checker which merely re-read the certificate's own claims would
+/// re-credit. Each is DECLINED instead, because the role indices are derived
+/// from the module's export section and the lowered bytes are pinned to the
+/// module's own code section.
+#[test]
+fn cert_verify_declines_int_comparison_role_tampers() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Int-comparison tamper test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-intcmp-tamper");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/formal/int_comparison_laws.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify int_comparison_laws failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = out_dir.join("int_comparison_laws.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify(&wasm, &cert);
+    assert!(ok, "the honest control must verify CERTIFIED:\n{report}");
+
+    // Recover the two helper indices from the public plan data so the tampers
+    // stay robust to shifting module indices.
+    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let hole = |marker: &str| -> u32 {
+        let at = plans_text
+            .find(marker)
+            .unwrap_or_else(|| panic!("Plans.lean carries `{marker}`"));
+        plans_text[at + marker.len()..]
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|s| !s.is_empty())
+            .expect("an index follows the marker")
+            .parse()
+            .expect("the index parses")
+    };
+    let cmp_idx = hole("(.cmp, ");
+    let eq_idx = hole("(.eq, ");
+    assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
+
+    let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
+        let dir = temp_dir(&format!("cert-intcmp-tamper-{name}"));
+        copy_dir(&out_dir, &dir);
+        let plans = dir.join("cert").join("Plans.lean");
+        let text = std::fs::read_to_string(&plans).unwrap();
+        let edited = edit(&text);
+        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
+        std::fs::write(&plans, edited).unwrap();
+        let (ok, out) = aver_verify(&dir.join("int_comparison_laws.wasm"), &dir.join("cert"));
+        assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
+        assert!(
+            out.contains("DECLINED"),
+            "tamper `{name}` must report a decline verdict, not an error:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "tamper `{name}` must never re-credit an export:\n{out}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    };
+
+    // (1) Move the comparison helper's index consistently in the encoded plan
+    //     and in the role table the encoder is driven by: the certificate now
+    //     claims the three-way helper lives where the equality helper does.
+    //     The export section says otherwise and the lowered call immediate no
+    //     longer matches the module's own code bytes.
+    tamper("cmp-index-swap", &|text| {
+        text.replace(
+            &format!(".hostCall .cmp {cmp_idx} "),
+            &format!(".hostCall .cmp {eq_idx} "),
+        )
+        .replace(&format!("(.cmp, {cmp_idx})"), &format!("(.cmp, {eq_idx})"))
+    });
+
+    // (2) Swap which role name each exported helper carries, leaving both
+    //     plans and every byte list untouched. The two helpers declare the
+    //     SAME function type, so nothing in the type section objects; only the
+    //     export-name binding of each role does, and it is what makes the
+    //     audited encoder produce a different plan than the one claimed.
+    tamper("eq-for-cmp-role-swap", &|text| {
+        text.replace(&format!("(.cmp, {cmp_idx})"), "(.cmp, __SWAP__)")
+            .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
+            .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
     });
 
     let _ = std::fs::remove_dir_all(&out_dir);
