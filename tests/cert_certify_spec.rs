@@ -276,15 +276,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(3),
-        "schema 3 added the required toIndex key to the subject host-role table"
+        Some(4),
+        "schema 4 added the required cmp and eq keys to the subject host-role table"
     );
     assert_eq!(
         manifest["profile"].as_str(),
         Some("AverUserProfile/v1"),
         "the first public byte profile is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 3);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 4);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),

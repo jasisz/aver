@@ -4,8 +4,8 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 3,
-  "format": {"version": 1, "wall_id": "sha256:c739437f0c1015536aa030ed3c07c0e9d0e330bee1e4c1b6c7b06d4a3d3ec6c8"},
+  "schema_version": 4,
+  "format": {"version": 1, "wall_id": "sha256:da82268a049429b3ed4928f9fb2c4b32fec840da776219f1c4466777515b84fd"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5786e69e54fbb243d59b6a905b459321d5ac8ac3c17041fe5b4b49ae2580355c",
   "level": "L1",
@@ -34,7 +34,7 @@ expression: golden
   ],
   "capabilities": [],
   "start": {"present": false, "function_index": null},
-  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18},
+  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": 13, "eq": 14},
   "stringHostRoles": [],
   "certified": [
     {"name": "addOne", "class": "expr-fragment-v1", "policy": "simulatesModel", "level": "L1", "dom": "List Int", "cod": "Int", "theorem": "AcceptanceSoundness.exprFragment_claim_discharges"}
@@ -64,7 +64,7 @@ open AverCert.Schema CertPrelude
 
 abbrev addOneOb : Schema.Obligation :=
   { export_ := "addOne", policy := .simulatesModel, carrier := 2,
-    code := CertModule.addOneCode, host := fun add _ _ _ _ _ => CertModule.addOneHost add, self := 1,
+    code := CertModule.addOneCode, host := fun add _ _ _ _ _ _ _ => CertModule.addOneHost add, self := 1,
     Dom := List Int, Cod := Int,
     domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,
     codRepr := fun S n w => intRepr S n w,
@@ -80,7 +80,7 @@ def manifest : Schema.Manifest :=
         declaredUncertified := [("_start", "module export is outside the claimed certification obligations"), ("__rt_string_from_lm", "module export is outside the claimed certification obligations"), ("__rt_string_to_lm", "module export is outside the claimed certification obligations"), ("__rt_memory_pages", "module export is outside the claimed certification obligations"), ("__rt_memory_grow", "module export is outside the claimed certification obligations"), ("__rt_aint_from_i64", "module export is outside the claimed certification obligations"), ("__aint_to_index", "module export is outside the claimed certification obligations"), ("__aint_cmp", "module export is outside the claimed certification obligations"), ("__aint_eq", "module export is outside the claimed certification obligations"), ("memory", "module export is outside the claimed certification obligations"), ("__caller_fn_count", "module export is outside the claimed certification obligations"), ("__caller_fn_name", "module export is outside the claimed certification obligations")],
         capabilities := [],
         start := none,
-        hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18 } : CertDecode.AddSub.Roles),
+        hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := some 13, eq := some 14 } : CertDecode.AddSub.Roles),
         arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams),
         stringHostRoles := [],
         contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values)"] },
@@ -133,7 +133,7 @@ example : AverCert.PlanCheck.checkSymRawPlan addOneSymPlan = true := rfl
 /-- The audited Lean-side source encoder maps `addOne`'s `SymPlan`,
 under the byte-derived host-role and struct tables, to the
 representation plan that is bound to bytes below. -/
-example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan [(.box, 6), (.add, 7), (.mul, 9), (.sub, 8), (.toIndex, 18)] [] addOneSymPlan =
+example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan [(.box, 6), (.add, 7), (.mul, 9), (.sub, 8), (.toIndex, 18), (.cmp, 13), (.eq, 14)] [] addOneSymPlan =
   some addOnePlan := rfl
 
 /-- The audited Lean-side structural checker accepts `addOne`'s raw plan. -/

@@ -20,8 +20,12 @@ pub const FORMAT_VERSION: u32 = 1;
 /// the required `toIndex` key to the object form of `hostRoleTable`: the fused
 /// vector-read face binds the `__aint_to_index` helper by its named function
 /// export, exactly like `box`, and the exact-object manifest matching means a
-/// version-2 table would reject every module carrying the helper.
-pub const CERT_SCHEMA_VERSION: u32 = 3;
+/// version-2 table would reject every module carrying the helper. Version 4
+/// added the required `cmp` and `eq` keys for the same reason: the two Int
+/// value-comparison faces bind `__aint_cmp` and `__aint_eq` by their named
+/// function exports, and because those two helpers declare the same function
+/// type, the export name is the only thing that tells one role from the other.
+pub const CERT_SCHEMA_VERSION: u32 = 4;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
@@ -137,5 +141,25 @@ mod tests {
             "certificate-format.md does not state \"{count_phrase}\"; \
              update the wall source count printed in the spec"
         );
+    }
+
+    /// The same staleness trap applies to the statement schema version: the
+    /// spec prints it in the identity table and again in the envelope-check
+    /// step of the acceptance pipeline, and a reimplementor takes both as
+    /// normative. A spec left one version behind describes a verifier that
+    /// rejects every package this release produces.
+    #[test]
+    fn format_spec_states_the_current_schema_version() {
+        let spec = include_str!("../../docs/certificate-format.md");
+        for phrase in [
+            format!("`{CERT_SCHEMA_VERSION}` (`CERT_SCHEMA_VERSION`)"),
+            format!("schema_version = {CERT_SCHEMA_VERSION}"),
+        ] {
+            assert!(
+                spec.contains(&phrase),
+                "certificate-format.md does not state \"{phrase}\"; \
+                 update the schema version printed in the spec"
+            );
+        }
     }
 }
