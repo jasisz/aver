@@ -147,19 +147,6 @@ fn check_plan_host_calls(block: &FragBlock, table: &FragHostTable) -> Result<(),
     Ok(())
 }
 
-/// Whether a checked plan contains any `hostCall` node.
-fn plan_has_host_calls(block: &FragBlock) -> bool {
-    block.nodes.iter().any(|node| match &node.kind {
-        FragNodeKind::HostCall { .. } => true,
-        FragNodeKind::If {
-            then_block,
-            else_block,
-            ..
-        } => plan_has_host_calls(then_block) || plan_has_host_calls(else_block),
-        _ => false,
-    })
-}
-
 // `FragIntAddFace` / `FragProjectFace` and their recognisers moved to
 // `expr_fragment_faces.rs` (`plans` layer): the producer's MIR adapter gates
 // plan emission on the same faces the classifier admits.

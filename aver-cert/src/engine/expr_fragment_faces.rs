@@ -529,6 +529,27 @@ pub fn expr_fragment_plan_touches_adt_ref(plan: &ExprFragmentPlan) -> bool {
         || frag_block_touches_adt_ref(&plan.body)
 }
 
+fn frag_block_has_host_calls(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|node| match &node.kind {
+        FragNodeKind::HostCall { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => frag_block_has_host_calls(then_block) || frag_block_has_host_calls(else_block),
+        _ => false,
+    })
+}
+
+/// Whether a plan calls a runtime host helper anywhere in its body. Such plans
+/// are admitted ONLY through an exact recognised face: a host call is a claim
+/// about a runtime contract, and the generic expression-fragment gate in the
+/// wall (`genericFragmentAllowedFuel`) rejects every `.hostCall` node outright.
+/// Producer and verifier read this same predicate so the two gates cannot drift.
+pub fn expr_fragment_plan_has_host_calls(plan: &ExprFragmentPlan) -> bool {
+    frag_block_has_host_calls(&plan.body)
+}
+
 #[cfg(all(test, feature = "engine"))]
 mod record_proj_face_tests {
     use super::*;

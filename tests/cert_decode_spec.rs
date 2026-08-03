@@ -55,6 +55,7 @@ const S1_FIXTURES: &[&str] = &[
     "certkit_zoo",
     "certprobe",
     "certprobe2",
+    "clockrange",
     "compose",
     "f64verbatim",
     "intdispatchgen",

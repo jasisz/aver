@@ -4005,3 +4005,89 @@ fn certify_nested_module_models_close_end_to_end() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+/// The producer's face gate must refuse a host-call-bearing plan that lands on
+/// no admitted face, exactly as the verifier sidecar does.
+///
+/// `validClockValue` (`match value >= 0 { false -> false; true -> value < limit }`)
+/// becomes `if a >= 0 { a < b } else { false }` after the MIR `bool_match_to_if`
+/// rewrite: TWO `__aint_cmp` calls nested inside a conditional. Neither Int
+/// comparison face covers that node list, and the wall's generic
+/// expression-fragment gate rejects every `.hostCall` node outright, so a plan
+/// here can only ever decline.
+///
+/// The observable difference is the DECLINE REASON, and it is the whole point:
+/// with the gate the export falls back to the legacy byte-classifier and
+/// declines with its template message; without the gate the producer ships a
+/// plan claim that the verifier then rejects ("producer fragment plan
+/// rejected"). The emitted module bytes are the same either way — the plan's
+/// canonical lowering reproduces the emitter's bytes for this shape — so bytes
+/// alone cannot witness the gate; the certificate surface can.
+#[test]
+fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-clockrange-gate");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/clockrange.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify clockrange failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+
+    let certified: BTreeSet<String> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        !certified.contains("validClockValue"),
+        "a faceless host-call shape must not be certified: {certified:?}"
+    );
+
+    let reason = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("validClockValue"))
+        .and_then(|entry| entry["reason"].as_str())
+        .expect("validClockValue is declared uncertified with a reason")
+        .to_string();
+    assert!(
+        reason.contains("does not match a certified template"),
+        "the export must decline on the legacy byte-classifier route, \
+         meaning the producer never selected a plan for it; got: {reason}"
+    );
+    assert!(
+        !reason.contains("producer fragment plan rejected"),
+        "the producer emitted a plan the verifier then refused — the face gate \
+         is not mirroring the sidecar; got: {reason}"
+    );
+
+    // No plan claim reached the certificate at all.
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    assert!(
+        !plans.contains("validClockValue"),
+        "an unplanned export must carry no plan in the certificate:\n{plans}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
