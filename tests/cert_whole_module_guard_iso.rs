@@ -1463,6 +1463,14 @@ example : arithRoleCheckRawSplice (natOfBytes honestModuleBytes)
 /// leave the length short. The whole pin path is then exercised at those
 /// widths: a module framed around each wide body is accepted at its own role
 /// and refused at the other one's.
+///
+/// Width alone does NOT separate the two encoders, though, and the check would
+/// be hollow if it stopped there: at every hole value the wide parameters use,
+/// `s33Bytes` and `uleb32Bytes` agree byte for byte, so swapping one encoder
+/// for the other would go unnoticed. The `[64, 127]` band is where they part —
+/// the s33 sign bit forces a second byte while the unsigned form still fits in
+/// one — so a third instantiation puts `limb` at 100 and pins the divergence
+/// directly.
 #[test]
 fn comparison_templates_splice_wide_indices_through_their_encoders() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -1514,20 +1522,35 @@ def wideParams : ArithHostParams :=
   { carrier := 200, limb := 130, decompose := 300, normalize := 600,
     strip := 400, umagCmp := 500 }
 
--- Both declarations are inside the u32 band the pin admits, so nothing below
--- is decided by the bound.
+-- The regime that tells the two ENCODERS apart. `limb` is the only index that
+-- occurs at a signed s33 position, and 100 is inside `[64, 127]`, where the
+-- s33 sign bit forces a second byte while the unsigned form still fits in one.
+-- Everything else stays narrow so the length arithmetic below isolates it.
+def bandParams : ArithHostParams :=
+  { carrier := 2, limb := 100, decompose := 5, normalize := 6, strip := 7,
+    umagCmp := 8 }
+
+-- All three declarations are inside the u32 band the pin admits, so nothing
+-- below is decided by the bound.
 example : checkArithHostParams narrowParams = true := by decide
 example : checkArithHostParams wideParams = true := by decide
+example : checkArithHostParams bandParams = true := by decide
 
 -- Each hole is spliced through the encoder its POSITION demands: a signed s33
--- in heap-type positions, an unsigned uleb32 everywhere else. At these indices
--- the two disagree in width as well as in bytes.
+-- in heap-type positions, an unsigned uleb32 everywhere else.
 example : s33Bytes 130 = [0x82, 0x01] := by decide
 example : uleb32Bytes 130 = [0x82, 0x01] := by decide
 example : uleb32Bytes 200 = [0xc8, 0x01] := by decide
 example : uleb32Bytes 300 = [0xac, 0x02] := by decide
 example : uleb32Bytes 400 = [0x90, 0x03] := by decide
 example : uleb32Bytes 500 = [0xf4, 0x03] := by decide
+
+-- ...and at 130 the two encoders AGREE, which is exactly why the wide set
+-- cannot witness an encoder swap on its own. At 100 they diverge in both
+-- width and bytes, so every assertion keyed on `bandParams` below fails the
+-- moment a signed splice is replaced by an unsigned one or vice versa.
+example : s33Bytes 100 = [0xe4, 0x00] := by decide
+example : uleb32Bytes 100 = [0x64] := by decide
 
 -- LENGTH ARITHMETIC: seven holes in `cmp`, nine in `eq`, and each one grows by
 -- exactly one byte. A hole spliced as a raw byte would not move at all.
@@ -1556,6 +1579,23 @@ example : ((eqTemplateBody wideParams).drop 7).take 7 = [0x20, 0x00, 0xfb, 0x02,
 example : (eqTemplateBody wideParams).drop 159 = [0x20, 0x06, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b] := by
   decide
 
+-- ENCODER SEPARATION at `limb = 100`. `cmp` mentions `limb` at two s33 holes
+-- and nowhere else, so its body grows by exactly two; an unsigned splice would
+-- have left it at the narrow length, since `uleb32Bytes 100` is one byte.
+example : (cmpTemplateBody bandParams).length = 101 + 2 := by decide
+example : (cmpTemplateBody bandParams).take 12 =
+    [0x05, 0x01, 0x63, 0xe4, 0x00, 0x01, 0x7f, 0x01, 0x63, 0xe4, 0x00, 0x05] := by decide
+
+-- `eq` mentions `limb` at ONE s33 hole (locals) and TWO unsigned `array.get`
+-- type-index holes, so it grows by exactly one: the signed hole widened and
+-- the two unsigned ones did not. Both facts are pinned positionally below, so
+-- swapping either encoder moves a byte the check reads.
+example : (eqTemplateBody bandParams).length = 157 + 1 := by decide
+example : (eqTemplateBody bandParams).take 5 = [0x02, 0x02, 0x63, 0xe4, 0x00] := by decide
+example : ((eqTemplateBody bandParams).drop 116).take 14 =
+    [0x20, 0x02, 0x20, 0x04, 0xfb, 0x0b, 0x64,
+     0x20, 0x03, 0x20, 0x04, 0xfb, 0x0b, 0x64] := by decide
+
 -- Little-endian byte list -> the big-Nat representation the decoders read, and
 -- the minimal wasm framing `bodyBytesAtFuncIndex` consumes (header + code
 -- section with one entry).
@@ -1570,6 +1610,17 @@ def frame (body : List Nat) : List Nat :=
 
 def cmpModule : List Nat := frame (arithHelperBody .cmp wideParams)
 def eqModule : List Nat := frame (arithHelperBody .eq wideParams)
+
+def bandCmpModule : List Nat := frame (arithHelperBody .cmp bandParams)
+def bandEqModule : List Nat := frame (arithHelperBody .eq bandParams)
+
+-- The pin path runs at the encoder-separating width too, so the divergence
+-- above is not merely a fact about the template function: it is the body the
+-- acceptance predicate compares the real code section against.
+example : AcceptedArtifact.arithRoleCheck (natOfBytes bandCmpModule) bandCmpModule.length
+    .cmp (some 0) bandParams = true := by decide +kernel
+example : AcceptedArtifact.arithRoleCheck (natOfBytes bandEqModule) bandEqModule.length
+    .eq (some 0) bandParams = true := by decide +kernel
 
 -- The whole pin path runs at these widths: the wide body is ACCEPTED at the
 -- index its role is declared at. This is the statement the corpus cannot make.
