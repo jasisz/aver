@@ -131,6 +131,10 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       match args with
       | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
       | _ => none
+  | .i32GeS =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
   -- SOUNDNESS: `i32.and` must NOT use the loose `hasI32Ty` the comparisons
   -- use. Bitwise AND over arbitrary `rawI32` operands can yield a value
   -- outside {0,1} (`2 and 2 = 2`), so declaring `boolI32` for it would let a
@@ -399,6 +403,7 @@ def primNeedsRelationalFloatResult : FragPrim → Bool
   | .i32Eq => false
   | .i32LtS => false
   | .i32GtS => false
+  | .i32GeS => false
   | .i32And => false
 
 /-- The general WebAssembly profile gives `f64.add`/`f64.mul` a set-valued

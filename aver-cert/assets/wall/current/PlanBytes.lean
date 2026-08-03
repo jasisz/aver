@@ -168,6 +168,7 @@ def primBytes : FragPrim → List Nat
   | .i32Eq => [0x46]
   | .i32LtS => [0x48]
   | .i32GtS => [0x4a]
+  | .i32GeS => [0x4e]
   | .i32And => [0x71]
 
 /-- Byte and semantic lowering share one symbolic-stack discipline and one

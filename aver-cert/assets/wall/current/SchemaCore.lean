@@ -309,6 +309,12 @@ inductive FragPrim where
   | i32Eq
   | i32LtS
   | i32GtS
+  /-- `i32.ge_s`: the tail the emitter appends to a `__aint_cmp` call for a
+      source-level `>=`. The signed relational family is admitted one member at
+      a time, as a plan that needs it appears; `i32.le_s` has an interpreter
+      clause and a `WInstr` constructor already but no admitted plan, so it is
+      deliberately still outside `FragPrim`. -/
+  | i32GeS
   /-- `i32.and` restricted to the Boolean domain: `PlanCheck` types it only
       over two `boolI32` operands (NOT the loose `hasI32Ty`), because bitwise
       AND of arbitrary raw i32 values can produce a non-Boolean result
