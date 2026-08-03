@@ -220,9 +220,9 @@ def stringConcatContract : String :=
 def toIndexContract : String :=
   "__aint_to_index (carrier -> i32 array index; [0, 2^31) passes, else -1)"
 def cmpContract : String :=
-  "__aint_cmp (carrier pair -> i32 three-way sign: -1 less, 0 equal, 1 greater)"
+  "__aint_cmp (carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)"
 def eqContract : String :=
-  "__aint_eq (carrier pair -> i32 boolean: 1 when the represented integers are equal, else 0)"
+  "__aint_eq (carrier pair -> i32 boolean; 1 when equal, else 0)"
 def addTotalContract : String :=
   "Int.add (carrier add = exact integer addition on represented values); total on represented values"
 def subTotalContract : String :=
