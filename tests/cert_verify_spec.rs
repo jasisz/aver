@@ -4486,9 +4486,11 @@ example : AverCert.quadOb.host = AverCert.AcceptedArtifact.intDispatchCanonicalH
 def badHost : (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
-    (List WVal → Option WVal) → HostTbl := fun _ _ _ _ _ _ _ => none
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
+    (List WVal → Option WVal) → HostTbl := fun _ _ _ _ _ _ _ _ _ => none
 def addProbe : List WVal → Option WVal := fun _ => some .null
-example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe) 9 ≠
+example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe
+      addProbe) 9 ≠
     (AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
       addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe) 9 := by
   simp [badHost, addProbe, hosts, AverCert.AcceptedArtifact.intDispatchCanonicalHost,
@@ -5754,7 +5756,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := ");
     lean.push_str(&carrier);
-    lean.push_str(", code := fun _ => none,\n    host := fun _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
+    lean.push_str(", code := fun _ => none,\n    host := fun _ _ _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
     lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none, cmp := none, eq := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str(
         "def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := ",
@@ -6391,7 +6393,7 @@ def isoCode : CertPrelude.CodeTbl := fun i : Nat =>
 
 def isoOb : Obligation :=
   { export_ := "f", policy := .simulatesModel, carrier := 5,
-    code := isoCode, host := fun _ _ _ _ _ _ => (fun _ : Nat => none), self := 0,
+    code := isoCode, host := fun _ _ _ _ _ _ _ _ => (fun _ : Nat => none), self := 0,
     Dom := Unit, Cod := Unit,
     domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
     model := fun _ => () }
@@ -7229,7 +7231,7 @@ fn int_dispatch_kernel_guards_are_isolating() {
         "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
         "    (Nat → List WVal → Option WVal) →\n",
         "    (List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
-        "  fun _ _ _ _ _ _ => fun fn =>\n",
+        "  fun _ _ _ _ _ _ _ _ => fun fn =>\n",
         "    if fn = 7 then\n",
         "      some (1, fun args => match args with\n",
         "        | [WVal.i64v 0] => CertPrelude.boxRef 11 args\n",

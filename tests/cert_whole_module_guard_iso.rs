@@ -1204,8 +1204,9 @@ def nerfedStringHost :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → HostTbl :=
-  fun _ _ _ _ _ _ _ => none
+  fun _ _ _ _ _ _ _ _ _ => none
 example : quoteOrSelfOb.host =
     AcceptedArtifact.stringEqCanonicalHost {eq_idx} := rfl
 example : nerfedStringHost ≠
@@ -3170,7 +3171,7 @@ example : entryFor 0 ≠ entryFor 1 := by decide +kernel
 def probeOb (carrier : Nat) : Obligation :=
   {{ export_ := "slotCount", policy := .simulatesModel, carrier := carrier,
     code := fun i => if i = 1 then some ⟨1, 1, bodyFor carrier⟩ else none,
-    host := fun _ _ _ _ _ _ => fun _ => none,
+    host := fun _ _ _ _ _ _ _ _ => fun _ => none,
     self := 1, Dom := Unit, Cod := Int,
     domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
     model := fun _ => 0 }}
@@ -3401,7 +3402,7 @@ def digitEntryFor (carrier : Nat) : AverCert.WasmSlice.ByteSeq :=
 def digitOb (carrier : Nat) : Obligation :=
   {{ export_ := "inAsciiDigit", policy := .simulatesModel, carrier := carrier,
     code := fun i => if i = 0 then some ⟨1, 1, digitBodyFor carrier⟩ else none,
-    host := fun _ _ _ _ _ _ => fun _ => none,
+    host := fun _ _ _ _ _ _ _ _ => fun _ => none,
     self := 0, Dom := Unit, Cod := Int,
     domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
     model := fun _ => 0 }}
