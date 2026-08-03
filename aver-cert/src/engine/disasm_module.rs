@@ -513,11 +513,14 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
 
     // Runtime helper names never certified as code. `__aint_to_index` is the
     // named host-role export the fused vector-read contract binds, exactly
-    // like `__rt_aint_from_i64` for box.
+    // like `__rt_aint_from_i64` for box; `__aint_cmp` and `__aint_eq` are the
+    // same kind of named export for the two Int comparison host roles.
     let is_runtime = |name: &str| {
         name.starts_with("__rt_")
             || name.starts_with("__caller")
             || name == "__aint_to_index"
+            || name == "__aint_cmp"
+            || name == "__aint_eq"
             || name == "_start"
             || name == "memory"
     };

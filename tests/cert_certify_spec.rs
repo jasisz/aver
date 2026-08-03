@@ -288,8 +288,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        16,
-        "all 42 module exports must be certified or explicitly declared"
+        18,
+        "all 44 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {

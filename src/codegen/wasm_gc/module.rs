@@ -2660,6 +2660,42 @@ pub(super) fn emit_module_with(
             if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToIndex) {
                 exports.export("__aint_to_index", ExportKind::Func, idx);
             }
+            // The two Int value-vs-value comparison helpers, named exports on
+            // the same rule as the box and index helpers above: the wall reads
+            // the helper's function index off the export name, and pins the
+            // bytes at that index against a fixed body template.
+            //
+            // `__aint_cmp` renders its shared sub-routines (`decompose`,
+            // `strip`, `umag_cmp`) either as a `call` to a registered helper
+            // or as an inlined loop, and the two shapes have different bytes.
+            // Only the call shape is pinned by the wall, so the export and the
+            // inline shape must never coexist: refuse to emit the module at
+            // all rather than ship an export whose body the wall cannot
+            // recognise. The sub-routines are registered unconditionally
+            // alongside `AintCmp` under the same `registry.bignum` gate (see
+            // the bignum registration block above), so this is unreachable
+            // today by construction — it is a guard against a future
+            // registration change silently flipping the emitted shape.
+            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintCmp) {
+                if registry.aint_decompose_fn_idx.is_none()
+                    || registry.aint_strip_fn_idx.is_none()
+                    || registry.aint_umag_cmp_fn_idx.is_none()
+                {
+                    return Err(WasmGcError::Validation(
+                        "__aint_cmp is exported as a certified host role but its shared \
+                         sub-routines (decompose / strip / umag_cmp) are unregistered, so \
+                         the helper body would be emitted in the inlined shape the \
+                         certificate wall does not recognise"
+                            .to_string(),
+                    ));
+                }
+                exports.export("__aint_cmp", ExportKind::Func, idx);
+            }
+            // `__aint_eq` is self-contained (no inter-helper `call`), so it has
+            // a single fixed shape and needs no such guard.
+            if let Some(idx) = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq) {
+                exports.export("__aint_eq", ExportKind::Func, idx);
+            }
         }
         exports.export("memory", ExportKind::Memory, 0);
     } else if cabi_realloc.is_some() {

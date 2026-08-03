@@ -895,12 +895,26 @@ fn cert_tripwire_declines_flipped_wasm_byte() {
     };
 
     // (a) One flipped wasm byte → hash mismatch, before any build.
+    //
+    // The byte is picked by CONTENT, not by offset: the flip must leave a
+    // structurally valid module, or the checker refuses at wasm validation and
+    // the hash pin never gets its turn. The first byte of the `sumTo` export
+    // name is such a byte — a name is opaque to validation — and it is unique
+    // in the module. An offset-derived choice (this test used the file
+    // midpoint) silently changes meaning whenever the emitter's section sizes
+    // move, which is what happened when the module gained two runtime exports:
+    // the midpoint drifted into a function body and the decline became a
+    // validation error instead of the hash mismatch this test exists to pin.
     let dir = temp_dir("neg-a");
     copy_dir(&out_dir, &dir);
     let w = dir.join("certprobe2.wasm");
     let mut bytes = std::fs::read(&w).unwrap();
-    let mid = bytes.len() / 2;
-    bytes[mid] ^= 0x01;
+    let name = b"sumTo";
+    let at = bytes
+        .windows(name.len())
+        .position(|win| win == name)
+        .expect("the `sumTo` export name should be present in the wasm");
+    bytes[at] ^= 0x01;
     std::fs::write(&w, &bytes).unwrap();
     let (ok, out) = aver_check(&w, &dir.join("cert"));
     assert!(!ok, "flipped wasm byte must fail:\n{out}");

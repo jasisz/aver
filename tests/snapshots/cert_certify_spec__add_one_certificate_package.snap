@@ -7,7 +7,7 @@ expression: golden
   "schema_version": 3,
   "format": {"version": 1, "wall_id": "sha256:c739437f0c1015536aa030ed3c07c0e9d0e330bee1e4c1b6c7b06d4a3d3ec6c8"},
   "wasm": "add_one.wasm",
-  "wasm_sha256": "bdda9a1cdd38c016c35df53eae9c38060cfd1fdf9b0564f97610b91e1e9c4d16",
+  "wasm_sha256": "5786e69e54fbb243d59b6a905b459321d5ac8ac3c17041fe5b4b49ae2580355c",
   "level": "L1",
   "profile": "AverUserProfile/v1",
   "abi": "aver-wasm-gc/0",
@@ -26,6 +26,8 @@ expression: golden
     {"name": "__rt_memory_grow", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__rt_aint_from_i64", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__aint_to_index", "reason": "module export is outside the claimed certification obligations"},
+    {"name": "__aint_cmp", "reason": "module export is outside the claimed certification obligations"},
+    {"name": "__aint_eq", "reason": "module export is outside the claimed certification obligations"},
     {"name": "memory", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__caller_fn_count", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__caller_fn_name", "reason": "module export is outside the claimed certification obligations"}
@@ -70,12 +72,12 @@ abbrev addOneOb : Schema.Obligation :=
 
 def manifest : Schema.Manifest :=
   { subject :=
-      { artifactHash := "bdda9a1cdd38c016c35df53eae9c38060cfd1fdf9b0564f97610b91e1e9c4d16",
+      { artifactHash := "5786e69e54fbb243d59b6a905b459321d5ac8ac3c17041fe5b4b49ae2580355c",
         profile := "AverUserProfile/v1",
         abi := "aver-wasm-gc/0",
         artifactRoot := "AverCert.Artifact.certificate",
         exports := ["addOne"],
-        declaredUncertified := [("_start", "module export is outside the claimed certification obligations"), ("__rt_string_from_lm", "module export is outside the claimed certification obligations"), ("__rt_string_to_lm", "module export is outside the claimed certification obligations"), ("__rt_memory_pages", "module export is outside the claimed certification obligations"), ("__rt_memory_grow", "module export is outside the claimed certification obligations"), ("__rt_aint_from_i64", "module export is outside the claimed certification obligations"), ("__aint_to_index", "module export is outside the claimed certification obligations"), ("memory", "module export is outside the claimed certification obligations"), ("__caller_fn_count", "module export is outside the claimed certification obligations"), ("__caller_fn_name", "module export is outside the claimed certification obligations")],
+        declaredUncertified := [("_start", "module export is outside the claimed certification obligations"), ("__rt_string_from_lm", "module export is outside the claimed certification obligations"), ("__rt_string_to_lm", "module export is outside the claimed certification obligations"), ("__rt_memory_pages", "module export is outside the claimed certification obligations"), ("__rt_memory_grow", "module export is outside the claimed certification obligations"), ("__rt_aint_from_i64", "module export is outside the claimed certification obligations"), ("__aint_to_index", "module export is outside the claimed certification obligations"), ("__aint_cmp", "module export is outside the claimed certification obligations"), ("__aint_eq", "module export is outside the claimed certification obligations"), ("memory", "module export is outside the claimed certification obligations"), ("__caller_fn_count", "module export is outside the claimed certification obligations"), ("__caller_fn_name", "module export is outside the claimed certification obligations")],
         capabilities := [],
         start := none,
         hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18 } : CertDecode.AddSub.Roles),
