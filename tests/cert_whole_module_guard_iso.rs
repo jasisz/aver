@@ -960,6 +960,398 @@ example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes Artifact
     let _ = std::fs::remove_dir_all(out_dir);
 }
 
+/// Byte offset of the SOLE occurrence of `opcode` inside the body of the
+/// defined function at absolute wasm index `func_idx`.
+///
+/// The position is derived by PARSING the module — imports counted, the code
+/// entry selected by the same index the export section binds, then that
+/// entry's operator stream walked — and never from a fixed file position: a
+/// change anywhere upstream moves every body, and a stale literal offset would
+/// quietly mutate some other function while the test kept passing. Only
+/// operator START positions are examined, so an immediate byte that happens to
+/// equal `opcode` can never be mistaken for the instruction.
+fn sole_body_opcode_offset(bytes: &[u8], func_idx: u32, opcode: u8, what: &str) -> usize {
+    let mut imported_funcs = 0u32;
+    let mut code_ordinal = 0u32;
+    let mut hits = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                if imported_funcs + code_ordinal == func_idx {
+                    let mut operators = body
+                        .get_operators_reader()
+                        .expect("helper body must expose its operators");
+                    while !operators.eof() {
+                        let at = operators.original_position();
+                        operators.read().expect("operator must parse");
+                        if bytes[at] == opcode {
+                            hits.push(at);
+                        }
+                    }
+                }
+                code_ordinal += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        hits.len(),
+        1,
+        "the {what} body must carry exactly one {opcode:#04x} instruction; refit the mutation"
+    );
+    hits[0]
+}
+
+/// The mirror of the Int-comparison role GuardIso above: there the BYTES are
+/// honest and the declaration moves, here the DECLARATION is honest and one
+/// byte of the module moves.
+///
+/// A live single-byte mutation inside each comparison helper's body, with
+/// every other pin left correct: `__aint_cmp` gets its `i32.gt_s` (`0x4a`)
+/// turned into `i32.lt_s` (`0x48`), `__aint_eq` gets its `i64.eq` (`0x51`)
+/// turned into `i64.ne` (`0x52`). Both mutants are still VALID wasm (asserted
+/// with `wasmparser`), both keep the export names, the export indices, the
+/// declared function types and every other module byte, and the producer-side
+/// classifier resolves the identical role table from them — so nothing but the
+/// template equality can tell them from the certified module, and the decline
+/// cannot be an artefact of a broken module.
+///
+/// LAYER. The flip does not reach this pin through `aver cert verify`: the
+/// artifact hash gate refuses a mutated wasm before any Lean process starts
+/// (`cert_tripwire_declines_flipped_countdown_body_byte` pins that behaviour).
+/// That gate is not what defends against this attack, because the hash is the
+/// producer's own datum — a hostile producer mutates the body and hashes what
+/// it mutated. So the tamper is applied at the layer the guard-iso operates
+/// at, exactly as the hostile-manifest tests do in reverse: the wall is handed
+/// the mutant's numeral (the LITERAL numeral of the byte vector validated
+/// here, not a re-derivation) together with the certificate's own honest
+/// declaration, and it has to refuse it.
+///
+/// Per mutant the same three-part pattern the file uses everywhere is
+/// exhibited rather than asserted:
+///   * the REAL wall refuses the mutant under the certificate's own table;
+///   * the copy of the live acceptance check weakened by EXACTLY that role's
+///     TEMPLATE conjunct ACCEPTS it — so that conjunct is the sole rejector,
+///     and every sibling pin (carrier, all four export-name equalities, the
+///     other six template equalities including the other comparison role)
+///     still holds of these bytes;
+///   * the copies weakened by that role's NAME equality and by the OTHER
+///     role's template equality still REJECT it — a body edit is invisible to
+///     the name pin, and the two roles are not covering for each other.
+///
+/// All four weakened copies are CUT FROM THE LIVE materialized wall source,
+/// with the removed conjunct asserted to occur exactly once first, so a moved
+/// or renamed conjunct fails this test loudly instead of leaving a stale hand
+/// copy quietly passing.
+#[test]
+fn inkernel_int_comparison_role_bodies_reject_a_flipped_body_byte() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Int-comparison body-mutation GuardIso test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-intcmp-body-mutation-guard-iso");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/certprobe.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("compile certprobe fixture for the Int-comparison body-mutation GuardIso");
+    assert!(
+        compile.status.success(),
+        "certprobe compile failed for the Int-comparison body-mutation GuardIso:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = std::fs::read(out_dir.join("certprobe.wasm")).unwrap();
+    let honest_roles = aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+    let cmp_idx = honest_roles.5.expect("certprobe must export __aint_cmp");
+    let eq_idx = honest_roles.6.expect("certprobe must export __aint_eq");
+    assert_ne!(
+        cmp_idx, eq_idx,
+        "the two helpers must be distinct functions"
+    );
+
+    // The two mutation sites, located by content. Each replacement keeps the
+    // instruction's operand and result types — `i32.gt_s`/`i32.lt_s` and
+    // `i64.eq`/`i64.ne` are the same shape — so the module stays structurally
+    // valid and the decline below cannot come from wasm validation.
+    let cmp_at = sole_body_opcode_offset(&wasm, cmp_idx, 0x4a, "__aint_cmp");
+    let eq_at = sole_body_opcode_offset(&wasm, eq_idx, 0x51, "__aint_eq");
+    let mut cmp_mut = wasm.clone();
+    cmp_mut[cmp_at] = 0x48;
+    let mut eq_mut = wasm.clone();
+    eq_mut[eq_at] = 0x52;
+    for (label, mutant) in [("__aint_cmp", &cmp_mut), ("__aint_eq", &eq_mut)] {
+        wasmparser::Validator::new()
+            .validate_all(mutant)
+            .unwrap_or_else(|error| panic!("the {label} mutant must stay valid wasm: {error}"));
+        assert_eq!(
+            mutant.len(),
+            wasm.len(),
+            "the {label} mutant must keep the module length"
+        );
+        assert_eq!(
+            mutant.iter().zip(&wasm).filter(|(a, b)| a != b).count(),
+            1,
+            "the {label} mutant must differ in exactly one byte"
+        );
+        // The producer's own classifier — the independent oracle this suite
+        // runs against the kernel decoders — reads the same role table out of
+        // the mutant. The attack is invisible to everything that binds a role
+        // to an index; only the body equality can see it.
+        assert_eq!(
+            aver::codegen::cert::byte_derived_frag_host_role_indices(mutant).unwrap(),
+            honest_roles,
+            "the {label} mutant must keep every byte-derived role index"
+        );
+    }
+
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .arg("build")
+        .output()
+        .expect("build certprobe certificate before the Int-comparison body-mutation GuardIso");
+    assert!(
+        build.status.success(),
+        "certprobe certificate failed before the Int-comparison body-mutation GuardIso:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Literal weakened copies, cut from the LIVE acceptance source the
+    // certificate just elaborated against: each comparison role's TEMPLATE
+    // equality alone, and each role's export-NAME equality alone.
+    let accepted_core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
+        .expect("materialized wall has AcceptedArtifactCore.lean");
+    let live = extract_wall_def(&accepted_core, "arithTableCheck");
+    let cmp_name = "      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&\n";
+    let eq_name = "      (roles.eq == CertDecode.AddSub.eqIdx n len) &&\n";
+    let cmp_template = "      arithRoleCheck n len .cmp roles.cmp p &&\n";
+    let eq_template = " &&\n      arithRoleCheck n len .eq roles.eq p";
+    for (conjunct, what) in [
+        (cmp_name, "cmp export-name"),
+        (eq_name, "eq export-name"),
+        (cmp_template, "cmp template"),
+        (eq_template, "eq template"),
+    ] {
+        assert_eq!(
+            live.matches(conjunct).count(),
+            1,
+            "the {what} conjunct moved; refit the GuardIso surgery"
+        );
+    }
+    assert_eq!(
+        live.matches("arithTableCheck").count(),
+        1,
+        "`arithTableCheck` is not a single top-level definition; refit the surgery"
+    );
+    let weakened = |name: &str, drop: &str| live.replace(drop, "").replace("arithTableCheck", name);
+    let weak_copies = format!(
+        "namespace AverCert.AcceptedArtifact\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `cmp` TEMPLATE equality. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `eq` TEMPLATE equality. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `cmp` export-name equality. -/\n{}\n\n\
+         /-! Live acceptance check weakened by EXACTLY the `eq` export-name equality. -/\n{}\n\n\
+         end AverCert.AcceptedArtifact",
+        weakened("weakCmpTemplateArithTableCheck", cmp_template),
+        weakened("weakEqTemplateArithTableCheck", eq_template),
+        weakened("weakCmpNameArithTableCheck", cmp_name),
+        weakened("weakEqNameArithTableCheck", eq_name),
+    );
+
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+
+-- The two mutants, as the LITERAL numerals of the byte vectors the harness
+-- validated as wasm. Nothing here re-derives the edit: what the kernel reads
+-- below is the module `wasmparser` accepted.
+def cmpMutBytes : Nat := 0x{cmp_hex}
+def eqMutBytes : Nat := 0x{eq_hex}
+
+-- Each mutant is the certified module with ONE byte moved. Stated as numeral
+-- arithmetic, so it covers every byte of the module rather than only the bytes
+-- the checks below happen to read: the difference is exactly one unit-weight
+-- at one position, and the module length is untouched.
+example : ArtifactBytes.modBytes - cmpMutBytes = 2 <<< {cmp_shift} := by decide +kernel
+example : eqMutBytes - ArtifactBytes.modBytes = 1 <<< {eq_shift} := by decide +kernel
+
+-- ...and the byte that moved is the instruction named in the doc block:
+-- `i32.gt_s` became `i32.lt_s`, `i64.eq` became `i64.ne`.
+example : CertDecode.takeBytes 1 (ArtifactBytes.modBytes >>> {cmp_shift}) = [0x4a] := by
+  decide +kernel
+example : CertDecode.takeBytes 1 (cmpMutBytes >>> {cmp_shift}) = [0x48] := by decide +kernel
+example : CertDecode.takeBytes 1 (ArtifactBytes.modBytes >>> {eq_shift}) = [0x51] := by
+  decide +kernel
+example : CertDecode.takeBytes 1 (eqMutBytes >>> {eq_shift}) = [0x52] := by decide +kernel
+
+-- BYTE-DERIVED GROUND TRUTH, on the certified module and on both mutants
+-- alike: the export section still binds both helpers, at the same indices.
+-- Every declaration the export-name conjuncts admit for these bytes is
+-- therefore the honest one the certificate already carries — the escape routes
+-- the sibling GuardIso covers (a hostile index, a role declared absent) are
+-- closed here by those conjuncts, so the mutant has to be refused on its BODY
+-- or not at all.
+example : CertDecode.AddSub.cmpIdx ArtifactBytes.modBytes ArtifactBytes.modLen
+    = some {cmp_idx} := by decide +kernel
+example : CertDecode.AddSub.eqIdx ArtifactBytes.modBytes ArtifactBytes.modLen
+    = some {eq_idx} := by decide +kernel
+example : CertDecode.AddSub.cmpIdx cmpMutBytes ArtifactBytes.modLen = some {cmp_idx} := by
+  decide +kernel
+example : CertDecode.AddSub.eqIdx cmpMutBytes ArtifactBytes.modLen = some {eq_idx} := by
+  decide +kernel
+example : CertDecode.AddSub.cmpIdx eqMutBytes ArtifactBytes.modLen = some {cmp_idx} := by
+  decide +kernel
+example : CertDecode.AddSub.eqIdx eqMutBytes ArtifactBytes.modLen = some {eq_idx} := by
+  decide +kernel
+
+-- The declared-type gate reads the same type section in both mutants, so it
+-- accepts them exactly as it accepts the honest module: a body edit is
+-- invisible to it by construction.
+example : (match CertDecode.carrierState ArtifactBytes.modBytes ArtifactBytes.modLen with
+    | some (some c) =>
+        AverCert.WasmSlice.hostTableFuncTypesMatch cmpMutBytes ArtifactBytes.modLen
+          c [(.cmp, {cmp_idx}), (.eq, {eq_idx})] &&
+        AverCert.WasmSlice.hostTableFuncTypesMatch eqMutBytes ArtifactBytes.modLen
+          c [(.cmp, {cmp_idx}), (.eq, {eq_idx})]
+    | _ => false) = true := by decide +kernel
+
+-- What DID move, at the granularity the template equality works on: exactly
+-- one byte of the mutated helper's body, with the other helper's body left
+-- byte-identical. This is the whole attack surface — one instruction inside
+-- one of the two runtime helpers the table pins.
+example : (match AcceptedArtifact.bodyBytesAtFuncIndex cmpMutBytes ArtifactBytes.modLen {cmp_idx},
+    AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {cmp_idx} with
+    | some xs, some ys =>
+        (xs.length == ys.length) && (((xs.zip ys).filter (fun p => p.1 != p.2)).length == 1)
+    | _, _ => false) = true := by decide +kernel
+example : AcceptedArtifact.bodyBytesAtFuncIndex cmpMutBytes ArtifactBytes.modLen {eq_idx}
+    = AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {eq_idx} := by
+  decide +kernel
+example : (match AcceptedArtifact.bodyBytesAtFuncIndex eqMutBytes ArtifactBytes.modLen {eq_idx},
+    AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {eq_idx} with
+    | some xs, some ys =>
+        (xs.length == ys.length) && (((xs.zip ys).filter (fun p => p.1 != p.2)).length == 1)
+    | _, _ => false) = true := by decide +kernel
+example : AcceptedArtifact.bodyBytesAtFuncIndex eqMutBytes ArtifactBytes.modLen {cmp_idx}
+    = AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {cmp_idx} := by
+  decide +kernel
+
+-- The HONEST control: the certificate's own declared table, accepted by the
+-- real check against the real bytes, so no rejection below is an artefact of
+-- the framing.
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+
+-- THE DECLINE. The certificate's own honest declaration does not accept either
+-- mutant: `decodedHostRoleTable` is exactly this conjunct, so an artifact
+-- carrying these bytes cannot reach acceptance.
+def cmpMutArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := cmpMutBytes }}
+def eqMutArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := eqMutBytes }}
+
+example : ¬ AcceptedArtifact.decodedHostRoleTable cmpMutArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck cmpMutBytes ArtifactBytes.modLen
+      Artifact.data.manifest.subject.hostRoleTable
+      Artifact.data.manifest.subject.arithParams = true := h
+  exact absurd bad (by decide +kernel)
+
+example : ¬ AcceptedArtifact.decodedHostRoleTable eqMutArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck eqMutBytes ArtifactBytes.modLen
+      Artifact.data.manifest.subject.hostRoleTable
+      Artifact.data.manifest.subject.arithParams = true := h
+  exact absurd bad (by decide +kernel)
+{weak_copies}
+
+-- Every weakened copy still accepts the HONEST module, so each acceptance flip
+-- below is caused by the mutation and not by the surgery.
+example : AcceptedArtifact.weakCmpTemplateArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqTemplateArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+
+-- ATTRIBUTION, mutated `__aint_cmp` body: dropping EXACTLY the `cmp` template
+-- equality admits it. So that one conjunct is the sole rejector, and every
+-- sibling pin — the carrier, all four export-name equalities, and the other
+-- six template equalities including `eq` — holds of these bytes.
+example : AcceptedArtifact.weakCmpTemplateArithTableCheck cmpMutBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+
+-- ...and neither the `cmp` NAME equality nor the `eq` template equality is
+-- doing that work: with either of them removed the mutant is still refused.
+example : AcceptedArtifact.weakCmpNameArithTableCheck cmpMutBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+example : AcceptedArtifact.weakEqTemplateArithTableCheck cmpMutBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+
+-- ATTRIBUTION, mutated `__aint_eq` body: the exact mirror.
+example : AcceptedArtifact.weakEqTemplateArithTableCheck eqMutBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqNameArithTableCheck eqMutBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+example : AcceptedArtifact.weakCmpTemplateArithTableCheck eqMutBytes ArtifactBytes.modLen
+    Artifact.data.manifest.subject.hostRoleTable
+    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
+"#,
+        cmp_hex = hex_le(&cmp_mut),
+        eq_hex = hex_le(&eq_mut),
+        cmp_shift = 8 * cmp_at,
+        eq_shift = 8 * eq_at,
+    );
+    std::fs::write(cert.join("IntCmpBodyMutationGuardIso.lean"), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(&cert)
+        .arg("env")
+        .arg("lean")
+        .arg("IntCmpBodyMutationGuardIso.lean")
+        .output()
+        .expect("run the Int-comparison body-mutation GuardIso");
+    assert!(
+        check.status.success(),
+        "Int-comparison body-mutation GuardIso failed:\n{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let _ = std::fs::remove_dir_all(out_dir);
+}
+
 /// A module WITH the Int box helper whose module-wide role scan fails: it
 /// contains an unrelated carrier-binop-signature function whose body starts
 /// with an instruction encoding outside the certificate decoder's scan
