@@ -2441,19 +2441,39 @@ mod tcp_tests {
         }
     }
 
-    /// Count validation happens before the connection is touched, so these
-    /// need no socket. A negative count, one past the read cap, and one too
-    /// large for `i64` must all be catchable `Result.Err` rather than traps.
+    /// A negative count, one past the read cap, and one too large for `i64`
+    /// must all be catchable `Result.Err` rather than traps.
+    ///
+    /// Uses a real listener rather than a constructed `Tcp.Connection`:
+    /// construction is rejected by the type checker (`Cannot construct opaque
+    /// type 'Tcp.Connection'`), and only slips through here because
+    /// `call_fn_with_effects` VM-compiles without type checking. A test that
+    /// relied on that would be exercising a program Aver source cannot express.
     #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
     fn tcp_read_bytes_rejects_out_of_range_counts() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            while let Ok((stream, _)) = listener.accept() {
+                // Hold the peer open; these cases must fail on the count
+                // before any read is attempted.
+                thread::sleep(std::time::Duration::from_millis(200));
+                drop(stream);
+            }
+        });
+
         for (count, expect) in [
             ("-1", "negative"),
             ("20000000", "limit"),
             ("1208925819614629174706176", "read limit"),
         ] {
             let src = format!(
-                "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.readBytes]\n    conn = Tcp.Connection(id = \"tcp-0\", host = \"127.0.0.1\", port = 1)\n    Tcp.readBytes(conn, {})\n",
-                count
+                "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    Tcp.readBytes(conn, {})\n",
+                port, count
             );
             match run_tcp_fn(&src, "talk") {
                 Value::Err(inner) => match *inner {
