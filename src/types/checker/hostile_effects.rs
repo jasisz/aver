@@ -542,6 +542,24 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Tcp.writeBytes" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: List<Int>) -> Result<Unit, String>\n    ? \"honest: bytes reach the peer\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: List<Int>) -> Result<Unit, String>\n    ? \"hostile: write fails\"\n    Result.Err(\"hostile: write failed\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Tcp.close" => vec![
             HostileProfile {
                 name: "normal_ok",
@@ -711,6 +729,7 @@ mod tests {
             "Tcp.connect",
             "Tcp.readLine",
             "Tcp.writeLine",
+            "Tcp.writeBytes",
             "Tcp.close",
             "Terminal.readKey",
         ];

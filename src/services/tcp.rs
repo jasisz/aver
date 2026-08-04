@@ -11,6 +11,7 @@
 /// Persistent-connection methods:
 ///   `Tcp.connect(host, port)`           → Result<Tcp.Connection, String>  (returns opaque connection record)
 ///   `Tcp.writeLine(conn, line)`         → Result<Unit, String>    (writes line + \r\n)
+///   `Tcp.writeBytes(conn, payload)`     → Result<Unit, String>    (exact bytes, nothing appended)
 ///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
 ///
@@ -31,6 +32,7 @@ pub fn register(global: &mut HashMap<String, Value>) {
         "ping",
         "connect",
         "writeLine",
+        "writeBytes",
         "readLine",
         "close",
     ] {
@@ -54,6 +56,7 @@ pub const DECLARED_EFFECTS: &[&str] = &[
     "Tcp.ping",
     "Tcp.connect",
     "Tcp.writeLine",
+    "Tcp.writeBytes",
     "Tcp.readLine",
     "Tcp.close",
 ];
@@ -65,6 +68,7 @@ pub fn effects(name: &str) -> &'static [&'static str] {
         "Tcp.ping" => &["Tcp.ping"],
         "Tcp.connect" => &["Tcp.connect"],
         "Tcp.writeLine" => &["Tcp.writeLine"],
+        "Tcp.writeBytes" => &["Tcp.writeBytes"],
         "Tcp.readLine" => &["Tcp.readLine"],
         "Tcp.close" => &["Tcp.close"],
         _ => &[],
@@ -79,6 +83,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Tcp.ping" => Some(tcp_ping(args)),
         "Tcp.connect" => Some(tcp_connect(args)),
         "Tcp.writeLine" => Some(tcp_write_line(args)),
+        "Tcp.writeBytes" => Some(tcp_write_bytes(args)),
         "Tcp.readLine" => Some(tcp_read_line(args)),
         "Tcp.close" => Some(tcp_close(args)),
         _ => None,
@@ -168,6 +173,25 @@ fn tcp_write_line(args: &[Value]) -> Result<Value, RuntimeError> {
     let line = str_arg(&args[1], "Tcp.writeLine: line must be a String")?;
 
     match aver_rt::tcp::write_line(&conn, &line) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+    }
+}
+
+fn tcp_write_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.writeBytes() takes 2 arguments (conn, payload), got {}",
+            args.len()
+        )));
+    }
+    let conn = tcp_connection_arg(&args[0], "Tcp.writeBytes")?;
+    let payload = match bytes_arg(&args[1], "Tcp.writeBytes")? {
+        Ok(bytes) => bytes,
+        Err(msg) => return Ok(Value::Err(Box::new(Value::Str(msg)))),
+    };
+
+    match aver_rt::tcp::write_bytes(&conn, &payload) {
         Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
@@ -342,6 +366,7 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
         "ping",
         "connect",
         "writeLine",
+        "writeBytes",
         "readLine",
         "close",
     ];
@@ -370,6 +395,7 @@ pub fn call_nv(
             | "Tcp.ping"
             | "Tcp.connect"
             | "Tcp.writeLine"
+            | "Tcp.writeBytes"
             | "Tcp.readLine"
             | "Tcp.close"
     ) {

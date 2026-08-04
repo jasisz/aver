@@ -327,6 +327,12 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         runtime_return: RuntimeType::ResultUnitStr,
     },
     EffectClassification {
+        method: "Tcp.writeBytes",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::ListInt],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    EffectClassification {
         method: "Tcp.close",
         dimension: EffectDimension::GenerativeOutput,
         runtime_params: &[RuntimeType::TcpConnection],
@@ -841,7 +847,13 @@ mod tests {
         }
         // GenerativeOutput: session TCP — request emitted, response from oracle.
         // Stateless: writeLine does not affect a later readLine.
-        for name in &["Tcp.connect", "Tcp.readLine", "Tcp.writeLine", "Tcp.close"] {
+        for name in &[
+            "Tcp.connect",
+            "Tcp.readLine",
+            "Tcp.writeLine",
+            "Tcp.writeBytes",
+            "Tcp.close",
+        ] {
             let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
             assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
         }

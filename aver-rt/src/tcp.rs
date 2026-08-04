@@ -77,6 +77,30 @@ pub fn write_line(conn: &TcpConnection, line: &str) -> Result<(), String> {
     })
 }
 
+/// Byte-clean sibling of [`write_line`].
+///
+/// `write_line` appends `\r\n` and takes a `&str`, which is always valid UTF-8,
+/// so `as_bytes()` re-encodes anything above `0x7F` into a multi-byte sequence:
+/// the single byte `0xF9` cannot be put on the wire at all. Both behaviours are
+/// wrong for a binary protocol — the appended bytes desynchronise a
+/// length-prefixed stream, and the encoding corrupts the payload.
+///
+/// This writes `payload` exactly as given: nothing appended, nothing encoded.
+/// An empty payload is a no-op.
+pub fn write_bytes(conn: &TcpConnection, payload: &[u8]) -> Result<(), String> {
+    CONNECTIONS.with(|map| {
+        let mut borrow = map.borrow_mut();
+        let id: &str = &conn.id;
+        match borrow.get_mut(id) {
+            None => Err(format!("Tcp.writeBytes: unknown connection '{}'", conn.id)),
+            Some(reader) => reader
+                .get_mut()
+                .write_all(payload)
+                .map_err(|e| e.to_string()),
+        }
+    })
+}
+
 pub fn read_line(conn: &TcpConnection) -> Result<String, String> {
     CONNECTIONS.with(|map| {
         let mut borrow = map.borrow_mut();

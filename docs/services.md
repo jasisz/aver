@@ -266,6 +266,7 @@ Source: `src/services/tcp.rs`
 |---|---|---|
 | `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Opaque handle — see below. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
+| `Tcp.writeBytes` | `(Tcp.Connection, List<Int>) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 
@@ -281,6 +282,15 @@ non-UTF-8 sequence with U+FFFD — silently, irreversibly, and starting at the
 first offending byte — so it is only safe for protocols whose responses are
 valid UTF-8 text. Payload values outside `0..=255` return
 `Result.Err` naming the offending value and its index.
+
+`Tcp.writeBytes` is the byte-clean form of `Tcp.writeLine`. `writeLine` appends
+`\r\n` unconditionally — two bytes that desynchronise a length-prefixed stream —
+and its `String` argument is UTF-8, so a codepoint above `0x7F` is re-encoded
+into a multi-byte sequence: the single byte `0xF9` cannot be put on the wire at
+all. `writeBytes` writes the payload exactly as given. Elements outside
+`0..=255` return `Result.Err` naming the value and its index, and are rejected
+before any wire I/O, so a bad payload never half-writes. An empty payload is a
+no-op. `Tcp.writeLine` is unchanged and remains right for line-oriented text.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 
