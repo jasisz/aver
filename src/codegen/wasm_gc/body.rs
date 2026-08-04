@@ -109,9 +109,15 @@ pub(super) struct FnMap {
 
 impl FnMap {
     /// Resolve an `$AverInt` runtime helper by name, recording the two
-    /// comparison helpers as called. Every `__aint_cmp` / `__aint_eq` call
-    /// site in the body emitter goes through here, so the recording cannot
-    /// drift from the emitted `call` it stands for.
+    /// comparison helpers as called. The flag is a conservative signal, not an
+    /// exact one, in both directions: a body that resolves a helper here and
+    /// then falls back to a trap stub leaves the flag set for a `call` the
+    /// module never ships, and the Int-literal match cascade in
+    /// `pattern_match.rs` calls `__aint_eq` through a direct `builtins` lookup
+    /// without raising it. Both misses are fail-closed for certification —
+    /// the cascade only runs for bodies the plan producer left unplanned (so
+    /// no claim can cite the role), and a plan that does cite `cmp`/`eq` raises
+    /// the export through its own host-call nodes, not through this flag.
     pub(super) fn aint_helper_idx(&self, name: &str) -> Option<u32> {
         let idx = self.builtins.get(name).copied()?;
         match name {

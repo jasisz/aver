@@ -1,8 +1,8 @@
 {
  "schema_version": 1,
  "tool": "tools/coverage.py",
- "generated": "2026-08-03",
- "repo_commit": "3a2ee44d",
+ "generated": "2026-08-04",
+ "repo_commit": "c5bff6ed",
  "corpus": {
   "globs": [
    "examples/**/*.av",
