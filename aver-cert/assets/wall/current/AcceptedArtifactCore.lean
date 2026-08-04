@@ -252,16 +252,20 @@ def stringEqCanonicalHost (funcIdx : Nat) :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) →
+    (List WVal → Option WVal) →
     (List WVal → Option WVal) → HostTbl :=
-  fun _add _sub _mul stringEq _stringConcat _toIndex fn =>
+  fun _add _sub _mul stringEq _stringConcat _toIndex _cmp _eq fn =>
     if fn = funcIdx then some (2, stringEq) else none
 
 def stringConcatCanonicalHost (funcIdx resultTy : Nat) :
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) →
+    (List WVal → Option WVal) →
     (List WVal → Option WVal) → HostTbl :=
-  fun _add _sub _mul _stringEq stringConcat _toIndex fn =>
+  fun _add _sub _mul _stringEq stringConcat _toIndex _cmp _eq fn =>
     if fn = funcIdx then some (1, stringConcat resultTy) else none
 
 /-- Artifact-level acceptance for one String.concat export. The raw plan carries
@@ -841,9 +845,13 @@ def intDispatchCanonicalSlots
           | .add => ((2 : Nat), add)
           | .mul => ((2 : Nat), mul)
           | .sub => ((2 : Nat), sub)
-          -- The Int-face dispatch grammar never cites the to-index role; a
-          -- table entry for it wires a slot that always fails (trap-only).
-          | .toIndex => ((1 : Nat), fun _ => none))
+          -- The Int-face dispatch grammar cites neither the to-index role nor
+          -- either comparison role; a table entry for one of them wires a slot
+          -- that always fails (trap-only). The arities are the real helper
+          -- arities so the wiring stays honest about the shape it refuses.
+          | .toIndex => ((1 : Nat), fun _ => none)
+          | .cmp => ((2 : Nat), fun _ => none)
+          | .eq => ((2 : Nat), fun _ => none))
       else intDispatchCanonicalSlots carrier add sub mul rest fn
 
 /-- The canonical Int-face host BUILDER for a byte-derived role table: the
@@ -863,8 +871,10 @@ def intDispatchCanonicalHost
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (List WVal → Option WVal) → (List WVal → Option WVal) →
     (Nat → List WVal → Option WVal) →
+    (List WVal → Option WVal) →
+    (List WVal → Option WVal) →
     (List WVal → Option WVal) → HostTbl :=
-  fun add sub mul _stringEq _stringConcat _toIndex =>
+  fun add sub mul _stringEq _stringConcat _toIndex _cmp _eq =>
     intDispatchCanonicalSlots carrier add sub mul hostTable
 
 /-- Artifact-level acceptance for one Int-face `ref.test`-dispatch export. The
@@ -1865,12 +1875,12 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     role-citing fragment and the arith table it cites can never disagree about
     where the carrier lives.
 
-    `box` and `toIndex` carry a SECOND pin, to their runtime export names
-    (#736 for `box`), and both pins are kept because they constrain different
-    things. The name equality says at WHICH INDEX the role may be declared; the
-    template equality says WHICH BYTES sit there. Only the name equality has any
-    force on a `none` declaration, since `arithRoleCheck` is vacuous on `none`
-    by design — dropping it would turn "this module exports no
+    `box`, `toIndex`, `cmp` and `eq` carry a SECOND pin, to their runtime export
+    names (#736 for `box`), and both pins are kept because they constrain
+    different things. The name equality says at WHICH INDEX the role may be
+    declared; the template equality says WHICH BYTES sit there. Only the name
+    equality has any force on a `none` declaration, since `arithRoleCheck` is
+    vacuous on `none` by design — dropping it would turn "this module exports no
     `__aint_to_index`" from a byte-proved fact into a producer's free choice.
     Conversely only the template equality constrains the code at an
     honestly-named export, which the name equality never reads.
@@ -1883,11 +1893,24 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     module that exports no `__aint_to_index`; a claim citing the role then fails
     to match, because `Subject.hostRoles` binds it to `none`.
 
+    The two comparison roles inherit that argument WORD FOR WORD — a comparison
+    face also wires an abstract contract at a declared index — and add one of
+    their own. `cmp` and `eq` declare the SAME function type
+    (`[(ref null carrier), (ref null carrier)] -> [i32]`), so
+    `hostTableFuncTypesMatch` cannot separate them: without the name equalities
+    an artifact could declare the equality helper as the `cmp` role and the
+    three-way helper as the `eq` role and still satisfy every declared-type
+    conjunct. The template equalities do separate them, since the two bodies
+    differ — but only where a declaration is `some`. On `none` the templates say
+    nothing at all, which is exactly the hole the name pin closes: a module that
+    really does export `__aint_cmp` may not declare that role absent and thereby
+    escape both pins.
+
     What none of this establishes: the template equality identifies the code
-    behind a role, never its meaning. The add/sub/mul/box/index-extraction
-    contracts stay explicit hypotheses of `Obligation.holds` and stay disclosed
-    by `ClaimAxes`. Pinning bytes narrows the artifact, not the trusted-computing
-    base. -/
+    behind a role, never its meaning. The add/sub/mul/box/index-extraction and
+    comparison contracts stay explicit hypotheses of `Obligation.holds` and stay
+    disclosed by `ClaimAxes`. Pinning bytes narrows the artifact, not the
+    trusted-computing base. -/
 def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
     (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
   match roles?, params? with
@@ -1897,12 +1920,16 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
       (CertDecode.carrierState n len == some (some p.carrier)) &&
       (roles.box == CertDecode.AddSub.boxIdx n len) &&
       (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
+      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&
+      (roles.eq == CertDecode.AddSub.eqIdx n len) &&
       ArithTemplateDerisk.checkArithHostParams p &&
       arithRoleCheck n len .box roles.box p &&
       arithRoleCheck n len .toIndex roles.toIndex p &&
       arithRoleCheck n len .add roles.add p &&
       arithRoleCheck n len .sub roles.sub p &&
-      arithRoleCheck n len .mul roles.mul p
+      arithRoleCheck n len .mul roles.mul p &&
+      arithRoleCheck n len .cmp roles.cmp p &&
+      arithRoleCheck n len .eq roles.eq p
   | _, _ => false
 
 /-- Bind the declared host-role table and arith indices to the module bytes by
@@ -1910,9 +1937,9 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
     certificate DECLARES which function index carries each helper (plus the
     carrier/limb/sub-routine indices the bodies mention) and the wall
     SYNTHESIZES the canonical helper body from that declaration and pins the real
-    code bytes equal to it. `box` and `toIndex` stay name-bound as well, and the
-    carrierless class stays proved by the absent `__rt_aint_from_i64` export
-    (#736 intact). -/
+    code bytes equal to it. `box`, `toIndex`, `cmp` and `eq` stay name-bound as
+    well, and the carrierless class stays proved by the absent
+    `__rt_aint_from_i64` export (#736 intact). -/
 def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
   arithTableCheck artifact.modBytes artifact.modLen
     artifact.manifest.subject.hostRoleTable artifact.manifest.subject.arithParams = true

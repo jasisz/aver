@@ -2958,7 +2958,7 @@ fn render_artifact(
 /// * Carriered module — the leaf theorems live in `ArtifactHostRoles.lean`
 ///   (emitted by `render_project`); the aggregate rewrites the manifest
 ///   projections to their literals, unfolds `arithTableCheck`, and rewrites the
-///   five `arithRoleCheck` subterms to `true` from the imported leaves, leaving
+///   seven `arithRoleCheck` subterms to `true` from the imported leaves, leaving
 ///   only the floor-cost carrier/index conjuncts for a final `decide +kernel`.
 ///   The statement is byte-identical to the monolith; only the proof changes.
 /// * Carrierless module — no table, no leaf file, and the original single
@@ -2986,6 +2986,7 @@ fn render_decoded_host_roles(analysis: &Analysis) -> (String, String) {
          show AverCert.manifest.subject.arithParams = some {params_literal} from rfl]\n  \
          simp only [AverCert.AcceptedArtifact.arithTableCheck, decodedHostRole_box, \
          decodedHostRole_toIndex, decodedHostRole_add, decodedHostRole_sub, decodedHostRole_mul, \
+         decodedHostRole_cmp, decodedHostRole_eq, \
          Bool.and_true, Bool.true_and]\n  \
          decide +kernel"
     );
@@ -3018,13 +3019,15 @@ fn render_artifact_host_roles(analysis: &Analysis) -> String {
         leaf("add", "add", table.add_idx),
         leaf("sub", "sub", table.sub_idx),
         leaf("mul", "mul", table.mul_idx),
+        leaf("cmp", "cmp", table.cmp_idx),
+        leaf("eq", "eq", table.eq_idx),
     ]
     .join("\n\n");
     format!(
         "-- Per-role arith host-table leaves for `Artifact.decodedHostRoles`.\n\
          -- Each role's template equality is checked and freed in its own\n\
          -- `decide +kernel` declaration, in this separate compilation unit, so\n\
-         -- the whole-module proof never materialises all five at once.\n\
+         -- the whole-module proof never materialises all seven at once.\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\n\
          set_option maxRecDepth 200000\n\n\

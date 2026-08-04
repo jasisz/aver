@@ -20,15 +20,19 @@ pub const FORMAT_VERSION: u32 = 1;
 /// the required `toIndex` key to the object form of `hostRoleTable`: the fused
 /// vector-read face binds the `__aint_to_index` helper by its named function
 /// export, exactly like `box`, and the exact-object manifest matching means a
-/// version-2 table would reject every module carrying the helper.
-pub const CERT_SCHEMA_VERSION: u32 = 3;
+/// version-2 table would reject every module carrying the helper. Version 4
+/// added the required `cmp` and `eq` keys for the same reason: the two Int
+/// value-comparison faces bind `__aint_cmp` and `__aint_eq` by their named
+/// function exports, and because those two helpers declare the same function
+/// type, the export name is the only thing that tells one role from the other.
+pub const CERT_SCHEMA_VERSION: u32 = 4;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:c739437f0c1015536aa030ed3c07c0e9d0e330bee1e4c1b6c7b06d4a3d3ec6c8";
+    "sha256:674ef391cc63b01688b42b5bfc08e06f2efc3cfefb317195cc1a4dae266c6cbe";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
@@ -136,6 +140,88 @@ mod tests {
             spec.contains(&count_phrase),
             "certificate-format.md does not state \"{count_phrase}\"; \
              update the wall source count printed in the spec"
+        );
+    }
+
+    /// The same staleness trap applies to the statement schema version: the
+    /// spec prints it in the identity table and again in the envelope-check
+    /// step of the acceptance pipeline, and a reimplementor takes both as
+    /// normative. A spec left one version behind describes a verifier that
+    /// rejects every package this release produces.
+    #[test]
+    fn format_spec_states_the_current_schema_version() {
+        let spec = include_str!("../../docs/certificate-format.md");
+        for phrase in [
+            format!("`{CERT_SCHEMA_VERSION}` (`CERT_SCHEMA_VERSION`)"),
+            format!("schema_version = {CERT_SCHEMA_VERSION}"),
+        ] {
+            assert!(
+                spec.contains(&phrase),
+                "certificate-format.md does not state \"{phrase}\"; \
+                 update the schema version printed in the spec"
+            );
+        }
+    }
+
+    /// The schema version lives in TWO constants — this one, which the
+    /// transport parser enforces, and `engine::CERT_SCHEMA_VERSION`, which the
+    /// producer emits. They are read on opposite sides of the package
+    /// boundary, so a bump applied to only one silently produces packages the
+    /// same build refuses, and nothing else ties them together.
+    ///
+    /// Read as SOURCE TEXT rather than as a constant, deliberately: the engine
+    /// module is feature-gated (`engine`/`plans`) while this module is not, so
+    /// a typed comparison would compile away in exactly the lane that runs
+    /// these tests. The doc-pin tests above use the same technique.
+    #[test]
+    fn the_two_schema_version_constants_agree() {
+        let engine_src = include_str!("engine/mod.rs");
+        let expected = format!("pub const CERT_SCHEMA_VERSION: u32 = {CERT_SCHEMA_VERSION};");
+        assert!(
+            engine_src.contains(&expected),
+            "engine/mod.rs does not declare `{expected}`; the producer would emit a \
+             schema version the transport parser rejects"
+        );
+    }
+
+    /// Every runtime contract string is a VERBATIM twin: `ClaimAxes.lean`
+    /// declares it in the wall, `engine/mod.rs` declares it for the producer,
+    /// and the kernel's `contractsMatch` compares the manifest's list against
+    /// the wall's own. A one-character drift on either side fails every package
+    /// closed, and it is invisible in review — the two strings live in
+    /// different languages, in different files, edited in different commits.
+    #[test]
+    fn every_wall_contract_string_has_a_verbatim_producer_twin() {
+        let axes = include_str!("../assets/wall/current/ClaimAxes.lean");
+        let engine_src = include_str!("engine/mod.rs");
+
+        // `def <name>Contract : String :=` followed by the quoted literal.
+        let mut seen = 0usize;
+        let mut lines = axes.lines();
+        while let Some(line) = lines.next() {
+            let trimmed = line.trim();
+            if !(trimmed.starts_with("def ") && trimmed.ends_with("Contract : String :=")) {
+                continue;
+            }
+            let literal = lines
+                .next()
+                .expect("a contract definition is followed by its literal")
+                .trim();
+            assert!(
+                literal.starts_with('"') && literal.ends_with('"'),
+                "expected a one-line string literal under `{trimmed}`, got: {literal}"
+            );
+            assert!(
+                engine_src.contains(literal),
+                "wall contract `{trimmed}` has no verbatim producer twin in \
+                 engine/mod.rs: {literal}"
+            );
+            seen += 1;
+        }
+        assert!(
+            seen >= 12,
+            "only {seen} wall contract definitions were found; the scan shape has \
+             drifted and this test has stopped checking anything"
         );
     }
 }

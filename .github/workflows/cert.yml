@@ -101,6 +101,9 @@ jobs:
           - suite: cert_toindex_differential
             lane: ''
             mode: cargo
+          - suite: cert_intcmp_differential
+            lane: ''
+            mode: cargo
           - suite: cert_whole_module_guard_iso
             lane: ''
             mode: cargo

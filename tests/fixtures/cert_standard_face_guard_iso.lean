@@ -13,7 +13,7 @@ set_option maxRecDepth 300000
 -- `StandardFace.classifyIntAdd` pins to a single carrier parameter.
 
 def hostileHost : AverCert.StandardFace.HostBuilder :=
-  fun _ _ _ _ _ _ _ => none
+  fun _ _ _ _ _ _ _ _ _ => none
 
 def hostileAddTwoOb : Obligation :=
   { AverCert.addTwoOb with host := hostileHost }
@@ -22,8 +22,8 @@ def hostileAddTwoOb : Obligation :=
 -- first host call traps and therefore no successful run needs to be related to
 -- the source model.
 theorem hostileAddTwoHolds : hostileAddTwoOb.holds := by
-  intro S add sub mul stringEq stringConcat toIndex hadd hsub hmul hStringEq
-    hStringConcat _hToIndex fuel x vs w hdom hrun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq hadd hsub hmul hStringEq
+    hStringConcat _hToIndex _hCmp _hEq fuel x vs w hdom hrun
   change wFuncN CertModule.addTwoCode (fun _ => none) fuel 1 vs = some w at hrun
   cases fuel with
   | zero => simp [wFuncN] at hrun
@@ -106,7 +106,8 @@ example : ¬ StandardFace.checkedFaces hostileArtifact := by
   have hhost := hface.2.2.2.2.2.1
   have hslot := congrArg
     (fun host => (host (fun _ => none) (fun _ => none) (fun _ => none)
-      (fun _ => none) (fun _ _ => none) (fun _ => none) %box%).map Prod.fst) hhost
+      (fun _ => none) (fun _ _ => none) (fun _ => none) (fun _ => none)
+      (fun _ => none) %box%).map Prod.fst) hhost
   simp [hostileAddTwoOb, hostileHost, StandardFace.intList,
     StandardFace.intAddHost] at hslot
 

@@ -48,6 +48,11 @@ fn render_certificate(
             // Int-face dispatch is discharged in `Final.cert` by the
             // declared-envelope face transport; no bespoke bridge is emitted.
             Cert::WidenedIntMatch { .. } | Cert::VariantDispatch { .. } => {}
+            // Comparison-faced fragments are discharged inside the wall from
+            // their checked face; they contribute no semantic bridge, so they
+            // must be routed away from the audited-generic bridge renderer even
+            // though their source types sit inside its gate.
+            Cert::ExprFragment { .. } if c.int_cmp_face().is_some() => {}
             Cert::ExprFragment { .. }
                 if expr_fragment_uses_audited_generic(c) || c.tag_dispatch_face().is_some() =>
             {

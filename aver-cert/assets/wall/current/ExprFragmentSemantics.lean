@@ -47,6 +47,8 @@ def runPrim : FragPrim -> List WVal -> Option (List WVal)
       some (b32 (a < b) :: st)
   | .i32GtS, .i32v b :: .i32v a :: st =>
       some (b32 (a > b) :: st)
+  | .i32GeS, .i32v b :: .i32v a :: st =>
+      some (b32 (a ≥ b) :: st)
   -- Twin of the `wRunF` `.i32And` clause: logical AND on the {0,1} Boolean
   -- domain `PlanCheck` pins for this primitive's operands.
   | .i32And, .i32v b :: .i32v a :: st =>

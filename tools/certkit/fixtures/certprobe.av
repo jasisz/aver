@@ -1,12 +1,32 @@
 module CertProbe
     intent =
-        "Minimal probe for artifact-level certification measurements."
-    exposes [addTwo]
+        "Minimal probe for artifact-level certification measurements. Carries"
+        "one value-versus-value comparison of each kind, so the module really"
+        "calls both Int comparison helpers and therefore exports both of them:"
+        "the host-role gates read this fixture for a module whose declared"
+        "comparison roles can be checked against bytes that have them."
+    exposes [addTwo, atLeast, sameKey]
 
 fn addTwo(x: Int) -> Int
     ? "Adds two."
     x + 2
 
+fn atLeast(a: Int, b: Int) -> Bool
+    ? "Is a at least b?"
+    a >= b
+
+fn sameKey(a: Int, b: Int) -> Bool
+    ? "Do two keys compare equal?"
+    a == b
+
 verify addTwo
     addTwo(1) => 3
     addTwo(-5) => -3
+
+verify atLeast
+    atLeast(3, 2) => true
+    atLeast(2, 3) => false
+
+verify sameKey
+    sameKey(2, 2) => true
+    sameKey(2, 3) => false

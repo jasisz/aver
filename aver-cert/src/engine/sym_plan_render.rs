@@ -224,6 +224,12 @@ fn sym_node_kind_lean_value(kind: &SymNodeKind) -> String {
             value.0,
             constant
         ),
+        SymNodeKind::IntCmp { op, lhs, rhs } => format!(
+            ".intCmp {} {} {}",
+            op.lean_plan_ctor(),
+            lhs.0,
+            rhs.0
+        ),
         SymNodeKind::TagMatch {
             type_name,
             scrutinee,
@@ -329,6 +335,14 @@ fn render_sym_node_plan(node: &SymNode, indent: usize, out: &mut String) {
                 op.plan_tag(),
                 value.0,
                 constant
+            ));
+        }
+        SymNodeKind::IntCmp { op, lhs, rhs } => {
+            out.push_str(&format!(
+                "int.cmp op={} lhs=v{} rhs=v{}\n",
+                op.plan_tag(),
+                lhs.0,
+                rhs.0
             ));
         }
         SymNodeKind::TagMatch {

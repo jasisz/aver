@@ -56,6 +56,39 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
             d = face.default,
         );
     }
+    // The two Int comparison faces: every meaning field is a wall term the
+    // checked face pins by `HEq` — the model included. Nothing here is read
+    // from the source model, which is why these claims cite no model name.
+    if let Some(face) = c.int_cmp_bool_face() {
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := Int × Int, Cod := Bool,\n    \
+             domRepr := AverCert.StandardFace.intPairSmallBandDomRepr {carrier},\n    \
+             codRepr := boolRepr,\n    \
+             model := AverCert.StandardFace.intCmpModel {op} }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            op = face.op.lean_ctor(),
+        );
+    }
+    if let Some(face) = c.int_select_face() {
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
+             Dom := Int × Int, Cod := Int,\n    \
+             domRepr := AverCert.StandardFace.intPairSmallBandDomRepr {carrier},\n    \
+             codRepr := intRepr,\n    \
+             model := AverCert.StandardFace.intSelectModel {op} }}\n\n",
+            carrier = c.carrier(),
+            host = c.host_expr(),
+            self_idx = c.self_idx(),
+            op = face.op.lean_ctor(),
+        );
+    }
     // An ADT-ref expr fragment with the field-projection face states the SAME
     // verbatim projection obligation the legacy field-projection class ships:
     // a two-field struct in, the projected field out unchanged.
@@ -678,12 +711,14 @@ fn render_manifest(
     // otherwise.
     if analysis.frag_host_table.box_idx.is_some() {
         s.push_str(&format!(
-            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}, \"toIndex\": {}}},\n",
+            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}, \"toIndex\": {}, \"cmp\": {}, \"eq\": {}}},\n",
             json_role(analysis.frag_host_table.box_idx),
             json_role(analysis.frag_host_table.add_idx),
             json_role(analysis.frag_host_table.mul_idx),
             json_role(analysis.frag_host_table.sub_idx),
             json_role(analysis.frag_host_table.to_index_idx),
+            json_role(analysis.frag_host_table.cmp_idx),
+            json_role(analysis.frag_host_table.eq_idx),
         ));
     } else {
         s.push_str("  \"hostRoleTable\": null,\n");
@@ -733,6 +768,10 @@ fn render_manifest(
         };
         let theorem = if matches!(c.inner(), Cert::Composition { .. }) {
             "AcceptanceSoundness.composition_claim_discharges_with_bridge".to_string()
+        } else if c.int_cmp_bool_face().is_some() {
+            "AcceptanceSoundness.intCmpBool_claim_discharges".to_string()
+        } else if c.int_select_face().is_some() {
+            "AcceptanceSoundness.intSelect_claim_discharges".to_string()
         } else if expr_fragment_uses_audited_generic(c) {
             "AcceptanceSoundness.exprFragment_claim_discharges".to_string()
         } else if c.vector_get_face().is_some() {

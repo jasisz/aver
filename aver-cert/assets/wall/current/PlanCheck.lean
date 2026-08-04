@@ -131,6 +131,10 @@ def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
       match args with
       | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
       | _ => none
+  | .i32GeS =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
   -- SOUNDNESS: `i32.and` must NOT use the loose `hasI32Ty` the comparisons
   -- use. Bitwise AND over arbitrary `rawI32` operands can yield a value
   -- outside {0,1} (`2 and 2 = 2`), so declaring `boolI32` for it would let a
@@ -165,6 +169,22 @@ def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat
   -- `__aint_to_index` is consumed only inside the monolithic fused
   -- vector-read node; a standalone host call to it has no admitted face.
   | .toIndex => none
+  -- `__aint_cmp` leaves the carrier: it takes two represented integers and
+  -- returns the raw three-way sign, which the emitter always feeds into a
+  -- signed comparison against `i32.const 0`. Typing it `rawI32` rather than
+  -- `boolI32` is load-bearing: `-1` is a perfectly good result here and would
+  -- be a lie as a Boolean, and the `boolI32`-only consumers (`i32.and`, the
+  -- fragment's `if` condition) must not accept it unfiltered.
+  | .cmp =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .rawI32 else none
+  -- `__aint_eq` already yields the source-level Boolean (`0`/`1`), so its
+  -- result IS `boolI32` and needs no comparison tail. Read this as a TYPING
+  -- rule, not as a proved range: the `{0, 1}` guarantee is contract-backed
+  -- only inside the certified small band (`Obligation.holds`'s `_hEq` is
+  -- quantified over literal small carriers), and outside it the typing rests
+  -- on the pinned helper body alone.
+  | .eq =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .boolI32 else none
 
 /-- All arguments of a self-call must be Int carriers; the recursion class only
     threads Int values through its recursive descent. -/
@@ -323,6 +343,12 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
             if hasSymTy checked value (.named typeName) then some fieldTy else none
         | .intConstCmp _ value _ =>
             if hasSymTy checked value .int && isSymParam checked value then some .bool else none
+        -- Both operands are ordinary Int VALUES; nothing here demands they be
+        -- parameters. The two comparison faces pin the encoded node list
+        -- literally to reads of locals 0 and 1, so a comparison of anything
+        -- else encodes to a plan no face recognizes and declines there.
+        | .intCmp _ lhs rhs =>
+            if hasSymTy checked lhs .int && hasSymTy checked rhs .int then some .bool else none
         | .tagMatch _typeName scrutinee _tag hit miss =>
             -- The scrutinee must be an ADT/record value (encodes to `adtRef`, so
             -- `struct.get.user` is well-typed); both arms must check under the
@@ -387,6 +413,7 @@ def primNeedsRelationalFloatResult : FragPrim → Bool
   | .i32Eq => false
   | .i32LtS => false
   | .i32GtS => false
+  | .i32GeS => false
   | .i32And => false
 
 /-- The general WebAssembly profile gives `f64.add`/`f64.mul` a set-valued
@@ -825,6 +852,17 @@ def symIntSmallConstCmpPrim? : SymIntCmp → Option FragPrim
   | .ge => some .i64GeS
   | .gt => some .i64GtS
 
+/-- The signed relational primitive that reads the three-way `__aint_cmp`
+    verdict for one source operator. `eq` is absent because it reads a
+    DIFFERENT helper (`__aint_eq`, which needs no tail at all), and `le` is
+    absent because the plan grammar has no `i32.le_s` to lower it to. -/
+def symIntCmpTailPrim? : SymIntCmp → Option FragPrim
+  | .lt => some .i32LtS
+  | .gt => some .i32GtS
+  | .ge => some .i32GeS
+  | .eq => none
+  | .le => none
+
 inductive SymBigIntConstCmpKind where
   | always (value : Bool)
   | signLtZero
@@ -963,6 +1001,27 @@ def encodeSymBlockFuel :
               let elseBlock ← encodeIntBigConstCmpBlock? index op
               let (st, id) := pushEncodedNode st .boolI32 (.ifElse isSmall thenBlock elseBlock)
               some { st with symToFrag := st.symToFrag ++ [id] }
+          | .intCmp op lhs rhs =>
+              -- The emitted comparison: read both operands, call the helper the
+              -- operator names, and — for the three relational operators —
+              -- compare the raw verdict against `i32.const 0`. Equality reads
+              -- `__aint_eq`, whose `0`/`1` result IS the source Boolean.
+              let lhsId ← encodedValue? st lhs
+              let rhsId ← encodedValue? st rhs
+              match op with
+              | .eq =>
+                  let eqIdx ← hostRoleIdx? hostTable .eq
+                  let (st, id) :=
+                    pushEncodedNode st .boolI32 (.hostCall .eq eqIdx [lhsId, rhsId])
+                  some { st with symToFrag := st.symToFrag ++ [id] }
+              | op =>
+                  let prim ← symIntCmpTailPrim? op
+                  let cmpIdx ← hostRoleIdx? hostTable .cmp
+                  let (st, verdict) :=
+                    pushEncodedNode st .rawI32 (.hostCall .cmp cmpIdx [lhsId, rhsId])
+                  let (st, zero) := pushEncodedNode st .rawI32 (.constI32 0)
+                  let (st, id) := pushEncodedNode st .boolI32 (.prim prim [verdict, zero])
+                  some { st with symToFrag := st.symToFrag ++ [id] }
           | .tagMatch typeName scrutinee tag hitBlock missBlock =>
               -- Canonical tag-dispatch lowering: read field 0 (i32 tag) of the
               -- scrutinee's struct, compare to the literal discriminant, and

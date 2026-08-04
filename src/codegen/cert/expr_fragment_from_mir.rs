@@ -7,21 +7,45 @@
 /// values are admitted ONLY through the exact field-projection face: any other
 /// ADT-ref plan (a bare reference passthrough, a projection chain) stays
 /// unplanned here and declines fail-closed at the verifier.
+///
+/// Host CALLS carry the same discipline, and it is a separate condition from
+/// the result type: a plan may call `__aint_cmp` and still return `boolI32`,
+/// and the wall's generic gate (`genericFragmentAllowedFuel`) rejects every
+/// `.hostCall` node outright, so such a plan certifies only as one of the exact
+/// comparison faces. This mirrors the verifier sidecar, which declines on
+/// `expr_fragment_plan_has_host_calls || result == IntCarrier` — both sides
+/// read the same two predicates. A host-call-bearing plan without a face must
+/// stay UNPLANNED here rather than reach the verifier: an emitted plan would
+/// change the function's bytes and then decline, whereas leaving it unplanned
+/// keeps the bytes identical to a build with no plan path at all.
 fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
     let record_proj = expr_fragment_record_proj_face(plan).is_some();
+    // The Int comparison faces call a runtime helper, and the selection face
+    // additionally returns an Int carrier; its result is a passthrough of an
+    // input local rather than a fresh box.
+    let int_cmp_bool = expr_fragment_int_cmp_bool_face(plan).is_some();
+    let int_select = expr_fragment_int_select_face(plan).is_some();
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
-        || record_proj;
+        || record_proj
+        || int_select;
+    let host_call_face_ok = !expr_fragment_plan_has_host_calls(plan)
+        || expr_fragment_int_add_face(plan).is_some()
+        || tag_dispatch
+        || vector_get
+        || record_proj
+        || int_cmp_bool
+        || int_select;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
         || expr_fragment_project_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj;
-    int_face_ok && adt_face_ok
+    int_face_ok && host_call_face_ok && adt_face_ok
 }
 
 /// Producer-side record layout resolver: `(record type name, field name) ->
@@ -63,16 +87,31 @@ pub(crate) fn fragment_plan_from_mir_fn(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn expr_fragment_plan_from_mir_fn(
-    mir_fn: &crate::ir::mir::MirFn,
-) -> Option<ExprFragmentPlan> {
-    let plan = fragment_plan_from_mir_fn(mir_fn, &|_, _| None, &[])?;
-    let struct_table = match &plan {
+/// The plan as the representation-level fragment it will lower to, encoded
+/// against placeholder tables. Indices do not affect the encoding SHAPE, so
+/// this answers structural questions (which host roles does the body call?)
+/// without needing the module's byte-derived tables.
+fn placeholder_expr_fragment_plan(plan: &FragmentPlan) -> Option<ExprFragmentPlan> {
+    let struct_table = match plan {
         FragmentPlan::Sym(sym) => FragStructTable::placeholder_for(sym),
         FragmentPlan::Expr(_) => FragStructTable::default(),
     };
     plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &struct_table)
+}
+
+/// Whether the body this plan lowers to calls a particular host helper role.
+/// The wasm-gc emitter reads it to decide which runtime helpers the module it
+/// is about to emit really calls, which gates their named exports.
+pub(crate) fn fragment_plan_calls_host_role(plan: &FragmentPlan, role: FragHostRole) -> bool {
+    placeholder_expr_fragment_plan(plan)
+        .is_some_and(|frag| expr_fragment_plan_calls_host_role(&frag, role))
+}
+
+#[cfg(test)]
+pub(crate) fn expr_fragment_plan_from_mir_fn(
+    mir_fn: &crate::ir::mir::MirFn,
+) -> Option<ExprFragmentPlan> {
+    placeholder_expr_fragment_plan(&fragment_plan_from_mir_fn(mir_fn, &|_, _| None, &[])?)
 }
 
 /// Fail-closed representation guard. The plan lowerer emits the ALL-BOXED
@@ -415,6 +454,11 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
                 )
             }
             crate::ir::mir::MirExpr::IfThenElse(ite) => self.lower_if(&ite.node),
+            // Bool `match` never reaches a backend: the MIR pass
+            // `bool_match_to_if` rewrites every documented two-armed Bool shape
+            // into `IfThenElse` upstream, and its stated invariant is that
+            // backends consume only the rewritten form. What survives here is
+            // an ADT tag dispatch.
             crate::ir::mir::MirExpr::Match(m) => self.lower_tag_match(&m.node),
             crate::ir::mir::MirExpr::Call(call) => self.lower_call(&call.node),
             _ => None,
@@ -585,6 +629,15 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
 
         let (lhs, lhs_ty) = self.lower_expr(&binop.lhs)?;
         let (rhs, rhs_ty) = self.lower_expr(&binop.rhs)?;
+        // Int VALUE versus Int VALUE. The emitter calls `__aint_cmp` (or
+        // `__aint_eq`) here, which the two exact-pinned comparison faces
+        // recognize. Placed before the Float bail so a Float comparison keeps
+        // its existing primitive lowering untouched. `<=` and `!=` decline:
+        // neither has an admitted plan primitive behind it.
+        if lhs_ty == SymTy::Int && rhs_ty == SymTy::Int {
+            let op = sym_int_cmp_op(binop.op)?;
+            return self.push_node(SymTy::Bool, SymNodeKind::IntCmp { op, lhs, rhs });
+        }
         if lhs_ty == SymTy::String && rhs_ty == SymTy::String {
             if binop.op != crate::ast::BinOp::Add {
                 return None;
@@ -1184,6 +1237,21 @@ fn sym_int_const_cmp_op(op: crate::ast::BinOp) -> Option<SymIntCmp> {
     }
 }
 
+/// The source operators an Int value-versus-value comparison admits. `Lte` is
+/// absent because the plan grammar has no `i32.le_s` to lower its `__aint_cmp`
+/// tail to, and `Neq` because nothing needs it: admitting either would widen
+/// the checker with no certifiable export behind it.
+fn sym_int_cmp_op(op: crate::ast::BinOp) -> Option<SymIntCmp> {
+    match op {
+        crate::ast::BinOp::Eq => Some(SymIntCmp::Eq),
+        crate::ast::BinOp::Lt => Some(SymIntCmp::Lt),
+        crate::ast::BinOp::Gt => Some(SymIntCmp::Gt),
+        crate::ast::BinOp::Gte => Some(SymIntCmp::Ge),
+        crate::ast::BinOp::Lte | crate::ast::BinOp::Neq => None,
+        _ => None,
+    }
+}
+
 fn big_int_const_cmp_kind(op: crate::ast::BinOp) -> Option<BigIntConstCmpKind> {
     match op {
         crate::ast::BinOp::Eq => Some(BigIntConstCmpKind::Always(false)),
@@ -1333,6 +1401,72 @@ mod tests {
             aliased_slots: std::sync::Arc::new(Vec::new()),
             repr: MirFnRepr::default(),
         }
+    }
+
+    /// `fn f(a: Int, b: Int) -> <return_type>` with an arbitrary body.
+    fn int_pair_fn(return_type: &str, body: Spanned<MirExpr>, local_count: u32) -> MirFn {
+        MirFn {
+            fn_id: FnId(0),
+            name: "f".to_string(),
+            params: vec![
+                MirParam {
+                    local: LocalId(0),
+                    name: "a".to_string(),
+                    ty: "Int".to_string(),
+                },
+                MirParam {
+                    local: LocalId(1),
+                    name: "b".to_string(),
+                    ty: "Int".to_string(),
+                },
+            ],
+            return_type: return_type.to_string(),
+            effects: vec![],
+            body,
+            local_count,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
+            repr: MirFnRepr::default(),
+        }
+    }
+
+    /// `a < b` — one of the shapes the Int comparison face was built for. The
+    /// control for the refusal below: the gate must still admit a host call
+    /// that DOES land on an exact face.
+    #[test]
+    fn bare_int_value_comparison_still_plans() {
+        let mir_fn = int_pair_fn("Bool", binop(BinOp::Lt, int_local(0), int_local(1)), 2);
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[])
+            .expect("a bare Int value comparison must plan through the comparison face");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("int value comparison should use SymPlan")
+        };
+        let frag = sym
+            .to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default())
+            .expect("comparison encodes to a representation plan");
+        assert!(expr_fragment_plan_has_host_calls(&frag));
+        assert!(expr_fragment_int_cmp_bool_face(&frag).is_some());
+    }
+
+    /// `if a >= 0 { a < b } else { false }` — `validClockValue` after the MIR
+    /// `bool_match_to_if` rewrite. Two `__aint_cmp` calls NESTED inside a
+    /// conditional: no admitted face covers it, and the wall's generic
+    /// expression-fragment gate rejects every `.hostCall` node, so a plan here
+    /// would be a claim nothing can discharge. The producer must leave the
+    /// function unplanned — which is also what keeps its emitted bytes the
+    /// plain emitter's, since the wasm-gc body is emitted FROM the plan
+    /// whenever one exists.
+    #[test]
+    fn nested_int_value_comparison_stays_unplanned() {
+        let body = if_expr(
+            binop(BinOp::Gte, int_local(0), int_lit(0)),
+            binop(BinOp::Lt, int_local(0), int_local(1)),
+            bool_lit(false),
+        );
+        let mir_fn = int_pair_fn("Bool", body, 2);
+        assert!(
+            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
+            "a host-call-bearing plan with no admitted face must stay unplanned"
+        );
     }
 
     fn int_identity_fn() -> MirFn {

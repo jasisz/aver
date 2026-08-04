@@ -32,6 +32,7 @@ def primInstr : FragPrim → WInstr
   | .i32Eq => .i32Eq
   | .i32LtS => .i32LtS
   | .i32GtS => .i32GtS
+  | .i32GeS => .i32GeS
   | .i32And => .i32And
 
 def popExpected : List Nat → Nat → Option (List Nat)

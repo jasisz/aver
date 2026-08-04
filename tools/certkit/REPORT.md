@@ -9,7 +9,7 @@ semantics layer plus its tooling.
 
 | Path | What |
 |------|------|
-| `prelude/CertPrelude.lean` | Semantics: `WVal`, `WInstr` (all 39 opcodes), stratified `wRunF` + fuelled `wFuncN`, `ReprSpec`, executable host-contract faces (`boxRef`, `addRef`, `subRef`, `leRef`…). |
+| `prelude/CertPrelude.lean` | Semantics: `WVal`, `WInstr` (all 39 opcodes), stratified `wRunF` + fuelled `wFuncN`, `ReprSpec`, executable host-contract faces (`boxRef`, `addRef`, `subRef`, `toIndexRef`…). |
 | `prelude/CertPreludeSanity.lean` | Ported simulation theorem `addTwo_wasm_certified` (kernel-clean) + 32 `native_decide` anti-vacuity guards executing every opcode. |
 | `prelude/lakefile.lean`, `lean-toolchain` | Standalone lake project, pinned `leanprover/lean4:v4.32.0` (same as `aver proof`). |
 | `wat.py` | Minimal `wasm-tools print` reader (types, data, exports, user-fn bodies). |
@@ -35,7 +35,7 @@ arithmetic/comparison variants (`f64.mul`, `f64.ge`, `f64.gt`, `i64.gt_s`,
   opaque `callee` parameter. Fuel lives only in `wFuncN`, burned solely on
   call-into-code. This is the stratification lesson from probe #2.
 - Runtime helpers are not interpreted. They are named host contracts. The
-  prelude ships executable reference faces (`boxRef`/`addRef`/`subRef`/`leRef`
+  prelude ships executable reference faces (`boxRef`/`addRef`/`subRef`/`toIndexRef`
   ...) so the harness runs end to end; the certificate theorem keeps them
   abstract (`ReprSpec` + `h7`-style hypotheses).
 - Instruction immediates are resolved at extraction time: `structNew` carries

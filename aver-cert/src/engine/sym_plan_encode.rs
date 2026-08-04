@@ -138,6 +138,7 @@ impl SymToFragEncoder<'_> {
                 value,
                 constant,
             } => self.encode_int_const_cmp(*op, *value, *constant)?,
+            SymNodeKind::IntCmp { op, lhs, rhs } => self.encode_int_cmp(*op, *lhs, *rhs)?,
             SymNodeKind::TagMatch {
                 type_name,
                 scrutinee,
@@ -233,6 +234,50 @@ impl SymToFragEncoder<'_> {
         let id = FragValueId(self.nodes.len());
         self.nodes.push(FragNode { id, ty, kind });
         id
+    }
+
+    /// Twin of the wall's `.intCmp` encoder arm: read both operands, call the
+    /// helper the operator names, and — for the three relational operators —
+    /// compare the raw verdict against `i32.const 0`. Equality reads
+    /// `__aint_eq`, whose `0`/`1` result IS the source Boolean and carries no
+    /// tail. A missing role binding or the unadmitted `<=` fail-closes.
+    fn encode_int_cmp(
+        &mut self,
+        op: SymIntCmp,
+        lhs: SymValueId,
+        rhs: SymValueId,
+    ) -> Option<FragValueId> {
+        let lhs = *self.sym_to_frag.get(lhs.0)?;
+        let rhs = *self.sym_to_frag.get(rhs.0)?;
+        if op == SymIntCmp::Eq {
+            let eq_idx = self.host_table.eq_idx?;
+            return Some(self.push_node(
+                FragTy::BoolI32,
+                FragNodeKind::HostCall {
+                    role: FragHostRole::Eq,
+                    func_idx: eq_idx,
+                    args: vec![lhs, rhs],
+                },
+            ));
+        }
+        let prim = sym_int_cmp_tail_prim(op)?;
+        let cmp_idx = self.host_table.cmp_idx?;
+        let verdict = self.push_node(
+            FragTy::RawI32,
+            FragNodeKind::HostCall {
+                role: FragHostRole::Cmp,
+                func_idx: cmp_idx,
+                args: vec![lhs, rhs],
+            },
+        );
+        let zero = self.push_node(FragTy::RawI32, FragNodeKind::ConstI32(0));
+        Some(self.push_node(
+            FragTy::BoolI32,
+            FragNodeKind::Prim {
+                op: prim,
+                args: vec![verdict, zero],
+            },
+        ))
     }
 
     fn encode_int_const_cmp(
@@ -342,6 +387,18 @@ enum SymBigIntConstCmpKind {
     Always(bool),
     SignLtZero,
     SignGtZero,
+}
+
+/// Twin of `PlanCheck.symIntCmpTailPrim?`: the signed relational primitive that
+/// reads the three-way `__aint_cmp` verdict. `Eq` is absent because it reads a
+/// DIFFERENT helper, `Le` because the plan grammar has no `i32.le_s`.
+fn sym_int_cmp_tail_prim(op: SymIntCmp) -> Option<FragPrim> {
+    match op {
+        SymIntCmp::Lt => Some(FragPrim::I32LtS),
+        SymIntCmp::Gt => Some(FragPrim::I32GtS),
+        SymIntCmp::Ge => Some(FragPrim::I32GeS),
+        SymIntCmp::Eq | SymIntCmp::Le => None,
+    }
 }
 
 fn sym_int_small_const_cmp_prim(op: SymIntCmp) -> Option<FragPrim> {

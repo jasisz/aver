@@ -196,7 +196,7 @@ theorem {name}_recursionSemanticBridge :
   refine Or.inl ?_
   refine ⟨{combine}, {box_idx}, {add_idx}, {sub_idx}, {shape},
     rfl, rfl, ?_, ?_⟩
-  · intro add sub mul stringEq stringConcat toIndex
+  · intro add sub mul stringEq stringConcat toIndex cmp eq
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom
     rcases hDom with ⟨hRepr, hLen⟩
@@ -253,7 +253,7 @@ theorem {name}_recursionSemanticBridge :
   refine Or.inr ?_
   refine ⟨{box_idx}, {add_idx}, {sub_idx}, .accumulator,
     rfl, rfl, ?_, ?_⟩
-  · intro add sub mul stringEq stringConcat toIndex
+  · intro add sub mul stringEq stringConcat toIndex cmp eq
     simpa [AverCert.{name}Ob, CertModule.{name}Host]
   · intro S ns vs hDom
     rcases hDom with ⟨hRepr, hLen⟩

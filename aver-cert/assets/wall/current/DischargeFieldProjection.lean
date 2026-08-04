@@ -133,6 +133,8 @@ theorem fieldProjection_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
       (List WVal → Option WVal) → HostTbl)
     (hCheck : AverCert.PlanCheck.checkFieldProjectionRawPlan 2 plan = true)
     (hCode : code self = some {
@@ -153,8 +155,8 @@ theorem fieldProjection_canonical_discharges
          codRepr := fun S v w => verbatimRepr S v w
          model := fun p => FieldProjectionSoundness.pairProjection plan.fieldIdx p.1 p.2 } :
         Obligation) := by
-  intro S add sub mul stringEq stringConcat toIndex
-    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel p vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel p vs w hDom hRun
   rcases p with ⟨a, b⟩
   subst vs
   cases fuel with
@@ -167,10 +169,10 @@ theorem fieldProjection_canonical_discharges
           some body := by
         simp [body, AverCert.PlanLower.lowerFieldProjectionBody, hCheck]
       have hCall := FieldProjectionSoundness.generic_field_projection_certified
-        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex cmp eq) self
         hCheck body hLow hCode a b
       have hFuel := fieldProjection_run_succ_eq_one
-        structIdx plan code (host add sub mul stringEq stringConcat toIndex) self
+        structIdx plan code (host add sub mul stringEq stringConcat toIndex cmp eq) self
         hCheck body hLow hCode fuel a b
       rw [hFuel, hCall] at hRun
       exact (Option.some.inj hRun).symm
@@ -190,6 +192,8 @@ theorem fieldProjection_direct_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
       (List WVal → Option WVal) → HostTbl)
     (hField : fieldIdx < 2)
     (hCode : code self = some {
@@ -209,8 +213,8 @@ theorem fieldProjection_direct_canonical_discharges
          codRepr := fun S v w => verbatimRepr S v w
          model := fun p => FieldProjectionSoundness.pairProjection fieldIdx p.1 p.2 } :
         Obligation) := by
-  intro S add sub mul stringEq stringConcat toIndex
-    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel p vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel p vs w hDom hRun
   rcases p with ⟨a, b⟩
   subst vs
   cases fuel with
@@ -246,15 +250,15 @@ theorem fieldProjection_claim_discharges
     ⟨plan, hPlan, hCall⟩
   rcases hBridge plan hPlan with ⟨_hTwo, hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
-  intro S add sub mul stringEq stringConcat toIndex
-    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
   rcases hSemantic S x vs hDom with ⟨a, b, hVs, hCod⟩
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hResult := hCall
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         fuel a b
       rw [hResult] at hRun
       have hw : FieldProjectionSoundness.pairProjection plan.fieldIdx a b = w :=

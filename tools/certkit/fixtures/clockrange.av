@@ -1,0 +1,19 @@
+module ClockRange
+    intent =
+        "Int value-versus-value comparison NESTED inside a Bool match: the"
+        "shape no admitted comparison face covers, kept as a producer gate"
+        "regression."
+    exposes [validClockValue]
+    effects []
+
+fn validClockValue(value: Int, limit: Int) -> Bool
+    ? "Shared range check for hour, minute, and second values."
+    match value >= 0
+        false -> false
+        true -> value < limit
+
+verify validClockValue
+    validClockValue(0, 24) => true
+    validClockValue(23, 24) => true
+    validClockValue(24, 24) => false
+    validClockValue(0 - 1, 24) => false

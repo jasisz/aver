@@ -36,6 +36,22 @@ fn render_claim_cases(
 
 fn render_expr_side_arm(c: &Cert) -> String {
     let name = c.name();
+    // The two comparison arms sit at positions seven and eight of eight. Their
+    // side condition is purely the routing discriminator plus the family's
+    // partial-correctness policy; the discharge derives the obligation from the
+    // checked face, so no producer semantic premise participates. Both are
+    // tested before the audited-generic arm: their source types sit inside that
+    // gate but their plans call a runtime helper it refuses.
+    if c.int_cmp_bool_face().is_some() {
+        return String::from(
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, rfl⟩))))))",
+        );
+    }
+    if c.int_select_face().is_some() {
+        return String::from(
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨rfl, rfl⟩))))))",
+        );
+    }
     if expr_fragment_uses_audited_generic(c) {
         return format!(
             "exact Or.inl ⟨rfl, by\n  intro plan hPlan\n  injection hPlan with hPlan\n  \
@@ -61,20 +77,20 @@ fn render_expr_side_arm(c: &Cert) -> String {
             "exact Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, by\n  exact \
              AcceptanceSoundness.fieldProjection_direct_canonical_discharges \
              \"{name}\" {} {} {} {} CertModule.{name}Code \
-             (fun _ _ _ _ _ _ => CertModule.{name}Host) (by decide) (by rfl)⟩)))",
+             (fun _ _ _ _ _ _ _ _ => CertModule.{name}Host) (by decide) (by rfl)⟩)))",
             c.carrier(),
             face.struct_idx,
             c.self_idx(),
             face.field_idx,
         );
     }
-    // The record-parameter arm sits at position six of six: its side condition
+    // The record-parameter arm sits at position six of eight: its side condition
     // is purely the routing discriminator `exprFragmentIsRecordParam claim`, and
     // the discharge derives the obligation from the checked record face — no
     // producer semantic premise participates.
     if c.record_param_face().is_some() {
         return String::from(
-            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl))))",
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))",
         );
     }
     let Cert::ExprFragment { plan, .. } = c.inner() else {
@@ -84,8 +100,8 @@ fn render_expr_side_arm(c: &Cert) -> String {
         plan.params.contains(&FragTy::F64) || plan.result == FragTy::F64,
         "only float expression claims may use the bespoke residual: {name}"
     );
-    // The float arm sits at position five of six: the record-parameter arm
-    // was appended after it, so the float payload gains one `Or.inl`.
+    // The float arm sits at position five of eight: three arms were appended
+    // after it, so the float payload keeps its `Or.inl`.
     format!(
         "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, CertProofs.{name}_simulates⟩))))"
     )

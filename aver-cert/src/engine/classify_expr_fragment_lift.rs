@@ -57,6 +57,8 @@ pub fn byte_derived_frag_host_role_indices(
         host_table.mul_idx,
         host_table.sub_idx,
         host_table.to_index_idx,
+        host_table.cmp_idx,
+        host_table.eq_idx,
     ))
 }
 
@@ -90,6 +92,8 @@ fn frag_calls_resolvable(calls: &[u32], table: &FragHostTable) -> bool {
                 || Some(*idx) == table.mul_idx
                 || Some(*idx) == table.sub_idx
                 || Some(*idx) == table.to_index_idx
+                || Some(*idx) == table.cmp_idx
+                || Some(*idx) == table.eq_idx
         })
 }
 
@@ -141,19 +145,6 @@ fn check_plan_host_calls(block: &FragBlock, table: &FragHostTable) -> Result<(),
         }
     }
     Ok(())
-}
-
-/// Whether a checked plan contains any `hostCall` node.
-fn plan_has_host_calls(block: &FragBlock) -> bool {
-    block.nodes.iter().any(|node| match &node.kind {
-        FragNodeKind::HostCall { .. } => true,
-        FragNodeKind::If {
-            then_block,
-            else_block,
-            ..
-        } => plan_has_host_calls(then_block) || plan_has_host_calls(else_block),
-        _ => false,
-    })
 }
 
 // `FragIntAddFace` / `FragProjectFace` and their recognisers moved to

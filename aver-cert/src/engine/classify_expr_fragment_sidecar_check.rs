@@ -335,11 +335,11 @@ fn check_expr_fragment_plan_object(
     )
     .ok_or_else(|| format!("plan for `{export_name}` has unsupported wasm result type"))?;
     // Fail-closed host-call discipline: every hostCall node must cite exactly
-    // the byte-derived index for its role. The only fragment shape with a
-    // rendered proof face over the Int carrier is the straight-line
-    // `add(param0, box(k))` integer face — any other carrier-returning plan
-    // (a bare Int passthrough, a host-call chain) has no coherent `Cod`/
-    // `codRepr` and is declined here, mirroring the producer gate.
+    // the byte-derived index for its role. Carrier-returning plans and
+    // host-call-bearing plans alike are admitted only as one of the exact
+    // recognised faces below; anything else is declined here, mirroring the
+    // producer gate in `expr_fragment_plan_has_face`, which reads the same two
+    // predicates so the pair cannot drift apart.
     check_plan_host_calls(&plan.body, &host_table)
         .map_err(|e| format!("plan for `{export_name}`: {e}"))?;
     // Fail-closed struct discipline: every struct.get.user node must cite a
@@ -350,16 +350,23 @@ fn check_expr_fragment_plan_object(
     let tag_dispatch = expr_fragment_is_tag_dispatch(&plan);
     let vector_get = expr_fragment_vector_get_face(&plan).is_some();
     let record_proj = expr_fragment_record_proj_face(&plan).is_some();
-    if (plan_has_host_calls(&plan.body) || plan.result == FragTy::IntCarrier)
+    // Both Int comparison faces call a runtime helper, and the selection face
+    // additionally returns an Int carrier, so each would trip the gate below
+    // without its own admission.
+    let int_cmp = expr_fragment_int_cmp_bool_face(&plan).is_some()
+        || expr_fragment_int_select_face(&plan).is_some();
+    if (expr_fragment_plan_has_host_calls(&plan) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
         && !record_proj
+        && !int_cmp
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
-             are supported only through the straight-line integer, tag-dispatch, \
-             fused vector-read, or record field-read face"
+             and runtime host calls are supported only through the straight-line \
+             integer, tag-dispatch, fused vector-read, record field-read, Int \
+             comparison, or Int selection face"
         ));
     }
     // Face-gated AdtRef admission (the FIX-1 pattern): plans touching opaque
@@ -489,6 +496,7 @@ fn prim_has_nan_nondeterministic_float_result(op: &FragPrim) -> bool {
         | FragPrim::I32Eq
         | FragPrim::I32LtS
         | FragPrim::I32GtS
+        | FragPrim::I32GeS
         | FragPrim::I32And => false,
     }
 }

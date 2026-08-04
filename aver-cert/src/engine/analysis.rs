@@ -287,9 +287,12 @@ fn model_citation_names(c: &Cert) -> Vec<String> {
             .collect(),
         // Audited integer/Bool fragments (including the straight-line add
         // face) state `model := <source fn>`; plan-modeled (float) fragments
-        // cite no model name.
+        // cite no model name. The two Int comparison faces are wall-modeled —
+        // `intCmpModel`/`intSelectModel` name no source function — so they cite
+        // nothing either, even though their types sit inside the audited gate.
         Cert::ExprFragment { name, .. }
-            if expr_fragment_uses_audited_generic(c) || c.int_add_face().is_some() =>
+            if c.int_cmp_face().is_none()
+                && (expr_fragment_uses_audited_generic(c) || c.int_add_face().is_some()) =>
         {
             vec![name.clone()]
         }
@@ -348,6 +351,8 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     let mut has_string_eq = false;
     let mut has_string_concat = false;
     let mut has_to_index = false;
+    let mut has_cmp = false;
+    let mut has_eq = false;
     let mut has_add_total = false;
     let mut has_sub_total = false;
     let mut has_mul_total = false;
@@ -372,6 +377,16 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
             // The fused read calls the to-index helper and boxes the default.
             has_box = true;
             has_to_index = true;
+            continue;
+        }
+        // Each comparison face reads exactly ONE helper: `__aint_eq` for the
+        // equality operator, `__aint_cmp` for the three relational ones. Twin
+        // of the wall's `useHostRole` accounting over the encoded plan.
+        if let Some(face) = c.int_cmp_face() {
+            match face.op {
+                FragIntCmpOp::Eq => has_eq = true,
+                FragIntCmpOp::Lt | FragIntCmpOp::Gt | FragIntCmpOp::Ge => has_cmp = true,
+            }
             continue;
         }
         match c.inner() {
@@ -455,6 +470,12 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
     }
     if has_to_index {
         contracts.push(TO_INDEX_CONTRACT.to_string());
+    }
+    if has_cmp {
+        contracts.push(CMP_CONTRACT.to_string());
+    }
+    if has_eq {
+        contracts.push(EQ_CONTRACT.to_string());
     }
     if has_add_total {
         contracts.push(INT_ADD_TOTAL_CONTRACT.to_string());

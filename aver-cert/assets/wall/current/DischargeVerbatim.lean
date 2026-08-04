@@ -83,6 +83,8 @@ theorem verbatim_canonical_discharges
       (List WVal → Option WVal) →
       (List WVal → Option WVal) →
       (Nat → List WVal → Option WVal) →
+      (List WVal → Option WVal) →
+      (List WVal → Option WVal) →
       (List WVal → Option WVal) → HostTbl)
     (hCheck : AverCert.PlanCheck.checkVerbatimPlan
       (verbatimNLocals plan) plan = true)
@@ -102,14 +104,14 @@ theorem verbatim_canonical_discharges
          codRepr := fun S v w => verbatimRepr S v w
          model := fun v => ConstructVerbatimSoundness.verbatimModel plan v } :
         Obligation) := by
-  intro S add sub mul stringEq stringConcat toIndex
-    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel v vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel v vs w hDom hRun
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hCall := ConstructVerbatimSoundness.generic_verbatim_certified
-        plan code (host add sub mul stringEq stringConcat toIndex) self
+        plan code (host add sub mul stringEq stringConcat toIndex cmp eq) self
         (verbatimNLocals plan) hCheck hCode fuel v w hRun
       simpa [verbatimRepr] using hCall
 
@@ -127,15 +129,15 @@ theorem verbatim_claim_discharges
     ⟨plan, hPlan, hCall⟩
   rcases hBridge plan hPlan with ⟨hPolicy, hSemantic⟩
   rw [obligationHolds, hPolicy]
-  intro S add sub mul stringEq stringConcat toIndex
-    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex fuel x vs w hDom hRun
+  intro S add sub mul stringEq stringConcat toIndex cmp eq
+    _hAdd _hSub _hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq fuel x vs w hDom hRun
   rcases hSemantic S x vs hDom with ⟨v, hVs, hCod⟩
   subst vs
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
       have hResult := hCall
-        (claim.obligation.host add sub mul stringEq stringConcat toIndex)
+        (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
         fuel v w hRun
       simpa [hResult] using hCod
 

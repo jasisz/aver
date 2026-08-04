@@ -28,9 +28,7 @@ pub(crate) enum MirBuiltinEmit {
 /// miss is a real wiring bug.
 fn aint_helper(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
     ctx.fn_map
-        .builtins
-        .get(name)
-        .copied()
+        .aint_helper_idx(name)
         .ok_or(WasmGcError::Validation(format!(
             "bignum active but {name} helper not registered"
         )))
@@ -1972,15 +1970,7 @@ fn emit_aint_binop(
     op: BinOp,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
-    let call = |name: &str| -> Result<u32, WasmGcError> {
-        ctx.fn_map
-            .builtins
-            .get(name)
-            .copied()
-            .ok_or(WasmGcError::Validation(format!(
-                "bignum active but {name} helper not registered"
-            )))
-    };
+    let call = |name: &str| -> Result<u32, WasmGcError> { aint_helper(ctx, name) };
     match op {
         BinOp::Add => {
             func.instruction(&Instruction::Call(call("__aint_add")?));

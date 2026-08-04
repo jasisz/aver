@@ -165,5 +165,6 @@ fn op_to_wasm(op: FragPrim) -> Op {
         FragPrim::I32And => Op::I32And,
         FragPrim::I32LtS => Op::I32LtS,
         FragPrim::I32GtS => Op::I32GtS,
+        FragPrim::I32GeS => Op::I32GeS,
     }
 }

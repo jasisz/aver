@@ -355,7 +355,7 @@ theorem {name}_mutualSemanticBridge :
     ⟨{position}, by omega⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
   · intro i _hi
 {fin_cases}
-  · intro add sub mul stringEq stringConcat toIndex
+  · intro add sub mul stringEq stringConcat toIndex cmp eq
     refine ⟨rfl, rfl, ?_⟩
     intro i
 {fin_cases}

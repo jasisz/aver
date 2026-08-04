@@ -55,6 +55,7 @@ const S1_FIXTURES: &[&str] = &[
     "certkit_zoo",
     "certprobe",
     "certprobe2",
+    "clockrange",
     "compose",
     "f64verbatim",
     "intdispatchgen",
@@ -577,14 +578,17 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
     let mut carrierless_seen = 0usize;
     for (name, av_path) in corpus {
         let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
-        let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) =
+        let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
             aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
                 .unwrap_or_else(|error| panic!("{name}: Rust role classifier failed: {error}"));
-        // The production acceptance pin binds exactly the two name-derived
+        // The production acceptance pin binds exactly the four name-derived
         // roles plus the carrierless proof; `add`/`mul`/`sub` are no longer
         // discovered from bytes at all (they are declared and confirmed
-        // against a synthesized helper body), so only these three decoders
-        // are on the trusted path and worth a differential.
+        // against a synthesized helper body), so only these decoders are on
+        // the trusted path and worth a differential. `cmp` and `eq` earn their
+        // place twice over: they are the only pair that share a declared
+        // function type, so the export-name decode is the ONLY thing telling
+        // the two roles apart.
         let helper_absent = if box_idx.is_some() { "false" } else { "true" };
         // The carrier STATE, from an independent oracle: `wasmparser` reads the
         // type section and reports the first struct shaped `{i64, _, i32}`. The
@@ -603,6 +607,8 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
              def bytesLen : Nat := {}\n\n\
              example : CertDecode.AddSub.boxIdx bytesN bytesLen = {} := rfl\n\
              example : CertDecode.AddSub.toIndexIdx bytesN bytesLen = {} := rfl\n\
+             example : CertDecode.AddSub.cmpIdx bytesN bytesLen = {} := rfl\n\
+             example : CertDecode.AddSub.eqIdx bytesN bytesLen = {} := rfl\n\
              example : CertDecode.AddSub.carrierHelperAbsent bytesN bytesLen = {} := rfl\n\
              example : CertDecode.decodeCarrier bytesN bytesLen = {} := rfl\n\
              example : CertDecode.carrierState bytesN bytesLen = {} := rfl\n",
@@ -610,6 +616,8 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
             bytes.len(),
             option_nat(box_idx),
             option_nat(to_index_idx),
+            option_nat(cmp_idx),
+            option_nat(eq_idx),
             helper_absent,
             option_nat(carrier),
             carrier_state,
