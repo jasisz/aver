@@ -2368,6 +2368,106 @@ mod tcp_tests {
         }
     }
 
+    /// Regression: `Tcp.readLine` frames on `\n` and rejects non-UTF-8, so
+    /// neither half of a length-prefixed binary frame survives it.
+    /// `Tcp.readBytes` must return exactly the bytes asked for. The payload
+    /// carries `0x0A` twice (which `readLine` would split on) and `0xFF`
+    /// (which it would reject outright).
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_round_trips_binary_frame() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .write_all(&[0xF9, 0xBE, 0xB4, 0xD9, 0x01, 0x0A, 0xFF, 0x0A, 0x03])
+                    .ok();
+                thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+
+        let src = format!(
+            "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    header = Tcp.readBytes(conn, 4)?\n    payload = Tcp.readBytes(conn, 5)?\n    Result.Ok(List.concat(header, payload))\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Ok(inner) => match *inner {
+                Value::List(items) => {
+                    let got: Vec<i64> = items
+                        .iter()
+                        .map(|v| match v {
+                            Value::Int(n) => n.to_i64().unwrap(),
+                            other => panic!("expected Int element, got {:?}", other),
+                        })
+                        .collect();
+                    assert_eq!(got, vec![249, 190, 180, 217, 1, 10, 255, 10, 3]);
+                }
+                other => panic!("expected List, got {:?}", other),
+            },
+            other => panic!("expected Ok(List<Int>), got {:?}", other),
+        }
+    }
+
+    /// A short read is an error, not a truncated success: fewer bytes than the
+    /// length prefix promised means the peer went away mid-frame, and returning
+    /// a partial frame would desynchronise the caller's parser.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_short_read_is_an_error() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream.write_all(&[1, 2, 3]).ok();
+            }
+        });
+
+        let src = format!(
+            "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    Tcp.readBytes(conn, 10)\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Err(_) => {}
+            other => panic!("expected Err on a short read, got {:?}", other),
+        }
+    }
+
+    /// Count validation happens before the connection is touched, so these
+    /// need no socket. A negative count, one past the read cap, and one too
+    /// large for `i64` must all be catchable `Result.Err` rather than traps.
+    #[test]
+    fn tcp_read_bytes_rejects_out_of_range_counts() {
+        for (count, expect) in [
+            ("-1", "negative"),
+            ("20000000", "limit"),
+            ("1208925819614629174706176", "read limit"),
+        ] {
+            let src = format!(
+                "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.readBytes]\n    conn = Tcp.Connection(id = \"tcp-0\", host = \"127.0.0.1\", port = 1)\n    Tcp.readBytes(conn, {})\n",
+                count
+            );
+            match run_tcp_fn(&src, "talk") {
+                Value::Err(inner) => match *inner {
+                    Value::Str(msg) => assert!(
+                        msg.contains(expect),
+                        "count {count}: expected message mentioning {expect:?}, got: {msg}"
+                    ),
+                    other => panic!("expected Str error, got {:?}", other),
+                },
+                other => panic!("count {count}: expected Err, got {:?}", other),
+            }
+        }
+    }
+
     /// An `Int` outside `i64` is still an `Int` — a fortiori out of byte
     /// range, so it must take the same catchable value-error path as `256`,
     /// not trap as a bogus type error.

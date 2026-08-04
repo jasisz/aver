@@ -267,6 +267,7 @@ Source: `src/services/tcp.rs`
 | `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Opaque handle — see below. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
+| `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<List<Int>, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 
 `Tcp.Connection` is **opaque** from the surface: construction is reserved to `Tcp.connect` and field reads / pattern matches are rejected by the type checker. The handle is purely an identity token — the caller has nothing to inspect inside it. The underlying socket lives in a thread-local `HashMap` (VM / self-host / wasm-gc-bridge, keyed by `AtomicU64` "tcp-N") or a 256-slot wasm-gc array (`--target wasip2`, slot allocated via first-free scan + monotonic counter generation). Either way, manually forging an id is impossible: the type checker rejects the constructor.
@@ -281,6 +282,19 @@ non-UTF-8 sequence with U+FFFD — silently, irreversibly, and starting at the
 first offending byte — so it is only safe for protocols whose responses are
 valid UTF-8 text. Payload values outside `0..=255` return
 `Result.Err` naming the offending value and its index.
+
+`Tcp.readBytes` is the byte-clean form of `Tcp.readLine`, and the only way to
+read a fixed number of bytes off a persistent connection. `readLine` frames on
+`\n` — wrong for length-prefixed protocols, whose payloads carry `0x0A` at
+arbitrary offsets — and goes through `BufRead::read_line`, which rejects
+non-UTF-8 input outright. `readBytes` does neither: it reads exactly the
+requested count and decodes nothing.
+
+A short read is an error rather than a truncated success, because fewer bytes
+than a length prefix promised means the peer went away mid-message. The count is
+capped at 10 MiB; a negative, oversized, or `i64`-overflowing count returns
+`Result.Err` rather than trapping. `Tcp.readLine` is unchanged and remains the
+right choice for line-oriented text protocols.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 

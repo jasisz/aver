@@ -524,6 +524,32 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Tcp.readBytes" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<List<Int>, String>\n    ? \"honest: peer sends the bytes that were asked for\"\n    Result.Ok([0, 1, 2])\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "short_read",
+                stub_fn_name: stub_name("short_read"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<List<Int>, String>\n    ? \"hostile: peer goes away mid-frame\"\n    Result.Err(\"hostile: failed to fill whole buffer\")\n",
+                    stub_name("short_read")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<List<Int>, String>\n    ? \"hostile: read fails\"\n    Result.Err(\"hostile: read failed\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Tcp.writeLine" => vec![
             HostileProfile {
                 name: "normal_ok",
@@ -710,6 +736,7 @@ mod tests {
             "Tcp.ping",
             "Tcp.connect",
             "Tcp.readLine",
+            "Tcp.readBytes",
             "Tcp.writeLine",
             "Tcp.close",
             "Terminal.readKey",
