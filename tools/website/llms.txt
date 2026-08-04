@@ -306,7 +306,9 @@ fn sum(xs: List<Int>) -> Int
 Use namespaced builtins only.
 
 Common pure namespaces:
-- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Byte`, `Result`, `Option`
+- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Byte`, `Crypto`, `Result`, `Option`
+
+`Crypto.sha256 : List<Int> -> Result<List<Int>, String>` — 32-byte digest, pure (no effect declaration), so it is covered by ordinary `verify` blocks.
 
 Key `String` API:
 - `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`

@@ -86,6 +86,7 @@ src/
     char.rs           — Char.toCode/fromCode (pure, not a type)
     bool.rs           — Bool.or/and/not (pure)
     byte.rs           — Byte.toHex/fromHex (pure, not a type)
+    crypto.rs         — Crypto.sha256 (pure, not a type)
     checker/          — Static type checker. Split into submodules:
       mod.rs          — TypeChecker struct, constraint_compatible(), run_type_check_*
       infer.rs        — infer_type: expressions, calls, match, patterns

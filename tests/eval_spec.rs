@@ -3329,6 +3329,92 @@ fn char_from_code_u32_overflow_returns_none() {
 }
 
 // ---------------------------------------------------------------------------
+// Crypto namespace
+// ---------------------------------------------------------------------------
+
+/// Render a `Result<List<Int>, String>` digest as lowercase hex so the
+/// published test vectors can be compared as written.
+fn digest_hex(v: Value) -> String {
+    match v {
+        Value::Ok(inner) => match *inner {
+            Value::List(items) => items
+                .iter()
+                .map(|b| match b {
+                    Value::Int(n) => format!("{:02x}", n.to_i64().unwrap()),
+                    other => panic!("expected Int element, got {:?}", other),
+                })
+                .collect(),
+            other => panic!("expected List, got {:?}", other),
+        },
+        other => panic!("expected Ok, got {:?}", other),
+    }
+}
+
+/// NIST FIPS 180-4 vectors. These are the published values, not values
+/// captured from this implementation, so they would catch a wrong digest
+/// rather than merely a changed one.
+#[test]
+fn crypto_sha256_matches_published_vectors() {
+    assert_eq!(
+        digest_hex(eval("Crypto.sha256([])")),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "SHA-256 of the empty input"
+    );
+    assert_eq!(
+        digest_hex(eval("Crypto.sha256([97, 98, 99])")),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "SHA-256 of \"abc\""
+    );
+}
+
+/// Double-SHA256 is what Bitcoin uses for message checksums and txids, so
+/// the composition is worth pinning as well as the primitive.
+#[test]
+fn crypto_sha256_composes_for_double_hashing() {
+    let src = "fn double() -> Result<List<Int>, String>\n    inner = Crypto.sha256([97, 98, 99])?\n    Crypto.sha256(inner)\n";
+    assert_eq!(
+        digest_hex(call_fn(src, "double", vec![])),
+        "4f8b42c22dd3729b519ba6f68d2da7cc5b2d606d05daed5ad5128cc03e6c6358",
+        "double SHA-256 of \"abc\""
+    );
+}
+
+/// The digest is always 32 bytes regardless of input length.
+#[test]
+fn crypto_sha256_returns_32_bytes() {
+    match eval("Crypto.sha256([1, 2, 3, 4, 5])") {
+        Value::Ok(inner) => match *inner {
+            Value::List(items) => assert_eq!(items.len(), 32),
+            other => panic!("expected List, got {:?}", other),
+        },
+        other => panic!("expected Ok, got {:?}", other),
+    }
+}
+
+/// Elements outside `0..=255` are a value error, not a type error — the
+/// argument really is a `List<Int>` — so they are catchable rather than traps.
+/// The bignum case follows the same rule an `Int` beyond `i64` gets elsewhere.
+#[test]
+fn crypto_sha256_rejects_out_of_range_bytes() {
+    for (input, expect) in [
+        ("[65, 256]", "index 1"),
+        ("[-1]", "index 0"),
+        ("[1208925819614629174706176]", "index 0"),
+    ] {
+        match eval(&format!("Crypto.sha256({})", input)) {
+            Value::Err(inner) => match *inner {
+                Value::Str(msg) => assert!(
+                    msg.contains(expect) && msg.contains("out of range"),
+                    "{input}: expected an out-of-range message naming {expect:?}, got: {msg}"
+                ),
+                other => panic!("expected Str error, got {:?}", other),
+            },
+            other => panic!("{input}: expected Err, got {:?}", other),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Byte namespace
 // ---------------------------------------------------------------------------
 

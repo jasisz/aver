@@ -165,6 +165,33 @@ Source: `src/types/byte.rs` — not a type, operates on `Int`/`String`.
 | `Byte.toHex` | `Int -> Result<String, String>` | Always 2-char lowercase hex |
 | `Byte.fromHex` | `String -> Result<Int, String>` | Exactly 2 hex chars required |
 
+### `Crypto` namespace
+
+Source: `src/types/crypto.rs` — not a type, operates on `List<Int>`.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Crypto.sha256` | `List<Int> -> Result<List<Int>, String>` | 32-byte digest. Elements outside `0..=255` return `Err` naming the value and its index. |
+
+Hashing is deterministic and total given valid input, so `Crypto.sha256`
+requires no effect declaration and pure callers stay pure. That is what makes it
+coverable by an ordinary `verify` block rather than an Oracle stub:
+
+```aver
+verify hashOf
+    hex(hashOf([97, 98, 99])) => "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+```
+
+Double hashing composes with `?`, which is the shape Bitcoin message checksums
+and transaction ids need:
+
+```aver
+fn doubleSha(bytes: List<Int>) -> Result<List<Int>, String>
+    ? "SHA-256 applied twice."
+    inner = Crypto.sha256(bytes)?
+    Crypto.sha256(inner)
+```
+
 ## Effectful namespaces
 
 **Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` is equivalent to `! [Disk.readText, Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.deleteDir, Disk.listDir, Disk.makeDir]`. You can still use granular declarations like `! [Disk.readText]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.

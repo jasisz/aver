@@ -95,6 +95,7 @@ pub fn is_builtin_namespace(name: &str) -> bool {
             | "Byte"
             | "Char"
             | "Console"
+            | "Crypto"
             | "Disk"
             | "Env"
             | "Float"
