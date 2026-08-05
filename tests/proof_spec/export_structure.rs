@@ -1,6 +1,56 @@
 use super::*;
 
 #[test]
+fn proof_export_escapes_lean_reserved_identifiers_end_to_end() {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture = repo_root.join("tests/fixtures/lean_reserved_identifiers.av");
+    let root = temp_output_dir("aver-proof-lean-reserved-identifiers");
+
+    let mut command = Command::new(aver_bin);
+    command
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(&fixture)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&root);
+    if Command::new("lake").arg("--version").output().is_ok() {
+        command.arg("--check");
+    }
+    let output = command
+        .output()
+        .expect("aver proof --backend lean for reserved identifiers");
+    assert!(
+        output.status.success(),
+        "Lean rejected escaped reserved identifiers:\n{}",
+        format_output(&output)
+    );
+
+    let lean = std::fs::read_to_string(root.join("LeanReservedIdentifiers.lean"))
+        .expect("read LeanReservedIdentifiers.lean");
+    for name in [
+        "at",
+        "using",
+        "exists",
+        "sorry",
+        "suffices",
+        "variable",
+        "universe",
+        "notation",
+        "attribute",
+    ] {
+        assert!(
+            lean.contains(&format!("def {name}'")),
+            "reserved identifier {name} was not escaped:\n{lean}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn proof_export_cross_module_recursive_fns_get_per_module_fn_contracts() {
     // Round-5 audit follow-up: two dep modules each declaring a
     // recursive `countdown(n: Int) -> Int` with the canonical
@@ -542,17 +592,21 @@ fn proof_export_preserves_container_and_nested_refinements_end_to_end() {
     let root = temp_output_dir("aver-proof-container-nested-refinement");
 
     let lean_out = root.join("lean");
-    let lean = Command::new(aver_bin)
+    let mut lean_command = Command::new(aver_bin);
+    lean_command
         .current_dir(&repo_root)
         .arg("proof")
         .arg(&fixture)
         .arg("--backend")
         .arg("lean")
         .arg("-o")
-        .arg(&lean_out)
-        .arg("--check")
+        .arg(&lean_out);
+    if Command::new("lake").arg("--version").output().is_ok() {
+        lean_command.arg("--check");
+    }
+    let lean = lean_command
         .output()
-        .expect("aver proof --backend lean --check");
+        .expect("aver proof --backend lean for container refinements");
     assert!(
         lean.status.success(),
         "Lean rejected container/nested refinement export:\n{}",
@@ -597,17 +651,21 @@ fn proof_export_preserves_container_and_nested_refinements_end_to_end() {
     );
 
     let dafny_out = root.join("dafny");
-    let dafny = Command::new(aver_bin)
+    let mut dafny_command = Command::new(aver_bin);
+    dafny_command
         .current_dir(&repo_root)
         .arg("proof")
         .arg(&fixture)
         .arg("--backend")
         .arg("dafny")
         .arg("-o")
-        .arg(&dafny_out)
-        .arg("--check")
+        .arg(&dafny_out);
+    if Command::new("dafny").arg("--version").output().is_ok() {
+        dafny_command.arg("--check");
+    }
+    let dafny = dafny_command
         .output()
-        .expect("aver proof --backend dafny --check");
+        .expect("aver proof --backend dafny for container refinements");
     assert!(
         dafny.status.success(),
         "Dafny rejected container/nested refinement export:\n{}",
