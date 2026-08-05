@@ -2,6 +2,7 @@
 use super::builtins;
 use super::pattern::emit_pattern;
 use super::shared::to_lower_first;
+pub(crate) use super::syntax::{aver_name_to_lean, lean_name_to_aver};
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{is_user_type, resolve_module_call};
@@ -36,7 +37,6 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // in `ctx.proof_ir.refined_types`.
             if let Some(ty) = obj.ty()
                 && let Some(decl) = crate::codegen::common::find_refined_type_for_named(ctx, ty)
-                && decl.carrier_type == "Int"
                 && field == &decl.carrier_field
             {
                 let obj_str = emit_expr(obj, ctx);
@@ -178,8 +178,7 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // structure shape and a plain `{ value := … }` record
             // literal, so this fast-path is gated on the carrier
             // matching.
-            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
-                && decl.carrier_type == "Int"
+            if crate::codegen::common::find_refined_type(ctx, type_name).is_some()
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
@@ -539,7 +538,7 @@ fn emit_match(
 }
 
 /// True iff `expr` (recursively) contains a `RecordCreate` whose
-/// type is an Int-carrier refinement record — i.e. one we'll emit
+/// type is a refinement record — i.e. one we'll emit
 /// as a Lean Subtype constructor `⟨val, by omega⟩` that needs the
 /// surrounding `if`'s predicate as a hypothesis. Used to decide
 /// when the enclosing Bool match should emit dependent-`if h :
@@ -547,9 +546,7 @@ fn emit_match(
 fn true_body_uses_refinement_subtype(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> bool {
     match &expr.node {
         ResolvedExpr::RecordCreate { type_name, .. } => {
-            crate::codegen::common::find_refined_type(ctx, type_name)
-                .map(|decl| decl.carrier_type == "Int")
-                .unwrap_or(false)
+            crate::codegen::common::find_refined_type(ctx, type_name).is_some()
         }
         ResolvedExpr::Call(_, args) => args
             .iter()
@@ -655,123 +652,9 @@ pub fn emit_pattern_legacy(
     super::pattern::emit_pattern(&resolved, ctx)
 }
 
-/// Convert an Aver identifier to a valid Lean 4 identifier.
-/// Lean 4 reserved words.
-const LEAN_RESERVED: &[&str] = &[
-    "abbrev",
-    "axiom",
-    "by",
-    "calc",
-    "class",
-    "def",
-    "decreasing_by",
-    "deriving",
-    "do",
-    "else",
-    "end",
-    "example",
-    "from",
-    "fun",
-    "have",
-    "id",
-    "if",
-    "import",
-    "in",
-    "inductive",
-    "infix",
-    "infixl",
-    "infixr",
-    "instance",
-    "let",
-    "local",
-    "macro",
-    "match",
-    // Not Lean keywords, but GLOBAL Lean 4 functions a bare user fn
-    // shadows/collides with — a user `fn max` / `fn and` / `fn insert` emits
-    // `def max` / `def and` / `def insert` and references that resolve
-    // AMBIGUOUSLY against Lean's builtin (the `Max`/`Min`/`Insert` typeclass
-    // forms, or the core `and`/`or : Bool -> Bool -> Bool`). The def or a
-    // `simp [insert]` rewrite then fails to elaborate ("ambiguous term" /
-    // "invalid simp theorem"), and the proof can't reference the user fn.
-    // Escaping to `max'`/`and'`/`insert'`/… sidesteps it. (Other stdlib names
-    // like `length`/`take`/`drop` are reached as METHODS `xs.length` and don't
-    // collide as bare identifiers.) The full Bool family `and`/`or`/`not`/`xor`
-    // all resolve against `_root_.<op> : Bool -> Bool -> Bool`.
-    "and",
-    "insert",
-    "max",
-    "min",
-    "not",
-    "or",
-    "xor",
-    "mutual",
-    "namespace",
-    "noncomputable",
-    "nonrec",
-    "opaque",
-    "open",
-    "partial",
-    "postfix",
-    "prefix",
-    "priority",
-    "private",
-    "protected",
-    "public",
-    "repeat",
-    "return",
-    "scoped",
-    "section",
-    "show",
-    "structure",
-    "syntax",
-    "termination_by",
-    "then",
-    "theorem",
-    "toString",
-    "unsafe",
-    "where",
-    "with",
-];
-
-pub fn aver_name_to_lean(name: &str) -> String {
-    crate::codegen::common::escape_reserved_word(name, LEAN_RESERVED, "'")
-}
-
-/// Inverse of [`aver_name_to_lean`] for the `--explain` un-translator: strip the
-/// trailing-`'` guard that [`aver_name_to_lean`] appends to a Lean reserved word,
-/// so `repeat'` reads back as `repeat`. A name that does not match the
-/// escape pattern is returned unchanged.
-pub(crate) fn lean_name_to_aver(name: &str) -> String {
-    if let Some(base) = name.strip_suffix('\'')
-        && LEAN_RESERVED.contains(&base)
-    {
-        return base.to_string();
-    }
-    name.to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{aver_name_to_lean, escape_lean_string};
-
-    #[test]
-    fn aver_name_to_lean_escapes_lean_reserved_words() {
-        assert_eq!(aver_name_to_lean("repeat"), "repeat'");
-        assert_eq!(aver_name_to_lean("from"), "from'");
-        assert_eq!(aver_name_to_lean("by"), "by'");
-        assert_eq!(aver_name_to_lean("termination_by"), "termination_by'");
-        assert_eq!(aver_name_to_lean("value"), "value");
-        // Global Lean builtins (Max/Min typeclass) — escaped so a user
-        // `fn max`/`min` doesn't collide with the typeclass-dispatched form.
-        assert_eq!(aver_name_to_lean("max"), "max'");
-        assert_eq!(aver_name_to_lean("min"), "min'");
-        // The full Bool family collides with `_root_.and`/`or`/`not`/`xor`
-        // (each `Bool -> Bool -> Bool`); a bare reference is "ambiguous term".
-        assert_eq!(aver_name_to_lean("and"), "and'");
-        assert_eq!(aver_name_to_lean("or"), "or'");
-        assert_eq!(aver_name_to_lean("not"), "not'");
-        assert_eq!(aver_name_to_lean("xor"), "xor'");
-    }
+    use super::escape_lean_string;
 
     #[test]
     fn escape_lean_string_escapes_control_chars() {

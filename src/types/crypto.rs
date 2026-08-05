@@ -1,16 +1,11 @@
-/// Crypto namespace — cryptographic hashing over byte sequences.
-///
-/// Crypto is NOT a type — these are functions operating on `List<Int>` whose
-/// elements are bytes (0–255). Same pattern as `Byte` and `Char`: a namespace
-/// of operations over existing types.
+/// Crypto namespace — pure cryptographic operations over standard-library
+/// byte refinements.
 ///
 /// Methods:
-///   Crypto.sha256(bytes: List<Int>) → Result<List<Int>, String>  — 32-byte digest
+///   Crypto.sha256(bytes: Bytes) → Digest32
 ///
-/// No effects required. Hashing is deterministic and total given valid input,
-/// so it carries no `! [...]` declaration and pure callers stay pure — which
-/// means hashing code can be covered by ordinary `verify` blocks against the
-/// published test vectors rather than needing Oracle stubs.
+/// `Bytes` guarantees octets and SHA-256 always returns exactly 32 of them, so
+/// the public operation is total and its result preserves that fact nominally.
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
@@ -53,66 +48,60 @@ fn sha256(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let bytes = match bytes_arg(&args[0], "Crypto.sha256")? {
-        Ok(bytes) => bytes,
-        // An element outside 0..=255 is a value error, not a type error — it is
-        // still a `List<Int>` — so it surfaces as a catchable `Result.Err`,
-        // matching how `Tcp.sendBytes` treats the same mistake.
-        Err(msg) => return Ok(Value::Err(Box::new(Value::Str(msg)))),
-    };
+    let bytes = bytes_arg(&args[0], "Crypto.sha256")?;
 
     let digest = Sha256::digest(&bytes);
     let items: Vec<Value> = digest.iter().map(|b| Value::int(*b as i64)).collect();
-    Ok(Value::Ok(Box::new(Value::List(AverList::from_vec(items)))))
+    let digest_bytes = Value::Record {
+        type_name: "Bytes".to_string(),
+        fields: vec![("values".to_string(), Value::List(AverList::from_vec(items)))].into(),
+    };
+    Ok(Value::Record {
+        type_name: "Digest32".to_string(),
+        fields: vec![("bytes".to_string(), digest_bytes)].into(),
+    })
 }
 
-/// Convert a `List<Int>` argument into raw bytes.
+/// Project the standard-library `Bytes` carrier into host bytes.
 ///
-/// The outer `Result` is the type check; the inner one is the value check. An
-/// `Int` outside `i64` is still an `Int` — a fortiori outside byte range — so
-/// it takes the catchable value-error path rather than being reported as a
-/// bogus type error.
-#[allow(clippy::type_complexity)]
-fn bytes_arg(val: &Value, method: &str) -> Result<Result<Vec<u8>, String>, RuntimeError> {
-    let items = match val {
-        Value::List(items) => items,
-        _ => {
-            return Err(RuntimeError::Error(format!(
-                "{}: argument must be a List<Int>",
-                method
-            )));
-        }
+/// User code can only obtain `Bytes` through its validating constructors. The
+/// range checks below defend the host boundary against malformed internal
+/// values; violating the refinement is a runtime invariant error rather than a
+/// catchable branch in SHA-256's public type.
+fn bytes_arg(val: &Value, method: &str) -> Result<Vec<u8>, RuntimeError> {
+    let Value::Record { type_name, fields } = val else {
+        return Err(RuntimeError::Error(format!(
+            "{method}: argument must be Bytes"
+        )));
+    };
+    if type_name.rsplit('.').next() != Some("Bytes") {
+        return Err(RuntimeError::Error(format!(
+            "{method}: argument must be Bytes"
+        )));
+    }
+    let Some((_, Value::List(items))) = fields.iter().find(|(name, _)| name == "values") else {
+        return Err(RuntimeError::Error(format!(
+            "{method}: malformed Bytes carrier"
+        )));
     };
     let mut out = Vec::with_capacity(items.len());
     for (idx, item) in items.iter().enumerate() {
-        let n = match item {
-            Value::Int(n) => match n.to_i64() {
-                Some(n) => n,
-                None => {
-                    return Ok(Err(format!(
-                        "{}: byte {} at index {} is out of range (0\u{2013}255)",
-                        method, n, idx
-                    )));
-                }
-            },
-            _ => {
-                return Err(RuntimeError::Error(format!(
-                    "{}: argument must be a List<Int>",
-                    method
-                )));
-            }
+        let Value::Int(n) = item else {
+            return Err(RuntimeError::Error(format!(
+                "{method}: malformed Bytes value at index {idx}"
+            )));
         };
-        match u8::try_from(n) {
-            Ok(b) => out.push(b),
-            Err(_) => {
-                return Ok(Err(format!(
-                    "{}: byte {} at index {} is out of range (0\u{2013}255)",
-                    method, n, idx
-                )));
-            }
-        }
+        let Some(n) = n.to_i64() else {
+            return Err(RuntimeError::Error(format!(
+                "{method}: malformed Bytes value at index {idx}"
+            )));
+        };
+        let byte = u8::try_from(n).map_err(|_| {
+            RuntimeError::Error(format!("{method}: malformed Bytes value at index {idx}"))
+        })?;
+        out.push(byte);
     }
-    Ok(Ok(out))
+    Ok(out)
 }
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────

@@ -35,8 +35,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "String.fromBool"
             | "String.chars"
             | "Char.fromCode"
-            | "Byte.toHex"
-            | "Byte.fromHex"
             | "Disk.readText"
             | "Disk.writeText"
             | "Disk.appendText"

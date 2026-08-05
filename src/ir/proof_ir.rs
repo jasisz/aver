@@ -182,9 +182,10 @@ pub struct RefinedTypeDecl {
     ///   roundtrip / test convenience.
     /// - Future Z3 / Coq / etc.: same fact, rendered per target.
     ///
-    /// `None` when no satisfier was found. Backends that require a
-    /// witness must either reject the type or fall back to a target-
-    /// default (Dafny picks `0` and crosses fingers).
+    /// `None` when no satisfier was found. This does not erase the
+    /// refinement: Lean permits an empty Subtype and Dafny emits
+    /// `witness *`, which keeps the subset predicate without inventing an
+    /// invalid target default.
     pub witness: Option<String>,
     /// Constant integer interval over-approximating `invariant`, as
     /// derived by [`crate::ir::interval::interval_of_invariant`] from
@@ -1253,7 +1254,7 @@ pub struct StringEscapeRoundtripPin {
     /// Control classifier (`escapeControlChar`): equality ladder +
     /// `code < threshold → control escape` + printable passthrough.
     pub control_fn: String,
-    /// Hex control escape (`controlCodeEscape`): `Byte.toHex` +
+    /// Hex control escape (`controlCodeEscape`): singleton `Bytes` encoding +
     /// 4-char prefix.
     pub control_escape_fn: String,
     /// Success ctor of the law's rhs, source spelling

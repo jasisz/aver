@@ -4,6 +4,7 @@
 /// verify blocks (as `example` proofs), and decision blocks (as comments).
 /// Effectful functions and `main` are skipped.
 mod builtins;
+mod decl_order;
 mod expr;
 mod law_auto;
 pub mod lemma_calc;
@@ -12,6 +13,7 @@ mod prelude;
 pub(crate) mod recurrence;
 mod sample_literal;
 mod shared;
+mod syntax;
 pub mod tactic_ir;
 #[cfg(test)]
 mod tests;

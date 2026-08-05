@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use aver::diagnostics::context::build_context_for_items;
-use aver::source::{find_module_file, parse_source, require_module_declaration};
+use aver::source::{parse_source, require_module_declaration, resolve_module_source};
 
 pub(super) use aver::diagnostics::context::FileContext;
 
@@ -19,6 +19,16 @@ pub(super) use aver::diagnostics::context::FileContext;
 /// threaded through to prevent cycles.
 pub(super) fn collect_contexts(
     file: &str,
+    module_root: &str,
+    visited: &mut HashSet<String>,
+    max_depth: Option<usize>,
+) -> Vec<FileContext> {
+    collect_contexts_with_source(file, None, module_root, visited, max_depth)
+}
+
+fn collect_contexts_with_source(
+    file: &str,
+    prefetched_source: Option<String>,
     module_root: &str,
     visited: &mut HashSet<String>,
     max_depth: Option<usize>,
@@ -33,12 +43,15 @@ pub(super) fn collect_contexts(
     }
     visited.insert(canonical);
 
-    let source = match fs::read_to_string(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Cannot read '{}': {}", file, e);
-            return vec![];
-        }
+    let source = match prefetched_source {
+        Some(source) => source,
+        None => match fs::read_to_string(file) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("Cannot read '{}': {}", file, error);
+                return vec![];
+            }
+        },
     };
 
     let items = match parse_source(&source) {
@@ -68,10 +81,20 @@ pub(super) fn collect_contexts(
     if should_recurse {
         let next_depth = max_depth.map(|d| d.saturating_sub(1));
         for dep_name in dep_names {
-            if let Some(dep_path) = find_module_file(&dep_name, module_root) {
-                let dep_file = dep_path.to_string_lossy().to_string();
-                let mut sub = collect_contexts(&dep_file, module_root, visited, next_depth);
-                result.append(&mut sub);
+            match resolve_module_source(&dep_name, module_root) {
+                Ok(Some(module)) => {
+                    let dep_file = module.path.to_string_lossy().to_string();
+                    let mut sub = collect_contexts_with_source(
+                        &dep_file,
+                        Some(module.source),
+                        module_root,
+                        visited,
+                        next_depth,
+                    );
+                    result.append(&mut sub);
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("{}", error),
             }
         }
     }

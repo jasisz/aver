@@ -77,6 +77,49 @@ pub fn find_module_file(name: &str, module_root: &str) -> Option<PathBuf> {
     None
 }
 
+/// Source and stable display path for a resolved Aver module.
+///
+/// Project modules come from `module_root`; standard modules are ordinary Aver
+/// source embedded in the compiler binary.
+#[derive(Clone, Debug)]
+pub struct ModuleSource {
+    pub path: PathBuf,
+    pub source: String,
+}
+
+/// Resolve an Aver standard module without consulting the filesystem.
+///
+/// This is public for compiler-adjacent tools such as `aver-lsp`, which keep a
+/// filesystem cache for project modules but can consume embedded source
+/// directly.
+pub fn resolve_standard_module_source(name: &str) -> Option<ModuleSource> {
+    crate::stdlib::find(name).map(|module| ModuleSource {
+        path: PathBuf::from(module.virtual_path),
+        source: module.source.to_string(),
+    })
+}
+
+/// Resolve and read a project or standard-library module.
+///
+/// The standard library is checked first so its module names cannot be
+/// shadowed by a project-local file. `Ok(None)` means that neither source owns
+/// `name`.
+pub fn resolve_module_source(
+    name: &str,
+    module_root: &str,
+) -> Result<Option<ModuleSource>, String> {
+    if let Some(module) = resolve_standard_module_source(name) {
+        return Ok(Some(module));
+    }
+
+    let Some(path) = find_module_file(name, module_root) else {
+        return Ok(None);
+    };
+    let source = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
+    Ok(Some(ModuleSource { path, source }))
+}
+
 pub fn canonicalize_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -122,8 +165,14 @@ fn load_recursive_from_map(
     loading: &mut Vec<String>,
     result: &mut Vec<LoadedModule>,
 ) -> Result<(), String> {
-    let key = find_file_key_in_map(dep_name, files)
-        .ok_or_else(|| format!("Module '{}' not found in virtual fs", dep_name))?;
+    let (key, source) = if let Some(module) = crate::stdlib::find(dep_name) {
+        (module.virtual_path.to_string(), module.source.to_string())
+    } else {
+        let key = find_file_key_in_map(dep_name, files)
+            .ok_or_else(|| format!("Module '{}' not found in virtual fs", dep_name))?;
+        let source = files.get(&key).expect("resolved virtual module").clone();
+        (key, source)
+    };
 
     if loaded.contains(&key) {
         return Ok(());
@@ -139,9 +188,8 @@ fn load_recursive_from_map(
     }
     loading.push(key.clone());
 
-    let source = files.get(&key).unwrap();
     let items =
-        parse_source(source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
+        parse_source(&source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
     require_module_declaration(&items, &key)?;
 
     if let Some(module) = visibility::module_decl(&items) {
@@ -227,8 +275,10 @@ fn load_recursive(
     loading: &mut Vec<String>,
     result: &mut Vec<LoadedModule>,
 ) -> Result<(), String> {
-    let path = find_module_file(dep_name, module_root)
+    let resolved = resolve_module_source(dep_name, module_root)?
         .ok_or_else(|| format!("Module '{}' not found in '{}'", dep_name, module_root))?;
+    let path = resolved.path;
+    let source = resolved.source;
     let canon = canonicalize_path(&path).to_string_lossy().to_string();
 
     if loaded.contains(&canon) {
@@ -256,8 +306,6 @@ fn load_recursive(
     }
     loading.push(canon.clone());
 
-    let source = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
     let items =
         parse_source(&source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
 
@@ -397,14 +445,14 @@ fn load_module_recursive_for_compile(
     if !loaded.insert(name.to_string()) {
         return Ok(());
     }
-    let path = find_module_file(name, module_root).ok_or_else(|| {
+    let resolved = resolve_module_source(name, module_root)?.ok_or_else(|| {
         format!(
             "Cannot find module '{}' in module root '{}'",
             name, module_root
         )
     })?;
-    let source =
-        std::fs::read_to_string(&path).map_err(|e| format!("Read '{}': {}", path.display(), e))?;
+    let path = resolved.path;
+    let source = resolved.source;
     let mut items =
         parse_source(&source).map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
     require_module_declaration(&items, path.to_str().unwrap_or(name))?;
@@ -475,7 +523,45 @@ fn load_module_recursive_for_compile(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_source, require_module_declaration};
+    use super::{
+        load_module_tree, load_module_tree_from_map, parse_source, require_module_declaration,
+        resolve_module_source,
+    };
+
+    #[test]
+    fn standard_bytes_module_resolves_without_a_filesystem_root() {
+        let resolved = resolve_module_source("Bytes", "/path/that/does/not/exist")
+            .expect("resolve standard module")
+            .expect("Bytes is shipped with Aver");
+        assert_eq!(resolved.path.to_string_lossy(), "<aver-stdlib>/bytes.av");
+        assert!(resolved.source.starts_with("module Bytes\n"));
+
+        let loaded = load_module_tree(
+            &["Crypto.Digest32".to_string()],
+            "/path/that/does/not/exist",
+        )
+        .expect("load standard module tree");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].dep_name, "Bytes");
+        assert_eq!(loaded[1].dep_name, "Crypto.Digest32");
+    }
+
+    #[test]
+    fn standard_bytes_module_is_available_to_virtual_filesystems() {
+        let loaded =
+            load_module_tree_from_map(&["Crypto.Digest32".to_string()], &Default::default())
+                .expect("load embedded standard module in playground");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].dep_name, "Bytes");
+        assert_eq!(loaded[1].dep_name, "Crypto.Digest32");
+    }
+
+    #[test]
+    fn unknown_module_still_uses_normal_project_resolution() {
+        let resolved =
+            resolve_module_source("DefinitelyNotARealModule", ".").expect("resolve unknown module");
+        assert!(resolved.is_none());
+    }
 
     #[test]
     fn require_module_accepts_single_first_module() {

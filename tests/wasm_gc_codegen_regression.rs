@@ -3,9 +3,8 @@
 //! For every single-file `examples/**/*.av` program (no `depends`
 //! clause), drive the full frontend → IR pipeline → `compile_to_wasm_gc`
 //! → `wasmparser::Validator` walk. Asserts: no panic, no compile
-//! error, no validator rejection. Multi-module games / apps need
-//! `load_compile_deps` which lives in the CLI binary today; they get a
-//! follow-up subprocess-based test when that helper moves to lib.
+//! error, no validator rejection. Focused multi-module cases use the
+//! library dependency loader and the same flattening step as the CLI.
 //!
 //! Catches:
 //!   - codegen panics on real-world shapes (caught early, no AFL needed)
@@ -78,6 +77,13 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
+    parse_pipeline_with_module_root(source, None)
+}
+
+fn parse_pipeline_with_module_root(
+    source: &str,
+    module_root: Option<&str>,
+) -> Result<Vec<TopLevel>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
@@ -90,7 +96,9 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
     let result = ir::pipeline::run(
         &mut items,
         ir::PipelineConfig {
-            typecheck: Some(ir::TypecheckMode::Full { base_dir: None }),
+            typecheck: Some(ir::TypecheckMode::Full {
+                base_dir: module_root,
+            }),
             run_interp_lower: false,
             run_buffer_build: false,
             ..Default::default()
@@ -104,6 +112,11 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
             tc.errors.len(),
             tc.errors.first()
         ));
+    }
+    if let Some(root) = module_root {
+        let dep_modules = aver::source::load_compile_deps(&items, root)?;
+        aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        aver::ir::pipeline::resolve(&mut items);
     }
     Ok(items)
 }
@@ -263,7 +276,8 @@ fn json_sum_uses_nominal_root_in_variants_tuple_and_dispatch() {
     use wasmparser::{CompositeInnerType, Operator, Parser as WasmParser, Payload, StorageType};
 
     let source = fs::read_to_string(examples_dir().join("data/json.av")).unwrap();
-    let items = parse_pipeline(&source).unwrap();
+    let module_root = env!("CARGO_MANIFEST_DIR");
+    let items = parse_pipeline_with_module_root(&source, Some(module_root)).unwrap();
     let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None).unwrap();
     wasmparser::Validator::new().validate_all(&bytes).unwrap();
 

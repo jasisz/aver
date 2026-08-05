@@ -121,7 +121,6 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // value *is* the underlying `int`).
             if let Some(ty) = obj.ty()
                 && let Some(decl) = crate::codegen::common::find_refined_type_for_named(ctx, ty)
-                && decl.carrier_type == "Int"
                 && field == &decl.carrier_field
             {
                 return emit_expr(obj, ctx);
@@ -199,7 +198,7 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             format!("({} {} {})", l, op_str, r)
         }
         ResolvedExpr::Match { subject, arms } => emit_match(subject, arms, ctx),
-        ResolvedExpr::Ctor(ctor, args) => emit_constructor(ctor, args, ctx),
+        ResolvedExpr::Ctor(ctor, args) => emit_constructor(ctor, args, expr.ty(), ctx),
         ResolvedExpr::ErrorProp(_) => {
             // ? operator requires early-return semantics (Err propagation).
             // Dafny pure functions cannot express this; functions using ? are
@@ -247,13 +246,12 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         ResolvedExpr::RecordCreate {
             type_name, fields, ..
         } => {
-            // Int-carrier refinement records emit as a subset type
-            // (`type X = n: int | P n`), so `X(value := k)` collapses
-            // to just `k` — the value already inhabits the subset.
+            // Refinement records admitted by the proof lowerer emit as a
+            // subset type (`type X = value: T | P(value)`), so
+            // `X(value := carrier)` collapses to the carrier expression.
             // Dafny narrowing (via `if pred then ... else ...`) is
             // what closes the refinement obligation at the call site.
-            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
-                && decl.carrier_type == "Int"
+            if crate::codegen::common::find_refined_type(ctx, type_name).is_some()
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
@@ -516,11 +514,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         BoolAnd => format!("({} && {})", a[0], a[1]),
         BoolNot => format!("(!{})", a[0]),
 
-        // Char/Byte
+        // Char
         CharToCode => format!("CharToCode({})", a[0]),
         CharFromCode => format!("CharFromCode({})", a[0]),
-        ByteToHex => format!("ByteToHex({})", a[0]),
-        ByteFromHex => format!("ByteFromHex({})", a[0]),
 
         // List
         // An empty-list literal has no element-type context in Dafny
@@ -813,6 +809,7 @@ fn emit_ctor_pattern(ctor: &ResolvedCtor, bindings: &[String]) -> String {
 fn emit_constructor(
     ctor: &ResolvedCtor,
     args: &[Spanned<ResolvedExpr>],
+    result_type: Option<&crate::types::Type>,
     ctx: &CodegenContext,
 ) -> String {
     // In Dafny expression context, qualify constructors to avoid
@@ -821,11 +818,23 @@ fn emit_constructor(
     // can declare its own `enum ParseResult { Ok, Err }` with the same
     // variant names, and Dafny needs the discriminator to pick the
     // right datatype.
+    let explicit_wrapper = result_type
+        .filter(|ty| type_contains_refinement(ty, ctx))
+        .map(super::toplevel::emit_type_from);
     let qualified = match ctor {
-        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => "Result.Ok".to_string(),
-        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => "Result.Err".to_string(),
-        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => "Option.Some".to_string(),
-        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => return "Option.None".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => explicit_wrapper
+            .as_ref()
+            .map_or_else(|| "Result.Ok".to_string(), |ty| format!("{}.Ok", ty)),
+        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => explicit_wrapper
+            .as_ref()
+            .map_or_else(|| "Result.Err".to_string(), |ty| format!("{}.Err", ty)),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => explicit_wrapper
+            .as_ref()
+            .map_or_else(|| "Option.Some".to_string(), |ty| format!("{}.Some", ty)),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => {
+            return explicit_wrapper
+                .map_or_else(|| "Option.None".to_string(), |ty| format!("{}.None", ty));
+        }
         ResolvedCtor::User { type_id, name, .. } => {
             let type_entry = ctx.symbol_table.type_entry(*type_id);
             let type_name = type_entry.key.name.as_str();
@@ -858,6 +867,42 @@ fn emit_constructor(
     } else {
         let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
         format!("{}({})", qualified, arg_strs.join(", "))
+    }
+}
+
+/// Dafny infers datatype constructor parameters from their arguments before
+/// applying the surrounding function's expected return type. A refinement
+/// record is emitted as its carrier expression, so `Result.Ok(Bytes(...))`
+/// would otherwise infer `Result<seq<int>, _>` instead of `Result<Bytes, _>`.
+/// Qualifying only wrappers that contain an Aver refinement preserves the
+/// existing compact output for ordinary `Result` / `Option` values.
+fn type_contains_refinement(ty: &crate::types::Type, ctx: &CodegenContext) -> bool {
+    use crate::types::Type;
+
+    match ty {
+        Type::Named { .. } => {
+            crate::codegen::common::find_refined_type_for_named(ctx, ty).is_some()
+        }
+        Type::Result(ok, err) | Type::Map(ok, err) => {
+            type_contains_refinement(ok, ctx) || type_contains_refinement(err, ctx)
+        }
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            type_contains_refinement(inner, ctx)
+        }
+        Type::Tuple(items) => items.iter().any(|item| type_contains_refinement(item, ctx)),
+        Type::Fn(params, result, _) => {
+            params
+                .iter()
+                .any(|param| type_contains_refinement(param, ctx))
+                || type_contains_refinement(result, ctx)
+        }
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Invalid => false,
     }
 }
 

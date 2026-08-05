@@ -275,16 +275,6 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(Int) -> Option<String>",
             },
         ],
-        "Byte" => &[
-            Member {
-                name: "toHex",
-                detail: "fn(Int) -> Result<String, String>",
-            },
-            Member {
-                name: "fromHex",
-                detail: "fn(String) -> Result<Int, String>",
-            },
-        ],
         "Result" => &[
             Member {
                 name: "Ok",
@@ -562,7 +552,6 @@ pub fn all_namespaces() -> Vec<CompletionItem> {
         ("Vector", "Indexed dense collection (O(1) get/set)"),
         ("Map", "Map operations"),
         ("Char", "Character operations"),
-        ("Byte", "Byte operations"),
         ("Result", "Result type constructors"),
         ("Option", "Option type constructors"),
         ("Args", "Command-line arguments"),

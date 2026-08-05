@@ -5,6 +5,29 @@
 
 use super::*;
 
+/// Carrier shapes whose smart-constructor invariant can be represented
+/// faithfully by both proof backends today.
+///
+/// `Int` is the original scalar path. Structural containers and named
+/// carriers add the two missing pieces needed by `Bytes` (`List<Int>`) and
+/// nested refinements such as `Digest32` (`Bytes`). Float and String keep
+/// their existing plain-record path: their proof models and automation have
+/// separate, documented limitations that this container lift must not change
+/// accidentally.
+pub(super) fn proof_subtype_carrier_supported(carrier_type: &str) -> bool {
+    matches!(
+        crate::types::parse_type_str(carrier_type),
+        crate::types::Type::Int
+            | crate::types::Type::List(_)
+            | crate::types::Type::Vector(_)
+            | crate::types::Type::Map(_, _)
+            | crate::types::Type::Result(_, _)
+            | crate::types::Type::Option(_)
+            | crate::types::Type::Tuple(_)
+            | crate::types::Type::Named { .. }
+    )
+}
+
 /// Backend-neutral analogue of `codegen::common::refinement_lift_
 /// for_given`. Walks `lhs` / `rhs` looking for a `RecordCreate {
 /// type_name, fields: [(_, Ident(given))] }` shape where `type_
@@ -249,13 +272,14 @@ pub(super) fn arms_match_bool_ok_err(arms: &[crate::ast::MatchArm]) -> bool {
     saw_true_ok && saw_false_err
 }
 
-/// Pick an inhabitation witness: a literal value of the carrier type
-/// that satisfies the refinement predicate. Backend-neutral output —
-/// Dafny consumes it as `witness <W>`, Lean may later use it for a
-/// `sample_X` helper. First tries the smart constructor's verify-
-/// block samples (entry-module only — `ModuleInfo` doesn't surface
-/// verify blocks); falls back to evaluating the predicate against
-/// `[0, 1, -1]` and returning the first satisfier.
+/// Pick an inhabitation witness when the carrier is an integer and a concrete
+/// satisfier can be established. Backend-neutral output — Dafny consumes it
+/// as `witness <W>`, Lean may later use it for a `sample_X` helper.
+///
+/// Structural and nested refinements normally return `None`: Lean Subtypes
+/// may be empty, and Dafny represents that honest uncertainty with
+/// `witness *`. A missing witness must therefore never make the lowerer drop
+/// the invariant and silently emit a plain record.
 pub(super) fn pick_witness(
     type_name: &str,
     type_id: crate::ir::TypeId,

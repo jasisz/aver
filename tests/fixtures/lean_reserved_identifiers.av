@@ -1,0 +1,59 @@
+module LeanReservedIdentifiers
+    intent =
+        "Every Aver identifier that is a Lean keyword must be escaped consistently in proof export."
+    exposes [at, using, exists, sorry, suffices, variable, universe, notation, attribute]
+    effects []
+
+fn at(n: Int) -> Int
+    n
+
+fn using(n: Int) -> Int
+    n
+
+fn exists(n: Int) -> Int
+    n
+
+fn sorry(n: Int) -> Int
+    n
+
+fn suffices(n: Int) -> Int
+    n
+
+fn variable(n: Int) -> Int
+    n
+
+fn universe(n: Int) -> Int
+    n
+
+fn notation(n: Int) -> Int
+    n
+
+fn attribute(n: Int) -> Int
+    n
+
+verify at
+    at(1) => 1
+
+verify using
+    using(2) => 2
+
+verify exists
+    exists(3) => 3
+
+verify sorry
+    sorry(4) => 4
+
+verify suffices
+    suffices(5) => 5
+
+verify variable
+    variable(6) => 6
+
+verify universe
+    universe(7) => 7
+
+verify notation
+    notation(8) => 8
+
+verify attribute
+    attribute(9) => 9

@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use tower_lsp_server::ls_types::Uri;
 
 use aver::ast::{FnDef, TopLevel, TypeDef};
-use aver::source::find_module_file;
+use aver::source::{find_module_file, resolve_standard_module_source};
 
 use crate::completion;
 
@@ -79,6 +79,16 @@ pub fn resolve_dependencies(source: &str, base_dir: &str) -> Vec<ResolvedModule>
 
     let mut modules = Vec::new();
     for dep_name in &depends {
+        if let Some(module) = resolve_standard_module_source(dep_name) {
+            let items = completion::parse_items(&module.source);
+            modules.push(ResolvedModule {
+                name: dep_name.clone(),
+                path: module.path,
+                source: module.source,
+                items,
+            });
+            continue;
+        }
         if let Some(path) = find_module_file(dep_name, base_dir)
             && let Some((mod_source, mod_items)) = read_module_cached(&path)
         {
@@ -170,7 +180,7 @@ pub fn exported_types(module: &ResolvedModule) -> Vec<&TypeDef> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{ResolvedModule, exported_fns, exported_types};
+    use super::{ResolvedModule, exported_fns, exported_types, resolve_dependencies};
     use crate::completion;
 
     #[test]
@@ -211,5 +221,22 @@ type HiddenType
 
         assert_eq!(fn_names, vec!["publicFn"]);
         assert_eq!(type_names, vec!["PublicType"]);
+    }
+
+    #[test]
+    fn resolves_embedded_standard_module_for_completion() {
+        let source = "module Demo\n    depends [Bytes, Crypto.Digest32]\n";
+        let modules = resolve_dependencies(source, "/path/that/does/not/exist");
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].name, "Bytes");
+        assert_eq!(modules[0].path.to_string_lossy(), "<aver-stdlib>/bytes.av");
+        assert_eq!(modules[1].name, "Crypto.Digest32");
+        assert_eq!(
+            modules[1].path.to_string_lossy(),
+            "<aver-stdlib>/crypto/digest32.av"
+        );
+        assert!(exported_types(&modules[1]).iter().any(|ty| {
+            matches!(ty, aver::ast::TypeDef::Product { name, .. } if name == "Digest32")
+        }));
     }
 }

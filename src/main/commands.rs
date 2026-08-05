@@ -13,7 +13,7 @@ use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::source::{find_module_file, require_module_declaration};
+use aver::source::{require_module_declaration, resolve_module_source};
 use aver::types::{Type, parse_type_str};
 use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
@@ -248,10 +248,10 @@ fn collect_check_units(
     include_deps: bool,
 ) -> Result<Vec<(String, String, Vec<TopLevel>)>, String> {
     let mut out = Vec::new();
-    let mut stack = vec![PathBuf::from(file)];
+    let mut stack = vec![(PathBuf::from(file), None)];
     let mut visited = std::collections::HashSet::new();
 
-    while let Some(path) = stack.pop() {
+    while let Some((path, prefetched_source)) = stack.pop() {
         let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
         let key = canonical.to_string_lossy().to_string();
         if !visited.insert(key) {
@@ -259,7 +259,10 @@ fn collect_check_units(
         }
 
         let path_str = path.to_string_lossy().to_string();
-        let source = read_file(&path_str)?;
+        let source = match prefetched_source {
+            Some(source) => source,
+            None => read_file(&path_str)?,
+        };
 
         // Parse failure shouldn't abort the whole check — let
         // analyze_source turn it into a canonical parse-error
@@ -282,13 +285,13 @@ fn collect_check_units(
             })
         {
             for dep in m.depends.iter().rev() {
-                let dep_path = find_module_file(dep, module_root).ok_or_else(|| {
+                let resolved = resolve_module_source(dep, module_root)?.ok_or_else(|| {
                     format!(
                         "Module '{}' not found in '{}' (required by '{}')",
                         dep, module_root, path_str
                     )
                 })?;
-                stack.push(dep_path);
+                stack.push((resolved.path, Some(resolved.source)));
             }
         }
 
@@ -905,8 +908,8 @@ fn collect_unused_exposes_findings(
             .depends
             .iter()
             .filter_map(|dep| {
-                let dep_path = find_module_file(dep, module_root)?;
-                let dep_key = canonical_path_key(&dep_path.to_string_lossy());
+                let resolved = resolve_module_source(dep, module_root).ok().flatten()?;
+                let dep_key = canonical_path_key(&resolved.path.to_string_lossy());
                 let info = module_info_by_path.get(&dep_key)?.clone();
                 Some(ImportTarget {
                     dep_path_parts: dep.split('.').map(|part| part.to_string()).collect(),
@@ -9121,9 +9124,9 @@ fn load_module_recursive(
         return; // already loaded or circular
     }
 
-    let path = match find_module_file(name, module_root) {
-        Some(p) => p,
-        None => {
+    let resolved = match resolve_module_source(name, module_root) {
+        Ok(Some(module)) => module,
+        Ok(None) => {
             eprintln!(
                 "{}",
                 format!(
@@ -9134,15 +9137,13 @@ fn load_module_recursive(
             );
             process::exit(1);
         }
-    };
-
-    let source = match read_file(path.to_str().unwrap_or("")) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", e.red());
+        Err(error) => {
+            eprintln!("{}", error.red());
             process::exit(1);
         }
     };
+    let path = resolved.path;
+    let source = resolved.source;
 
     let mut items = match parse_file(&source) {
         Ok(i) => i,

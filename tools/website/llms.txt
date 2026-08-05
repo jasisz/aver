@@ -306,9 +306,12 @@ fn sum(xs: List<Int>) -> Int
 Use namespaced builtins only.
 
 Common pure namespaces:
-- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Byte`, `Crypto`, `Result`, `Option`
+- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Crypto`, `Result`, `Option`
 
-`Crypto.sha256 : List<Int> -> Result<List<Int>, String>` — 32-byte digest, pure (no effect declaration), so it is covered by ordinary `verify` blocks.
+`Bytes` and `Crypto.Digest32` are embedded Aver modules. With
+`depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total
+and pure: the input already guarantees octets and the result guarantees exactly
+32 bytes.
 
 Key `String` API:
 - `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`

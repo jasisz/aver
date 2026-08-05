@@ -85,8 +85,7 @@ src/
     map.rs            — Map.* (pure)
     char.rs           — Char.toCode/fromCode (pure, not a type)
     bool.rs           — Bool.or/and/not (pure)
-    byte.rs           — Byte.toHex/fromHex (pure, not a type)
-    crypto.rs         — Crypto.sha256 (pure, not a type)
+    crypto.rs         — Crypto.sha256: Bytes -> Digest32 (pure)
     checker/          — Static type checker. Split into submodules:
       mod.rs          — TypeChecker struct, constraint_compatible(), run_type_check_*
       infer.rs        — infer_type: expressions, calls, match, patterns
@@ -138,6 +137,10 @@ src/
     disk.rs           — Disk.readText/writeText/appendText/exists/delete/... via shared helpers
     tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close via `aver_rt::tcp`
     terminal.rs       — Terminal.* (raw mode, cursor, color, key input) via `aver_rt::terminal` [feature-gated]
+
+stdlib/
+  bytes.av            — Bytes refinement and total hexadecimal conversion
+  crypto/digest32.av  — exactly-32-byte Digest32 refinement
 ```
 
 ## How to run

@@ -489,8 +489,6 @@ pub fn isBuiltinCallName(name: AverStr) -> bool {
             AverStr::from("Bool.and"),
             AverStr::from("Bool.not"),
             AverStr::from("Bool.or"),
-            AverStr::from("Byte.fromHex"),
-            AverStr::from("Byte.toHex"),
             AverStr::from("Char.fromCode"),
             AverStr::from("Char.toCode"),
             AverStr::from("Console.error"),

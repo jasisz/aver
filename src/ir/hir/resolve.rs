@@ -32,9 +32,11 @@
 //!   well-formed `ResolvedTopLevel` even when individual references
 //!   couldn't classify (those land in `Unresolved` passthroughs so
 //!   the surrounding tree still walks).
-//! - **No `Spanned::ty()` re-stamping**. Type stamps on the original
-//!   `Spanned<Expr>` nodes are already canonical (Phase B); the
-//!   resolver carries them across unchanged when relevant.
+//! - **No type inference**. The resolver carries `Spanned::ty()` stamps
+//!   across, canonicalising named identities against its symbol table.
+//!   This matters when a dependency was typechecked on its own before
+//!   being lifted into the final whole-program symbol table: numeric
+//!   `TypeId`s are build-local even though their source names are stable.
 //! - **No backend wiring**. Output is `Vec<ResolvedTopLevel>` —
 //!   producer only. Future PRs migrate each backend to consume it.
 //!
@@ -281,7 +283,7 @@ fn resolve_spanned(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> Spanned<Resolv
     let resolved = resolve_expr(ctx, expr);
     let out = Spanned::new(resolved, expr.line);
     if let Some(t) = expr.ty.get() {
-        let _ = out.ty.set(t.clone());
+        let _ = out.ty.set(canonicalise_type(ctx, t.clone()));
     }
     out
 }
@@ -586,14 +588,22 @@ fn parse_builtin_ctor(name: &str) -> Option<BuiltinCtor> {
 fn canonicalise_type(ctx: &ResolveCtx<'_>, ty: crate::ast::Type) -> crate::ast::Type {
     use crate::ast::Type;
     match ty {
-        // Peer review round 7: `Some(id)` is sacred. The typechecker
-        // already stamped real identities; never overwrite.
+        // A `TypeId` is stable only within the SymbolTable build that
+        // created it. Dependency modules are typechecked independently
+        // before codegen assembles the final whole-program table, so a
+        // correct local id can point at a different declaration here.
+        // Re-resolve by the source name in the owning module's context;
+        // keep the existing id only for synthetic fragments whose name
+        // is absent from this table.
         Type::Named {
             id: Some(existing),
             name,
-        } => Type::Named {
-            id: Some(existing),
-            name,
+        } => match ctx.resolve_type_id(&name) {
+            Some(id) => Type::Named { id: Some(id), name },
+            None => Type::Named {
+                id: Some(existing),
+                name,
+            },
         },
         Type::Named { id: None, name } => match ctx.resolve_type_id(&name) {
             Some(id) => Type::Named { id: Some(id), name },
@@ -829,6 +839,45 @@ fn pair() -> Int
         };
         assert_eq!(name, "x");
         assert_eq!(ty_ann.as_ref(), Some(&crate::ast::Type::Int));
+    }
+
+    #[test]
+    fn recanonicalises_expression_type_ids_against_the_active_symbol_table() {
+        let (symbols, _) = build(
+            r#"
+record Bytes
+    values: List<Int>
+
+record Digest32
+    bytes: Bytes
+"#,
+        );
+        let bytes_id = symbols
+            .type_id_of(&TypeKey::entry("Bytes"))
+            .expect("Bytes id");
+        let digest_id = symbols
+            .type_id_of(&TypeKey::entry("Digest32"))
+            .expect("Digest32 id");
+        assert_ne!(bytes_id, digest_id, "fixture needs distinct type ids");
+
+        // Model a dependency body stamped during its own pipeline run:
+        // the source name is still Digest32, but its build-local numeric
+        // id now aliases Bytes in the final whole-program table.
+        let expr = Spanned::bare(Expr::Ident("digest".to_string()));
+        expr.set_ty(crate::ast::Type::Named {
+            id: Some(bytes_id),
+            name: "Digest32".to_string(),
+        });
+
+        let ctx = ResolveCtx::new(&symbols);
+        let resolved = resolve_spanned(&ctx, &expr);
+        assert_eq!(
+            resolved.ty(),
+            Some(&crate::ast::Type::Named {
+                id: Some(digest_id),
+                name: "Digest32".to_string(),
+            })
+        );
     }
 
     #[test]

@@ -47,7 +47,8 @@ use crate::ir::{EscapePairSpec, StringEscapeRoundtripPin};
 /// cls(c)             = match c { DEC_i -> "<ESC><LETTER_i>", …, _ -> ctl(c) }
 /// ctl(c)             = code = toCode(c); match code == K_j { true -> "<ESC><LETTER_j>",
 ///                        false -> … match code < T { true -> cce(c, code), false -> c } }
-/// cce(c, code)       = match Byte.toHex(code) { Ok(h) -> "<ESC><UNI>00" + h, Err(_) -> c }
+/// cce(c, code)       = match Bytes.fromList([code]) {
+///                        Ok(bs) -> "<ESC><UNI>00" + Bytes.toHex(bs), Err(_) -> c }
 /// ```
 ///
 /// Alignment gates (each rules out a shape whose synthesized proof
@@ -57,7 +58,8 @@ use crate::ir::{EscapePairSpec, StringEscapeRoundtripPin};
 /// classifier pairs with codes >= the control threshold; control
 /// ladder codes sit below the threshold and never duplicate a
 /// classifier pair; the threshold matches between producer and
-/// validator and stays <= 256 (`Byte.toHex` range, and below the
+/// validator and stays <= 32 (the JSON control-character range, safely inside
+/// the `Bytes.fromList` octet range and below the
 /// surrogate guards' bounds); the control-escape prefix is exactly
 /// `[ESC, UNI, '0', '0']` (4 chars, so a hex escape is consumed by
 /// 1 escape hop + 4 `readHex` digits); the scanner SCC members carry
@@ -458,9 +460,9 @@ pub(super) fn detect_string_escape_roundtrip(
         .then_some(())?;
         *threshold
     };
-    // `Byte.toHex` range on the producer side (`¬ code > 255` must be
+    // `Bytes.fromList` range on the producer side (`¬ code > 255` must be
     // omega-derivable from `code < threshold`).
-    if !(1..=256).contains(&control_threshold) {
+    if !(1..=32).contains(&control_threshold) {
         return None;
     }
 
@@ -913,7 +915,8 @@ pub(super) fn detect_string_escape_roundtrip(
         }
     };
 
-    // Control escape: `Byte.toHex` + the `[ESC, UNI, '0', '0']` prefix.
+    // Control escape: a singleton `Bytes.fromList` followed by `Bytes.toHex`,
+    // plus the `[ESC, UNI, '0', '0']` prefix.
     let control_escape_fd = resolve_user_fn(&control_escape_name)?;
     if !param_types(control_escape_fd, &["String", "Int"])
         || control_escape_fd.return_type.trim() != "String"
@@ -927,7 +930,11 @@ pub(super) fn detect_string_escape_roundtrip(
         );
         let (subject, arms) = single_match(control_escape_fd)?;
         let (callee, args) = call_of(subject)?;
-        (callee == "Byte.toHex" && args.len() == 1 && is_ident(&args[0], cc_code)).then_some(())?;
+        (callee == "Bytes.fromList" && args.len() == 1).then_some(())?;
+        let Expr::List(singleton) = &args[0].node else {
+            return None;
+        };
+        (singleton.len() == 1 && is_ident(&singleton[0], cc_code)).then_some(())?;
         if arms.len() != 2 {
             return None;
         }
@@ -941,10 +948,14 @@ pub(super) fn detect_string_escape_roundtrip(
         let Pattern::Constructor(_, ok_binders) = &ok_arm.pattern else {
             return None;
         };
-        let Expr::BinOp(crate::ast::BinOp::Add, prefix, hex) = &ok_arm.body.node else {
+        let Expr::BinOp(crate::ast::BinOp::Add, prefix, encoded) = &ok_arm.body.node else {
             return None;
         };
-        is_ident(hex, &ok_binders[0]).then_some(())?;
+        let (to_hex, to_hex_args) = call_of(encoded)?;
+        (to_hex == "Bytes.toHex"
+            && to_hex_args.len() == 1
+            && is_ident(&to_hex_args[0], &ok_binders[0]))
+        .then_some(())?;
         let prefix_str = str_lit(prefix)?;
         let want: String = [escape_char, unicode_letter, '0', '0'].iter().collect();
         (prefix_str == want).then_some(())?;

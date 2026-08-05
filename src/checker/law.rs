@@ -63,7 +63,9 @@ mod tests {
         let items = parse_items(include_str!("../../examples/data/json.av"));
         let tc = crate::ir::pipeline::typecheck(
             &items,
-            &crate::ir::TypecheckMode::Full { base_dir: None },
+            &crate::ir::TypecheckMode::Full {
+                base_dir: Some(env!("CARGO_MANIFEST_DIR")),
+            },
         );
         assert!(
             tc.errors.is_empty(),

@@ -431,6 +431,9 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         else {
             continue;
         };
+        if !refinement::proof_subtype_carrier_supported(info.carrier_type) {
+            continue;
+        }
         let invariant = Predicate {
             free_vars: vec![(
                 info.param_name.to_string(),
@@ -446,17 +449,11 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             info.param_name,
             module_prefix,
         );
-        // Round-4 finding 1: a `None` witness means we couldn't
-        // exhibit any inhabitant satisfying the predicate. Inserting
-        // the slot anyway makes Dafny silently fall back to
-        // `witness 0` even when the predicate excludes 0 — producing
-        // an unsound subset type. Skip the lift entirely: the
-        // backend will emit a plain `datatype` instead, which is
-        // honest about the missing invariant. The pure-fn / law
-        // paths still typecheck against the plain record.
-        let Some(witness) = witness else {
-            continue;
-        };
+        // A missing concrete witness is not a reason to erase the invariant.
+        // Lean permits an empty Subtype; Dafny's `witness *` expresses the
+        // same uncertainty without inventing an invalid default. Keeping the
+        // decl in ProofIR makes "emit a proof subtype" one backend-neutral,
+        // fail-closed decision.
         ir.refined_types.insert(
             canonical_key,
             RefinedTypeDecl {
@@ -465,7 +462,7 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 carrier_field: info.carrier_field.to_string(),
                 predicate_param: info.param_name.to_string(),
                 invariant,
-                witness: Some(witness),
+                witness,
                 // Filled in immediately below by `populate_refined_type_intervals`,
                 // which runs the interval analysis once over the just-built
                 // `refined_types` map. Left empty here so the two passes share

@@ -7,10 +7,6 @@ use super::{is_recursive_product, is_recursive_type};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 
-pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
-    emit_type_def_in_scope(td, ctx, None)
-}
-
 /// Module-scoped emit: `scope` carries the prefix of the module
 /// whose typedefs we're currently rendering (or `None` for entry
 /// items). Drives [`find_refined_type_scoped`] so a refined record
@@ -64,11 +60,9 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             format!("instance : Inhabited {name} := ⟨{witness}⟩")
         }
         TypeDef::Product { name, fields, .. } => {
-            // Refined `Int`-carrier records emit as a `Subtype`, not a
-            // `structure`, and never carried `deriving`; skip them.
-            if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
-                && decl.carrier_type == "Int"
-            {
+            // Every decl admitted to ProofIR emits as a Subtype rather than a
+            // structure and therefore never carries `deriving`.
+            if crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some() {
                 return String::new();
             }
             let args = std::iter::repeat_n("default", fields.len())
@@ -119,18 +113,11 @@ fn emit_product_type(
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
-    // Refinement-via-opaque records emit as Lean `Subtype` only
-    // when the carrier is `Int`. Float-carrier records (NonNegFloat,
-    // Discount, …) stay as plain `structure`, because Lean's `Float`
-    // model doesn't admit universal arithmetic laws (IEEE 754: `NaN
-    // ≠ NaN`, `+` not commutative across infinities), so the lift
-    // would just produce uniwersalne theorems we can't prove. The
-    // existing sample-based path covers them: domain values come
-    // from `given a: Float = […]`, and proofs are sample-by-sample
-    // via native_decide.
-    if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
-        && decl.carrier_type == "Int"
-    {
+    // The lowerer is the single eligibility decision. Int, structural
+    // containers, and nested named carriers admitted there all render through
+    // the same Subtype shape; intentionally unsupported scalar carriers never
+    // enter `refined_types` and keep the plain structure path below.
+    if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope) {
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
         let param = aver_name_to_lean(&decl.predicate_param);
         let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);

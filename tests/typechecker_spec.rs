@@ -246,29 +246,9 @@ fn valid_char_namespace_signatures() {
 }
 
 #[test]
-fn valid_byte_namespace_signatures() {
-    let src = concat!(
-        "fn f() -> Result<Int, String>\n",
-        "    hex = Byte.toHex(255)\n",
-        "    n = hex?\n",
-        "    Byte.fromHex(n)\n",
-    );
-    assert_no_errors(src);
-}
-
-#[test]
 fn error_char_to_code_argument_type() {
     let src = "fn f() -> Int\n    Char.toCode(1)\n";
     assert_error_containing(src, "Argument 1 of 'Char.toCode': expected String, got Int");
-}
-
-#[test]
-fn error_byte_from_hex_argument_type() {
-    let src = "fn f() -> Result<Int, String>\n    Byte.fromHex(42)\n";
-    assert_error_containing(
-        src,
-        "Argument 1 of 'Byte.fromHex': expected String, got Int",
-    );
 }
 
 #[test]
