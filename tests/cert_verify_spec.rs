@@ -2098,21 +2098,46 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     copy_dir(&out_dir, &dir);
     let w = dir.join("json.wasm");
     let mut bytes = std::fs::read(&w).unwrap();
-    // i32.const 0; i32.const 0; array.new_data type19 seg11 (the empty string
-    // literal). Changing the length operand to 1 violates the decoder's
-    // fail-closed data-segment guard while keeping the module parseable.
-    let pat = [0x41, 0x00, 0x41, 0x00, 0xfb, 0x09, 0x13, 0x0b];
-    let mut hits = 0usize;
-    for i in 0..bytes.len().saturating_sub(pat.len()) {
-        if bytes[i..].starts_with(&pat) {
-            bytes[i + 3] = 0x01;
-            hits += 1;
+    // Find empty array.new_data literals through the decoded instruction
+    // stream, so adding unrelated heap types or data segments cannot make this
+    // regression guard depend on their numeric indices. Changing the length
+    // operand from 0 to 1 keeps the module parseable but violates the decoder's
+    // fail-closed data-segment guard.
+    let mut length_immediates = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::CodeSectionEntry(body) =
+            payload.expect("compiler-produced json wasm must parse")
+        {
+            let mut operators = body.get_operators_reader().unwrap();
+            let mut previous_i32_consts = [None, None];
+            while !operators.eof() {
+                let offset = operators.original_position();
+                match operators.read().expect("json operator must parse") {
+                    wasmparser::Operator::I32Const { value } => {
+                        previous_i32_consts[0] = previous_i32_consts[1];
+                        previous_i32_consts[1] = Some((value, offset));
+                    }
+                    wasmparser::Operator::ArrayNewData { .. } => {
+                        if matches!(previous_i32_consts[0], Some((0, _)))
+                            && matches!(previous_i32_consts[1], Some((0, _)))
+                        {
+                            length_immediates.push(previous_i32_consts[1].unwrap().1 + 1);
+                        }
+                        previous_i32_consts = [None, None];
+                    }
+                    _ => previous_i32_consts = [None, None],
+                }
+            }
         }
     }
     assert!(
-        hits > 0,
+        !length_immediates.is_empty(),
         "expected empty array.new_data literal in json wasm"
     );
+    for offset in length_immediates {
+        assert_eq!(bytes[offset], 0, "expected one-byte i32.const 0 immediate");
+        bytes[offset] = 1;
+    }
     std::fs::write(&w, &bytes).unwrap();
 
     let old_hash = {
