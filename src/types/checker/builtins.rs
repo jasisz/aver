@@ -657,6 +657,16 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
+        // Crypto namespace
+        let crypto_sigs: &[(&str, &[Type], Type, &[&str])] = &[(
+            "Crypto.sha256",
+            &[Type::named("Bytes")],
+            Type::named("Digest32"),
+            &[],
+        )];
+        for (name, params, ret, effects) in crypto_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
         // Result.Ok / Result.Err / Option.Some — constructor signatures.
         // Polymorphic over T (ok/some) and E (err).
         let e_var = || Type::Var("E".to_string());

@@ -189,6 +189,24 @@ Source: `src/types/char.rs` — not a type, operates on `String`/`Int`.
 | `Char.toCode` | `String -> Int` | Unicode scalar value of first char |
 | `Char.fromCode` | `Int -> Option<String>` | Code point to 1-char string, `Option.None` for surrogates/invalid |
 
+### `Crypto` namespace
+
+Source: `src/types/crypto.rs`; byte and digest types come from the embedded
+`Bytes` and `Crypto.Digest32` Aver modules.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Crypto.sha256` | `Bytes -> Digest32` | Pure, total SHA-256 over validated bytes. |
+
+Import both nominal types with `depends [Bytes, Crypto.Digest32]`. Hashing is
+deterministic and total over `Bytes`, so it requires neither an effect declaration
+nor a `Result`:
+
+```aver
+fn doubleSha(bytes: Bytes) -> Digest32
+    first = Crypto.sha256(bytes)
+    Crypto.sha256(Crypto.Digest32.toBytes(first))
+```
 ## Effectful namespaces
 
 **Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` is equivalent to `! [Disk.readText, Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.deleteDir, Disk.listDir, Disk.makeDir]`. You can still use granular declarations like `! [Disk.readText]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.

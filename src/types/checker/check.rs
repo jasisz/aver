@@ -72,6 +72,29 @@ impl TypeChecker {
         if let Err(e) = self.integrate_registry(&registry) {
             self.error(e);
         }
+        self.canonicalize_source_typed_builtin_sigs();
+    }
+
+    /// Re-stamp builtin signatures whose nominal types are owned by embedded
+    /// Aver modules after those modules have entered the active symbol table.
+    ///
+    /// Most builtins mention primitives or host-owned records and stay raw.
+    /// `Crypto.sha256` is the first boundary whose public domain and codomain
+    /// are source-defined refinements, so its initially unresolved `Bytes` and
+    /// `Digest32` names must join the same `TypeId` space as imported values.
+    fn canonicalize_source_typed_builtin_sigs(&mut self) {
+        for name in ["Crypto.sha256"] {
+            let Some(mut sig) = self.extra_sigs.remove(name) else {
+                continue;
+            };
+            sig.params = sig
+                .params
+                .into_iter()
+                .map(|ty| self.canonicalize_named(ty))
+                .collect();
+            sig.ret = self.canonicalize_named(sig.ret);
+            self.extra_sigs.insert(name.to_string(), sig);
+        }
     }
 
     /// Visit every function body in each loaded dependency module so the

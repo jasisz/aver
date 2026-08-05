@@ -5028,6 +5028,26 @@ fn emit_user_types(
         ));
     }
 
+    // Scratch storage for the pure SHA-256 helper. Both arrays carry i32:
+    // message elements are octets in the low 8 bits, schedule elements are
+    // modulo-2^32 words. They are private implementation details and exist
+    // only when `Crypto.sha256` is reachable.
+    for idx in [
+        registry.crypto_byte_array_type_idx,
+        registry.crypto_word_array_type_idx,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        entries.push((
+            idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32),
+                mutable: true,
+            }),
+        ));
+    }
+
     // bignum slice 1 — `$AverInt` carrier + its `(array i64)` limb
     // magnitude. Emitted only when the registry allocated them (opt-in
     // flag + reachable Int arithmetic). The magnitude array slot sits

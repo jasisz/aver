@@ -100,6 +100,9 @@ pub fn emit_builtin_call(
         CharToCode => format!("Char.toCode {}", p(&a[0])),
         CharFromCode => format!("Char.fromCode {}", p(&a[0])),
 
+        // ---- Crypto ----
+        CryptoSha256 => format!("Crypto.sha256 {}", p(&a[0])),
+
         // ---- String ----
         // `*.len` builtins return Aver `Int` (= ℤ), so their Lean lowering must
         // produce an `Int`, not a bare Lean `Nat`: dropping to `Nat` silently

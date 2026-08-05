@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+pub mod crypto;
 mod display;
 #[cfg(feature = "http")]
 pub mod http;

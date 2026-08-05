@@ -69,6 +69,7 @@ use super::types::TypeRegistry;
 use super::wat_helper;
 
 mod bignum;
+mod crypto;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
 /// new builtin: extend this enum + `from_dotted` + `signature` +
@@ -139,6 +140,10 @@ pub(super) enum BuiltinName {
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
     StringReplace,
+    /// Pure SHA-256 over the refined `Bytes` record, returning the nominal
+    /// 32-byte digest record. Implemented inside the wasm module so browser
+    /// and WASI targets share identical semantics without a host import.
+    CryptoSha256,
     /// Internal `__int_mod_euclid(a: i64, b: i64) -> i64` — Euclidean
     /// modulo (always in `[0, |b|)`). Powers `Int.mod` so result has
     /// math-modulo semantics, not Rust `%` truncated remainder.
@@ -247,6 +252,7 @@ impl BuiltinName {
             "Char.fromCode" => Some(Self::CharFromCode),
             "String.chars" => Some(Self::StringChars),
             "String.replace" => Some(Self::StringReplace),
+            "Crypto.sha256" => Some(Self::CryptoSha256),
             _ => None,
         }
     }
@@ -276,6 +282,7 @@ impl BuiltinName {
             Self::CharFromCode => "Char.fromCode",
             Self::StringChars => "String.chars",
             Self::StringReplace => "String.replace",
+            Self::CryptoSha256 => "Crypto.sha256",
             Self::IntModEuclid => "__int_mod_euclid",
             Self::IntDivEuclid => "__int_div_euclid",
             Self::AintFromI64 => "__aint_from_i64",
@@ -335,6 +342,7 @@ impl BuiltinName {
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
+            Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Bytes")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64, ValType::I64]),
             Self::AintFromI64 => Ok(vec![ValType::I64]),
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
@@ -387,6 +395,7 @@ impl BuiltinName {
             }
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
+            Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
             Self::AintFromI64
             | Self::AintAdd
@@ -442,6 +451,7 @@ impl BuiltinName {
             Self::CharFromCode => emit_char_from_code(registry),
             Self::StringChars => emit_string_chars(registry),
             Self::StringReplace => emit_string_replace(registry),
+            Self::CryptoSha256 => crypto::emit_sha256(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
             Self::IntDivEuclid => emit_int_div_euclid(),
             Self::AintFromI64 => bignum::emit_aint_from_i64(registry),
@@ -580,6 +590,17 @@ fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, Wa
         .ok_or(WasmGcError::Validation(format!(
             "builtin requires `{canonical}` slot but it wasn't registered"
         )))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// Nullable reference to a nominal record used by an intrinsic boundary.
+fn record_ref_ty(registry: &TypeRegistry, name: &str) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .record_type_idx(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("builtin requires record `{name}`")))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(idx),

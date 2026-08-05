@@ -31,6 +31,7 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 rand = { version = "0.9", optional = true }
+sha2 = "0.10"
 ureq = { version = "2", optional = true }
 
 # On wasm32-unknown-unknown:
