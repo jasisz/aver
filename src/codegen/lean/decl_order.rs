@@ -164,6 +164,9 @@ fn collect_annotation_type_refs(annotation: &str, out: &mut HashSet<String>) {
 fn collect_type_refs(ty: &crate::types::Type, out: &mut HashSet<String>) {
     use crate::types::Type;
     match ty {
+        // syntax-discovery-only: this per-scope declaration DAG compares the
+        // source spelling against type declarations in the same scope; typed
+        // identity has already selected that scope before this local walk.
         Type::Named { name, .. } => {
             out.insert(name.clone());
         }
