@@ -6873,12 +6873,19 @@ fn list_constructor_kernel_guards_are_isolating() {
         String::from_utf8_lossy(&build.stderr)
     );
     let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
+    let mut types = Vec::new();
     let mut imported_func_count = 0;
+    let mut defined_func_types = Vec::new();
     let mut singleton_func_idx = None;
     let mut code_idx = 0;
     let mut tamper_offset = None;
     for payload in wasmparser::Parser::new(0).parse_all(&wasm) {
         match payload.expect("parse JSON constructor guard fixture") {
+            wasmparser::Payload::TypeSection(reader) => {
+                for group in reader {
+                    types.extend(group.expect("read type rec group").into_types());
+                }
+            }
             wasmparser::Payload::ImportSection(reader) => {
                 for group in reader {
                     for import in group.expect("read import group") {
@@ -6887,6 +6894,11 @@ fn list_constructor_kernel_guards_are_isolating() {
                             imported_func_count += 1;
                         }
                     }
+                }
+            }
+            wasmparser::Payload::FunctionSection(reader) => {
+                for type_idx in reader {
+                    defined_func_types.push(type_idx.expect("read defined function type"));
                 }
             }
             wasmparser::Payload::ExportSection(reader) => {
@@ -6916,6 +6928,38 @@ fn list_constructor_kernel_guards_are_isolating() {
     }
     let tamper_offset = tamper_offset.expect("code entry for singletonJsonEntries export");
     assert_ne!(wasm[tamper_offset], 24, "tamper must change the code byte");
+    let singleton_func_idx = singleton_func_idx.expect("singletonJsonEntries function export");
+    let singleton_defined_idx = singleton_func_idx
+        .checked_sub(imported_func_count)
+        .expect("singletonJsonEntries must be a defined function");
+    let singleton_type_idx = defined_func_types[singleton_defined_idx as usize];
+    let singleton_type = &types[singleton_type_idx as usize];
+    let wasmparser::CompositeInnerType::Func(singleton_type) = &singleton_type.composite_type.inner
+    else {
+        panic!("singletonJsonEntries must have a function type");
+    };
+    assert_eq!(singleton_type.params().len(), 1);
+    assert_eq!(singleton_type.results().len(), 1);
+    let wasmparser::ValType::Ref(result_ref) = singleton_type.results()[0] else {
+        panic!("singletonJsonEntries result must be a nullable list reference");
+    };
+    assert!(result_ref.is_nullable());
+    let list_struct_idx = match result_ref.heap_type() {
+        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => idx
+            .as_module_index()
+            .expect("list result type must use a module-local heap type"),
+        _ => panic!("singletonJsonEntries result must name its list struct"),
+    };
+    let wasmparser::ValType::Ref(element_ref) = singleton_type.params()[0] else {
+        panic!("singletonJsonEntries element must be a nullable reference");
+    };
+    assert!(element_ref.is_nullable());
+    let element_type_idx = match element_ref.heap_type() {
+        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => idx
+            .as_module_index()
+            .expect("list element type must use a module-local heap type"),
+        _ => panic!("singletonJsonEntries element must name its tuple struct"),
+    };
     let lean = r#"import Artifact
 open CertPrelude AverCert.Schema AverCert.WasmSlice
 set_option maxRecDepth 400000
@@ -6958,15 +7002,17 @@ example : sourceAccepted honestPrependSym permutedPrepend = false := rfl
 
 -- TypeAttack: the claimed element representation is read from both the list
 -- struct and the exported signature. A coherent symbolic relabel cannot turn
--- the fixture's concrete `(ref null 39)` element into another byte type.
+-- the fixture's concrete nullable-ref element into another byte type. Numeric
+-- type indices come from wasmparser above rather than depending on declaration
+-- order in this whole-program fixture.
 example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 28 (.nullableRef 39) = true := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_STRUCT_IDX__ (.nullableRef __LIST_ELEMENT_TYPE_IDX__) = true := rfl
 example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 63 1 28 (.nullableRef 39) = true := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_FUNC_TYPE_IDX__ 1 __LIST_STRUCT_IDX__ (.nullableRef __LIST_ELEMENT_TYPE_IDX__) = true := rfl
 example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 28 .eqref = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_STRUCT_IDX__ .eqref = false := rfl
 example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 63 1 28 .eqref = false := rfl
+    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_FUNC_TYPE_IDX__ 1 __LIST_STRUCT_IDX__ .eqref = false := rfl
 
 -- CountAttack: predicate-level copy of constructPlanAccepted dropping ONLY
 -- `plan.fields.length = fieldCount`.
@@ -7108,7 +7154,14 @@ example : constructFamilyDropNodup dupManifest dupClaims := by
       · trivial
   · decide
 example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nodup := by decide
-"#.replace("__BYTE_OFFSET__", &tamper_offset.to_string());
+"#
+    .replace("__BYTE_OFFSET__", &tamper_offset.to_string())
+    .replace("__LIST_STRUCT_IDX__", &list_struct_idx.to_string())
+    .replace(
+        "__LIST_ELEMENT_TYPE_IDX__",
+        &element_type_idx.to_string(),
+    )
+    .replace("__LIST_FUNC_TYPE_IDX__", &singleton_type_idx.to_string());
     std::fs::write(cert.join("ListConstructGuardIso.lean"), lean).unwrap();
     let check = lake_for_cert(&cert)
         .current_dir(&cert)
