@@ -28,8 +28,12 @@ proof export.
 |---|---|---|
 | `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet |
 | `Bytes.toList` | `Bytes -> List<Int>` | Exposes validated values |
+| `Bytes.fromHex` | `String -> Result<Bytes, String>` | Even length, case-insensitive, no `0x` prefix |
+| `Bytes.toHex` | `Bytes -> String` | Total, lowercase output |
 | `Crypto.Digest32.fromBytes` | `Bytes -> Result<Digest32, String>` | Requires exactly 32 bytes |
 | `Crypto.Digest32.toBytes` | `Digest32 -> Bytes` | Forgets only the length refinement |
+| `Crypto.Digest32.fromHex` | `String -> Result<Digest32, String>` | Hex decode plus exact-length validation |
+| `Crypto.Digest32.toHex` | `Digest32 -> String` | Always 64 lowercase characters |
 
 ## Pure namespaces (no effects)
 
@@ -184,15 +188,6 @@ Source: `src/types/char.rs` — not a type, operates on `String`/`Int`.
 |---|---|---|
 | `Char.toCode` | `String -> Int` | Unicode scalar value of first char |
 | `Char.fromCode` | `Int -> Option<String>` | Code point to 1-char string, `Option.None` for surrogates/invalid |
-
-### `Byte` namespace
-
-Source: `src/types/byte.rs` — not a type, operates on `Int`/`String`.
-
-| Function | Signature | Notes |
-|---|---|---|
-| `Byte.toHex` | `Int -> Result<String, String>` | Always 2-char lowercase hex |
-| `Byte.fromHex` | `String -> Result<Int, String>` | Exactly 2 hex chars required |
 
 ## Effectful namespaces
 

@@ -657,25 +657,6 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Byte namespace
-        let byte_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            (
-                "Byte.toHex",
-                &[Type::Int],
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
-                &[],
-            ),
-            (
-                "Byte.fromHex",
-                &[Type::Str],
-                Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
-                &[],
-            ),
-        ];
-        for (name, params, ret, effects) in byte_sigs {
-            self.insert_sig(name, params, ret.clone(), effects);
-        }
-
         // Result.Ok / Result.Err / Option.Some — constructor signatures.
         // Polymorphic over T (ok/some) and E (err).
         let e_var = || Type::Var("E".to_string());

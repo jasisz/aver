@@ -1,7 +1,7 @@
 module Bytes
     intent =
         "Defines validated byte sequences as an ordinary Aver refinement."
-    exposes [fromList, toList]
+    exposes [fromList, toList, fromHex, toHex]
     exposes opaque [Bytes]
     effects []
 
@@ -26,6 +26,117 @@ fn toList(bytes: Bytes) -> List<Int>
     ? "Expose the validated octets for ordinary List operations."
     bytes.values
 
+fn parseHexChars(chars: List<String>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Parse hexadecimal pairs into octets from left to right."
+    match chars
+        [] -> Result.Ok(List.reverse(acc))
+        [highChar, ..afterHigh] -> match afterHigh
+            [] -> Result.Err("Bytes.fromHex: expected an even number of hex characters")
+            [lowChar, ..rest] -> match hexDigitValue(highChar)
+                Option.None -> Result.Err("Bytes.fromHex: invalid hexadecimal character '{highChar}'")
+                Option.Some(high) -> match hexDigitValue(lowChar)
+                    Option.None -> Result.Err("Bytes.fromHex: invalid hexadecimal character '{lowChar}'")
+                    Option.Some(low) -> parseHexChars(rest, List.prepend(high * 16 + low, acc))
+
+fn hexDigitValue(digit: String) -> Option<Int>
+    ? "Decode one case-insensitive hexadecimal digit."
+    match String.toLower(digit)
+        "0" -> Option.Some(0)
+        "1" -> Option.Some(1)
+        "2" -> Option.Some(2)
+        "3" -> Option.Some(3)
+        "4" -> Option.Some(4)
+        "5" -> Option.Some(5)
+        "6" -> Option.Some(6)
+        "7" -> Option.Some(7)
+        "8" -> Option.Some(8)
+        "9" -> Option.Some(9)
+        "a" -> Option.Some(10)
+        "b" -> Option.Some(11)
+        "c" -> Option.Some(12)
+        "d" -> Option.Some(13)
+        "e" -> Option.Some(14)
+        "f" -> Option.Some(15)
+        _ -> Option.None
+
+fn fromHex(text: String) -> Result<Bytes, String>
+    ? "Decode an even-length hexadecimal string into validated bytes."
+    values = parseHexChars(String.chars(text), [])?
+    fromList(values)
+
+fn hexDigit(value: Int) -> String
+    ? "Encode one integer in 0..=15 as lowercase hexadecimal."
+    match value
+        0 -> "0"
+        1 -> "1"
+        2 -> "2"
+        3 -> "3"
+        4 -> "4"
+        5 -> "5"
+        6 -> "6"
+        7 -> "7"
+        8 -> "8"
+        9 -> "9"
+        10 -> "a"
+        11 -> "b"
+        12 -> "c"
+        13 -> "d"
+        14 -> "e"
+        15 -> "f"
+        _ -> ""
+
+fn highNibble(value: Int) -> Int
+    ? "Compute a validated octet's high nibble without fallible arithmetic."
+    match value < 16
+        true -> 0
+        false -> match value < 32
+            true -> 1
+            false -> match value < 48
+                true -> 2
+                false -> match value < 64
+                    true -> 3
+                    false -> match value < 80
+                        true -> 4
+                        false -> match value < 96
+                            true -> 5
+                            false -> match value < 112
+                                true -> 6
+                                false -> match value < 128
+                                    true -> 7
+                                    false -> match value < 144
+                                        true -> 8
+                                        false -> match value < 160
+                                            true -> 9
+                                            false -> match value < 176
+                                                true -> 10
+                                                false -> match value < 192
+                                                    true -> 11
+                                                    false -> match value < 208
+                                                        true -> 12
+                                                        false -> match value < 224
+                                                            true -> 13
+                                                            false -> match value < 240
+                                                                true -> 14
+                                                                false -> 15
+
+fn lowNibble(value: Int) -> Int
+    ? "Compute a validated octet's low nibble without fallible arithmetic."
+    value - highNibble(value) * 16
+
+fn byteToHex(value: Int) -> String
+    ? "Encode one validated octet as two lowercase hexadecimal characters."
+    hexDigit(highNibble(value)) + hexDigit(lowNibble(value))
+
+fn hexParts(values: List<Int>, acc: List<String>) -> List<String>
+    ? "Encode validated octets into lowercase two-character pieces."
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> hexParts(tail, List.prepend(byteToHex(head), acc))
+
+fn toHex(bytes: Bytes) -> String
+    ? "Encode bytes as lowercase hexadecimal; total because Bytes contains only octets."
+    String.join(hexParts(toList(bytes), []), "")
+
 verify allInRange
     allInRange([]) => true
     allInRange([0, 127, 255]) => true
@@ -35,3 +146,48 @@ verify allInRange
 verify fromList
     fromList([0, 127, 255]) => Result.Ok(Bytes(values = [0, 127, 255]))
     fromList([256]) => Result.Err("byte value outside 0..=255")
+
+verify parseHexChars
+    parseHexChars([], []) => Result.Ok([])
+    parseHexChars(["0", "0", "a", "F"], []) => Result.Ok([0, 175])
+    parseHexChars(["0", "g"], []) => Result.Err("Bytes.fromHex: invalid hexadecimal character 'g'")
+
+verify hexDigitValue
+    hexDigitValue("0") => Option.Some(0)
+    hexDigitValue("A") => Option.Some(10)
+    hexDigitValue("f") => Option.Some(15)
+    hexDigitValue("x") => Option.None
+
+verify hexDigit
+    hexDigit(0) => "0"
+    hexDigit(10) => "a"
+    hexDigit(15) => "f"
+
+verify highNibble
+    highNibble(0) => 0
+    highNibble(175) => 10
+    highNibble(255) => 15
+
+verify lowNibble
+    lowNibble(0) => 0
+    lowNibble(16) => 0
+    lowNibble(175) => 15
+
+verify byteToHex
+    byteToHex(0) => "00"
+    byteToHex(10) => "0a"
+    byteToHex(255) => "ff"
+
+verify hexParts
+    hexParts([], []) => []
+    hexParts([0, 10, 255], []) => ["00", "0a", "ff"]
+
+verify fromHex
+    fromHex("") => Result.Ok(Bytes(values = []))
+    fromHex("00aF") => Result.Ok(Bytes(values = [0, 175]))
+    fromHex("abc") => Result.Err("Bytes.fromHex: expected an even number of hex characters")
+    fromHex("0g") => Result.Err("Bytes.fromHex: invalid hexadecimal character 'g'")
+
+verify toHex
+    toHex(fromList([])?) => ""
+    toHex(fromList([0, 10, 255])?) => "000aff"

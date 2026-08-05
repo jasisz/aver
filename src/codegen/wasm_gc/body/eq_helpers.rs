@@ -180,7 +180,7 @@ impl EqHelperRegistry {
     fn register_field_type(&mut self, field_ty: &str, registry: &TypeRegistry) {
         if matches!(
             field_ty,
-            "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char"
+            "Int" | "Float" | "Bool" | "String" | "Unit" | "Char"
         ) {
             return;
         }

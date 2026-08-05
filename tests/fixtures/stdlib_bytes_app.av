@@ -2,13 +2,18 @@ module StdlibBytesApp
     intent =
         "Consumes byte and digest refinements from Aver's embedded standard library."
     depends [Bytes, Crypto.Digest32]
-    exposes [roundTrip, digestLength, checkedDigestLength]
+    exposes [roundTrip, hexRoundTrip, digestLength, checkedDigestLength, checkedDigestHex]
     effects []
 
 fn roundTrip(values: List<Int>) -> Result<List<Int>, String>
     ? "Validate octets and expose the same values."
     bytes = Bytes.fromList(values)?
     Result.Ok(Bytes.toList(bytes))
+
+fn hexRoundTrip(text: String) -> Result<String, String>
+    ? "Decode hexadecimal bytes and encode their canonical lowercase form."
+    bytes = Bytes.fromHex(text)?
+    Result.Ok(Bytes.toHex(bytes))
 
 fn digestLength(digest: Digest32) -> Int
     ? "Observe that Digest32 remains usable as an opaque imported type."
@@ -20,10 +25,23 @@ fn checkedDigestLength(values: List<Int>) -> Result<Int, String>
     digest = Crypto.Digest32.fromBytes(bytes)?
     Result.Ok(digestLength(digest))
 
+fn checkedDigestHex(text: String) -> Result<String, String>
+    ? "Decode one hexadecimal digest and return its canonical lowercase form."
+    digest = Crypto.Digest32.fromHex(text)?
+    Result.Ok(Crypto.Digest32.toHex(digest))
+
 verify roundTrip
     roundTrip([0, 127, 255]) => Result.Ok([0, 127, 255])
     roundTrip([0, 256]) => Result.Err("byte value outside 0..=255")
 
+verify hexRoundTrip
+    hexRoundTrip("00aF") => Result.Ok("00af")
+    hexRoundTrip("abc") => Result.Err("Bytes.fromHex: expected an even number of hex characters")
+
 verify checkedDigestLength
     checkedDigestLength([0, 0]) => Result.Err("digest must contain exactly 32 bytes")
     checkedDigestLength([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) => Result.Ok(32)
+
+verify checkedDigestHex
+    checkedDigestHex("0000") => Result.Err("digest must contain exactly 32 bytes")
+    checkedDigestHex("00000000000000000000000000000000000000000000000000000000000000AF") => Result.Ok("00000000000000000000000000000000000000000000000000000000000000af")

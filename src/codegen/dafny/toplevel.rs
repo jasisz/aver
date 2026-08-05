@@ -1141,12 +1141,9 @@ pub(super) fn termination_guess_unjustified(fd: &FnDef, ctx: &CodegenContext) ->
     if infer_decreases(fd).is_some() {
         return false;
     }
-    fd.params.iter().all(|(_, t)| {
-        matches!(
-            t.as_str(),
-            "Int" | "Float" | "Bool" | "String" | "Char" | "Byte"
-        )
-    })
+    fd.params
+        .iter()
+        .all(|(_, t)| matches!(t.as_str(), "Int" | "Float" | "Bool" | "String" | "Char"))
 }
 
 /// True when the Aver body opens with a guard that explicitly handles

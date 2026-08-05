@@ -1254,7 +1254,7 @@ pub struct StringEscapeRoundtripPin {
     /// Control classifier (`escapeControlChar`): equality ladder +
     /// `code < threshold → control escape` + printable passthrough.
     pub control_fn: String,
-    /// Hex control escape (`controlCodeEscape`): `Byte.toHex` +
+    /// Hex control escape (`controlCodeEscape`): singleton `Bytes` encoding +
     /// 4-char prefix.
     pub control_escape_fn: String,
     /// Success ctor of the law's rhs, source spelling
