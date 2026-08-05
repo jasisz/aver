@@ -36,7 +36,6 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // in `ctx.proof_ir.refined_types`.
             if let Some(ty) = obj.ty()
                 && let Some(decl) = crate::codegen::common::find_refined_type_for_named(ctx, ty)
-                && decl.carrier_type == "Int"
                 && field == &decl.carrier_field
             {
                 let obj_str = emit_expr(obj, ctx);
@@ -178,8 +177,7 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // structure shape and a plain `{ value := … }` record
             // literal, so this fast-path is gated on the carrier
             // matching.
-            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
-                && decl.carrier_type == "Int"
+            if crate::codegen::common::find_refined_type(ctx, type_name).is_some()
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
@@ -539,7 +537,7 @@ fn emit_match(
 }
 
 /// True iff `expr` (recursively) contains a `RecordCreate` whose
-/// type is an Int-carrier refinement record — i.e. one we'll emit
+/// type is a refinement record — i.e. one we'll emit
 /// as a Lean Subtype constructor `⟨val, by omega⟩` that needs the
 /// surrounding `if`'s predicate as a hypothesis. Used to decide
 /// when the enclosing Bool match should emit dependent-`if h :
@@ -547,9 +545,7 @@ fn emit_match(
 fn true_body_uses_refinement_subtype(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> bool {
     match &expr.node {
         ResolvedExpr::RecordCreate { type_name, .. } => {
-            crate::codegen::common::find_refined_type(ctx, type_name)
-                .map(|decl| decl.carrier_type == "Int")
-                .unwrap_or(false)
+            crate::codegen::common::find_refined_type(ctx, type_name).is_some()
         }
         ResolvedExpr::Call(_, args) => args
             .iter()

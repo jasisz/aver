@@ -169,13 +169,11 @@ fn literal_int_value(expr: &Spanned<Expr>) -> Option<String> {
 
 /// Emit a Dafny datatype/record from a TypeDef.
 ///
-/// Refinement-via-opaque records with an `Int` carrier emit as a
-/// subset type (`type X = n: int | P n witness W`) so the invariant
-/// rides in the type and universal laws drop their `requires`
-/// clause. Other carriers (Float / String / multi-field) keep the
-/// plain `datatype` shape — `real` is Z3-unfriendly, strings are
-/// poorly automated, and multi-field needs a `predicate` over the
-/// product which the smart-constructor pattern doesn't supply.
+/// Refinement-via-opaque records admitted by proof lowering emit as a
+/// subset type (`type X = x: T | P x witness W`) so the invariant rides in
+/// the type. The lowerer supports the original Int carrier plus structural
+/// containers and nested named carriers; unsupported shapes never enter
+/// `ProofIR.refined_types` and keep the plain datatype path.
 pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
     emit_type_def_in_scope(td, ctx, None)
 }
@@ -217,14 +215,13 @@ pub fn emit_type_def_in_scope(
             ))
         }
         TypeDef::Product { name, fields, .. } => {
-            if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
-                && decl.carrier_type == "Int"
-            {
+            if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope) {
                 let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
                 let bind = aver_name_to_dafny(&decl.predicate_param);
-                let witness = decl.witness.clone().unwrap_or_else(|| "0".to_string());
+                let carrier = emit_type(&decl.carrier_type);
+                let witness = decl.witness.clone().unwrap_or_else(|| "*".to_string());
                 return Some(format!(
-                    "type {name} = {bind}: int | {predicate} witness {witness}\n"
+                    "type {name} = {bind}: {carrier} | {predicate} witness {witness}\n"
                 ));
             }
             let field_strs: Vec<String> = fields

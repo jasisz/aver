@@ -535,6 +535,102 @@ fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
 }
 
 #[test]
+fn proof_export_preserves_container_and_nested_refinements_end_to_end() {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture = repo_root.join("tests/fixtures/refinement_container_nested.av");
+    let root = temp_output_dir("aver-proof-container-nested-refinement");
+
+    let lean_out = root.join("lean");
+    let lean = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(&fixture)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&lean_out)
+        .arg("--check")
+        .output()
+        .expect("aver proof --backend lean --check");
+    assert!(
+        lean.status.success(),
+        "Lean rejected container/nested refinement export:\n{}",
+        format_output(&lean)
+    );
+
+    let lean_src = std::fs::read_to_string(lean_out.join("ContainerRefinement.lean"))
+        .expect("read ContainerRefinement.lean");
+    let all_in_range = lean_src
+        .find("def allInRange")
+        .expect("named container predicate must be emitted");
+    let bytes_type = lean_src
+        .find("abbrev Bytes")
+        .expect("Bytes must emit as a Lean Subtype");
+    let to_list = lean_src
+        .find("def toList")
+        .expect("carrier projection must be emitted");
+    let has_length = lean_src
+        .find("def hasLength32")
+        .expect("named nested predicate must be emitted");
+    let digest_type = lean_src
+        .find("abbrev Digest32")
+        .expect("Digest32 must emit as a nested Lean Subtype");
+
+    assert!(
+        all_in_range < bytes_type,
+        "Bytes' predicate must be declared before its Subtype:\n{lean_src}"
+    );
+    assert!(
+        bytes_type < to_list && to_list < has_length && has_length < digest_type,
+        "nested refinement dependencies must be emitted in declaration order:\n{lean_src}"
+    );
+    assert!(
+        lean_src.contains("abbrev Bytes := { xs : List Int // allInRange xs }")
+            && lean_src.contains("abbrev Digest32 := { bytes : Bytes // hasLength32 bytes }"),
+        "both invariants must ride in the generated Lean types:\n{lean_src}"
+    );
+    assert!(
+        !lean_src.contains("structure Bytes where")
+            && !lean_src.contains("structure Digest32 where"),
+        "refinements must never silently degrade to plain structures:\n{lean_src}"
+    );
+
+    let dafny_out = root.join("dafny");
+    let dafny = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(&fixture)
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&dafny_out)
+        .arg("--check")
+        .output()
+        .expect("aver proof --backend dafny --check");
+    assert!(
+        dafny.status.success(),
+        "Dafny rejected container/nested refinement export:\n{}",
+        format_output(&dafny)
+    );
+
+    let dafny_src = std::fs::read_to_string(dafny_out.join("ContainerRefinement.dfy"))
+        .expect("read ContainerRefinement.dfy");
+    assert!(
+        dafny_src.contains("type Bytes = xs: seq<int> | allInRange(xs) witness *")
+            && dafny_src.contains("type Digest32 = bytes: Bytes | hasLength32(bytes) witness *"),
+        "both invariants must ride in the generated Dafny subset types:\n{dafny_src}"
+    );
+    assert!(
+        !dafny_src.contains("datatype Bytes = Bytes(")
+            && !dafny_src.contains("datatype Digest32 = Digest32("),
+        "refinements must never silently degrade to plain datatypes:\n{dafny_src}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     // Issue #128: red_black_tree.av carried 44 lake errors after the
     // #123 path-shadow / `.val` fixes. The diagnosis in the issue

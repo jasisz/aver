@@ -105,9 +105,9 @@ Lemmas whose `ensures` references an opaque fn (axiom or fuel-guarded) short-cir
 
 ## Refinement records (refinement-via-opaque)
 
-An Aver `record X { v: Int }` paired with a validating smart
-constructor `fn fromX(n: Int) -> Result<X, String>` whose body matches
-`match <pred(n)> { true -> Result.Ok(X(v = n)); false -> Result.Err(_) }`
+An Aver single-field record paired with a validating smart constructor
+`fn fromX(value: T) -> Result<X, String>` whose body matches
+`match <pred(value)> { true -> Result.Ok(X(v = value)); false -> Result.Err(_) }`
 lifts to a Dafny subset type:
 
 ```dafny
@@ -125,10 +125,12 @@ lemma {:fuel add, 5} {:fuel fromInt, 5} add_commutative(a: Natural, b: Natural)
 { }
 ```
 
-Triggers for single-field `Int` carriers; `Float` / `String` and
-multi-field records stay on the plain `datatype X = X(v: int)` shape
-(no universal algebraic laws to exploit). Cross-module emit is
-identical to standalone — `aver proof natural.av` and
+The lift supports `Int`, structural containers (`List`, `Vector`, `Map`,
+`Result`, `Option`, tuples), and named carriers, including nested refinements.
+When no concrete inhabitant is known, the exporter uses Dafny's `witness *`;
+it never drops the subset predicate merely because witness synthesis failed.
+`Float` / `String` carriers and multi-field refinement records stay on the
+plain datatype shape. Cross-module emit is identical to standalone — `aver proof natural.av` and
 `aver proof natural_app.av --module-root examples` both generate the
 same `type Natural = ...` declaration.
 
