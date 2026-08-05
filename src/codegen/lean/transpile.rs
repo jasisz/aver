@@ -541,6 +541,9 @@ pub(super) fn transpile_unified(
         union_body.push('\n');
 
         let mut imports = vec!["import AverCommon".to_string()];
+        if body.contains("Crypto.sha256") {
+            imports.push("import Crypto".to_string());
+        }
         for d in &module.depends {
             imports.push(format!("import {}", d));
         }
@@ -609,6 +612,9 @@ pub(super) fn transpile_unified(
 
     let project_name = lean_project_name(ctx);
     let mut entry_imports = vec!["import AverCommon".to_string()];
+    if entry_body.contains("Crypto.sha256") {
+        entry_imports.push("import Crypto".to_string());
+    }
     for m in &ctx.modules {
         entry_imports.push(format!("import {}", m.prefix));
     }
@@ -664,9 +670,13 @@ pub(super) fn transpile_unified(
 
     // ---- AverCommon.lean ----
     let common_content = build_common_lean(&union_body, cert_model);
+    let uses_crypto_sha256 = union_body.contains("Crypto.sha256");
 
     // Project files
     let mut extra_roots: Vec<String> = vec!["AverCommon".to_string()];
+    if uses_crypto_sha256 {
+        extra_roots.push("Crypto".to_string());
+    }
     for m in &ctx.modules {
         extra_roots.push(m.prefix.clone());
     }
@@ -676,6 +686,9 @@ pub(super) fn transpile_unified(
     let mut files = module_files;
     files.push((format!("{}.lean", project_name), entry_content));
     files.push(("AverCommon.lean".to_string(), common_content));
+    if uses_crypto_sha256 {
+        files.push(("Crypto.lean".to_string(), super::crypto::SOURCE.to_string()));
+    }
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
     ProjectOutput { files }

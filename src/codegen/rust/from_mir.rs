@@ -57,7 +57,9 @@ use crate::ir::hir::{
     BuiltinCtor, BuiltinIntrinsic, ResolvedCtor, ResolvedMatchArm, ResolvedPattern,
     classify_match_dispatch_plan_resolved,
 };
-use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram};
+use crate::ir::mir::{
+    LocalId, MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram,
+};
 use crate::ir::{MatchDispatchPlan, SymbolTable};
 
 use super::emit_ctx::{is_copy_type, should_borrow_param};
@@ -985,6 +987,21 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                         ));
                     }
                     _ => unreachable!("int_arith only set for Add/Sub/Mul/Div"),
+                };
+                // The method receiver is borrowed for the duration of the
+                // call. If a nested RHS expression consumes that local (for
+                // example `value - highNibble(value) * 16`), Rust rejects the
+                // receiver borrow followed by the move inside the argument.
+                // Clone only for that overlap; a direct `x + x` RHS is itself
+                // borrowed by this method call and remains `x.add(&x)`.
+                let lhs_rhs_move_overlap = local_of(&bop.lhs.node).is_some_and(|lhs| {
+                    !matches!(&bop.rhs.node, MirExpr::Local(_))
+                        && mir_expr_contains_last_use_of_slot(&bop.rhs.node, lhs.slot)
+                });
+                let l = if lhs_rhs_move_overlap {
+                    mir_maybe_clone(l, &bop.lhs.node, emit_ctx)
+                } else {
+                    l
                 };
                 return Some(format!("{}.{}(&{})", l, method, r));
             }
@@ -3420,6 +3437,23 @@ fn local_of(expr: &MirExpr) -> Option<&MirLocal> {
     }
 }
 
+/// Whether a nested expression contains a final read of `slot`. Such reads
+/// may be emitted in an owning position, so a method receiver using the same
+/// local must be detached before evaluating that expression.
+fn mir_expr_contains_last_use_of_slot(expr: &MirExpr, slot: LocalId) -> bool {
+    if let MirExpr::Local(local) = expr {
+        return local.node.slot == slot && local.node.last_use;
+    }
+
+    let mut found = false;
+    crate::ir::mir::optimize::bare_i64::visit_children(expr, &mut |child| {
+        if !found && mir_expr_contains_last_use_of_slot(child, slot) {
+            found = true;
+        }
+    });
+    found
+}
+
 /// Should `.clone()` be skipped for this MIR expr? Mirror of HIR's
 /// `expr_skip_clone`. A local read skips clone on its last use or
 /// when Copy; `rc_wrapped` / `borrowed_params` never skip (they
@@ -4157,6 +4191,18 @@ fn emit_mir_builtin_call(
             arg!(0)
         ),
         "Map.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
+
+        // ---- Crypto ----
+        // `Bytes` and `Digest32` are nominal source-defined records, but the
+        // builtin is allowed to cross their opaque boundary. The generated
+        // Rust stays on the public semantic shape: validated octets in,
+        // exactly 32 validated octets out.
+        "Crypto.sha256" => {
+            let bytes = arg!(0);
+            format!(
+                "{{ let __input: Vec<u8> = ({bytes}).values.iter().map(|__b| __b.to_u32().expect(\"Bytes invariant violated\") as u8).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
+            )
+        }
 
         // ---- Bool ----
         "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),

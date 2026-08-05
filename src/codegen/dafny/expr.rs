@@ -518,6 +518,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         CharToCode => format!("CharToCode({})", a[0]),
         CharFromCode => format!("CharFromCode({})", a[0]),
 
+        // Crypto
+        CryptoSha256 => format!("Aver_Crypto.sha256({})", a[0]),
+
         // List
         // An empty-list literal has no element-type context in Dafny
         // (seq<?>), which makes `|[]|` fail resolver with "type of this

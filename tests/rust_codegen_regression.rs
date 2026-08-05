@@ -157,6 +157,49 @@ fn rust_codegen_emits_buildable_project_for_every_corpus_example() {
     );
 }
 
+#[test]
+fn rust_codegen_builds_embedded_bytes_crypto_fixture() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let source = repo_root.join("tests/fixtures/stdlib_bytes_app.av");
+    let workspace = temp_output_dir("rust-codegen-stdlib-bytes-crypto");
+    let project_dir = workspace.join("project");
+    fs::create_dir_all(&project_dir).expect("create crypto codegen workspace");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&source)
+        .arg("--module-root")
+        .arg(&repo_root)
+        .arg("--target")
+        .arg("rust")
+        .arg("-o")
+        .arg(&project_dir)
+        .output()
+        .expect("aver compile embedded crypto fixture");
+    assert!(
+        compile.status.success(),
+        "aver compile failed:\n{}",
+        format_output(&compile)
+    );
+
+    let check = Command::new("cargo")
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(project_dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .output()
+        .expect("cargo check generated crypto project");
+    assert!(
+        check.status.success(),
+        "generated crypto project failed cargo check:\n{}",
+        format_output(&check)
+    );
+
+    let _ = fs::remove_dir_all(workspace);
+}
+
 fn sanitise(relative: &str) -> String {
     relative
         .chars()

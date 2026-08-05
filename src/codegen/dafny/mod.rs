@@ -1,3 +1,4 @@
+mod crypto;
 /// Aver → Dafny transpiler.
 ///
 /// Single-module sources emit one `.dfy` file. Multi-module sources emit
@@ -280,6 +281,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             sections.extend(fuel.clone());
         }
         let body = sections.join("\n");
+        let module_uses_crypto_sha256 = body.contains("Aver_Crypto.sha256");
         union_body.push_str(&body);
         union_body.push('\n');
 
@@ -312,12 +314,18 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             "// Aver-generated module: {}\ninclude \"{}common.dfy\"\n",
             module.prefix, up
         );
+        if module_uses_crypto_sha256 {
+            header.push_str(&format!("include \"{}Crypto.dfy\"\n", up));
+        }
         if !depends_includes.is_empty() {
             header.push_str(&depends_includes);
             header.push('\n');
         }
 
         let mut module_inner = String::from("  import opened AverCommon\n");
+        if module_uses_crypto_sha256 {
+            module_inner.push_str("  import opened Aver_Crypto\n");
+        }
         if !depends_imports.is_empty() {
             module_inner.push_str(&depends_imports);
             module_inner.push('\n');
@@ -455,6 +463,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let entry_body = entry_sections.join("\n");
     union_body.push_str(&entry_body);
     union_body.push('\n');
+    let uses_crypto_sha256 = union_body.contains("Aver_Crypto.sha256");
 
     let entry_includes: String = ctx
         .modules
@@ -469,12 +478,21 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         .join("\n");
     let entry_name = crate::codegen::common::entry_basename(ctx);
     let mut entry_parts: Vec<String> = vec![format!(
-        "// Aver-generated entry: {}\ninclude \"common.dfy\"\n{}",
-        entry_name, entry_includes
+        "// Aver-generated entry: {}\ninclude \"common.dfy\"\n{}{}",
+        entry_name,
+        if uses_crypto_sha256 {
+            "include \"Crypto.dfy\"\n"
+        } else {
+            ""
+        },
+        entry_includes
     )];
     // Open every dependent module + AverCommon so unqualified type names
     // (`Point`, `Tile`) and helpers stay in scope at the top level.
     let mut opens = vec!["import opened AverCommon".to_string()];
+    if uses_crypto_sha256 {
+        opens.push("import opened Aver_Crypto".to_string());
+    }
     for m in &ctx.modules {
         opens.push(format!("import opened {}", dafny_module_name(&m.prefix)));
     }
@@ -514,6 +532,13 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let mut files = module_files;
     files.push((format!("{}.dfy", entry_name), entry_content));
     files.push(("common.dfy".to_string(), common_content));
+    if uses_crypto_sha256 {
+        files.push(("Crypto.dfy".to_string(), crypto::SOURCE.to_string()));
+        files.push((
+            "Crypto/Sha256Core.dfy".to_string(),
+            crypto::CORE_SOURCE.to_string(),
+        ));
+    }
     ProjectOutput { files }
 }
 
