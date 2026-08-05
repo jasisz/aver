@@ -876,49 +876,14 @@ def Float.fromString (s : String) : Except String Float :=
              else Float.ofScientific mantissa true ((-shift).toNat)
     .ok (if neg then -f else f)"#;
 
-const LEAN_PRELUDE_CHAR_BYTE: &str = r#"def Char.toCode (s : String) : Int :=
+const LEAN_PRELUDE_CHAR_CODE: &str = r#"def Char.toCode (s : String) : Int :=
   match s.toList.head? with
   | some c => (c.toNat : Int)
   | none => panic! "Char.toCode: string is empty"
 def Char.fromCode (n : Int) : Option String :=
   if n < 0 || n > 1114111 then none
   else if n >= 55296 && n <= 57343 then none
-  else some (Char.toString (Char.ofNat n.toNat))
-
-def hexDigit (n : Int) : String :=
-  match n with
-  | 0 => "0" | 1 => "1" | 2 => "2" | 3 => "3"
-  | 4 => "4" | 5 => "5" | 6 => "6" | 7 => "7"
-  | 8 => "8" | 9 => "9" | 10 => "a" | 11 => "b"
-  | 12 => "c" | 13 => "d" | 14 => "e" | 15 => "f"
-  | _ => "?"
-
-def byteToHex (code : Int) : String :=
-  hexDigit (code / 16) ++ hexDigit (code % 16)
-
-namespace AverByte
-private def hexValue (c : Char) : Option Int :=
-  match c with
-  | '0' => some 0  | '1' => some 1  | '2' => some 2  | '3' => some 3
-  | '4' => some 4  | '5' => some 5  | '6' => some 6  | '7' => some 7
-  | '8' => some 8  | '9' => some 9  | 'a' => some 10 | 'b' => some 11
-  | 'c' => some 12 | 'd' => some 13 | 'e' => some 14 | 'f' => some 15
-  | 'A' => some 10 | 'B' => some 11 | 'C' => some 12 | 'D' => some 13
-  | 'E' => some 14 | 'F' => some 15
-  | _ => none
-def toHex (n : Int) : Except String String :=
-  if n < 0 || n > 255 then
-    .error ("Byte.toHex: " ++ toString n ++ " is out of range 0-255")
-  else
-    .ok (byteToHex n)
-def fromHex (s : String) : Except String Int :=
-  match s.toList with
-  | [hi, lo] =>
-    match hexValue hi, hexValue lo with
-    | some h, some l => .ok (h * 16 + l)
-    | _, _ => .error ("Byte.fromHex: invalid hex '" ++ s ++ "'")
-  | _ => .error ("Byte.fromHex: expected exactly 2 hex chars, got '" ++ s ++ "'")
-end AverByte"#;
+  else some (Char.toString (Char.ofNat n.toNat))"#;
 
 /// The nonlinear nonneg/order closing kit for the `NonlinearNonneg`
 /// strategy (the Newton-Raphson error bounds of `projects/k5_fdiv`).
@@ -1075,7 +1040,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 false,
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(body, include_all_helpers)),
-            "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
+            "CharCode" => parts.push(LEAN_PRELUDE_CHAR_CODE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
@@ -1304,7 +1269,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
                 union_body, false, cert_model,
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(union_body, false)),
-            "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
+            "CharCode" => parts.push(LEAN_PRELUDE_CHAR_CODE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),

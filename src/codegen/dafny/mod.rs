@@ -533,7 +533,7 @@ fn build_common_dafny(union_body: &str) -> String {
             "AverList" => sections.push(DAFNY_HELPER_AVER_LIST.to_string()),
             "StringHelpers" => sections.push(DAFNY_HELPER_STRING_HELPERS.to_string()),
             "NumericParse" => sections.push(DAFNY_HELPER_NUMERIC_PARSE.to_string()),
-            "CharByte" => sections.push(DAFNY_HELPER_CHAR_BYTE.to_string()),
+            "CharCode" => sections.push(DAFNY_HELPER_CHAR.to_string()),
             "AverMap" => sections.push(DAFNY_HELPER_AVER_MAP.to_string()),
             "AverMeasure" | "ProofFuel" => {}
             "FloatInstances" | "ExceptInstances" | "StringHadd" => {}
@@ -731,11 +731,9 @@ function FloatDiv(a: real, b: real): real
 }
 "#;
 
-const DAFNY_HELPER_CHAR_BYTE: &str = r#"
+const DAFNY_HELPER_CHAR: &str = r#"
 function CharToCode(c: string): int
 function CharFromCode(n: int): Option<string>
-function ByteToHex(b: int): Result<string, string>
-function ByteFromHex(s: string): Result<int, string>
 "#;
 
 #[cfg(test)]

@@ -1500,9 +1500,8 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "String.byteLength"
                             | "Char.toCode"
                             | "Char.fromCode"
-                            | "Byte.toHex"
                             // `Int.mod`, `Int.div`, `Int.fromString`,
-                            // `Float.fromString`, `Byte.fromHex` return
+                            // and `Float.fromString` return
                             // Result<_, String> — touching them forces the
                             // String slot for the error payload even when
                             // the program never reads the Err arm.
@@ -1510,7 +1509,6 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
-                            | "Byte.fromHex"
                             // Effects that produce or consume String at
                             // their boundary. The string slot has to be
                             // allocated whenever any of these is called

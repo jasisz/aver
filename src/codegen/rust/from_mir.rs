@@ -2673,7 +2673,7 @@ pub(super) fn emit_mir_fn_body_routed(
 }
 
 /// Is the type stamp a primitive numeric?
-/// `Int` / `Float` / `Byte` count; everything else (incl. `Str`)
+/// `Int` / `Float` count; everything else (incl. `Str`)
 /// doesn't. Mirror of HIR's `EmitCtx::expr_is_numeric` for the
 /// MIR walker's `+` dispatch.
 fn ty_is_numeric(ty: Option<&Type>) -> bool {
@@ -3625,7 +3625,7 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 //
 // Mirror of the HIR oracle `emit_builtin_call` / `emit_builtin_call_inner`
 // (`builtins.rs`) for the ~88 PURE builtins (Result / Option / Int /
-// Float / String / List / Map / Vector / Bool / Char / Byte). The
+// Float / String / List / Map / Vector / Bool / Char). The
 // EFFECTFUL families (Args / Console / Http / HttpServer / Disk / Env /
 // Random / SelfHostRuntime / Tcp / Terminal / Time) are split off at the
 // `Call(Builtin)` arm to `emit_mir_effectful_builtin_call` (Wave 3b,
@@ -3637,7 +3637,7 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 //   `emit_str_arg_or_deref(…)`     → `mir_str_arg_or_deref(&args[i], ctx)?`
 // then runs the `builtin_needs_str_conversion` `.into_aver()` post-step
 // that `emit_builtin_call` applies (Int.mod, Int/Float.fromString,
-// String.* returning String, Char.fromCode, Byte.*). The byte-parity
+// String.* returning String and Char.fromCode). The byte-parity
 // gate is the safety net: any arm whose output diverges from HIR blocks
 // graduation and the fn falls back to HIR.
 
@@ -4175,18 +4175,6 @@ fn emit_mir_builtin_call(
             arg!(0)
         ),
 
-        // ---- Byte ----
-        // Range check over ℤ (no `as u8` truncation): compare the `AverInt`
-        // against the 0–255 bounds, then convert the in-range value.
-        "Byte.toHex" => format!(
-            "{{ let __n = {}; match __n.to_u16() {{ Some(__b @ 0..=255) => Ok(format!(\"{{:02x}}\", __b as u8)), _ => Err(format!(\"Byte.toHex: {{}} is out of range 0–255\", __n)) }} }}",
-            arg!(0)
-        ),
-        "Byte.fromHex" => format!(
-            "{{ let __s = {}; if __s.len() != 2 {{ Err(format!(\"Byte.fromHex: expected exactly 2 hex chars, got '{{}}'\", __s)) }} else {{ u8::from_str_radix(&__s, 16).map(|n| aver_rt::AverInt::from_i64(n as i64)).map_err(|_| format!(\"Byte.fromHex: invalid hex '{{}}'\", __s)) }} }}",
-            arg!(0)
-        ),
-
         // ---- Vector ----
         "Vector.new" => {
             let size = arg!(0);
@@ -4262,7 +4250,7 @@ fn emit_mir_builtin_call(
 
     // Mirror of `emit_builtin_call`'s `.into_aver()` post-step for
     // String-returning pure builtins (and Int.mod / Int.fromString /
-    // Float.fromString / Char.fromCode / Byte.*).
+    // Float.fromString / Char.fromCode).
     if super::builtins::builtin_needs_str_conversion(name) {
         Some(format!("({}).into_aver()", result))
     } else {

@@ -3,7 +3,7 @@
 //!
 //! Lean has hand-written `LEAN_PRELUDE_*` constants for things like
 //! `AverDigits` numeric parsing, `String.charAt`/`String.slice`,
-//! `Char.toCode`/`byteToHex`, the `AverList` recursion helpers, and
+//! `Char.toCode`, the `AverList` recursion helpers, and
 //! `BranchPath`'s `child`/`parse` constructors. Dafny has the same
 //! shape sitting inside `DAFNY_PRELUDE_AFTER_RECORDS`. Each backend
 //! re-decides locally whether to include each piece, with a mix of
@@ -138,22 +138,16 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
               / `FloatToString` / `FloatFromString` declarations.",
     },
     BuiltinHelper {
-        key: "CharByte",
+        key: "CharCode",
         body_tokens: &[
             "Char.toCode",
             "Char.fromCode",
-            "byteToHex",
-            "AverByte.",
             "CharToCode(",
             "CharFromCode(",
-            "ByteToHex(",
-            "ByteFromHex(",
         ],
-        // Dafny's `CharFromCode` returns `Option<string>` and
-        // `ByteToHex`/`ByteFromHex` return `Result<...>`.
-        depends_on: &["OptionDatatype", "ResultDatatype"],
-        doc: "Character-code helpers and hex byte utilities (Lean's `Char.toCode` / `byteToHex` / \
-              `AverByte`; Dafny's opaque `CharToCode` / `CharFromCode` / `ByteToHex` / `ByteFromHex`).",
+        // Dafny's `CharFromCode` returns `Option<string>`.
+        depends_on: &["OptionDatatype"],
+        doc: "Character-code helpers.",
     },
     BuiltinHelper {
         key: "AverMeasure",
@@ -350,7 +344,7 @@ mod tests {
                 "OptionDatatype",
                 "AverList",
                 "StringHelpers",
-                "CharByte",
+                "CharCode",
                 "ProofFuel",
                 "StringHadd",
             ]
@@ -372,7 +366,7 @@ mod tests {
                 "OptionDatatype",
                 "AverList",
                 "StringHelpers",
-                "CharByte",
+                "CharCode",
                 "AverMeasure",
                 "AverMap",
                 "ProofFuel",

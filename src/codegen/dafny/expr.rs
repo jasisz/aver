@@ -514,11 +514,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         BoolAnd => format!("({} && {})", a[0], a[1]),
         BoolNot => format!("(!{})", a[0]),
 
-        // Char/Byte
+        // Char
         CharToCode => format!("CharToCode({})", a[0]),
         CharFromCode => format!("CharFromCode({})", a[0]),
-        ByteToHex => format!("ByteToHex({})", a[0]),
-        ByteFromHex => format!("ByteFromHex({})", a[0]),
 
         // List
         // An empty-list literal has no element-type context in Dafny

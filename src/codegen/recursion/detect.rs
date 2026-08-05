@@ -1448,7 +1448,7 @@ pub(crate) fn supports_mutual_string_pos_advance(
 pub(crate) fn is_scalar_like_type(type_name: &str) -> bool {
     matches!(
         type_name,
-        "Int" | "Float" | "Bool" | "String" | "Char" | "Byte" | "Unit"
+        "Int" | "Float" | "Bool" | "String" | "Char" | "Unit"
     )
 }
 

@@ -501,13 +501,13 @@ pub(super) fn emit_string_escape_roundtrip_law(
     ));
     push(floored(
         &format!(
-            "private theorem {p}_hexDigit_data :\n    ∀ d : Nat, d < 16 → (hexDigit (d : Int)).toList = [(hexDigit (d : Int)).toList.head!]"
+            "private theorem {p}_hexDigit_data :\n    ∀ d : Nat, d < 16 → (Bytes.hexDigit (d : Int)).toList = [(Bytes.hexDigit (d : Int)).toList.head!]"
         ),
         "decide",
     ));
     push(floored(
         &format!(
-            "private theorem {p}_hexVal_round :\n    ∀ d : Nat, d < 16 → {hexval} (Char.toString ((hexDigit (d : Int)).toList.head!)) = some (d : Int)"
+            "private theorem {p}_hexVal_round :\n    ∀ d : Nat, d < 16 → {hexval} (Char.toString ((Bytes.hexDigit (d : Int)).toList.head!)) = some (d : Int)"
         ),
         "decide",
     ));
@@ -558,10 +558,10 @@ pub(super) fn emit_string_escape_roundtrip_law(
             .collect();
         push(floored(
             &format!(
-                "private theorem {p}_control_u {{c : Char}} (h32 : c.toNat < {t}){ladder_hyps} :\n    {ctl} (Char.toString c) =\n      {prefix_s} + (hexDigit ((c.toNat : Int) / 16) ++ hexDigit ((c.toNat : Int) % 16))"
+                "private theorem {p}_control_u {{c : Char}} (h32 : c.toNat < {t}){ladder_hyps} :\n    {ctl} (Char.toString c) =\n      {prefix_s} + (Bytes.hexDigit ((c.toNat : Int) / 16) + Bytes.hexDigit ((c.toNat : Int) % 16))"
             ),
             &format!(
-                "simp only [{ctl}]\nrw [{p}_toCode_toString]\nsimp [{ladder_ne_shows}\n  show ((c.toNat : Int) < {t}) from by omega,\n  {cce}, AverByte.toHex,\n  show ¬ ((c.toNat : Int) < 0) from by omega,\n  show ¬ ((c.toNat : Int) > 255) from by omega,\n  byteToHex]"
+                "simp only [{ctl}]\nrw [{p}_toCode_toString]\nsimp [{ladder_ne_shows}\n  show ((c.toNat : Int) < {t}) from by omega]\nhave h255 : (c.toNat : Int) ≤ 255 := by omega\nby_cases h16 : (c.toNat : Int) < 16\n· have hdiv16 : (c.toNat : Int) / 16 = 0 := by omega\n  have hmod16 : (c.toNat : Int) % 16 = (c.toNat : Int) := by omega\n  simp [{cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.toList, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble, h16, h255, hdiv16, hmod16]\n· have h32i : (c.toNat : Int) < 32 := by omega\n  have hdiv32 : (c.toNat : Int) / 16 = 1 := by omega\n  have hmod32 : (c.toNat : Int) % 16 = (c.toNat : Int) - 16 := by omega\n  simp [{cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.toList, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble, h16, h32i, h255, hdiv32, hmod32]"
             ),
         ));
     }
@@ -698,7 +698,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
             .map(|(i, _)| format!(" hk{i}"))
             .collect();
         body.push_str(&format!(
-            "have hesc : {cls} (Char.toString c) =\n    {prefix_s} + (hexDigit ((c.toNat / 16 : Nat) : Int) ++ hexDigit ((c.toNat % 16 : Nat) : Int)) := by\n  rw [{p}_classifier_default{e_args}, {p}_control_u h32{hk_args}, hdiv, hmod]\n"
+            "have hesc : {cls} (Char.toString c) =\n    {prefix_s} + (Bytes.hexDigit ((c.toNat / 16 : Nat) : Int) + Bytes.hexDigit ((c.toNat % 16 : Nat) : Int)) := by\n  rw [{p}_classifier_default{e_args}, {p}_control_u h32{hk_args}, hdiv, hmod]\n"
         ));
         body.push_str(&format!(
             "have hA := {p}_hexDigit_data (c.toNat / 16) (by omega)\n"
@@ -707,7 +707,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
             "have hB := {p}_hexDigit_data (c.toNat % 16) (by omega)\n"
         ));
         body.push_str(&format!(
-            "have hdataE : ({cls} (Char.toString c)).toList\n    = {esc_c} :: {uni_c} :: '0' :: '0' ::\n      (hexDigit ((c.toNat / 16 : Nat) : Int)).toList.head! ::\n      (hexDigit ((c.toNat % 16 : Nat) : Int)).toList.head! :: [] := by\n  rw [hesc, {p}_data_add, {p}_data_append, hA, hB]\n  rfl\n"
+            "have hdataE : ({cls} (Char.toString c)).toList\n    = {esc_c} :: {uni_c} :: '0' :: '0' ::\n      (Bytes.hexDigit ((c.toNat / 16 : Nat) : Int)).toList.head! ::\n      (Bytes.hexDigit ((c.toNat % 16 : Nat) : Int)).toList.head! :: [] := by\n  rw [hesc, {p}_data_add, {p}_data_add, hA, hB]\n  rfl\n"
         ));
         body.push_str(&format!(
             "have hlen : ({p}_escL (c :: cs)).toList.length = 6 + ({p}_escL cs).toList.length := by\n  rw [{p}_escL_cons, {p}_data_append, List.length_append, hdataE]\n  rfl\n"
@@ -726,8 +726,8 @@ pub(super) fn emit_string_escape_roundtrip_law(
             };
             body.push_str(&format!("have hn{k} := {p}_drop_succ_of_drop {prev}\n"));
         }
-        let hex_a = "(hexDigit ((c.toNat / 16 : Nat) : Int)).toList.head!";
-        let hex_b = "(hexDigit ((c.toNat % 16 : Nat) : Int)).toList.head!";
+        let hex_a = "(Bytes.hexDigit ((c.toNat / 16 : Nat) : Int)).toList.head!";
+        let hex_b = "(Bytes.hexDigit ((c.toNat % 16 : Nat) : Int)).toList.head!";
         let tail = format!("(({p}_escL cs).toList ++ [{term_c}])");
         let suffixes: [String; 5] = [
             format!("{uni_c} :: '0' :: '0' :: {hex_a} :: {hex_b} :: {tail}"),
