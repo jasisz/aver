@@ -1,0 +1,32 @@
+module Digest32
+    intent =
+        "Defines an exactly 32-byte cryptographic digest refinement."
+    depends [Bytes]
+    exposes [fromBytes, toBytes]
+    exposes opaque [Digest32]
+    effects []
+
+record Digest32
+    bytes: Bytes
+
+fn hasLength32(bytes: Bytes) -> Bool
+    ? "Return true when the byte sequence has SHA-256 digest length."
+    List.len(Bytes.toList(bytes)) == 32
+
+fn fromBytes(bytes: Bytes) -> Result<Digest32, String>
+    ? "Validate and construct an exactly 32-byte cryptographic digest."
+    match hasLength32(bytes)
+        true -> Result.Ok(Digest32(bytes = bytes))
+        false -> Result.Err("digest must contain exactly 32 bytes")
+
+fn toBytes(digest: Digest32) -> Bytes
+    ? "Forget only the fixed-length digest refinement."
+    digest.bytes
+
+verify hasLength32
+    hasLength32(Bytes.fromList([])?) => false
+    hasLength32(Bytes.fromList([0, 0])?) => false
+    hasLength32(Bytes.fromList([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])?) => true
+
+verify fromBytes
+    fromBytes(Bytes.fromList([0, 0])?) => Result.Err("digest must contain exactly 32 bytes")

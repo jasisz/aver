@@ -2,6 +2,35 @@
 
 All functions live in namespaces — no flat builtins (decision: `FullNamespaceEverywhere`).
 
+## Aver source modules
+
+Standard modules ship as ordinary Aver source embedded in the compiler. Import
+them explicitly with `depends`; they do not depend on the current directory or
+`--module-root`, and project files cannot shadow their reserved names.
+
+### `Bytes` and `Crypto.Digest32`
+
+```aver
+module Packet
+    depends [Bytes, Crypto.Digest32]
+
+fn validate(payload: List<Int>) -> Result<Bytes, String>
+    Bytes.fromList(payload)
+```
+
+`Bytes` is an opaque refinement over `List<Int>` whose values are all in
+`0..=255`. `Digest32`, imported from `Crypto.Digest32`, is a nested refinement
+requiring exactly 32 bytes.
+Both remain ordinary Aver types and retain their invariants in Lean and Dafny
+proof export.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet |
+| `Bytes.toList` | `Bytes -> List<Int>` | Exposes validated values |
+| `Crypto.Digest32.fromBytes` | `Bytes -> Result<Digest32, String>` | Requires exactly 32 bytes |
+| `Crypto.Digest32.toBytes` | `Digest32 -> Bytes` | Forgets only the length refinement |
+
 ## Pure namespaces (no effects)
 
 ### `Bool` namespace

@@ -1,0 +1,37 @@
+module Bytes
+    intent =
+        "Defines validated byte sequences as an ordinary Aver refinement."
+    exposes [fromList, toList]
+    exposes opaque [Bytes]
+    effects []
+
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte value outside 0..=255")
+
+fn toList(bytes: Bytes) -> List<Int>
+    ? "Expose the validated octets for ordinary List operations."
+    bytes.values
+
+verify allInRange
+    allInRange([]) => true
+    allInRange([0, 127, 255]) => true
+    allInRange([-1]) => false
+    allInRange([256]) => false
+
+verify fromList
+    fromList([0, 127, 255]) => Result.Ok(Bytes(values = [0, 127, 255]))
+    fromList([256]) => Result.Err("byte value outside 0..=255")
