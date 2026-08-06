@@ -25,9 +25,9 @@
 
 use wasm_encoder::{FunctionSection, TypeSection, ValType};
 
+use super::super::effects::{EffectName, EffectRegistry};
 use super::super::types::TypeRegistry;
 use super::super::wasip2_imports::{Wasip2ImportRegistry, Wasip2ImportSlot};
-use super::super::effects::{EffectName, EffectRegistry};
 use super::{
     TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadBytesIndices, TcpReadLineIndices,
     TcpSendBytesIndices, TcpSendIndices, TcpWriteBytesIndices, TcpWriteLineIndices,
