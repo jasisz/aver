@@ -40,6 +40,7 @@ pub mod scc;
 #[cfg(feature = "runtime")]
 pub mod services;
 pub mod source;
+mod stdlib;
 pub mod tail_check;
 pub mod tco;
 #[cfg(feature = "tty-render")]

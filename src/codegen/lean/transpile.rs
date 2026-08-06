@@ -221,6 +221,96 @@ fn is_wrapper_over_recursion_inner(ctx: &CodegenContext, fd: &crate::ast::FnDef)
     })
 }
 
+fn emit_pure_component(
+    comp: &[&crate::ast::FnDef],
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+    emit_mode: LeanEmitMode,
+    recursive_names: &HashSet<String>,
+    recursive_fns: &HashSet<String>,
+) -> Vec<String> {
+    ctx.with_module_scope(scope, || {
+        let mut out = Vec::new();
+        if comp.len() > 1 {
+            let code = match emit_mode {
+                LeanEmitMode::Proof => {
+                    let all_supported = comp
+                        .iter()
+                        .all(|fd| crate::codegen::common::fn_contract_exists_for_fn(ctx, fd));
+                    if all_supported {
+                        toplevel::emit_mutual_group_proof(comp, ctx)
+                    } else {
+                        toplevel::emit_mutual_group(comp, ctx)
+                    }
+                }
+                LeanEmitMode::Standard => toplevel::emit_mutual_group(comp, ctx),
+            };
+            out.push(code);
+            out.push(String::new());
+        } else if let Some(fd) = comp.first() {
+            let emitted = match emit_mode {
+                LeanEmitMode::Proof => {
+                    let is_recursive = recursive_names.contains(&fd.name);
+                    // Recursive fns without a proof contract remain partial,
+                    // except recognized wrapper-recursion inner loops whose
+                    // law strategy needs transparent equations.
+                    if is_recursive
+                        && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
+                        && !is_wrapper_over_recursion_inner(ctx, fd)
+                    {
+                        toplevel::emit_fn_def(fd, recursive_names, ctx)
+                    } else {
+                        toplevel::emit_fn_def_proof(fd, ctx)
+                    }
+                }
+                LeanEmitMode::Standard => toplevel::emit_fn_def(fd, recursive_fns, ctx),
+            };
+            if let Some(code) = emitted {
+                out.push(code);
+                out.push(String::new());
+            }
+        }
+        out
+    })
+}
+
+fn emit_type_sections(
+    td: &crate::ast::TypeDef,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+    emit_mode: LeanEmitMode,
+    cert_model: bool,
+    recursive_types: &HashSet<String>,
+    measure_sig_type_refs: &[String],
+) -> Vec<String> {
+    ctx.with_module_scope(scope, || {
+        let mut sections = vec![toplevel::emit_type_def_in_scope(td, ctx, scope)];
+        if cert_model {
+            let inst = toplevel::emit_inhabited_instance(td, ctx, scope);
+            if !inst.is_empty() {
+                sections.push(inst);
+            }
+        }
+        if toplevel::is_recursive_type_def(td)
+            && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
+        {
+            if !cert_model {
+                sections.push(toplevel::emit_recursive_decidable_eq(
+                    toplevel::type_def_name(td),
+                ));
+            }
+            if matches!(emit_mode, LeanEmitMode::Proof)
+                && let Some(measure) =
+                    toplevel::emit_recursive_measure(td, recursive_types, measure_sig_type_refs)
+            {
+                sections.push(measure);
+            }
+        }
+        sections.push(String::new());
+        sections
+    })
+}
+
 /// Multi-file Lean output for multi-module Aver projects:
 /// - `AverCommon.lean` carries built-in helpers + records (UNION decision
 ///   over every module + entry body, so a helper is included only if
@@ -288,72 +378,6 @@ pub(super) fn transpile_unified(
         )
         .collect();
 
-    // Pure fns are SCC-routed per scope (per dependent module + entry)
-    // independently — shared `route_pure_components_per_scope` handles
-    // the loop. A global SCC pass would conflate same-bare-name fns from
-    // different modules (rogue's `Map.getT` vs `Fov.getT`).
-    let pure_per_scope = crate::codegen::common::route_pure_components_per_scope(
-        ctx,
-        toplevel::is_pure_fn,
-        |comp, scope| {
-            let scope_opt = if scope.is_empty() { None } else { Some(scope) };
-            ctx.with_module_scope(scope_opt, || {
-                let mut out: Vec<String> = Vec::new();
-                if comp.len() > 1 {
-                    let code = match emit_mode {
-                        LeanEmitMode::Proof => {
-                            let all_supported = comp.iter().all(|fd| {
-                                crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
-                            });
-                            if all_supported {
-                                toplevel::emit_mutual_group_proof(comp, ctx)
-                            } else {
-                                toplevel::emit_mutual_group(comp, ctx)
-                            }
-                        }
-                        LeanEmitMode::Standard => toplevel::emit_mutual_group(comp, ctx),
-                    };
-                    out.push(code);
-                    out.push(String::new());
-                } else if let Some(fd) = comp.first() {
-                    let emitted = match emit_mode {
-                        LeanEmitMode::Proof => {
-                            let is_recursive = recursive_names.contains(&fd.name);
-                            // ProofIR's `fn_contracts` holds an entry only for
-                            // recursive fns the ContractLower stage could
-                            // classify. Recursive fns without a contract land
-                            // in `unclassified_fns` and fall through to the
-                            // partial/non-recursive emit — EXCEPT the inner loop
-                            // of a recognized `WrapperOverRecursion` law (e.g.
-                            // `factTR`). Such a fn drives structurally on its
-                            // first parameter (Lean's equation compiler infers
-                            // the measure), so emit it as a terminating `def`:
-                            // the strategy's accumulator-decomposition lemma
-                            // needs the definitional equations a `partial def`
-                            // would withhold. Scoped to wrapper inners so a bare
-                            // accumulator fn outside the strategy (whose law the
-                            // backend honestly declines) stays `partial`.
-                            if is_recursive
-                                && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
-                                && !is_wrapper_over_recursion_inner(ctx, fd)
-                            {
-                                toplevel::emit_fn_def(fd, &recursive_names, ctx)
-                            } else {
-                                toplevel::emit_fn_def_proof(fd, ctx)
-                            }
-                        }
-                        LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
-                    };
-                    if let Some(code) = emitted {
-                        out.push(code);
-                        out.push(String::new());
-                    }
-                }
-                out
-            })
-        },
-    );
-
     // Lifted effectful fns + decisions + verifies remain entry-only.
     let mut entry_lifted_sections: Vec<String> = Vec::new();
     let lifted_recursive_names = match emit_mode {
@@ -411,49 +435,37 @@ pub(super) fn transpile_unified(
 
     for module in &ctx.modules {
         let mut body_sections: Vec<String> = Vec::new();
-        ctx.with_module_scope(Some(module.prefix.as_str()), || {
-            for td in &module.type_defs {
-                body_sections.push(toplevel::emit_type_def_in_scope(
-                    td,
-                    ctx,
-                    Some(module.prefix.as_str()),
-                ));
-                // Cert mode drops `deriving`, so supply the `Inhabited` instance
-                // the proof-mode recursive `panic!` sites need, explicitly.
-                if cert_model {
-                    let inst =
-                        toplevel::emit_inhabited_instance(td, ctx, Some(module.prefix.as_str()));
-                    if !inst.is_empty() {
-                        body_sections.push(inst);
-                    }
+        let scope = Some(module.prefix.as_str());
+        let decl_plan = super::decl_order::plan_scoped_declarations(
+            ctx,
+            &module.type_defs,
+            &module.fn_defs,
+            scope,
+        );
+        for decl in &decl_plan.order {
+            match *decl {
+                super::decl_order::ScopedDecl::Type(index) => {
+                    body_sections.extend(emit_type_sections(
+                        &module.type_defs[index],
+                        scope,
+                        ctx,
+                        emit_mode,
+                        cert_model,
+                        &recursive_types,
+                        &measure_sig_type_refs,
+                    ));
                 }
-                if toplevel::is_recursive_type_def(td)
-                    && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
-                {
-                    // The `@[implemented_by]`/`unsafe` `DecidableEq` shim exists
-                    // only for the `native_decide` sample checks; a certificate
-                    // model file drops it (kernel-clean, and the wall rejects
-                    // `unsafe`).
-                    if !cert_model {
-                        body_sections.push(toplevel::emit_recursive_decidable_eq(
-                            toplevel::type_def_name(td),
-                        ));
-                    }
-                    if matches!(emit_mode, LeanEmitMode::Proof)
-                        && let Some(measure) = toplevel::emit_recursive_measure(
-                            td,
-                            &recursive_types,
-                            &measure_sig_type_refs,
-                        )
-                    {
-                        body_sections.push(measure);
-                    }
+                super::decl_order::ScopedDecl::FnComponent(index) => {
+                    body_sections.extend(emit_pure_component(
+                        &decl_plan.components[index],
+                        scope,
+                        ctx,
+                        emit_mode,
+                        &recursive_names,
+                        &recursive_fns,
+                    ));
                 }
-                body_sections.push(String::new());
             }
-        });
-        if let Some(scope_sections) = pure_per_scope.by_scope.get(&module.prefix) {
-            body_sections.extend(scope_sections.clone());
         }
         // Cross-file law pool — EMIT side: a dependency module's proven
         // `verify … law` blocks become `<fn>_law_<name>` theorems INSIDE
@@ -529,6 +541,9 @@ pub(super) fn transpile_unified(
         union_body.push('\n');
 
         let mut imports = vec!["import AverCommon".to_string()];
+        if body.contains("Crypto.sha256") {
+            imports.push("import Crypto".to_string());
+        }
         for d in &module.depends {
             imports.push(format!("import {}", d));
         }
@@ -560,33 +575,32 @@ pub(super) fn transpile_unified(
 
     // ---- Entry sections ----
     let mut entry_body_sections: Vec<String> = Vec::new();
-    for td in &ctx.type_defs {
-        entry_body_sections.push(toplevel::emit_type_def(td, ctx));
-        if cert_model {
-            let inst = toplevel::emit_inhabited_instance(td, ctx, None);
-            if !inst.is_empty() {
-                entry_body_sections.push(inst);
-            }
-        }
-        if toplevel::is_recursive_type_def(td)
-            && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
-        {
-            if !cert_model {
-                entry_body_sections.push(toplevel::emit_recursive_decidable_eq(
-                    toplevel::type_def_name(td),
+    let entry_plan =
+        super::decl_order::plan_scoped_declarations(ctx, &ctx.type_defs, &ctx.fn_defs, None);
+    for decl in &entry_plan.order {
+        match *decl {
+            super::decl_order::ScopedDecl::Type(index) => {
+                entry_body_sections.extend(emit_type_sections(
+                    &ctx.type_defs[index],
+                    None,
+                    ctx,
+                    emit_mode,
+                    cert_model,
+                    &recursive_types,
+                    &measure_sig_type_refs,
                 ));
             }
-            if matches!(emit_mode, LeanEmitMode::Proof)
-                && let Some(measure) =
-                    toplevel::emit_recursive_measure(td, &recursive_types, &measure_sig_type_refs)
-            {
-                entry_body_sections.push(measure);
+            super::decl_order::ScopedDecl::FnComponent(index) => {
+                entry_body_sections.extend(emit_pure_component(
+                    &entry_plan.components[index],
+                    None,
+                    ctx,
+                    emit_mode,
+                    &recursive_names,
+                    &recursive_fns,
+                ));
             }
         }
-        entry_body_sections.push(String::new());
-    }
-    if let Some(entry_pure) = pure_per_scope.by_scope.get("") {
-        entry_body_sections.extend(entry_pure.clone());
     }
     entry_body_sections.extend(entry_lifted_sections);
     entry_body_sections.extend(entry_decision_sections);
@@ -598,6 +612,9 @@ pub(super) fn transpile_unified(
 
     let project_name = lean_project_name(ctx);
     let mut entry_imports = vec!["import AverCommon".to_string()];
+    if entry_body.contains("Crypto.sha256") {
+        entry_imports.push("import Crypto".to_string());
+    }
     for m in &ctx.modules {
         entry_imports.push(format!("import {}", m.prefix));
     }
@@ -653,9 +670,13 @@ pub(super) fn transpile_unified(
 
     // ---- AverCommon.lean ----
     let common_content = build_common_lean(&union_body, cert_model);
+    let uses_crypto_sha256 = union_body.contains("Crypto.sha256");
 
     // Project files
     let mut extra_roots: Vec<String> = vec!["AverCommon".to_string()];
+    if uses_crypto_sha256 {
+        extra_roots.push("Crypto".to_string());
+    }
     for m in &ctx.modules {
         extra_roots.push(m.prefix.clone());
     }
@@ -665,6 +686,9 @@ pub(super) fn transpile_unified(
     let mut files = module_files;
     files.push((format!("{}.lean", project_name), entry_content));
     files.push(("AverCommon.lean".to_string(), common_content));
+    if uses_crypto_sha256 {
+        files.push(("Crypto.lean".to_string(), super::crypto::SOURCE.to_string()));
+    }
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
     ProjectOutput { files }

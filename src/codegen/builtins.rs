@@ -70,9 +70,8 @@ pub(crate) enum Builtin {
     CharToCode,
     CharFromCode,
 
-    // --- Byte ---
-    ByteToHex,
-    ByteFromHex,
+    // --- Crypto ---
+    CryptoSha256,
 
     // --- List ---
     ListLen,
@@ -179,9 +178,8 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Char.toCode" => Builtin::CharToCode,
         "Char.fromCode" => Builtin::CharFromCode,
 
-        // Byte
-        "Byte.toHex" => Builtin::ByteToHex,
-        "Byte.fromHex" => Builtin::ByteFromHex,
+        // Crypto
+        "Crypto.sha256" => Builtin::CryptoSha256,
 
         // List
         "List.len" => Builtin::ListLen,

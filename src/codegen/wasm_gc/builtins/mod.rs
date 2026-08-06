@@ -69,6 +69,7 @@ use super::types::TypeRegistry;
 use super::wat_helper;
 
 mod bignum;
+mod crypto;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
 /// new builtin: extend this enum + `from_dotted` + `signature` +
@@ -135,18 +136,14 @@ pub(super) enum BuiltinName {
     CharToCode,
     CharFromCode,
     StringChars,
-    /// `Byte.fromHex(s) -> Result<Int, String>`. Parses a 2-char hex
-    /// string. Validates length + each digit; returns `Result.Ok(byte)`
-    /// or `Result.Err("not a hex string")`.
-    ByteFromHex,
-    /// `Byte.toHex(b) -> Result<String, String>`. Validates `b` is in
-    /// `[0, 256)`, returns the 2-char lowercase hex string. Out-of-
-    /// range returns `Result.Err("byte out of range")`.
-    ByteToHex,
     /// `String.replace(s, needle, repl) -> String`. Two-pass naive
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
     StringReplace,
+    /// Pure SHA-256 over the refined `Bytes` record, returning the nominal
+    /// 32-byte digest record. Implemented inside the wasm module so browser
+    /// and WASI targets share identical semantics without a host import.
+    CryptoSha256,
     /// Internal `__int_mod_euclid(a: i64, b: i64) -> i64` — Euclidean
     /// modulo (always in `[0, |b|)`). Powers `Int.mod` so result has
     /// math-modulo semantics, not Rust `%` truncated remainder.
@@ -254,9 +251,8 @@ impl BuiltinName {
             "Char.toCode" => Some(Self::CharToCode),
             "Char.fromCode" => Some(Self::CharFromCode),
             "String.chars" => Some(Self::StringChars),
-            "Byte.fromHex" => Some(Self::ByteFromHex),
-            "Byte.toHex" => Some(Self::ByteToHex),
             "String.replace" => Some(Self::StringReplace),
+            "Crypto.sha256" => Some(Self::CryptoSha256),
             _ => None,
         }
     }
@@ -285,9 +281,8 @@ impl BuiltinName {
             Self::CharToCode => "Char.toCode",
             Self::CharFromCode => "Char.fromCode",
             Self::StringChars => "String.chars",
-            Self::ByteFromHex => "Byte.fromHex",
-            Self::ByteToHex => "Byte.toHex",
             Self::StringReplace => "String.replace",
+            Self::CryptoSha256 => "Crypto.sha256",
             Self::IntModEuclid => "__int_mod_euclid",
             Self::IntDivEuclid => "__int_div_euclid",
             Self::AintFromI64 => "__aint_from_i64",
@@ -342,13 +337,12 @@ impl BuiltinName {
             Self::CharToCode => Ok(vec![string_ref_ty(registry)?]),
             Self::CharFromCode => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
-            Self::ByteFromHex => Ok(vec![string_ref_ty(registry)?]),
-            Self::ByteToHex => Ok(vec![ValType::I64]),
             Self::StringReplace => Ok(vec![
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
+            Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Bytes")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64, ValType::I64]),
             Self::AintFromI64 => Ok(vec![ValType::I64]),
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
@@ -400,9 +394,8 @@ impl BuiltinName {
                 Ok(vec![option_ref_ty(registry, "Option<String>")?])
             }
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
-            Self::ByteFromHex => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
-            Self::ByteToHex => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
+            Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
             Self::AintFromI64
             | Self::AintAdd
@@ -457,9 +450,8 @@ impl BuiltinName {
             Self::CharToCode => emit_char_to_code(registry),
             Self::CharFromCode => emit_char_from_code(registry),
             Self::StringChars => emit_string_chars(registry),
-            Self::ByteFromHex => emit_byte_from_hex(registry),
-            Self::ByteToHex => emit_byte_to_hex(registry),
             Self::StringReplace => emit_string_replace(registry),
+            Self::CryptoSha256 => crypto::emit_sha256(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
             Self::IntDivEuclid => emit_int_div_euclid(),
             Self::AintFromI64 => bignum::emit_aint_from_i64(registry),
@@ -598,6 +590,17 @@ fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, Wa
         .ok_or(WasmGcError::Validation(format!(
             "builtin requires `{canonical}` slot but it wasn't registered"
         )))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// Nullable reference to a nominal record used by an intrinsic boundary.
+fn record_ref_ty(registry: &TypeRegistry, name: &str) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .record_type_idx(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("builtin requires record `{name}`")))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(idx),
@@ -2990,172 +2993,6 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::End);
     Ok(f)
-}
-
-/// `Byte.fromHex(s: String) -> Result<Int, String>`. Parses a 2-byte
-/// ASCII hex string. Validates length + each digit; returns
-/// `Result.Ok(byte)` on success or `Result.Err(s)` on any parse
-/// failure (length != 2 or any non-hex byte).
-fn emit_byte_from_hex(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let preamble =
-        string_and_result_preamble(registry, "Result<Int,String>", "i64", "(ref null $string)")?;
-    let wat = format!(
-        r#"
-        (module
-          {preamble}
-          (func (export "helper")
-                (param $s (ref null $string))
-                (result (ref null $result))
-            (local $d0 i32)
-            (local $d1 i32)
-            (local $byte i64)
-            (local $byte_local i32)
-
-            ;; len(s) != 2 → Err(s)
-            local.get $s array.len
-            i32.const 2
-            i32.ne
-            (if
-              (then
-                i32.const 0
-                i64.const 0
-                local.get $s
-                struct.new $result
-                return))
-
-            ;; d0 = hex_digit(s[0]) inline (no subroutines — wat_helper
-            ;; only emits the first function in the module)
-            local.get $s i32.const 0 array.get_u $string local.set $byte_local
-            i32.const -1 local.set $d0
-            local.get $byte_local i32.const 48 i32.ge_u
-            local.get $byte_local i32.const 57 i32.le_u i32.and
-            (if (then local.get $byte_local i32.const 48 i32.sub local.set $d0))
-            local.get $byte_local i32.const 65 i32.ge_u
-            local.get $byte_local i32.const 70 i32.le_u i32.and
-            (if (then local.get $byte_local i32.const 55 i32.sub local.set $d0))
-            local.get $byte_local i32.const 97 i32.ge_u
-            local.get $byte_local i32.const 102 i32.le_u i32.and
-            (if (then local.get $byte_local i32.const 87 i32.sub local.set $d0))
-
-            ;; d1 = hex_digit(s[1]) inline
-            local.get $s i32.const 1 array.get_u $string local.set $byte_local
-            i32.const -1 local.set $d1
-            local.get $byte_local i32.const 48 i32.ge_u
-            local.get $byte_local i32.const 57 i32.le_u i32.and
-            (if (then local.get $byte_local i32.const 48 i32.sub local.set $d1))
-            local.get $byte_local i32.const 65 i32.ge_u
-            local.get $byte_local i32.const 70 i32.le_u i32.and
-            (if (then local.get $byte_local i32.const 55 i32.sub local.set $d1))
-            local.get $byte_local i32.const 97 i32.ge_u
-            local.get $byte_local i32.const 102 i32.le_u i32.and
-            (if (then local.get $byte_local i32.const 87 i32.sub local.set $d1))
-
-            ;; if either < 0 → Err
-            local.get $d0
-            i32.const 0
-            i32.lt_s
-            local.get $d1
-            i32.const 0
-            i32.lt_s
-            i32.or
-            (if
-              (then
-                i32.const 0
-                i64.const 0
-                local.get $s
-                struct.new $result
-                return))
-
-            ;; byte = d0 * 16 + d1
-            local.get $d0
-            i32.const 4
-            i32.shl
-            local.get $d1
-            i32.or
-            i64.extend_i32_u
-            local.set $byte
-
-            ;; Result.Ok(byte): tag=1, ok=byte, err=null
-            i32.const 1
-            local.get $byte
-            ref.null $string
-            struct.new $result)
-        )
-    "#
-    );
-    wat_helper::compile_wat_helper(&wat)
-}
-
-/// `Byte.toHex(b: Int) -> Result<String, String>`. Validates `b` is in
-/// `[0, 256)`. On success returns the 2-char lowercase hex string
-/// `Result.Ok(hex)`. Out-of-range returns `Result.Err(empty)` —
-/// callers that want a richer error string should validate themselves
-/// or wrap; this matches the legacy backend's runtime helper.
-fn emit_byte_to_hex(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let preamble = string_and_result_preamble(
-        registry,
-        "Result<String,String>",
-        "(ref null $string)",
-        "(ref null $string)",
-    )?;
-    let wat = format!(
-        r#"
-        (module
-          {preamble}
-          (func (export "helper")
-                (param $b i64)
-                (result (ref null $result))
-            (local $hi i32)
-            (local $lo i32)
-            (local $hi_byte i32)
-            (local $lo_byte i32)
-            (local $out (ref null $string))
-
-            ;; Out of range → Err(empty)
-            local.get $b
-            i64.const 0
-            i64.lt_s
-            local.get $b
-            i64.const 256
-            i64.ge_s
-            i32.or
-            (if
-              (then
-                i32.const 0
-                ref.null $string
-                i32.const 0
-                array.new_default $string
-                struct.new $result
-                return))
-
-            local.get $b i32.wrap_i64 i32.const 4 i32.shr_u local.set $hi
-            local.get $b i32.wrap_i64 i32.const 15 i32.and local.set $lo
-
-            ;; hi_byte = hi < 10 ? '0'+hi : 'a'+hi-10  (inline)
-            local.get $hi i32.const 10 i32.lt_u
-            (if (result i32)
-              (then local.get $hi i32.const 48 i32.add)
-              (else local.get $hi i32.const 87 i32.add))
-            local.set $hi_byte
-            local.get $lo i32.const 10 i32.lt_u
-            (if (result i32)
-              (then local.get $lo i32.const 48 i32.add)
-              (else local.get $lo i32.const 87 i32.add))
-            local.set $lo_byte
-
-            i32.const 2 array.new_default $string local.set $out
-            local.get $out i32.const 0 local.get $hi_byte array.set $string
-            local.get $out i32.const 1 local.get $lo_byte array.set $string
-
-            ;; Result.Ok(out): tag=1, ok=out, err=null
-            i32.const 1
-            local.get $out
-            ref.null $string
-            struct.new $result)
-        )
-    "#
-    );
-    wat_helper::compile_wat_helper(&wat)
 }
 
 /// `String.replace(s: String, needle: String, repl: String) -> String`.

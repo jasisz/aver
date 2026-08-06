@@ -298,9 +298,9 @@ verify loop.
 
 ## Refinement records (refinement-via-opaque)
 
-An Aver `record X { v: Int }` paired with a validating smart constructor
-`fn fromX(n: Int) -> Result<X, String>` whose body is the canonical
-`match <pred(n)> { true -> Result.Ok(X(v = n)); false -> Result.Err(_) }`
+An Aver single-field record paired with a validating smart constructor
+`fn fromX(value: T) -> Result<X, String>` whose body is the canonical
+`match <pred(value)> { true -> Result.Ok(X(v = value)); false -> Result.Err(_) }`
 shape lifts to a true refinement subtype in Lean:
 
 ```lean
@@ -320,10 +320,18 @@ theorem add_law_commutative : ∀ (a b : Natural), add a b = add b a := by
 
 — one line, instead of the pre-0.22 `by_cases h_a : a ≥ 0 / by_cases
 h_b : b ≥ 0 / unfold / hand-rolled tactic` plumbing per law shape. The
-lift is automatic, no source-language change. Triggers for single-field
-`Int` carriers; `Float` and `String` carriers keep the plain
-structure path (IEEE 754 NaN breaks universal float laws, strings have
-no universal algebraic structure to exploit).
+lift is automatic, no source-language change. It supports `Int`, structural
+containers (`List`, `Vector`, `Map`, `Result`, `Option`, tuples), and named
+carriers, including one refinement nested inside another. The exporter orders
+predicate functions and types by dependency, so a source file may declare the
+record before its predicate. `Float` and `String` carriers keep the plain
+structure path (IEEE 754 NaN breaks universal float laws, strings have no
+universal algebraic structure to exploit).
+
+For example, `Bytes(values: List<Int>)` may carry an `allInRange(values)`
+invariant, and `Digest32(bytes: Bytes)` may add `hasLength32(bytes)`; both
+invariants remain in their generated Subtypes rather than degrading to plain
+structures.
 
 Refinement records work the same way whether the type is declared in
 the entry file or in a dependent module — `aver proof natural.av` and
@@ -352,7 +360,7 @@ These examples are currently smoke-tested end to end with
 - `examples/refinement/natural/natural.av` — refinement-via-opaque (Int + `>= 0`)
 - `examples/refinement/positive/positive.av` — refinement (Int + `>= 1`)
 - `examples/refinement/int_range/int_range.av` — refinement with compound `Bool.and(n >= 0, n <= 100)`
-- `examples/refinement/bigint/bigint.av` — refinement over `List<Int>` + mutual-rec digit arithmetic
+- `examples/refinement/bigint/bigint.av` — opaque `List<Int>`-backed record + mutual-rec digit arithmetic
 - `examples/refinement/nonneg_float/nonneg_float.av` — Float carrier, structure path
 - `examples/refinement/email/email.av` — String carrier, structure path
 

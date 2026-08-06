@@ -2,6 +2,39 @@
 
 All functions live in namespaces — no flat builtins (decision: `FullNamespaceEverywhere`).
 
+## Aver source modules
+
+Standard modules ship as ordinary Aver source embedded in the compiler. Import
+them explicitly with `depends`; they do not depend on the current directory or
+`--module-root`, and project files cannot shadow their reserved names.
+
+### `Bytes` and `Crypto.Digest32`
+
+```aver
+module Packet
+    depends [Bytes, Crypto.Digest32]
+
+fn validate(payload: List<Int>) -> Result<Bytes, String>
+    Bytes.fromList(payload)
+```
+
+`Bytes` is an opaque refinement over `List<Int>` whose values are all in
+`0..=255`. `Digest32`, imported from `Crypto.Digest32`, is a nested refinement
+requiring exactly 32 bytes.
+Both remain ordinary Aver types and retain their invariants in Lean and Dafny
+proof export.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet |
+| `Bytes.toList` | `Bytes -> List<Int>` | Exposes validated values |
+| `Bytes.fromHex` | `String -> Result<Bytes, String>` | Even length, case-insensitive, no `0x` prefix |
+| `Bytes.toHex` | `Bytes -> String` | Total, lowercase output |
+| `Crypto.Digest32.fromBytes` | `Bytes -> Result<Digest32, String>` | Requires exactly 32 bytes |
+| `Crypto.Digest32.toBytes` | `Digest32 -> Bytes` | Forgets only the length refinement |
+| `Crypto.Digest32.fromHex` | `String -> Result<Digest32, String>` | Hex decode plus exact-length validation |
+| `Crypto.Digest32.toHex` | `Digest32 -> String` | Always 64 lowercase characters |
+
 ## Pure namespaces (no effects)
 
 ### `Bool` namespace
@@ -156,15 +189,24 @@ Source: `src/types/char.rs` — not a type, operates on `String`/`Int`.
 | `Char.toCode` | `String -> Int` | Unicode scalar value of first char |
 | `Char.fromCode` | `Int -> Option<String>` | Code point to 1-char string, `Option.None` for surrogates/invalid |
 
-### `Byte` namespace
+### `Crypto` namespace
 
-Source: `src/types/byte.rs` — not a type, operates on `Int`/`String`.
+Source: `src/types/crypto.rs`; byte and digest types come from the embedded
+`Bytes` and `Crypto.Digest32` Aver modules.
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Byte.toHex` | `Int -> Result<String, String>` | Always 2-char lowercase hex |
-| `Byte.fromHex` | `String -> Result<Int, String>` | Exactly 2 hex chars required |
+| `Crypto.sha256` | `Bytes -> Digest32` | Pure, total SHA-256 over validated bytes. |
 
+Import both nominal types with `depends [Bytes, Crypto.Digest32]`. Hashing is
+deterministic and total over `Bytes`, so it requires neither an effect declaration
+nor a `Result`:
+
+```aver
+fn doubleSha(bytes: Bytes) -> Digest32
+    first = Crypto.sha256(bytes)
+    Crypto.sha256(Crypto.Digest32.toBytes(first))
+```
 ## Effectful namespaces
 
 **Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` is equivalent to `! [Disk.readText, Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.deleteDir, Disk.listDir, Disk.makeDir]`. You can still use granular declarations like `! [Disk.readText]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.

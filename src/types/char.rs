@@ -1,7 +1,7 @@
 /// Char namespace — Unicode scalar value operations on strings.
 ///
 /// Char is NOT a type — these are functions operating on String (first character)
-/// and Int (code point). Same pattern as Byte: namespace of operations on existing types.
+/// and Int (code point).
 ///
 /// Methods:
 ///   Char.toCode(s: String)    → Int             — Unicode scalar value of first char

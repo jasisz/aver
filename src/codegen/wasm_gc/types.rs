@@ -125,6 +125,11 @@ pub(super) struct TypeRegistry {
     /// reachable from the program (most numeric bench scenarios).
     /// See `builtins/` README for the full repr decision.
     pub(super) string_array_type_idx: Option<u32>,
+    /// Internal mutable i32 arrays used by the pure `Crypto.sha256` helper:
+    /// one for the padded message bytes and one for the 64-word schedule.
+    /// They are allocated only when that intrinsic is reachable.
+    pub(super) crypto_byte_array_type_idx: Option<u32>,
+    pub(super) crypto_word_array_type_idx: Option<u32>,
     /// Per-byte-sequence passive data segment for `String` literals.
     /// Each unique literal in the program lands at one segment idx;
     /// `ResolvedExpr::Literal(Literal::Str(_))` lowers to `array.new_data
@@ -387,6 +392,19 @@ impl TypeRegistry {
             Some(idx)
         } else {
             None
+        };
+
+        let needs_crypto_sha256 = resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Crypto.sha256"));
+        let (crypto_byte_array_type_idx, crypto_word_array_type_idx) = if needs_crypto_sha256 {
+            let byte_idx = next_idx;
+            next_idx += 1;
+            let word_idx = next_idx;
+            next_idx += 1;
+            (Some(byte_idx), Some(word_idx))
+        } else {
+            (None, None)
         };
 
         // Phase 4 (0.20) — TCP connection pool type slots. `$tcp_slot`
@@ -1046,6 +1064,8 @@ impl TypeRegistry {
             primitive_key_box_order,
             user_type_count: next_idx,
             string_array_type_idx,
+            crypto_byte_array_type_idx,
+            crypto_word_array_type_idx,
             string_literals,
             string_literal_idx,
             non_newtypable_keys,
@@ -1500,9 +1520,8 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "String.byteLength"
                             | "Char.toCode"
                             | "Char.fromCode"
-                            | "Byte.toHex"
                             // `Int.mod`, `Int.div`, `Int.fromString`,
-                            // `Float.fromString`, `Byte.fromHex` return
+                            // and `Float.fromString` return
                             // Result<_, String> — touching them forces the
                             // String slot for the error payload even when
                             // the program never reads the Err arm.
@@ -1510,7 +1529,6 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
-                            | "Byte.fromHex"
                             // Effects that produce or consume String at
                             // their boundary. The string slot has to be
                             // allocated whenever any of these is called
@@ -1666,6 +1684,7 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Random.int"
             | "Time.unixMs"
             | "Tcp.sendBytes"
+            | "Crypto.sha256"
     )
 }
 

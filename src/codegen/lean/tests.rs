@@ -84,7 +84,9 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
         &mut items,
         crate::ir::PipelineConfig {
             run_tco: true,
-            typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+            typecheck: Some(crate::ir::TypecheckMode::Full {
+                base_dir: Some(env!("CARGO_MANIFEST_DIR")),
+            }),
             run_interp_lower: false,
             run_buffer_build: false,
             run_resolve: false,

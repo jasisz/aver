@@ -57,7 +57,9 @@ use crate::ir::hir::{
     BuiltinCtor, BuiltinIntrinsic, ResolvedCtor, ResolvedMatchArm, ResolvedPattern,
     classify_match_dispatch_plan_resolved,
 };
-use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram};
+use crate::ir::mir::{
+    LocalId, MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram,
+};
 use crate::ir::{MatchDispatchPlan, SymbolTable};
 
 use super::emit_ctx::{is_copy_type, should_borrow_param};
@@ -985,6 +987,21 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                         ));
                     }
                     _ => unreachable!("int_arith only set for Add/Sub/Mul/Div"),
+                };
+                // The method receiver is borrowed for the duration of the
+                // call. If a nested RHS expression consumes that local (for
+                // example `value - highNibble(value) * 16`), Rust rejects the
+                // receiver borrow followed by the move inside the argument.
+                // Clone only for that overlap; a direct `x + x` RHS is itself
+                // borrowed by this method call and remains `x.add(&x)`.
+                let lhs_rhs_move_overlap = local_of(&bop.lhs.node).is_some_and(|lhs| {
+                    !matches!(&bop.rhs.node, MirExpr::Local(_))
+                        && mir_expr_contains_last_use_of_slot(&bop.rhs.node, lhs.slot)
+                });
+                let l = if lhs_rhs_move_overlap {
+                    mir_maybe_clone(l, &bop.lhs.node, emit_ctx)
+                } else {
+                    l
                 };
                 return Some(format!("{}.{}(&{})", l, method, r));
             }
@@ -2673,7 +2690,7 @@ pub(super) fn emit_mir_fn_body_routed(
 }
 
 /// Is the type stamp a primitive numeric?
-/// `Int` / `Float` / `Byte` count; everything else (incl. `Str`)
+/// `Int` / `Float` count; everything else (incl. `Str`)
 /// doesn't. Mirror of HIR's `EmitCtx::expr_is_numeric` for the
 /// MIR walker's `+` dispatch.
 fn ty_is_numeric(ty: Option<&Type>) -> bool {
@@ -3420,6 +3437,23 @@ fn local_of(expr: &MirExpr) -> Option<&MirLocal> {
     }
 }
 
+/// Whether a nested expression contains a final read of `slot`. Such reads
+/// may be emitted in an owning position, so a method receiver using the same
+/// local must be detached before evaluating that expression.
+fn mir_expr_contains_last_use_of_slot(expr: &MirExpr, slot: LocalId) -> bool {
+    if let MirExpr::Local(local) = expr {
+        return local.node.slot == slot && local.node.last_use;
+    }
+
+    let mut found = false;
+    crate::ir::mir::optimize::bare_i64::visit_children(expr, &mut |child| {
+        if !found && mir_expr_contains_last_use_of_slot(child, slot) {
+            found = true;
+        }
+    });
+    found
+}
+
 /// Should `.clone()` be skipped for this MIR expr? Mirror of HIR's
 /// `expr_skip_clone`. A local read skips clone on its last use or
 /// when Copy; `rc_wrapped` / `borrowed_params` never skip (they
@@ -3625,7 +3659,7 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 //
 // Mirror of the HIR oracle `emit_builtin_call` / `emit_builtin_call_inner`
 // (`builtins.rs`) for the ~88 PURE builtins (Result / Option / Int /
-// Float / String / List / Map / Vector / Bool / Char / Byte). The
+// Float / String / List / Map / Vector / Bool / Char). The
 // EFFECTFUL families (Args / Console / Http / HttpServer / Disk / Env /
 // Random / SelfHostRuntime / Tcp / Terminal / Time) are split off at the
 // `Call(Builtin)` arm to `emit_mir_effectful_builtin_call` (Wave 3b,
@@ -3637,7 +3671,7 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 //   `emit_str_arg_or_deref(…)`     → `mir_str_arg_or_deref(&args[i], ctx)?`
 // then runs the `builtin_needs_str_conversion` `.into_aver()` post-step
 // that `emit_builtin_call` applies (Int.mod, Int/Float.fromString,
-// String.* returning String, Char.fromCode, Byte.*). The byte-parity
+// String.* returning String and Char.fromCode). The byte-parity
 // gate is the safety net: any arm whose output diverges from HIR blocks
 // graduation and the fn falls back to HIR.
 
@@ -4158,6 +4192,18 @@ fn emit_mir_builtin_call(
         ),
         "Map.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
 
+        // ---- Crypto ----
+        // `Bytes` and `Digest32` are nominal source-defined records, but the
+        // builtin is allowed to cross their opaque boundary. The generated
+        // Rust stays on the public semantic shape: validated octets in,
+        // exactly 32 validated octets out.
+        "Crypto.sha256" => {
+            let bytes = arg!(0);
+            format!(
+                "{{ let __input: Vec<u8> = ({bytes}).values.iter().map(|__b| __b.to_u32().expect(\"Bytes invariant violated\") as u8).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
+            )
+        }
+
         // ---- Bool ----
         "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
         "Bool.and" => format!("({} && {})", arg!(0), arg!(1)),
@@ -4172,18 +4218,6 @@ fn emit_mir_builtin_call(
         // Index-like lookup: an out-of-`u32` (or invalid) code → `None`.
         "Char.fromCode" => format!(
             "({}).to_u32().and_then(char::from_u32).map(|c| c.to_string())",
-            arg!(0)
-        ),
-
-        // ---- Byte ----
-        // Range check over ℤ (no `as u8` truncation): compare the `AverInt`
-        // against the 0–255 bounds, then convert the in-range value.
-        "Byte.toHex" => format!(
-            "{{ let __n = {}; match __n.to_u16() {{ Some(__b @ 0..=255) => Ok(format!(\"{{:02x}}\", __b as u8)), _ => Err(format!(\"Byte.toHex: {{}} is out of range 0–255\", __n)) }} }}",
-            arg!(0)
-        ),
-        "Byte.fromHex" => format!(
-            "{{ let __s = {}; if __s.len() != 2 {{ Err(format!(\"Byte.fromHex: expected exactly 2 hex chars, got '{{}}'\", __s)) }} else {{ u8::from_str_radix(&__s, 16).map(|n| aver_rt::AverInt::from_i64(n as i64)).map_err(|_| format!(\"Byte.fromHex: invalid hex '{{}}'\", __s)) }} }}",
             arg!(0)
         ),
 
@@ -4262,7 +4296,7 @@ fn emit_mir_builtin_call(
 
     // Mirror of `emit_builtin_call`'s `.into_aver()` post-step for
     // String-returning pure builtins (and Int.mod / Int.fromString /
-    // Float.fromString / Char.fromCode / Byte.*).
+    // Float.fromString / Char.fromCode).
     if super::builtins::builtin_needs_str_conversion(name) {
         Some(format!("({}).into_aver()", result))
     } else {

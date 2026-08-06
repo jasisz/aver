@@ -226,7 +226,6 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Map       | empty/set/get/len/has/keys/values/remove/entries/fromList + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K ∈ `{String, user-defined record, user-defined sum, Int, Float, Bool}` ✅. Record / sum K field types ∈ `{Int, Float, Bool, String, nested record, nested sum, List<T>, Vector<T>}` ✅ (List/Vector hash+eq emitted as per-T helpers; record / sum dependencies force-registered as pseudo-K via DFS). |
 | Tuple     | `(A, B)` literal + match destructure ✅, per-(A,B) instantiation in the type registry, used as a building block for `List.zip` / `Map.entries` / `Map.fromList`. Tuple types accept both Aver-surface `(A, B)` and internal canonical `Tuple<A,B>` interchangeably |
 | Vector    | new/get (boxed)/set (boxed)/len/toList ✅ + `fromList` per-(L,V) ✅ |
-| Byte      | fromHex/toHex ✅ |
 | BranchPath, Tcp.Connection | ❌ surface-level builtin records, low priority |
 
 Zero bench scenario in `bench/scenarios/*.av` calls anything in the "missing" rows. Adding them is per-helper plumbing, not blocking work.
