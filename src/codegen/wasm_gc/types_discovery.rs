@@ -110,17 +110,14 @@ pub(super) fn collect_results_from_builtin_uses(
                 if let crate::ir::hir::ResolvedCallee::Builtin(dotted) = callee {
                     match dotted.as_str() {
                         "Float.fromString" => intern("Result<Float,String>"),
-                        "Int.fromString" | "Int.mod" | "Int.div" | "Byte.fromHex" => {
-                            intern("Result<Int,String>")
-                        }
-                        "Byte.toHex" | "Console.readLine" | "Disk.readText" => {
-                            intern("Result<String,String>")
-                        }
+                        "Int.fromString" | "Int.mod" | "Int.div" => intern("Result<Int,String>"),
+                        "Console.readLine" | "Disk.readText" => intern("Result<String,String>"),
                         "Disk.writeText" | "Disk.appendText" | "Disk.delete" | "Disk.deleteDir"
                         | "Disk.makeDir" => intern("Result<Unit,String>"),
                         "Disk.listDir" => intern("Result<List<String>,String>"),
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
                         "Tcp.readLine" => intern("Result<String,String>"),
+                        "Tcp.readBytes" => intern("Result<Bytes,String>"),
                         "Tcp.writeLine" | "Tcp.close" => intern("Result<Unit,String>"),
                         // `Tcp.send`, `Tcp.sendBytes`, and `Tcp.ping`
                         // are ephemeral (Phase 4.7+ passes 4 / 5) —
@@ -131,7 +128,7 @@ pub(super) fn collect_results_from_builtin_uses(
                         // and `Result<Unit,String>`; both are dead
                         // weight on the ephemeral path.
                         "Tcp.send" => intern("Result<String,String>"),
-                        "Tcp.sendBytes" => intern("Result<List<Int>,String>"),
+                        "Tcp.sendBytes" => intern("Result<Bytes,String>"),
                         "Tcp.ping" => intern("Result<Unit,String>"),
                         "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put"
                         | "Http.patch" => intern("Result<HttpResponse,String>"),

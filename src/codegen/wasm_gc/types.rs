@@ -125,6 +125,11 @@ pub(super) struct TypeRegistry {
     /// reachable from the program (most numeric bench scenarios).
     /// See `builtins/` README for the full repr decision.
     pub(super) string_array_type_idx: Option<u32>,
+    /// Internal mutable i32 arrays used by the pure `Crypto.sha256` helper:
+    /// one for the padded message bytes and one for the 64-word schedule.
+    /// They are allocated only when that intrinsic is reachable.
+    pub(super) crypto_byte_array_type_idx: Option<u32>,
+    pub(super) crypto_word_array_type_idx: Option<u32>,
     /// Per-byte-sequence passive data segment for `String` literals.
     /// Each unique literal in the program lands at one segment idx;
     /// `ResolvedExpr::Literal(Literal::Str(_))` lowers to `array.new_data
@@ -389,6 +394,19 @@ impl TypeRegistry {
             None
         };
 
+        let needs_crypto_sha256 = resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Crypto.sha256"));
+        let (crypto_byte_array_type_idx, crypto_word_array_type_idx) = if needs_crypto_sha256 {
+            let byte_idx = next_idx;
+            next_idx += 1;
+            let word_idx = next_idx;
+            next_idx += 1;
+            (Some(byte_idx), Some(word_idx))
+        } else {
+            (None, None)
+        };
+
         // Phase 4 (0.20) — TCP connection pool type slots. `$tcp_slot`
         // is a 4-field struct (socket / in_stream / out_stream / in_use
         // handles, all i32), and `$tcp_pool` is the `(array (mut $tcp_slot))`
@@ -565,14 +583,18 @@ impl TypeRegistry {
             list_order.push("List<String>".to_string());
             next_idx += 1;
         }
-        // `Tcp.sendBytes` consumes and returns `List<Int>` across the
-        // host boundary, so its concrete list slot is required even
-        // when the payload expression is an empty list.
-        let needs_list_int_for_tcp_send_bytes = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node == "Tcp.sendBytes"),
+        // Byte-clean TCP effects consume or return nominal `Bytes`. Its
+        // private `values` carrier is still `List<Int>`, so the
+        // concrete list slot is required even when no list literal is
+        // present at the call site.
+        let needs_list_int_for_tcp_bytes = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd
+                .effects
+                .iter()
+                .any(|e| matches!(e.node.as_str(), "Tcp.sendBytes" | "Tcp.readBytes")),
             _ => false,
         });
-        if needs_list_int_for_tcp_send_bytes && !list_types.contains_key("List<Int>") {
+        if needs_list_int_for_tcp_bytes && !list_types.contains_key("List<Int>") {
             list_types.insert("List<Int>".to_string(), next_idx);
             list_order.push("List<Int>".to_string());
             next_idx += 1;
@@ -974,6 +996,9 @@ impl TypeRegistry {
                 // method name since one segment serves close /
                 // writeLine / readLine).
                 b"tcp: unknown connection".as_ref(),
+                b"Tcp.readBytes: count is negative".as_ref(),
+                b"Tcp.readBytes: count exceeds the 10485760 byte limit".as_ref(),
+                b"failed to fill whole buffer".as_ref(),
                 // Phase 4.7+ — port validation. VM message verbatim
                 // (`Tcp: port N is out of range (0\u{2013}65535)`)
                 // is parameterised on the port value; we ship a
@@ -1046,6 +1071,8 @@ impl TypeRegistry {
             primitive_key_box_order,
             user_type_count: next_idx,
             string_array_type_idx,
+            crypto_byte_array_type_idx,
+            crypto_word_array_type_idx,
             string_literals,
             string_literal_idx,
             non_newtypable_keys,
@@ -1500,9 +1527,8 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "String.byteLength"
                             | "Char.toCode"
                             | "Char.fromCode"
-                            | "Byte.toHex"
                             // `Int.mod`, `Int.div`, `Int.fromString`,
-                            // `Float.fromString`, `Byte.fromHex` return
+                            // and `Float.fromString` return
                             // Result<_, String> — touching them forces the
                             // String slot for the error payload even when
                             // the program never reads the Err arm.
@@ -1510,7 +1536,6 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
-                            | "Byte.fromHex"
                             // Effects that produce or consume String at
                             // their boundary. The string slot has to be
                             // allocated whenever any of these is called
@@ -1666,6 +1691,8 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Random.int"
             | "Time.unixMs"
             | "Tcp.sendBytes"
+            | "Tcp.readBytes"
+            | "Crypto.sha256"
     )
 }
 
@@ -2329,7 +2356,9 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // *consume* one through their first parameter, so even a
         // program that only reads / writes / closes still needs the
         // slot allocated.
-        "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close" => "Tcp.Connection",
+        "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.readBytes" | "Tcp.close" => {
+            "Tcp.Connection"
+        }
         // HTTP verb effects all return Result<HttpResponse, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.

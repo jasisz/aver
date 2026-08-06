@@ -1,0 +1,44 @@
+module ContainerRefinement
+    intent =
+        "Container and nested refinements must retain their invariants in every proof backend."
+    exposes [allInRange, fromList, toList, hasLength32, fromBytes, digestToBytes]
+    exposes opaque [Bytes, Digest32]
+    effects []
+
+record Bytes
+    values: List<Int>
+
+record Digest32
+    bytes: Bytes
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "True when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [h, ..t] -> match Bool.and(h >= 0, h <= 255)
+            true -> allInRange(t)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate a raw integer list as bytes."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("element outside 0..=255")
+
+fn toList(bytes: Bytes) -> List<Int>
+    ? "Expose the validated byte values."
+    bytes.values
+
+fn hasLength32(bytes: Bytes) -> Bool
+    ? "True when the byte sequence is exactly one SHA-256 digest long."
+    List.len(toList(bytes)) == 32
+
+fn fromBytes(bytes: Bytes) -> Result<Digest32, String>
+    ? "Validate a byte sequence as a 32-byte digest."
+    match hasLength32(bytes)
+        true -> Result.Ok(Digest32(bytes = bytes))
+        false -> Result.Err("digest must contain exactly 32 bytes")
+
+fn digestToBytes(digest: Digest32) -> Bytes
+    ? "Forget only the fixed-length refinement."
+    digest.bytes

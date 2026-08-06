@@ -2323,12 +2323,17 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.sendBytes]\n    Tcp.sendBytes(\"127.0.0.1\", {}, [249, 190, 180, 217])\n",
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.sendBytes]\n    Tcp.sendBytes(\"127.0.0.1\", {}, Bytes(values = [249, 190, 180, 217]))\n",
             port
         );
         match run_tcp_fn(&src, "talk") {
             Value::Ok(inner) => match *inner {
-                Value::List(items) => {
+                Value::Record { type_name, fields } => {
+                    assert_eq!(type_name, "Bytes");
+                    let items = match fields.iter().find(|(name, _)| name == "values") {
+                        Some((_, Value::List(items))) => items,
+                        other => panic!("expected Bytes.values list, got {:?}", other),
+                    };
                     let got: Vec<i64> = items
                         .iter()
                         .map(|v| match v {
@@ -2338,21 +2343,21 @@ mod tcp_tests {
                         .collect();
                     assert_eq!(got, vec![249, 190, 180, 217]);
                 }
-                other => panic!("expected List, got {:?}", other),
+                other => panic!("expected Bytes, got {:?}", other),
             },
-            other => panic!("expected Ok(List<Int>), got {:?}", other),
+            other => panic!("expected Ok(Bytes), got {:?}", other),
         }
     }
 
-    /// Byte values outside `0..=255` are a value error, not a type error, so
-    /// they surface as a catchable `Result.Err` rather than a VM trap — the
-    /// same treatment the port range gets.
+    /// Public code cannot construct this value: `Bytes.fromList` rejects it.
+    /// The TCP bridge still fails closed if a malformed carrier reaches it.
     #[test]
-    fn tcp_send_bytes_rejects_out_of_range_byte() {
+    fn tcp_send_bytes_defensively_rejects_out_of_range_carrier() {
         let src = concat!(
-            "fn talk() -> Result<List<Int>, String>\n",
+            "record Bytes\n    values: List<Int>\n\n",
+            "fn talk() -> Result<Bytes, String>\n",
             "    ! [Tcp.sendBytes]\n",
-            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 256])\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, Bytes(values = [65, 256]))\n",
         );
         match run_tcp_fn(src, "talk") {
             Value::Err(inner) => match *inner {
@@ -2453,15 +2458,140 @@ mod tcp_tests {
         );
     }
 
-    /// An `Int` outside `i64` is still an `Int` — a fortiori out of byte
-    /// range, so it must take the same catchable value-error path as `256`,
-    /// not trap as a bogus type error.
+    /// Regression: `Tcp.readLine` frames on `\n` and rejects non-UTF-8, so
+    /// neither half of a length-prefixed binary frame survives it.
+    /// `Tcp.readBytes` must return exactly the bytes asked for. The payload
+    /// carries `0x0A` twice (which `readLine` would split on) and `0xFF`
+    /// (which it would reject outright).
     #[test]
-    fn tcp_send_bytes_rejects_bignum_byte() {
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_round_trips_binary_frame() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .write_all(&[0xF9, 0xBE, 0xB4, 0xD9, 0x01, 0x0A, 0xFF, 0x0A, 0x03])
+                    .ok();
+                thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+
+        let src = format!(
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    header = Tcp.readBytes(conn, 4)?\n    payload = Tcp.readBytes(conn, 5)?\n    Result.Ok(Bytes(values = List.concat(header.values, payload.values)))\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Ok(inner) => match *inner {
+                Value::Record { type_name, fields } => {
+                    assert_eq!(type_name, "Bytes");
+                    let items = match fields.iter().find(|(name, _)| name == "values") {
+                        Some((_, Value::List(items))) => items,
+                        other => panic!("expected Bytes.values list, got {:?}", other),
+                    };
+                    let got: Vec<i64> = items
+                        .iter()
+                        .map(|v| match v {
+                            Value::Int(n) => n.to_i64().unwrap(),
+                            other => panic!("expected Int element, got {:?}", other),
+                        })
+                        .collect();
+                    assert_eq!(got, vec![249, 190, 180, 217, 1, 10, 255, 10, 3]);
+                }
+                other => panic!("expected Bytes, got {:?}", other),
+            },
+            other => panic!("expected Ok(Bytes), got {:?}", other),
+        }
+    }
+
+    /// A short read is an error, not a truncated success: fewer bytes than the
+    /// length prefix promised means the peer went away mid-frame, and returning
+    /// a partial frame would desynchronise the caller's parser.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_short_read_is_an_error() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream.write_all(&[1, 2, 3]).ok();
+            }
+        });
+
+        let src = format!(
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    Tcp.readBytes(conn, 10)\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Err(_) => {}
+            other => panic!("expected Err on a short read, got {:?}", other),
+        }
+    }
+
+    /// A negative count, one past the read cap, and one too large for `i64`
+    /// must all be catchable `Result.Err` rather than traps.
+    ///
+    /// Uses a real listener rather than a constructed `Tcp.Connection`:
+    /// construction is rejected by the type checker (`Cannot construct opaque
+    /// type 'Tcp.Connection'`), and only slips through here because
+    /// `call_fn_with_effects` VM-compiles without type checking. A test that
+    /// relied on that would be exercising a program Aver source cannot express.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_rejects_out_of_range_counts() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            while let Ok((stream, _)) = listener.accept() {
+                // Hold the peer open; these cases must fail on the count
+                // before any read is attempted.
+                thread::sleep(std::time::Duration::from_millis(200));
+                drop(stream);
+            }
+        });
+
+        for (count, expect) in [
+            ("-1", "negative"),
+            ("20000000", "limit"),
+            ("1208925819614629174706176", "read limit"),
+        ] {
+            let src = format!(
+                "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    Tcp.readBytes(conn, {})\n",
+                port, count
+            );
+            match run_tcp_fn(&src, "talk") {
+                Value::Err(inner) => match *inner {
+                    Value::Str(msg) => assert!(
+                        msg.contains(expect),
+                        "count {count}: expected message mentioning {expect:?}, got: {msg}"
+                    ),
+                    other => panic!("expected Str error, got {:?}", other),
+                },
+                other => panic!("count {count}: expected Err, got {:?}", other),
+            }
+        }
+    }
+
+    /// The same defensive path retains an arbitrary-precision offending value
+    /// in its error instead of truncating it at the host boundary.
+    #[test]
+    fn tcp_send_bytes_defensively_rejects_bignum_carrier() {
         let src = concat!(
-            "fn talk() -> Result<List<Int>, String>\n",
+            "record Bytes\n    values: List<Int>\n\n",
+            "fn talk() -> Result<Bytes, String>\n",
             "    ! [Tcp.sendBytes]\n",
-            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 1208925819614629174706176])\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, Bytes(values = [65, 1208925819614629174706176]))\n",
         );
         match run_tcp_fn(src, "talk") {
             Value::Err(inner) => match *inner {
@@ -3411,74 +3541,6 @@ fn char_from_code_too_large_returns_none() {
 fn char_from_code_u32_overflow_returns_none() {
     // > u32::MAX should not wrap around to NUL
     assert_eq!(eval("Char.fromCode(4294967296)"), Value::None);
-}
-
-// ---------------------------------------------------------------------------
-// Byte namespace
-// ---------------------------------------------------------------------------
-
-#[test]
-fn byte_to_hex_zero() {
-    assert_eq!(
-        eval("Byte.toHex(0)"),
-        Value::Ok(Box::new(Value::Str("00".to_string())))
-    );
-}
-
-#[test]
-fn byte_to_hex_255() {
-    assert_eq!(
-        eval("Byte.toHex(255)"),
-        Value::Ok(Box::new(Value::Str("ff".to_string())))
-    );
-}
-
-#[test]
-fn byte_to_hex_ten() {
-    assert_eq!(
-        eval("Byte.toHex(10)"),
-        Value::Ok(Box::new(Value::Str("0a".to_string())))
-    );
-}
-
-#[test]
-fn byte_to_hex_out_of_range() {
-    let val = eval("Byte.toHex(256)");
-    assert!(matches!(val, Value::Err(_)));
-}
-
-#[test]
-fn byte_to_hex_negative() {
-    let val = eval("Byte.toHex(0 - 1)");
-    assert!(matches!(val, Value::Err(_)));
-}
-
-#[test]
-fn byte_from_hex_valid() {
-    assert_eq!(
-        eval("Byte.fromHex(\"0a\")"),
-        Value::Ok(Box::new(Value::int(10)))
-    );
-}
-
-#[test]
-fn byte_from_hex_uppercase() {
-    assert_eq!(
-        eval("Byte.fromHex(\"FF\")"),
-        Value::Ok(Box::new(Value::int(255)))
-    );
-}
-
-#[test]
-fn byte_from_hex_invalid_chars() {
-    let val = eval("Byte.fromHex(\"zz\")");
-    assert!(matches!(val, Value::Err(_)));
-}
-
-#[test]
-fn byte_from_hex_wrong_length() {
-    let val = eval("Byte.fromHex(\"a\")");
-    assert!(matches!(val, Value::Err(_)));
 }
 
 // ---------------------------------------------------------------------------

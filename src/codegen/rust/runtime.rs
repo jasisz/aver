@@ -248,41 +248,7 @@ where
 /// (`Tcp.connect`, see `convert_tcp_connection`). Keeping the surface type
 /// distinct is what lets `conn.port.add(&…)` typecheck.
 pub fn generate_tcp_types() -> String {
-    r#"pub fn tcp_send_bytes_payload_to_host(
-    payload: &aver_rt::AverList<aver_rt::AverInt>,
-) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::with_capacity(payload.len());
-    for (idx, n) in payload.iter().enumerate() {
-        let Some(byte) = n.to_i64().and_then(|n| u8::try_from(n).ok()) else {
-            return Err(format!(
-                "Tcp.sendBytes: byte {} at index {} is out of range (0–255)",
-                n, idx
-            ));
-        };
-        bytes.push(byte);
-    }
-    Ok(bytes)
-}
-
-pub fn tcp_send_bytes_response_from_host(
-    bytes: Vec<u8>,
-) -> aver_rt::AverList<aver_rt::AverInt> {
-    aver_rt::AverList::from_vec(
-        bytes
-            .into_iter()
-            .map(|byte| aver_rt::AverInt::from_i64(i64::from(byte)))
-            .collect(),
-    )
-}
-
-impl IntoAverStr for Result<aver_rt::AverList<aver_rt::AverInt>, String> {
-    type Output = Result<aver_rt::AverList<aver_rt::AverInt>, AverStr>;
-    fn into_aver(self) -> Self::Output {
-        self.map_err(AverStr::from)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
+    r#"#[derive(Clone, Debug, PartialEq)]
 pub struct Tcp_Connection {
     pub id: aver_rt::AverStr,
     pub host: aver_rt::AverStr,
@@ -306,7 +272,7 @@ fn convert_tcp_connection(c: aver_rt::TcpConnection) -> Tcp_Connection {
     }
 }
 /// Surface (`AverInt` port) -> host `aver_rt::TcpConnection` (`i64` port),
-/// applied before `Tcp.writeLine`/`readLine`/`close`. The host keeps live
+/// applied before `Tcp.writeLine`/`readLine`/`readBytes`/`close`. The host keeps live
 /// sockets in a thread-local keyed by `id`, so rebuilding the host record
 /// from the surface fields is enough to find the connection.
 pub fn tcp_connection_to_host(c: &Tcp_Connection) -> aver_rt::TcpConnection {

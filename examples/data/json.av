@@ -3,6 +3,7 @@ module Json
         "RFC 8259 JSON parser. Recursive descent, pure, no effects."
         "Supports: integers, floats, strings (with \\uXXXX), bools, null, arrays, objects."
         "Validates: trailing content, leading zeros, control chars, invalid escapes."
+    depends [Bytes]
     exposes [Json, fromString, toString]
     effects [Console]
 
@@ -434,8 +435,8 @@ verify escapeControlChar
 
 fn controlCodeEscape(c: String, code: Int) -> String
     ? "JSON helper: controlCodeEscape."
-    match Byte.toHex(code)
-        Result.Ok(hex) -> "\\u00" + hex
+    match Bytes.fromList([code])
+        Result.Ok(bytes) -> "\\u00" + Bytes.toHex(bytes)
         Result.Err(_) -> c
 
 verify controlCodeEscape

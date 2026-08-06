@@ -35,8 +35,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "String.fromBool"
             | "String.chars"
             | "Char.fromCode"
-            | "Byte.toHex"
-            | "Byte.fromHex"
             | "Disk.readText"
             | "Disk.writeText"
             | "Disk.appendText"
@@ -53,7 +51,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Http.put"
             | "Http.patch"
             | "Tcp.send"
-            | "Tcp.sendBytes"
             | "Tcp.ping"
             | "Tcp.connect"
             | "Tcp.writeLine"
@@ -74,8 +71,15 @@ fn builtin_effect_name(name: &str) -> &str {
 
 fn compose_tcp_send_bytes_call(args: &[String]) -> String {
     format!(
-        "{{ let __host = &{}; let __port = crate::to_host_i64(&{}, \"Tcp.sendBytes: port must be an Int\"); let __payload = &{}; match crate::tcp_send_bytes_payload_to_host(__payload) {{ Ok(__bytes) => aver_rt::tcp::send_bytes(__host, __port, &__bytes).map(crate::tcp_send_bytes_response_from_host), Err(__error) => Err(__error) }} }}",
+        "{{ let __host = &{}; let __port = crate::to_host_i64(&{}, \"Tcp.sendBytes: port must be an Int\"); let __payload = &{}; let __bytes: Result<Vec<u8>, crate::AverStr> = __payload.values.iter().map(|__value| __value.to_u32().and_then(|__value| u8::try_from(__value).ok()).ok_or_else(|| crate::AverStr::from(\"Tcp.sendBytes: malformed Bytes carrier\"))).collect(); match __bytes {{ Err(__error) => Err(__error), Ok(__bytes) => aver_rt::tcp::send_bytes(__host, __port, &__bytes).map(|__response| crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__response.into_iter().map(|__byte| aver_rt::AverInt::from_i64(i64::from(__byte))).collect()) }}).map_err(crate::AverStr::from) }} }}",
         args[0], args[1], args[2]
+    )
+}
+
+fn compose_tcp_read_bytes_call(args: &[String]) -> String {
+    format!(
+        "{{ let __conn = crate::tcp_connection_to_host(&{}); let __count = &{}; match __count.to_i64() {{ None => Err(crate::AverStr::from(format!(\"Tcp.readBytes: count {{}} exceeds the read limit\", __count))), Some(__count) => aver_rt::tcp::read_bytes(&__conn, __count).map(|__response| crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__response.into_iter().map(|__byte| aver_rt::AverInt::from_i64(i64::from(__byte))).collect()) }}).map_err(crate::AverStr::from) }} }}",
+        args[0], args[1]
     )
 }
 
@@ -182,6 +186,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
             args[0]
         )),
+        "Tcp.readBytes" => Some(compose_tcp_read_bytes_call(args)),
         "Tcp.close" => Some(format!(
             "aver_rt::tcp::close(&crate::tcp_connection_to_host(&{}))",
             args[0]
@@ -383,6 +388,7 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
             "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
             a(0)
         )),
+        "Tcp.readBytes" => Some(compose_tcp_read_bytes_call(args)),
         "Tcp.close" => Some(format!(
             "aver_rt::tcp::close(&crate::tcp_connection_to_host(&{}))",
             a(0)

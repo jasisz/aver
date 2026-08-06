@@ -122,6 +122,45 @@ pub fn read_line(conn: &TcpConnection) -> Result<String, String> {
     })
 }
 
+/// Byte-clean, exact-length sibling of [`read_line`].
+///
+/// `read_line` frames on `\n` and goes through `BufRead::read_line`, which
+/// rejects non-UTF-8 outright. Neither works for a length-prefixed binary
+/// protocol, where framing is "read a fixed-size header, decode a length, read
+/// exactly that many bytes" and the payload may carry `0x0A` at any offset.
+/// This reads exactly `n` bytes and decodes nothing.
+///
+/// A short read is an error rather than a truncated success: fewer bytes than
+/// the length prefix promised means the peer went away mid-message, and
+/// silently returning a partial frame would desynchronise the caller's parser.
+///
+/// `n` is capped at `BODY_LIMIT`. Length prefixes arrive from an untrusted
+/// peer — Bitcoin's is four bytes, so it can ask for 4 GiB — and the cap stops
+/// a hostile or corrupt prefix from becoming an allocation that size.
+pub fn read_bytes(conn: &TcpConnection, n: i64) -> Result<Vec<u8>, String> {
+    if n < 0 {
+        return Err(format!("Tcp.readBytes: count {n} is negative"));
+    }
+    let want = usize::try_from(n).unwrap_or(usize::MAX);
+    if want > BODY_LIMIT {
+        return Err(format!(
+            "Tcp.readBytes: count {n} exceeds the {BODY_LIMIT} byte limit"
+        ));
+    }
+    CONNECTIONS.with(|map| {
+        let mut borrow = map.borrow_mut();
+        let id: &str = &conn.id;
+        match borrow.get_mut(id) {
+            None => Err(format!("Tcp.readBytes: unknown connection '{}'", conn.id)),
+            Some(reader) => {
+                let mut buf = vec![0u8; want];
+                reader.read_exact(&mut buf).map_err(|e| e.to_string())?;
+                Ok(buf)
+            }
+        }
+    })
+}
+
 pub fn close(conn: &TcpConnection) -> Result<(), String> {
     let id: &str = &conn.id;
     let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(id));

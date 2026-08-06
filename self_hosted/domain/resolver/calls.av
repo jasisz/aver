@@ -157,8 +157,6 @@ fn isBuiltinCallName(name: String) -> Bool
         "Bool.and",
         "Bool.not",
         "Bool.or",
-        "Byte.fromHex",
-        "Byte.toHex",
         "Char.fromCode",
         "Char.toCode",
         "Console.error",

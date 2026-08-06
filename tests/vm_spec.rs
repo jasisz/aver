@@ -127,6 +127,22 @@ fn vm_machine(src: &str) -> vm::VM {
     vm::VM::new(code, globals, arena)
 }
 
+fn vm_machine_with_module_root(src: &str, module_root: &Path) -> vm::VM {
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let root_str = module_root
+        .to_str()
+        .expect("module root must be valid UTF-8");
+    let (resolved, symbols) = resolve_for_vm_with_deps(&items, root_str);
+    let (code, globals) =
+        vm::compile_program_with_modules(&resolved, &symbols, &mut arena, Some(root_str), "", None)
+            .expect("compile failed");
+    vm::VM::new(code, globals, arena)
+}
+
 fn vm_compile(src: &str) -> vm::CodeStore {
     let mut items = parse(src);
     tco::transform_program(&mut items);
@@ -570,7 +586,7 @@ fn vm_rebuilt_variant_error_chain_keeps_message_strings_alive() {
 #[test]
 fn vm_real_json_from_string_error_keeps_message_alive() {
     let src = include_str!("../examples/data/json.av");
-    let mut machine = vm_machine(src);
+    let mut machine = vm_machine_with_module_root(src, Path::new(env!("CARGO_MANIFEST_DIR")));
     let arg = nv_string(&mut machine, "01");
     let result = machine
         .run_named_function("fromString", &[arg])
@@ -586,7 +602,7 @@ fn vm_real_json_from_string_error_keeps_message_alive() {
 #[test]
 fn vm_real_json_negative_leading_zero_error_keeps_message_alive() {
     let src = include_str!("../examples/data/json.av");
-    let mut machine = vm_machine(src);
+    let mut machine = vm_machine_with_module_root(src, Path::new(env!("CARGO_MANIFEST_DIR")));
     let arg = nv_string(&mut machine, "-01");
     let result = machine
         .run_named_function("fromString", &[arg])
@@ -602,7 +618,7 @@ fn vm_real_json_negative_leading_zero_error_keeps_message_alive() {
 #[test]
 fn vm_real_json_repeated_from_string_calls_keep_error_strings_alive() {
     let src = include_str!("../examples/data/json.av");
-    let mut machine = vm_machine(src);
+    let mut machine = vm_machine_with_module_root(src, Path::new(env!("CARGO_MANIFEST_DIR")));
 
     for (input, expected) in [
         (

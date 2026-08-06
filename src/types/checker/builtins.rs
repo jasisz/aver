@@ -133,6 +133,7 @@ impl TypeChecker {
                 "Tcp.writeLine".to_string(),
                 "Tcp.writeBytes".to_string(),
                 "Tcp.readLine".to_string(),
+                "Tcp.readBytes".to_string(),
                 "Tcp.close".to_string(),
                 "HttpServer.listen".to_string(),
                 "HttpServer.listenWith".to_string(),
@@ -291,11 +292,8 @@ impl TypeChecker {
             ),
             (
                 "Tcp.sendBytes",
-                &[Type::Str, Type::Int, Type::List(Box::new(Type::Int))],
-                Type::Result(
-                    Box::new(Type::List(Box::new(Type::Int))),
-                    Box::new(Type::Str),
-                ),
+                &[Type::Str, Type::Int, Type::named("Bytes")],
+                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str)),
                 &["Tcp.sendBytes"],
             ),
             (
@@ -330,6 +328,12 @@ impl TypeChecker {
                 &[Type::named("Tcp.Connection")],
                 Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                 &["Tcp.readLine"],
+            ),
+            (
+                "Tcp.readBytes",
+                &[Type::named("Tcp.Connection"), Type::Int],
+                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str)),
+                &["Tcp.readBytes"],
             ),
             (
                 "Tcp.close",
@@ -667,25 +671,16 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Byte namespace
-        let byte_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            (
-                "Byte.toHex",
-                &[Type::Int],
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
-                &[],
-            ),
-            (
-                "Byte.fromHex",
-                &[Type::Str],
-                Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
-                &[],
-            ),
-        ];
-        for (name, params, ret, effects) in byte_sigs {
+        // Crypto namespace
+        let crypto_sigs: &[(&str, &[Type], Type, &[&str])] = &[(
+            "Crypto.sha256",
+            &[Type::named("Bytes")],
+            Type::named("Digest32"),
+            &[],
+        )];
+        for (name, params, ret, effects) in crypto_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
         }
-
         // Result.Ok / Result.Err / Option.Some — constructor signatures.
         // Polymorphic over T (ok/some) and E (err).
         let e_var = || Type::Var("E".to_string());

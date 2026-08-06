@@ -1387,6 +1387,7 @@ verify drop law dropRevLen
 /// json corpus's identifiers or table.
 const FIELD_ESCAPE_FIXTURE: &str = r#"module FieldEsc
     intent = "an escaped log-field render/parse roundtrip closing via StringEscapeRoundtrip"
+    depends [Bytes]
     effects []
 
 type FieldVal
@@ -1429,8 +1430,8 @@ fn packLow(c: String) -> String
 
 fn packHex(c: String, code: Int) -> String
     ? "Hex escape for a control char."
-    match Byte.toHex(code)
-        Result.Ok(hex) -> "%x00" + hex
+    match Bytes.fromList([code])
+        Result.Ok(bytes) -> "%x00" + Bytes.toHex(bytes)
         Result.Err(_) -> c
 
 fn fieldHexVal(c: String) -> Option<Int>

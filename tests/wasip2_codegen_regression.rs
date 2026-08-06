@@ -86,6 +86,13 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
+    parse_pipeline_with_module_root(source, None)
+}
+
+fn parse_pipeline_with_module_root(
+    source: &str,
+    module_root: Option<&str>,
+) -> Result<Vec<TopLevel>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
@@ -98,7 +105,9 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
     let result = ir::pipeline::run(
         &mut items,
         ir::PipelineConfig {
-            typecheck: Some(ir::TypecheckMode::Full { base_dir: None }),
+            typecheck: Some(ir::TypecheckMode::Full {
+                base_dir: module_root,
+            }),
             run_interp_lower: false,
             run_buffer_build: false,
             ..Default::default()
@@ -113,6 +122,11 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
             tc.errors.first()
         ));
     }
+    if let Some(root) = module_root {
+        let dep_modules = aver::source::load_compile_deps(&items, root)?;
+        aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        aver::ir::pipeline::resolve(&mut items);
+    }
     Ok(items)
 }
 
@@ -120,15 +134,45 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
 fn tcp_send_bytes_compiles_and_validates_as_component() {
     let source = r#"module Probe
     intent = "Compile the byte-clean TCP request path."
+    depends [Bytes]
     exposes [main]
     effects [Tcp.sendBytes]
 
-fn main() -> Result<List<Int>, String>
+fn main() -> Result<Bytes, String>
     ? "Send and receive bytes without UTF-8 conversion."
     ! [Tcp.sendBytes]
-    Tcp.sendBytes("127.0.0.1", 9, [249, 190, 180, 217])
+    payload = Bytes.fromList([249, 190, 180, 217])?
+    Tcp.sendBytes("127.0.0.1", 9, payload)
 "#;
-    let items = parse_pipeline(source).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
+fn tcp_read_bytes_compiles_and_validates_as_component() {
+    let source = r#"module Probe
+    intent = "Compile exact-length binary reads."
+    depends [Bytes]
+    exposes [read]
+    effects [Tcp.readBytes]
+
+fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "Read one length-delimited binary frame."
+    ! [Tcp.readBytes]
+    Tcp.readBytes(conn, count)
+"#;
+    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
     let core_bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
     let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(

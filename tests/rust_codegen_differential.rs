@@ -365,41 +365,63 @@ fn run_vm_inline(name: &str, source: &str) -> Result<String, String> {
 
 /// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in
 /// the emitted project, so this regression must drive `Tcp.sendBytes` through
-/// a real `cargo build`. Invalid payloads fail before any socket connection,
-/// which also pins the VM's catchable value-error contract for both small and
-/// arbitrary-precision `Int` values.
+/// a real `cargo build`. Invalid raw lists fail at `Bytes.fromList` before any
+/// socket connection, pinning the refinement boundary on both backends.
 #[test]
-fn rust_tcp_send_bytes_builds_and_returns_catchable_range_errors() {
+fn rust_tcp_send_bytes_builds_with_the_bytes_refinement_boundary() {
     let src = r#"module TcpSendBytesRange
-    intent = "Rust codegen must render Tcp.sendBytes and preserve payload errors"
-    depends []
+    intent = "Rust codegen must render Tcp.sendBytes with nominal Bytes"
+    depends [Bytes]
     effects [Console, Tcp]
 
 fn report(payload: List<Int>) -> Unit
     ? "Print the result of validating one binary payload."
     ! [Console.print, Tcp.sendBytes]
-    match Tcp.sendBytes("127.0.0.1", 1, payload)
-        Result.Ok(_) -> Console.print("unexpected-ok")
+    match Bytes.fromList(payload)
         Result.Err(e) -> Console.print(e)
+        Result.Ok(bytes) -> match Tcp.sendBytes("127.0.0.1", 1, bytes)
+            Result.Ok(_) -> Console.print("unexpected-ok")
+            Result.Err(e) -> Console.print(e)
 
 fn main() -> Unit
     ! [Console.print, Tcp.sendBytes]
     report([65, 256])
     report([65, 1208925819614629174706176])
 "#;
-    let expected = concat!(
-        "Tcp.sendBytes: byte 256 at index 1 is out of range (0–255)\n",
-        "Tcp.sendBytes: byte 1208925819614629174706176 at index 1 is out of range (0–255)",
-    );
+    let expected = "byte value outside 0..=255\nbyte value outside 0..=255";
 
     let vm = run_vm_inline("tcp_send_bytes_range", src).expect("vm run");
     let rust = build_run_rust_inline("tcp_send_bytes_range", src)
         .expect("rust compile + cargo build + run");
-    assert_eq!(vm, expected, "VM payload-range contract changed");
+    assert_eq!(vm, expected, "VM Bytes refinement contract changed");
     assert_eq!(
         rust, expected,
-        "Rust payload-range contract diverged from VM"
+        "Rust Bytes refinement contract diverged from VM"
     );
+}
+
+#[test]
+fn rust_tcp_read_bytes_builds_with_nominal_bytes() {
+    let src = r#"module TcpReadBytesBuild
+    intent = "Rust codegen must render Tcp.readBytes with nominal Bytes"
+    depends [Bytes]
+    effects [Console, Tcp]
+
+fn readFrame(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "Read one exact binary frame."
+    ! [Tcp.readBytes]
+    Tcp.readBytes(conn, count)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("compiled")
+"#;
+
+    let vm = run_vm_inline("tcp_read_bytes_build", src).expect("vm run");
+    let rust = build_run_rust_inline("tcp_read_bytes_build", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "compiled");
+    assert_eq!(rust, vm, "Rust Tcp.readBytes codegen diverged from VM");
 }
 
 /// The #383 corruption class on the RUST backend: a Vector PARAM captured
@@ -2289,18 +2311,19 @@ fn rust_tcp_send_bytes_round_trips_non_utf8() {
         format!(
             r#"module TcpSendBytesProbe
     intent = "Round-trip non-UTF-8 bytes through the Rust backend"
-    depends []
+    depends [Bytes]
     effects [Console, Tcp]
 
-fn exchange() -> Result<List<Int>, String>
+fn exchange() -> Result<Bytes, String>
     ? "Send one binary payload to a loopback echo server."
     ! [Tcp.sendBytes]
-    Tcp.sendBytes("127.0.0.1", {port}, [249, 190, 180, 217])
+    payload = Bytes.fromList([249, 190, 180, 217])?
+    Tcp.sendBytes("127.0.0.1", {port}, payload)
 
 fn main() -> Unit
     ! [Console.print, Tcp.sendBytes]
     match exchange()
-        Result.Ok(response) -> Console.print("{{response}}")
+        Result.Ok(response) -> Console.print("{{Bytes.toList(response)}}")
         Result.Err(e) -> Console.print("err:{{e}}")
 "#
         ),
@@ -2374,6 +2397,95 @@ fn main() -> Unit
 
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
+fn rust_tcp_read_bytes_round_trips_non_utf8() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!("skipping Rust Tcp.readBytes probe — set AVER_RUST_DIFF_FULL=1");
+        return;
+    }
+
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener addr").port();
+    listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let server = std::thread::spawn(move || -> Result<(), String> {
+        // The generated project's first cargo build happens after this thread
+        // starts and can take several seconds on a cold CI runner.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    return stream
+                        .write_all(&[249, 190, 180, 217])
+                        .map_err(|e| format!("write binary frame: {e}"));
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err("timed out waiting for Tcp.readBytes connection".to_string());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => return Err(format!("accept Tcp.readBytes: {e}")),
+            }
+        }
+    });
+
+    let ws = temp_dir("tcp-read-bytes");
+    let src = ws.join("tcp_read_bytes.av");
+    fs::write(
+        &src,
+        format!(
+            r#"module TcpReadBytesProbe
+    intent = "Read non-UTF-8 bytes through the Rust backend"
+    depends [Bytes]
+    effects [Console, Tcp]
+
+fn readFrame(conn: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Console.print]
+    match Tcp.readBytes(conn, 4)
+        Result.Ok(frame) -> Console.print("{{Bytes.toList(frame)}}")
+        Result.Err(e) -> Console.print("err:{{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(conn) -> readFrame(conn)
+        Result.Err(e) -> Console.print("connect:{{e}}")
+"#
+        ),
+    )
+    .expect("write probe source");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "tcp_read_bytes_probe";
+    let result = (|| -> Result<(), String> {
+        compile_rust(&src, &project, name, None, &[])?;
+        let bin = cargo_build_in(&project, name, &isolated_target_dir(&ws))?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        server
+            .join()
+            .map_err(|_| "loopback server panicked".to_string())??;
+        if !out.status.success() {
+            return Err(format!("generated binary failed:\n{}", format_output(&out)));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if stdout != "[249, 190, 180, 217]" {
+            return Err(format!("unexpected stdout: {stdout:?}"));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.expect("Rust Tcp.readBytes round-trip");
 }
 
 #[test]
