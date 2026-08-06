@@ -209,9 +209,7 @@ fn tcp_read_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
     };
 
     match aver_rt::tcp::read_bytes(&conn, count) {
-        Ok(bytes) => Ok(Value::Ok(Box::new(crate::types::bytes::from_host(
-            &bytes,
-        )))),
+        Ok(bytes) => Ok(Value::Ok(Box::new(crate::types::bytes::from_host(&bytes)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }

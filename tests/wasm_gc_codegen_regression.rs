@@ -171,6 +171,45 @@ fn main() -> Result<Bytes, String>
 }
 
 #[test]
+fn tcp_read_bytes_imports_host_function_and_validates() {
+    use wasmparser::{Parser as WasmParser, Payload};
+
+    let source = r#"module Probe
+    intent = "Compile exact-length binary reads."
+    depends [Bytes]
+    exposes [read]
+    effects [Tcp.readBytes]
+
+fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "Read one length-delimited binary frame."
+    ! [Tcp.readBytes]
+    Tcp.readBytes(conn, count)
+"#;
+    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+        .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|e| panic!("wasmparser validate: {e}\n--- source ---\n{source}"));
+
+    let mut found = false;
+    for payload in WasmParser::new(0).parse_all(&bytes) {
+        if let Payload::ImportSection(reader) = payload.expect("generated module must parse") {
+            found = reader.into_imports().flatten().any(|import| {
+                import.module == "aver"
+                    && import.name == "tcp_read_bytes"
+                    && matches!(import.ty, wasmparser::TypeRef::Func(_))
+            });
+        }
+    }
+    assert!(
+        found,
+        "Tcp.readBytes must lower to the aver.tcp_read_bytes host import"
+    );
+}
+
+#[test]
 fn bare_list_literal_inside_interpolation_compiles() {
     assert_compiles_and_validates(
         r#"module Probe

@@ -28,8 +28,8 @@ use wasm_encoder::{FunctionSection, TypeSection, ValType};
 use super::super::types::TypeRegistry;
 use super::super::wasip2_imports::{Wasip2ImportRegistry, Wasip2ImportSlot};
 use super::{
-    TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadLineIndices, TcpSendBytesIndices,
-    TcpSendIndices, TcpWriteLineIndices,
+    TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadBytesIndices, TcpReadLineIndices,
+    TcpSendBytesIndices, TcpSendIndices, TcpWriteLineIndices,
 };
 
 /// Per-helper allocation bundle. Every field is `Option<_>`: `None`
@@ -44,6 +44,7 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
     pub parse_id: Option<(u32, u32)>,
     pub write_line: Option<TcpWriteLineIndices>,
     pub read_line: Option<TcpReadLineIndices>,
+    pub read_bytes: Option<TcpReadBytesIndices>,
     pub close: Option<TcpCloseIndices>,
     pub send: Option<TcpSendIndices>,
     pub send_bytes: Option<TcpSendBytesIndices>,
@@ -57,7 +58,8 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
 ///
 /// Ordering invariant: the inner blocks reserve indices in this
 /// exact sequence — connect → format_id → parse_id → write_line →
-/// read_line → close → send → ping. [`register_funcs`] and the
+/// read_line → read_bytes → close → send → send_bytes → ping.
+/// [`register_funcs`] and the
 /// `emit_*` blocks in `module.rs` rely on it.
 pub(in crate::codegen::wasm_gc) fn allocate(
     registry: &TypeRegistry,
@@ -90,6 +92,14 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         next_builtin_fn_idx,
     );
     let read_line = allocate_read_line(
+        registry,
+        wasip2_imports,
+        parse_id,
+        types,
+        next_type_idx,
+        next_builtin_fn_idx,
+    );
+    let read_bytes = allocate_read_bytes(
         registry,
         wasip2_imports,
         parse_id,
@@ -132,6 +142,7 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         parse_id,
         write_line,
         read_line,
+        read_bytes,
         close,
         send,
         send_bytes,
@@ -159,6 +170,9 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.read_line {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.read_bytes {
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.close {
@@ -387,6 +401,66 @@ fn allocate_read_line(
         tcp_pool_type_idx: pool_idx,
         eof_segment_idx: eof_seg,
         eof_len: b"tcp: eof".len() as u32,
+        unknown_segment_idx: unknown_seg,
+        unknown_len: b"tcp: unknown connection".len() as u32,
+    })
+}
+
+fn allocate_read_bytes(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpReadBytesIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let connection_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
+    let int_idx = registry.aint_struct_idx?;
+    let list_int_idx = registry.list_type_idx("List<Int>")?;
+    let result_idx = registry.result_type_idx("Result<Bytes,String>")?;
+    let negative_seg = registry.string_literal_segment(b"Tcp.readBytes: count is negative")?;
+    let limit_seg =
+        registry.string_literal_segment(b"Tcp.readBytes: count exceeds the 10485760 byte limit")?;
+    let short_read_seg = registry.string_literal_segment(b"failed to fill whole buffer")?;
+    let unknown_seg = registry.string_literal_segment(b"tcp: unknown connection")?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::InputStreamBlockingRead)?;
+    parse_id?;
+
+    let connection_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(connection_idx),
+    });
+    let int_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(int_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types.ty().function([connection_ref, int_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpReadBytesIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        tcp_connection_type_idx: connection_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        aint_struct_type_idx: int_idx,
+        list_int_type_idx: list_int_idx,
+        negative_segment_idx: negative_seg,
+        negative_len: b"Tcp.readBytes: count is negative".len() as u32,
+        limit_segment_idx: limit_seg,
+        limit_len: b"Tcp.readBytes: count exceeds the 10485760 byte limit".len() as u32,
+        short_read_segment_idx: short_read_seg,
+        short_read_len: b"failed to fill whole buffer".len() as u32,
         unknown_segment_idx: unknown_seg,
         unknown_len: b"tcp: unknown connection".len() as u32,
     })
