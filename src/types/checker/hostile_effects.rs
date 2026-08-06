@@ -568,6 +568,24 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Tcp.writeBytes" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n    ? \"honest: bytes reach the peer\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n    ? \"hostile: write fails\"\n    Result.Err(\"hostile: write failed\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Tcp.close" => vec![
             HostileProfile {
                 name: "normal_ok",
@@ -738,12 +756,13 @@ mod tests {
             "Tcp.readLine",
             "Tcp.readBytes",
             "Tcp.writeLine",
+            "Tcp.writeBytes",
             "Tcp.close",
             "Terminal.readKey",
         ];
         for method in methods {
             for p in hostile_profiles_for(method) {
-                let depends = if method == "Tcp.readBytes" {
+                let depends = if matches!(method, "Tcp.readBytes" | "Tcp.writeBytes") {
                     "    depends [Bytes]\n"
                 } else {
                     ""

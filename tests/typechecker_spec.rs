@@ -1312,6 +1312,39 @@ fn valid_tcp_write_line_with_connection() {
 }
 
 #[test]
+fn valid_tcp_write_bytes_requires_nominal_bytes() {
+    let src = concat!(
+        "module M\n",
+        "    intent = \"Use the standard nominal Bytes type.\"\n",
+        "    depends [Bytes]\n",
+        "    effects [Tcp.writeBytes]\n",
+        "fn send(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n",
+        "    ! [Tcp.writeBytes]\n",
+        "    Tcp.writeBytes(conn, payload)\n",
+    );
+    let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
+    assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+}
+
+#[test]
+fn error_tcp_write_bytes_rejects_raw_list() {
+    let src = concat!(
+        "module M\n",
+        "    intent = \"Reject raw lists at the TCP boundary.\"\n",
+        "    depends [Bytes]\n",
+        "    effects [Tcp.writeBytes]\n",
+        "fn send(conn: Tcp.Connection) -> Result<Unit, String>\n",
+        "    ! [Tcp.writeBytes]\n",
+        "    Tcp.writeBytes(conn, [1, 2, 3])\n",
+    );
+    let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter().any(|error| error.contains("expected Bytes")),
+        "expected nominal Bytes error, got: {errs:?}"
+    );
+}
+
+#[test]
 fn valid_tcp_read_line_with_connection() {
     let src = concat!(
         "fn recv(conn: Tcp.Connection) -> Result<String, String>\n",

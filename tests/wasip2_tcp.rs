@@ -8,6 +8,8 @@
 //!   host / port fields.
 //! - `tcp_write_line_round_trip` — write a single line, the
 //!   Python server reads + closes, Aver gets `Result.Ok(())`.
+//! - `tcp_write_bytes_exact_binary_frame` — persistent raw-byte write,
+//!   including non-UTF-8 and an embedded newline, with no framing added.
 //! - `tcp_read_line_echo_round_trip` — write+read against an
 //!   echo server, assert the line round-trips byte-for-byte.
 //! - `tcp_read_bytes_exact_binary_frame` — exact non-UTF-8 read split
@@ -135,6 +137,36 @@ def serve():
             c.sendall(bytes([249]))
             time.sleep(0.05)
             c.sendall(bytes([190, 180, 217]))
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
+time.sleep(60)
+"#;
+
+/// Reads one exact binary frame and acknowledges whether the wire bytes match.
+const BINARY_SINK_SCRIPT: &str = r#"
+import socket, sys, threading, time
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    expected = bytes([249, 190, 180, 217, 10, 255])
+    while True:
+        try:
+            c, _ = s.accept()
+            data = b""
+            while len(data) < len(expected):
+                chunk = c.recv(len(expected) - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            c.sendall(b"exact\n" if data == expected else b"wrong\n")
             c.close()
         except OSError:
             break
@@ -319,6 +351,65 @@ fn main() -> Unit
     );
     assert!(s.contains(" wrote-ok"), "expected wrote-ok, got:\n{s}");
     assert!(s.contains(" closed"), "expected closed, got:\n{s}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tcp_write_bytes_exact_binary_frame() {
+    let dir = tempdir("writeBytes");
+    let Some((mut server, port)) = spawn_python_server(&dir, BINARY_SINK_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping wasip2_tcp writeBytes test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+module WriteBytes
+    intent = "Write one exact nominal Bytes frame on WASI."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn awaitAck(c: Tcp.Connection) -> Unit
+    ! [Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.readLine(c)
+        Result.Ok(ack) -> Console.print(ack)
+        Result.Err(e) -> Console.print("read err: {{e}}")
+
+fn writeFrame(c: Tcp.Connection, payload: Bytes) -> Unit
+    ! [Tcp.writeBytes, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.writeBytes(c, payload)
+        Result.Ok(_) -> awaitAck(c)
+        Result.Err(e) -> Console.print("write err: {{e}}")
+
+fn usePayload(c: Tcp.Connection, payload: Result<Bytes, String>) -> Unit
+    ! [Tcp.writeBytes, Tcp.readLine, Tcp.close, Console.print]
+    match payload
+        Result.Ok(bytes) -> writeFrame(c, bytes)
+        Result.Err(e) -> Console.print("bytes err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.writeBytes, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> usePayload(c, Bytes.fromList([249, 190, 180, 217, 10, 255]))
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "write_bytes.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wasip2_tcp writeBytes failed (exit {:?})\nstdout:\n{stdout}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("exact"),
+        "expected exact binary payload from Tcp.writeBytes, got:\n{stdout}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

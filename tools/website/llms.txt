@@ -338,7 +338,7 @@ Effectful namespaces:
 - `Console`: print, error, warn, readLine — **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.
 - `Http`: get, post, put, patch, delete, head
 - `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
-- `Tcp`: connect, writeLine, readLine, readBytes, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes` and `readBytes`
+- `Tcp`: connect, writeLine, writeBytes, readLine, readBytes, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`
 - `Terminal`: enableRawMode, readKey, setCursor, print, clear, size — `Terminal.print` and `Terminal.setColor` also take `String`.
 - `Time`: now, unixMs, sleep
 - `Env`: get, set

@@ -2373,6 +2373,91 @@ mod tcp_tests {
         }
     }
 
+    /// Regression: `Tcp.writeLine` appends `\r\n` and UTF-8-encodes its
+    /// `String`, so `0xF9` reaches the wire as `C3 B9` followed by two bytes
+    /// nobody asked for. `Tcp.writeBytes` must put exactly the given bytes on
+    /// the socket. The payload here is the Bitcoin mainnet magic plus a length
+    /// prefix and an embedded `0x0A`.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_write_bytes_puts_exact_bytes_on_the_wire() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_w = Arc::clone(&seen);
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).ok();
+                *seen_w.lock().unwrap() = buf;
+            }
+        });
+
+        let src = format!(
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Unit, String>\n    ! [Tcp.connect, Tcp.writeBytes, Tcp.close]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    payload = Bytes(values = [249, 190, 180, 217, 5, 0, 0, 0, 1, 10, 255])\n    _w = Tcp.writeBytes(conn, payload)?\n    Tcp.close(conn)\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        handle.join().unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![249, 190, 180, 217, 5, 0, 0, 0, 1, 10, 255],
+            "writeBytes must append nothing and encode nothing"
+        );
+    }
+
+    /// Out-of-range bytes are rejected before any wire I/O, so a bad payload
+    /// never half-writes. Uses a real connection because `Tcp.Connection` is
+    /// opaque — Aver source cannot construct one.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_write_bytes_rejects_out_of_range_byte() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_w = Arc::clone(&seen);
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).ok();
+                *seen_w.lock().unwrap() = buf;
+            }
+        });
+
+        let src = format!(
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Unit, String>\n    ! [Tcp.connect, Tcp.writeBytes, Tcp.close]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    r = Tcp.writeBytes(conn, Bytes(values = [65, 256]))\n    _c = Tcp.close(conn)?\n    r\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Err(inner) => match *inner {
+                Value::Str(msg) => assert!(
+                    msg.contains("256") && msg.contains("index 1"),
+                    "error should name the offending byte and its index, got: {msg}"
+                ),
+                other => panic!("expected Str error, got {:?}", other),
+            },
+            other => panic!("expected Err, got {:?}", other),
+        }
+        handle.join().unwrap();
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a rejected payload must not put any bytes on the wire"
+        );
+    }
+
     /// Regression: `Tcp.readLine` frames on `\n` and rejects non-UTF-8, so
     /// neither half of a length-prefixed binary frame survives it.
     /// `Tcp.readBytes` must return exactly the bytes asked for. The payload

@@ -878,7 +878,7 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
-                    EffectName::TcpWriteLine => {
+                    EffectName::TcpWriteLine | EffectName::TcpWriteBytes => {
                         wasip2_imports
                             .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
                     }
@@ -1910,6 +1910,7 @@ pub(super) fn emit_module_with(
     // type/fn-idx bumps in a fixed order; register_funcs/emit
     // sites below pattern-match on the resulting bundle.
     let tcp = super::wasip2_tcp::wireup::allocate(
+        &effect_registry,
         &registry,
         &wasip2_imports,
         &mut types,
@@ -2478,6 +2479,7 @@ pub(super) fn emit_module_with(
                 tcp_connect_fn_idx: tcp.connect.as_ref().map(|t| t.fn_idx),
                 tcp_close_fn_idx: tcp.close.as_ref().map(|t| t.fn_idx),
                 tcp_write_line_fn_idx: tcp.write_line.as_ref().map(|t| t.fn_idx),
+                tcp_write_bytes_fn_idx: tcp.write_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_read_line_fn_idx: tcp.read_line.as_ref().map(|t| t.fn_idx),
                 tcp_read_bytes_fn_idx: tcp.read_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp.send.as_ref().map(|t| t.fn_idx),
@@ -4190,7 +4192,7 @@ pub(super) fn emit_module_with(
     }
     // Code-section order MUST match allocation order in
     // tcp_*_fn_type_idx blocks above: connect → format_id →
-    // parse_id → write_line → read_line → close → send. Diverging
+    // parse_id → write_line → write_bytes → read_line → close → send. Diverging
     // shifts every Call(idx) and surfaces as wasm validator
     // type-mismatch errors at cryptic offsets.
     if let Some(tw) = &tcp.write_line {
@@ -4248,6 +4250,56 @@ pub(super) fn emit_module_with(
                 .expect("tcp.write_line emit requires bump_alloc_ptr global"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_write_line(tw, &helpers));
+    }
+    if let Some(tw) = &tcp.write_bytes {
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.write_bytes gated on tcp_parse_id allocation");
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.write_bytes emit requires cabi_realloc fn idx".into())
+        })?;
+        let blocking_write_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .expect("tcp.write_bytes gate requires blocking-write slot");
+        let result_ok_fn = factory_exports
+            .result_unit_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.write_bytes emit requires Result<Unit,String> Ok factory".into(),
+                )
+            })?
+            .fn_idx;
+        let result_err_fn = factory_exports
+            .result_unit_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.write_bytes emit requires Result<Unit,String> Err factory".into(),
+                )
+            })?
+            .fn_idx;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.write_bytes emit requires tcp_pool global (Phase 4.1b gate)".into(),
+                )
+            })?;
+        let helpers = super::wasip2_tcp::TcpWriteBytesHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            blocking_write_fn,
+            result_ok_fn,
+            result_err_fn,
+            tcp_pool_global,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp.write_bytes emit requires bump_alloc_ptr global"),
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_write_bytes(tw, &helpers));
     }
     if let Some(tr) = &tcp.read_line {
         let (_, parse_id_fn) = tcp
@@ -6501,7 +6553,7 @@ fn allocate_factory_exports(
 
     // Result<Unit, String> factories — Disk.{writeText, appendText,
     // delete, deleteDir, makeDir} all yield this shape; same for the
-    // shape-equivalent Tcp.{writeLine, close, ping} effects.
+    // shape-equivalent Tcp.{writeLine, writeBytes, close, ping} effects.
     // Tcp.send is ephemeral (Phase 4.7+ pass 4) — its body returns
     // Result<String,String> directly and never materialises a
     // Result<Unit,String>, so it's not in the union.
@@ -6514,6 +6566,7 @@ fn allocate_factory_exports(
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir
                 | EffectName::TcpWriteLine
+                | EffectName::TcpWriteBytes
                 | EffectName::TcpClose
                 | EffectName::TcpPing
         )
@@ -6561,6 +6614,7 @@ fn allocate_factory_exports(
             e,
             EffectName::TcpConnect
                 | EffectName::TcpWriteLine
+                | EffectName::TcpWriteBytes
                 | EffectName::TcpReadLine
                 | EffectName::TcpReadBytes
                 | EffectName::TcpClose

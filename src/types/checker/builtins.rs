@@ -131,6 +131,7 @@ impl TypeChecker {
                 "Tcp.sendBytes".to_string(),
                 "Tcp.ping".to_string(),
                 "Tcp.writeLine".to_string(),
+                "Tcp.writeBytes".to_string(),
                 "Tcp.readLine".to_string(),
                 "Tcp.readBytes".to_string(),
                 "Tcp.close".to_string(),
@@ -312,6 +313,12 @@ impl TypeChecker {
                 &[Type::named("Tcp.Connection"), Type::Str],
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp.writeLine"],
+            ),
+            (
+                "Tcp.writeBytes",
+                &[Type::named("Tcp.Connection"), Type::named("Bytes")],
+                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
+                &["Tcp.writeBytes"],
             ),
             (
                 "Tcp.readLine",

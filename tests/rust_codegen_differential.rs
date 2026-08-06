@@ -424,6 +424,30 @@ fn main() -> Unit
     assert_eq!(rust, vm, "Rust Tcp.readBytes codegen diverged from VM");
 }
 
+#[test]
+fn rust_tcp_write_bytes_builds_with_nominal_bytes() {
+    let src = r#"module TcpWriteBytesBuild
+    intent = "Rust codegen must render Tcp.writeBytes with nominal Bytes"
+    depends [Bytes]
+    effects [Console, Tcp]
+
+fn writeFrame(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
+    ? "Write one exact binary frame."
+    ! [Tcp.writeBytes]
+    Tcp.writeBytes(conn, payload)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("compiled")
+"#;
+
+    let vm = run_vm_inline("tcp_write_bytes_build", src).expect("vm run");
+    let rust = build_run_rust_inline("tcp_write_bytes_build", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "compiled");
+    assert_eq!(rust, vm, "Rust Tcp.writeBytes codegen diverged from VM");
+}
+
 /// The #383 corruption class on the RUST backend: a Vector PARAM captured
 /// into a record field AND own-mutated, both in the SAME fn on the SAME
 /// param. `own_param`'s capture guard must keep the slot flagged so the

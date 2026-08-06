@@ -118,7 +118,9 @@ pub(super) fn collect_results_from_builtin_uses(
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
                         "Tcp.readLine" => intern("Result<String,String>"),
                         "Tcp.readBytes" => intern("Result<Bytes,String>"),
-                        "Tcp.writeLine" | "Tcp.close" => intern("Result<Unit,String>"),
+                        "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.close" => {
+                            intern("Result<Unit,String>")
+                        }
                         // `Tcp.send`, `Tcp.sendBytes`, and `Tcp.ping`
                         // are ephemeral (Phase 4.7+ passes 4 / 5) —
                         // none calls `__rt_tcp_connect` or returns a

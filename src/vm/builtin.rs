@@ -73,6 +73,7 @@ vm_builtins! {
     TcpPing => "Tcp.ping",
     TcpConnect => "Tcp.connect",
     TcpWriteLine => "Tcp.writeLine",
+    TcpWriteBytes => "Tcp.writeBytes",
     TcpReadLine => "Tcp.readLine",
     TcpReadBytes => "Tcp.readBytes",
     TcpClose => "Tcp.close",
@@ -280,6 +281,7 @@ impl VmBuiltin {
             | Self::TcpPing
             | Self::TcpConnect
             | Self::TcpWriteLine
+            | Self::TcpWriteBytes
             | Self::TcpReadLine
             | Self::TcpReadBytes
             | Self::TcpClose => tcp::effects(self.name()),
@@ -366,6 +368,7 @@ impl VmBuiltin {
             | Self::TcpPing
             | Self::TcpConnect
             | Self::TcpWriteLine
+            | Self::TcpWriteBytes
             | Self::TcpReadLine
             | Self::TcpReadBytes
             | Self::TcpClose => tcp::call_nv(self.name(), args, arena),

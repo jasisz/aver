@@ -1,5 +1,5 @@
-//! `Tcp.*` host imports — connect / writeLine / readLine / readBytes / close /
-//! send / sendBytes / ping. Connection handles cross as opaque wasm-gc structs
+//! `Tcp.*` host imports — connect / writeLine / writeBytes / readLine /
+//! readBytes / close / send / sendBytes / ping. Connection handles cross as opaque wasm-gc structs
 //! built by `host_tcp_connection_make`; the host extracts the
 //! `id` field via `host_tcp_connection_id`.
 
@@ -103,6 +103,49 @@ pub(super) fn dispatch(
             };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.writeLine", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_write_bytes" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn_arg = json_record(
+                "Tcp.Connection",
+                vec![
+                    ("id", aver::replay::JsonValue::String(id.clone())),
+                    ("host", aver::replay::JsonValue::String(String::new())),
+                    ("port", aver::replay::JsonValue::Int(0)),
+                ],
+            );
+            let (payload, payload_json) =
+                decode_byte_payload(caller, params.get(1), "Tcp.writeBytes")?;
+            let args = vec![conn_arg, payload_json];
+            if let Some(cached) = try_replay(caller, "Tcp.writeBytes", args.clone())? {
+                let result = decode_result_unit(caller, &cached)?;
+                results[0] = Val::AnyRef(result);
+                return Ok(true);
+            }
+            let conn = aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            };
+            let (result_ref, outcome) = match payload {
+                Err(error) => (
+                    host_result_err_unit_string(caller, &error)?,
+                    json_err(&error),
+                ),
+                Ok(payload) => match aver_rt::tcp::write_bytes(&conn, &payload) {
+                    Ok(()) => (
+                        host_result_ok_unit(caller)?,
+                        json_ok(aver::replay::JsonValue::Null),
+                    ),
+                    Err(error) => (
+                        host_result_err_unit_string(caller, &error)?,
+                        json_err(&error),
+                    ),
+                },
+            };
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Tcp.writeBytes", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_read_line" => {
@@ -262,7 +305,8 @@ pub(super) fn dispatch(
         "tcp_send_bytes" => {
             let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
-            let (payload, payload_json) = decode_byte_payload(caller, params.get(2))?;
+            let (payload, payload_json) =
+                decode_byte_payload(caller, params.get(2), "Tcp.sendBytes")?;
             let args = vec![
                 aver::replay::JsonValue::String(host.clone()),
                 aver::replay::JsonValue::Int(port),
@@ -333,44 +377,36 @@ struct GuestInt {
 fn decode_byte_payload(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     val: Option<&wasmtime::Val>,
+    effect: &'static str,
 ) -> Result<(Result<Vec<u8>, String>, aver::replay::JsonValue), wasmtime::Error> {
     use wasmtime::Val;
     let bytes_ref = match val {
         Some(Val::AnyRef(Some(r))) => *r,
         _ => {
-            return Err(wasmtime::Error::msg("Tcp.sendBytes: payload must be Bytes"));
+            return Err(wasmtime::Error::msg(format!(
+                "{effect}: payload must be Bytes"
+            )));
         }
     };
     let bytes = bytes_ref
         .as_struct(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: payload must be Bytes"))?;
+        .ok_or_else(|| wasmtime::Error::msg(format!("{effect}: payload must be Bytes")))?;
+    let malformed = format!("{effect}: malformed Bytes.values carrier");
     let mut current = match bytes.field(&mut *caller, 0)? {
         Val::AnyRef(r) => r,
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: malformed Bytes.values carrier",
-            ));
-        }
+        _ => return Err(wasmtime::Error::msg(malformed.clone())),
     };
     let mut ints = Vec::new();
     while let Some(node_ref) = current {
         let node = node_ref
             .as_struct(&*caller)?
-            .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
+            .ok_or_else(|| wasmtime::Error::msg(malformed.clone()))?;
         let head = node.field(&mut *caller, 0)?;
         let tail = node.field(&mut *caller, 1)?;
-        ints.push(decode_guest_int(
-            caller,
-            &head,
-            "Tcp.sendBytes: malformed Bytes.values carrier",
-        )?);
+        ints.push(decode_guest_int(caller, &head, &malformed)?);
         current = match tail {
             Val::AnyRef(r) => r,
-            _ => {
-                return Err(wasmtime::Error::msg(
-                    "Tcp.sendBytes: malformed Bytes.values carrier",
-                ));
-            }
+            _ => return Err(wasmtime::Error::msg(malformed.clone())),
         };
     }
 
@@ -397,7 +433,7 @@ fn decode_byte_payload(
     for (idx, int) in ints.iter().enumerate() {
         let Some(n) = int.value else {
             return Ok((
-                Err(byte_range_error(&int.display, idx)),
+                Err(byte_range_error(effect, &int.display, idx)),
                 json_record("Bytes", vec![("values", values_json)]),
             ));
         };
@@ -405,7 +441,7 @@ fn decode_byte_payload(
             Ok(byte) => bytes.push(byte),
             Err(_) => {
                 return Ok((
-                    Err(byte_range_error(&int.display, idx)),
+                    Err(byte_range_error(effect, &int.display, idx)),
                     json_record("Bytes", vec![("values", values_json)]),
                 ));
             }
@@ -420,24 +456,24 @@ fn decode_byte_payload(
 fn decode_guest_int(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     val: &wasmtime::Val,
-    malformed: &'static str,
+    malformed: &str,
 ) -> Result<GuestInt, wasmtime::Error> {
     use wasmtime::Val;
     let any_ref = match val {
         Val::AnyRef(Some(r)) => *r,
-        _ => return Err(wasmtime::Error::msg(malformed)),
+        _ => return Err(wasmtime::Error::msg(malformed.to_owned())),
     };
     let int_ref = any_ref
         .as_struct(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg(malformed))?;
+        .ok_or_else(|| wasmtime::Error::msg(malformed.to_owned()))?;
     let small = match int_ref.field(&mut *caller, 0)? {
         Val::I64(n) => n,
-        _ => return Err(wasmtime::Error::msg(malformed)),
+        _ => return Err(wasmtime::Error::msg(malformed.to_owned())),
     };
     let magnitude = int_ref.field(&mut *caller, 1)?;
     let magnitude_ref = match magnitude {
         Val::AnyRef(r) => r,
-        _ => return Err(wasmtime::Error::msg(malformed)),
+        _ => return Err(wasmtime::Error::msg(malformed.to_owned())),
     };
     let Some(magnitude_ref) = magnitude_ref else {
         return Ok(GuestInt {
@@ -450,17 +486,19 @@ fn decode_guest_int(
         Val::I32(n) if n < 0 => Sign::Minus,
         Val::I32(0) => Sign::NoSign,
         Val::I32(_) => Sign::Plus,
-        _ => return Err(wasmtime::Error::msg(malformed)),
+        _ => return Err(wasmtime::Error::msg(malformed.to_owned())),
     };
     let magnitude = magnitude_ref
         .as_array(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg(malformed))?;
+        .ok_or_else(|| wasmtime::Error::msg(malformed.to_owned()))?;
     let len = magnitude.len(&*caller)?;
     let mut limbs = Vec::with_capacity(len as usize);
     for idx in 0..len {
         let limb = match magnitude.get(&mut *caller, idx)? {
-            Val::I64(n) => u32::try_from(n).map_err(|_| wasmtime::Error::msg(malformed))?,
-            _ => return Err(wasmtime::Error::msg(malformed)),
+            Val::I64(n) => {
+                u32::try_from(n).map_err(|_| wasmtime::Error::msg(malformed.to_owned()))?
+            }
+            _ => return Err(wasmtime::Error::msg(malformed.to_owned())),
         };
         limbs.push(limb);
     }
@@ -470,9 +508,9 @@ fn decode_guest_int(
     })
 }
 
-fn byte_range_error(value: &str, idx: usize) -> String {
+fn byte_range_error(effect: &str, value: &str, idx: usize) -> String {
     format!(
-        "Tcp.sendBytes: byte {} at index {} is out of range (0\u{2013}255)",
-        value, idx
+        "{}: byte {} at index {} is out of range (0\u{2013}255)",
+        effect, value, idx
     )
 }

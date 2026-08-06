@@ -64,6 +64,7 @@ def CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "disk_make_dir"),
   ("aver", "tcp_connect"),
   ("aver", "tcp_write_line"),
+  ("aver", "tcp_write_bytes"),
   ("aver", "tcp_read_line"),
   ("aver", "tcp_read_bytes"),
   ("aver", "tcp_close"),
