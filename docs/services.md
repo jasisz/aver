@@ -299,7 +299,7 @@ Source: `src/services/tcp.rs`
 | Function | Signature |
 |---|---|
 | `Tcp.send` | `(String, Int, String) -> Result<String, String>` |
-| `Tcp.sendBytes` | `(String, Int, List<Int>) -> Result<List<Int>, String>` |
+| `Tcp.sendBytes` | `(String, Int, Bytes) -> Result<Bytes, String>` |
 | `Tcp.ping` | `(String, Int) -> Result<Unit, String>` |
 
 **Persistent connections:**
@@ -316,13 +316,13 @@ Source: `src/services/tcp.rs`
 `Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program holding 256 live `Tcp.connect` handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
 
 `Tcp.sendBytes` is the byte-clean form of `Tcp.send`: same socket behaviour, but
-the payload and response stay `List<Int>` and no UTF-8 encoding or decoding
+the payload and response stay `Bytes` and no UTF-8 encoding or decoding
 happens in either direction. Prefer it for any binary protocol. `Tcp.send`
 decodes the response with `String::from_utf8_lossy`, which replaces every
 non-UTF-8 sequence with U+FFFD — silently, irreversibly, and starting at the
 first offending byte — so it is only safe for protocols whose responses are
-valid UTF-8 text. Payload values outside `0..=255` return
-`Result.Err` naming the offending value and its index.
+valid UTF-8 text. Construct payloads with `Bytes.fromList` or `Bytes.fromHex`;
+invalid octets are rejected at that refinement boundary before TCP is called.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 

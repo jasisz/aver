@@ -467,7 +467,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal_ok",
                 stub_fn_name: stub_name("normal_ok"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: List<Int>) -> Result<List<Int>, String>\n    ? \"honest: tcp sendBytes echoes the payload\"\n    Result.Ok(payload)\n",
+                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: Bytes) -> Result<Bytes, String>\n    ? \"honest: tcp sendBytes echoes the payload\"\n    Result.Ok(payload)\n",
                     stub_name("normal_ok")
                 ),
             },
@@ -475,7 +475,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "always_err",
                 stub_fn_name: stub_name("always_err"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: List<Int>) -> Result<List<Int>, String>\n    ? \"hostile: tcp sendBytes fails\"\n    Result.Err(\"hostile: send failed\")\n",
+                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: Bytes) -> Result<Bytes, String>\n    ? \"hostile: tcp sendBytes fails\"\n    Result.Err(\"hostile: send failed\")\n",
                     stub_name("always_err")
                 ),
             },

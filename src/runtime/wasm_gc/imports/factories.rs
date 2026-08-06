@@ -368,10 +368,10 @@ pub(crate) fn host_result_err_list_string(
     })
 }
 
-/// Build a `Result<List<Int>, String>::Ok(list)` ref. Each response
-/// byte is lifted through the module's canonical `$AverInt`
-/// constructor before the list is assembled bottom-up.
-pub(crate) fn host_result_ok_list_int(
+/// Build a `Result<Bytes, String>::Ok(bytes)` ref. Each response byte
+/// is lifted through the module's canonical `$AverInt` constructor;
+/// the exported factory wraps the completed private list in `Bytes`.
+pub(crate) fn host_result_ok_bytes(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     items: &[i64],
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -386,7 +386,7 @@ pub(crate) fn host_result_ok_list_int(
         .get_export("__rt_aint_from_i64")
         .and_then(|e| e.into_func());
     let factory = caller
-        .get_export("__rt_result_list_int_string_ok")
+        .get_export("__rt_result_bytes_string_ok")
         .and_then(|e| e.into_func());
     let (Some(nil), Some(cons), Some(from_i64), Some(factory)) = (nil, cons, from_i64, factory)
     else {
@@ -424,7 +424,7 @@ pub(crate) fn host_result_ok_list_int(
     })
 }
 
-pub(crate) fn host_result_err_list_int(
+pub(crate) fn host_result_err_bytes(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     text: &str,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -434,7 +434,7 @@ pub(crate) fn host_result_err_list_int(
         None => return Ok(None),
     };
     let factory = caller
-        .get_export("__rt_result_list_int_string_err")
+        .get_export("__rt_result_bytes_string_err")
         .and_then(|e| e.into_func());
     let Some(factory) = factory else {
         return Ok(None);

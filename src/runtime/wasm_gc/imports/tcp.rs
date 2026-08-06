@@ -7,11 +7,11 @@ use num_bigint::{BigInt, Sign};
 
 use super::super::RunWasmGcHost;
 use super::super::decode::{
-    decode_result_list_int, decode_result_string, decode_result_tcp_connection, decode_result_unit,
+    decode_result_bytes, decode_result_string, decode_result_tcp_connection, decode_result_unit,
 };
 use super::factories::{
-    host_result_err_list_int, host_result_err_string, host_result_err_unit_string,
-    host_result_ok_list_int, host_result_ok_string, host_result_ok_unit,
+    host_result_err_bytes, host_result_err_string, host_result_err_unit_string,
+    host_result_ok_bytes, host_result_ok_string, host_result_ok_unit,
     host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_id,
     host_tcp_connection_make,
 };
@@ -204,12 +204,12 @@ pub(super) fn dispatch(
                 payload_json,
             ];
             if let Some(cached) = try_replay(caller, "Tcp.sendBytes", args.clone())? {
-                let r = decode_result_list_int(caller, &cached)?;
+                let r = decode_result_bytes(caller, &cached)?;
                 results[0] = Val::AnyRef(r);
                 return Ok(true);
             }
             let (result_ref, outcome) = match payload {
-                Err(e) => (host_result_err_list_int(caller, &e)?, json_err(&e)),
+                Err(e) => (host_result_err_bytes(caller, &e)?, json_err(&e)),
                 Ok(payload) => match aver_rt::tcp::send_bytes(&host, port, &payload) {
                     Ok(bytes) => {
                         let ints: Vec<i64> = bytes.iter().map(|b| i64::from(*b)).collect();
@@ -219,11 +219,14 @@ pub(super) fn dispatch(
                             .map(aver::replay::JsonValue::Int)
                             .collect();
                         (
-                            host_result_ok_list_int(caller, &ints)?,
-                            json_ok(aver::replay::JsonValue::Array(json)),
+                            host_result_ok_bytes(caller, &ints)?,
+                            json_ok(json_record(
+                                "Bytes",
+                                vec![("values", aver::replay::JsonValue::Array(json))],
+                            )),
                         )
                     }
-                    Err(e) => (host_result_err_list_int(caller, &e)?, json_err(&e)),
+                    Err(e) => (host_result_err_bytes(caller, &e)?, json_err(&e)),
                 },
             };
             results[0] = Val::AnyRef(result_ref);
@@ -267,11 +270,20 @@ fn decode_byte_payload(
     val: Option<&wasmtime::Val>,
 ) -> Result<(Result<Vec<u8>, String>, aver::replay::JsonValue), wasmtime::Error> {
     use wasmtime::Val;
-    let mut current = match val {
-        Some(Val::AnyRef(r)) => *r,
+    let bytes_ref = match val {
+        Some(Val::AnyRef(Some(r))) => *r,
+        _ => {
+            return Err(wasmtime::Error::msg("Tcp.sendBytes: payload must be Bytes"));
+        }
+    };
+    let bytes = bytes_ref
+        .as_struct(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: payload must be Bytes"))?;
+    let mut current = match bytes.field(&mut *caller, 0)? {
+        Val::AnyRef(r) => r,
         _ => {
             return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: payload must be a List<Int>",
+                "Tcp.sendBytes: malformed Bytes.values carrier",
             ));
         }
     };
@@ -279,7 +291,7 @@ fn decode_byte_payload(
     while let Some(node_ref) = current {
         let node = node_ref
             .as_struct(&*caller)?
-            .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: payload must be a List<Int>"))?;
+            .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
         let head = node.field(&mut *caller, 0)?;
         let tail = node.field(&mut *caller, 1)?;
         ints.push(decode_guest_int(caller, &head)?);
@@ -287,13 +299,13 @@ fn decode_byte_payload(
             Val::AnyRef(r) => r,
             _ => {
                 return Err(wasmtime::Error::msg(
-                    "Tcp.sendBytes: payload must be a List<Int>",
+                    "Tcp.sendBytes: malformed Bytes.values carrier",
                 ));
             }
         };
     }
 
-    let json = if ints.iter().all(|n| n.value.is_some()) {
+    let values_json = if ints.iter().all(|n| n.value.is_some()) {
         aver::replay::JsonValue::Array(
             ints.iter()
                 .filter_map(|n| n.value.map(aver::replay::JsonValue::Int))
@@ -315,16 +327,25 @@ fn decode_byte_payload(
     let mut bytes = Vec::with_capacity(ints.len());
     for (idx, int) in ints.iter().enumerate() {
         let Some(n) = int.value else {
-            return Ok((Err(byte_range_error(&int.display, idx)), json));
+            return Ok((
+                Err(byte_range_error(&int.display, idx)),
+                json_record("Bytes", vec![("values", values_json)]),
+            ));
         };
         match u8::try_from(n) {
             Ok(byte) => bytes.push(byte),
             Err(_) => {
-                return Ok((Err(byte_range_error(&int.display, idx)), json));
+                return Ok((
+                    Err(byte_range_error(&int.display, idx)),
+                    json_record("Bytes", vec![("values", values_json)]),
+                ));
             }
         }
     }
-    Ok((Ok(bytes), json))
+    Ok((
+        Ok(bytes),
+        json_record("Bytes", vec![("values", values_json)]),
+    ))
 }
 
 fn decode_guest_int(
@@ -336,18 +357,18 @@ fn decode_guest_int(
         Val::AnyRef(Some(r)) => *r,
         _ => {
             return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: payload must be a List<Int>",
+                "Tcp.sendBytes: malformed Bytes.values carrier",
             ));
         }
     };
     let int_ref = any_ref
         .as_struct(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: payload must be a List<Int>"))?;
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
     let small = match int_ref.field(&mut *caller, 0)? {
         Val::I64(n) => n,
         _ => {
             return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: payload must be a List<Int>",
+                "Tcp.sendBytes: malformed Bytes.values carrier",
             ));
         }
     };
@@ -356,7 +377,7 @@ fn decode_guest_int(
         Val::AnyRef(r) => r,
         _ => {
             return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: payload must be a List<Int>",
+                "Tcp.sendBytes: malformed Bytes.values carrier",
             ));
         }
     };
@@ -373,13 +394,13 @@ fn decode_guest_int(
         Val::I32(_) => Sign::Plus,
         _ => {
             return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: payload must be a List<Int>",
+                "Tcp.sendBytes: malformed Bytes.values carrier",
             ));
         }
     };
     let magnitude = magnitude_ref
         .as_array(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: payload must be a List<Int>"))?;
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
     let len = magnitude.len(&*caller)?;
     let mut limbs = Vec::with_capacity(len as usize);
     for idx in 0..len {

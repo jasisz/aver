@@ -583,9 +583,10 @@ impl TypeRegistry {
             list_order.push("List<String>".to_string());
             next_idx += 1;
         }
-        // `Tcp.sendBytes` consumes and returns `List<Int>` across the
-        // host boundary, so its concrete list slot is required even
-        // when the payload expression is an empty list.
+        // `Tcp.sendBytes` consumes and returns nominal `Bytes`. Its
+        // private `values` carrier is still `List<Int>`, so the
+        // concrete list slot is required even when no list literal is
+        // present at the call site.
         let needs_list_int_for_tcp_send_bytes = items.iter().any(|item| match item {
             TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node == "Tcp.sendBytes"),
             _ => false,

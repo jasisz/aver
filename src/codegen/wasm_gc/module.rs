@@ -6297,10 +6297,11 @@ struct FactoryExports {
     /// only case so far is `Disk.listDir`'s success arm).
     list_string_cons: Option<FactorySlot>,
     list_string_nil: Option<FactorySlot>,
-    /// `Tcp.sendBytes` host-return builders for its byte-clean
-    /// `Result<List<Int>, String>` shape.
-    result_list_int_string_ok: Option<FactorySlot>,
-    result_list_int_string_err: Option<FactorySlot>,
+    /// `Tcp.sendBytes` host-return builders for its nominal
+    /// `Result<Bytes, String>` shape. The host still assembles the
+    /// private `List<Int>` carrier before the Ok factory wraps it.
+    result_bytes_string_ok: Option<FactorySlot>,
+    result_bytes_string_err: Option<FactorySlot>,
     list_int_cons: Option<FactorySlot>,
     list_int_nil: Option<FactorySlot>,
     /// `__rt_record_tcp_connection_make(id, host, port)` — emitted
@@ -6718,18 +6719,23 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
-    // Result<List<Int>, String> + List<Int> builders — driven by
-    // `Tcp.sendBytes`.
+    // Result<Bytes, String> + Bytes' private List<Int> carrier builders —
+    // driven by `Tcp.sendBytes`.
     if effect_registry
         .iter()
         .any(|e| matches!(e, EffectName::TcpSendBytes))
     {
         let res_idx =
             registry
-                .result_type_idx("Result<List<Int>,String>")
+                .result_type_idx("Result<Bytes,String>")
                 .ok_or(WasmGcError::Validation(
-                    "Tcp.sendBytes factory requires Result<List<Int>,String> slot".into(),
+                    "Tcp.sendBytes factory requires Result<Bytes,String> slot".into(),
                 ))?;
+        let _bytes_idx = registry
+            .record_type_idx("Bytes")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.sendBytes factory requires Bytes record slot".into(),
+            ))?;
         let list_idx = registry
             .list_type_idx("List<Int>")
             .ok_or(WasmGcError::Validation(
@@ -6749,7 +6755,7 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
 
         types.ty().function([list_ref], [res_ref]);
-        fx.result_list_int_string_ok = Some(FactorySlot {
+        fx.result_bytes_string_ok = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -6757,7 +6763,7 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
 
         types.ty().function([s_ref], [res_ref]);
-        fx.result_list_int_string_err = Some(FactorySlot {
+        fx.result_bytes_string_err = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -6840,15 +6846,11 @@ impl FactoryExports {
         if let Some(s) = self.list_string_nil {
             exports.export("__rt_list_string_nil", ExportKind::Func, s.fn_idx);
         }
-        if let Some(s) = self.result_list_int_string_ok {
-            exports.export("__rt_result_list_int_string_ok", ExportKind::Func, s.fn_idx);
+        if let Some(s) = self.result_bytes_string_ok {
+            exports.export("__rt_result_bytes_string_ok", ExportKind::Func, s.fn_idx);
         }
-        if let Some(s) = self.result_list_int_string_err {
-            exports.export(
-                "__rt_result_list_int_string_err",
-                ExportKind::Func,
-                s.fn_idx,
-            );
+        if let Some(s) = self.result_bytes_string_err {
+            exports.export("__rt_result_bytes_string_err", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.list_int_cons {
             exports.export("__rt_list_int_cons", ExportKind::Func, s.fn_idx);
@@ -6968,11 +6970,11 @@ impl FactoryExports {
         if self.map_string_list_string_empty.is_some() {
             codes.function(&emit_factory_map_string_list_string_empty(registry)?);
         }
-        if self.result_list_int_string_ok.is_some() {
-            codes.function(&emit_factory_result_list_int_string_ok(registry)?);
+        if self.result_bytes_string_ok.is_some() {
+            codes.function(&emit_factory_result_bytes_string_ok(registry)?);
         }
-        if self.result_list_int_string_err.is_some() {
-            codes.function(&emit_factory_result_list_int_string_err(registry)?);
+        if self.result_bytes_string_err.is_some() {
+            codes.function(&emit_factory_result_bytes_string_err(registry)?);
         }
         if self.list_int_cons.is_some() {
             codes.function(&emit_factory_list_int_cons(registry)?);
@@ -7004,8 +7006,8 @@ impl FactoryExports {
             self.result_http_response_string_ok,
             self.result_http_response_string_err,
             self.map_string_list_string_empty,
-            self.result_list_int_string_ok,
-            self.result_list_int_string_err,
+            self.result_bytes_string_ok,
+            self.result_bytes_string_err,
             self.list_int_cons,
             self.list_int_nil,
         ]
@@ -7231,11 +7233,14 @@ fn emit_factory_list_string_nil(
     Ok(f)
 }
 
-fn emit_factory_result_list_int_string_ok(
+fn emit_factory_result_bytes_string_ok(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     let res_idx = registry
-        .result_type_idx("Result<List<Int>,String>")
+        .result_type_idx("Result<Bytes,String>")
+        .expect("checked at allocation");
+    let bytes_idx = registry
+        .record_type_idx("Bytes")
         .expect("checked at allocation");
     let s_idx = registry
         .string_array_type_idx
@@ -7243,6 +7248,7 @@ fn emit_factory_result_list_int_string_ok(
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(bytes_idx));
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         s_idx,
     )));
@@ -7251,19 +7257,19 @@ fn emit_factory_result_list_int_string_ok(
     Ok(f)
 }
 
-fn emit_factory_result_list_int_string_err(
+fn emit_factory_result_bytes_string_err(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     let res_idx = registry
-        .result_type_idx("Result<List<Int>,String>")
+        .result_type_idx("Result<Bytes,String>")
         .expect("checked at allocation");
-    let list_idx = registry
-        .list_type_idx("List<Int>")
+    let bytes_idx = registry
+        .record_type_idx("Bytes")
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        list_idx,
+        bytes_idx,
     )));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
