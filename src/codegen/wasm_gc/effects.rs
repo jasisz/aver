@@ -551,7 +551,10 @@ impl EffectName {
             Self::TcpClose | Self::TcpReadLine => Ok(vec![any_ref_ty()]),
             Self::TcpWriteLine => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
-            Self::TcpSendBytes => Ok(vec![any_ref_ty(), ValType::I64, list_int_ref_ty(registry)?]),
+            // Bytes is a nominal record. Keep the import parameter as anyref,
+            // like Tcp.Connection, so the host can project its `values`
+            // carrier without coupling the host ABI to a concrete type index.
+            Self::TcpSendBytes => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
             Self::TcpPing => Ok(vec![any_ref_ty(), ValType::I64]),
             // HTTP verbs all take a URL. `Http.get` / `Http.head` /
             // `Http.delete` are arity-1; the body verbs add (body,
@@ -671,7 +674,7 @@ impl EffectName {
             Self::TcpReadLine | Self::TcpSend => {
                 Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
             }
-            Self::TcpSendBytes => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
+            Self::TcpSendBytes => Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?]),
             Self::TcpWriteLine | Self::TcpClose | Self::TcpPing => {
                 Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
             }
@@ -736,18 +739,6 @@ fn map_string_list_string_ref_ty(registry: &TypeRegistry) -> Result<ValType, Was
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(slots.map),
-    }))
-}
-
-fn list_int_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
-    let idx = registry
-        .list_type_idx("List<Int>")
-        .ok_or(WasmGcError::Validation(
-            "Tcp.sendBytes requires List<Int> slot but none was registered".into(),
-        ))?;
-    Ok(ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(idx),
     }))
 }
 

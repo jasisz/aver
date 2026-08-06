@@ -291,11 +291,8 @@ impl TypeChecker {
             ),
             (
                 "Tcp.sendBytes",
-                &[Type::Str, Type::Int, Type::List(Box::new(Type::Int))],
-                Type::Result(
-                    Box::new(Type::List(Box::new(Type::Int))),
-                    Box::new(Type::Str),
-                ),
+                &[Type::Str, Type::Int, Type::named("Bytes")],
+                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str)),
                 &["Tcp.sendBytes"],
             ),
             (
@@ -325,10 +322,7 @@ impl TypeChecker {
             (
                 "Tcp.readBytes",
                 &[Type::named("Tcp.Connection"), Type::Int],
-                Type::Result(
-                    Box::new(Type::List(Box::new(Type::Int))),
-                    Box::new(Type::Str),
-                ),
+                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str)),
                 &["Tcp.readBytes"],
             ),
             (

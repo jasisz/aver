@@ -5,7 +5,7 @@ use crate::ast::{BinOp, Expr, FnDef, MatchArm, Spanned, Stmt, TailCallData, TopL
 use super::CheckFinding;
 
 const PURE_NAMESPACE_PREFIXES: &[&str] = &[
-    "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.", "Char.", "Byte.",
+    "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.", "Char.",
 ];
 
 /// Collect warnings for repeated arithmetic subexpressions across match condition

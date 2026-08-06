@@ -2,8 +2,8 @@
 ///
 /// One-shot methods:
 ///   `Tcp.send(host, port, message)` — connect, write message, read response, close.
-///   `Tcp.sendBytes(host, port, payload)` — same, but byte-clean: `List<Int>` in,
-///       `List<Int>` out, no UTF-8 encoding or decoding on either side. `send`
+///   `Tcp.sendBytes(host, port, payload)` — same, but byte-clean: `Bytes` in,
+///       `Bytes` out, no UTF-8 encoding or decoding on either side. `send`
 ///       decodes the response with `String::from_utf8_lossy`, which destroys any
 ///       non-UTF-8 byte irrecoverably; binary protocols need this variant.
 ///   `Tcp.ping(host, port)`          — check whether the port accepts connections.
@@ -12,14 +12,14 @@
 ///   `Tcp.connect(host, port)`           → Result<Tcp.Connection, String>  (returns opaque connection record)
 ///   `Tcp.writeLine(conn, line)`         → Result<Unit, String>    (writes line + \r\n)
 ///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
-///   `Tcp.readBytes(conn, n)`            → Result<List<Int>, String>  (exactly n bytes, no decoding)
+///   `Tcp.readBytes(conn, n)`            → Result<Bytes, String>  (exactly n bytes, no decoding)
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
 ///
 /// Each method requires its own exact effect (`Tcp.send`, `Tcp.ping`, etc.).
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use aver_rt::{AverList, TcpConnection};
+use aver_rt::TcpConnection;
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value};
@@ -116,16 +116,18 @@ fn tcp_send_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
     }
     let host = str_arg(&args[0], "Tcp.sendBytes: host must be a String")?;
     let port = int_arg(&args[1], "Tcp.sendBytes: port must be an Int")?;
-    let payload = match bytes_arg(&args[2], "Tcp.sendBytes")? {
-        Ok(bytes) => bytes,
-        // Out-of-range byte values are a value error, not a type error, so they
-        // surface as a catchable `Result.Err` — same treatment the port range
-        // gets in `aver-rt::tcp` rather than a VM-only trap.
-        Err(msg) => return Ok(Value::Err(Box::new(Value::Str(msg)))),
+    let payload = match crate::types::bytes::project(&args[2], "Tcp.sendBytes") {
+        Ok(payload) => payload,
+        Err(RuntimeError::Error(message)) => {
+            return Ok(Value::Err(Box::new(Value::Str(message))));
+        }
+        Err(error) => return Err(error),
     };
 
     match aver_rt::tcp::send_bytes(&host, port, &payload) {
-        Ok(response) => Ok(Value::Ok(Box::new(bytes_to_value(&response)))),
+        Ok(response) => Ok(Value::Ok(Box::new(crate::types::bytes::from_host(
+            &response,
+        )))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }
@@ -207,7 +209,9 @@ fn tcp_read_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
     };
 
     match aver_rt::tcp::read_bytes(&conn, count) {
-        Ok(bytes) => Ok(Value::Ok(Box::new(bytes_to_value(&bytes)))),
+        Ok(bytes) => Ok(Value::Ok(Box::new(crate::types::bytes::from_host(
+            &bytes,
+        )))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
 }
@@ -287,63 +291,12 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
     }
 }
 
-/// Convert a `List<Int>` argument into raw bytes.
-///
-/// The outer `Result` is the type check (wrong shape is a `RuntimeError`); the
-/// inner one is the value check (an Int outside `0..=255` is a catchable Aver
-/// `Result.Err`, reported with its index so a long payload is debuggable).
-#[allow(clippy::type_complexity)]
-fn bytes_arg(val: &Value, method: &str) -> Result<Result<Vec<u8>, String>, RuntimeError> {
-    let items = match val {
-        Value::List(items) => items,
-        _ => {
-            return Err(RuntimeError::Error(format!(
-                "{}: payload must be a List<Int>",
-                method
-            )));
-        }
-    };
-    let mut out = Vec::with_capacity(items.len());
-    for (idx, item) in items.iter().enumerate() {
-        let n = match item {
-            Value::Int(n) => match n.to_i64() {
-                Some(n) => n,
-                // An `Int` outside `i64` is still an `Int` — a fortiori out
-                // of byte range, so it takes the catchable value-error path,
-                // not the type-error one.
-                None => {
-                    return Ok(Err(format!(
-                        "{}: byte {} at index {} is out of range (0\u{2013}255)",
-                        method, n, idx
-                    )));
-                }
-            },
-            _ => {
-                return Err(RuntimeError::Error(format!(
-                    "{}: payload must be a List<Int>",
-                    method
-                )));
-            }
-        };
-        match u8::try_from(n) {
-            Ok(b) => out.push(b),
-            Err(_) => {
-                return Ok(Err(format!(
-                    "{}: byte {} at index {} is out of range (0\u{2013}255)",
-                    method, n, idx
-                )));
-            }
-        }
-    }
-    Ok(Ok(out))
-}
-
 /// Read a byte-count argument.
 ///
 /// Outer `Result` is the type check; inner is the value check. An `Int` too
 /// large for `i64` is still an `Int` — a fortiori past the read limit — so it
 /// takes the catchable value-error path rather than being reported as a bogus
-/// type error, matching how `bytes_arg` treats an out-of-range byte.
+/// type error.
 #[allow(clippy::type_complexity)]
 fn count_arg(val: &Value, method: &str) -> Result<Result<i64, String>, RuntimeError> {
     match val {
@@ -359,11 +312,6 @@ fn count_arg(val: &Value, method: &str) -> Result<Result<i64, String>, RuntimeEr
             method
         ))),
     }
-}
-
-fn bytes_to_value(bytes: &[u8]) -> Value {
-    let items: Vec<Value> = bytes.iter().map(|b| Value::int(*b as i64)).collect();
-    Value::List(AverList::from_vec(items))
 }
 
 fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {

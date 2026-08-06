@@ -299,7 +299,7 @@ Source: `src/services/tcp.rs`
 | Function | Signature |
 |---|---|
 | `Tcp.send` | `(String, Int, String) -> Result<String, String>` |
-| `Tcp.sendBytes` | `(String, Int, List<Int>) -> Result<List<Int>, String>` |
+| `Tcp.sendBytes` | `(String, Int, Bytes) -> Result<Bytes, String>` |
 | `Tcp.ping` | `(String, Int) -> Result<Unit, String>` |
 
 **Persistent connections:**
@@ -309,7 +309,7 @@ Source: `src/services/tcp.rs`
 | `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Opaque handle — see below. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
-| `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<List<Int>, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
+| `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 
 `Tcp.Connection` is **opaque** from the surface: construction is reserved to `Tcp.connect` and field reads / pattern matches are rejected by the type checker. The handle is purely an identity token — the caller has nothing to inspect inside it. The underlying socket lives in a thread-local `HashMap` (VM / self-host / wasm-gc-bridge, keyed by `AtomicU64` "tcp-N") or a 256-slot wasm-gc array (`--target wasip2`, slot allocated via first-free scan + monotonic counter generation). Either way, manually forging an id is impossible: the type checker rejects the constructor.
@@ -317,13 +317,13 @@ Source: `src/services/tcp.rs`
 `Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program holding 256 live `Tcp.connect` handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
 
 `Tcp.sendBytes` is the byte-clean form of `Tcp.send`: same socket behaviour, but
-the payload and response stay `List<Int>` and no UTF-8 encoding or decoding
+the payload and response stay `Bytes` and no UTF-8 encoding or decoding
 happens in either direction. Prefer it for any binary protocol. `Tcp.send`
 decodes the response with `String::from_utf8_lossy`, which replaces every
 non-UTF-8 sequence with U+FFFD — silently, irreversibly, and starting at the
 first offending byte — so it is only safe for protocols whose responses are
-valid UTF-8 text. Payload values outside `0..=255` return
-`Result.Err` naming the offending value and its index.
+valid UTF-8 text. Construct payloads with `Bytes.fromList` or `Bytes.fromHex`;
+invalid octets are rejected at that refinement boundary before TCP is called.
 
 `Tcp.readBytes` is the byte-clean form of `Tcp.readLine`, and the only way to
 read a fixed number of bytes off a persistent connection. `readLine` frames on
@@ -331,6 +331,9 @@ read a fixed number of bytes off a persistent connection. `readLine` frames on
 arbitrary offsets — and goes through `BufRead::read_line`, which rejects
 non-UTF-8 input outright. `readBytes` does neither: it reads exactly the
 requested count and decodes nothing.
+
+The returned payload is nominal `Bytes`; use `Bytes.toList` only when ordinary
+list operations are needed.
 
 A short read is an error rather than a truncated success, because fewer bytes
 than a length prefix promised means the peer went away mid-message. The count is

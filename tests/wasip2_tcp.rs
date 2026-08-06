@@ -387,6 +387,11 @@ fn tcp_send_bytes_one_shot() {
 
     let src = format!(
         r#"
+module SendBytes
+    intent = "Round-trip nominal Bytes over the WASI TCP backend."
+    depends [Bytes]
+    effects [Tcp, Console]
+
 fn renderBytes(bytes: List<Int>) -> String
     match bytes
         [] -> ""
@@ -394,9 +399,11 @@ fn renderBytes(bytes: List<Int>) -> String
 
 fn main() -> Unit
     ! [Tcp.sendBytes, Console.print]
-    match Tcp.sendBytes("127.0.0.1", {port}, [249, 190, 180, 217])
-        Result.Ok(r) -> Console.print("got: {{renderBytes(r)}}")
+    match Bytes.fromList([249, 190, 180, 217])
         Result.Err(e) -> Console.print("err: {{e}}")
+        Result.Ok(payload) -> match Tcp.sendBytes("127.0.0.1", {port}, payload)
+            Result.Ok(r) -> Console.print("got: {{renderBytes(Bytes.toList(r))}}")
+            Result.Err(e) -> Console.print("err: {{e}}")
 "#
     );
     let fixture = write_fixture(&dir, "send_bytes.av", &src);
@@ -418,13 +425,18 @@ fn main() -> Unit
 }
 
 #[test]
-fn tcp_send_bytes_out_of_range_is_catchable() {
+fn bytes_from_list_rejects_out_of_range_before_tcp() {
     let dir = tempdir("send-bytes-range");
     let src = r#"
+module SendBytesRange
+    intent = "Reject an invalid octet at the Bytes refinement boundary."
+    depends [Bytes]
+    effects [Console.print]
+
 fn main() -> Unit
-    ! [Tcp.sendBytes, Console.print]
-    match Tcp.sendBytes("127.0.0.1", 1, [65, 256])
-        Result.Ok(_) -> Console.print("unexpected ok")
+    ! [Console.print]
+    match Bytes.fromList([65, 256])
+        Result.Ok(_) -> Console.print("unexpected valid Bytes")
         Result.Err(e) -> Console.print(e)
 "#;
     let fixture = write_fixture(&dir, "send_bytes_range.av", src);
@@ -432,14 +444,11 @@ fn main() -> Unit
     let s = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(
         out.status.success(),
-        "wasip2_tcp sendBytes range check failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        "wasip2 Bytes range check failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(
-        s,
-        "Tcp.sendBytes: byte 256 at index 1 is out of range (0–255)\n"
-    );
+    assert_eq!(s, "byte value outside 0..=255\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

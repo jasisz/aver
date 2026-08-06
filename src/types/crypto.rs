@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use aver_rt::AverList;
 use sha2::{Digest, Sha256};
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
@@ -48,60 +47,14 @@ fn sha256(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    let bytes = bytes_arg(&args[0], "Crypto.sha256")?;
+    let bytes = super::bytes::project(&args[0], "Crypto.sha256")?;
 
     let digest = Sha256::digest(&bytes);
-    let items: Vec<Value> = digest.iter().map(|b| Value::int(*b as i64)).collect();
-    let digest_bytes = Value::Record {
-        type_name: "Bytes".to_string(),
-        fields: vec![("values".to_string(), Value::List(AverList::from_vec(items)))].into(),
-    };
+    let digest_bytes = super::bytes::from_host(&digest);
     Ok(Value::Record {
         type_name: "Digest32".to_string(),
         fields: vec![("bytes".to_string(), digest_bytes)].into(),
     })
-}
-
-/// Project the standard-library `Bytes` carrier into host bytes.
-///
-/// User code can only obtain `Bytes` through its validating constructors. The
-/// range checks below defend the host boundary against malformed internal
-/// values; violating the refinement is a runtime invariant error rather than a
-/// catchable branch in SHA-256's public type.
-fn bytes_arg(val: &Value, method: &str) -> Result<Vec<u8>, RuntimeError> {
-    let Value::Record { type_name, fields } = val else {
-        return Err(RuntimeError::Error(format!(
-            "{method}: argument must be Bytes"
-        )));
-    };
-    if type_name.rsplit('.').next() != Some("Bytes") {
-        return Err(RuntimeError::Error(format!(
-            "{method}: argument must be Bytes"
-        )));
-    }
-    let Some((_, Value::List(items))) = fields.iter().find(|(name, _)| name == "values") else {
-        return Err(RuntimeError::Error(format!(
-            "{method}: malformed Bytes carrier"
-        )));
-    };
-    let mut out = Vec::with_capacity(items.len());
-    for (idx, item) in items.iter().enumerate() {
-        let Value::Int(n) = item else {
-            return Err(RuntimeError::Error(format!(
-                "{method}: malformed Bytes value at index {idx}"
-            )));
-        };
-        let Some(n) = n.to_i64() else {
-            return Err(RuntimeError::Error(format!(
-                "{method}: malformed Bytes value at index {idx}"
-            )));
-        };
-        let byte = u8::try_from(n).map_err(|_| {
-            RuntimeError::Error(format!("{method}: malformed Bytes value at index {idx}"))
-        })?;
-        out.push(byte);
-    }
-    Ok(out)
 }
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────

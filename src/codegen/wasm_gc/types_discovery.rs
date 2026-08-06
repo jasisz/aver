@@ -127,7 +127,7 @@ pub(super) fn collect_results_from_builtin_uses(
                         // and `Result<Unit,String>`; both are dead
                         // weight on the ephemeral path.
                         "Tcp.send" => intern("Result<String,String>"),
-                        "Tcp.sendBytes" => intern("Result<List<Int>,String>"),
+                        "Tcp.sendBytes" => intern("Result<Bytes,String>"),
                         "Tcp.ping" => intern("Result<Unit,String>"),
                         "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put"
                         | "Http.patch" => intern("Result<HttpResponse,String>"),

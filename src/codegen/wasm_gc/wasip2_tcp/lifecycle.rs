@@ -160,14 +160,14 @@ pub(in crate::codegen::wasm_gc) struct TcpSendHelperFns {
     pub result_string_string_err_fn: u32,
 }
 
-/// `__rt_tcp_send_bytes(host, port, data) ->
-/// ref Result<List<Int>, String>`.
+/// `__rt_tcp_send_bytes(host, port, data) -> ref Result<Bytes, String>`.
 pub(in crate::codegen::wasm_gc) struct TcpSendBytesIndices {
     pub fn_type: u32,
     pub fn_idx: u32,
     pub string_type_idx: u32,
+    pub bytes_type_idx: u32,
     pub list_int_type_idx: u32,
-    pub result_list_int_string_type_idx: u32,
+    pub result_bytes_string_type_idx: u32,
     pub aint_struct_type_idx: Option<u32>,
     pub dns_err_segment_idx: u32,
     pub dns_err_len: u32,
@@ -267,6 +267,7 @@ enum TcpSendFlavor {
         result_err_fn: u32,
     },
     Bytes {
+        bytes_type_idx: u32,
         list_int_type_idx: u32,
         result_type_idx: u32,
         aint_struct_type_idx: Option<u32>,
@@ -366,7 +367,7 @@ fn emit_lm_append_u64_decimal(
 
 struct TcpByteRangeError {
     string_type_idx: u32,
-    list_int_type_idx: u32,
+    bytes_type_idx: u32,
     result_type_idx: u32,
     string_from_lm_fn: u32,
     cabi_realloc_fn: u32,
@@ -470,7 +471,7 @@ fn emit_byte_range_error(f: &mut Function, ctx: &TcpByteRangeError) {
 
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::RefNull(HeapType::Concrete(
-        ctx.list_int_type_idx,
+        ctx.bytes_type_idx,
     )));
     f.instruction(&Instruction::LocalGet(ctx.message_cursor_local));
     f.instruction(&Instruction::Call(ctx.string_from_lm_fn));
@@ -581,8 +582,9 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_send_bytes(
             bump_alloc_ptr_global: helpers.bump_alloc_ptr_global,
         },
         TcpSendFlavor::Bytes {
+            bytes_type_idx: indices.bytes_type_idx,
             list_int_type_idx: indices.list_int_type_idx,
-            result_type_idx: indices.result_list_int_string_type_idx,
+            result_type_idx: indices.result_bytes_string_type_idx,
             aint_struct_type_idx: indices.aint_struct_type_idx,
             string_from_lm_fn: helpers.string_from_lm_fn,
             aint_from_i64_fn: helpers.aint_from_i64_fn,
@@ -785,12 +787,12 @@ fn emit_tcp_send_impl(
                 f.instruction(&Instruction::Call(result_err_fn));
             }
             TcpSendFlavor::Bytes {
-                list_int_type_idx,
+                bytes_type_idx,
                 result_type_idx,
                 ..
             } => {
                 f.instruction(&Instruction::I32Const(0));
-                f.instruction(&Instruction::RefNull(HeapType::Concrete(list_int_type_idx)));
+                f.instruction(&Instruction::RefNull(HeapType::Concrete(bytes_type_idx)));
                 f.instruction(&Instruction::I32Const(0));
                 f.instruction(&Instruction::I32Const(len as i32));
                 f.instruction(&Instruction::ArrayNewData {
@@ -809,6 +811,7 @@ fn emit_tcp_send_impl(
     f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
     if let TcpSendFlavor::Bytes {
+        bytes_type_idx,
         list_int_type_idx,
         result_type_idx,
         aint_struct_type_idx,
@@ -821,6 +824,10 @@ fn emit_tcp_send_impl(
         let l_list_cursor = l_list_cursor.expect("bytes flavor has list cursor local");
 
         f.instruction(&Instruction::LocalGet(2));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: bytes_type_idx,
+            field_index: 0,
+        });
         f.instruction(&Instruction::LocalSet(l_list_cursor));
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::LocalSet(l_data_len));
@@ -888,7 +895,7 @@ fn emit_tcp_send_impl(
             &mut f,
             &TcpByteRangeError {
                 string_type_idx,
-                list_int_type_idx,
+                bytes_type_idx,
                 result_type_idx,
                 string_from_lm_fn,
                 cabi_realloc_fn: helpers.cabi_realloc_fn,
@@ -1133,6 +1140,7 @@ fn emit_tcp_send_impl(
             f.instruction(&Instruction::LocalSet(l_data_len));
         }
         TcpSendFlavor::Bytes {
+            bytes_type_idx,
             list_int_type_idx,
             aint_struct_type_idx,
             ..
@@ -1145,6 +1153,10 @@ fn emit_tcp_send_impl(
             f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
             f.instruction(&Instruction::Drop);
             f.instruction(&Instruction::LocalGet(2));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: bytes_type_idx,
+                field_index: 0,
+            });
             f.instruction(&Instruction::LocalSet(l_list_cursor));
             f.instruction(&Instruction::I32Const(0));
             f.instruction(&Instruction::LocalSet(l_off));
@@ -1429,6 +1441,7 @@ fn emit_tcp_send_impl(
             f.instruction(&Instruction::StructNew(result_type_idx));
         }
         TcpSendFlavor::Bytes {
+            bytes_type_idx,
             list_int_type_idx,
             result_type_idx,
             aint_struct_type_idx,
@@ -1468,6 +1481,7 @@ fn emit_tcp_send_impl(
 
             f.instruction(&Instruction::I32Const(1));
             f.instruction(&Instruction::LocalGet(l_list_cursor));
+            f.instruction(&Instruction::StructNew(bytes_type_idx));
             f.instruction(&Instruction::RefNull(HeapType::Concrete(
                 indices.string_type_idx,
             )));

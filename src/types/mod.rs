@@ -9,6 +9,7 @@
 /// - `bool`, `int`, `float`, `string`, `list`, `map`, `char`, `crypto` — pure namespace helpers (no effects)
 pub mod bool;
 pub mod branch_path;
+pub(crate) mod bytes;
 pub mod char;
 pub mod checker;
 pub mod crypto;

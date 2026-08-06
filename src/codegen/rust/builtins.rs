@@ -51,7 +51,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Http.put"
             | "Http.patch"
             | "Tcp.send"
-            | "Tcp.sendBytes"
             | "Tcp.ping"
             | "Tcp.connect"
             | "Tcp.writeLine"
@@ -72,7 +71,7 @@ fn builtin_effect_name(name: &str) -> &str {
 
 fn compose_tcp_send_bytes_call(args: &[String]) -> String {
     format!(
-        "{{ let __host = &{}; let __port = crate::to_host_i64(&{}, \"Tcp.sendBytes: port must be an Int\"); let __payload = &{}; match crate::tcp_send_bytes_payload_to_host(__payload) {{ Ok(__bytes) => aver_rt::tcp::send_bytes(__host, __port, &__bytes).map(crate::tcp_send_bytes_response_from_host), Err(__error) => Err(__error) }} }}",
+        "{{ let __host = &{}; let __port = crate::to_host_i64(&{}, \"Tcp.sendBytes: port must be an Int\"); let __payload = &{}; let __bytes: Result<Vec<u8>, crate::AverStr> = __payload.values.iter().map(|__value| __value.to_u32().and_then(|__value| u8::try_from(__value).ok()).ok_or_else(|| crate::AverStr::from(\"Tcp.sendBytes: malformed Bytes carrier\"))).collect(); match __bytes {{ Err(__error) => Err(__error), Ok(__bytes) => aver_rt::tcp::send_bytes(__host, __port, &__bytes).map(|__response| crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__response.into_iter().map(|__byte| aver_rt::AverInt::from_i64(i64::from(__byte))).collect()) }}).map_err(crate::AverStr::from) }} }}",
         args[0], args[1], args[2]
     )
 }
