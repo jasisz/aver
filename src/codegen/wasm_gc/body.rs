@@ -71,6 +71,10 @@ pub(super) struct FnMap {
     /// Per-`List<T>` helpers (len / reverse). Key = canonical Aver
     /// string `List<T>`.
     pub(super) list_ops: std::collections::HashMap<String, super::lists::ListOps>,
+    /// Proof-packed structural-refinement construct/project bridges, keyed by
+    /// nominal type name.
+    pub(super) packed_sequence_ops:
+        std::collections::HashMap<String, super::packed_sequences::PackedSequenceOps>,
     /// Per-`List<T>` `Vector.fromList` helper (paired with the
     /// matching `Vector<T>` registered in the type registry).
     pub(super) vfl_ops: std::collections::HashMap<String, super::lists::VectorFromListOps>,
@@ -143,6 +147,20 @@ impl FnMap {
         } else {
             None
         }
+    }
+
+    pub(super) fn packed_sequence_ops_lookup(
+        &self,
+        type_name: &str,
+    ) -> Option<super::packed_sequences::PackedSequenceOps> {
+        self.packed_sequence_ops
+            .get(type_name)
+            .copied()
+            .or_else(|| {
+                type_name
+                    .rsplit_once('.')
+                    .and_then(|(_, bare)| self.packed_sequence_ops.get(bare).copied())
+            })
     }
 
     pub(super) fn map_helpers_lookup(&self, canonical: &str) -> Option<&super::maps::MapKVHelpers> {

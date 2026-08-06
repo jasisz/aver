@@ -46,6 +46,7 @@ use super::super::types::TypeRegistry;
 pub(crate) enum EqKind {
     Record,
     Sum,
+    PackedSequence,
     OptionEq,
     ResultEq,
     TupleEq,
@@ -99,6 +100,11 @@ impl EqHelperRegistry {
         if registry.is_eligible_carrier(type_name) {
             return;
         }
+        let kind = if registry.packed_sequence(type_name).is_some() {
+            EqKind::PackedSequence
+        } else {
+            kind
+        };
         // Skip nominal types whose fields contain unhandled shapes
         // (List/Map/Vector/Set inside fields — the inline eq emitter
         // covers Option/Result/Tuple via per-instantiation helpers
@@ -114,6 +120,7 @@ impl EqHelperRegistry {
             EqKind::Sum => {
                 super::super::lists::sum_fields_resolvable(type_name, registry, &mut seen)
             }
+            EqKind::PackedSequence => true,
             // Carrier kinds — Option<X>/Result/Tuple have one
             // shape regardless of inner; resolvability is checked at
             // the record/sum level via `field_type_resolvable`.
@@ -146,6 +153,7 @@ impl EqHelperRegistry {
                     }
                 }
             }
+            EqKind::PackedSequence => {}
             // Carrier kinds — recurse into inner types so a direct
             // top-level register (e.g. discovery seed walker hitting
             // `Option<PieceKind>` from a `List<Option<PieceKind>>`)
@@ -192,6 +200,10 @@ impl EqHelperRegistry {
         // would emit a body that `struct.get`s a value that is actually an
         // `i64` (the func-33 validation failure this guards).
         if registry.is_eligible_carrier(field_ty) {
+            return;
+        }
+        if registry.packed_sequence(field_ty).is_some() {
+            self.register_transitive(field_ty, EqKind::PackedSequence, registry);
             return;
         }
         if registry.record_fields.contains_key(field_ty) {
@@ -399,6 +411,9 @@ impl EqHelperRegistry {
                     )?;
                     f.instruction(&Instruction::End);
                     codes.function(&f);
+                }
+                EqKind::PackedSequence => {
+                    codes.function(&emit_packed_sequence_eq_body(name, registry)?);
                 }
                 EqKind::OptionEq => {
                     let f = emit_option_eq_body(name, registry, string_eq_fn_idx, &helper_idx_map)?;
@@ -813,6 +828,7 @@ fn type_has_string_field(
             .flat_map(|vs| vs.iter())
             .filter(|v| v.parent == name)
             .any(|v| v.fields.iter().any(|t| t.trim() == "String")),
+        EqKind::PackedSequence => false,
         // Option<X>/Result<X,Y>/Tuple<…> — check whether any inner
         // type is `String`. Cheap string match on the canonical
         // (e.g. `"Option<String>"` contains `"String"`); accurate
@@ -820,4 +836,81 @@ fn type_has_string_field(
         // `__wasmgc_string_eq` when it might be called.
         EqKind::OptionEq | EqKind::ResultEq | EqKind::TupleEq => name.contains("String"),
     }
+}
+
+fn emit_packed_sequence_eq_body(
+    name: &str,
+    registry: &TypeRegistry,
+) -> Result<Function, WasmGcError> {
+    let packed = registry.packed_sequence(name).ok_or_else(|| {
+        WasmGcError::Validation(format!("eq helper for packed `{name}`: type missing"))
+    })?;
+    let packed_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(packed.type_idx),
+    });
+    let mut f = Function::new(vec![(2, packed_ref), (2, wasm_encoder::ValType::I32)]);
+    let heap = wasm_encoder::HeapType::Concrete(packed.type_idx);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(heap));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefCastNonNull(heap));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    for local in [2, 3] {
+        f.instruction(&Instruction::LocalGet(local));
+        f.instruction(&Instruction::LocalGet(5));
+        match packed.layout.element {
+            crate::codegen::proof_lower::PackedIntElement::U8
+            | crate::codegen::proof_lower::PackedIntElement::I8
+            | crate::codegen::proof_lower::PackedIntElement::U16
+            | crate::codegen::proof_lower::PackedIntElement::I16 => {
+                f.instruction(&Instruction::ArrayGetU(packed.type_idx));
+            }
+            _ => {
+                f.instruction(&Instruction::ArrayGet(packed.type_idx));
+            }
+        }
+    }
+    if matches!(
+        packed.layout.element,
+        crate::codegen::proof_lower::PackedIntElement::I64
+    ) {
+        f.instruction(&Instruction::I64Ne);
+    } else {
+        f.instruction(&Instruction::I32Ne);
+    }
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
 }

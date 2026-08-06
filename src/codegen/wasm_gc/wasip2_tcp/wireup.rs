@@ -396,7 +396,10 @@ fn allocate_write_bytes(
     next_builtin_fn_idx: &mut u32,
 ) -> Option<TcpWriteBytesIndices> {
     let string_idx = registry.string_array_type_idx?;
-    let bytes_idx = registry.record_type_idx("Bytes")?;
+    let bytes_idx = registry
+        .packed_sequence("Bytes")
+        .map(|packed| packed.type_idx)
+        .or_else(|| registry.record_type_idx("Bytes"))?;
     let list_idx = registry.list_type_idx("List<Int>")?;
     let aint_idx = registry.aint_struct_idx?;
     let conn_idx = registry.record_type_idx("Tcp.Connection")?;
@@ -688,7 +691,10 @@ fn allocate_send_bytes(
     next_builtin_fn_idx: &mut u32,
 ) -> Option<TcpSendBytesIndices> {
     let string_idx = registry.string_array_type_idx?;
-    let bytes_idx = registry.record_type_idx("Bytes")?;
+    let bytes_idx = registry
+        .packed_sequence("Bytes")
+        .map(|packed| packed.type_idx)
+        .or_else(|| registry.record_type_idx("Bytes"))?;
     let list_int_idx = registry.list_type_idx("List<Int>")?;
     let result_idx = registry.result_type_idx("Result<Bytes,String>")?;
     let dns_err_seg = registry.string_literal_segment(b"tcp: dns resolve failed")?;

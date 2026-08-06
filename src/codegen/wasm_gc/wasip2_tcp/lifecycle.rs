@@ -212,6 +212,8 @@ pub(in crate::codegen::wasm_gc) struct TcpSendBytesHelperFns {
     pub string_from_lm_fn: u32,
     pub aint_from_i64_fn: Option<u32>,
     pub aint_to_string_fn: Option<u32>,
+    pub bytes_pack_fn: Option<u32>,
+    pub bytes_unpack_fn: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -274,6 +276,8 @@ enum TcpSendFlavor {
         string_from_lm_fn: u32,
         aint_from_i64_fn: Option<u32>,
         aint_to_string_fn: Option<u32>,
+        bytes_pack_fn: Option<u32>,
+        bytes_unpack_fn: Option<u32>,
     },
 }
 
@@ -589,6 +593,8 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_send_bytes(
             string_from_lm_fn: helpers.string_from_lm_fn,
             aint_from_i64_fn: helpers.aint_from_i64_fn,
             aint_to_string_fn: helpers.aint_to_string_fn,
+            bytes_pack_fn: helpers.bytes_pack_fn,
+            bytes_unpack_fn: helpers.bytes_unpack_fn,
         },
     )
 }
@@ -817,6 +823,7 @@ fn emit_tcp_send_impl(
         aint_struct_type_idx,
         string_from_lm_fn,
         aint_to_string_fn,
+        bytes_unpack_fn,
         ..
     } = flavor
     {
@@ -824,10 +831,14 @@ fn emit_tcp_send_impl(
         let l_list_cursor = l_list_cursor.expect("bytes flavor has list cursor local");
 
         f.instruction(&Instruction::LocalGet(2));
-        f.instruction(&Instruction::StructGet {
-            struct_type_index: bytes_type_idx,
-            field_index: 0,
-        });
+        if let Some(unpack_fn) = bytes_unpack_fn {
+            f.instruction(&Instruction::Call(unpack_fn));
+        } else {
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: bytes_type_idx,
+                field_index: 0,
+            });
+        }
         f.instruction(&Instruction::LocalSet(l_list_cursor));
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::LocalSet(l_data_len));
@@ -1143,6 +1154,7 @@ fn emit_tcp_send_impl(
             bytes_type_idx,
             list_int_type_idx,
             aint_struct_type_idx,
+            bytes_unpack_fn,
             ..
         } => {
             let l_list_cursor = l_list_cursor.expect("bytes flavor has list cursor local");
@@ -1153,10 +1165,14 @@ fn emit_tcp_send_impl(
             f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
             f.instruction(&Instruction::Drop);
             f.instruction(&Instruction::LocalGet(2));
-            f.instruction(&Instruction::StructGet {
-                struct_type_index: bytes_type_idx,
-                field_index: 0,
-            });
+            if let Some(unpack_fn) = bytes_unpack_fn {
+                f.instruction(&Instruction::Call(unpack_fn));
+            } else {
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: bytes_type_idx,
+                    field_index: 0,
+                });
+            }
             f.instruction(&Instruction::LocalSet(l_list_cursor));
             f.instruction(&Instruction::I32Const(0));
             f.instruction(&Instruction::LocalSet(l_off));
@@ -1446,6 +1462,7 @@ fn emit_tcp_send_impl(
             result_type_idx,
             aint_struct_type_idx,
             aint_from_i64_fn,
+            bytes_pack_fn,
             ..
         } => {
             let l_list_cursor = l_list_cursor.expect("bytes flavor has list cursor local");
@@ -1481,7 +1498,11 @@ fn emit_tcp_send_impl(
 
             f.instruction(&Instruction::I32Const(1));
             f.instruction(&Instruction::LocalGet(l_list_cursor));
-            f.instruction(&Instruction::StructNew(bytes_type_idx));
+            if let Some(pack_fn) = bytes_pack_fn {
+                f.instruction(&Instruction::Call(pack_fn));
+            } else {
+                f.instruction(&Instruction::StructNew(bytes_type_idx));
+            }
             f.instruction(&Instruction::RefNull(HeapType::Concrete(
                 indices.string_type_idx,
             )));

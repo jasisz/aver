@@ -42,6 +42,16 @@ use super::types_discovery::{
 
 use crate::ast::{TopLevel, Type, TypeDef};
 
+/// Wasm storage selected for an opaque structural refinement whose carrier is
+/// `List<Int>`. The nominal Aver type is represented directly by this array;
+/// its source-level list is materialised only at the smart-constructor and
+/// field-projection boundaries.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PackedSequenceType {
+    pub(super) type_idx: u32,
+    pub(super) layout: crate::codegen::proof_lower::PackedSequenceLayout,
+}
+
 /// User-type lookup tables built once before any fn body emit.
 pub(super) struct TypeRegistry {
     /// `record_name → type_idx` for product (record) types.
@@ -117,6 +127,12 @@ pub(super) struct TypeRegistry {
     /// pass raw `K_val` and box on insert / unbox on read.
     pub(super) primitive_key_box: HashMap<String, u32>,
     pub(super) primitive_key_box_order: Vec<String>,
+    /// Proof-derived packed representations for opaque `List<Int>`
+    /// refinements. Keyed by bare nominal type name. Unlike ordinary record
+    /// newtyping this changes the carrier shape, so construct/project sites
+    /// bridge between `List<Int>` and the packed array explicitly.
+    pub(super) packed_sequences: HashMap<String, PackedSequenceType>,
+    pub(super) packed_sequence_order: Vec<String>,
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
@@ -1072,6 +1088,8 @@ impl TypeRegistry {
             tuple_order,
             primitive_key_box,
             primitive_key_box_order,
+            packed_sequences: HashMap::new(),
+            packed_sequence_order: Vec::new(),
             user_type_count: next_idx,
             string_array_type_idx,
             crypto_byte_array_type_idx,
@@ -1393,6 +1411,35 @@ impl TypeRegistry {
     /// Keyed by bare Aver name (`"IntRange"`).
     pub(super) fn set_eligible_carriers(&mut self, names: std::collections::HashSet<String>) {
         self.eligible_carriers = names;
+    }
+
+    /// Install proof-derived packed sequence layouts after the ordinary type
+    /// discovery pass. Slots are appended deterministically to the user-type
+    /// rec group so every later signature and body sees one stable nominal
+    /// array type per eligible refinement.
+    pub(super) fn install_packed_sequences(
+        &mut self,
+        layouts: HashMap<String, crate::codegen::proof_lower::PackedSequenceLayout>,
+    ) {
+        let mut names: Vec<String> = layouts.keys().cloned().collect();
+        names.sort();
+        for name in names {
+            let layout = layouts[&name];
+            let type_idx = self.user_type_count;
+            self.user_type_count += 1;
+            self.packed_sequences
+                .insert(name.clone(), PackedSequenceType { type_idx, layout });
+            self.packed_sequence_order.push(name);
+        }
+    }
+
+    pub(super) fn packed_sequence(&self, type_name: &str) -> Option<PackedSequenceType> {
+        let trimmed = type_name.trim();
+        self.packed_sequences.get(trimmed).copied().or_else(|| {
+            trimmed
+                .rsplit_once('.')
+                .and_then(|(_, bare)| self.packed_sequences.get(bare).copied())
+        })
     }
 
     /// ETAP-2 carrier-`i64`: is `type_name` (bare or `Module.`-qualified) a
@@ -1919,6 +1966,16 @@ pub(super) fn aver_to_wasm(
         return Ok(None);
     }
     if let Some(reg) = registry {
+        // Structural refinement erasure — an eligible nominal
+        // `record X { values: List<Int> }` is represented by its proven packed
+        // array everywhere. Construction/projection bridge the source-level
+        // list at the opaque module boundary.
+        if let Some(packed) = reg.packed_sequence(trimmed) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(packed.type_idx),
+            })));
+        }
         // Newtype optimization — a single-field record / single-variant
         // sum of a primitive lowers to the underlying primitive
         // everywhere. Saves an allocation per wrap and a struct.get

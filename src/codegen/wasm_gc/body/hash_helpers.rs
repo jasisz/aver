@@ -35,6 +35,7 @@ use super::super::types::TypeRegistry;
 pub(crate) enum HashKind {
     Record,
     Sum,
+    PackedSequence,
     OptionHash,
     ResultHash,
     TupleHash,
@@ -87,6 +88,11 @@ impl HashHelperRegistry {
         if registry.is_eligible_carrier(type_name) {
             return;
         }
+        let kind = if registry.packed_sequence(type_name).is_some() {
+            HashKind::PackedSequence
+        } else {
+            kind
+        };
         let mut seen = std::collections::HashSet::new();
         let resolvable = match kind {
             HashKind::Record => {
@@ -95,6 +101,7 @@ impl HashHelperRegistry {
             HashKind::Sum => {
                 super::super::lists::sum_fields_resolvable(type_name, registry, &mut seen)
             }
+            HashKind::PackedSequence => true,
             HashKind::OptionHash | HashKind::ResultHash | HashKind::TupleHash => true,
         };
         if !resolvable {
@@ -123,6 +130,7 @@ impl HashHelperRegistry {
                     }
                 }
             }
+            HashKind::PackedSequence => {}
             // Mirror eq_helpers — recurse so direct top-level
             // registration of a carrier (seed walker etc.) still
             // discovers inner types.
@@ -161,6 +169,10 @@ impl HashHelperRegistry {
         // struct, no per-type `__hash_<Carrier>` helper; its hash is the raw
         // `i32.wrap_i64` inlined at the use site. Treat like a primitive.
         if registry.is_eligible_carrier(field_ty) {
+            return;
+        }
+        if registry.packed_sequence(field_ty).is_some() {
+            self.register_transitive(field_ty, HashKind::PackedSequence, registry);
             return;
         }
         if registry.record_fields.contains_key(field_ty) {
@@ -303,6 +315,9 @@ impl HashHelperRegistry {
                     let f = emit_sum_hash_body(name, registry, &helper_idx_map, self_fn_idx)?;
                     codes.function(&f);
                 }
+                HashKind::PackedSequence => {
+                    codes.function(&emit_packed_sequence_hash_body(name, registry)?);
+                }
                 HashKind::OptionHash => {
                     let f = emit_option_hash_body(name, registry, &helper_idx_map)?;
                     codes.function(&f);
@@ -319,6 +334,72 @@ impl HashHelperRegistry {
         }
         Ok(())
     }
+}
+
+fn emit_packed_sequence_hash_body(
+    name: &str,
+    registry: &TypeRegistry,
+) -> Result<Function, WasmGcError> {
+    let packed = registry.packed_sequence(name).ok_or_else(|| {
+        WasmGcError::Validation(format!("hash helper for packed `{name}`: type missing"))
+    })?;
+    let packed_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(packed.type_idx),
+    });
+    // 1 = typed array, 2 = len, 3 = index, 4 = accumulator.
+    let mut f = Function::new(vec![(1, packed_ref), (3, wasm_encoder::ValType::I32)]);
+    let heap = wasm_encoder::HeapType::Concrete(packed.type_idx);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(heap));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(5));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    match packed.layout.element {
+        crate::codegen::proof_lower::PackedIntElement::U8
+        | crate::codegen::proof_lower::PackedIntElement::I8
+        | crate::codegen::proof_lower::PackedIntElement::U16
+        | crate::codegen::proof_lower::PackedIntElement::I16 => {
+            f.instruction(&Instruction::ArrayGetU(packed.type_idx));
+        }
+        crate::codegen::proof_lower::PackedIntElement::I64 => {
+            f.instruction(&Instruction::ArrayGet(packed.type_idx));
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        _ => {
+            f.instruction(&Instruction::ArrayGet(packed.type_idx));
+        }
+    }
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::End);
+    Ok(f)
 }
 
 /// `(eqref) -> i32` body for a record. Cast → typed, DJB2 fold over

@@ -16,10 +16,10 @@ const SHA256_K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// Emit SHA-256 directly into the GC module. The helper consumes the nominal
-/// `Bytes` record, hashes its `List<Int>` payload with wrapping i32 operations,
-/// then constructs `Digest32(Bytes(...))`. No host import is involved, so this
-/// one body serves both browser wasm-gc and the wasip2 component wrapper.
+/// Emit SHA-256 directly into the GC module. When the proof-derived structural
+/// refinement pass packed `Bytes`, the helper reads and writes its `(array i8)`
+/// directly. The boxed `record Bytes { List<Int> }` path remains as the exact
+/// differential fallback selected by `AVER_NO_PACKED_SEQUENCES`.
 pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let byte_array_idx = registry.crypto_byte_array_type_idx.ok_or_else(|| {
         WasmGcError::Validation("Crypto.sha256 requires byte scratch type".into())
@@ -27,24 +27,50 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
     let word_array_idx = registry.crypto_word_array_type_idx.ok_or_else(|| {
         WasmGcError::Validation("Crypto.sha256 requires word scratch type".into())
     })?;
-    let bytes_idx = registry
-        .record_type_idx("Bytes")
-        .ok_or_else(|| WasmGcError::Validation("Crypto.sha256 requires Bytes record".into()))?;
+    let packed_bytes = registry.packed_sequence("Bytes");
+    if let Some(packed) = packed_bytes
+        && !matches!(
+            packed.layout.element,
+            crate::codegen::proof_lower::PackedIntElement::U8
+        )
+    {
+        return Err(WasmGcError::Validation(
+            "Crypto.sha256 requires an unsigned-octet Bytes layout".into(),
+        ));
+    }
+    let bytes_idx = packed_bytes
+        .map(|p| p.type_idx)
+        .or_else(|| registry.record_type_idx("Bytes"))
+        .ok_or_else(|| WasmGcError::Validation("Crypto.sha256 requires Bytes".into()))?;
     let digest_idx = registry
         .record_type_idx("Digest32")
         .ok_or_else(|| WasmGcError::Validation("Crypto.sha256 requires Digest32 record".into()))?;
-    let list_idx = registry.list_type_idx("List<Int>").ok_or_else(|| {
-        WasmGcError::Validation("Crypto.sha256 requires List<Int> representation".into())
-    })?;
-    let aint_idx = registry.aint_struct_idx.ok_or_else(|| {
-        WasmGcError::Validation("Crypto.sha256 requires unbounded Int representation".into())
-    })?;
-    let from_i64_idx = registry
-        .aint_from_i64_fn_idx
-        .ok_or_else(|| WasmGcError::Validation("Crypto.sha256 requires __aint_from_i64".into()))?;
-    let to_i64_idx = registry.aint_to_i64_checked_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation("Crypto.sha256 requires __aint_to_i64_checked".into())
-    })?;
+    let list_idx = packed_bytes
+        .is_none()
+        .then(|| registry.list_type_idx("List<Int>"))
+        .flatten();
+    let aint_idx = packed_bytes
+        .is_none()
+        .then_some(registry.aint_struct_idx)
+        .flatten();
+    let from_i64_idx = packed_bytes
+        .is_none()
+        .then_some(registry.aint_from_i64_fn_idx)
+        .flatten();
+    let to_i64_idx = packed_bytes
+        .is_none()
+        .then_some(registry.aint_to_i64_checked_fn_idx)
+        .flatten();
+    if packed_bytes.is_none()
+        && (list_idx.is_none()
+            || aint_idx.is_none()
+            || from_i64_idx.is_none()
+            || to_i64_idx.is_none())
+    {
+        return Err(WasmGcError::Validation(
+            "Crypto.sha256 boxed Bytes path requires List<Int> and Int bridges".into(),
+        ));
+    }
 
     let types = crypto_types(
         byte_array_idx,
@@ -53,17 +79,161 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
         digest_idx,
         list_idx,
         aint_idx,
+        packed_bytes.is_some(),
     )?;
-    let callees = wat_helper::func_placeholders(&[
-        wat_helper::CalleeStub {
-            abs_idx: from_i64_idx,
-            sig: "(param i64) (result (ref null $aint))",
-        },
-        wat_helper::CalleeStub {
-            abs_idx: to_i64_idx,
-            sig: "(param (ref null $aint)) (result i64)",
-        },
-    ]);
+    let callees = if let (Some(from_i64_idx), Some(to_i64_idx)) = (from_i64_idx, to_i64_idx) {
+        wat_helper::func_placeholders(&[
+            wat_helper::CalleeStub {
+                abs_idx: from_i64_idx,
+                sig: "(param i64) (result (ref null $aint))",
+            },
+            wat_helper::CalleeStub {
+                abs_idx: to_i64_idx,
+                sig: "(param (ref null $aint)) (result i64)",
+            },
+        ])
+    } else {
+        String::new()
+    };
+    let carrier_locals = if packed_bytes.is_some() {
+        "(local $digest_bytes (ref null $bytes))"
+    } else {
+        "(local $node (ref null $list_int))\n  (local $out (ref null $list_int))"
+    };
+    let (input_length, input_copy) = if packed_bytes.is_some() {
+        (
+            r#"local.get $input
+  array.len
+  local.set $input_len"#
+                .to_string(),
+            r#"i32.const 0
+  local.set $i
+  (block $copy_done
+    (loop $copy
+      local.get $i
+      local.get $input_len
+      i32.ge_u
+      br_if $copy_done
+      local.get $message
+      local.get $i
+      local.get $input
+      local.get $i
+      array.get_u $bytes
+      array.set $byte_array
+      local.get $i
+      i32.const 1
+      i32.add
+      local.set $i
+      br $copy))"#
+                .to_string(),
+        )
+    } else {
+        let to_i64_idx = to_i64_idx.expect("boxed path checked above");
+        (
+            r#"local.get $input
+  ref.as_non_null
+  struct.get $bytes 0
+  local.set $node
+  (block $count_done
+    (loop $count
+      local.get $node
+      ref.is_null
+      br_if $count_done
+      local.get $input_len
+      i32.const 1
+      i32.add
+      local.set $input_len
+      local.get $node
+      ref.as_non_null
+      struct.get $list_int 1
+      local.set $node
+      br $count))"#
+                .to_string(),
+            format!(
+                r#"local.get $input
+  ref.as_non_null
+  struct.get $bytes 0
+  local.set $node
+  i32.const 0
+  local.set $i
+  (block $copy_done
+    (loop $copy
+      local.get $node
+      ref.is_null
+      br_if $copy_done
+      local.get $message
+      local.get $i
+      local.get $node
+      ref.as_non_null
+      struct.get $list_int 0
+      call {to_i64_idx}
+      i32.wrap_i64
+      array.set $byte_array
+      local.get $i
+      i32.const 1
+      i32.add
+      local.set $i
+      local.get $node
+      ref.as_non_null
+      struct.get $list_int 1
+      local.set $node
+      br $copy))"#
+            ),
+        )
+    };
+    let output_build = if packed_bytes.is_some() {
+        r#"i32.const 32
+  array.new_default $bytes
+  local.set $digest_bytes
+  i32.const 0 local.set $i
+  (block $output_done
+    (loop $output
+      local.get $i i32.const 32 i32.ge_u br_if $output_done
+      local.get $digest_bytes
+      local.get $i
+      local.get $words
+      local.get $i i32.const 2 i32.shr_u
+      array.get $word_array
+      i32.const 3
+      local.get $i i32.const 3 i32.and
+      i32.sub
+      i32.const 3 i32.shl
+      i32.shr_u
+      i32.const 255 i32.and
+      array.set $bytes
+      local.get $i i32.const 1 i32.add local.set $i
+      br $output))
+  local.get $digest_bytes
+  struct.new $digest"#
+            .to_string()
+    } else {
+        let from_i64_idx = from_i64_idx.expect("boxed path checked above");
+        format!(
+            r#"i32.const 31 local.set $i
+  (block $output_done
+    (loop $output
+      local.get $words
+      local.get $i i32.const 2 i32.shr_u
+      array.get $word_array
+      i32.const 3
+      local.get $i i32.const 3 i32.and
+      i32.sub
+      i32.const 3 i32.shl
+      i32.shr_u
+      i32.const 255 i32.and
+      i64.extend_i32_u
+      call {from_i64_idx}
+      local.get $out
+      struct.new $list_int
+      local.set $out
+      local.get $i i32.eqz br_if $output_done
+      local.get $i i32.const 1 i32.sub local.set $i
+      br $output))
+  local.get $out
+  struct.new $bytes
+  struct.new $digest"#
+        )
+    };
     let constants = SHA256_K
         .iter()
         .enumerate()
@@ -80,8 +250,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
 {types}
 {callees}
 (func (export "helper") (param $input (ref null $bytes)) (result (ref null $digest))
-  (local $node (ref null $list_int))
-  (local $out (ref null $list_int))
+  {carrier_locals}
   (local $message (ref null $byte_array))
   (local $words (ref null $word_array))
   (local $input_len i32)
@@ -113,25 +282,8 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
   (local $h7 i32)
   (local $bit_len i64)
 
-  ;; Count the refined byte list.
-  local.get $input
-  ref.as_non_null
-  struct.get $bytes 0
-  local.set $node
-  (block $count_done
-    (loop $count
-      local.get $node
-      ref.is_null
-      br_if $count_done
-      local.get $input_len
-      i32.const 1
-      i32.add
-      local.set $input_len
-      local.get $node
-      ref.as_non_null
-      struct.get $list_int 1
-      local.set $node
-      br $count))
+  ;; Read the source length and copy octets into the SHA scratch array.
+  {input_length}
 
   ;; padded_len = round_up(input_len + 9, 64)
   local.get $input_len
@@ -143,35 +295,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
   array.new_default $byte_array
   local.set $message
 
-  ;; Copy source octets, checking the Int carrier at the nominal boundary.
-  local.get $input
-  ref.as_non_null
-  struct.get $bytes 0
-  local.set $node
-  i32.const 0
-  local.set $i
-  (block $copy_done
-    (loop $copy
-      local.get $node
-      ref.is_null
-      br_if $copy_done
-      local.get $message
-      local.get $i
-      local.get $node
-      ref.as_non_null
-      struct.get $list_int 0
-      call {to_i64_idx}
-      i32.wrap_i64
-      array.set $byte_array
-      local.get $i
-      i32.const 1
-      i32.add
-      local.set $i
-      local.get $node
-      ref.as_non_null
-      struct.get $list_int 1
-      local.set $node
-      br $copy))
+  {input_copy}
 
   local.get $message
   local.get $input_len
@@ -386,31 +510,8 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
   local.get $words i32.const 6 local.get $h6 array.set $word_array
   local.get $words i32.const 7 local.get $h7 array.set $word_array
 
-  ;; Build the output list backwards so its final order is digest byte 0..31.
-  i32.const 31 local.set $i
-  (block $output_done
-    (loop $output
-      local.get $words
-      local.get $i i32.const 2 i32.shr_u
-      array.get $word_array
-      i32.const 3
-      local.get $i i32.const 3 i32.and
-      i32.sub
-      i32.const 3 i32.shl
-      i32.shr_u
-      i32.const 255 i32.and
-      i64.extend_i32_u
-      call {from_i64_idx}
-      local.get $out
-      struct.new $list_int
-      local.set $out
-      local.get $i i32.eqz br_if $output_done
-      local.get $i i32.const 1 i32.sub local.set $i
-      br $output))
-
-  local.get $out
-  struct.new $bytes
-  struct.new $digest)
+  ;; Materialise the 32 digest octets in the selected Bytes representation.
+  {output_build})
 )"#
     );
 
@@ -422,18 +523,14 @@ fn crypto_types(
     word_array_idx: u32,
     bytes_idx: u32,
     digest_idx: u32,
-    list_idx: u32,
-    aint_idx: u32,
+    list_idx: Option<u32>,
+    aint_idx: Option<u32>,
+    packed_bytes: bool,
 ) -> Result<String, WasmGcError> {
-    let named = [
-        byte_array_idx,
-        word_array_idx,
-        bytes_idx,
-        digest_idx,
-        list_idx,
-        aint_idx,
-    ];
-    let mut unique = named.to_vec();
+    let mut named = vec![byte_array_idx, word_array_idx, bytes_idx, digest_idx];
+    named.extend(list_idx);
+    named.extend(aint_idx);
+    let mut unique = named.clone();
     unique.sort_unstable();
     unique.dedup();
     if unique.len() != named.len() {
@@ -448,13 +545,15 @@ fn crypto_types(
             "(type $byte_array (array (mut i32)))"
         } else if idx == word_array_idx {
             "(type $word_array (array (mut i32)))"
+        } else if idx == bytes_idx && packed_bytes {
+            "(type $bytes (array (mut i8)))"
         } else if idx == bytes_idx {
             "(type $bytes (struct (field (ref null $list_int))))"
         } else if idx == digest_idx {
             "(type $digest (struct (field (ref null $bytes))))"
-        } else if idx == list_idx {
+        } else if Some(idx) == list_idx {
             "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
-        } else if idx == aint_idx {
+        } else if Some(idx) == aint_idx {
             // Only the reference identity is needed in this standalone WAT;
             // actual construction/conversion is delegated to the real helpers.
             "(type $aint (struct))"

@@ -1192,6 +1192,21 @@ pub(crate) fn emit_mir_expr(
             // emitter produces `emit_attr_get`'s diagnostic.
             let proj = &spanned_proj.node;
             let record_name = aver_type_str_of(&proj.base);
+            if ctx.registry.packed_sequence(&record_name).is_some() {
+                let produced = emit_mir_expr(func, &proj.base, slots, ctx)?;
+                if produced.is_some() {
+                    let ops = ctx
+                        .fn_map
+                        .packed_sequence_ops_lookup(&record_name)
+                        .ok_or_else(|| {
+                            WasmGcError::Validation(format!(
+                                "packed record `{record_name}` has no projection bridge"
+                            ))
+                        })?;
+                    func.instruction(&Instruction::Call(ops.unpack));
+                }
+                return Ok(produced);
+            }
             if ctx.registry.newtype_underlying(&record_name).is_some() {
                 // ETAP-2 carrier-`i64`: an eligible carrier's field read is
                 // still identity (emit the base, which is a native `i64`).

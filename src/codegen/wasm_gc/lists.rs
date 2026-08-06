@@ -876,6 +876,14 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
         "Bool" => Some(ListEqKind::I32),
         "String" => Some(ListEqKind::StringEq),
         other => {
+            // A proof-packed nominal still has a record declaration in the
+            // source registry, but its runtime representation is the packed
+            // array. Route through the nominal eq/hash helpers before the
+            // ordinary-record branch below tries to allocate record-typed
+            // scratch locals. This covers both List<X> and Vector<X> helpers.
+            if registry.packed_sequence(other).is_some() {
+                return Some(ListEqKind::CarrierEq(other.to_string()));
+            }
             // Record / sum element gets a contains/eq/hash slot
             // whenever its fields are themselves resolvable: primitives
             // or nominal types we've already accepted. Recursive refs
@@ -956,6 +964,9 @@ pub(super) fn field_type_resolvable(
     seen: &mut std::collections::HashSet<String>,
 ) -> bool {
     if matches!(field, "Int" | "Float" | "Bool" | "String") {
+        return true;
+    }
+    if registry.packed_sequence(field).is_some() {
         return true;
     }
     if registry.record_type_idx(field).is_some() {

@@ -388,6 +388,34 @@ fn decode_byte_payload(
             )));
         }
     };
+    // Proof-packed Bytes crosses the host ABI as `(array i8)`. Keep the old
+    // record/List<Int> decoder below as the differential fallback when
+    // `AVER_NO_PACKED_SEQUENCES` is set.
+    if let Some(array) = bytes_ref.as_array(&*caller)? {
+        let len = array.len(&*caller)?;
+        let mut bytes = Vec::with_capacity(len as usize);
+        for idx in 0..len {
+            match array.get(&mut *caller, idx)? {
+                Val::I32(value) => bytes.push(value as u8),
+                _ => {
+                    return Err(wasmtime::Error::msg(format!(
+                        "{effect}: malformed packed Bytes carrier"
+                    )));
+                }
+            }
+        }
+        let values_json = aver::replay::JsonValue::Array(
+            bytes
+                .iter()
+                .copied()
+                .map(|value| aver::replay::JsonValue::Int(i64::from(value)))
+                .collect(),
+        );
+        return Ok((
+            Ok(bytes),
+            json_record("Bytes", vec![("values", values_json)]),
+        ));
+    }
     let bytes = bytes_ref
         .as_struct(&*caller)?
         .ok_or_else(|| wasmtime::Error::msg(format!("{effect}: payload must be Bytes")))?;

@@ -50,6 +50,24 @@ pub(crate) fn emit_mir_record_create(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    if ctx.registry.packed_sequence(type_name).is_some() {
+        let field = fields.first().ok_or(WasmGcError::Validation(format!(
+            "packed record `{type_name}` requires one List<Int> field"
+        )))?;
+        let produced = emit_mir_record_field_value(func, &field.value, "List<Int>", slots, ctx)?;
+        if produced.is_some() {
+            let ops = ctx
+                .fn_map
+                .packed_sequence_ops_lookup(type_name)
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "packed record `{type_name}` has no construct bridge"
+                    ))
+                })?;
+            func.instruction(&Instruction::Call(ops.pack));
+        }
+        return Ok(produced);
+    }
     if ctx.registry.newtype_underlying(type_name).is_some() {
         let field = fields.first().ok_or(WasmGcError::Validation(format!(
             "newtype record `{type_name}` requires one field"
@@ -115,6 +133,25 @@ pub(crate) fn emit_mir_record_update(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    if ctx.registry.packed_sequence(type_name).is_some() {
+        let produced = if let Some(override_field) = updates.first() {
+            emit_mir_record_field_value(func, &override_field.value, "List<Int>", slots, ctx)?
+        } else {
+            emit_mir_expr(func, base, slots, ctx)?.map(|_| ())
+        };
+        if produced.is_some() && !updates.is_empty() {
+            let ops = ctx
+                .fn_map
+                .packed_sequence_ops_lookup(type_name)
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "packed record `{type_name}` has no update bridge"
+                    ))
+                })?;
+            func.instruction(&Instruction::Call(ops.pack));
+        }
+        return Ok(produced);
+    }
     // Mirror `emit_mir_record_create`'s newtype short-circuit: a record with
     // a single primitive field is newtype-erased to the bare underlying value
     // (Int->i64, Float->f64, Bool->i32), so an UPDATE must also emit the bare
