@@ -492,7 +492,7 @@ pub(super) struct Wasip2Lowering {
     /// orchestrator: connect + writeLine + readLine + close.
     pub(super) tcp_send_fn_idx: Option<u32>,
     /// `__rt_tcp_send_bytes(host, port, data) ->
-    /// ref Result<List<Int>, String>` helper wasm fn idx. Uses the
+    /// ref Result<Bytes, String>` helper wasm fn idx. Uses the
     /// same ephemeral socket pipeline as `Tcp.send`, with raw-byte
     /// list marshalling in both directions.
     pub(super) tcp_send_bytes_fn_idx: Option<u32>,

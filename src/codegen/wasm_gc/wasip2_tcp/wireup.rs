@@ -526,8 +526,9 @@ fn allocate_send_bytes(
     next_builtin_fn_idx: &mut u32,
 ) -> Option<TcpSendBytesIndices> {
     let string_idx = registry.string_array_type_idx?;
+    let bytes_idx = registry.record_type_idx("Bytes")?;
     let list_int_idx = registry.list_type_idx("List<Int>")?;
-    let result_idx = registry.result_type_idx("Result<List<Int>,String>")?;
+    let result_idx = registry.result_type_idx("Result<Bytes,String>")?;
     let dns_err_seg = registry.string_literal_segment(b"tcp: dns resolve failed")?;
     let no_addr_seg = registry.string_literal_segment(b"tcp: dns no addresses")?;
     let sock_err_seg = registry.string_literal_segment(b"tcp: socket create failed")?;
@@ -563,9 +564,9 @@ fn allocate_send_bytes(
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(string_idx),
     });
-    let list_ref = ValType::Ref(wasm_encoder::RefType {
+    let bytes_ref = ValType::Ref(wasm_encoder::RefType {
         nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(list_int_idx),
+        heap_type: wasm_encoder::HeapType::Concrete(bytes_idx),
     });
     let result_ref = ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -573,7 +574,7 @@ fn allocate_send_bytes(
     });
     types
         .ty()
-        .function([s_ref, ValType::I64, list_ref], [result_ref]);
+        .function([s_ref, ValType::I64, bytes_ref], [result_ref]);
     let fn_type = *next_type_idx;
     *next_type_idx += 1;
     let fn_idx = *next_builtin_fn_idx;
@@ -582,8 +583,9 @@ fn allocate_send_bytes(
         fn_type,
         fn_idx,
         string_type_idx: string_idx,
+        bytes_type_idx: bytes_idx,
         list_int_type_idx: list_int_idx,
-        result_list_int_string_type_idx: result_idx,
+        result_bytes_string_type_idx: result_idx,
         aint_struct_type_idx: registry.aint_struct_idx,
         dns_err_segment_idx: dns_err_seg,
         dns_err_len: b"tcp: dns resolve failed".len() as u32,

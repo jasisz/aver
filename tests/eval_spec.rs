@@ -2323,12 +2323,17 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn talk() -> Result<List<Int>, String>\n    ! [Tcp.sendBytes]\n    Tcp.sendBytes(\"127.0.0.1\", {}, [249, 190, 180, 217])\n",
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.sendBytes]\n    Tcp.sendBytes(\"127.0.0.1\", {}, Bytes(values = [249, 190, 180, 217]))\n",
             port
         );
         match run_tcp_fn(&src, "talk") {
             Value::Ok(inner) => match *inner {
-                Value::List(items) => {
+                Value::Record { type_name, fields } => {
+                    assert_eq!(type_name, "Bytes");
+                    let items = match fields.iter().find(|(name, _)| name == "values") {
+                        Some((_, Value::List(items))) => items,
+                        other => panic!("expected Bytes.values list, got {:?}", other),
+                    };
                     let got: Vec<i64> = items
                         .iter()
                         .map(|v| match v {
@@ -2338,21 +2343,21 @@ mod tcp_tests {
                         .collect();
                     assert_eq!(got, vec![249, 190, 180, 217]);
                 }
-                other => panic!("expected List, got {:?}", other),
+                other => panic!("expected Bytes, got {:?}", other),
             },
-            other => panic!("expected Ok(List<Int>), got {:?}", other),
+            other => panic!("expected Ok(Bytes), got {:?}", other),
         }
     }
 
-    /// Byte values outside `0..=255` are a value error, not a type error, so
-    /// they surface as a catchable `Result.Err` rather than a VM trap — the
-    /// same treatment the port range gets.
+    /// Public code cannot construct this value: `Bytes.fromList` rejects it.
+    /// The TCP bridge still fails closed if a malformed carrier reaches it.
     #[test]
-    fn tcp_send_bytes_rejects_out_of_range_byte() {
+    fn tcp_send_bytes_defensively_rejects_out_of_range_carrier() {
         let src = concat!(
-            "fn talk() -> Result<List<Int>, String>\n",
+            "record Bytes\n    values: List<Int>\n\n",
+            "fn talk() -> Result<Bytes, String>\n",
             "    ! [Tcp.sendBytes]\n",
-            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 256])\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, Bytes(values = [65, 256]))\n",
         );
         match run_tcp_fn(src, "talk") {
             Value::Err(inner) => match *inner {
@@ -2368,15 +2373,15 @@ mod tcp_tests {
         }
     }
 
-    /// An `Int` outside `i64` is still an `Int` — a fortiori out of byte
-    /// range, so it must take the same catchable value-error path as `256`,
-    /// not trap as a bogus type error.
+    /// The same defensive path retains an arbitrary-precision offending value
+    /// in its error instead of truncating it at the host boundary.
     #[test]
-    fn tcp_send_bytes_rejects_bignum_byte() {
+    fn tcp_send_bytes_defensively_rejects_bignum_carrier() {
         let src = concat!(
-            "fn talk() -> Result<List<Int>, String>\n",
+            "record Bytes\n    values: List<Int>\n\n",
+            "fn talk() -> Result<Bytes, String>\n",
             "    ! [Tcp.sendBytes]\n",
-            "    Tcp.sendBytes(\"127.0.0.1\", 1, [65, 1208925819614629174706176])\n",
+            "    Tcp.sendBytes(\"127.0.0.1\", 1, Bytes(values = [65, 1208925819614629174706176]))\n",
         );
         match run_tcp_fn(src, "talk") {
             Value::Err(inner) => match *inner {

@@ -136,15 +136,18 @@ fn tcp_send_bytes_imports_host_function_and_validates() {
 
     let source = r#"module Probe
     intent = "Compile the byte-clean TCP request path."
+    depends [Bytes]
     exposes [main]
     effects [Tcp.sendBytes]
 
-fn main() -> Result<List<Int>, String>
+fn main() -> Result<Bytes, String>
     ? "Send and receive bytes without UTF-8 conversion."
     ! [Tcp.sendBytes]
-    Tcp.sendBytes("127.0.0.1", 9, [249, 190, 180, 217])
+    payload = Bytes.fromList([249, 190, 180, 217])?
+    Tcp.sendBytes("127.0.0.1", 9, payload)
 "#;
-    let items = parse_pipeline(source).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
     let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
         .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
     wasmparser::Validator::new()

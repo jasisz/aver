@@ -79,11 +79,11 @@ impl TypeChecker {
     /// Aver modules after those modules have entered the active symbol table.
     ///
     /// Most builtins mention primitives or host-owned records and stay raw.
-    /// `Crypto.sha256` is the first boundary whose public domain and codomain
-    /// are source-defined refinements, so its initially unresolved `Bytes` and
-    /// `Digest32` names must join the same `TypeId` space as imported values.
+    /// Crypto and binary TCP cross source-defined refinements, so their
+    /// initially unresolved names must join the same `TypeId` space as
+    /// imported values.
     fn canonicalize_source_typed_builtin_sigs(&mut self) {
-        for name in ["Crypto.sha256"] {
+        for name in ["Crypto.sha256", "Tcp.sendBytes"] {
             let Some(mut sig) = self.extra_sigs.remove(name) else {
                 continue;
             };

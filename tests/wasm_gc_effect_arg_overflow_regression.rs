@@ -33,21 +33,35 @@ use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 /// clean run, or `Err(message)` when wasm execution traps / the backend
 /// rejects.
 fn run_wasm_gc(source: &str) -> Result<String, String> {
+    run_wasm_gc_with_mode(source, aver::runtime::wasm_gc::EffectMode::Normal)
+        .map(|(stdout, _)| stdout)
+}
+
+fn run_wasm_gc_with_mode(
+    source: &str,
+    mode: aver::runtime::wasm_gc::EffectMode,
+) -> Result<(String, aver::runtime::wasm_gc::RunOutcome), String> {
     let mut lexer = aver::lexer::Lexer::new(source);
     let tokens = lexer.tokenize().expect("lex");
     let mut parser = aver::parser::Parser::new(tokens);
     let mut items = parser.parse().expect("parse");
+    let dep_modules = aver::source::load_compile_deps(&items, env!("CARGO_MANIFEST_DIR"))?;
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(env!("CARGO_MANIFEST_DIR")),
+            }),
+            dep_modules: &dep_modules,
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
             ..Default::default()
         },
     );
+    aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+    aver::ir::pipeline::resolve(&mut items);
 
     let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {
         aver::runtime::wasm_gc::run_in_process(
@@ -56,13 +70,13 @@ fn run_wasm_gc(source: &str) -> Result<String, String> {
             aver::runtime::wasm_gc::RunConfig {
                 program_args: Vec::new(),
                 entry_info: None,
-                mode: aver::runtime::wasm_gc::EffectMode::Normal,
+                mode,
             },
         )
     });
 
     run_res
-        .map(|_| String::from_utf8_lossy(&stdout).into_owned())
+        .map(|outcome| (String::from_utf8_lossy(&stdout).into_owned(), outcome))
         .map_err(|e| e.to_string())
 }
 
@@ -141,43 +155,100 @@ fn main() -> Unit
 }
 
 #[test]
-fn tcp_send_bytes_out_of_range_is_a_catchable_result() {
+fn bytes_from_list_rejects_an_out_of_range_octet_on_wasm_gc() {
     let src = r#"module M
     intent =
-        "Tcp.sendBytes validates byte values before touching the socket"
-    effects [Tcp, Console]
+        "Bytes validates octets before Tcp.sendBytes can be called"
+    depends [Bytes]
+    effects [Console]
 
 fn main() -> Unit
-    ! [Tcp.sendBytes, Console.print]
-    match Tcp.sendBytes("127.0.0.1", 1, [65, 256])
-        Result.Ok(_) -> Console.print("unexpected ok")
+    ! [Console.print]
+    match Bytes.fromList([65, 256])
+        Result.Ok(_) -> Console.print("unexpected valid Bytes")
         Result.Err(e) -> Console.print(e)
 "#;
-    let out = run_wasm_gc(src).expect("byte-range failure must be a catchable Result.Err");
-    assert_eq!(
-        out,
-        "Tcp.sendBytes: byte 256 at index 1 is out of range (0–255)\n"
-    );
+    let out = run_wasm_gc(src).expect("Bytes range failure must be a catchable Result.Err");
+    assert_eq!(out, "byte value outside 0..=255\n");
 }
 
 #[test]
-fn tcp_send_bytes_bigint_is_a_catchable_result() {
+fn bytes_from_list_rejects_a_bigint_octet_on_wasm_gc() {
     let src = r#"module M
     intent =
-        "Tcp.sendBytes preserves a large byte value in its range error"
+        "Bytes rejects arbitrary-precision integers outside octet range"
+    depends [Bytes]
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    match Bytes.fromList([65, 1208925819614629174706176])
+        Result.Ok(_) -> Console.print("unexpected valid Bytes")
+        Result.Err(e) -> Console.print(e)
+"#;
+    let out = run_wasm_gc(src).expect("big Bytes range failure must be a catchable Result.Err");
+    assert_eq!(out, "byte value outside 0..=255\n");
+}
+
+#[test]
+fn tcp_send_bytes_round_trips_nominal_bytes_on_wasm_gc() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept Tcp.sendBytes");
+        let mut payload = Vec::new();
+        stream.read_to_end(&mut payload).expect("read payload");
+        stream.write_all(&payload).expect("echo payload");
+        payload
+    });
+
+    let src = format!(
+        r#"module M
+    intent = "Round-trip nominal Bytes through the hosted wasm-gc TCP bridge."
+    depends [Bytes]
     effects [Tcp, Console]
 
 fn main() -> Unit
     ! [Tcp.sendBytes, Console.print]
-    match Tcp.sendBytes("127.0.0.1", 1, [65, 1208925819614629174706176])
-        Result.Ok(_) -> Console.print("unexpected ok")
-        Result.Err(e) -> Console.print(e)
-"#;
-    let out = run_wasm_gc(src).expect("big byte-range failure must be a catchable Result.Err");
-    assert_eq!(
-        out,
-        "Tcp.sendBytes: byte 1208925819614629174706176 at index 1 is out of range (0–255)\n"
+    match Bytes.fromList([249, 190, 180, 217])
+        Result.Err(e) -> Console.print("err: {{e}}")
+        Result.Ok(payload) -> match Tcp.sendBytes("127.0.0.1", {port}, payload)
+            Result.Err(e) -> Console.print("err: {{e}}")
+            Result.Ok(response) -> Console.print("{{Bytes.toList(response) == [249, 190, 180, 217]}}")
+"#
     );
+    let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
+        .expect("hosted wasm-gc Tcp.sendBytes round-trip");
+    assert_eq!(server.join().expect("echo server"), [249, 190, 180, 217]);
+    assert_eq!(out, "true\n");
+
+    let effects = recorded
+        .recorded_effects
+        .expect("record mode must return the effect trace");
+    let recording = aver::replay::SessionRecording {
+        schema_version: 1,
+        request_id: "tcp-send-bytes-test".to_string(),
+        timestamp: String::new(),
+        program_file: String::new(),
+        module_root: String::new(),
+        entry_fn: "main".to_string(),
+        input: aver::replay::JsonValue::Null,
+        effects,
+        output: aver::replay::RecordedOutcome::Value(recorded.output),
+    };
+    let (replay_stdout, replayed) = run_wasm_gc_with_mode(
+        &src,
+        aver::runtime::wasm_gc::EffectMode::Replay(Box::new(recording), true),
+    )
+    .expect("recorded nominal Bytes response must decode during replay");
+    assert!(
+        replay_stdout.is_empty(),
+        "replay must suppress Console.print"
+    );
+    assert_eq!(replayed.effects_consumed, replayed.effects_total);
 }
 
 /// PURE-builtin saturation is UNCHANGED: `String.charAt` with an out-of-i64
