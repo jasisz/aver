@@ -62,6 +62,7 @@ mod flatten;
 mod lists;
 mod maps;
 mod module;
+mod packed_sequences;
 #[cfg(test)]
 mod tests;
 mod types;

@@ -1259,6 +1259,75 @@ fn literal_in_interval(value: &Spanned<Expr>, iv: crate::ir::interval::Interval)
     iv.contains_point(k)
 }
 
+/// Representation-independent safety scan for refinement carriers. A direct
+/// constructor or update outside the recognized smart constructor can bypass
+/// the invariant, so any such carrier must keep its ordinary representation.
+pub fn carrier_ungated_construction_demotions(
+    inputs: &ProofLowerInputs,
+    candidates: &HashSet<String>,
+    intervals: &HashMap<String, (crate::ir::interval::Interval, bool)>,
+) -> HashSet<String> {
+    let mut demoted = HashSet::new();
+    if candidates.is_empty() {
+        return demoted;
+    }
+
+    let mut ctor_fn_of: HashMap<String, String> = HashMap::new();
+    for name in candidates {
+        if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(name, inputs, None)
+        {
+            ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+        } else {
+            for m in inputs.dep_modules {
+                if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(
+                    name,
+                    inputs,
+                    Some(m.prefix.as_str()),
+                ) {
+                    ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    let all_fn_defs = inputs
+        .entry_items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .chain(inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter()));
+    for fd in all_fn_defs {
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => e,
+            };
+            carrier_walk_expr(expr, &mut |e| {
+                let (type_name, fields): (&String, &[(String, Spanned<Expr>)]) = match e {
+                    Expr::RecordCreate { type_name, fields } => (type_name, fields),
+                    Expr::RecordUpdate {
+                        type_name, updates, ..
+                    } => (type_name, updates),
+                    _ => return,
+                };
+                if !candidates.contains(type_name) || ctor_fn_of.get(type_name) == Some(&fd.name) {
+                    return;
+                }
+                let safe_literal = matches!(
+                    intervals.get(type_name),
+                    Some((iv, true)) if construct_arg_is_in_interval(fields, *iv)
+                );
+                if !safe_literal {
+                    demoted.insert(type_name.clone());
+                }
+            });
+        }
+    }
+    demoted
+}
+
 /// ETAP-2 carrier-`i64` SLICE 2b FOLLOW-UP: the fail-closed eligibility
 /// tightening. The bare carrier interval ([`carrier_interval_table`]) proves
 /// only that the smart-constructor's invariant `fits_i64`; it does NOT prove
@@ -1318,89 +1387,9 @@ pub fn carrier_eligibility_demotions(
     intervals: &HashMap<String, (crate::ir::interval::Interval, bool)>,
     resolved_map_keys: &[crate::ast::Type],
 ) -> HashSet<String> {
-    let mut demoted: HashSet<String> = HashSet::new();
+    let mut demoted = carrier_ungated_construction_demotions(inputs, candidates, intervals);
     if candidates.is_empty() {
         return demoted;
-    }
-
-    // Map each candidate carrier to its recognized smart-constructor fn name.
-    // `refinement_info_for_in_scope` is THE source of truth for "the
-    // smart-ctor function" — the exact fn the interval recognizer keyed off.
-    // For the wasm-gc path `dep_modules` is empty (the program is flattened
-    // into `entry_items`), so the entry scope (`None`) resolves every
-    // carrier; we still consult dep scopes for generality.
-    let mut ctor_fn_of: HashMap<String, String> = HashMap::new();
-    for name in candidates {
-        if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(name, inputs, None)
-        {
-            ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
-        } else {
-            for m in inputs.dep_modules {
-                if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(
-                    name,
-                    inputs,
-                    Some(m.prefix.as_str()),
-                ) {
-                    ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
-                    break;
-                }
-            }
-        }
-    }
-
-    // ---- Scan 1: ungated construction --------------------------------------
-    // Walk every fn body in the program. A `RecordCreate { type_name }` whose
-    // `type_name` is a candidate carrier and which sits in a fn OTHER than
-    // that carrier's smart-constructor is an ungated construct ⇒ demote,
-    // UNLESS its carrier-field argument is a constant literal provably inside
-    // the carrier's proven interval (an in-bounds literal can't smuggle an
-    // out-of-bound value past the gate — fail-closed but not over-eager). If
-    // we can't cleanly identify the smart-ctor (no entry in `ctor_fn_of`),
-    // every non-literal-safe construct demotes — fail-closed.
-    let all_fn_defs = inputs
-        .entry_items
-        .iter()
-        .filter_map(|it| match it {
-            TopLevel::FnDef(fd) => Some(fd),
-            _ => None,
-        })
-        .chain(inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter()));
-    for fd in all_fn_defs {
-        for stmt in fd.body.stmts() {
-            let expr = match stmt {
-                crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => e,
-            };
-            carrier_walk_expr(expr, &mut |e| {
-                // Both a fresh construct (`RecordCreate`) and a record-update
-                // (`RecordUpdate`, which sets the carrier's only field to an
-                // arbitrary value) can smuggle a value past the smart-ctor
-                // gate; treat both the same.
-                let (type_name, fields): (&String, &[(String, Spanned<Expr>)]) = match e {
-                    Expr::RecordCreate { type_name, fields } => (type_name, fields),
-                    Expr::RecordUpdate {
-                        type_name, updates, ..
-                    } => (type_name, updates),
-                    _ => return,
-                };
-                if !candidates.contains(type_name) {
-                    return;
-                }
-                // The construct inside the carrier's own smart-ctor is the
-                // gated one — never demotes.
-                if ctor_fn_of.get(type_name) == Some(&fd.name) {
-                    return;
-                }
-                // Outside the smart-ctor: safe iff the (single) carrier field
-                // is a constant literal inside the proven interval.
-                let safe_literal = matches!(
-                    intervals.get(type_name),
-                    Some((iv, true)) if construct_arg_is_in_interval(fields, *iv)
-                );
-                if !safe_literal {
-                    demoted.insert(type_name.clone());
-                }
-            });
-        }
     }
 
     // ---- Scan 2: Map-key usage (direct + transitive) -----------------------
@@ -2732,12 +2721,15 @@ mod induction;
 mod inequality;
 mod int_decimal_roundtrip;
 mod map_laws;
+mod packed_sequence;
 mod refinement;
 mod ring;
 mod simp;
 mod spec_equivalence;
 mod string_escape_roundtrip;
 mod wrapper_laws;
+
+pub use packed_sequence::{PackedIntElement, PackedSequenceLayout, packed_sequence_layout_table};
 
 pub(crate) use induction::LawProofCone;
 

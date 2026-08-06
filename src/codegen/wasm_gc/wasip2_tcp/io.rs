@@ -369,6 +369,7 @@ pub(in crate::codegen::wasm_gc) struct TcpWriteBytesHelperFns {
     pub result_err_fn: u32,
     pub tcp_pool_global: u32,
     pub bump_alloc_ptr_global: u32,
+    pub bytes_unpack_fn: Option<u32>,
 }
 
 pub(in crate::codegen::wasm_gc) fn emit_tcp_write_bytes(
@@ -481,10 +482,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_bytes(
 
     // First pass validates the private carrier and computes its byte length.
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: indices.bytes_type_idx,
-        field_index: 0,
-    });
+    if let Some(unpack_fn) = helpers.bytes_unpack_fn {
+        f.instruction(&Instruction::Call(unpack_fn));
+    } else {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: indices.bytes_type_idx,
+            field_index: 0,
+        });
+    }
     f.instruction(&Instruction::LocalSet(l_list));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(l_len));
@@ -546,10 +551,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_bytes(
     f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
     f.instruction(&Instruction::Drop);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: indices.bytes_type_idx,
-        field_index: 0,
-    });
+    if let Some(unpack_fn) = helpers.bytes_unpack_fn {
+        f.instruction(&Instruction::Call(unpack_fn));
+    } else {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: indices.bytes_type_idx,
+            field_index: 0,
+        });
+    }
     f.instruction(&Instruction::LocalSet(l_list));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(l_off));

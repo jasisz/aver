@@ -342,7 +342,11 @@ impl BuiltinName {
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
-            Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Bytes")?]),
+            Self::CryptoSha256 => Ok(vec![
+                super::types::aver_to_wasm("Bytes", Some(registry))?.ok_or_else(|| {
+                    WasmGcError::Validation("Crypto.sha256 requires Bytes".into())
+                })?,
+            ]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64, ValType::I64]),
             Self::AintFromI64 => Ok(vec![ValType::I64]),
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {

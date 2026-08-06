@@ -805,6 +805,18 @@ fn emit_hash_for(
     if let Some(under) = registry.newtype_underlying(k_aver) {
         return emit_hash_for(under, registry, string_key_helpers, all_key_helpers);
     }
+    if registry.packed_sequence(k_aver).is_some() {
+        let helpers = all_key_helpers.get(k_aver).ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "hash_for: packed `{k_aver}` has no registered hash helper"
+            ))
+        })?;
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::Call(helpers.hash));
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
     if registry.record_type_idx(k_aver).is_some() {
         return emit_hash_record(k_aver, registry, string_key_helpers, all_key_helpers);
     }
@@ -865,6 +877,19 @@ fn emit_eq_for(
     // records.
     if let Some(under) = registry.newtype_underlying(k_aver) {
         return emit_eq_for(under, registry, string_key_helpers, all_key_helpers);
+    }
+    if registry.packed_sequence(k_aver).is_some() {
+        let helpers = all_key_helpers.get(k_aver).ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "eq_for: packed `{k_aver}` has no registered eq helper"
+            ))
+        })?;
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::Call(helpers.eq));
+        f.instruction(&Instruction::End);
+        return Ok(f);
     }
     if registry.record_type_idx(k_aver).is_some() {
         return emit_eq_record(k_aver, registry, string_key_helpers, all_key_helpers);
@@ -1025,6 +1050,9 @@ fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
         && let Some(s) = registry.string_array_type_idx
     {
         return HeapType::Concrete(s);
+    }
+    if let Some(packed) = registry.packed_sequence(k_aver) {
+        return HeapType::Concrete(packed.type_idx);
     }
     if let Some(r) = registry.record_type_idx(k_aver) {
         return HeapType::Concrete(r);

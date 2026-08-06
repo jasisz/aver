@@ -330,6 +330,52 @@ pub(super) fn emit_module_with(
             .collect();
     registry.set_eligible_carrier_fields(eligible_carrier_fields);
 
+    // Structural sibling of carrier-i64: derive a per-element interval for
+    // canonical opaque `List<Int>` refinements and erase each eligible nominal
+    // wrapper to the smallest lossless wasm array element. This deliberately
+    // reuses the scalar pass's gate-bypass scan rather than trusting the type
+    // name or merely spotting a one-field record. Unlike scalar i64 erasure,
+    // packed refs are supported by Map's key/value storage and eq/hash paths,
+    // so Map-key use does not require a representation demotion.
+    let packed_sequence_layouts = if std::env::var("AVER_NO_PACKED_SEQUENCES").is_ok() {
+        std::collections::HashMap::new()
+    } else {
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+            entry_items: items,
+            dep_modules: &[],
+            module_prefixes: &std::collections::HashSet::new(),
+            recursive_fns: &std::collections::HashSet::new(),
+            symbol_table: &symbol_table,
+            program_shape: None,
+        };
+        let layouts = crate::codegen::proof_lower::packed_sequence_layout_table(&inputs);
+        let candidates: std::collections::HashSet<String> = layouts.keys().cloned().collect();
+        let intervals: std::collections::HashMap<_, _> = layouts
+            .iter()
+            .map(|(name, layout)| (name.clone(), (layout.element_interval, true)))
+            .collect();
+        let demoted = crate::codegen::proof_lower::carrier_ungated_construction_demotions(
+            &inputs,
+            &candidates,
+            &intervals,
+        );
+        layouts
+            .into_iter()
+            .filter(|(name, _)| !demoted.contains(name))
+            .collect()
+    };
+    // The proof scan can see an otherwise-unused dependency even when MIR
+    // instantiation discovery quite correctly omitted `List<Int>`. Packing
+    // such a dead nominal would force bridge helpers to reference a type that
+    // does not exist in this module. Keep the optimization fail-closed: a
+    // live structural carrier necessarily registers its declared list type.
+    let packed_sequence_layouts = if registry.list_type_idx("List<Int>").is_some() {
+        packed_sequence_layouts
+    } else {
+        std::collections::HashMap::new()
+    };
+    registry.install_packed_sequences(packed_sequence_layouts);
+
     let mir_program: crate::ir::mir::MirProgram = {
         // Reuse the `optimized` MIR built above for carrier-eligibility
         // Map-key discovery — the box/unbox boundary rewrite is the only
@@ -477,8 +523,13 @@ pub(super) fn emit_module_with(
         }
     }
     for canonical in &registry.map_order {
-        if let Some((k, _v)) = super::types::parse_map_kv(canonical) {
+        if let Some((k, v)) = super::types::parse_map_kv(canonical) {
             nominal_seed.push(k.trim().to_string());
+            // Map's own helper registry treats non-primitive values as
+            // pseudo-keys for structural eq/hash. Seed the shared nominal
+            // registries too so representation-specialized values (notably a
+            // proof-packed sequence) can override that record-shaped fallback.
+            nominal_seed.push(v.trim().to_string());
         }
     }
     for name in &nominal_seed {
@@ -530,6 +581,7 @@ pub(super) fn emit_module_with(
         let hk = match kind {
             EqKind::Record => HashKind::Record,
             EqKind::Sum => HashKind::Sum,
+            EqKind::PackedSequence => HashKind::PackedSequence,
             EqKind::OptionEq => HashKind::OptionHash,
             EqKind::ResultEq => HashKind::ResultHash,
             EqKind::TupleEq => HashKind::TupleHash,
@@ -1167,6 +1219,13 @@ pub(super) fn emit_module_with(
         &mut next_type_idx,
     )?;
     list_helpers.emit_helper_types(&mut types, &registry)?;
+
+    // Structural refinement list↔packed-array bridges. Their slots follow the
+    // list helpers because their signatures name `List<Int>` directly.
+    let mut packed_sequence_helpers =
+        super::packed_sequences::PackedSequenceHelperRegistry::default();
+    packed_sequence_helpers.assign_slots(&registry, &mut next_builtin_fn_idx, &mut next_type_idx);
+    packed_sequence_helpers.emit_helper_types(&mut types, &registry)?;
 
     // Per-(record/sum) `__eq_<TypeName>` helpers — slot allocation +
     // type emit. Bodies emitted after list helpers (they may call
@@ -1999,6 +2058,7 @@ pub(super) fn emit_module_with(
         &mut next_builtin_fn_idx,
         &registry,
         &effect_registry,
+        packed_sequence_helpers.ops_for("Bytes").map(|ops| ops.pack),
     )?;
 
     // 10) Caller-fn name table exports. `__caller_fn_count() -> i32`
@@ -2083,6 +2143,7 @@ pub(super) fn emit_module_with(
     }
     map_helpers.emit_function_section(&mut funcs);
     list_helpers.emit_function_section(&mut funcs);
+    packed_sequence_helpers.emit_function_section(&mut funcs);
     // Eq helpers — one fn entry per registered `__eq_<TypeName>` slot.
     for (name, _kind) in eq_helpers_registry.iter() {
         let t_idx = eq_helpers_registry
@@ -2574,6 +2635,10 @@ pub(super) fn emit_module_with(
         }
     }
     let string_split_ops = list_helpers.string_split_ops();
+    let packed_sequence_ops = packed_sequence_helpers
+        .iter()
+        .map(|(name, ops)| (name.to_string(), ops))
+        .collect();
     let mut eq_helpers_lookup: HashMap<String, u32> = HashMap::new();
     for (name, _kind) in eq_helpers_registry.iter() {
         if let Some(fn_idx) = eq_helpers_registry.lookup_fn_idx(name) {
@@ -2609,6 +2674,7 @@ pub(super) fn emit_module_with(
         vfl_ops: vfl_ops_lookup,
         zip_ops: zip_ops_lookup,
         string_split_ops,
+        packed_sequence_ops,
         eq_helpers: eq_helpers_lookup,
         funcref_table,
         call_indirect_types,
@@ -3308,15 +3374,17 @@ pub(super) fn emit_module_with(
             compound_eq_hash_lookup.insert(canonical.clone(), (h.eq, h.hash));
         }
     }
-    // Carrier eq+hash lookup — Option/Result/Tuple instantiations
-    // get their helpers from eq_helpers / hash_helpers; map keys
-    // proxy through these. Build the pair map by zipping the two
-    // registries' fn idxs by canonical.
+    // Carrier eq+hash lookup — Option/Result/Tuple and proof-packed nominal
+    // instantiations get their helpers from eq_helpers / hash_helpers; map
+    // keys and values proxy through these. Build the pair map by zipping the
+    // two registries' fn idxs by canonical.
     let mut carrier_eq_hash_lookup: HashMap<String, (u32, u32)> = HashMap::new();
     for (name, kind) in eq_helpers_registry.iter() {
         use super::body::eq_helpers::EqKind as EK;
-        if matches!(kind, EK::OptionEq | EK::ResultEq | EK::TupleEq)
-            && let Some(eq_fn) = eq_helpers_registry.lookup_fn_idx(name)
+        if matches!(
+            kind,
+            EK::PackedSequence | EK::OptionEq | EK::ResultEq | EK::TupleEq
+        ) && let Some(eq_fn) = eq_helpers_registry.lookup_fn_idx(name)
             && let Some(hash_fn) = hash_helpers_registry.lookup_fn_idx(name)
         {
             carrier_eq_hash_lookup.insert(name.to_string(), (eq_fn, hash_fn));
@@ -3363,6 +3431,7 @@ pub(super) fn emit_module_with(
         &hash_helper_fn_idx_map,
         aint_eq_fn_idx,
     )?;
+    packed_sequence_helpers.emit_helper_bodies(&mut codes, &registry)?;
 
     // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
     // list helpers so any String fields can call `__wasmgc_string_eq`
@@ -4298,6 +4367,9 @@ pub(super) fn emit_module_with(
                 .as_ref()
                 .map(|g| g.bump_alloc_ptr)
                 .expect("tcp.write_bytes emit requires bump_alloc_ptr global"),
+            bytes_unpack_fn: packed_sequence_helpers
+                .ops_for("Bytes")
+                .map(|ops| ops.unpack),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_write_bytes(tw, &helpers));
     }
@@ -4737,6 +4809,10 @@ pub(super) fn emit_module_with(
             string_from_lm_fn,
             aint_from_i64_fn,
             aint_to_string_fn,
+            bytes_pack_fn: packed_sequence_helpers.ops_for("Bytes").map(|ops| ops.pack),
+            bytes_unpack_fn: packed_sequence_helpers
+                .ops_for("Bytes")
+                .map(|ops| ops.unpack),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_send_bytes(ts, &helpers));
     }
@@ -5130,6 +5206,32 @@ fn emit_user_types(
             idx,
             mk_array(wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::I8,
+                mutable: true,
+            }),
+        ));
+    }
+
+    // Proof-derived structural refinement carriers. `i8` / `i16` are wasm
+    // packed storage; wider intervals use ordinary i32/i64 array elements.
+    // Signedness affects loads in the generated bridge helpers, not the array
+    // declaration itself.
+    for name in &registry.packed_sequence_order {
+        let packed = registry
+            .packed_sequence(name)
+            .expect("packed sequence order entry missing layout");
+        use crate::codegen::proof_lower::PackedIntElement;
+        let element_type = match packed.layout.element {
+            PackedIntElement::U8 | PackedIntElement::I8 => wasm_encoder::StorageType::I8,
+            PackedIntElement::U16 | PackedIntElement::I16 => wasm_encoder::StorageType::I16,
+            PackedIntElement::U32 | PackedIntElement::I32 => {
+                wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32)
+            }
+            PackedIntElement::I64 => wasm_encoder::StorageType::Val(wasm_encoder::ValType::I64),
+        };
+        entries.push((
+            packed.type_idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type,
                 mutable: true,
             }),
         ));
@@ -6411,6 +6513,10 @@ struct FactoryExports {
     result_bytes_string_err: Option<FactorySlot>,
     list_int_cons: Option<FactorySlot>,
     list_int_nil: Option<FactorySlot>,
+    /// When Bytes is proof-packed, the host-facing Ok factory still accepts
+    /// the private `List<Int>` it historically received and calls this bridge
+    /// before storing the Result payload.
+    bytes_pack_fn: Option<u32>,
     /// `__rt_record_tcp_connection_make(id, host, port)` — emitted
     /// when any `Tcp.*` effect is registered. The host hands the
     /// resulting record back as a Connection handle; subsequent
@@ -6450,8 +6556,12 @@ fn allocate_factory_exports(
     next_fn_idx: &mut u32,
     registry: &TypeRegistry,
     effect_registry: &EffectRegistry,
+    bytes_pack_fn: Option<u32>,
 ) -> Result<FactoryExports, WasmGcError> {
-    let mut fx = FactoryExports::default();
+    let mut fx = FactoryExports {
+        bytes_pack_fn,
+        ..FactoryExports::default()
+    };
 
     // Option<String> factories — driven by `Terminal.readKey`.
     if effect_registry
@@ -6842,9 +6952,11 @@ fn allocate_factory_exports(
                     "byte-clean TCP factory requires Result<Bytes,String> slot".into(),
                 ))?;
         let _bytes_idx = registry
-            .record_type_idx("Bytes")
+            .packed_sequence("Bytes")
+            .map(|packed| packed.type_idx)
+            .or_else(|| registry.record_type_idx("Bytes"))
             .ok_or(WasmGcError::Validation(
-                "byte-clean TCP factory requires Bytes record slot".into(),
+                "byte-clean TCP factory requires Bytes slot".into(),
             ))?;
         let list_idx = registry
             .list_type_idx("List<Int>")
@@ -7081,7 +7193,10 @@ impl FactoryExports {
             codes.function(&emit_factory_map_string_list_string_empty(registry)?);
         }
         if self.result_bytes_string_ok.is_some() {
-            codes.function(&emit_factory_result_bytes_string_ok(registry)?);
+            codes.function(&emit_factory_result_bytes_string_ok(
+                registry,
+                self.bytes_pack_fn,
+            )?);
         }
         if self.result_bytes_string_err.is_some() {
             codes.function(&emit_factory_result_bytes_string_err(registry)?);
@@ -7345,12 +7460,10 @@ fn emit_factory_list_string_nil(
 
 fn emit_factory_result_bytes_string_ok(
     registry: &TypeRegistry,
+    bytes_pack_fn: Option<u32>,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     let res_idx = registry
         .result_type_idx("Result<Bytes,String>")
-        .expect("checked at allocation");
-    let bytes_idx = registry
-        .record_type_idx("Bytes")
         .expect("checked at allocation");
     let s_idx = registry
         .string_array_type_idx
@@ -7358,7 +7471,14 @@ fn emit_factory_result_bytes_string_ok(
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(bytes_idx));
+    if let Some(pack_fn) = bytes_pack_fn {
+        f.instruction(&Instruction::Call(pack_fn));
+    } else {
+        let bytes_idx = registry
+            .record_type_idx("Bytes")
+            .expect("checked at allocation");
+        f.instruction(&Instruction::StructNew(bytes_idx));
+    }
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         s_idx,
     )));
@@ -7374,7 +7494,9 @@ fn emit_factory_result_bytes_string_err(
         .result_type_idx("Result<Bytes,String>")
         .expect("checked at allocation");
     let bytes_idx = registry
-        .record_type_idx("Bytes")
+        .packed_sequence("Bytes")
+        .map(|packed| packed.type_idx)
+        .or_else(|| registry.record_type_idx("Bytes"))
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(0));
