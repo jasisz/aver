@@ -573,7 +573,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal_ok",
                 stub_fn_name: stub_name("normal_ok"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: List<Int>) -> Result<Unit, String>\n    ? \"honest: bytes reach the peer\"\n    Result.Ok(Unit)\n",
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n    ? \"honest: bytes reach the peer\"\n    Result.Ok(Unit)\n",
                     stub_name("normal_ok")
                 ),
             },
@@ -581,7 +581,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "always_err",
                 stub_fn_name: stub_name("always_err"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: List<Int>) -> Result<Unit, String>\n    ? \"hostile: write fails\"\n    Result.Err(\"hostile: write failed\")\n",
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n    ? \"hostile: write fails\"\n    Result.Err(\"hostile: write failed\")\n",
                     stub_name("always_err")
                 ),
             },
@@ -762,7 +762,7 @@ mod tests {
         ];
         for method in methods {
             for p in hostile_profiles_for(method) {
-                let depends = if method == "Tcp.readBytes" {
+                let depends = if matches!(method, "Tcp.readBytes" | "Tcp.writeBytes") {
                     "    depends [Bytes]\n"
                 } else {
                     ""

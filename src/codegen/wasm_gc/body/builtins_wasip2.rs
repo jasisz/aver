@@ -757,6 +757,33 @@ pub(super) fn emit_tcp_write_line_wasip2(
     Ok(())
 }
 
+/// `Tcp.writeBytes(conn, payload) -> Result<Unit, String>` on native WASI 0.2.
+pub(super) fn emit_tcp_write_bytes_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.writeBytes on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.writeBytes on `--target wasip2` expects 2 args (conn, payload), got {}",
+            args.len()
+        )));
+    }
+    let write_bytes_fn = lowering.tcp_write_bytes_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.writeBytes on wasip2: __rt_tcp_write_bytes fn idx missing".into(),
+        )
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(write_bytes_fn));
+    Ok(())
+}
+
 /// Phase 4.3 (0.20) — `Tcp.close(conn: Tcp.Connection) ->
 /// Result<Unit, String>` on `--target wasip2`. Pushes the conn
 /// ref onto the stack and calls the `__rt_tcp_close` helper.

@@ -316,10 +316,7 @@ impl TypeChecker {
             ),
             (
                 "Tcp.writeBytes",
-                &[
-                    Type::named("Tcp.Connection"),
-                    Type::List(Box::new(Type::Int)),
-                ],
+                &[Type::named("Tcp.Connection"), Type::named("Bytes")],
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp.writeBytes"],
             ),

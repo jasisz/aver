@@ -152,6 +152,7 @@ pub(super) enum EffectName {
     //   `Tcp.Connection` struct refs.
     TcpConnect,
     TcpWriteLine,
+    TcpWriteBytes,
     TcpReadLine,
     TcpReadBytes,
     TcpClose,
@@ -235,6 +236,7 @@ impl EffectName {
         Self::DiskMakeDir,
         Self::TcpConnect,
         Self::TcpWriteLine,
+        Self::TcpWriteBytes,
         Self::TcpReadLine,
         Self::TcpReadBytes,
         Self::TcpClose,
@@ -310,6 +312,7 @@ impl EffectName {
             "Disk.makeDir" => Some(Self::DiskMakeDir),
             "Tcp.connect" => Some(Self::TcpConnect),
             "Tcp.writeLine" => Some(Self::TcpWriteLine),
+            "Tcp.writeBytes" => Some(Self::TcpWriteBytes),
             "Tcp.readLine" => Some(Self::TcpReadLine),
             "Tcp.readBytes" => Some(Self::TcpReadBytes),
             "Tcp.close" => Some(Self::TcpClose),
@@ -382,6 +385,7 @@ impl EffectName {
             Self::DiskMakeDir => "Disk.makeDir",
             Self::TcpConnect => "Tcp.connect",
             Self::TcpWriteLine => "Tcp.writeLine",
+            Self::TcpWriteBytes => "Tcp.writeBytes",
             Self::TcpReadLine => "Tcp.readLine",
             Self::TcpReadBytes => "Tcp.readBytes",
             Self::TcpClose => "Tcp.close",
@@ -456,6 +460,7 @@ impl EffectName {
             Self::DiskMakeDir => ("aver", "disk_make_dir"),
             Self::TcpConnect => ("aver", "tcp_connect"),
             Self::TcpWriteLine => ("aver", "tcp_write_line"),
+            Self::TcpWriteBytes => ("aver", "tcp_write_bytes"),
             Self::TcpReadLine => ("aver", "tcp_read_line"),
             Self::TcpReadBytes => ("aver", "tcp_read_bytes"),
             Self::TcpClose => ("aver", "tcp_close"),
@@ -557,7 +562,7 @@ impl EffectName {
             // Keep the count boxed so an arbitrary-precision Int can become a
             // catchable Result.Err instead of trapping at the host ABI.
             Self::TcpReadBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
-            Self::TcpWriteLine => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpWriteLine | Self::TcpWriteBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
             // Bytes is a nominal record. Keep the import parameter as anyref,
             // like Tcp.Connection, so the host can project its `values`
@@ -685,7 +690,7 @@ impl EffectName {
             Self::TcpSendBytes | Self::TcpReadBytes => {
                 Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?])
             }
-            Self::TcpWriteLine | Self::TcpClose | Self::TcpPing => {
+            Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpClose | Self::TcpPing => {
                 Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
             }
             Self::HttpGet
@@ -853,6 +858,7 @@ impl EffectName {
                 | EffectName::HttpPatch
                 | EffectName::TcpConnect
                 | EffectName::TcpWriteLine
+                | EffectName::TcpWriteBytes
                 | EffectName::TcpReadLine
                 | EffectName::TcpReadBytes
                 | EffectName::TcpSend

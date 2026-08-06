@@ -482,6 +482,10 @@ pub(super) struct Wasip2Lowering {
     /// `line + "\n"` into LM and chunked-writes through the
     /// slot's out-stream.
     pub(super) tcp_write_line_fn_idx: Option<u32>,
+    /// `__rt_tcp_write_bytes(conn, payload) -> ref Result<Unit, String>`.
+    /// Payload remains the nominal `Bytes` ref until the native helper
+    /// materialises its private list carrier into linear memory.
+    pub(super) tcp_write_bytes_fn_idx: Option<u32>,
     /// Phase 4.4b (0.20) — `__rt_tcp_read_line(conn) -> ref
     /// Result<String, String>` helper wasm fn idx. Loops 1-byte
     /// blocking-read against slot.in_stream, terminates on '\n',

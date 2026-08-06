@@ -80,7 +80,7 @@ pub enum RuntimeType {
     TcpConnection,
     /// `Result<Tcp.Connection, Str>` — return of `Tcp.connect`.
     ResultTcpConnectionStr,
-    /// Nominal `Bytes` refinement — payload of `Tcp.sendBytes`.
+    /// Nominal `Bytes` refinement — payload of byte-clean TCP writes.
     Bytes,
     /// `Result<Bytes, Str>` — return of `Tcp.sendBytes`.
     ResultBytesStr,
@@ -334,7 +334,7 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
     EffectClassification {
         method: "Tcp.writeBytes",
         dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::ListInt],
+        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::Bytes],
         runtime_return: RuntimeType::ResultUnitStr,
     },
     EffectClassification {

@@ -30,8 +30,8 @@ pub(super) use connect::{
 pub(super) use ids::{emit_tcp_format_id, emit_tcp_parse_id};
 pub(super) use io::{
     TcpReadBytesHelperFns, TcpReadBytesIndices, TcpReadLineHelperFns, TcpReadLineIndices,
-    TcpWriteLineHelperFns, TcpWriteLineIndices, emit_tcp_read_bytes, emit_tcp_read_line,
-    emit_tcp_write_line,
+    TcpWriteBytesHelperFns, TcpWriteBytesIndices, TcpWriteLineHelperFns, TcpWriteLineIndices,
+    emit_tcp_read_bytes, emit_tcp_read_line, emit_tcp_write_bytes, emit_tcp_write_line,
 };
 pub(super) use lifecycle::{
     TcpCloseHelperFns, TcpCloseIndices, TcpPingHelperFns, TcpPingIndices, TcpSendBytesHelperFns,

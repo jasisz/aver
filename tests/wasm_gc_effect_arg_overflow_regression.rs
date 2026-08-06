@@ -316,6 +316,79 @@ fn main() -> Unit
 }
 
 #[test]
+fn tcp_write_bytes_records_and_replays_nominal_bytes_on_wasm_gc() {
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept Tcp.writeBytes");
+        let mut payload = [0u8; 4];
+        stream
+            .read_exact(&mut payload)
+            .expect("read exact binary frame");
+        payload
+    });
+
+    let src = format!(
+        r#"module M
+    intent = "Write nominal Bytes through the hosted wasm-gc TCP bridge."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn writeFrame(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
+    ? "Write one exact binary frame."
+    ! [Tcp.writeBytes]
+    Tcp.writeBytes(conn, payload)
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.writeBytes, Tcp.close, Console.print]
+    match Bytes.fromList([249, 190, 180, 217])
+        Result.Err(e) -> Console.print("bytes err: {{e}}")
+        Result.Ok(payload) -> match Tcp.connect("127.0.0.1", {port})
+            Result.Err(e) -> Console.print("connect err: {{e}}")
+            Result.Ok(conn) -> match writeFrame(conn, payload)
+                Result.Err(e) -> Console.print("write err: {{e}}")
+                Result.Ok(_) -> match Tcp.close(conn)
+                    Result.Err(e) -> Console.print("close err: {{e}}")
+                    Result.Ok(_) -> Console.print("written")
+"#
+    );
+    let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
+        .expect("hosted wasm-gc Tcp.writeBytes round-trip");
+    assert_eq!(
+        server.join().expect("binary sink server"),
+        [249, 190, 180, 217]
+    );
+    assert_eq!(out, "written\n");
+
+    let recording = aver::replay::SessionRecording {
+        schema_version: 1,
+        request_id: "tcp-write-bytes-test".to_string(),
+        timestamp: String::new(),
+        program_file: String::new(),
+        module_root: String::new(),
+        entry_fn: "main".to_string(),
+        input: aver::replay::JsonValue::Null,
+        effects: recorded
+            .recorded_effects
+            .expect("record mode must return the effect trace"),
+        output: aver::replay::RecordedOutcome::Value(recorded.output),
+    };
+    let (replay_stdout, replayed) = run_wasm_gc_with_mode(
+        &src,
+        aver::runtime::wasm_gc::EffectMode::Replay(Box::new(recording), true),
+    )
+    .expect("recorded Tcp.writeBytes result must decode during replay");
+    assert!(
+        replay_stdout.is_empty(),
+        "replay must suppress Console.print"
+    );
+    assert_eq!(replayed.effects_consumed, replayed.effects_total);
+}
+
+#[test]
 fn tcp_read_bytes_big_count_is_catchable_on_wasm_gc() {
     let src = r#"module M
     intent = "Reject an unbounded binary frame length without trapping."

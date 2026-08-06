@@ -83,6 +83,13 @@ fn compose_tcp_read_bytes_call(args: &[String]) -> String {
     )
 }
 
+fn compose_tcp_write_bytes_call(args: &[String]) -> String {
+    format!(
+        "{{ let __conn = crate::tcp_connection_to_host(&{}); let __payload = &{}; let __bytes: Result<Vec<u8>, crate::AverStr> = __payload.values.iter().map(|__value| __value.to_u32().and_then(|__value| u8::try_from(__value).ok()).ok_or_else(|| crate::AverStr::from(\"Tcp.writeBytes: malformed Bytes carrier\"))).collect(); match __bytes {{ Err(__error) => Err(__error), Ok(__bytes) => aver_rt::tcp::write_bytes(&__conn, &__bytes).map_err(crate::AverStr::from) }} }}",
+        args[0], args[1]
+    )
+}
+
 pub(super) fn builtin_is_effectful(name: &str) -> bool {
     matches!(
         builtin_effect_name(name).split('.').next(),
@@ -182,6 +189,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             "aver_rt::tcp::write_line(&crate::tcp_connection_to_host(&{}), &{})",
             args[0], args[1]
         )),
+        "Tcp.writeBytes" => Some(compose_tcp_write_bytes_call(args)),
         "Tcp.readLine" => Some(format!(
             "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
             args[0]
@@ -384,6 +392,7 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
             a(0),
             a(1)
         )),
+        "Tcp.writeBytes" => Some(compose_tcp_write_bytes_call(args)),
         "Tcp.readLine" => Some(format!(
             "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
             a(0)

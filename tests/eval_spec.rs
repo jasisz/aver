@@ -2399,7 +2399,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn talk() -> Result<Unit, String>\n    ! [Tcp.connect, Tcp.writeBytes, Tcp.close]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    _w = Tcp.writeBytes(conn, [249, 190, 180, 217, 5, 0, 0, 0, 1, 10, 255])?\n    Tcp.close(conn)\n",
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Unit, String>\n    ! [Tcp.connect, Tcp.writeBytes, Tcp.close]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    payload = Bytes(values = [249, 190, 180, 217, 5, 0, 0, 0, 1, 10, 255])\n    _w = Tcp.writeBytes(conn, payload)?\n    Tcp.close(conn)\n",
             port
         );
         match run_tcp_fn(&src, "talk") {
@@ -2438,7 +2438,7 @@ mod tcp_tests {
         });
 
         let src = format!(
-            "fn talk() -> Result<Unit, String>\n    ! [Tcp.connect, Tcp.writeBytes, Tcp.close]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    r = Tcp.writeBytes(conn, [65, 256])\n    _c = Tcp.close(conn)?\n    r\n",
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Unit, String>\n    ! [Tcp.connect, Tcp.writeBytes, Tcp.close]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    r = Tcp.writeBytes(conn, Bytes(values = [65, 256]))\n    _c = Tcp.close(conn)?\n    r\n",
             port
         );
         match run_tcp_fn(&src, "talk") {

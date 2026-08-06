@@ -1,4 +1,4 @@
-//! `__rt_tcp_write_line`, `__rt_tcp_read_line`, and
+//! `__rt_tcp_write_line`, `__rt_tcp_write_bytes`, `__rt_tcp_read_line`, and
 //! `__rt_tcp_read_bytes` — the per-connection I/O helpers. All look up the
 //! pool slot via the shared
 //! `__rt_tcp_parse_id` helper and reach the underlying wasi:io stream
@@ -334,6 +334,313 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::End);
 
     // Loop + newline write finished without errors → Ok(()).
+    f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// `__rt_tcp_write_bytes(conn, payload) -> ref Result<Unit, String>`.
+/// The nominal `Bytes` carrier is projected into linear memory without text
+/// encoding or framing, then written through the persistent slot out-stream.
+pub(in crate::codegen::wasm_gc) struct TcpWriteBytesIndices {
+    pub fn_type: u32,
+    pub fn_idx: u32,
+    pub string_type_idx: u32,
+    pub bytes_type_idx: u32,
+    pub list_int_type_idx: u32,
+    pub aint_struct_type_idx: u32,
+    pub tcp_connection_type_idx: u32,
+    pub tcp_slot_type_idx: u32,
+    pub tcp_pool_type_idx: u32,
+    pub malformed_segment_idx: u32,
+    pub malformed_len: u32,
+    pub write_err_segment_idx: u32,
+    pub write_err_len: u32,
+    pub unknown_segment_idx: u32,
+    pub unknown_len: u32,
+}
+
+pub(in crate::codegen::wasm_gc) struct TcpWriteBytesHelperFns {
+    pub parse_id_fn: u32,
+    pub cabi_realloc_fn: u32,
+    pub blocking_write_fn: u32,
+    pub result_ok_fn: u32,
+    pub result_err_fn: u32,
+    pub tcp_pool_global: u32,
+    pub bump_alloc_ptr_global: u32,
+}
+
+pub(in crate::codegen::wasm_gc) fn emit_tcp_write_bytes(
+    indices: &TcpWriteBytesIndices,
+    helpers: &TcpWriteBytesHelperFns,
+) -> Function {
+    use wasm_encoder::{BlockType, HeapType, MemArg, RefType};
+
+    let slot_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.tcp_slot_type_idx),
+    });
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.list_int_type_idx),
+    });
+    // Params: 0=conn, 1=Bytes. Locals: 2=parsed_id, 3=slot_idx,
+    // 4=slot, 5=len, 6=off, 7=retptr, 8=saved_alloc, 9=list, 10=byte.
+    let mut f = Function::new(vec![
+        (2u32, ValType::I32),
+        (1u32, slot_ref),
+        (4u32, ValType::I32),
+        (1u32, list_ref),
+        (1u32, ValType::I64),
+    ]);
+    let l_parsed_id = 2;
+    let l_slot_idx = 3;
+    let l_slot = 4;
+    let l_len = 5;
+    let l_off = 6;
+    let l_retptr = 7;
+    let l_saved_alloc = 8;
+    let l_list = 9;
+    let l_byte = 10;
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    let emit_err = |f: &mut Function, segment_idx: u32, len: u32| {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(len as i32));
+        f.instruction(&Instruction::ArrayNewData {
+            array_type_index: indices.string_type_idx,
+            array_data_index: segment_idx,
+        });
+        f.instruction(&Instruction::Call(helpers.result_err_fn));
+        restore_bump(f, l_saved_alloc, helpers.bump_alloc_ptr_global);
+        f.instruction(&Instruction::Return);
+    };
+
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::LocalSet(l_saved_alloc));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_connection_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(helpers.parse_id_fn));
+    f.instruction(&Instruction::LocalSet(l_parsed_id));
+
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_err(&mut f, indices.unknown_segment_idx, indices.unknown_len);
+    f.instruction(&Instruction::End);
+
+    // Find the live persistent slot by its full monotonic id.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_err(&mut f, indices.unknown_segment_idx, indices.unknown_len);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalSet(l_slot));
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 4,
+    });
+    f.instruction(&Instruction::LocalGet(l_parsed_id));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::BrIf(2));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // First pass validates the private carrier and computes its byte length.
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.bytes_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalSet(l_list));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_len));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.list_int_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.aint_struct_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.list_int_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.aint_struct_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalTee(l_byte));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64LtS);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I64Const(255));
+    f.instruction(&Instruction::I64GtS);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_err(&mut f, indices.malformed_segment_idx, indices.malformed_len);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.list_int_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(l_list));
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_len));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // Reserve enough LM and materialise the bytes at offset zero.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::Drop);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.bytes_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalSet(l_list));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_off));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_off));
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.list_int_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.aint_struct_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Store8(mem1));
+    f.instruction(&Instruction::LocalGet(l_list));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.list_int_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(l_list));
+    f.instruction(&Instruction::LocalGet(l_off));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_off));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // Keep allocator scratch past the payload, then allocate the write retptr.
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(15));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(-16));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(15));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(-16));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::GlobalSet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(12));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    let string_type_idx = indices.string_type_idx;
+    let write_err_segment_idx = indices.write_err_segment_idx;
+    let write_err_len = indices.write_err_len;
+    let result_err_fn = helpers.result_err_fn;
+    let tcp_slot_type_idx = indices.tcp_slot_type_idx;
+    let bump_alloc_ptr_global = helpers.bump_alloc_ptr_global;
+    super::super::wasip2_helpers::emit_chunked_blocking_write(
+        &mut f,
+        l_len,
+        l_off,
+        helpers.blocking_write_fn,
+        &|f| {
+            f.instruction(&Instruction::LocalGet(l_slot));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: tcp_slot_type_idx,
+                field_index: 2,
+            });
+        },
+        &|f| {
+            f.instruction(&Instruction::LocalGet(l_retptr));
+        },
+        Some(&|f| {
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::I32Const(write_err_len as i32));
+            f.instruction(&Instruction::ArrayNewData {
+                array_type_index: string_type_idx,
+                array_data_index: write_err_segment_idx,
+            });
+            f.instruction(&Instruction::Call(result_err_fn));
+            restore_bump(f, l_saved_alloc, bump_alloc_ptr_global);
+            f.instruction(&Instruction::Return);
+        }),
+    );
+
     f.instruction(&Instruction::Call(helpers.result_ok_fn));
     restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::End);

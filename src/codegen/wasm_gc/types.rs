@@ -588,10 +588,12 @@ impl TypeRegistry {
         // concrete list slot is required even when no list literal is
         // present at the call site.
         let needs_list_int_for_tcp_bytes = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => fd
-                .effects
-                .iter()
-                .any(|e| matches!(e.node.as_str(), "Tcp.sendBytes" | "Tcp.readBytes")),
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| {
+                matches!(
+                    e.node.as_str(),
+                    "Tcp.sendBytes" | "Tcp.readBytes" | "Tcp.writeBytes"
+                )
+            }),
             _ => false,
         });
         if needs_list_int_for_tcp_bytes && !list_types.contains_key("List<Int>") {
@@ -996,6 +998,7 @@ impl TypeRegistry {
                 // method name since one segment serves close /
                 // writeLine / readLine).
                 b"tcp: unknown connection".as_ref(),
+                b"Tcp.writeBytes: malformed Bytes carrier".as_ref(),
                 b"Tcp.readBytes: count is negative".as_ref(),
                 b"Tcp.readBytes: count exceeds the 10485760 byte limit".as_ref(),
                 b"failed to fill whole buffer".as_ref(),
@@ -1692,6 +1695,7 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Time.unixMs"
             | "Tcp.sendBytes"
             | "Tcp.readBytes"
+            | "Tcp.writeBytes"
             | "Crypto.sha256"
     )
 }
@@ -2356,9 +2360,8 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // *consume* one through their first parameter, so even a
         // program that only reads / writes / closes still needs the
         // slot allocated.
-        "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.readBytes" | "Tcp.close" => {
-            "Tcp.Connection"
-        }
+        "Tcp.connect" | "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.readLine" | "Tcp.readBytes"
+        | "Tcp.close" => "Tcp.Connection",
         // HTTP verb effects all return Result<HttpResponse, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.

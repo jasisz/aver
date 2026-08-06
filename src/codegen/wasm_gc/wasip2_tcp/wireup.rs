@@ -27,9 +27,10 @@ use wasm_encoder::{FunctionSection, TypeSection, ValType};
 
 use super::super::types::TypeRegistry;
 use super::super::wasip2_imports::{Wasip2ImportRegistry, Wasip2ImportSlot};
+use super::super::effects::{EffectName, EffectRegistry};
 use super::{
     TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadBytesIndices, TcpReadLineIndices,
-    TcpSendBytesIndices, TcpSendIndices, TcpWriteLineIndices,
+    TcpSendBytesIndices, TcpSendIndices, TcpWriteBytesIndices, TcpWriteLineIndices,
 };
 
 /// Per-helper allocation bundle. Every field is `Option<_>`: `None`
@@ -43,6 +44,7 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
     pub format_id: Option<(u32, u32)>,
     pub parse_id: Option<(u32, u32)>,
     pub write_line: Option<TcpWriteLineIndices>,
+    pub write_bytes: Option<TcpWriteBytesIndices>,
     pub read_line: Option<TcpReadLineIndices>,
     pub read_bytes: Option<TcpReadBytesIndices>,
     pub close: Option<TcpCloseIndices>,
@@ -57,11 +59,12 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
 /// and bumps `next_type_idx` / `next_builtin_fn_idx` in lockstep.
 ///
 /// Ordering invariant: the inner blocks reserve indices in this
-/// exact sequence — connect → format_id → parse_id → write_line →
-/// read_line → read_bytes → close → send → send_bytes → ping.
+/// exact sequence — connect → format_id → parse_id → write_line → write_bytes
+/// → read_line → read_bytes → close → send → send_bytes → ping.
 /// [`register_funcs`] and the
 /// `emit_*` blocks in `module.rs` rely on it.
 pub(in crate::codegen::wasm_gc) fn allocate(
+    effects: &EffectRegistry,
     registry: &TypeRegistry,
     wasip2_imports: &Wasip2ImportRegistry,
     types: &mut TypeSection,
@@ -91,6 +94,20 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         next_type_idx,
         next_builtin_fn_idx,
     );
+    let write_bytes = effects
+        .iter()
+        .any(|effect| effect == EffectName::TcpWriteBytes)
+        .then(|| {
+            allocate_write_bytes(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
     let read_line = allocate_read_line(
         registry,
         wasip2_imports,
@@ -99,14 +116,20 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         next_type_idx,
         next_builtin_fn_idx,
     );
-    let read_bytes = allocate_read_bytes(
-        registry,
-        wasip2_imports,
-        parse_id,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
+    let read_bytes = effects
+        .iter()
+        .any(|effect| effect == EffectName::TcpReadBytes)
+        .then(|| {
+            allocate_read_bytes(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
     let close = allocate_close(
         registry,
         wasip2_imports,
@@ -141,6 +164,7 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         format_id,
         parse_id,
         write_line,
+        write_bytes,
         read_line,
         read_bytes,
         close,
@@ -167,6 +191,9 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
         funcs.function(ty);
     }
     if let Some(t) = &helpers.write_line {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.write_bytes {
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.read_line {
@@ -357,6 +384,67 @@ fn allocate_write_line(
         write_err_len: b"tcp: write failed".len() as u32,
         unknown_segment_idx: unknown_seg,
         unknown_len: b"tcp: unknown connection".len() as u32,
+    })
+}
+
+fn allocate_write_bytes(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpWriteBytesIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let bytes_idx = registry.record_type_idx("Bytes")?;
+    let list_idx = registry.list_type_idx("List<Int>")?;
+    let aint_idx = registry.aint_struct_idx?;
+    let conn_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
+    let result_idx = registry.result_type_idx("Result<Unit,String>")?;
+    let malformed = b"Tcp.writeBytes: malformed Bytes carrier";
+    let malformed_seg = registry.string_literal_segment(malformed)?;
+    let write_err = b"tcp: write failed";
+    let write_err_seg = registry.string_literal_segment(write_err)?;
+    let unknown = b"tcp: unknown connection";
+    let unknown_seg = registry.string_literal_segment(unknown)?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)?;
+    parse_id?;
+
+    let conn_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(conn_idx),
+    });
+    let bytes_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(bytes_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types.ty().function([conn_ref, bytes_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpWriteBytesIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        bytes_type_idx: bytes_idx,
+        list_int_type_idx: list_idx,
+        aint_struct_type_idx: aint_idx,
+        tcp_connection_type_idx: conn_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        malformed_segment_idx: malformed_seg,
+        malformed_len: malformed.len() as u32,
+        write_err_segment_idx: write_err_seg,
+        write_err_len: write_err.len() as u32,
+        unknown_segment_idx: unknown_seg,
+        unknown_len: unknown.len() as u32,
     })
 }
 

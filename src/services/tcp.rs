@@ -11,7 +11,7 @@
 /// Persistent-connection methods:
 ///   `Tcp.connect(host, port)`           → Result<Tcp.Connection, String>  (returns opaque connection record)
 ///   `Tcp.writeLine(conn, line)`         → Result<Unit, String>    (writes line + \r\n)
-///   `Tcp.writeBytes(conn, payload)`     → Result<Unit, String>    (exact bytes, nothing appended)
+///   `Tcp.writeBytes(conn, payload)`     → Result<Unit, String>    (nominal Bytes; exact wire payload)
 ///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
 ///   `Tcp.readBytes(conn, n)`            → Result<Bytes, String>  (exactly n bytes, no decoding)
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
@@ -193,9 +193,12 @@ fn tcp_write_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     }
     let conn = tcp_connection_arg(&args[0], "Tcp.writeBytes")?;
-    let payload = match bytes_arg(&args[1], "Tcp.writeBytes")? {
-        Ok(bytes) => bytes,
-        Err(msg) => return Ok(Value::Err(Box::new(Value::Str(msg)))),
+    let payload = match crate::types::bytes::project(&args[1], "Tcp.writeBytes") {
+        Ok(payload) => payload,
+        Err(RuntimeError::Error(message)) => {
+            return Ok(Value::Err(Box::new(Value::Str(message))));
+        }
+        Err(error) => return Err(error),
     };
 
     match aver_rt::tcp::write_bytes(&conn, &payload) {
