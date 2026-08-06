@@ -400,6 +400,30 @@ fn main() -> Unit
     );
 }
 
+#[test]
+fn rust_tcp_read_bytes_builds_with_nominal_bytes() {
+    let src = r#"module TcpReadBytesBuild
+    intent = "Rust codegen must render Tcp.readBytes with nominal Bytes"
+    depends [Bytes]
+    effects [Console, Tcp]
+
+fn readFrame(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "Read one exact binary frame."
+    ! [Tcp.readBytes]
+    Tcp.readBytes(conn, count)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("compiled")
+"#;
+
+    let vm = run_vm_inline("tcp_read_bytes_build", src).expect("vm run");
+    let rust = build_run_rust_inline("tcp_read_bytes_build", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "compiled");
+    assert_eq!(rust, vm, "Rust Tcp.readBytes codegen diverged from VM");
+}
+
 /// The #383 corruption class on the RUST backend: a Vector PARAM captured
 /// into a record field AND own-mutated, both in the SAME fn on the SAME
 /// param. `own_param`'s capture guard must keep the slot flagged so the
@@ -2373,6 +2397,95 @@ fn main() -> Unit
 
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
+fn rust_tcp_read_bytes_round_trips_non_utf8() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!("skipping Rust Tcp.readBytes probe — set AVER_RUST_DIFF_FULL=1");
+        return;
+    }
+
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener addr").port();
+    listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let server = std::thread::spawn(move || -> Result<(), String> {
+        // The generated project's first cargo build happens after this thread
+        // starts and can take several seconds on a cold CI runner.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    return stream
+                        .write_all(&[249, 190, 180, 217])
+                        .map_err(|e| format!("write binary frame: {e}"));
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err("timed out waiting for Tcp.readBytes connection".to_string());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => return Err(format!("accept Tcp.readBytes: {e}")),
+            }
+        }
+    });
+
+    let ws = temp_dir("tcp-read-bytes");
+    let src = ws.join("tcp_read_bytes.av");
+    fs::write(
+        &src,
+        format!(
+            r#"module TcpReadBytesProbe
+    intent = "Read non-UTF-8 bytes through the Rust backend"
+    depends [Bytes]
+    effects [Console, Tcp]
+
+fn readFrame(conn: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Console.print]
+    match Tcp.readBytes(conn, 4)
+        Result.Ok(frame) -> Console.print("{{Bytes.toList(frame)}}")
+        Result.Err(e) -> Console.print("err:{{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(conn) -> readFrame(conn)
+        Result.Err(e) -> Console.print("connect:{{e}}")
+"#
+        ),
+    )
+    .expect("write probe source");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "tcp_read_bytes_probe";
+    let result = (|| -> Result<(), String> {
+        compile_rust(&src, &project, name, None, &[])?;
+        let bin = cargo_build_in(&project, name, &isolated_target_dir(&ws))?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        server
+            .join()
+            .map_err(|_| "loopback server panicked".to_string())??;
+        if !out.status.success() {
+            return Err(format!("generated binary failed:\n{}", format_output(&out)));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if stdout != "[249, 190, 180, 217]" {
+            return Err(format!("unexpected stdout: {stdout:?}"));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.expect("Rust Tcp.readBytes round-trip");
 }
 
 #[test]

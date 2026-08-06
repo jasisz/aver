@@ -475,7 +475,7 @@ pub(crate) fn decode_result_list_string(
 }
 
 /// Decode the nominal `Result<Bytes, String>` replay shape returned by
-/// `Tcp.sendBytes`.
+/// the byte-clean TCP effects.
 pub(crate) fn decode_result_bytes(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,

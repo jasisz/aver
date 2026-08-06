@@ -1,4 +1,4 @@
-//! `Tcp.*` host imports — connect / writeLine / readLine / close /
+//! `Tcp.*` host imports — connect / writeLine / readLine / readBytes / close /
 //! send / sendBytes / ping. Connection handles cross as opaque wasm-gc structs
 //! built by `host_tcp_connection_make`; the host extracts the
 //! `id` field via `host_tcp_connection_id`.
@@ -135,6 +135,71 @@ pub(super) fn dispatch(
             };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.readLine", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_read_bytes" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn_arg = json_record(
+                "Tcp.Connection",
+                vec![
+                    ("id", aver::replay::JsonValue::String(id.clone())),
+                    ("host", aver::replay::JsonValue::String(String::new())),
+                    ("port", aver::replay::JsonValue::Int(0)),
+                ],
+            );
+            let count = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.readBytes: missing count"))?;
+            let count = decode_guest_int(caller, count, "Tcp.readBytes: malformed count carrier")?;
+            let count_json = match count.value {
+                Some(value) => aver::replay::JsonValue::Int(value),
+                None => {
+                    let mut opaque = std::collections::BTreeMap::new();
+                    opaque.insert(
+                        "$opaque".to_string(),
+                        aver::replay::JsonValue::String(count.display.clone()),
+                    );
+                    aver::replay::JsonValue::Object(opaque)
+                }
+            };
+            let args = vec![conn_arg, count_json];
+            if let Some(cached) = try_replay(caller, "Tcp.readBytes", args.clone())? {
+                let r = decode_result_bytes(caller, &cached)?;
+                results[0] = Val::AnyRef(r);
+                return Ok(true);
+            }
+            let conn = aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            };
+            let read = match count.value {
+                Some(value) => aver_rt::tcp::read_bytes(&conn, value),
+                None => Err(format!(
+                    "Tcp.readBytes: count {} exceeds the read limit",
+                    count.display
+                )),
+            };
+            let (result_ref, outcome) = match read {
+                Ok(bytes) => {
+                    let ints: Vec<i64> = bytes.iter().map(|byte| i64::from(*byte)).collect();
+                    let json = ints
+                        .iter()
+                        .copied()
+                        .map(aver::replay::JsonValue::Int)
+                        .collect();
+                    (
+                        host_result_ok_bytes(caller, &ints)?,
+                        json_ok(json_record(
+                            "Bytes",
+                            vec![("values", aver::replay::JsonValue::Array(json))],
+                        )),
+                    )
+                }
+                Err(error) => (host_result_err_bytes(caller, &error)?, json_err(&error)),
+            };
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Tcp.readBytes", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_close" => {
@@ -294,7 +359,11 @@ fn decode_byte_payload(
             .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
         let head = node.field(&mut *caller, 0)?;
         let tail = node.field(&mut *caller, 1)?;
-        ints.push(decode_guest_int(caller, &head)?);
+        ints.push(decode_guest_int(
+            caller,
+            &head,
+            "Tcp.sendBytes: malformed Bytes.values carrier",
+        )?);
         current = match tail {
             Val::AnyRef(r) => r,
             _ => {
@@ -351,35 +420,24 @@ fn decode_byte_payload(
 fn decode_guest_int(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     val: &wasmtime::Val,
+    malformed: &'static str,
 ) -> Result<GuestInt, wasmtime::Error> {
     use wasmtime::Val;
     let any_ref = match val {
         Val::AnyRef(Some(r)) => *r,
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: malformed Bytes.values carrier",
-            ));
-        }
+        _ => return Err(wasmtime::Error::msg(malformed)),
     };
     let int_ref = any_ref
         .as_struct(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
+        .ok_or_else(|| wasmtime::Error::msg(malformed))?;
     let small = match int_ref.field(&mut *caller, 0)? {
         Val::I64(n) => n,
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: malformed Bytes.values carrier",
-            ));
-        }
+        _ => return Err(wasmtime::Error::msg(malformed)),
     };
     let magnitude = int_ref.field(&mut *caller, 1)?;
     let magnitude_ref = match magnitude {
         Val::AnyRef(r) => r,
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: malformed Bytes.values carrier",
-            ));
-        }
+        _ => return Err(wasmtime::Error::msg(malformed)),
     };
     let Some(magnitude_ref) = magnitude_ref else {
         return Ok(GuestInt {
@@ -392,26 +450,17 @@ fn decode_guest_int(
         Val::I32(n) if n < 0 => Sign::Minus,
         Val::I32(0) => Sign::NoSign,
         Val::I32(_) => Sign::Plus,
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "Tcp.sendBytes: malformed Bytes.values carrier",
-            ));
-        }
+        _ => return Err(wasmtime::Error::msg(malformed)),
     };
     let magnitude = magnitude_ref
         .as_array(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.sendBytes: malformed Bytes.values carrier"))?;
+        .ok_or_else(|| wasmtime::Error::msg(malformed))?;
     let len = magnitude.len(&*caller)?;
     let mut limbs = Vec::with_capacity(len as usize);
     for idx in 0..len {
         let limb = match magnitude.get(&mut *caller, idx)? {
-            Val::I64(n) => u32::try_from(n)
-                .map_err(|_| wasmtime::Error::msg("Tcp.sendBytes: malformed Int magnitude limb"))?,
-            _ => {
-                return Err(wasmtime::Error::msg(
-                    "Tcp.sendBytes: malformed Int magnitude limb",
-                ));
-            }
+            Val::I64(n) => u32::try_from(n).map_err(|_| wasmtime::Error::msg(malformed))?,
+            _ => return Err(wasmtime::Error::msg(malformed)),
         };
         limbs.push(limb);
     }

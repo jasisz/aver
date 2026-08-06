@@ -583,15 +583,18 @@ impl TypeRegistry {
             list_order.push("List<String>".to_string());
             next_idx += 1;
         }
-        // `Tcp.sendBytes` consumes and returns nominal `Bytes`. Its
+        // Byte-clean TCP effects consume or return nominal `Bytes`. Its
         // private `values` carrier is still `List<Int>`, so the
         // concrete list slot is required even when no list literal is
         // present at the call site.
-        let needs_list_int_for_tcp_send_bytes = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node == "Tcp.sendBytes"),
+        let needs_list_int_for_tcp_bytes = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd
+                .effects
+                .iter()
+                .any(|e| matches!(e.node.as_str(), "Tcp.sendBytes" | "Tcp.readBytes")),
             _ => false,
         });
-        if needs_list_int_for_tcp_send_bytes && !list_types.contains_key("List<Int>") {
+        if needs_list_int_for_tcp_bytes && !list_types.contains_key("List<Int>") {
             list_types.insert("List<Int>".to_string(), next_idx);
             list_order.push("List<Int>".to_string());
             next_idx += 1;
@@ -993,6 +996,9 @@ impl TypeRegistry {
                 // method name since one segment serves close /
                 // writeLine / readLine).
                 b"tcp: unknown connection".as_ref(),
+                b"Tcp.readBytes: count is negative".as_ref(),
+                b"Tcp.readBytes: count exceeds the 10485760 byte limit".as_ref(),
+                b"failed to fill whole buffer".as_ref(),
                 // Phase 4.7+ — port validation. VM message verbatim
                 // (`Tcp: port N is out of range (0\u{2013}65535)`)
                 // is parameterised on the port value; we ship a
@@ -1685,6 +1691,7 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Random.int"
             | "Time.unixMs"
             | "Tcp.sendBytes"
+            | "Tcp.readBytes"
             | "Crypto.sha256"
     )
 }
@@ -2349,7 +2356,9 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // *consume* one through their first parameter, so even a
         // program that only reads / writes / closes still needs the
         // slot allocated.
-        "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close" => "Tcp.Connection",
+        "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.readBytes" | "Tcp.close" => {
+            "Tcp.Connection"
+        }
         // HTTP verb effects all return Result<HttpResponse, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.

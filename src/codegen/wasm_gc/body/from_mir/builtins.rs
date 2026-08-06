@@ -200,6 +200,7 @@ pub(crate) fn emit_mir_wasip2_effect(
         ("Tcp", "close") => emit_tcp_close_wasip2(func, args, slots, ctx)?,
         ("Tcp", "writeLine") => emit_tcp_write_line_wasip2(func, args, slots, ctx)?,
         ("Tcp", "readLine") => emit_tcp_read_line_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "readBytes") => emit_tcp_read_bytes_wasip2(func, args, slots, ctx)?,
         ("Tcp", "send") => emit_tcp_send_wasip2(func, args, slots, ctx)?,
         ("Tcp", "sendBytes") => emit_tcp_send_bytes_wasip2(func, args, slots, ctx)?,
         ("Tcp", "ping") => emit_tcp_ping_wasip2(func, args, slots, ctx)?,

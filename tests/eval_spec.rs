@@ -2373,6 +2373,131 @@ mod tcp_tests {
         }
     }
 
+    /// Regression: `Tcp.readLine` frames on `\n` and rejects non-UTF-8, so
+    /// neither half of a length-prefixed binary frame survives it.
+    /// `Tcp.readBytes` must return exactly the bytes asked for. The payload
+    /// carries `0x0A` twice (which `readLine` would split on) and `0xFF`
+    /// (which it would reject outright).
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_round_trips_binary_frame() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .write_all(&[0xF9, 0xBE, 0xB4, 0xD9, 0x01, 0x0A, 0xFF, 0x0A, 0x03])
+                    .ok();
+                thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+
+        let src = format!(
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    header = Tcp.readBytes(conn, 4)?\n    payload = Tcp.readBytes(conn, 5)?\n    Result.Ok(Bytes(values = List.concat(header.values, payload.values)))\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Ok(inner) => match *inner {
+                Value::Record { type_name, fields } => {
+                    assert_eq!(type_name, "Bytes");
+                    let items = match fields.iter().find(|(name, _)| name == "values") {
+                        Some((_, Value::List(items))) => items,
+                        other => panic!("expected Bytes.values list, got {:?}", other),
+                    };
+                    let got: Vec<i64> = items
+                        .iter()
+                        .map(|v| match v {
+                            Value::Int(n) => n.to_i64().unwrap(),
+                            other => panic!("expected Int element, got {:?}", other),
+                        })
+                        .collect();
+                    assert_eq!(got, vec![249, 190, 180, 217, 1, 10, 255, 10, 3]);
+                }
+                other => panic!("expected Bytes, got {:?}", other),
+            },
+            other => panic!("expected Ok(Bytes), got {:?}", other),
+        }
+    }
+
+    /// A short read is an error, not a truncated success: fewer bytes than the
+    /// length prefix promised means the peer went away mid-frame, and returning
+    /// a partial frame would desynchronise the caller's parser.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_short_read_is_an_error() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream.write_all(&[1, 2, 3]).ok();
+            }
+        });
+
+        let src = format!(
+            "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    Tcp.readBytes(conn, 10)\n",
+            port
+        );
+        match run_tcp_fn(&src, "talk") {
+            Value::Err(_) => {}
+            other => panic!("expected Err on a short read, got {:?}", other),
+        }
+    }
+
+    /// A negative count, one past the read cap, and one too large for `i64`
+    /// must all be catchable `Result.Err` rather than traps.
+    ///
+    /// Uses a real listener rather than a constructed `Tcp.Connection`:
+    /// construction is rejected by the type checker (`Cannot construct opaque
+    /// type 'Tcp.Connection'`), and only slips through here because
+    /// `call_fn_with_effects` VM-compiles without type checking. A test that
+    /// relied on that would be exercising a program Aver source cannot express.
+    #[test]
+    #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
+    fn tcp_read_bytes_rejects_out_of_range_counts() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            while let Ok((stream, _)) = listener.accept() {
+                // Hold the peer open; these cases must fail on the count
+                // before any read is attempted.
+                thread::sleep(std::time::Duration::from_millis(200));
+                drop(stream);
+            }
+        });
+
+        for (count, expect) in [
+            ("-1", "negative"),
+            ("20000000", "limit"),
+            ("1208925819614629174706176", "read limit"),
+        ] {
+            let src = format!(
+                "record Bytes\n    values: List<Int>\n\nfn talk() -> Result<Bytes, String>\n    ! [Tcp.connect, Tcp.readBytes]\n    conn = Tcp.connect(\"127.0.0.1\", {})?\n    Tcp.readBytes(conn, {})\n",
+                port, count
+            );
+            match run_tcp_fn(&src, "talk") {
+                Value::Err(inner) => match *inner {
+                    Value::Str(msg) => assert!(
+                        msg.contains(expect),
+                        "count {count}: expected message mentioning {expect:?}, got: {msg}"
+                    ),
+                    other => panic!("expected Str error, got {:?}", other),
+                },
+                other => panic!("count {count}: expected Err, got {:?}", other),
+            }
+        }
+    }
+
     /// The same defensive path retains an arbitrary-precision offending value
     /// in its error instead of truncating it at the host boundary.
     #[test]

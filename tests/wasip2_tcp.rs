@@ -1,6 +1,6 @@
 //! Wasip2 `Tcp.*` end-to-end tests (Phase 4 / 0.20 "Pulse").
 //!
-//! Six scenarios share a tiny Python TCP server bound on an
+//! Eight scenarios share a tiny Python TCP server bound on an
 //! OS-assigned port (avoids fixed-port flakes in parallel runs):
 //!
 //! - `tcp_connect_close_round_trip` — connect + close, verify
@@ -10,6 +10,10 @@
 //!   Python server reads + closes, Aver gets `Result.Ok(())`.
 //! - `tcp_read_line_echo_round_trip` — write+read against an
 //!   echo server, assert the line round-trips byte-for-byte.
+//! - `tcp_read_bytes_exact_binary_frame` — exact non-UTF-8 read split
+//!   across two host chunks.
+//! - `tcp_read_bytes_big_count_is_a_result_error` — hostile frame length
+//!   remains a catchable error.
 //! - `tcp_send_one_shot` — `Tcp.send` orchestrator: connect +
 //!   write + read + close in one call, return the response line.
 //! - `tcp_send_bytes_one_shot` — the byte-clean sibling round-trips
@@ -110,6 +114,32 @@ def serve():
 
 threading.Thread(target=serve, daemon=True).start()
 import time
+time.sleep(60)
+"#;
+
+/// Sends one non-UTF-8 frame in two chunks, exercising the exact-length
+/// read loop rather than relying on a single host `blocking-read` result.
+const FIXED_BINARY_SCRIPT: &str = r#"
+import socket, sys, threading, time
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    while True:
+        try:
+            c, _ = s.accept()
+            c.sendall(bytes([249]))
+            time.sleep(0.05)
+            c.sendall(bytes([190, 180, 217]))
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
 time.sleep(60)
 "#;
 
@@ -336,6 +366,104 @@ fn main() -> Unit
     assert!(
         s.contains("echo: ping"),
         "expected `echo: ping` round trip, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tcp_read_bytes_exact_binary_frame() {
+    let dir = tempdir("readBytes");
+    let Some((mut server, port)) = spawn_python_server(&dir, FIXED_BINARY_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping wasip2_tcp readBytes test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+module ReadBytes
+    intent = "Read one exact nominal Bytes frame on WASI."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn renderBytes(bytes: List<Int>) -> String
+    match bytes
+        [] -> ""
+        [head, ..tail] -> "{{head}},{{renderBytes(tail)}}"
+
+fn doRead(c: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Console.print]
+    match Tcp.readBytes(c, 4)
+        Result.Ok(frame) -> Console.print("got: {{renderBytes(Bytes.toList(frame))}}")
+        Result.Err(e) -> Console.print("read err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> doRead(c)
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "read_bytes.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wasip2_tcp readBytes failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("got: 249,190,180,217,"),
+        "expected exact non-UTF-8 frame from Tcp.readBytes, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tcp_read_bytes_big_count_is_a_result_error() {
+    let dir = tempdir("readBytes-big-count");
+    let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping wasip2_tcp big readBytes count test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let src = format!(
+        r#"
+module ReadBytesBigCount
+    intent = "Reject hostile frame lengths without trapping."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn rejectBigCount(conn: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Console.print]
+    match Tcp.readBytes(conn, 1208925819614629174706176)
+        Result.Ok(_) -> Console.print("unexpected-ok")
+        Result.Err(_) -> Console.print("range-error")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(conn) -> rejectBigCount(conn)
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "read_bytes_big_count.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wasip2 big Tcp.readBytes count trapped (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("range-error"),
+        "big count must be catchable, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

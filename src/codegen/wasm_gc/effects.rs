@@ -153,6 +153,7 @@ pub(super) enum EffectName {
     TcpConnect,
     TcpWriteLine,
     TcpReadLine,
+    TcpReadBytes,
     TcpClose,
     TcpSend,
     TcpSendBytes,
@@ -235,6 +236,7 @@ impl EffectName {
         Self::TcpConnect,
         Self::TcpWriteLine,
         Self::TcpReadLine,
+        Self::TcpReadBytes,
         Self::TcpClose,
         Self::TcpSend,
         Self::TcpSendBytes,
@@ -309,6 +311,7 @@ impl EffectName {
             "Tcp.connect" => Some(Self::TcpConnect),
             "Tcp.writeLine" => Some(Self::TcpWriteLine),
             "Tcp.readLine" => Some(Self::TcpReadLine),
+            "Tcp.readBytes" => Some(Self::TcpReadBytes),
             "Tcp.close" => Some(Self::TcpClose),
             "Tcp.send" => Some(Self::TcpSend),
             "Tcp.sendBytes" => Some(Self::TcpSendBytes),
@@ -380,6 +383,7 @@ impl EffectName {
             Self::TcpConnect => "Tcp.connect",
             Self::TcpWriteLine => "Tcp.writeLine",
             Self::TcpReadLine => "Tcp.readLine",
+            Self::TcpReadBytes => "Tcp.readBytes",
             Self::TcpClose => "Tcp.close",
             Self::TcpSend => "Tcp.send",
             Self::TcpSendBytes => "Tcp.sendBytes",
@@ -453,6 +457,7 @@ impl EffectName {
             Self::TcpConnect => ("aver", "tcp_connect"),
             Self::TcpWriteLine => ("aver", "tcp_write_line"),
             Self::TcpReadLine => ("aver", "tcp_read_line"),
+            Self::TcpReadBytes => ("aver", "tcp_read_bytes"),
             Self::TcpClose => ("aver", "tcp_close"),
             Self::TcpSend => ("aver", "tcp_send"),
             Self::TcpSendBytes => ("aver", "tcp_send_bytes"),
@@ -549,6 +554,9 @@ impl EffectName {
             // `struct.get` the id field directly without us having to
             // mention the concrete record type idx in the import sig.
             Self::TcpClose | Self::TcpReadLine => Ok(vec![any_ref_ty()]),
+            // Keep the count boxed so an arbitrary-precision Int can become a
+            // catchable Result.Err instead of trapping at the host ABI.
+            Self::TcpReadBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpWriteLine => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
             // Bytes is a nominal record. Keep the import parameter as anyref,
@@ -674,7 +682,9 @@ impl EffectName {
             Self::TcpReadLine | Self::TcpSend => {
                 Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
             }
-            Self::TcpSendBytes => Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?]),
+            Self::TcpSendBytes | Self::TcpReadBytes => {
+                Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?])
+            }
             Self::TcpWriteLine | Self::TcpClose | Self::TcpPing => {
                 Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
             }
@@ -844,6 +854,7 @@ impl EffectName {
                 | EffectName::TcpConnect
                 | EffectName::TcpWriteLine
                 | EffectName::TcpReadLine
+                | EffectName::TcpReadBytes
                 | EffectName::TcpSend
                 | EffectName::TcpSendBytes
                 | EffectName::TcpClose

@@ -6,7 +6,7 @@
 //!   materialise pipeline (the big one, ~700 lines on its own).
 //! - [`ids`]      — `__rt_tcp_format_id` / `__rt_tcp_parse_id` for
 //!   the `"tcp-N"` slot-id round-trip.
-//! - [`io`]       — `__rt_tcp_write_line` / `__rt_tcp_read_line`.
+//! - [`io`]       — persistent `writeLine` / `readLine` / `readBytes`.
 //! - [`lifecycle`] — `__rt_tcp_close` / `__rt_tcp_send` /
 //!   `__rt_tcp_ping` (the resource-teardown + orchestrators).
 //!
@@ -29,8 +29,9 @@ pub(super) use connect::{
 };
 pub(super) use ids::{emit_tcp_format_id, emit_tcp_parse_id};
 pub(super) use io::{
-    TcpReadLineHelperFns, TcpReadLineIndices, TcpWriteLineHelperFns, TcpWriteLineIndices,
-    emit_tcp_read_line, emit_tcp_write_line,
+    TcpReadBytesHelperFns, TcpReadBytesIndices, TcpReadLineHelperFns, TcpReadLineIndices,
+    TcpWriteLineHelperFns, TcpWriteLineIndices, emit_tcp_read_bytes, emit_tcp_read_line,
+    emit_tcp_write_line,
 };
 pub(super) use lifecycle::{
     TcpCloseHelperFns, TcpCloseIndices, TcpPingHelperFns, TcpPingIndices, TcpSendBytesHelperFns,

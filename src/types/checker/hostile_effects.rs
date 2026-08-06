@@ -524,6 +524,32 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Tcp.readBytes" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"honest: peer sends the bytes that were asked for\"\n    Bytes.fromList([0, 1, 2])\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "short_read",
+                stub_fn_name: stub_name("short_read"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"hostile: peer goes away mid-frame\"\n    Result.Err(\"hostile: failed to fill whole buffer\")\n",
+                    stub_name("short_read")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"hostile: read fails\"\n    Result.Err(\"hostile: read failed\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Tcp.writeLine" => vec![
             HostileProfile {
                 name: "normal_ok",
@@ -710,19 +736,25 @@ mod tests {
             "Tcp.ping",
             "Tcp.connect",
             "Tcp.readLine",
+            "Tcp.readBytes",
             "Tcp.writeLine",
             "Tcp.close",
             "Terminal.readKey",
         ];
         for method in methods {
             for p in hostile_profiles_for(method) {
+                let depends = if method == "Tcp.readBytes" {
+                    "    depends [Bytes]\n"
+                } else {
+                    ""
+                };
                 let src = format!(
-                    "module M\n    intent = \"t\"\n    effects []\n\n{}",
-                    p.stub_body
+                    "module M\n    intent = \"t\"\n{}    effects []\n\n{}",
+                    depends, p.stub_body
                 );
                 let items = parse_source(&src)
                     .unwrap_or_else(|e| panic!("{}/{}: parse: {:?}", method, p.name, e));
-                let result = run_type_check_full(&items, None);
+                let result = run_type_check_full(&items, Some(env!("CARGO_MANIFEST_DIR")));
                 if !result.errors.is_empty() {
                     panic!(
                         "{}/{}: typecheck errors:\n{}\n\nbody:\n{}",

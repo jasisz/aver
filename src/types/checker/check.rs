@@ -83,7 +83,7 @@ impl TypeChecker {
     /// initially unresolved names must join the same `TypeId` space as
     /// imported values.
     fn canonicalize_source_typed_builtin_sigs(&mut self) {
-        for name in ["Crypto.sha256", "Tcp.sendBytes"] {
+        for name in ["Crypto.sha256", "Tcp.sendBytes", "Tcp.readBytes"] {
             let Some(mut sig) = self.extra_sigs.remove(name) else {
                 continue;
             };

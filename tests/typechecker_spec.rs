@@ -1322,6 +1322,18 @@ fn valid_tcp_read_line_with_connection() {
 }
 
 #[test]
+fn valid_tcp_read_bytes_returns_nominal_bytes() {
+    let src = concat!(
+        "record Bytes\n",
+        "    values: List<Int>\n",
+        "fn recv(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n",
+        "    ! [Tcp.readBytes]\n",
+        "    Tcp.readBytes(conn, count)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_tcp_close_with_connection() {
     let src = concat!(
         "fn done(conn: Tcp.Connection) -> Result<Unit, String>\n",

@@ -700,6 +700,34 @@ pub(super) fn emit_tcp_read_line_wasip2(
     Ok(())
 }
 
+pub(super) fn emit_tcp_read_bytes_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.readBytes on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.readBytes on `--target wasip2` expects 2 args (conn, count), got {}",
+            args.len()
+        )));
+    }
+    let read_bytes_fn = lowering.tcp_read_bytes_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.readBytes on wasip2: __rt_tcp_read_bytes fn idx missing".into(),
+        )
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    // Keep the arbitrary-precision carrier intact. The helper applies the
+    // 10 MiB bound and returns Result.Err for negative or huge counts.
+    emit_mir_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(read_bytes_fn));
+    Ok(())
+}
+
 /// Phase 4.4a (0.20) — `Tcp.writeLine(conn, line) -> Result<Unit, String>`
 /// on `--target wasip2`. Pushes (conn, line) and calls the
 /// `__rt_tcp_write_line` helper.

@@ -251,6 +251,88 @@ fn main() -> Unit
     assert_eq!(replayed.effects_consumed, replayed.effects_total);
 }
 
+#[test]
+fn tcp_read_bytes_records_and_replays_nominal_bytes_on_wasm_gc() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept Tcp.readBytes");
+        stream
+            .write_all(&[249, 190, 180, 217])
+            .expect("write binary frame");
+    });
+
+    let src = format!(
+        r#"module M
+    intent = "Read nominal Bytes through the hosted wasm-gc TCP bridge."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn readFrame(conn: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Console.print]
+    match Tcp.readBytes(conn, 4)
+        Result.Err(e) -> Console.print("err: {{e}}")
+        Result.Ok(frame) -> Console.print("{{Bytes.toList(frame) == [249, 190, 180, 217]}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+        Result.Ok(conn) -> readFrame(conn)
+"#
+    );
+    let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
+        .expect("hosted wasm-gc Tcp.readBytes round-trip");
+    server.join().expect("binary frame server");
+    assert_eq!(out, "true\n");
+
+    let effects = recorded
+        .recorded_effects
+        .expect("record mode must return the effect trace");
+    let recording = aver::replay::SessionRecording {
+        schema_version: 1,
+        request_id: "tcp-read-bytes-test".to_string(),
+        timestamp: String::new(),
+        program_file: String::new(),
+        module_root: String::new(),
+        entry_fn: "main".to_string(),
+        input: aver::replay::JsonValue::Null,
+        effects,
+        output: aver::replay::RecordedOutcome::Value(recorded.output),
+    };
+    let (replay_stdout, replayed) = run_wasm_gc_with_mode(
+        &src,
+        aver::runtime::wasm_gc::EffectMode::Replay(Box::new(recording), true),
+    )
+    .expect("recorded Tcp.readBytes response must decode during replay");
+    assert!(
+        replay_stdout.is_empty(),
+        "replay must suppress Console.print"
+    );
+    assert_eq!(replayed.effects_consumed, replayed.effects_total);
+}
+
+#[test]
+fn tcp_read_bytes_big_count_is_catchable_on_wasm_gc() {
+    let src = r#"module M
+    intent = "Reject an unbounded binary frame length without trapping."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn main() -> Unit
+    ! [Tcp.readBytes, Console.print]
+    conn = Tcp.Connection(id = "missing", host = "", port = 0)
+    match Tcp.readBytes(conn, 1208925819614629174706176)
+        Result.Ok(_) -> Console.print("unexpected-ok")
+        Result.Err(_) -> Console.print("range-error")
+"#;
+    let out = run_wasm_gc(src).expect("big read count must return Result.Err, not trap");
+    assert_eq!(out, "range-error\n");
+}
+
 /// PURE-builtin saturation is UNCHANGED: `String.charAt` with an out-of-i64
 /// index past the string end must SATURATE to `Option.None` on wasm-gc (the
 /// VM's clamp), NOT trap. This pins that the fix touched only the EFFECT-arg

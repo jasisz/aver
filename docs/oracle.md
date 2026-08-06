@@ -87,7 +87,7 @@ Oracle has a fixed built-in effect set:
 | `Disk` | `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir` | generative + output |
 | `Http` | `get`, `head`, `delete`, `post`, `put`, `patch` | generative + output |
 | `Tcp` | `send`, `sendBytes`, `ping` | generative + output |
-| `Tcp` | `connect`, `readLine`, `writeLine`, `close` | generative + output |
+| `Tcp` | `connect`, `readLine`, `readBytes`, `writeLine`, `close` | generative + output |
 | `Console` | `print`, `error`, `warn` | output |
 | `Terminal` | `readKey` | generative |
 | `Terminal` | `size` | snapshot |
@@ -375,6 +375,7 @@ user already wrote is not re-run.
 | `Http.{get,head,delete,post,put,patch}` | `normal_ok`, `always_err` |
 | `Disk.{writeText,appendText,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
 | `Tcp.{send,sendBytes,ping,readLine,writeLine,close}` | `normal_ok`, `always_err` |
+| `Tcp.readBytes` | `normal_ok`, `short_read`, `always_err` |
 | `Tcp.connect` | `always_err` (lifecycle — connection either holds or doesn't) |
 
 User-given pins are **not** a pre-empt: hostile profiles always layer

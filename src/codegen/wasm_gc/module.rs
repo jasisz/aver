@@ -882,7 +882,7 @@ pub(super) fn emit_module_with(
                         wasip2_imports
                             .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
                     }
-                    EffectName::TcpReadLine => {
+                    EffectName::TcpReadLine | EffectName::TcpReadBytes => {
                         wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
                     }
                     EffectName::TcpClose => {
@@ -2479,6 +2479,7 @@ pub(super) fn emit_module_with(
                 tcp_close_fn_idx: tcp.close.as_ref().map(|t| t.fn_idx),
                 tcp_write_line_fn_idx: tcp.write_line.as_ref().map(|t| t.fn_idx),
                 tcp_read_line_fn_idx: tcp.read_line.as_ref().map(|t| t.fn_idx),
+                tcp_read_bytes_fn_idx: tcp.read_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp.send.as_ref().map(|t| t.fn_idx),
                 tcp_send_bytes_fn_idx: tcp.send_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_ping_fn_idx: tcp.ping.as_ref().map(|t| t.fn_idx),
@@ -4277,6 +4278,60 @@ pub(super) fn emit_module_with(
                 .expect("tcp.read_line emit requires bump_alloc_ptr global"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_read_line(tr, &helpers));
+    }
+    if let Some(tr) = &tcp.read_bytes {
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.read_bytes gated on tcp_parse_id allocation");
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.read_bytes emit requires cabi_realloc fn idx".into())
+        })?;
+        let blocking_read_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("tcp.read_bytes gate requires blocking-read slot");
+        let result_ok_fn = factory_exports
+            .result_bytes_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.read_bytes emit requires Result<Bytes,String> Ok factory".into(),
+                )
+            })?
+            .fn_idx;
+        let result_err_fn = factory_exports
+            .result_bytes_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.read_bytes emit requires Result<Bytes,String> Err factory".into(),
+                )
+            })?
+            .fn_idx;
+        let aint_from_i64_fn = registry.aint_from_i64_fn_idx.ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp.read_bytes emit requires __aint_from_i64 for List<Int> result".into(),
+            )
+        })?;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.read_bytes emit requires tcp_pool global (Phase 4.1b gate)".into(),
+                )
+            })?;
+        let helpers = super::wasip2_tcp::TcpReadBytesHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            blocking_read_fn,
+            result_ok_fn,
+            result_err_fn,
+            aint_from_i64_fn,
+            tcp_pool_global,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp.read_bytes emit requires bump_alloc_ptr global"),
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_read_bytes(tr, &helpers));
     }
     if let Some(tc) = &tcp.close {
         let (_, parse_id_fn) = tcp
@@ -6297,7 +6352,7 @@ struct FactoryExports {
     /// only case so far is `Disk.listDir`'s success arm).
     list_string_cons: Option<FactorySlot>,
     list_string_nil: Option<FactorySlot>,
-    /// `Tcp.sendBytes` host-return builders for its nominal
+    /// Byte-clean TCP host-return builders for the nominal
     /// `Result<Bytes, String>` shape. The host still assembles the
     /// private `List<Int>` carrier before the Ok factory wraps it.
     result_bytes_string_ok: Option<FactorySlot>,
@@ -6507,6 +6562,7 @@ fn allocate_factory_exports(
             EffectName::TcpConnect
                 | EffectName::TcpWriteLine
                 | EffectName::TcpReadLine
+                | EffectName::TcpReadBytes
                 | EffectName::TcpClose
         )
     });
@@ -6720,34 +6776,34 @@ fn allocate_factory_exports(
     }
 
     // Result<Bytes, String> + Bytes' private List<Int> carrier builders —
-    // driven by `Tcp.sendBytes`.
+    // shared by the byte-clean TCP effects.
     if effect_registry
         .iter()
-        .any(|e| matches!(e, EffectName::TcpSendBytes))
+        .any(|e| matches!(e, EffectName::TcpSendBytes | EffectName::TcpReadBytes))
     {
         let res_idx =
             registry
                 .result_type_idx("Result<Bytes,String>")
                 .ok_or(WasmGcError::Validation(
-                    "Tcp.sendBytes factory requires Result<Bytes,String> slot".into(),
+                    "byte-clean TCP factory requires Result<Bytes,String> slot".into(),
                 ))?;
         let _bytes_idx = registry
             .record_type_idx("Bytes")
             .ok_or(WasmGcError::Validation(
-                "Tcp.sendBytes factory requires Bytes record slot".into(),
+                "byte-clean TCP factory requires Bytes record slot".into(),
             ))?;
         let list_idx = registry
             .list_type_idx("List<Int>")
             .ok_or(WasmGcError::Validation(
-                "Tcp.sendBytes factory requires List<Int> slot".into(),
+                "byte-clean TCP factory requires List<Int> slot".into(),
             ))?;
         let int_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
-            "Tcp.sendBytes factory requires the AverInt slot".into(),
+            "byte-clean TCP factory requires the AverInt slot".into(),
         ))?;
         let s_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
-                "Tcp.sendBytes factory requires String slot".into(),
+                "byte-clean TCP factory requires String slot".into(),
             ))?;
         let res_ref = ref_null(res_idx);
         let list_ref = ref_null(list_idx);

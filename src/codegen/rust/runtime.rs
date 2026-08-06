@@ -272,7 +272,7 @@ fn convert_tcp_connection(c: aver_rt::TcpConnection) -> Tcp_Connection {
     }
 }
 /// Surface (`AverInt` port) -> host `aver_rt::TcpConnection` (`i64` port),
-/// applied before `Tcp.writeLine`/`readLine`/`close`. The host keeps live
+/// applied before `Tcp.writeLine`/`readLine`/`readBytes`/`close`. The host keeps live
 /// sockets in a thread-local keyed by `id`, so rebuilding the host record
 /// from the surface fields is enough to find the connection.
 pub fn tcp_connection_to_host(c: &Tcp_Connection) -> aver_rt::TcpConnection {

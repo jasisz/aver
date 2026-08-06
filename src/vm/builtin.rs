@@ -74,6 +74,7 @@ vm_builtins! {
     TcpConnect => "Tcp.connect",
     TcpWriteLine => "Tcp.writeLine",
     TcpReadLine => "Tcp.readLine",
+    TcpReadBytes => "Tcp.readBytes",
     TcpClose => "Tcp.close",
 
     TerminalEnableRawMode => "Terminal.enableRawMode",
@@ -280,6 +281,7 @@ impl VmBuiltin {
             | Self::TcpConnect
             | Self::TcpWriteLine
             | Self::TcpReadLine
+            | Self::TcpReadBytes
             | Self::TcpClose => tcp::effects(self.name()),
 
             // Effects list is structural metadata — same regardless of
@@ -365,6 +367,7 @@ impl VmBuiltin {
             | Self::TcpConnect
             | Self::TcpWriteLine
             | Self::TcpReadLine
+            | Self::TcpReadBytes
             | Self::TcpClose => tcp::call_nv(self.name(), args, arena),
 
             #[cfg(feature = "terminal")]

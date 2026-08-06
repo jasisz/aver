@@ -12,6 +12,7 @@
 ///   `Tcp.connect(host, port)`           → Result<Tcp.Connection, String>  (returns opaque connection record)
 ///   `Tcp.writeLine(conn, line)`         → Result<Unit, String>    (writes line + \r\n)
 ///   `Tcp.readLine(conn)`                → Result<String, String>  (reads until \n, strips \r\n)
+///   `Tcp.readBytes(conn, n)`            → Result<Bytes, String>  (exactly n bytes, no decoding)
 ///   `Tcp.close(conn)`                   → Result<Unit, String>
 ///
 /// Each method requires its own exact effect (`Tcp.send`, `Tcp.ping`, etc.).
@@ -32,6 +33,7 @@ pub fn register(global: &mut HashMap<String, Value>) {
         "connect",
         "writeLine",
         "readLine",
+        "readBytes",
         "close",
     ] {
         members.insert(
@@ -55,6 +57,7 @@ pub const DECLARED_EFFECTS: &[&str] = &[
     "Tcp.connect",
     "Tcp.writeLine",
     "Tcp.readLine",
+    "Tcp.readBytes",
     "Tcp.close",
 ];
 
@@ -66,6 +69,7 @@ pub fn effects(name: &str) -> &'static [&'static str] {
         "Tcp.connect" => &["Tcp.connect"],
         "Tcp.writeLine" => &["Tcp.writeLine"],
         "Tcp.readLine" => &["Tcp.readLine"],
+        "Tcp.readBytes" => &["Tcp.readBytes"],
         "Tcp.close" => &["Tcp.close"],
         _ => &[],
     }
@@ -80,6 +84,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Tcp.connect" => Some(tcp_connect(args)),
         "Tcp.writeLine" => Some(tcp_write_line(args)),
         "Tcp.readLine" => Some(tcp_read_line(args)),
+        "Tcp.readBytes" => Some(tcp_read_bytes(args)),
         "Tcp.close" => Some(tcp_close(args)),
         _ => None,
     }
@@ -190,6 +195,25 @@ fn tcp_read_line(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
+fn tcp_read_bytes(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Tcp.readBytes() takes 2 arguments (conn, count), got {}",
+            args.len()
+        )));
+    }
+    let conn = tcp_connection_arg(&args[0], "Tcp.readBytes")?;
+    let count = match count_arg(&args[1], "Tcp.readBytes")? {
+        Ok(n) => n,
+        Err(msg) => return Ok(Value::Err(Box::new(Value::Str(msg)))),
+    };
+
+    match aver_rt::tcp::read_bytes(&conn, count) {
+        Ok(bytes) => Ok(Value::Ok(Box::new(crate::types::bytes::from_host(&bytes)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+    }
+}
+
 fn tcp_close(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
@@ -265,6 +289,29 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
     }
 }
 
+/// Read a byte-count argument.
+///
+/// Outer `Result` is the type check; inner is the value check. An `Int` too
+/// large for `i64` is still an `Int` — a fortiori past the read limit — so it
+/// takes the catchable value-error path rather than being reported as a bogus
+/// type error.
+#[allow(clippy::type_complexity)]
+fn count_arg(val: &Value, method: &str) -> Result<Result<i64, String>, RuntimeError> {
+    match val {
+        Value::Int(n) => match n.to_i64() {
+            Some(n) => Ok(Ok(n)),
+            None => Ok(Err(format!(
+                "{}: count {} exceeds the read limit",
+                method, n
+            ))),
+        },
+        _ => Err(RuntimeError::Error(format!(
+            "{}: count must be an Int",
+            method
+        ))),
+    }
+}
+
 fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
     // Phase 4.7+ fix #13 — type check only; the port-range check
     // moved into `aver-rt::tcp::{connect, send, ping}` so every
@@ -289,6 +336,7 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
         "connect",
         "writeLine",
         "readLine",
+        "readBytes",
         "close",
     ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
@@ -317,6 +365,7 @@ pub fn call_nv(
             | "Tcp.connect"
             | "Tcp.writeLine"
             | "Tcp.readLine"
+            | "Tcp.readBytes"
             | "Tcp.close"
     ) {
         return None;
