@@ -9,8 +9,6 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use sha2::{Digest, Sha256};
-
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value};
 
@@ -49,7 +47,7 @@ fn sha256(args: &[Value]) -> Result<Value, RuntimeError> {
     }
     let bytes = super::bytes::project(&args[0], "Crypto.sha256")?;
 
-    let digest = Sha256::digest(&bytes);
+    let digest = aver_rt::crypto::sha256(&bytes);
     let digest_bytes = super::bytes::from_host(&digest);
     Ok(Value::Record {
         type_name: "Digest32".to_string(),

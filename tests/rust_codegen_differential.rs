@@ -448,6 +448,41 @@ fn main() -> Unit
     assert_eq!(rust, vm, "Rust Tcp.writeBytes codegen diverged from VM");
 }
 
+/// `Crypto.sha256` produces a `Digest32` even when the program never names
+/// `Crypto.Digest32` in `depends`. The emitted Rust references
+/// `crate::aver_generated::crypto::digest32::Digest32`, so the owning
+/// standard module must join the generated project implicitly — this used to
+/// pass `aver compile` and then fail `cargo build` with E0433. The digest
+/// binding stays unused on purpose: without the `Crypto.Digest32` module the
+/// program can only observe that the total builtin returned.
+#[test]
+fn rust_sha256_builds_without_digest32_in_depends() {
+    let src = r#"module Sha256ImplicitDigest
+    intent = "Crypto.sha256 must build even when depends omits Crypto.Digest32"
+    depends [Bytes]
+    effects [Console.print]
+
+fn hashTag(xs: List<Int>) -> Result<String, String>
+    ? "Hash the octets and report that a digest was produced."
+    bytes = Bytes.fromList(xs)?
+    digest = Crypto.sha256(bytes)
+    Result.Ok("hashed")
+
+fn main() -> Unit
+    ? "Hash a small byte list and print the outcome."
+    ! [Console.print]
+    match hashTag([1, 2, 3])
+        Result.Ok(tag) -> Console.print(tag)
+        Result.Err(msg) -> Console.print(msg)
+"#;
+
+    let vm = run_vm_inline("sha256_implicit_digest32", src).expect("vm run");
+    let rust = build_run_rust_inline("sha256_implicit_digest32", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "hashed");
+    assert_eq!(rust, vm, "Rust Crypto.sha256 codegen diverged from VM");
+}
+
 /// The #383 corruption class on the RUST backend: a Vector PARAM captured
 /// into a record field AND own-mutated, both in the SAME fn on the SAME
 /// param. `own_param`'s capture guard must keep the slot flagged so the

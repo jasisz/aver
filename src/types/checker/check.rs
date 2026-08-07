@@ -81,15 +81,12 @@ impl TypeChecker {
     /// Most builtins mention primitives or host-owned records and stay raw.
     /// Crypto and binary TCP cross source-defined refinements, so their
     /// initially unresolved names must join the same `TypeId` space as
-    /// imported values.
+    /// imported values. The affected builtins live in
+    /// `crate::stdlib::SOURCE_TYPED_BUILTINS`, shared with the compile-time
+    /// implicit module loading that keeps codegen able to emit those types.
     fn canonicalize_source_typed_builtin_sigs(&mut self) {
-        for name in [
-            "Crypto.sha256",
-            "Tcp.sendBytes",
-            "Tcp.readBytes",
-            "Tcp.writeBytes",
-        ] {
-            let Some(mut sig) = self.extra_sigs.remove(name) else {
+        for (name, _) in crate::stdlib::SOURCE_TYPED_BUILTINS {
+            let Some(mut sig) = self.extra_sigs.remove(*name) else {
                 continue;
             };
             sig.params = sig

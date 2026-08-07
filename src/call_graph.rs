@@ -434,7 +434,7 @@ fn count_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>,
     }
 }
 
-fn collect_callees_stmt(stmt: &Stmt, callees: &mut HashSet<String>) {
+pub(crate) fn collect_callees_stmt(stmt: &Stmt, callees: &mut HashSet<String>) {
     match stmt {
         Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
             collect_callees_expr(e, callees);

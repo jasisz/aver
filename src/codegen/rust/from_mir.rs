@@ -4196,11 +4196,14 @@ fn emit_mir_builtin_call(
         // `Bytes` and `Digest32` are nominal source-defined records, but the
         // builtin is allowed to cross their opaque boundary. The generated
         // Rust stays on the public semantic shape: validated octets in,
-        // exactly 32 validated octets out.
+        // exactly 32 validated octets out. The builtin is total, so a
+        // malformed carrier (a value outside 0..=255 behind the `Bytes`
+        // boundary) has no error channel — it must panic rather than
+        // silently truncate into a wrong digest.
         "Crypto.sha256" => {
             let bytes = arg!(0);
             format!(
-                "{{ let __input: Vec<u8> = ({bytes}).values.iter().map(|__b| __b.to_u32().expect(\"Bytes invariant violated\") as u8).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
+                "{{ let __input: Vec<u8> = ({bytes}).values.iter().map(|__b| __b.to_u32().and_then(|__b| u8::try_from(__b).ok()).expect(\"Bytes invariant violated\")).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
             )
         }
 
