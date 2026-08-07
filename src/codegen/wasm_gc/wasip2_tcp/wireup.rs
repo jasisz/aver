@@ -71,13 +71,25 @@ pub(in crate::codegen::wasm_gc) fn allocate(
     next_type_idx: &mut u32,
     next_builtin_fn_idx: &mut u32,
 ) -> TcpHelpers {
-    let connect = allocate_connect(
-        registry,
-        wasip2_imports,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
+    // Every helper allocation is gated on its declared effect, not
+    // just registry / wasi-import availability. Without the effect
+    // gate, one Tcp.* effect registers enough shared slots (the
+    // needs_tcp literals, the pool types, the wasi:io stream pair)
+    // that unrelated helpers allocate coincidentally and ship as
+    // dead module bytes — e.g. `Tcp.writeLine` + `Console.readLine`
+    // used to emit the whole `__rt_tcp_read_line` body.
+    let declares = |name: EffectName| effects.iter().any(|effect| effect == name);
+    let connect = declares(EffectName::TcpConnect)
+        .then(|| {
+            allocate_connect(
+                registry,
+                wasip2_imports,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
     let format_id = allocate_format_id(
         registry,
         &connect,
@@ -85,18 +97,36 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         next_type_idx,
         next_builtin_fn_idx,
     );
-    let parse_id = allocate_parse_id(registry, types, next_type_idx, next_builtin_fn_idx);
-    let write_line = allocate_write_line(
-        registry,
-        wasip2_imports,
-        parse_id,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
-    let write_bytes = effects
+    // parse_id is shared by every pool-consuming helper (write_line /
+    // write_bytes / read_line / read_bytes / close), so it gates on
+    // the union of their effects.
+    let parse_id = effects
         .iter()
-        .any(|effect| effect == EffectName::TcpWriteBytes)
+        .any(|effect| {
+            matches!(
+                effect,
+                EffectName::TcpWriteLine
+                    | EffectName::TcpWriteBytes
+                    | EffectName::TcpReadLine
+                    | EffectName::TcpReadBytes
+                    | EffectName::TcpClose
+            )
+        })
+        .then(|| allocate_parse_id(registry, types, next_type_idx, next_builtin_fn_idx))
+        .flatten();
+    let write_line = declares(EffectName::TcpWriteLine)
+        .then(|| {
+            allocate_write_line(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let write_bytes = declares(EffectName::TcpWriteBytes)
         .then(|| {
             allocate_write_bytes(
                 registry,
@@ -108,17 +138,19 @@ pub(in crate::codegen::wasm_gc) fn allocate(
             )
         })
         .flatten();
-    let read_line = allocate_read_line(
-        registry,
-        wasip2_imports,
-        parse_id,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
-    let read_bytes = effects
-        .iter()
-        .any(|effect| effect == EffectName::TcpReadBytes)
+    let read_line = declares(EffectName::TcpReadLine)
+        .then(|| {
+            allocate_read_line(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let read_bytes = declares(EffectName::TcpReadBytes)
         .then(|| {
             allocate_read_bytes(
                 registry,
@@ -130,35 +162,51 @@ pub(in crate::codegen::wasm_gc) fn allocate(
             )
         })
         .flatten();
-    let close = allocate_close(
-        registry,
-        wasip2_imports,
-        parse_id,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
-    let send = allocate_send(
-        registry,
-        wasip2_imports,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
-    let send_bytes = allocate_send_bytes(
-        registry,
-        wasip2_imports,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
-    let ping = allocate_ping(
-        registry,
-        wasip2_imports,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
+    let close = declares(EffectName::TcpClose)
+        .then(|| {
+            allocate_close(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let send = declares(EffectName::TcpSend)
+        .then(|| {
+            allocate_send(
+                registry,
+                wasip2_imports,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let send_bytes = declares(EffectName::TcpSendBytes)
+        .then(|| {
+            allocate_send_bytes(
+                registry,
+                wasip2_imports,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let ping = declares(EffectName::TcpPing)
+        .then(|| {
+            allocate_ping(
+                registry,
+                wasip2_imports,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
     TcpHelpers {
         connect,
         format_id,
@@ -317,13 +365,14 @@ fn allocate_parse_id(
     next_type_idx: &mut u32,
     next_builtin_fn_idx: &mut u32,
 ) -> Option<(u32, u32)> {
-    // Gate on `needs_tcp` (via the slot type idx) rather than the
-    // connect helper specifically. close / write_line / read_line
-    // each need parse_id; a program that only consumes a
+    // The caller gates on the union of the pool-consuming effects
+    // rather than the connect helper specifically. close / write_line
+    // / read_line each need parse_id; a program that only consumes a
     // `Tcp.Connection` parameter (e.g. `fn handle(c: Tcp.Connection)
     // ! [Tcp.close]`) graduates close in `effect_check` without ever
     // declaring `Tcp.connect`, and would otherwise hit an `expect`
-    // at emit time.
+    // at emit time. The slot type idx check stays as the registry
+    // availability gate.
     registry.tcp_slot_type_idx?;
     let s_idx = registry.string_array_type_idx?;
     let s_ref = ValType::Ref(wasm_encoder::RefType {
@@ -515,6 +564,8 @@ fn allocate_read_bytes(
     let negative_seg = registry.string_literal_segment(b"Tcp.readBytes: count is negative")?;
     let limit_seg =
         registry.string_literal_segment(b"Tcp.readBytes: count exceeds the 10485760 byte limit")?;
+    let read_limit_seg =
+        registry.string_literal_segment(b"Tcp.readBytes: count exceeds the read limit")?;
     let short_read_seg = registry.string_literal_segment(b"failed to fill whole buffer")?;
     let unknown_seg = registry.string_literal_segment(b"tcp: unknown connection")?;
     wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::InputStreamBlockingRead)?;
@@ -550,6 +601,8 @@ fn allocate_read_bytes(
         negative_len: b"Tcp.readBytes: count is negative".len() as u32,
         limit_segment_idx: limit_seg,
         limit_len: b"Tcp.readBytes: count exceeds the 10485760 byte limit".len() as u32,
+        read_limit_segment_idx: read_limit_seg,
+        read_limit_len: b"Tcp.readBytes: count exceeds the read limit".len() as u32,
         short_read_segment_idx: short_read_seg,
         short_read_len: b"failed to fill whole buffer".len() as u32,
         unknown_segment_idx: unknown_seg,
