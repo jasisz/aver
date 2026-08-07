@@ -2071,7 +2071,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 {compile_report}"
     );
     assert!(
-        compile_report.contains("(12 certified, 88 source-level-only)"),
+        compile_report.contains("(12 certified, 90 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
