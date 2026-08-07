@@ -201,11 +201,19 @@ fn compile_multi_module_bytes(entry_src: &str, dep_sources: &[(&str, &str)]) -> 
         .into_iter()
         .map(|m| aver::codegen::ModuleInfo::from_loaded(&m))
         .collect();
-    aver::codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
     aver::ir::pipeline::resolve(&mut entry_items);
-    compile_to_wasm_gc(&entry_items, result.analysis.as_ref()).unwrap_or_else(|e| {
+    aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        &entry_items,
+        result.analysis.as_ref(),
+        None,
+        aver::codegen::wasm_gc::TargetMode::AverBridge,
+        &type_aliases,
+    )
+    .unwrap_or_else(|e| {
         panic!("wasm-gc multi-module compile failed: {e:?}");
     })
+    .bytes
 }
 
 fn run_int_multi(entry_src: &str, dep_sources: &[(&str, &str)]) -> i64 {
@@ -489,6 +497,65 @@ record Octets
         "expected the ungated Left.Octets record to stay boxed and return \
          1000; 232 means it inherited the entry refinement's packed u8 \
          layout through a qualified→bare name fallback and truncated"
+    );
+}
+
+// Availability counterpart of the exact-name test above: an ENTRY-side
+// local-binding annotation may spell a dep type qualified
+// (`o: Dep.Octets = ...`) even though flatten keeps the sole-declarer
+// dep `TypeDef` bare. The pre-flatten typechecker stamps the binding
+// slot with the qualified name, and that stamp survives into codegen,
+// so the packed lookups must accept `Dep.Octets` as an alias for the
+// unique `Octets` layout. The alias is identity-correct ONLY because
+// `Dep` is the sole declarer — a collision-renamed spelling must keep
+// declining (previous test).
+#[test]
+fn entry_qualified_annotation_over_sole_declarer_packed_dep_type() {
+    let entry_src = r#"
+module Entry
+    intent = "qualified local annotation over a sole-declarer packed dep type"
+    depends [Dep]
+
+fn firstValue(o: Dep.Octets) -> Int
+    match o.values
+        [head, .._] -> head
+        [] -> 0 - 1
+
+fn run() -> Result<Int, String>
+    o: Dep.Octets = Dep.fromList([200])?
+    Result.Ok(firstValue(o))
+
+fn main() -> Int
+    match run()
+        Result.Ok(n) -> n
+        Result.Err(_) -> 0 - 2
+"#;
+    let dep_src = r#"
+module Dep
+    intent = "sole-declarer gated Octets refinement"
+    exposes [Octets, fromList]
+    depends []
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+"#;
+    let result = run_int_multi(entry_src, &[("Dep", dep_src)]);
+    assert_eq!(
+        result, 200,
+        "expected the qualified `o: Dep.Octets` binding to resolve the \
+         unique packed dep layout and return 200"
     );
 }
 
@@ -1314,5 +1381,51 @@ record IntRange
         "expected the plain Left.IntRange record to stay boxed and hold a \
          beyond-i64 Int; a trap or 0 means it inherited the entry carrier's \
          i64 erasure through a qualified→bare name fallback"
+    );
+}
+
+// Availability counterpart for the scalar carrier path: an entry-side
+// qualified local-binding annotation over a SOLE-declarer gated dep
+// carrier (`r: Dep.IntRange = ...`) must resolve the same carrier-i64
+// eligibility fact as the bare post-flatten name, because `Dep` is the
+// unique declarer. Only collision-renamed spellings keep declining.
+#[test]
+fn entry_qualified_annotation_over_sole_declarer_carrier_dep_type() {
+    let entry_src = r#"
+module Entry
+    intent = "qualified local annotation over a sole-declarer carrier dep type"
+    depends [Dep]
+
+fn value(r: Dep.IntRange) -> Int
+    r.value
+
+fn run() -> Result<Int, String>
+    r: Dep.IntRange = Dep.fromInt(70)?
+    Result.Ok(value(r))
+
+fn main() -> Int
+    match run()
+        Result.Ok(n) -> n
+        Result.Err(_) -> 0 - 1
+"#;
+    let dep_src = r#"
+module Dep
+    intent = "sole-declarer gated IntRange carrier"
+    exposes [IntRange, fromInt]
+    depends []
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("oob")
+"#;
+    let result = run_int_multi(entry_src, &[("Dep", dep_src)]);
+    assert_eq!(
+        result, 70,
+        "expected the qualified `r: Dep.IntRange` binding to agree with the \
+         unique carrier's representation and return 70"
     );
 }

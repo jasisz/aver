@@ -157,7 +157,7 @@ pub(super) fn try_run_wasm_gc(
         return Err(shared::format_type_errors(&tc.errors));
     }
     let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
-    flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after multi-module flatten so the freshly
     // appended dep fns get a `FnResolution` (slot map + slot_types).
     // The first `pipeline::run` only saw entry items; without this
@@ -173,6 +173,7 @@ pub(super) fn try_run_wasm_gc(
             program_args,
             entry_info: entry_info.clone(),
             mode,
+            type_aliases,
         },
     )?;
 

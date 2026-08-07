@@ -244,9 +244,11 @@ fn run_wasm_gc(
         // expects a single flat ast — multi-module split happens
         // upstream of run_in_process per its doc comment).
         let mut items_flat = items.to_vec();
+        let mut type_aliases = std::collections::HashMap::new();
         if let Some(root) = module_root {
             if let Ok(dep_modules) = aver::source::load_compile_deps(items, root) {
-                aver::codegen::wasm_gc::flatten_multimodule(&mut items_flat, &dep_modules);
+                type_aliases =
+                    aver::codegen::wasm_gc::flatten_multimodule(&mut items_flat, &dep_modules);
             }
         }
         let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {
@@ -257,6 +259,7 @@ fn run_wasm_gc(
                     program_args: Vec::new(),
                     entry_info: None,
                     mode: aver::runtime::wasm_gc::EffectMode::Normal,
+                    type_aliases: type_aliases.clone(),
                 },
             )
         });

@@ -64,6 +64,10 @@ pub struct RunConfig {
     pub entry_info: Option<(String, Vec<Value>)>,
     /// Recorder / replayer state machine. See [`EffectMode`].
     pub mode: EffectMode,
+    /// Identity-preserving qualified type-name aliases returned by
+    /// `flatten_multimodule` when the caller flattened a multi-module
+    /// program. Empty for single-file programs (the fuzz harness path).
+    pub type_aliases: std::collections::HashMap<String, String>,
 }
 
 /// What one `run_in_process` invocation actually produced. Carries
@@ -120,8 +124,15 @@ pub fn run_in_process(
     analysis: Option<&AnalysisResult>,
     config: RunConfig,
 ) -> Result<RunOutcome, String> {
-    let bytes =
-        aver::codegen::wasm_gc::compile_to_wasm_gc(items, analysis).map_err(|e| format!("{e}"))?;
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        items,
+        analysis,
+        None,
+        aver::codegen::wasm_gc::TargetMode::AverBridge,
+        &config.type_aliases,
+    )
+    .map(|out| out.bytes)
+    .map_err(|e| format!("{e}"))?;
 
     let entry_fn_name: &str = config
         .entry_info

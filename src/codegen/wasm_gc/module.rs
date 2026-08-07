@@ -132,6 +132,7 @@ pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
     target: super::TargetMode,
+    type_aliases: &HashMap<String, String>,
 ) -> Result<
     (
         Vec<u8>,
@@ -154,6 +155,12 @@ pub(super) fn emit_module_with(
 
     let mut registry =
         TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
+    // Identity-preserving qualified spellings for sole-declarer dep types,
+    // derived by `flatten_multimodule` from its collision info. Entry-side
+    // qualified annotation stamps (`o: Dep.Octets`) survive into codegen,
+    // so the name-keyed representation lookups resolve them through this
+    // map. Empty for single-module programs.
+    registry.set_type_name_aliases(type_aliases.clone());
 
     // Lower the post-link resolved fns to MIR and run the shared
     // `optimize` pipeline — the SAME six passes the VM consumes
@@ -286,11 +293,21 @@ pub(super) fn emit_module_with(
     // kept as `$AverInt` storage — reading an i64 from an `$AverInt` slot,
     // a wasm validation error. So restrict the carrier table to the eligible
     // names before threading it into the rewrite.
-    let bare_carrier_intervals: crate::ir::mir::bare_i64::CarrierIntervals = carrier_intervals
+    let mut bare_carrier_intervals: crate::ir::mir::bare_i64::CarrierIntervals = carrier_intervals
         .iter()
         .filter(|(name, _)| eligible_carriers.contains(name.as_str()))
         .map(|(name, iv)| (name.clone(), *iv))
         .collect();
+    // Register the flatten-derived qualified aliases as extra keys so the
+    // MIR bare-i64 facts agree with the registry's alias-aware storage
+    // decision when an entry-side annotation stamp spells the carrier
+    // qualified. Aliases only mirror canonical entries that SURVIVED the
+    // demotion tightening above, so the fail-closed set is unchanged.
+    for (alias, canonical) in type_aliases {
+        if let Some(iv) = bare_carrier_intervals.get(canonical).copied() {
+            bare_carrier_intervals.entry(alias.clone()).or_insert(iv);
+        }
+    }
     registry.set_eligible_carriers(eligible_carriers);
 
     // ETAP-2 multi-field carrier-`i64`: the per-`(record, field)` eligible
@@ -301,7 +318,7 @@ pub(super) fn emit_module_with(
     // eligible-field set) AND the body-emit bridges (construct / direct-read)
     // key off ONE table. Empty under `AVER_NO_CARRIER_I64=1` (the differential
     // baseline) and on any program with no bounded multi-field record.
-    let field_carrier_intervals: crate::ir::mir::bare_i64::FieldCarrierIntervals =
+    let mut field_carrier_intervals: crate::ir::mir::bare_i64::FieldCarrierIntervals =
         if std::env::var("AVER_NO_CARRIER_I64").is_ok() {
             crate::ir::mir::bare_i64::FieldCarrierIntervals::new()
         } else {
@@ -329,6 +346,22 @@ pub(super) fn emit_module_with(
             .map(|((rec, field), _)| (rec.clone(), field.clone()))
             .collect();
     registry.set_eligible_carrier_fields(eligible_carrier_fields);
+    // Same alias mirroring as `bare_carrier_intervals` above, done AFTER
+    // the registry's eligible set is derived so that set stays keyed by
+    // canonical post-flatten names only.
+    for (alias, canonical) in type_aliases {
+        let mirrored: Vec<(String, (crate::ir::interval::Interval, bool))> =
+            field_carrier_intervals
+                .iter()
+                .filter(|((rec, _), _)| rec == canonical)
+                .map(|((_, field), fact)| (field.clone(), *fact))
+                .collect();
+        for (field, fact) in mirrored {
+            field_carrier_intervals
+                .entry((alias.clone(), field))
+                .or_insert(fact);
+        }
+    }
 
     // Structural sibling of carrier-i64: derive a per-element interval for
     // canonical opaque `List<Int>` refinements and erase each eligible nominal
@@ -2635,10 +2668,20 @@ pub(super) fn emit_module_with(
         }
     }
     let string_split_ops = list_helpers.string_split_ops();
-    let packed_sequence_ops = packed_sequence_helpers
-        .iter()
-        .map(|(name, ops)| (name.to_string(), ops))
-        .collect();
+    let mut packed_sequence_ops: HashMap<String, super::packed_sequences::PackedSequenceOps> =
+        packed_sequence_helpers
+            .iter()
+            .map(|(name, ops)| (name.to_string(), ops))
+            .collect();
+    // Mirror the flatten-derived qualified aliases onto the canonical
+    // pack/unpack pairs (extra lookup keys only — helper emission walks
+    // the canonical order). Keeps `FnMap::packed_sequence_ops_lookup` in
+    // agreement with the registry's alias-aware `packed_sequence`.
+    for (alias, canonical) in &registry.type_name_aliases {
+        if let Some(ops) = packed_sequence_ops.get(canonical).copied() {
+            packed_sequence_ops.entry(alias.clone()).or_insert(ops);
+        }
+    }
     let mut eq_helpers_lookup: HashMap<String, u32> = HashMap::new();
     for (name, _kind) in eq_helpers_registry.iter() {
         if let Some(fn_idx) = eq_helpers_registry.lookup_fn_idx(name) {

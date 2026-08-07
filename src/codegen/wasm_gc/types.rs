@@ -133,6 +133,19 @@ pub(super) struct TypeRegistry {
     /// bridge between `List<Int>` and the packed array explicitly.
     pub(super) packed_sequences: HashMap<String, PackedSequenceType>,
     pub(super) packed_sequence_order: Vec<String>,
+    /// Identity-preserving qualified→bare type-name aliases derived by
+    /// `flatten_multimodule` from its collision info: `"Dep.Octets"` →
+    /// `"Octets"` ONLY when `Dep` is the sole declarer of the bare name
+    /// (no dep-dep collision, no entry-declared type of the same bare
+    /// name), so the alias provably denotes the same `TypeDef`. Consulted
+    /// by the name-keyed representation lookups (`packed_sequence`,
+    /// `is_eligible_carrier`, `is_eligible_carrier_field`,
+    /// `newtype_underlying`) because entry-side qualified annotation
+    /// stamps survive into codegen. A collision-renamed dep type never
+    /// lands here — its canonical `TypeDef` name IS the qualified form, so
+    /// exact lookups keep working and the #792 exact-name soundness rule
+    /// (no suffix guessing) is preserved.
+    pub(super) type_name_aliases: HashMap<String, String>,
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
@@ -1090,6 +1103,10 @@ impl TypeRegistry {
             primitive_key_box_order,
             packed_sequences: HashMap::new(),
             packed_sequence_order: Vec::new(),
+            // Populated post-build by `module.rs` from the aliases
+            // `flatten_multimodule` derived; empty for single-module
+            // programs and for callers that did not flatten.
+            type_name_aliases: HashMap::new(),
             user_type_count: next_idx,
             string_array_type_idx,
             crypto_byte_array_type_idx,
@@ -1434,32 +1451,60 @@ impl TypeRegistry {
         }
     }
 
-    /// Exact-name lookup only — NO qualified→bare fallback. The layout
+    /// Resolve an identity-preserving qualified alias (installed via
+    /// `set_type_name_aliases`) to its canonical post-flatten `TypeDef`
+    /// name; a name with no alias entry is returned trimmed, unchanged.
+    /// This is NOT a suffix fallback: only spellings `flatten_multimodule`
+    /// proved unambiguous (sole declarer, no collision rename, no entry
+    /// shadow) are in the map, so a collision-renamed dep type keeps
+    /// resolving by its exact canonical name.
+    pub(super) fn canonical_type_name<'a>(&'a self, type_name: &'a str) -> &'a str {
+        let trimmed = type_name.trim();
+        match self.type_name_aliases.get(trimmed) {
+            Some(canonical) => canonical.as_str(),
+            None => trimmed,
+        }
+    }
+
+    /// Install the flatten-derived qualified type-name aliases. See
+    /// `type_name_aliases` for the identity contract.
+    pub(super) fn set_type_name_aliases(&mut self, aliases: HashMap<String, String>) {
+        self.type_name_aliases = aliases;
+    }
+
+    /// Exact-name lookup — NO qualified→bare suffix fallback. The layout
     /// table keys are post-flatten `TypeDef` names (bare for entry and
     /// non-colliding dep types, canonical `Prefix.Name` for collision-
     /// renamed dep types), and both the collision guard and the ungated-
     /// construction demotion scan match those names exactly. A bare-name
     /// fallback here would hand a collision-renamed dep type (`Left.Octets`)
     /// the packed layout of an unrelated bare-named gated type (`Octets`),
-    /// letting an ungated record silently truncate through `pack`.
+    /// letting an ungated record silently truncate through `pack`. The only
+    /// indirection is `canonical_type_name`, whose alias entries provably
+    /// denote the same `TypeDef` (entry-side qualified annotation stamps
+    /// over a sole-declarer dep type).
     pub(super) fn packed_sequence(&self, type_name: &str) -> Option<PackedSequenceType> {
-        self.packed_sequences.get(type_name.trim()).copied()
+        self.packed_sequences
+            .get(self.canonical_type_name(type_name))
+            .copied()
     }
 
     /// ETAP-2 carrier-`i64`: is `type_name` a carrier whose erasure should be
     /// a native `i64`? A carrier in the eligible set is ALSO a newtype
     /// (single-field opaque record of `Int`), so `newtype_underlying` already
     /// returns `Some("Int")` for it — this just decides whether that erasure
-    /// becomes `i64` or stays `$AverInt`. Exact-name lookup only, matching the
+    /// becomes `i64` or stays `$AverInt`. Exact-name lookup (modulo the
+    /// identity-preserving `canonical_type_name` aliases), matching the
     /// post-flatten `TypeDef` name the interval table and the demotion scans
-    /// key on — a qualified→bare fallback would let a collision-renamed dep
-    /// type (`Left.IntRange`) inherit an unrelated carrier's i64 erasure and
-    /// trap on values only the bignum representation can hold.
+    /// key on — a qualified→bare suffix fallback would let a collision-renamed
+    /// dep type (`Left.IntRange`) inherit an unrelated carrier's i64 erasure
+    /// and trap on values only the bignum representation can hold.
     pub(super) fn is_eligible_carrier(&self, type_name: &str) -> bool {
         if self.eligible_carriers.is_empty() {
             return false;
         }
-        self.eligible_carriers.contains(type_name.trim())
+        self.eligible_carriers
+            .contains(self.canonical_type_name(type_name))
     }
 
     /// ETAP-2 multi-field carrier-`i64`: install the eligible `(record, field)`
@@ -1476,16 +1521,24 @@ impl TypeRegistry {
 
     /// ETAP-2 multi-field carrier-`i64`: is `(record_name, field)` a bounded
     /// record field whose storage should be a native `i64`? Exact-name lookup
-    /// only, for the same reason as `is_eligible_carrier`.
+    /// (modulo `canonical_type_name` aliases), for the same reason as
+    /// `is_eligible_carrier`.
     pub(super) fn is_eligible_carrier_field(&self, record_name: &str, field: &str) -> bool {
         if self.eligible_carrier_fields.is_empty() {
             return false;
         }
-        self.eligible_carrier_fields
-            .contains(&(record_name.trim().to_string(), field.to_string()))
+        self.eligible_carrier_fields.contains(&(
+            self.canonical_type_name(record_name).to_string(),
+            field.to_string(),
+        ))
     }
 
     pub(super) fn newtype_underlying(&self, type_name: &str) -> Option<&str> {
+        // Qualified annotation stamps over a sole-declarer dep type must
+        // see the SAME newtype/carrier decision as the canonical name —
+        // otherwise an entry-side `r: Dep.IntRange` slot stays a struct
+        // ref while the carrier value it holds erased to `i64`.
+        let type_name = self.canonical_type_name(type_name);
         // Suppress newtype optimisation when the type is used as a
         // `Map<K, *>` key. Map's open-addressing layout uses
         // `keys[i] == null` as the empty marker, which only works
