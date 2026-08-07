@@ -51,9 +51,9 @@ verify checkCollision
 
 fn rotatePiece(state: GameState) -> GameState
     ? "Rotate piece clockwise if no collision"
-    match checkCollision(state.board, Piece(kind = state.piece.kind, rotation = Result.withDefault(Int.mod(state.piece.rotation + 1, 4), 0)), state.px, state.py)
+    match checkCollision(state.board, Piece(kind = state.piece.kind, rotation = Int.mod(state.piece.rotation + 1, 4)), state.px, state.py)
         true -> state
-        false -> GameState.update(state, piece = Piece(kind = state.piece.kind, rotation = Result.withDefault(Int.mod(state.piece.rotation + 1, 4), 0)))
+        false -> GameState.update(state, piece = Piece(kind = state.piece.kind, rotation = Int.mod(state.piece.rotation + 1, 4)))
 
 verify rotatePiece
     rotatePiece(mkState(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0)).piece.rotation => 1

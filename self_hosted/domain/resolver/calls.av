@@ -143,12 +143,76 @@ fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, Int>) -> Ex
         Option.None -> match String.endsWith(name, ".update")
             true -> Expr.ExprCall(name, resolvedArgs)
             false -> match isBuiltinCallName(name)
-                true -> Expr.ExprCallBuiltin(name, resolvedArgs)
+                true -> resolveBuiltinCall(name, resolvedArgs)
                 false -> Expr.ExprCall(name, resolvedArgs)
 
 verify resolveOneCall
     resolveOneCall("foo", [], Map.set({}, "foo", 5)) => Expr.ExprCallDirect(5, [])
     resolveOneCall("Map.get", [Expr.ExprInt(1)], {}) => Expr.ExprCallBuiltin("Map.get", [Expr.ExprInt(1)])
+    resolveOneCall("Int.div", [Expr.ExprSlot(0), Expr.ExprInt(2)], {}) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.div", [Expr.ExprSlot(0), Expr.ExprInt(2)]), Expr.ExprInt(0)])
+
+fn resolveBuiltinCall(name: String, resolvedArgs: List<Expr>) -> Expr
+    ? "Link a builtin call, discharging a literal-divisor Int.div/Int.mod to a plain Int."
+    match isLiteralDivisorCall(name, resolvedArgs)
+        true -> Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin(name, resolvedArgs), Expr.ExprInt(0)])
+        false -> Expr.ExprCallBuiltin(name, resolvedArgs)
+
+verify resolveBuiltinCall
+    resolveBuiltinCall("Map.get", [Expr.ExprInt(1)]) => Expr.ExprCallBuiltin("Map.get", [Expr.ExprInt(1)])
+    resolveBuiltinCall("Int.mod", [Expr.ExprSlot(0), Expr.ExprInt(2)]) => Expr.ExprCallBuiltin("Result.withDefault", [Expr.ExprCallBuiltin("Int.mod", [Expr.ExprSlot(0), Expr.ExprInt(2)]), Expr.ExprInt(0)])
+    resolveBuiltinCall("Int.mod", [Expr.ExprSlot(0), Expr.ExprSlot(1)]) => Expr.ExprCallBuiltin("Int.mod", [Expr.ExprSlot(0), Expr.ExprSlot(1)])
+
+fn isLiteralDivisorCall(name: String, args: List<Expr>) -> Bool
+    ? "Whether this is Int.div/Int.mod over a syntactic nonzero integer literal divisor."
+    match Bool.and(Bool.or(name == "Int.div", name == "Int.mod"), List.len(args) == 2)
+        false -> false
+        true -> isNonzeroIntLiteralDivisor(args)
+
+verify isLiteralDivisorCall
+    isLiteralDivisorCall("Int.div", [Expr.ExprSlot(0), Expr.ExprInt(2)]) => true
+    isLiteralDivisorCall("Int.mod", [Expr.ExprSlot(0), Expr.ExprNeg(Expr.ExprInt(3))]) => true
+    isLiteralDivisorCall("Int.div", [Expr.ExprSlot(0), Expr.ExprInt(0)]) => false
+    isLiteralDivisorCall("Int.div", [Expr.ExprSlot(0), Expr.ExprSlot(1)]) => false
+    isLiteralDivisorCall("Int.max", [Expr.ExprSlot(0), Expr.ExprInt(2)]) => false
+    isLiteralDivisorCall("Int.div", [Expr.ExprInt(2)]) => false
+
+fn isNonzeroIntLiteralDivisor(args: List<Expr>) -> Bool
+    ? "Whether the second of exactly two arguments is a nonzero integer literal."
+    match args
+        [_, ..rest] -> match rest
+            [divisor, ..ignored] -> isNonzeroIntLiteral(divisor)
+            _ -> false
+        _ -> false
+
+verify isNonzeroIntLiteralDivisor
+    isNonzeroIntLiteralDivisor([Expr.ExprSlot(0), Expr.ExprInt(4)]) => true
+    isNonzeroIntLiteralDivisor([Expr.ExprSlot(0)]) => false
+    isNonzeroIntLiteralDivisor([]) => false
+
+fn isNonzeroIntLiteral(expr: Expr) -> Bool
+    ? "Whether an expression is a nonzero integer literal under at most one unary minus."
+    match expr
+        Expr.ExprInt(k) -> k != 0
+        Expr.ExprNeg(inner) -> isBareNonzeroIntLiteral(inner)
+        _ -> false
+
+verify isNonzeroIntLiteral
+    isNonzeroIntLiteral(Expr.ExprInt(2)) => true
+    isNonzeroIntLiteral(Expr.ExprInt(0)) => false
+    isNonzeroIntLiteral(Expr.ExprNeg(Expr.ExprInt(3))) => true
+    isNonzeroIntLiteral(Expr.ExprNeg(Expr.ExprNeg(Expr.ExprInt(5)))) => false
+    isNonzeroIntLiteral(Expr.ExprSlot(0)) => false
+
+fn isBareNonzeroIntLiteral(expr: Expr) -> Bool
+    ? "Whether an expression is a bare nonzero integer literal, with no unary minus of its own."
+    match expr
+        Expr.ExprInt(k) -> k != 0
+        _ -> false
+
+verify isBareNonzeroIntLiteral
+    isBareNonzeroIntLiteral(Expr.ExprInt(3)) => true
+    isBareNonzeroIntLiteral(Expr.ExprInt(0)) => false
+    isBareNonzeroIntLiteral(Expr.ExprNeg(Expr.ExprInt(3))) => false
 
 fn isBuiltinCallName(name: String) -> Bool
     ? "Return whether a call name is one of the exact builtin/service entrypoints."

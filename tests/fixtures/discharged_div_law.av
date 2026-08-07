@@ -1,26 +1,91 @@
 module DischargedDivLaw
     intent =
-        "Law over a literal-divisor discharged Int.div. half(a) = Int.div(a, 2) types as plain Int (the literal 2 makes the division total), the Lean emission renders it as the bare Euclidean quotient (a / 2), and the doubling identity is provable by the linear-arithmetic strategy — omega speaks ediv natively. The verify cases pin the Euclidean rounding on negative operands."
+        "Laws over literal-divisor discharged Int.div and Int.mod. half(a) = Int.div(a, 2) types as plain Int (the literal 2 makes the division total), the Lean emission renders it as the bare Euclidean quotient (a / 2), and the doubling identity is provable by the linear-arithmetic strategy — omega speaks ediv and emod natively. Coverage: a discharged mod (rebuild), a NEGATIVE literal divisor (negThird, negThirdRem), and a body mixing a discharged divisor with a dynamic-divisor Result call (mixedQuotients). The mixed law is the emission-correctness pin: it only closes if the discharged call became a bare Euclidean operator the arithmetic tactic can crunch WHILE the dynamic call stayed an opaque Result term in the same body. Negative divisors are law-covered on the quotient only — omega relates a / -k to a / k but not a % -k, so the negative remainder is pinned by verify examples instead. The verify cases pin the Euclidean rounding on negative operands."
     effects []
 
 fn half(a: Int) -> Int
     ? "Floor half of a; total because the divisor is the literal 2."
     Int.div(a, 2)
 
+fn parity(a: Int) -> Int
+    ? "Euclidean remainder of a mod 2; total because the divisor is the literal 2."
+    Int.mod(a, 2)
+
 fn doubleThenHalf(a: Int) -> Int
     ? "Doubles a and halves the result."
     half(a + a)
+
+fn rebuild(a: Int) -> Int
+    ? "Reassemble a from its discharged quotient and remainder."
+    2 * half(a) + parity(a)
+
+fn negThird(a: Int) -> Int
+    ? "Euclidean quotient of a by the negative literal -3."
+    Int.div(a, -3)
+
+fn negThirdRem(a: Int) -> Int
+    ? "Euclidean remainder of a by the negative literal -3."
+    Int.mod(a, -3)
+
+fn third(a: Int) -> Int
+    ? "Euclidean quotient of a by the positive literal 3."
+    Int.div(a, 3)
+
+fn dynamicQuotient(a: Int, k: Int) -> Int
+    ? "Quotient through the dynamic-divisor Result path; the fallback is unreachable at k = 2."
+    Result.withDefault(Int.div(a, k), 0)
+
+fn mixedQuotients(a: Int) -> Int
+    ? "A discharged divisor over a doubled dividend, beside a dynamic-divisor passenger."
+    Int.div(a + a, 2) + dynamicQuotient(a, 2)
 
 verify half
     half(9) => 4
     half(0 - 9) => 0 - 5
     half(0 - 8) => 0 - 4
 
+verify parity
+    parity(9) => 1
+    parity(0 - 9) => 1
+    parity(0 - 8) => 0
+
+verify negThird
+    negThird(9) => 0 - 3
+    negThird(0 - 8) => 3
+    negThird(0) => 0
+
+verify negThirdRem
+    negThirdRem(9) => 0
+    negThirdRem(0 - 8) => 1
+    negThirdRem(0 - 9) => 0
+
+verify third
+    third(9) => 3
+    third(0 - 8) => 0 - 3
+    third(0) => 0
+
 verify doubleThenHalf
     doubleThenHalf(3) => 3
     doubleThenHalf(0) => 0
     doubleThenHalf(0 - 5) => 0 - 5
 
+verify mixedQuotients
+    mixedQuotients(9) => 13
+    mixedQuotients(0 - 9) => 0 - 14
+    mixedQuotients(0) => 0
+
 verify doubleThenHalf law identity
     given a: Int = 0..8
     doubleThenHalf(a) => a
+
+verify rebuild law divisionIdentity
+    given a: Int = 0..8
+    rebuild(a) => a
+
+verify negThird law negatedDivisor
+    given a: Int = 0..8
+    negThird(a) => 0 - third(a)
+
+verify mixedQuotients law dischargedHalfCollapses
+    given a: Int = 0..8
+    mixedQuotients(a) => a + dynamicQuotient(a, 2)

@@ -790,9 +790,14 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
 #[test]
 fn proof_dafny_verifies_discharged_div_law_when_dafny_is_available() {
     // Dafny side of the literal-divisor discharge: the discharged
-    // `Int.div(a, 2)` renders as bare Euclidean `/` (Dafny int division is
-    // Euclidean — same rounding as the runtime on every sign), and the
-    // doubling law verifies with no `Result` scaffolding.
+    // `Int.div(a, 2)` / `Int.mod(a, 2)` render as bare Euclidean `/` and
+    // `%` (Dafny int division is Euclidean — same rounding as the runtime
+    // on every sign), and all four laws verify with no `Result`
+    // scaffolding: the doubling identity, the quotient/remainder rebuild
+    // (the discharged-`mod` arm), the negative-literal-divisor law, and
+    // the mixed discharged + dynamic-divisor law, which is the one that
+    // forces Z3 to reason about a bare `/` and a `Result` datatype sitting
+    // in the SAME function body.
     assert_dafny_verifies(
         "tests/fixtures/discharged_div_law.av",
         "aver-dafny-discharged-div-law",
@@ -805,11 +810,30 @@ fn proof_export_verifies_discharged_div_law_when_lake_is_available() {
     // (tests/fixtures/discharged_div_law.av): `half(a) = Int.div(a, 2)`
     // types as plain Int and the Lean backend renders the discharged call
     // as the bare Euclidean `(a / 2)` (Lean `/` on Int = Int.ediv — same
-    // rounding as the runtime on every sign). The doubling law
-    // `doubleThenHalf(a) => a` must CERTIFY (budget 0): the unfold cone is
-    // pure user fns + a core ediv term, squarely inside omega's theory.
-    // The verify cases pin the Euclidean rounding for negative operands as
-    // kernel-visible examples.
+    // rounding as the runtime on every sign); `Int.mod` likewise renders
+    // as bare `%`. All four laws must CERTIFY (budget 0), because each
+    // unfold cone is pure user fns plus core ediv/emod terms, squarely
+    // inside omega's theory:
+    //   - `doubleThenHalf(a) => a`         — the discharged quotient;
+    //   - `rebuild(a) => a`                — 2*(a/2) + a%2, the discharged
+    //                                        `mod` arm;
+    //   - `negThird(a) => 0 - third(a)`    — a NEGATIVE literal divisor;
+    //   - `mixedQuotients(a) => a + dynamicQuotient(a, 2)` — the
+    //     emission-correctness pin. A discharged divisor and a
+    //     dynamic-divisor `Result` call share one body; the law closes
+    //     only if the discharged call became a bare Euclidean operator the
+    //     arithmetic tactic can crunch WHILE the dynamic call stayed an
+    //     opaque `Except` term. Cross-contamination in either direction
+    //     (a stray `Result` wrap on the discharged side, or the dynamic
+    //     side collapsing to a bare `/`) breaks it.
+    // Negative divisors are law-covered on the QUOTIENT only: omega
+    // relates `a / -k` to `a / k` but has no rule for `a % -k` (it leaves
+    // the term uninterpreted and reports a counterexample), so the
+    // negative remainder is pinned by verify examples instead. Those
+    // examples also pin the Euclidean rounding for negative operands —
+    // they are emitted as `native_decide` evaluations, so they exercise
+    // the emitted definitions without contributing to the kernel-genuine
+    // law count.
     assert_proof_builds(
         "tests/fixtures/discharged_div_law.av",
         "aver-proof-discharged-div-law",
@@ -828,6 +852,15 @@ fn proof_export_builds_result_default_cone_when_lake_is_available() {
     // `Except` match sits outside omega's theory, so the tactic could
     // never close. Declined, the law degrades to the prelude-simp
     // `first | simp | sorry` rung: budget exactly 1 honest caught sorry.
+    //
+    // The budget of 1 PREDATES the literal-divisor discharge — it landed
+    // with the decline behaviour it pins (#482, "decline instead of
+    // guessing on shapes the exporters cannot justify"), and is the whole
+    // point of the fixture, so it stays. The discharge work only had to
+    // make the fixture's divisor a NAMED BINDING: a literal divisor would
+    // now discharge `Int.div` to a bare Int and erase the
+    // `Result.withDefault` call this cone exists to exercise, silently
+    // turning the test into a second copy of the discharged-div law.
     assert_proof_builds_with_sorry_budget(
         "tests/fixtures/result_default_cone.av",
         "aver-proof-result-default-cone",

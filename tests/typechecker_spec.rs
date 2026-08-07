@@ -1644,11 +1644,47 @@ fn literal_divisor_discharge_boundary_is_syntactic_literals_only() {
     // A doubly-negated literal is not a syntactic literal (single unary
     // minus only).
     assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, --5)\n");
+    // Parenthesising an identifier does not turn it into a literal.
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    k = 2\n    Int.div(a, (k))\n");
+    // An interpolated string is not an integer literal. The discharge must
+    // not fire on it — the call keeps the registered signature and the
+    // normal argument check rejects the operand type, rather than the
+    // divisor sneaking through a discharge that skips it.
+    assert_error_containing(
+        "fn f(a: Int) -> Int\n    Int.div(a, \"{2}\")\n",
+        "Argument 2 of 'Int.div': expected Int, got String",
+    );
     // And the discharged type does NOT satisfy a Result return.
     assert_error_containing(
         "fn f(a: Int) -> Result<Int, String>\n    Int.div(a, 2)\n",
         "body returns Int but declared return type is Result<Int, String>",
     );
+}
+
+#[test]
+fn literal_divisor_discharge_parentheses_are_transparent() {
+    // Parentheses around a single expression are ERASED by the parser, so
+    // `(16)` is literally the same AST node as `16`. The discharge rule is
+    // defined on the AST, so all three parenthesised spellings below are
+    // syntactic literals and discharge to plain `Int`:
+    //   `(16)`   — parenthesised literal
+    //   `(-16)`  — parenthesised negative literal
+    //   `-(16)`  — unary minus over a parenthesised literal
+    // The last two both reduce to a single `Neg` over an `Int` literal,
+    // which is exactly what the predicate accepts. This is consistent with
+    // "syntactic literal" (same node), not a widening of the boundary —
+    // there is no constant folding here, and `--5` two lines down in the
+    // boundary test still stays on the `Result` path.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, (16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, (-16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, -(16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.mod(a, (16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.mod(a, -(16))\n");
+    // Nesting the parentheses changes nothing.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, ((16)))\n");
+    // Parentheses do not make a zero literal nonzero.
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, (0))\n");
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.mod(a, (0))\n");
 }
 
 #[test]

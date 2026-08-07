@@ -33,8 +33,8 @@ verify turnSpeed
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
     kind = pickKind(seed)
-    cx = Float.fromInt(room.x + Result.withDefault(Int.div(room.w, 2), 0)) + 0.5
-    cy = Float.fromInt(room.y + Result.withDefault(Int.div(room.h, 2), 0)) + 0.5
+    cx = Float.fromInt(room.x + Int.div(room.w, 2)) + 0.5
+    cy = Float.fromInt(room.y + Int.div(room.h, 2)) + 0.5
     Types.mkEnemy(cx, cy, kind, Types.enemyMaxHp(kind))
 
 verify spawnInRoom

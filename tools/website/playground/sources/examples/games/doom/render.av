@@ -166,7 +166,7 @@ verify stoneBits
 
 fn brickBits(side: Int, pixY: Int, col: Int) -> Int
     ? "Brick: alternating pattern like mortar lines"
-    isMortar = Result.withDefault(Int.mod(pixY, 3), 1) == 0
+    isMortar = Int.mod(pixY, 3) == 0
     match isMortar
         true -> match side
             1 -> dotBitRight(pixY)
@@ -222,7 +222,7 @@ fn ceilBit(y: Int, i: Int, col: Int) -> Int
     ? "Ceiling: sparse dots near horizon, denser at top"
     match y < 8
         true -> dotBit(i)
-        false -> match Result.withDefault(Int.mod(y + col, 4), 1) == 0
+        false -> match Int.mod(y + col, 4) == 0
             true -> dotBit(i)
             false -> 0
 
@@ -233,7 +233,7 @@ fn floorBit(y: Int, i: Int, col: Int) -> Int
     ? "Floor: sparse dots near horizon, denser at bottom"
     match y > 72
         true -> dotBitRight(i)
-        false -> match Result.withDefault(Int.mod(y + col, 3), 1) == 0
+        false -> match Int.mod(y + col, 3) == 0
             true -> dotBitRight(i)
             false -> 0
 
@@ -310,7 +310,7 @@ fn renderWallCol(zbuf: Vector<RayHit>, col: Int, hit: RayHit) -> Unit
     ? "Render one wall column with ceiling, wall, floor colors"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     wh = wallHeight(hit.dist)
-    wTop = Result.withDefault(Int.div(pixelH() - wh, 2), 0)
+    wTop = Int.div(pixelH() - wh, 2)
     wBot = wTop + wh
     wallColor = shadeColor(hit.dist, hit.side)
     renderWallRows(col, wTop, wBot, hit.wallType, hit.side, 0, wallColor)
@@ -411,8 +411,8 @@ fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: Vector<Enemy>,
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     spriteH = Math.clampInt(Float.floor(2.5 / eDist * Float.fromInt(screenH())), 1, 10)
     spriteW = Math.clampInt(Float.floor(5.0 / eDist * Float.fromInt(screenW()) / 10.0), 3, 13)
-    topRow = Result.withDefault(Int.div(screenH(), 2), 0) - Result.withDefault(Int.div(spriteH, 2), 0)
-    leftCol = screenCol - Result.withDefault(Int.div(spriteW, 2), 0)
+    topRow = Int.div(screenH(), 2) - Int.div(spriteH, 2)
+    leftCol = screenCol - Int.div(spriteW, 2)
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0)
     Terminal.resetColor()
     renderEnemiesVec(enemies, zbuf, px, py, pAngle, i + 1)
@@ -542,7 +542,7 @@ fn renderCrosshair() -> Unit
     ? "Draw a crosshair at screen center"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.setColor("white")
-    Terminal.moveTo(Result.withDefault(Int.div(screenW(), 2), 0), Result.withDefault(Int.div(screenH(), 2), 0))
+    Terminal.moveTo(Int.div(screenW(), 2), Int.div(screenH(), 2))
     Terminal.print("+")
     Terminal.resetColor()
 

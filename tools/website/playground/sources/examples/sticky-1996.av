@@ -71,9 +71,7 @@ fn ratFloor(x: Rat) -> Int
 
 fn isOdd(k: Int) -> Bool
     ? "Parity of a nonnegative integer."
-    match Int.mod(k, 2)
-        Result.Ok(r) -> r == 1
-        Result.Err(msg) -> false
+    Int.mod(k, 2) == 1
 
 verify isOdd
     isOdd(5) => true

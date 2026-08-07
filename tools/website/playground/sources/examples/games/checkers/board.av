@@ -251,7 +251,7 @@ verify inBounds
 
 fn isDarkSquare(x: Int, y: Int) -> Bool
     ? "True if (x,y) is a dark square where pieces can be placed"
-    Result.withDefault(Int.mod(x + y, 2), 0) == 1
+    Int.mod(x + y, 2) == 1
 
 verify isDarkSquare
     isDarkSquare(0, 1) => true

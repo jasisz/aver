@@ -122,7 +122,15 @@ fn run_rust(prefix: &str, source: &str) -> Result<String, String> {
         .parent()
         .expect("temp module has parent")
         .join("project");
-    let name = "cross_bp_rust";
+    // Crate (and therefore binary) name is derived from `prefix`, so two
+    // tests running concurrently never write the same path inside the
+    // SHARED target dir. With a single fixed name, one test's `cargo
+    // build` overwrote the binary another test was about to execute, and
+    // the victim read the other program's stdout — an assertion failure
+    // that reproduced only under the full-suite (parallel) run.
+    // Deriving from the prefix keeps the name stable per test, so the
+    // dependency compile still amortises across cases.
+    let name = &format!("cross_bp_{}", prefix.replace('-', "_"));
 
     let compile = Command::new(aver_bin)
         .current_dir(&repo_root)
