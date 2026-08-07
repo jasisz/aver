@@ -359,7 +359,10 @@ pub enum ResolvedCallee {
 
 /// The enumerated set of compiler-synthesised call intrinsics. New
 /// variants are added only when a lowering pass introduces a new
-/// `Expr::Ident("__…")` shape — there is no user-source mapping.
+/// `Expr::Ident("__…")` shape; none has a `__…` user-source spelling.
+/// (`IntDivEuclid` / `IntModEuclid` are additionally produced by the
+/// resolver's literal-divisor discharge of source `Int.div` / `Int.mod`
+/// calls with a syntactic nonzero literal divisor.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinIntrinsic {
     /// `__buf_new(<cap_hint>)` — allocate a fresh buffer slot.
@@ -377,17 +380,21 @@ pub enum BuiltinIntrinsic {
     /// (used by interpolation lowering before `__buf_append`).
     ToStr,
     /// `__int_div_euclid(<a>, <k>)` — unchecked Euclidean (flooring)
-    /// `(Int, Int) -> Int` division. Synthesised by the MIR `const_fold`
-    /// pass when `Int.div(a, k)`'s divisor `k` is a literal `Int` outside
-    /// `{0, -1}` (the partial cases that would `Err`), so the surrounding
-    /// `Result` wrap collapses to bare division. Never produced by the
-    /// resolver — there is no `from_name` mapping; it appears only in MIR.
+    /// `(Int, Int) -> Int` division, total for every `k != 0` (over ℤ the
+    /// old `i64::MIN / -1` overflow is just a valid large quotient).
+    /// Produced by the HIR resolver for the literal-divisor discharge —
+    /// `Int.div(a, K)` with a syntactic nonzero integer literal `K`
+    /// (`crate::ast::is_literal_nonzero_int_divisor`, the same predicate
+    /// the typechecker's discharge rule uses) — and by the MIR
+    /// `const_fold` pass as a belt-and-suspenders rewrite for any literal
+    /// nonzero divisor that reaches MIR as a `Builtin` call. There is
+    /// still no `from_name` mapping: the source spelling is `Int.div`.
     IntDivEuclid,
     /// `__int_mod_euclid(<a>, <k>)` — unchecked Euclidean modulo
     /// `(Int, Int) -> Int`, partner of `IntDivEuclid` so that
-    /// `div(a,k)*k + mod(a,k) == a` for every sign. Synthesised by the
-    /// MIR `const_fold` pass for `Int.mod(a, k)` with a non-zero literal
-    /// divisor `k`.
+    /// `div(a,k)*k + mod(a,k) == a` for every sign. Produced by the HIR
+    /// resolver (literal-divisor discharge of `Int.mod(a, K)`) and by the
+    /// MIR `const_fold` pass for a non-zero literal divisor `k`.
     IntModEuclid,
 }
 
@@ -410,9 +417,11 @@ impl BuiltinIntrinsic {
     /// Returns `None` for anything else — the resolver then falls
     /// through to its regular fn / Unresolved classification.
     ///
-    /// `IntDivEuclid` / `IntModEuclid` are deliberately absent: they are
-    /// MIR-synthesis-only (emitted by `const_fold`), never recognised
-    /// from a source / resolver identifier.
+    /// `IntDivEuclid` / `IntModEuclid` are deliberately absent: their
+    /// source spelling is `Int.div` / `Int.mod` (the resolver's
+    /// literal-divisor discharge produces them from the call shape, and
+    /// `const_fold` synthesises them at MIR level), never a `__…`
+    /// identifier.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "__buf_new" => Some(Self::BufNew),

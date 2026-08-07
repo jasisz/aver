@@ -788,6 +788,35 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_discharged_div_law_when_dafny_is_available() {
+    // Dafny side of the literal-divisor discharge: the discharged
+    // `Int.div(a, 2)` renders as bare Euclidean `/` (Dafny int division is
+    // Euclidean — same rounding as the runtime on every sign), and the
+    // doubling law verifies with no `Result` scaffolding.
+    assert_dafny_verifies(
+        "tests/fixtures/discharged_div_law.av",
+        "aver-dafny-discharged-div-law",
+    );
+}
+
+#[test]
+fn proof_export_verifies_discharged_div_law_when_lake_is_available() {
+    // Literal-divisor discharge, proof side
+    // (tests/fixtures/discharged_div_law.av): `half(a) = Int.div(a, 2)`
+    // types as plain Int and the Lean backend renders the discharged call
+    // as the bare Euclidean `(a / 2)` (Lean `/` on Int = Int.ediv — same
+    // rounding as the runtime on every sign). The doubling law
+    // `doubleThenHalf(a) => a` must CERTIFY (budget 0): the unfold cone is
+    // pure user fns + a core ediv term, squarely inside omega's theory.
+    // The verify cases pin the Euclidean rounding for negative operands as
+    // kernel-visible examples.
+    assert_proof_builds(
+        "tests/fixtures/discharged_div_law.av",
+        "aver-proof-discharged-div-law",
+    );
+}
+
+#[test]
 fn proof_export_builds_result_default_cone_when_lake_is_available() {
     // A law whose unfold cone contains the `Result.withDefault` builtin
     // (tests/fixtures/result_default_cone.av): the linear-arithmetic

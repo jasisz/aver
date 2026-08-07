@@ -184,26 +184,25 @@ fn main() -> Unit
 #[test]
 fn win_const_divisor_fold_still_computes() {
     // The headline win must survive the soundness gate: a const-divisor
-    // `Int.div` still folds and computes the right Euclidean quotient.
+    // `Int.div` is discharged to a plain-`Int` Euclidean intrinsic and
+    // still computes the right quotient.
     let src = r#"module Win
-    intent = "const-divisor Int.div folds and still computes correctly."
+    intent = "const-divisor Int.div discharges and still computes correctly."
     exposes [main]
     depends []
     effects [Console]
 
-fn half(a: Int) -> Result<Int, String>
-    ? "Divide by a literal 2 — folds to a bare Euclid at MIR."
+fn half(a: Int) -> Int
+    ? "Divide by a literal 2 — discharged to a bare Euclid intrinsic."
     Int.div(a, 2)
 
 fn main() -> Unit
     ! [Console.print]
-    match half(10)
-        Result.Ok(v) -> Console.print("half {v}")
-        Result.Err(e) -> Console.print("err {e}")
+    Console.print("half {half(10)}")
 "#;
     let out = run_aver("win_const_divisor", src);
     assert_eq!(
         out, "half 5",
-        "const-divisor fold must still compute; got:\n{out}"
+        "const-divisor discharge must still compute; got:\n{out}"
     );
 }

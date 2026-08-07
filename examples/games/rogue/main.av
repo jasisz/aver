@@ -217,9 +217,9 @@ verify spawnEntitiesStepVec
 
 fn spawnOneEntity(seed: Int, room: Room, idx: Int, floor: Int) -> Entity
     ? "Spawn entity scaled by floor — deeper = stronger"
-    cx = room.x + Result.withDefault(Int.div(room.w, 2), 0)
-    cy = room.y + Result.withDefault(Int.div(room.h, 2), 0)
-    kind = Result.withDefault(Int.mod(idx, 3), 0)
+    cx = room.x + Int.div(room.w, 2)
+    cy = room.y + Int.div(room.h, 2)
+    kind = Int.mod(idx, 3)
     base = match kind
         0 -> Types.makeIfElse(cx, cy)
         1 -> Types.makeLoop(cx, cy)
@@ -276,9 +276,9 @@ fn spawnItemInRoomVec(seed: Int, rooms: Vector<Room>, room: Room, i: Int, acc: L
     ? "Maybe spawn an item in this room using shared room vector"
     cx = room.x + 1
     cy = room.y + 1
-    kind = Result.withDefault(Int.mod(i, 3), 0)
+    kind = Int.mod(i, 3)
     nextI = i + 1
-    match Result.withDefault(Int.mod(i, 2), 0) == 0
+    match Int.mod(i, 2) == 0
         true -> spawnItemsAccVec(Map.nextSeed(seed), rooms, nextI, List.prepend(makeItemByKind(cx, cy, kind), acc))
         false -> spawnItemsAccVec(seed, rooms, nextI, acc)
 
@@ -302,8 +302,8 @@ fn initGame(seed: Int) -> GameState
     gameMap = Map.generateMap(seed)
     rooms = Map.generateRooms(seed)
     startRoom = Option.withDefault(Vector.get(Vector.fromList(rooms), 0), Room(x = 5, y = 5, w = 6, h = 4))
-    px = startRoom.x + Result.withDefault(Int.div(startRoom.w, 2), 0)
-    py = startRoom.y + Result.withDefault(Int.div(startRoom.h, 2), 0)
+    px = startRoom.x + Int.div(startRoom.w, 2)
+    py = startRoom.y + Int.div(startRoom.h, 2)
     player = Types.makePlayer(px, py)
     ents = spawnEntities(seed, rooms, 0, 1)
     itms = spawnItems(seed, rooms, 0)
@@ -367,7 +367,7 @@ fn loopRespawn(state: GameState, target: Entity, idx: Int) -> GameState
     ? "for-loop respawns once with half HP (off-by-one — iterates one more time)"
     ! [Random.int]
     match Random.int(0, 1) == 0
-        true -> addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, Entity.update(target, hp = Result.withDefault(Int.div(target.maxHp, 2), 0)), 0)), "{target.name} reaches i=0 but iterates AGAIN! (respawns at half HP)")
+        true -> addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, Entity.update(target, hp = Int.div(target.maxHp, 2)), 0)), "{target.name} reaches i=0 but iterates AGAIN! (respawns at half HP)")
         false -> actualKill(state, target, idx)
 
 fn actualKill(state: GameState, target: Entity, idx: Int) -> GameState
@@ -549,7 +549,7 @@ verify loopAttack
 
 fn nullAttack(state: GameState, entity: Entity, i: Int) -> GameState
     ? "null: steals EXP instead of dealing HP damage (null dereference — wipes memory)"
-    stolen = Int.max(1, Result.withDefault(Int.div(state.player.exp, 4), 0))
+    stolen = Int.max(1, Int.div(state.player.exp, 4))
     newPlayer = Player.update(state.player, exp = Int.max(0, state.player.exp - stolen))
     addMessage(GameState.update(state, player = newPlayer), "{entity.name} dereferences your memory! -{String.fromInt(stolen)} EXP!")
 
@@ -584,7 +584,7 @@ verify loopBehavior
 
 fn loopPatrol(state: GameState, entity: Entity, i: Int) -> GameState
     ? "for-loop patrols: moves in a square pattern based on turn count"
-    step = Result.withDefault(Int.mod(state.seed, 4), 0)
+    step = Int.mod(state.seed, 4)
     dx = match step
         0 -> 1
         1 -> 0
@@ -648,8 +648,8 @@ fn descend(state: GameState) -> GameState
     newMap = Map.generateMap(newSeed)
     rooms = Map.generateRooms(newSeed)
     startRoom = Option.withDefault(Vector.get(Vector.fromList(rooms), 0), Room(x = 5, y = 5, w = 6, h = 4))
-    px = startRoom.x + Result.withDefault(Int.div(startRoom.w, 2), 0)
-    py = startRoom.y + Result.withDefault(Int.div(startRoom.h, 2), 0)
+    px = startRoom.x + Int.div(startRoom.w, 2)
+    py = startRoom.y + Int.div(startRoom.h, 2)
     newPlayer = Player.update(state.player, pos = Types.pt(px, py), floor = newFloor)
     ents = spawnEntities(newSeed, rooms, 0, newFloor)
     itms = spawnItems(newSeed, rooms, 0)

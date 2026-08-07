@@ -103,6 +103,38 @@ pub enum Literal {
     Unit,
 }
 
+/// Literal-divisor discharge predicate, shared by the typechecker and the
+/// HIR resolver: `Int.div(a, K)` / `Int.mod(a, K)` type and lower as TOTAL
+/// (plain `Int`, direct Euclidean division) exactly when the divisor `K` is
+/// a syntactic nonzero integer literal — `2`, `-3` (a single unary minus
+/// over a literal), or a `BigInt` literal (whose magnitude exceeds `i64`,
+/// so it is nonzero by construction). Everything else — a `0` literal, a
+/// double negation (`--5`), an identifier, a named constant, a constant
+/// expression like `8 + 8` — keeps the `Result<Int, String>` path. The
+/// boundary is deliberately syntactic: this is a typing rule for two
+/// builtin callees, not a refinement system, and the typechecker stays
+/// solver-free.
+///
+/// Both consumers MUST share this one predicate. Real pipelines resolve
+/// without typechecking (`tests/eval_spec.rs` compiles straight from the
+/// resolver), so the HIR rewrite cannot key on type stamps — a stamp-keyed
+/// rewrite would fork semantics between checked and unchecked pipelines.
+pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
+    fn is_nonzero_int_literal(node: &Expr) -> bool {
+        match node {
+            Expr::Literal(Literal::Int(k)) => *k != 0,
+            // The lexer produces `BigInt` only when the magnitude overflows
+            // `i64`, so a BigInt literal is never zero.
+            Expr::Literal(Literal::BigInt(_)) => true,
+            _ => false,
+        }
+    }
+    match &expr.node {
+        Expr::Neg(inner) => is_nonzero_int_literal(&inner.node),
+        node => is_nonzero_int_literal(node),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
     Add,

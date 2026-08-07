@@ -749,6 +749,28 @@ impl TypeChecker {
                                 let e = arg_types[1].clone();
                                 return Type::Result(Box::new(t), Box::new(e));
                             }
+                        // Literal-divisor discharge: `Int.div` / `Int.mod`
+                        // with a SYNTACTIC nonzero integer literal divisor
+                        // cannot fail (over ℤ the only partiality is a zero
+                        // divisor), so the call types as plain `Int` instead
+                        // of the registered `Result<Int, String>` signature.
+                        // The boundary is `is_literal_nonzero_int_divisor`
+                        // — shared with the HIR resolver, which lowers the
+                        // same shape to the total Euclidean intrinsics. A
+                        // `0` literal or any non-literal divisor falls
+                        // through to the normal `Result` signature.
+                        "Int.div" | "Int.mod"
+                            if args.len() == 2
+                                && crate::ast::is_literal_nonzero_int_divisor(&args[1]) =>
+                        {
+                            // Keep the standard arity/arg-type checks (both
+                            // operands must be Int); only the return type is
+                            // discharged.
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::Int;
+                        }
                         _ => {}
                     }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {

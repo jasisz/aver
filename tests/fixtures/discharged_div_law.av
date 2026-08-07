@@ -1,0 +1,26 @@
+module DischargedDivLaw
+    intent =
+        "Law over a literal-divisor discharged Int.div. half(a) = Int.div(a, 2) types as plain Int (the literal 2 makes the division total), the Lean emission renders it as the bare Euclidean quotient (a / 2), and the doubling identity is provable by the linear-arithmetic strategy — omega speaks ediv natively. The verify cases pin the Euclidean rounding on negative operands."
+    effects []
+
+fn half(a: Int) -> Int
+    ? "Floor half of a; total because the divisor is the literal 2."
+    Int.div(a, 2)
+
+fn doubleThenHalf(a: Int) -> Int
+    ? "Doubles a and halves the result."
+    half(a + a)
+
+verify half
+    half(9) => 4
+    half(0 - 9) => 0 - 5
+    half(0 - 8) => 0 - 4
+
+verify doubleThenHalf
+    doubleThenHalf(3) => 3
+    doubleThenHalf(0) => 0
+    doubleThenHalf(0 - 5) => 0 - 5
+
+verify doubleThenHalf law identity
+    given a: Int = 0..8
+    doubleThenHalf(a) => a

@@ -342,7 +342,17 @@ fn int_max() {
 
 #[test]
 fn int_mod() {
-    assert_eq!(eval("Int.mod(10, 3)"), Value::Ok(Box::new(Value::int(1))));
+    // Literal-divisor discharge: a syntactic nonzero literal divisor makes
+    // `Int.mod` total — the resolver lowers it to the Euclidean intrinsic,
+    // so the value is a bare Int, not `Result.Ok`. (This harness compiles
+    // WITHOUT typechecking — proof that the discharge keys on syntax, not
+    // on type stamps.)
+    assert_eq!(eval("Int.mod(10, 3)"), Value::int(1));
+    // A dynamic divisor keeps the `Result` path.
+    assert_eq!(
+        eval("Int.mod(10, Int.min(3, 4))"),
+        Value::Ok(Box::new(Value::int(1)))
+    );
 }
 
 #[test]
@@ -357,24 +367,30 @@ fn int_mod_zero() {
 fn int_mod_negative_dividend_positive_divisor() {
     // Euclidean modulo always lands in [0, |b|). Diverges from Rust
     // `%` (truncated remainder) which would return -1 here.
-    assert_eq!(eval("Int.mod(-7, 3)"), Value::Ok(Box::new(Value::int(2))));
+    assert_eq!(eval("Int.mod(-7, 3)"), Value::int(2));
 }
 
 #[test]
 fn int_mod_negative_divisor() {
     // Result is in [0, |b|) regardless of b's sign. 7 = (-3) * (-2) + 1.
-    assert_eq!(eval("Int.mod(7, -3)"), Value::Ok(Box::new(Value::int(1))));
+    assert_eq!(eval("Int.mod(7, -3)"), Value::int(1));
 }
 
 #[test]
 fn int_mod_both_negative() {
     // -7 = (-3) * 3 + 2.
-    assert_eq!(eval("Int.mod(-7, -3)"), Value::Ok(Box::new(Value::int(2))));
+    assert_eq!(eval("Int.mod(-7, -3)"), Value::int(2));
 }
 
 #[test]
 fn int_div_builtin() {
-    assert_eq!(eval("Int.div(7, 2)"), Value::Ok(Box::new(Value::int(3))));
+    // Literal-divisor discharge — bare Int, no `Result.Ok` wrap.
+    assert_eq!(eval("Int.div(7, 2)"), Value::int(3));
+    // A dynamic divisor keeps the `Result` path.
+    assert_eq!(
+        eval("Int.div(7, Int.min(2, 3))"),
+        Value::Ok(Box::new(Value::int(3)))
+    );
 }
 
 #[test]
@@ -390,17 +406,22 @@ fn int_div_is_euclidean_floor() {
     // Euclidean (flooring) division — the exact partner of Euclidean
     // `Int.mod`, so `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign.
     // `-7 / 2 == -4` (floors toward -inf), NOT -3 (truncate toward zero).
-    assert_eq!(eval("Int.div(-7, 2)"), Value::Ok(Box::new(Value::int(-4))));
-    assert_eq!(eval("Int.div(7, -2)"), Value::Ok(Box::new(Value::int(-3))));
-    assert_eq!(eval("Int.div(-7, -2)"), Value::Ok(Box::new(Value::int(4))));
+    assert_eq!(eval("Int.div(-7, 2)"), Value::int(-4));
+    assert_eq!(eval("Int.div(7, -2)"), Value::int(-3));
+    assert_eq!(eval("Int.div(-7, -2)"), Value::int(4));
     // The division identity holds: -7 == (-4)*2 + 1, with Int.mod(-7,2) == 1.
-    assert_eq!(eval("Int.mod(-7, 2)"), Value::Ok(Box::new(Value::int(1))));
+    assert_eq!(eval("Int.mod(-7, 2)"), Value::int(1));
 }
 
 #[test]
 fn int_div_fused_withdefault() {
-    // Leaf-op fusion `Result.withDefault(Int.div(a, b), default)`.
-    assert_eq!(eval("Result.withDefault(Int.div(7, 2), -1)"), Value::int(3));
+    // Leaf-op fusion `Result.withDefault(Int.div(a, b), default)`. The
+    // divisor must be dynamic here: a literal one discharges to a bare Int
+    // (making the withDefault wrapper a type error in checked pipelines).
+    assert_eq!(
+        eval("Result.withDefault(Int.div(7, Int.min(2, 3)), -1)"),
+        Value::int(3)
+    );
     assert_eq!(
         eval("Result.withDefault(Int.div(7, 0), -1)"),
         Value::int(-1)
@@ -410,18 +431,22 @@ fn int_div_fused_withdefault() {
 #[test]
 fn int_div_min_by_neg_one_is_exact_over_z() {
     // `Int` is mathematical ℤ, so `i64::MIN / -1` is NOT an overflow — it is
-    // exactly `i64::MAX + 1` (`9223372036854775808`), returned as `Result.Ok`
-    // of an arbitrary-precision Big. The old i64-wrap overflow `Err` is gone.
-    // `i64::MIN` is built by arithmetic (the literal `-9223372036854775808`
-    // doesn't parse — it's negate-of-`i64::MAX + 1`).
+    // exactly `i64::MAX + 1` (`9223372036854775808`) as an
+    // arbitrary-precision Big. The old i64-wrap overflow `Err` is gone. The
+    // literal `-1` divisor discharges, so the value is a bare Int. `i64::MIN`
+    // is built by arithmetic (the literal `-9223372036854775808` doesn't
+    // parse — it's negate-of-`i64::MAX + 1`).
     let expected = aver_rt::AverInt::from_str("9223372036854775808").unwrap();
     assert_eq!(
         eval("Int.div((0 - 9223372036854775807) - 1, -1)"),
-        Value::Ok(Box::new(Value::Int(expected.clone())))
+        Value::Int(expected.clone())
     );
-    // The fused form returns the same exact value (no fallback — no error).
+    // Dynamic `-1` divisor (`0 - 1` is a constant expression, not a
+    // syntactic literal — outside the discharge boundary): the `Result`
+    // path, and the MIR const-fold's lifted `-1` arm, return the same
+    // exact value (no fallback — no error).
     assert_eq!(
-        eval("Result.withDefault(Int.div((0 - 9223372036854775807) - 1, -1), 99)"),
+        eval("Result.withDefault(Int.div((0 - 9223372036854775807) - 1, 0 - 1), 99)"),
         Value::Int(expected)
     );
 }

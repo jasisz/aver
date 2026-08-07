@@ -56,7 +56,7 @@ fn fact(n: Int, acc: Int) -> Int
 fn repeat(n: Int, acc: Int) -> Int
     match n == 0
         true -> acc
-        false -> repeat(n - 1, acc + Result.withDefault(Int.mod(fact(20, 1), 1000000), 0))
+        false -> repeat(n - 1, acc + Int.mod(fact(20, 1), 1000000))
 
 fn main() -> Int
     repeat(50000, 0)

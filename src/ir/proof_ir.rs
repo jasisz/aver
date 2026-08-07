@@ -352,8 +352,9 @@ pub enum RecursionContract {
     /// wellformed). Two validated sources:
     ///
     /// - `floor_div: Some(..)` — every self-call shrinks `param` by a
-    ///   literal-divisor floor division
-    ///   (`Result.withDefault(Int.div(p, k), d)` with literal k >= 2,
+    ///   literal-divisor floor division (bare `Int.div(p, k)` in the
+    ///   discharged total form, or the legacy
+    ///   `Result.withDefault(Int.div(p, k), d)` wrapper, literal k >= 2,
     ///   possibly through a unary wrapper fn), and the classifier
     ///   verified the guard chain enclosing every self-call site
     ///   implies `p >= 1` — so `p / k < p` and the measure strictly
@@ -380,11 +381,11 @@ pub struct FloorDivShrink {
     /// The literal divisor (>= 2).
     pub divisor: i64,
     /// `Some(name)` when the self-call shrinks through a unary
-    /// wrapper fn whose body is exactly
+    /// wrapper fn whose body is exactly the shrink shape — bare
+    /// `Int.div(x, divisor)` (discharged total form) or the legacy
     /// `Result.withDefault(Int.div(x, divisor), <int literal>)`;
-    /// `None` when the `Result.withDefault(Int.div(p, k), d)` call
-    /// is inlined at the self-call site. Lean's `decreasing_by`
-    /// unfolds the wrapper by name.
+    /// `None` when that call is inlined at the self-call site.
+    /// Lean's `decreasing_by` unfolds the wrapper by name.
     pub helper_fn: Option<String>,
 }
 

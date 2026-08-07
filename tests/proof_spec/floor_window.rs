@@ -2,7 +2,7 @@ use super::*;
 
 /// Floor-division window family (`tests/fixtures/floor_window.av`):
 /// laws over a power-of-two fn, a floor-halving binary-exponent fn
-/// (recursion on `Result.withDefault(Int.div(a, 2), 0)` through a
+/// (recursion on `Int.div(a, 2)` through a
 /// unary wrapper), and the scaled-significand / bit-width window
 /// predicates built from them.
 ///
@@ -270,7 +270,7 @@ fn spin(a: Int) -> Int
     ? "Halves until it reaches zero, but the guard admits a == 0 forever."
     match a == 5
         true -> 0
-        false -> spin(Result.withDefault(Int.div(a, 2), 0))
+        false -> spin(Int.div(a, 2))
 
 verify spin
     spin(5) => 0

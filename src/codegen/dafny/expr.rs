@@ -373,10 +373,11 @@ fn emit_fn_call(
         ResolvedCallee::Intrinsic(intr) => {
             use crate::ir::hir::BuiltinIntrinsic;
             let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
-            // Const-fold Euclidean div/mod: for a non-zero constant divisor
-            // these are total, and Dafny's `/` / `%` on `int` are Euclidean,
-            // so render the bare op. (MIR-synthesis-only; the Dafny backend
-            // reads HIR, so this is unreachable today — kept total + correct.)
+            // Literal-divisor discharge: for a nonzero literal divisor
+            // these are total, and Dafny's `/` / `%` on `int` are Euclidean
+            // (matching the runtime for every sign combination), so render
+            // the bare op. The HIR resolver produces these intrinsics for
+            // every discharged source call.
             match intr {
                 BuiltinIntrinsic::IntDivEuclid if a.len() == 2 => {
                     format!("({} / {})", a[0], a[1])

@@ -14,10 +14,14 @@
 //!
 //! - **Fold A** rewrites `Int.div(a, k)` / `Int.mod(a, k)` with a
 //!   literal `Int` divisor into the bare Euclidean intrinsic wrapped
-//!   in a *known* `Result` constructor (or, for the partial cases,
-//!   directly into `Result.Err("division by zero")`). The `k == -1`
-//!   case for `Int.div` is deliberately left untouched — `i64::MIN /
-//!   -1` overflows, so it stays the runtime `Result`.
+//!   in a *known* `Result` constructor (or, for `k == 0`, directly
+//!   into `Result.Err("division by zero")`). Over ℤ the only
+//!   partiality is a zero divisor — `i64::MIN / -1` is just a valid
+//!   (large) quotient (see `src/types/int.rs`, `divide_nv`), so every
+//!   nonzero literal folds, `-1` included. Since the HIR resolver's
+//!   literal-divisor discharge lowers these shapes to the intrinsics
+//!   before MIR, Fold A's nonzero arms are belt-and-suspenders; the
+//!   `k == 0` → `Err` arm stays live.
 //! - **Fold B** collapses a consumer (`Result.withDefault` /
 //!   `Option.withDefault`, a `match`, or error-propagation `?`) applied to
 //!   a statically-known constructor, dropping the dead branch.
@@ -297,12 +301,16 @@ fn try_struct_fold(expr: &mut Spanned<MirExpr>, builtins: &[String]) -> Option<S
 /// Fold A — const-fold `Int.div` / `Int.mod` with a literal divisor.
 ///
 /// ```text
-/// Int.div, k ∉ {0, -1}  → Result.Ok(IntDivEuclid(a, k))
-/// Int.div, k == 0       → Result.Err("division by zero")
-/// Int.div, k == -1      → UNCHANGED (i64::MIN / -1 overflows)
-/// Int.mod, k != 0       → Result.Ok(IntModEuclid(a, k))
-/// Int.mod, k == 0       → Result.Err("division by zero")
+/// Int.div, k != 0  → Result.Ok(IntDivEuclid(a, k))
+/// Int.div, k == 0  → Result.Err("division by zero")
+/// Int.mod, k != 0  → Result.Ok(IntModEuclid(a, k))
+/// Int.mod, k == 0  → Result.Err("division by zero")
 /// ```
+///
+/// `k == -1` folds like any other nonzero divisor: `Int` is ℤ, so
+/// `i64::MIN / -1` is a valid large quotient (`2^63`), not an
+/// overflow — every reachable backend computes it via the
+/// arbitrary-precision carrier.
 fn fold_a_partial_int_builtin(
     expr: &mut Spanned<MirExpr>,
     builtins: &[String],
@@ -347,12 +355,6 @@ fn fold_a_partial_int_builtin(
     Some(if is_div {
         match k {
             0 => div_by_zero_err(result_ty.as_ref()),
-            // `i64::MIN / -1` overflows → leave the runtime `Result`.
-            // (Restore the moved-out args first; the node stays a Call.)
-            -1 => {
-                spanned_call.node.args = vec![a, divisor];
-                return None;
-            }
             _ => builtin_ctor(
                 BuiltinCtor::ResultOk,
                 vec![euclid_call(BuiltinIntrinsic::IntDivEuclid, a, divisor)],
@@ -948,16 +950,26 @@ mod tests {
     }
 
     #[test]
-    fn fold_a_div_by_minus_one_left_unchanged() {
-        // `i64::MIN / -1` overflows → the fold must NOT touch the node;
-        // it stays the runtime `Int.div` Builtin call.
+    fn fold_a_div_by_minus_one_folds() {
+        // `-1` is an ordinary nonzero divisor over ℤ: `i64::MIN / -1` is
+        // the valid quotient `2^63` on the bignum carrier, not an
+        // overflow, so the fold fires exactly as for any other literal.
         let body = builtin_call(vec![int_lit(123), int_lit(-1)]);
         let folded = const_fold(program_with_builtin("Int.div", body));
-        let MirExpr::Call(c) = body_of(&folded) else {
-            panic!("expected the Int.div Builtin call to survive");
+        let MirExpr::Construct(c) = body_of(&folded) else {
+            panic!("expected Result.Ok Construct, got {:?}", body_of(&folded));
         };
-        assert!(matches!(c.node.callee, MirCallee::Builtin(BuiltinId(0))));
-        assert_eq!(c.node.args.len(), 2, "args must be restored intact");
+        assert!(matches!(
+            c.node.ctor,
+            MirCtor::Builtin(BuiltinCtor::ResultOk)
+        ));
+        let MirExpr::Call(inner) = &c.node.args[0].node else {
+            panic!("expected IntDivEuclid call");
+        };
+        assert!(matches!(
+            inner.node.callee,
+            MirCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid)
+        ));
     }
 
     #[test]

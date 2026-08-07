@@ -725,7 +725,8 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
 }
 
 /// First Int param that EVERY self-call shrinks by a literal-divisor
-/// floor division — `Result.withDefault(Int.div(p, k), d)` with a
+/// floor division — bare `Int.div(p, k)` (discharged total form) or the
+/// legacy `Result.withDefault(Int.div(p, k), d)` wrapper, with a
 /// literal k >= 2 (the BigInt base-10⁹ digit peel,
 /// `examples/refinement/bigint`). Z3 discharges `decreases p` for this
 /// shape directly (`p / k < p` whenever the recursive branch implies
@@ -763,18 +764,20 @@ fn div_shrink_param_index(fd: &FnDef) -> Option<usize> {
         })
 }
 
-/// `Result.withDefault(Int.div(p, k), _)` with literal `k >= 2`.
+/// Bare `Int.div(p, k)` (the discharged total form) or the legacy
+/// `Result.withDefault(Int.div(p, k), _)` wrapper, with literal `k >= 2`.
 fn is_literal_div_shrink(expr: &Spanned<Expr>, param_name: &str) -> bool {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return false;
+    let div_expr = match &expr.node {
+        Expr::FnCall(callee, args)
+            if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
+                == Some("Result.withDefault")
+                && args.len() == 2 =>
+        {
+            &args[0]
+        }
+        _ => expr,
     };
-    if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
-        != Some("Result.withDefault")
-        || args.len() != 2
-    {
-        return false;
-    }
-    let Expr::FnCall(div_callee, div_args) = &args[0].node else {
+    let Expr::FnCall(div_callee, div_args) = &div_expr.node else {
         return false;
     };
     crate::codegen::common::expr_to_dotted_name(&div_callee.node).as_deref() == Some("Int.div")

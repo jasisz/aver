@@ -252,7 +252,7 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
             None,
             Vec::new(),
             Some(
-                "Use Int.div(a, b) : Result<Int, String>; handle the failure with `match` or `Result.withDefault(Int.div(a, b), fallback)`"
+                "Use Int.div(a, b) : Result<Int, String>; handle the failure with `match` or `Result.withDefault(Int.div(a, b), fallback)`. With a nonzero literal divisor, Int.div(a, k) is total and returns plain Int"
                     .to_string(),
             ),
         );

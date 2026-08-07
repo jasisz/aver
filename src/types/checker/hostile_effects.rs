@@ -126,7 +126,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "midrange",
                 stub_fn_name: stub_name("midrange"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"honest: roll lands in the middle of the range\"\n    Result.withDefault(Int.div(min + max, 2), min)\n",
+                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"honest: roll lands in the middle of the range\"\n    Int.div(min + max, 2)\n",
                     stub_name("midrange")
                 ),
             },
@@ -150,7 +150,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "alternating",
                 stub_fn_name: stub_name("alternating"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"hostile: alternates min/max — most-likely-fair-coin assumption broken\"\n    match Result.withDefault(Int.mod(n, 2), 0)\n        0 -> min\n        _ -> max\n",
+                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"hostile: alternates min/max — most-likely-fair-coin assumption broken\"\n    match Int.mod(n, 2)\n        0 -> min\n        _ -> max\n",
                     stub_name("alternating")
                 ),
             },

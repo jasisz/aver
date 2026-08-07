@@ -7,7 +7,7 @@ module Rng
 
 fn nextSeed(s: Int) -> Int
     ? "Linear congruential generator step"
-    Result.withDefault(Int.mod(s * 1103515245 + 12345, 2147483648), 0)
+    Int.mod(s * 1103515245 + 12345, 2147483648)
 
 verify nextSeed
     nextSeed(0) => 12345
@@ -38,7 +38,7 @@ verify advanceSeed
 
 fn randomFloat(s: Int) -> Float
     ? "Map seed to [0.0, 1.0)"
-    Float.fromInt(Result.withDefault(Int.mod(Int.abs(s), 10000), 0)) / 10000.0
+    Float.fromInt(Int.mod(Int.abs(s), 10000)) / 10000.0
 
 verify randomFloat
     randomFloat(0) => 0.0

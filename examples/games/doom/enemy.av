@@ -91,7 +91,7 @@ verify stepDemon
 
 fn stepGhost(enemy: Enemy, px: Float, py: Float, d: Float, levelMap: List<String>, seed: Int, turn: Int) -> Enemy
     ? "Ghost teleports every 4 turns, otherwise drifts toward player"
-    isTeleportTurn = Result.withDefault(Int.mod(turn, 4), 1) == 0
+    isTeleportTurn = Int.mod(turn, 4) == 0
     match isTeleportTurn
         true -> ghostTeleport(enemy, seed, levelMap)
         false -> match d < 6.0

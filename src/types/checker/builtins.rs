@@ -454,6 +454,10 @@ impl TypeChecker {
             ("Int.abs", &[Type::Int], Type::Int, &[]),
             ("Int.min", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Int.max", &[Type::Int, Type::Int], Type::Int, &[]),
+            // `Int.mod` / `Int.div` register the dynamic-divisor type. When
+            // the divisor is a syntactic nonzero integer literal the call
+            // types as plain `Int` instead — the literal-divisor discharge
+            // rule in `infer/expr.rs` (`is_literal_nonzero_int_divisor`).
             ("Int.mod", &[Type::Int, Type::Int], int_result(), &[]),
             ("Int.div", &[Type::Int, Type::Int], int_result(), &[]),
         ];

@@ -58,7 +58,7 @@ A single `.dfy` file containing:
 | `match x: true → a, false → b` | `if x then a else b` |
 | `match n: 0 → base, _ → f(n-1)` | `if n == 0 then base else f(n-1)` |
 | `match xs: [] → a, [h,..t] → b` | `if \|xs\| == 0 then a else var h := xs[0]; var t := xs[1..]; b` |
-| `Int.div(a, b)` / `Int.mod(a, b)` | `Result`-wrapped Euclidean div/mod (Dafny guards the zero divisor); integer `/` is a type error, `/` is Float-only (Dafny `real`) |
+| `Int.div(a, b)` / `Int.mod(a, b)` | `Result`-wrapped Euclidean div/mod (Dafny guards the zero divisor); with a syntactic nonzero literal divisor the call is discharged to plain `Int` and renders as bare Euclidean `/` / `%`. Integer `/` is a type error, `/` is Float-only (Dafny `real`) |
 | `verify f law name` | sample `method` + universal `lemma` |
 
 ## Termination
@@ -70,7 +70,7 @@ Recursive functions fall into three buckets based on the shared classifier in `c
 - String parameter → `decreases |s|`
 - Int countdown (`match n { 0 -> …; _ -> recur(n-1, …) }`) → `requires n >= 0` + `decreases n`. Callers discharge the `requires` via Dafny's auto-inference from surrounding `if`/`match` shapes — `match (n < 0) { false -> worker(n) }` resolves to `n >= 0` automatically.
 - Int countdown with explicit `match n < 0` base → `decreases if n >= 0 then n else 0` (no `requires`, the body itself handles the negative case).
-- Int floor-division countdown by a literal divisor (`Result.withDefault(Int.div(p, k), d)` with literal `k >= 2`, inlined or through a unary wrapper like `half`) → `decreases if p >= 0 then p else 0` with NO synthesized `requires`, when the function's own guards prove `p >= 1` at every recursive call (binary exponent search by halving, base-10⁹ digit peeling). An unvalidated guard declines to the opaque form instead of guessing. `verify ... law` blocks over this class — power-of-two positivity and sum laws, the scaled-significand window of an integer ratio, the m-bit×n-bit product window — emit a proved support stack (division-window lemmas derived from the Euclidean identity, power algebra by self-call induction, branch-split significand lemmas) so the universal lemmas verify instead of being omitted; see `tests/fixtures/floor_window.av`.
+- Int floor-division countdown by a literal divisor (`Int.div(p, k)` with literal `k >= 2` — discharged total form — or the legacy `Result.withDefault(Int.div(p, k), d)` wrapper, inlined or through a unary wrapper like `half`) → `decreases if p >= 0 then p else 0` with NO synthesized `requires`, when the function's own guards prove `p >= 1` at every recursive call (binary exponent search by halving, base-10⁹ digit peeling). An unvalidated guard declines to the opaque form instead of guessing. `verify ... law` blocks over this class — power-of-two positivity and sum laws, the scaled-significand window of an integer ratio, the m-bit×n-bit product window — emit a proved support stack (division-window lemmas derived from the Euclidean identity, power algebra by self-call induction, branch-split significand lemmas) so the universal lemmas verify instead of being omitted; see `tests/fixtures/floor_window.av`.
 
 **Mutual-recursion SCCs** — preferred path emits as native `decreases` tuples when every member has a measurable `List`/`Vector`/`String` parameter (most BigInt-style SCCs):
 
