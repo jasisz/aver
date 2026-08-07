@@ -476,7 +476,15 @@ pub(crate) fn inject_hostile_effect_stubs_for_blocks(
         })
         .collect();
 
-    let mut to_inject: Vec<&'static str> = Vec::new();
+    // Owned method names, deduplicated in declaration order. Owning the
+    // strings (instead of borrowing from `fn_def.effects`) is what lets
+    // the injection loop below take the mutable borrow of `items` — and
+    // it keys `hostile_profiles_for` on the classified method name
+    // verbatim, so a newly classified effect can never be silently
+    // dropped by a stale name mapping (the previous hand-maintained
+    // `&'static str` table mapped unknown methods to `""`, which made
+    // the Tcp byte methods' profiles vanish from this path).
+    let mut to_inject: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for block in blocks {
@@ -498,12 +506,12 @@ pub(crate) fn inject_hostile_effect_stubs_for_blocks(
             if !seen.insert(method.to_string()) {
                 continue;
             }
-            to_inject.push(static_method_name(method));
+            to_inject.push(method.to_string());
         }
     }
 
     let mut new_items: Vec<TopLevel> = Vec::new();
-    for method in to_inject {
+    for method in &to_inject {
         for profile in hostile_profiles_for(method) {
             if existing.contains(&profile.stub_fn_name) {
                 continue;
@@ -520,46 +528,6 @@ pub(crate) fn inject_hostile_effect_stubs_for_blocks(
         }
     }
     items.extend(new_items);
-}
-
-/// `hostile_profiles_for` takes a `&str` and the closed set of known
-/// method names is small. This indirection lets us push owned method
-/// strings through the loop without leaking the lifetime of the borrow
-/// from `fn_def.effects` across the mutable borrow of `items` we need
-/// for stub injection.
-fn static_method_name(method: &str) -> &'static str {
-    match method {
-        "Args.get" => "Args.get",
-        "Env.get" => "Env.get",
-        "Terminal.size" => "Terminal.size",
-        "Random.int" => "Random.int",
-        "Random.float" => "Random.float",
-        "Time.now" => "Time.now",
-        "Time.unixMs" => "Time.unixMs",
-        "Disk.readText" => "Disk.readText",
-        "Disk.exists" => "Disk.exists",
-        "Disk.listDir" => "Disk.listDir",
-        "Console.readLine" => "Console.readLine",
-        "Http.get" => "Http.get",
-        "Http.head" => "Http.head",
-        "Http.delete" => "Http.delete",
-        "Http.post" => "Http.post",
-        "Http.put" => "Http.put",
-        "Http.patch" => "Http.patch",
-        "Disk.writeText" => "Disk.writeText",
-        "Disk.appendText" => "Disk.appendText",
-        "Disk.delete" => "Disk.delete",
-        "Disk.deleteDir" => "Disk.deleteDir",
-        "Disk.makeDir" => "Disk.makeDir",
-        "Tcp.send" => "Tcp.send",
-        "Tcp.ping" => "Tcp.ping",
-        "Tcp.connect" => "Tcp.connect",
-        "Tcp.readLine" => "Tcp.readLine",
-        "Tcp.writeLine" => "Tcp.writeLine",
-        "Tcp.close" => "Tcp.close",
-        "Terminal.readKey" => "Terminal.readKey",
-        _ => "",
-    }
 }
 
 fn parse_stub_body(source: &str) -> Result<Vec<TopLevel>, String> {
@@ -2172,6 +2140,71 @@ verify currentYear trace
                         "error should mention the cap"
                     );
                 }
+            }
+        }
+    }
+
+    /// Structural guard for the injection path: for EVERY classified
+    /// non-Output effect method, a law block over a fn declaring that
+    /// effect must get every one of the method's hostile profile stubs
+    /// injected as a `TopLevel::FnDef`. Before this guard, the injector
+    /// routed method names through a hand-maintained `&'static str`
+    /// mapping whose catch-all returned `""` — `Tcp.sendBytes` /
+    /// `Tcp.readBytes` / `Tcp.writeBytes` fell through it and their
+    /// hostile profiles were silently never injected. Paired with
+    /// `hostile_effects::tests::every_classified_non_output_effect_ships_hostile_profiles`
+    /// (which forbids empty profile lists), this makes it impossible for
+    /// the next new classified effect to vanish from hostile verification
+    /// without a test failure.
+    #[test]
+    fn inject_hostile_stubs_covers_every_classified_non_output_effect() {
+        use crate::types::checker::effect_classification::classifications_for_proof_subset;
+
+        for classification in classifications_for_proof_subset() {
+            if matches!(classification.dimension, EffectDimension::Output) {
+                continue;
+            }
+            let method = classification.method;
+            let src = format!(
+                "module M\n    effects [{method}]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [{method}]\n    1\n"
+            );
+            let mut items = parse_source(&src);
+            let blocks = vec![VerifyBlock {
+                fn_name: "f".to_string(),
+                line: 1,
+                cases: vec![],
+                case_spans: vec![],
+                case_givens: vec![],
+                case_hostile_origins: vec![],
+                case_hostile_profiles: vec![],
+                case_reverse_order: vec![],
+                kind: VerifyKind::Law(Box::new(VerifyLaw {
+                    name: "test".to_string(),
+                    givens: vec![],
+                    when: None,
+                    lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                    rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                    sample_guards: vec![],
+                })),
+                trace: true,
+                cases_givens: vec![],
+            }];
+            inject_hostile_effect_stubs_for_blocks(&mut items, &blocks);
+            let fn_names: std::collections::HashSet<String> = items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::FnDef(fd) => Some(fd.name.clone()),
+                    _ => None,
+                })
+                .collect();
+            for profile in crate::types::checker::hostile_effects::hostile_profiles_for(method) {
+                assert!(
+                    fn_names.contains(&profile.stub_fn_name),
+                    "hostile profile stub {} for {} was not injected — the injection path \
+                     silently dropped a classified effect",
+                    profile.stub_fn_name,
+                    method
+                );
             }
         }
     }

@@ -447,6 +447,27 @@ fn main() -> Unit
     assert_eq!(out, "range-error\n");
 }
 
+/// The harness must reject every program `aver run --wasm-gc` rejects: a
+/// knowingly ill-typed probe (constructing the opaque `Tcp.Connection`
+/// outside its defining module — exactly the source the pre-fix version of
+/// `tcp_read_bytes_big_count_is_catchable_on_wasm_gc` ran) must panic with
+/// the rendered typecheck error instead of silently compiling and running.
+/// Reverting the harness typecheck fix turns this test red.
+#[test]
+#[should_panic(expected = "typecheck failed")]
+fn harness_panics_on_ill_typed_probe_source() {
+    let src = r#"module M
+    intent = "harness must respect typecheck errors"
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    conn = Tcp.Connection(id = "missing", host = "", port = 0)
+    Console.print("unreachable")
+"#;
+    let _ = run_wasm_gc(src);
+}
+
 /// PURE-builtin saturation is UNCHANGED: `String.charAt` with an out-of-i64
 /// index past the string end must SATURATE to `Option.None` on wasm-gc (the
 /// VM's clamp), NOT trap. This pins that the fix touched only the EFFECT-arg

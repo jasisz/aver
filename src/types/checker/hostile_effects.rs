@@ -532,9 +532,16 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 // `count` bytes, and a negative / over-limit / out-of-i64
                 // count is an `Err` on every backend. The honest world must
                 // model that, or frame-length-validating user code never sees
-                // a success path.
+                // a success path. Branch order and message text mirror the
+                // VM builtin (the fidelity target — hostile verification
+                // runs on the VM): `count_arg` in `services/tcp.rs` rejects
+                // counts outside i64 FIRST (both signs, generic "read
+                // limit" text), then `aver_rt::tcp::read_bytes` rejects
+                // negative counts, then counts over the 10485760-byte
+                // `BODY_LIMIT` (named in the message). Pinned branch by
+                // branch in `tests/hostile_readbytes_stub_fidelity.rs`.
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"honest: peer sends exactly the count bytes that were asked for\"\n    match count < 0\n        true -> Result.Err(\"Tcp.readBytes: count {{count}} is negative\")\n        false -> match count > 10485760\n            true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the read limit\")\n            false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)))\n",
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"honest: peer sends exactly the count bytes that were asked for\"\n    match count > 9223372036854775807\n        true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the read limit\")\n        false -> match count < 0 - 9223372036854775808\n            true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the read limit\")\n            false -> match count < 0\n                true -> Result.Err(\"Tcp.readBytes: count {{count}} is negative\")\n                false -> match count > 10485760\n                    true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the 10485760 byte limit\")\n                    false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)))\n",
                     stub_name("normal_ok")
                 ),
             },
