@@ -30,6 +30,13 @@ pub struct AnalyzeOptions {
     /// `module_base_dir` — the type checker integrates these directly
     /// instead of loading from disk.
     pub loaded_modules: Option<Vec<LoadedModule>>,
+    /// `(module_name, ignored_file)` pairs for `depends` entries that
+    /// resolve to an embedded standard module while a same-named project
+    /// file exists (which module resolution silently ignores). Precomputed
+    /// by callers — `crate::source::collect_stdlib_shadowed` (disk) or
+    /// `collect_stdlib_shadowed_in_map` (playground) — because detection
+    /// needs the caller's file universe; each entry becomes a warning.
+    pub stdlib_shadowed: Vec<(String, String)>,
     pub include_intent_warnings: bool,
     pub include_coverage_warnings: bool,
     pub include_law_dependency_warnings: bool,
@@ -75,6 +82,7 @@ impl Default for AnalyzeOptions {
             file_label: "<input>".to_string(),
             module_base_dir: None,
             loaded_modules: None,
+            stdlib_shadowed: Vec::new(),
             include_intent_warnings: true,
             include_coverage_warnings: true,
             include_law_dependency_warnings: true,
@@ -195,6 +203,33 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
             diagnostics.push(from_check_finding(
                 Severity::Warning,
                 &w,
+                source,
+                &options.file_label,
+            ));
+        }
+    }
+
+    // Stdlib-shadowing: a `depends` entry resolved to an embedded standard
+    // module while a same-named project file exists — that file is silently
+    // ignored, so the program runs with stdlib semantics regardless of what
+    // the project file says. Anchored on the module declaration line (the
+    // `depends [...]` list lives in its indented block).
+    if !options.stdlib_shadowed.is_empty() {
+        let (module_name, module_line) = crate::visibility::module_decl(&items)
+            .map(|m| (Some(m.name.clone()), m.line))
+            .unwrap_or((None, 1));
+        for (dep_name, shadowed_path) in &options.stdlib_shadowed {
+            let finding = CheckFinding {
+                line: module_line,
+                module: module_name.clone(),
+                file: None,
+                fn_name: None,
+                message: crate::source::stdlib_shadow_message(dep_name, shadowed_path),
+                extra_spans: vec![],
+            };
+            diagnostics.push(from_check_finding(
+                Severity::Warning,
+                &finding,
                 source,
                 &options.file_label,
             ));

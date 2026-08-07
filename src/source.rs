@@ -99,6 +99,83 @@ pub fn resolve_standard_module_source(name: &str) -> Option<ModuleSource> {
     })
 }
 
+/// Project file that [`find_module_file`] would resolve for `name`, present
+/// even though the embedded standard library reserves the name. `Some` means
+/// module resolution silently ignores the on-disk file.
+pub fn stdlib_shadowed_project_file(name: &str, module_root: &str) -> Option<PathBuf> {
+    crate::stdlib::find(name)?;
+    find_module_file(name, module_root)
+}
+
+/// Shared wording for the stdlib-shadowing warning, used by both the
+/// load-time stderr warning and the `aver check` finding so the two
+/// channels never drift apart.
+pub fn stdlib_shadow_message(name: &str, shadowed_path: &str) -> String {
+    format!(
+        "module '{}' is reserved by the Aver standard library; project file \
+         '{}' is NOT loaded — rename the module and its `depends [...]` \
+         entries to use the project file",
+        name, shadowed_path
+    )
+}
+
+/// Emit the stdlib-shadowing warning once per process per module name.
+/// Resolution runs several times per command (typecheck tree walk, dep
+/// compile walk, check units), and repeating the identical warning would
+/// drown the signal.
+fn warn_stdlib_shadow_once(name: &str, shadowed_path: &Path) {
+    use std::sync::{Mutex, OnceLock};
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let mut warned = WARNED
+        .get_or_init(Default::default)
+        .lock()
+        .expect("stdlib shadow warning set poisoned");
+    if warned.insert(name.to_string()) {
+        eprintln!(
+            "warning: {}",
+            stdlib_shadow_message(name, &shadowed_path.display().to_string())
+        );
+    }
+}
+
+/// `(module_name, ignored_project_file)` pairs for every `depends` entry of
+/// `items` where the embedded standard library wins over a same-named
+/// project file in `module_root`. Feed the result to
+/// `AnalyzeOptions::stdlib_shadowed` so `aver check` surfaces the shadowing.
+pub fn collect_stdlib_shadowed(items: &[TopLevel], module_root: &str) -> Vec<(String, String)> {
+    let Some(module) = visibility::module_decl(items) else {
+        return Vec::new();
+    };
+    module
+        .depends
+        .iter()
+        .filter_map(|dep| {
+            stdlib_shadowed_project_file(dep, module_root)
+                .map(|path| (dep.clone(), path.display().to_string()))
+        })
+        .collect()
+}
+
+/// Virtual-fs sibling of [`collect_stdlib_shadowed`] for the playground:
+/// flags `depends` entries whose name the standard library reserves while
+/// the in-memory file map also carries a file for that module.
+pub fn collect_stdlib_shadowed_in_map(
+    items: &[TopLevel],
+    files: &HashMap<String, String>,
+) -> Vec<(String, String)> {
+    let Some(module) = visibility::module_decl(items) else {
+        return Vec::new();
+    };
+    module
+        .depends
+        .iter()
+        .filter_map(|dep| {
+            crate::stdlib::find(dep)?;
+            find_file_key_in_map(dep, files).map(|key| (dep.clone(), key))
+        })
+        .collect()
+}
+
 /// Resolve and read a project or standard-library module.
 ///
 /// The standard library is checked first so its module names cannot be
@@ -109,6 +186,12 @@ pub fn resolve_module_source(
     module_root: &str,
 ) -> Result<Option<ModuleSource>, String> {
     if let Some(module) = resolve_standard_module_source(name) {
+        // The embedded module wins, but a same-named project file on disk
+        // means the user probably expects their own code to load — say so
+        // instead of silently changing program meaning.
+        if let Some(shadowed) = find_module_file(name, module_root) {
+            warn_stdlib_shadow_once(name, &shadowed);
+        }
         return Ok(Some(module));
     }
 
@@ -165,6 +248,12 @@ fn load_recursive_from_map(
     loading: &mut Vec<String>,
     result: &mut Vec<LoadedModule>,
 ) -> Result<(), String> {
+    // The embedded standard library wins over a same-named virtual file,
+    // exactly like the filesystem loaders. No warning is emitted here: this
+    // loader's only output channel is `Result<_, String>` (hard errors) and
+    // browser builds drop stderr, so the playground surfaces shadowing as an
+    // `aver check` diagnostic instead (`collect_stdlib_shadowed_in_map`,
+    // wired in `playground::analyze_project`).
     let (key, source) = if let Some(module) = crate::stdlib::find(dep_name) {
         (module.virtual_path.to_string(), module.source.to_string())
     } else {
@@ -548,8 +637,9 @@ fn load_module_recursive_for_compile(
 #[cfg(test)]
 mod tests {
     use super::{
-        load_module_tree, load_module_tree_from_map, parse_source, require_module_declaration,
-        resolve_module_source,
+        collect_stdlib_shadowed, collect_stdlib_shadowed_in_map, load_module_tree,
+        load_module_tree_from_map, parse_source, require_module_declaration, resolve_module_source,
+        stdlib_shadowed_project_file,
     };
 
     #[test]
@@ -585,6 +675,61 @@ mod tests {
         let resolved =
             resolve_module_source("DefinitelyNotARealModule", ".").expect("resolve unknown module");
         assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn stdlib_shadowed_project_file_flags_reserved_names_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("bytes.av"), "module Bytes\n").expect("write bytes.av");
+        std::fs::write(dir.path().join("helpers.av"), "module Helpers\n")
+            .expect("write helpers.av");
+        let root = dir.path().to_str().expect("utf8 root");
+
+        // Reserved name + same-named project file = shadowed.
+        let shadowed = stdlib_shadowed_project_file("Bytes", root).expect("bytes.av is shadowed");
+        assert!(shadowed.ends_with("bytes.av"));
+        // The embedded module still wins resolution.
+        let resolved = resolve_module_source("Bytes", root)
+            .expect("resolve")
+            .expect("Bytes is shipped with Aver");
+        assert_eq!(resolved.path.to_string_lossy(), "<aver-stdlib>/bytes.av");
+        // Non-reserved names and reserved names without a project file
+        // are not shadowed.
+        assert!(stdlib_shadowed_project_file("Helpers", root).is_none());
+        assert!(stdlib_shadowed_project_file("Crypto.Digest32", root).is_none());
+    }
+
+    #[test]
+    fn collect_stdlib_shadowed_reports_depends_entries_with_project_files() {
+        let items = parse_source("module Main\n    intent = \"t\"\n    depends [Bytes]\n")
+            .expect("parse entry");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("bytes.av"), "module Bytes\n").expect("write bytes.av");
+        let pairs = collect_stdlib_shadowed(&items, dir.path().to_str().expect("utf8 root"));
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "Bytes");
+        assert!(pairs[0].1.ends_with("bytes.av"));
+
+        // Negative: no project file for the reserved name — no finding.
+        let empty = tempfile::tempdir().expect("empty tempdir");
+        assert!(collect_stdlib_shadowed(&items, empty.path().to_str().expect("utf8")).is_empty());
+    }
+
+    #[test]
+    fn collect_stdlib_shadowed_in_map_flags_virtual_files() {
+        let items = parse_source("module Main\n    intent = \"t\"\n    depends [Bytes]\n")
+            .expect("parse entry");
+
+        let mut files = std::collections::HashMap::new();
+        files.insert("bytes.av".to_string(), "module Bytes\n".to_string());
+        assert_eq!(
+            collect_stdlib_shadowed_in_map(&items, &files),
+            vec![("Bytes".to_string(), "bytes.av".to_string())]
+        );
+
+        // Negative: the virtual fs has no file for the reserved name.
+        assert!(collect_stdlib_shadowed_in_map(&items, &Default::default()).is_empty());
     }
 
     #[test]

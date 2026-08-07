@@ -551,6 +551,10 @@ fn analyze_project(
     // analyze_source with proper diagnostic formatting.
     if let Ok(items) = parse_source(&entry_source) {
         let depends = load_roots(&items);
+        // The map loader silently prefers embedded standard modules over
+        // same-named virtual files and has no warning channel of its own,
+        // so shadowing surfaces here as a check diagnostic.
+        opts.stdlib_shadowed = crate::source::collect_stdlib_shadowed_in_map(&items, files);
         if let Ok(loaded) = crate::source::load_module_tree_from_map(&depends, files) {
             opts = opts.with_loaded_modules(loaded);
         }
@@ -1253,6 +1257,43 @@ fn main() -> Int
             "playground project compile should use wasm-gc, got:\n{}",
             wat
         );
+    }
+
+    #[test]
+    fn check_project_reports_stdlib_shadowing() {
+        let entry = "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Count validated bytes.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n";
+        let mut files = HashMap::new();
+        files.insert("main.av".to_string(), entry.to_string());
+        files.insert(
+            "bytes.av".to_string(),
+            "module Bytes\n    intent = \"project-local Bytes\"\n".to_string(),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&check_project(&files, "main.av")).unwrap();
+        let slugs: Vec<String> = report["diagnostics"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|d| d["slug"].as_str().map(str::to_string))
+            .collect();
+        assert!(
+            slugs.iter().any(|s| s == "stdlib-shadow"),
+            "expected stdlib-shadow diagnostic, got: {:?}",
+            slugs
+        );
+
+        // Negative: no virtual file for the reserved name — no finding.
+        files.remove("bytes.av");
+        let report: serde_json::Value =
+            serde_json::from_str(&check_project(&files, "main.av")).unwrap();
+        let has_shadow = report["diagnostics"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .any(|d| d["slug"] == "stdlib-shadow");
+        assert!(!has_shadow, "unexpected stdlib-shadow diagnostic");
     }
 
     #[test]

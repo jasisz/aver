@@ -61,6 +61,7 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 |---|---|---|---|
 | `unknown-impact` | warning | A `decision`'s impact symbol doesn't resolve in scope. | Check spelling; remove if intentional. |
 | `unused-expose` | warning | Module `exposes` a name nobody imports. | Drop from `exposes` or start using it. |
+| `stdlib-shadow` | warning | A `depends` entry names an embedded standard module while a same-named project file exists; the project file is silently ignored because the standard library wins resolution. | Rename the project module and its `depends [...]` entries to use the project file. |
 
 ## Naming conventions
 
