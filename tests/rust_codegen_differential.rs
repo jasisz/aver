@@ -252,6 +252,29 @@ fn cargo_build_in(project_dir: &Path, name: &str, target: &Path) -> Result<PathB
     Ok(target.join("debug").join(binary_name(name)))
 }
 
+/// `cargo test -q --offline` on the emitted project — builds AND runs the
+/// `#[cfg(test)]` module that `emit_verify_blocks` generates from verify
+/// blocks, which `cargo build` alone never compiles.
+fn cargo_test_in(project_dir: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).expect("create cargo target dir");
+    let out = Command::new("cargo")
+        .arg("test")
+        .arg("-q")
+        .arg("--offline")
+        .arg("--manifest-path")
+        .arg(project_dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", target)
+        .output()
+        .expect("expected `cargo test` to spawn");
+    if !out.status.success() {
+        return Err(format!(
+            "cargo test failed on emitted project:\n{}",
+            format_output(&out)
+        ));
+    }
+    Ok(())
+}
+
 // ─── Mode (a): plain stdout parity ──────────────────────────────────────
 
 /// Compile + build + RUN an example, asserting stdout equals the VM.
@@ -446,6 +469,103 @@ fn main() -> Unit
         .expect("rust compile + cargo build + run");
     assert_eq!(vm, "compiled");
     assert_eq!(rust, vm, "Rust Tcp.writeBytes codegen diverged from VM");
+}
+
+/// `Crypto.sha256` produces a `Digest32` even when the program never names
+/// `Crypto.Digest32` in `depends`. The emitted Rust references
+/// `crate::aver_generated::crypto::digest32::Digest32`, so the owning
+/// standard module must join the generated project implicitly — this used to
+/// pass `aver compile` and then fail `cargo build` with E0433. The printed
+/// tag derives from the digests (structural equality of two hashes), so the
+/// sha256 calls stay observable: a future optimizer that deleted an unused
+/// pure call would otherwise silently stop exercising the emission path
+/// while this test kept passing.
+#[test]
+fn rust_sha256_builds_without_digest32_in_depends() {
+    let src = r#"module Sha256ImplicitDigest
+    intent = "Crypto.sha256 must build even when depends omits Crypto.Digest32"
+    depends [Bytes]
+    effects [Console.print]
+
+fn hashTag(xs: List<Int>, ys: List<Int>) -> Result<String, String>
+    ? "Hash both octet lists and report whether the digests agree."
+    first = Crypto.sha256(Bytes.fromList(xs)?)
+    second = Crypto.sha256(Bytes.fromList(ys)?)
+    match first == second
+        true -> Result.Ok("digests-agree")
+        false -> Result.Ok("digests-differ")
+
+fn main() -> Unit
+    ? "Hash byte lists and print digest agreement."
+    ! [Console.print]
+    match hashTag([1, 2, 3], [1, 2, 3])
+        Result.Ok(tag) -> Console.print(tag)
+        Result.Err(msg) -> Console.print(msg)
+    match hashTag([1, 2, 3], [9, 9, 9])
+        Result.Ok(tag) -> Console.print(tag)
+        Result.Err(msg) -> Console.print(msg)
+"#;
+
+    let vm = run_vm_inline("sha256_implicit_digest32", src).expect("vm run");
+    let rust = build_run_rust_inline("sha256_implicit_digest32", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "digests-agree\ndigests-differ");
+    assert_eq!(rust, vm, "Rust Crypto.sha256 codegen diverged from VM");
+}
+
+/// A program whose ONLY `Crypto.sha256` call sits in a verify case still
+/// generates a project whose `#[cfg(test)]` module references
+/// `crate::aver_generated::crypto::digest32::Digest32` — the implicit
+/// stdlib-module scan must cover verify blocks, not just fn bodies. This
+/// used to emit a project that passed `cargo build` and then failed
+/// `cargo test` with E0433. Driving `cargo test` (not just the build) also
+/// proves the digest-equality cases hold in the generated code.
+///
+/// The verify cases go through `forceBytes` instead of `Bytes.fromList(…)?`
+/// because `?` inside a verify case trips a pre-existing, unrelated emitter
+/// gap (the generated test fn returns `Result<(), String>` while generated
+/// stdlib fns error with `AverStr`, so the `?` conversion fails E0277).
+#[test]
+fn rust_sha256_verify_only_generates_testable_project() {
+    let src = r#"module Sha256VerifyOnly
+    intent = "A verify-only Crypto.sha256 call still generates a buildable test module"
+    depends [Bytes]
+    effects [Console.print]
+
+fn forceBytes(xs: List<Int>) -> Bytes
+    ? "Validate octets, retrying with an empty list on the impossible branch."
+    match Bytes.fromList(xs)
+        Result.Ok(bytes) -> bytes
+        Result.Err(_) -> forceBytes([])
+
+fn describe(same: Bool) -> String
+    ? "Describe digest agreement."
+    match same
+        true -> "same"
+        false -> "different"
+
+fn main() -> Unit
+    ? "Print a fixed label."
+    ! [Console.print]
+    Console.print(describe(true))
+
+verify describe
+    describe(Crypto.sha256(forceBytes([1, 2])) == Crypto.sha256(forceBytes([1, 2]))) => "same"
+    describe(Crypto.sha256(forceBytes([1, 2])) == Crypto.sha256(forceBytes([2, 1]))) => "different"
+"#;
+
+    let name = "sha256_verify_only";
+    let ws = temp_dir(name);
+    let src_file = ws.join(format!("{name}.av"));
+    fs::write(&src_file, src).expect("write source");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&src_file, &project, name, None, &[])?;
+        cargo_test_in(&project, &shared_target_dir())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.expect("rust compile + cargo test of the generated verify module");
 }
 
 /// The #383 corruption class on the RUST backend: a Vector PARAM captured

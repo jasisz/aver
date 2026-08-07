@@ -9108,6 +9108,24 @@ pub(super) fn load_compile_deps(
         );
     }
 
+    // Builtins like `Crypto.sha256` cross nominal types owned by embedded
+    // standard modules (`Bytes`, `Digest32`). Codegen backends emit those
+    // records from the loaded module set, so the owning modules must load
+    // even when the entry never names them in `depends` — otherwise the
+    // program passes check/verify and fails late inside the generated
+    // project. `loaded` dedupes the overlap with the explicit list.
+    for dep_name in aver::stdlib::implicit_stdlib_deps(items) {
+        load_module_recursive(
+            &dep_name,
+            module_root,
+            run_interp_lower,
+            run_buffer_build,
+            self_host_mode,
+            &mut result,
+            &mut loaded,
+        );
+    }
+
     result
 }
 
@@ -9262,6 +9280,22 @@ fn load_module_recursive(
                 loaded,
             );
         }
+    }
+
+    // A dependency module can also call a builtin whose signature crosses
+    // stdlib-owned nominal types without naming the owning standard module
+    // in its own `depends` — load those implied modules too (see
+    // `load_compile_deps` for the entry-level counterpart).
+    for dep in aver::stdlib::implicit_stdlib_deps(&items) {
+        load_module_recursive(
+            &dep,
+            module_root,
+            run_interp_lower,
+            run_buffer_build,
+            self_host_mode,
+            result,
+            loaded,
+        );
     }
 
     let type_defs: Vec<_> = items

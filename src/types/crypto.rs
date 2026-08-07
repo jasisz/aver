@@ -9,6 +9,11 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
+// Deliberately `sha2` directly, NOT `aver_rt::crypto`: `aver-rt` is an
+// optional dependency (behind the `runtime` feature), while this module
+// compiles in every feature combination that builds `src/types`. The
+// `aver_rt::crypto` helper exists for generated Rust projects, which
+// always link `aver-rt`.
 use sha2::{Digest, Sha256};
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
