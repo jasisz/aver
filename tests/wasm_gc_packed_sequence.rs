@@ -284,6 +284,46 @@ fn qualified_annotation_over_sole_declarer_dep_matches_vm_and_boxed_wasm() {
     assert_eq!(vm, "200");
 }
 
+// SOUNDNESS counterpart of the alias availability test above: an
+// entry-side QUALIFIED ungated constructor (`Dep.Octets(values = xs)`)
+// resolves the packed layout through the flatten-derived alias, so the
+// demotion scan must see that construct site under the SAME key — every
+// spelling that can resolve a packed layout at a construct site must be
+// visible to the scan. Before the alias-aware scan, the qualified
+// spelling never matched the bare `Octets` candidate, the type kept its
+// packed u8 storage, and the out-of-range 1000 silently truncated to
+// 232 on the packed path (the exact bug class the exact-name rule
+// killed for collision-renamed types).
+const QUALIFIED_BYPASS_ENTRY: &str = r#"module Main
+    intent = "entry-side qualified ungated constructor must demote the packed layout"
+    depends [Dep]
+    effects [Console]
+
+fn bypass(xs: List<Int>) -> Dep.Octets
+    Dep.Octets(values = xs)
+
+fn main() -> Unit
+    ! [Console.print]
+    value = bypass([1000])
+    match value.values
+        [head, .._] -> Console.print("{head}")
+        [] -> Console.print("empty")
+"#;
+
+#[test]
+fn qualified_ungated_constructor_demotes_instead_of_truncating() {
+    let (vm_ok, vm) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, false, true);
+    let (packed_ok, packed) =
+        run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, true, true);
+    let (boxed_ok, boxed) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(packed, vm, "packed wasm must not truncate the ungated 1000");
+    assert_eq!(boxed, vm);
+    assert_eq!(vm, "1000");
+}
+
 #[test]
 fn ungated_constructor_demotes_instead_of_truncating() {
     let (vm_ok, vm) = run(BYPASSED_OCTETS, false, true);

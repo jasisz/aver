@@ -37,8 +37,10 @@ use aver::value::Value;
 /// through the run pipeline without inflating every `Normal` /
 /// `Record` call to recording size — clippy's `large_enum_variant`
 /// would otherwise flag the size mismatch.
+#[derive(Default)]
 pub enum EffectMode {
     /// Production path — real effects run, no recording, no replay.
+    #[default]
     Normal,
     /// `aver run --wasm-gc --record <dir>` — real effects run, every
     /// call appended to the trace, returned through
@@ -55,6 +57,14 @@ pub enum EffectMode {
 }
 
 /// Caller-supplied configuration for one `run_in_process` call.
+///
+/// `Default` is the single-file embedding shape: no argv, whole-program
+/// entry, real effects, empty alias map. A caller that flattened a
+/// multi-module program MUST override `type_aliases` with the map
+/// `flatten_multimodule` returned — leaving it empty makes qualified
+/// dep-type spellings decline fail-closed instead of resolving their
+/// canonical layouts.
+#[derive(Default)]
 pub struct RunConfig {
     /// Argv visible to the program through `Args.get` / `Args.all`.
     pub program_args: Vec<String>,

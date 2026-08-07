@@ -1470,6 +1470,61 @@ impl TypeRegistry {
     /// `type_name_aliases` for the identity contract.
     pub(super) fn set_type_name_aliases(&mut self, aliases: HashMap<String, String>) {
         self.type_name_aliases = aliases;
+        // Mirror the alias spellings onto the record identity tables —
+        // `records` (name → struct type idx) and `record_fields` (name →
+        // declared field list) — as extra lookup KEYS on the canonical
+        // entries. Emit paths that key off a STAMPED spelling (map
+        // key/value helpers, hash_record / eq_record field walks, the
+        // demoted plain construct path) then resolve the same slot and
+        // field list for either spelling. The alias provably denotes the
+        // same `TypeDef` (sole declarer, no collision rename, no entry
+        // shadow), so sharing the rows is identity-correct; a spelling
+        // with NO alias keeps declining fail-closed. Point lookups only:
+        // the sole `record_fields.keys()` walk (struct-type emission)
+        // runs at build time, BEFORE this installer, so mirrored keys
+        // never double-emit a struct.
+        let mirrored: Vec<(String, String)> = self
+            .type_name_aliases
+            .iter()
+            .map(|(alias, canonical)| (alias.clone(), canonical.clone()))
+            .collect();
+        for (alias, canonical) in mirrored {
+            if let Some(idx) = self.records.get(&canonical).copied() {
+                self.records.entry(alias.clone()).or_insert(idx);
+            }
+            if let Some(fields) = self.record_fields.get(&canonical).cloned() {
+                self.record_fields.entry(alias).or_insert(fields);
+            }
+        }
+        // Re-run the Map-key newtype suppression with alias-aware key
+        // spellings. The build-time scan populated `non_newtypable_keys`
+        // BEFORE the aliases were installed, and its record/variant
+        // tables are bare-keyed — so a Map whose key is spelled ONLY
+        // qualified (`Map<Dep.IntRange, Int>` from an entry-side
+        // annotation stamp) escaped the suppression and its key record
+        // would be newtype-erased while the key array stores struct
+        // refs. Mark the CANONICAL name; `newtype_underlying`
+        // canonicalizes its argument first, so one canonical entry
+        // suppresses both spellings.
+        let mut extra: Vec<String> = Vec::new();
+        for canonical_map in &self.map_order {
+            let Some((k, _)) = parse_map_kv(canonical_map) else {
+                continue;
+            };
+            let Some(k_canon) = self.type_name_aliases.get(k.trim()) else {
+                continue;
+            };
+            if self.record_fields.contains_key(k_canon)
+                || self
+                    .variants
+                    .values()
+                    .flat_map(|v| v.iter())
+                    .any(|v| v.parent == *k_canon)
+            {
+                extra.push(k_canon.clone());
+            }
+        }
+        self.non_newtypable_keys.extend(extra);
     }
 
     /// Exact-name lookup — NO qualified→bare suffix fallback. The layout

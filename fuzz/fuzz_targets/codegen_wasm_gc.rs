@@ -100,9 +100,11 @@ fn main() {
         // Multi-module: flatten dep modules into `items` so
         // `compile_to_wasm_gc` (which expects a single flat AST per
         // its doc comment in src/runtime/wasm_gc.rs) sees them.
+        let mut type_aliases = std::collections::HashMap::new();
         if let Some(root) = base_dir {
             if let Ok(dep_modules) = aver::source::load_compile_deps(&items, root) {
-                aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+                type_aliases =
+                    aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
             }
         }
 
@@ -123,8 +125,17 @@ fn main() {
         //     don't let it abort every nightly run in the
         //     meantime.
         use std::panic::AssertUnwindSafe;
+        // Thread the flatten-derived alias map so the fuzz target compiles
+        // through the same production path the CLI's multi-module flow uses.
         let compile_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+            aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+                &items,
+                None,
+                None,
+                aver::codegen::wasm_gc::TargetMode::AverBridge,
+                &type_aliases,
+            )
+            .map(|out| out.bytes)
         }));
         let Ok(Ok(bytes)) = compile_result else {
             return;

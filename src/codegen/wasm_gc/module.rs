@@ -275,11 +275,17 @@ pub(super) fn emit_module_with(
                         .into_iter()
                         .map(|(k, _v)| k)
                         .collect();
+                // The scans canonicalize construct-site and resolved-type
+                // spellings through the SAME flatten-derived alias map the
+                // registry lookups consult: every spelling that can RESOLVE
+                // a carrier layout must be VISIBLE to the demotion scan
+                // under the same key.
                 let demoted = crate::codegen::proof_lower::carrier_eligibility_demotions(
                     &inputs,
                     &proven,
                     &carrier_intervals,
                     &resolved_map_keys,
+                    type_aliases,
                 );
                 proven.difference(&demoted).cloned().collect()
             }
@@ -337,7 +343,11 @@ pub(super) fn emit_module_with(
             // boxed (its container-element/value codegen stores the boxed
             // `$AverInt` record, so an i64-erased field fails wasm validation).
             let instantiations = crate::ir::mir::discover_instantiations(&optimized_mir);
-            crate::codegen::proof_lower::field_carrier_eligible_intervals(&inputs, &instantiations)
+            crate::codegen::proof_lower::field_carrier_eligible_intervals(
+                &inputs,
+                &instantiations,
+                type_aliases,
+            )
         };
     let eligible_carrier_fields: std::collections::HashSet<(String, String)> =
         field_carrier_intervals
@@ -387,10 +397,15 @@ pub(super) fn emit_module_with(
             .iter()
             .map(|(name, layout)| (name.clone(), (layout.element_interval, true)))
             .collect();
+        // Alias-aware for the same reason as the scalar-carrier scan: a
+        // qualified construct site (`Dep.Octets(values = ...)`) resolves
+        // the packed layout through the alias map, so the demotion scan
+        // must see it under the same canonical key.
         let demoted = crate::codegen::proof_lower::carrier_ungated_construction_demotions(
             &inputs,
             &candidates,
             &intervals,
+            type_aliases,
         );
         layouts
             .into_iter()
