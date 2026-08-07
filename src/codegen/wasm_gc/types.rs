@@ -1017,6 +1017,12 @@ impl TypeRegistry {
                 b"Tcp.writeBytes: malformed Bytes carrier".as_ref(),
                 b"Tcp.readBytes: count is negative".as_ref(),
                 b"Tcp.readBytes: count exceeds the 10485760 byte limit".as_ref(),
+                // Out-of-i64 counts get their own message, mirroring
+                // the VM's `count_arg` classification: i64-fit is
+                // checked before sign, so an out-of-i64 count of
+                // either sign reports "exceeds the read limit",
+                // never "is negative" or the 10485760 text.
+                b"Tcp.readBytes: count exceeds the read limit".as_ref(),
                 b"failed to fill whole buffer".as_ref(),
                 // Phase 4.7+ — port validation. VM message verbatim
                 // (`Tcp: port N is out of range (0\u{2013}65535)`)

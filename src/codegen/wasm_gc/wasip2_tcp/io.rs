@@ -1116,6 +1116,12 @@ pub(in crate::codegen::wasm_gc) struct TcpReadBytesIndices {
     pub negative_len: u32,
     pub limit_segment_idx: u32,
     pub limit_len: u32,
+    /// Out-of-i64 counts (either sign) — `"Tcp.readBytes: count
+    /// exceeds the read limit"`, mirroring the VM's `count_arg`
+    /// classification where the i64-fit check fires before the sign
+    /// and 10485760-limit checks.
+    pub read_limit_segment_idx: u32,
+    pub read_limit_len: u32,
     pub short_read_segment_idx: u32,
     pub short_read_len: u32,
     pub unknown_segment_idx: u32,
@@ -1207,6 +1213,11 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_bytes(
 
     // Big values cannot fit the bounded read request. Small values retain
     // their exact i64 representation for the ordinary range checks below.
+    // Branch classification mirrors the VM (`count_arg` +
+    // `aver_rt::tcp::read_bytes`): out-of-i64 counts of either sign
+    // report "exceeds the read limit" before the sign check ever runs,
+    // in-i64 negatives report "is negative", and in-i64 over-limit
+    // counts report the 10485760 byte limit.
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.aint_struct_type_idx,
@@ -1215,7 +1226,11 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_bytes(
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_err(&mut f, indices.limit_segment_idx, indices.limit_len);
+    emit_err(
+        &mut f,
+        indices.read_limit_segment_idx,
+        indices.read_limit_len,
+    );
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::StructGet {
@@ -1460,6 +1475,8 @@ mod tests {
             negative_len: 1,
             limit_segment_idx: 8,
             limit_len: 1,
+            read_limit_segment_idx: 11,
+            read_limit_len: 1,
             short_read_segment_idx: 9,
             short_read_len: 1,
             unknown_segment_idx: 10,
