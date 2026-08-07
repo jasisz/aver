@@ -60,6 +60,20 @@ fn run_wasm_gc_with_mode(
             ..Default::default()
         },
     );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        let rendered = tc
+            .errors
+            .iter()
+            .map(|e| format!("  [{}] {}", e.line, e.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!(
+            "typecheck failed — `aver run --wasm-gc` rejects this program before codegen, so the \
+             harness must not run it either:\n{rendered}"
+        );
+    }
     aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     aver::ir::pipeline::resolve(&mut items);
 
@@ -388,21 +402,48 @@ fn main() -> Unit
     assert_eq!(replayed.effects_consumed, replayed.effects_total);
 }
 
+/// A count too large for i64 (2^80) must surface as a catchable
+/// `Result.Err` on wasm-gc, not a trap. Uses a real loopback listener
+/// because `Tcp.Connection` is opaque — Aver source cannot construct one
+/// (the typechecker rejects `Tcp.Connection(id = ..., ...)`).
 #[test]
 fn tcp_read_bytes_big_count_is_catchable_on_wasm_gc() {
-    let src = r#"module M
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept Tcp.readBytes");
+        // Hold the peer open until the guest closes: the oversized count
+        // must fail on the count check, never by racing a dropped socket.
+        let mut buf = [0u8; 1];
+        let _ = stream.read(&mut buf);
+    });
+
+    let src = format!(
+        r#"module M
     intent = "Reject an unbounded binary frame length without trapping."
     depends [Bytes]
     effects [Tcp, Console]
 
-fn main() -> Unit
-    ! [Tcp.readBytes, Console.print]
-    conn = Tcp.Connection(id = "missing", host = "", port = 0)
-    match Tcp.readBytes(conn, 1208925819614629174706176)
+fn rejectBigCount(conn: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Tcp.close, Console.print]
+    result = Tcp.readBytes(conn, 1208925819614629174706176)
+    _ = Tcp.close(conn)
+    match result
         Result.Ok(_) -> Console.print("unexpected-ok")
         Result.Err(_) -> Console.print("range-error")
-"#;
-    let out = run_wasm_gc(src).expect("big read count must return Result.Err, not trap");
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+        Result.Ok(conn) -> rejectBigCount(conn)
+"#
+    );
+    let out = run_wasm_gc(&src).expect("big read count must return Result.Err, not trap");
+    server.join().expect("held-open listener");
     assert_eq!(out, "range-error\n");
 }
 

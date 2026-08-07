@@ -528,8 +528,13 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
             HostileProfile {
                 name: "normal_ok",
                 stub_fn_name: stub_name("normal_ok"),
+                // The real builtin is read-exact: `Ok` always carries exactly
+                // `count` bytes, and a negative / over-limit / out-of-i64
+                // count is an `Err` on every backend. The honest world must
+                // model that, or frame-length-validating user code never sees
+                // a success path.
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"honest: peer sends the bytes that were asked for\"\n    Bytes.fromList([0, 1, 2])\n",
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"honest: peer sends exactly the count bytes that were asked for\"\n    match count < 0\n        true -> Result.Err(\"Tcp.readBytes: count {{count}} is negative\")\n        false -> match count > 10485760\n            true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the read limit\")\n            false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)))\n",
                     stub_name("normal_ok")
                 ),
             },
