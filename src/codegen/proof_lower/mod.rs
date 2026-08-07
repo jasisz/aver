@@ -1343,7 +1343,9 @@ fn literal_in_interval(value: &Spanned<Expr>, iv: crate::ir::interval::Interval)
 
 /// Resolve one type-name spelling through the flatten-derived identity-
 /// preserving alias map (qualified spelling → canonical post-flatten
-/// `TypeDef` name); a spelling with no alias entry is returned unchanged.
+/// `TypeDef` name); a spelling with no alias entry is returned trimmed,
+/// unchanged (the same normalization `TypeRegistry::canonical_type_name`
+/// applies before its lookup).
 ///
 /// INVARIANT: every spelling that can RESOLVE a packed/carrier layout at a
 /// construct site must also be VISIBLE to the demotion scans under the same
@@ -1357,6 +1359,7 @@ fn literal_in_interval(value: &Spanned<Expr>, iv: crate::ir::interval::Interval)
 /// still resolving the packed layout, silently truncating out-of-range
 /// values. The map is empty for single-module compiles (identity).
 fn canonical_spelling<'a>(name: &'a str, type_aliases: &'a HashMap<String, String>) -> &'a str {
+    let name = name.trim();
     type_aliases.get(name).map(String::as_str).unwrap_or(name)
 }
 
