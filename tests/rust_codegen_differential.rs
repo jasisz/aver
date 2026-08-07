@@ -411,7 +411,8 @@ fn main() -> Unit
     report([65, 256])
     report([65, 1208925819614629174706176])
 "#;
-    let expected = "byte value outside 0..=255\nbyte value outside 0..=255";
+    let expected = "byte 256 at index 1 is outside 0..=255\n\
+                    byte 1208925819614629174706176 at index 1 is outside 0..=255";
 
     let vm = run_vm_inline("tcp_send_bytes_range", src).expect("vm run");
     let rust = build_run_rust_inline("tcp_send_bytes_range", src)

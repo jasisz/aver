@@ -26,7 +26,7 @@ proof export.
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet |
+| `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet; `Result.Err` names the offending value and its index |
 | `Bytes.toList` | `Bytes -> List<Int>` | Exposes validated values |
 | `Bytes.fromHex` | `String -> Result<Bytes, String>` | Even length, case-insensitive, no `0x` prefix |
 | `Bytes.toHex` | `Bytes -> String` | Total, lowercase output |
