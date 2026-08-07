@@ -1428,6 +1428,7 @@ fn run_check_for_file(
         let opts = diagnostic::AnalyzeOptions {
             file_label: shown_path.clone(),
             module_base_dir: Some(module_root.to_string()),
+            stdlib_shadowed: aver::source::collect_stdlib_shadowed(items, module_root),
             ..Default::default()
         };
         let report = diagnostic::analyze_source(source, &opts);

@@ -349,6 +349,8 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
             "bad-field-name",
             Some("Rename the field to camelCase".to_string()),
         )
+    } else if msg.contains("reserved by the Aver standard library") {
+        ("stdlib-shadow", split_repair(msg))
     } else if msg.contains("verify examples") || msg.contains("verify case") {
         ("verify-coverage", None)
     } else {
