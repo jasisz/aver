@@ -750,3 +750,98 @@ fn cross_file_forward_citation_is_refused_end_to_end() {
          in the emitted proof\nDomain/Frac.lean:\n{fwd_frac}"
     );
 }
+
+/// A dependency module named `Type` — a reserved Lean token that Aver's
+/// lexer accepts as a module name. Every module-name surface must carry
+/// the trailing-quote guard: the emitted file (`Type'.lean`), its
+/// `namespace`/`end` pair, the consumer's `import`/`open` lines and
+/// qualified call sites, and the lakefile root. Guarded by the standard
+/// `lake` skip; asserts the emitted sources, then that the project
+/// builds clean under the pinned toolchain.
+#[test]
+fn cross_file_reserved_module_name_escapes_and_builds() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping reserved-module-name test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-reserved-module-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("Type.av"),
+        "module Type\n\
+        \x20   intent =\n\
+        \x20       \"Dependency module named after a reserved Lean token.\"\n\
+        \x20   exposes [double]\n\n\
+        fn double(n: Int) -> Int\n\
+        \x20   n * 2\n",
+    )
+    .expect("write Type.av");
+    std::fs::write(
+        src.join("Consumer.av"),
+        "module Consumer\n\
+        \x20   depends [Type]\n\
+        \x20   intent =\n\
+        \x20       \"Entry depending on a module named Type.\"\n\n\
+        fn quadruple(n: Int) -> Int\n\
+        \x20   Type.double(Type.double(n))\n\n\
+        verify quadruple\n\
+        \x20   quadruple(3) => 12\n",
+    )
+    .expect("write Consumer.av");
+    let out = temp_output_dir("aver-reserved-module-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("Consumer.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("--module-root")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+
+    let dep_lean = std::fs::read_to_string(out.join("Type'.lean"))
+        .expect("dep module named `Type` must emit as Type'.lean");
+    assert!(
+        dep_lean.contains("namespace Type'") && dep_lean.contains("end Type'"),
+        "the dep namespace must carry the reserved-token guard\nType'.lean:\n{dep_lean}"
+    );
+    let consumer_lean =
+        std::fs::read_to_string(out.join("Consumer.lean")).expect("Consumer.lean must exist");
+    assert!(
+        consumer_lean.contains("import Type'") && consumer_lean.contains("open Type'"),
+        "the consumer's import/open lines must escape the module name\n\
+         Consumer.lean:\n{consumer_lean}"
+    );
+    assert!(
+        consumer_lean.contains("Type'.double"),
+        "qualified call sites must escape the module segment\nConsumer.lean:\n{consumer_lean}"
+    );
+    let lakefile =
+        std::fs::read_to_string(out.join("lakefile.lean")).expect("lakefile.lean must exist");
+    assert!(
+        lakefile.contains("`Type'"),
+        "the lakefile root must match the escaped module name\nlakefile.lean:\n{lakefile}"
+    );
+
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with('{')))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "the reserved-module-name project must build clean\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

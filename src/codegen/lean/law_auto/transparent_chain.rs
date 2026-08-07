@@ -399,7 +399,9 @@ fn resolve_fn_for_call<'a>(
         return Some(ResolvedFn {
             fd,
             scope: Some(prefix.to_string()),
-            lean_name: aver_name_to_lean(&format!("{prefix}.{short}")),
+            lean_name: crate::codegen::lean::syntax::aver_path_to_lean(&format!(
+                "{prefix}.{short}"
+            )),
         });
     }
 
@@ -412,7 +414,10 @@ fn resolve_fn_for_call<'a>(
         return Some(ResolvedFn {
             fd,
             scope: Some(scope.to_string()),
-            lean_name: aver_name_to_lean(&format!("{scope}.{}", fd.name)),
+            lean_name: crate::codegen::lean::syntax::aver_path_to_lean(&format!(
+                "{scope}.{}",
+                fd.name
+            )),
         });
     }
 

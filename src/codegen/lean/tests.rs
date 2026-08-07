@@ -374,6 +374,75 @@ verify addOne
 }
 
 #[test]
+fn reserved_lean_tokens_as_type_names_are_escaped() {
+    // `Type` / `Prop` are legal Aver type names (the lexer reserves only
+    // lowercase keywords) but Lean syntax tokens — declarations AND every
+    // reference (signatures, match subjects, ctor spellings) must carry the
+    // trailing-quote guard. A variant named `Match` lowers to Lean's
+    // reserved `match` and needs the same guard.
+    let mut ctx = ctx_from_source(
+        r#"
+module Reserved
+    intent = "Reserved Lean tokens as user type names."
+
+type Type
+    Scalar
+    Match
+    Vector(Int)
+
+record Prop
+    value: Int
+
+fn describe(t: Type) -> Int
+    match t
+        Type.Scalar -> 0
+        Type.Match -> 1
+        Type.Vector(n) -> n
+
+fn propValue(p: Prop) -> Int
+    p.value
+
+fn mkMatch() -> Type
+    Type.Match
+"#,
+        "reserved",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(
+        lean.contains("inductive Type' where"),
+        "sum type named `Type` must escape its declaration:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("structure Prop' where"),
+        "record named `Prop` must escape its declaration:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("(t : Type')") && lean.contains("(p : Prop')"),
+        "signature references to reserved type names must escape:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("| match'"),
+        "variant `Match` lowers to reserved `match` and must escape:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("Type'.match'"),
+        "constructor references must escape both segments:\n{}",
+        lean
+    );
+    assert!(
+        !lean.contains("inductive Type where") && !lean.contains("structure Prop where"),
+        "raw reserved declarations must not survive:\n{}",
+        lean
+    );
+}
+
+#[test]
 fn transpile_emits_native_decide_for_verify_by_default() {
     let mut ctx = empty_ctx_with_verify_case();
     let out = transpile(&mut ctx);

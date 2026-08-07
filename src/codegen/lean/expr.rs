@@ -1,7 +1,6 @@
 /// Aver expressions → Lean 4 expression strings.
 use super::builtins;
 use super::pattern::emit_pattern;
-use super::shared::to_lower_first;
 pub(crate) use super::syntax::{aver_name_to_lean, lean_name_to_aver};
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::codegen::CodegenContext;
@@ -64,7 +63,11 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 }
                 // User-defined type variant access: Shape.Point
                 if is_user_type(type_name, ctx) {
-                    return format!("{}.{}", type_name, to_lower_first(field));
+                    return format!(
+                        "{}.{}",
+                        aver_name_to_lean(type_name),
+                        super::syntax::lean_ctor_name(field)
+                    );
                 }
             }
             // Check module-qualified reference
@@ -75,12 +78,16 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                     let type_name = &bare[..dot_pos];
                     let variant = &bare[dot_pos + 1..];
                     if is_user_type(type_name, ctx) {
-                        return format!("{}.{}", type_name, to_lower_first(variant));
+                        return format!(
+                            "{}.{}",
+                            aver_name_to_lean(type_name),
+                            super::syntax::lean_ctor_name(variant)
+                        );
                     }
                 }
                 let bare_lean = aver_name_to_lean(bare);
                 if !ctx.modules.is_empty() {
-                    return format!("{}.{}", prefix, bare_lean);
+                    return format!("{}.{}", super::syntax::aver_path_to_lean(prefix), bare_lean);
                 }
                 return bare_lean;
             }
@@ -350,7 +357,11 @@ fn emit_fn_call(
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             let func = match module_prefix {
                 Some(prefix) if !ctx.modules.is_empty() => {
-                    format!("{}.{}", prefix, aver_name_to_lean(bare))
+                    format!(
+                        "{}.{}",
+                        super::syntax::aver_path_to_lean(prefix),
+                        aver_name_to_lean(bare)
+                    )
                 }
                 _ => aver_name_to_lean(bare),
             };
@@ -417,8 +428,10 @@ fn emit_constructor(
                 };
             }
             // User ctor: `Type.variant` in Lean. Lean convention is
-            // lowercase variant names; type stays as written.
-            let variant = to_lower_first(name);
+            // lowercase variant names; both segments pass through the
+            // reserved-token guard (`Type` / `Match` are legal Aver names).
+            let type_name = super::syntax::aver_path_to_lean(&type_name);
+            let variant = super::syntax::lean_ctor_name(name);
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             if arg_strs.is_empty() {
                 format!("{}.{}", type_name, variant)

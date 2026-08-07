@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use super::super::shared::to_lower_first;
+use super::super::syntax::lean_ctor_name;
 use super::super::tactic_ir::{InductionArm, Tactic};
 use super::AutoProof;
 use super::shared::law_simp_defs;
@@ -4731,7 +4731,7 @@ fn emit_simple_induction(
         let lean_variant = match &peano {
             Some(p) if variant.name == p.base_ctor => "zero".to_string(),
             Some(p) if variant.name == p.succ_ctor => "succ".to_string(),
-            _ => to_lower_first(&variant.name),
+            _ => lean_ctor_name(&variant.name),
         };
         let field_binders: Vec<String> = (0..variant.fields.len())
             .map(|index| format!("f{}", index))

@@ -540,12 +540,17 @@ pub(super) fn transpile_unified(
         union_body.push_str(&body);
         union_body.push('\n');
 
+        // Reserved-token guard on every module-name surface: `namespace` /
+        // `end`, `import` / `open` lines, and the `.lean` file path itself
+        // (a Lean module named `Type` is unimportable, so the file is named
+        // after the escaped spelling and the lakefile root matches).
+        let lean_prefix = super::syntax::aver_path_to_lean(&module.prefix);
         let mut imports = vec!["import AverCommon".to_string()];
         if body.contains("Crypto.sha256") {
             imports.push("import Crypto".to_string());
         }
         for d in &module.depends {
-            imports.push(format!("import {}", d));
+            imports.push(format!("import {}", super::syntax::aver_path_to_lean(d)));
         }
         // AverCommon has no surrounding namespace (top-level helpers / instances),
         // so `import` already brings them into scope. We `open` only the
@@ -553,7 +558,7 @@ pub(super) fn transpile_unified(
         let opens: Vec<String> = module
             .depends
             .iter()
-            .map(|d| format!("open {}", d))
+            .map(|d| format!("open {}", super::syntax::aver_path_to_lean(d)))
             .collect();
 
         let opens_str = if opens.is_empty() {
@@ -565,11 +570,11 @@ pub(super) fn transpile_unified(
             "{}\n\nset_option linter.unusedVariables false\nset_option maxRecDepth 1000000\n{}\nnamespace {}\n\n{}\nend {}\n",
             imports.join("\n"),
             opens_str,
-            module.prefix,
+            lean_prefix,
             body,
-            module.prefix
+            lean_prefix
         );
-        let path = module.prefix.replace('.', "/");
+        let path = lean_prefix.replace('.', "/");
         module_files.push((format!("{}.lean", path), content));
     }
 
@@ -616,12 +621,15 @@ pub(super) fn transpile_unified(
         entry_imports.push("import Crypto".to_string());
     }
     for m in &ctx.modules {
-        entry_imports.push(format!("import {}", m.prefix));
+        entry_imports.push(format!(
+            "import {}",
+            super::syntax::aver_path_to_lean(&m.prefix)
+        ));
     }
     let entry_opens: Vec<String> = ctx
         .modules
         .iter()
-        .map(|m| format!("open {}", m.prefix))
+        .map(|m| format!("open {}", super::syntax::aver_path_to_lean(&m.prefix)))
         .collect();
     let mut entry_parts = vec![entry_imports.join("\n")];
     if !entry_opens.is_empty() {
@@ -678,7 +686,7 @@ pub(super) fn transpile_unified(
         extra_roots.push("Crypto".to_string());
     }
     for m in &ctx.modules {
-        extra_roots.push(m.prefix.clone());
+        extra_roots.push(super::syntax::aver_path_to_lean(&m.prefix));
     }
     let lakefile = generate_lakefile_with_roots(&project_name, &extra_roots);
     let toolchain = generate_toolchain();

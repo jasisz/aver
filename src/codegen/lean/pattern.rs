@@ -1,5 +1,4 @@
 /// Aver patterns → Lean 4 pattern strings.
-use super::shared::to_lower_first;
 use crate::ast::Literal;
 use crate::codegen::CodegenContext;
 use crate::codegen::proof_recognize::{PeanoCtor, peano_ctor_role};
@@ -87,13 +86,14 @@ fn emit_ctor_pattern(ctor: &ResolvedCtor, bindings: &[String], ctx: &CodegenCont
         }
         ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => ".none".to_string(),
         ResolvedCtor::User { name, .. } => {
-            // Lean convention: lowercase constructor names. The
-            // `name` field of `ResolvedCtor::User` is the bare
-            // variant name (e.g. `"Point"` for `Shape.Point`); the
-            // owning type's emit context already namespaces the
-            // ctor at the call site, so no qualified-name handling
-            // is needed here.
-            let lean_variant = to_lower_first(name);
+            // Lean convention: lowercase constructor names (with the
+            // reserved-token guard — a variant `Match` lowers to the
+            // reserved `match`). The `name` field of
+            // `ResolvedCtor::User` is the bare variant name (e.g.
+            // `"Point"` for `Shape.Point`); the owning type's emit
+            // context already namespaces the ctor at the call site,
+            // so no qualified-name handling is needed here.
+            let lean_variant = super::syntax::lean_ctor_name(name);
             if bindings.is_empty() {
                 format!(".{}", lean_variant)
             } else {
