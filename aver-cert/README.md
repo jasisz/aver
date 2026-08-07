@@ -18,7 +18,7 @@ cargo install aver-cert
 The first command installs the certificate producer; omit it if you only need
 to verify an existing package.
 
-Verification uses the checker-pinned `leanprover/lean4:v4.32.0` toolchain and
+Verification uses the checker-pinned `leanprover/lean4:v4.32.2` toolchain and
 requires a standard Elan installation. The verifier resolves
 `$ELAN_HOME/bin/elan`, or the platform's default Elan home when `ELAN_HOME` is
 unset (`$HOME/.elan` on Unix, `%USERPROFILE%\.elan` on Windows). It invokes that

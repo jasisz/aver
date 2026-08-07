@@ -20,7 +20,7 @@ test are substantially slower than on native `linux/amd64`.
 The image pins:
 
 - Rust `1.95.0`
-- Lean toolchain `leanprover/lean4:v4.32.0`
+- Lean toolchain `leanprover/lean4:v4.32.2`
 - Dafny `4.11.0` (`dafny-4.11.0-x64-ubuntu-22.04.zip`)
 
 The Rust build is a debug build. That keeps the local quickstart bounded; release LTO is intentionally left out of this Docker path.
