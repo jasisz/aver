@@ -22,8 +22,8 @@ pub use verify::{emit_decision, emit_verify_block};
 // paths keep resolving exactly as they did when this was a single file.
 pub(super) use super::{
     LAW_CLASS_BOUNDED_DOMAIN, LAW_CLASS_MARKER_PREFIX, LAW_CLASS_UNIVERSAL, VerifyEmitMode,
-    bound_expr_to_lean, expr, law_auto, recurrence, sample_literal, shared,
-    sizeof_measure_param_indices, types,
+    bound_expr_to_lean, expr, law_auto, recurrence, sample_literal, sizeof_measure_param_indices,
+    syntax, types,
 };
 
 /// Check if a sum type is self-referencing (any variant field mentions the type name).

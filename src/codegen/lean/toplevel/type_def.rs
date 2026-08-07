@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::expr::aver_name_to_lean;
-use super::shared::to_lower_first;
+use super::syntax::lean_ctor_name;
 use super::types::type_annotation_to_lean;
 use super::{is_recursive_product, is_recursive_type};
 use crate::ast::*;
@@ -49,15 +49,16 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             let Some(first) = variants.first() else {
                 return String::new();
             };
+            let lean_name = aver_name_to_lean(name);
             let nullary = variants.iter().find(|v| v.fields.is_empty());
             let witness = match nullary {
-                Some(v) => format!("{}.{}", name, to_lower_first(&v.name)),
+                Some(v) => format!("{}.{}", lean_name, lean_ctor_name(&v.name)),
                 None => {
                     let args = " default".repeat(first.fields.len());
-                    format!("{}.{}{}", name, to_lower_first(&first.name), args)
+                    format!("{}.{}{}", lean_name, lean_ctor_name(&first.name), args)
                 }
             };
-            format!("instance : Inhabited {name} := ⟨{witness}⟩")
+            format!("instance : Inhabited {lean_name} := ⟨{witness}⟩")
         }
         TypeDef::Product { name, fields, .. } => {
             // Every decl admitted to ProofIR emits as a Subtype rather than a
@@ -68,7 +69,10 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             let args = std::iter::repeat_n("default", fields.len())
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("instance : Inhabited {name} := ⟨{args}⟩")
+            format!(
+                "instance : Inhabited {} := ⟨{args}⟩",
+                aver_name_to_lean(name)
+            )
         }
     }
 }
@@ -77,9 +81,9 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
     let mut lines = Vec::new();
     let is_recursive = is_recursive_type(name, variants);
 
-    lines.push(format!("inductive {} where", name));
+    lines.push(format!("inductive {} where", aver_name_to_lean(name)));
     for v in variants {
-        let lean_name = to_lower_first(&v.name);
+        let lean_name = lean_ctor_name(&v.name);
         if v.fields.is_empty() {
             lines.push(format!("  | {}", lean_name));
         } else {
@@ -121,13 +125,16 @@ fn emit_product_type(
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
         let param = aver_name_to_lean(&decl.predicate_param);
         let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
-        return format!("abbrev {name} := {{ {param} : {carrier_ty} // {predicate} }}");
+        return format!(
+            "abbrev {} := {{ {param} : {carrier_ty} // {predicate} }}",
+            aver_name_to_lean(name)
+        );
     }
 
     let mut lines = Vec::new();
     let is_recursive = is_recursive_product(name, fields);
 
-    lines.push(format!("structure {} where", name));
+    lines.push(format!("structure {} where", aver_name_to_lean(name)));
     for (field_name, field_type) in fields {
         lines.push(format!(
             "  {} : {}",
@@ -413,11 +420,11 @@ fn emit_recursive_sum_measure(
     lines.push(format!(
         "  def {} (value : {}) : Nat :=",
         measure_fn_name(name),
-        name
+        aver_name_to_lean(name)
     ));
     lines.push("    match value with".to_string());
     for variant in variants {
-        let ctor = to_lower_first(&variant.name);
+        let ctor = lean_ctor_name(&variant.name);
         if variant.fields.is_empty() {
             lines.push(format!("    | .{} => 1", ctor));
             continue;
@@ -448,7 +455,7 @@ fn emit_recursive_sum_measure(
     lines.push(format!(
         "  def {} (items : List {}) : Nat :=",
         measure_list_fn_name(name),
-        name
+        aver_name_to_lean(name)
     ));
     lines.push("    match items with".to_string());
     lines.push("    | [] => 1".to_string());
@@ -470,8 +477,8 @@ fn emit_recursive_sum_measure(
         lines.push(format!(
             "  def {} (items : List ({} × {})) : Nat :=",
             measure_entries_fn_name(name, &key_type),
-            key_type,
-            name
+            type_annotation_to_lean(&key_type),
+            aver_name_to_lean(name)
         ));
         lines.push("    match items with".to_string());
         lines.push("    | [] => 1".to_string());
@@ -512,13 +519,13 @@ fn emit_recursive_product_measure(
         format!(
             "  def {} (value : {}) : Nat :=",
             measure_fn_name(name),
-            name
+            aver_name_to_lean(name)
         ),
         format!("    {}", body),
         format!(
             "  def {} (items : List {}) : Nat :=",
             measure_list_fn_name(name),
-            name
+            aver_name_to_lean(name)
         ),
         "    match items with".to_string(),
         "    | [] => 1".to_string(),
@@ -537,8 +544,8 @@ fn emit_recursive_product_measure(
         lines.push(format!(
             "  def {} (items : List ({} × {})) : Nat :=",
             measure_entries_fn_name(name, &key_type),
-            key_type,
-            name
+            type_annotation_to_lean(&key_type),
+            aver_name_to_lean(name)
         ));
         lines.push("    match items with".to_string());
         lines.push("    | [] => 1".to_string());
@@ -576,6 +583,7 @@ pub fn emit_recursive_measure(
 /// fabricated proof matches. (Float's `==` is IEEE, so its shim reflects
 /// IEEE semantics instead; same mechanism, both deliberate.)
 pub fn emit_recursive_decidable_eq(name: &str) -> String {
+    let name = aver_name_to_lean(name);
     let mut lines = Vec::new();
     lines.push(format!(
         "private unsafe def {}.unsafeDecEq (a b : {}) : Decidable (a = b) :=",

@@ -558,12 +558,13 @@ fn const_to_expr(name: &str) -> Expr {
 }
 
 /// Un-escape a (possibly dotted) Lean name back to its Aver spelling: strip the
-/// trailing-`'` reserved-word guard from the final segment.
+/// trailing-`'` reserved-word guard from every segment (module and type
+/// segments carry the guard too — `Models.Type'` is Aver's `Models.Type`).
 fn lean_dotted_to_aver(name: &str) -> String {
-    match name.rsplit_once('.') {
-        Some((prefix, last)) => format!("{prefix}.{}", super::expr::lean_name_to_aver(last)),
-        None => super::expr::lean_name_to_aver(name),
-    }
+    name.split('.')
+        .map(super::expr::lean_name_to_aver)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 /// The Aver type name for a data `∀`-binder type node (`const Int`,

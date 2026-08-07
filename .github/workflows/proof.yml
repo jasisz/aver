@@ -75,6 +75,14 @@ jobs:
           echo "::error::lake unreachable after 6 attempts (toolchain download)"
           exit 1
 
+      - name: Check reserved-token snapshot against pinned Lean
+        # The guard test in src/codegen/lean/syntax.rs asks the pinned Lean
+        # toolchain for its token table and fails when the LEAN_RESERVED
+        # snapshot is missing entries. It silently skips when `lean` is not
+        # on PATH, and no other lane runs the lib tests with Lean installed —
+        # this job is the only place the tripwire can actually fire.
+        run: cargo test -p aver-lang --lib -- reserved_snapshot_covers_pinned_lean_token_table
+
       - name: Install Dafny
         # Manual download of the self-contained (62 MB — bundles its own
         # .NET runtime and Z3) Dafny release zip, replacing

@@ -105,13 +105,14 @@ pub fn type_to_lean(ty: &Type) -> String {
 /// must mangle the same way. A USER record is emitted inside its
 /// owning module's `namespace M`, so its Lean name is the dotted
 /// namespaced path (`Domain.Rational.Fraction`) — the dots must be
-/// preserved or the type ascription fails to resolve. Bare names (no
-/// dot) are unaffected either way.
+/// preserved or the type ascription fails to resolve, with each
+/// segment routed through the reserved-token guard (an Aver type or
+/// module named `Type`/`Prop` is legal but collides with Lean syntax).
 pub(crate) fn lean_named_type_name(name: &str) -> String {
     if crate::codegen::builtin_records::find(name).is_some() {
         name.replace('.', "_")
     } else {
-        name.to_string()
+        super::syntax::aver_path_to_lean(name)
     }
 }
 

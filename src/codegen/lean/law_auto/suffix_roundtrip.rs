@@ -73,13 +73,18 @@ fn lean_str(s: &str) -> String {
 }
 
 /// Source ctor name (`ParseResult.Ok`) → Lean ctor name
-/// (`ParseResult.ok`) — Lean convention lowercases the variant leaf.
+/// (`ParseResult.ok`) — Lean convention lowercases the variant leaf;
+/// both segments pass through the reserved-token guard.
 fn lean_ctor(name: &str) -> String {
     match name.rsplit_once('.') {
         Some((ty, variant)) => {
-            format!("{}.{}", ty, crate::codegen::common::to_lower_first(variant))
+            format!(
+                "{}.{}",
+                crate::codegen::lean::syntax::aver_path_to_lean(ty),
+                crate::codegen::lean::syntax::lean_ctor_name(variant)
+            )
         }
-        None => crate::codegen::common::to_lower_first(name),
+        None => crate::codegen::lean::syntax::lean_ctor_name(name),
     }
 }
 

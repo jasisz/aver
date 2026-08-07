@@ -3,8 +3,9 @@
 //! Lean distinguishes identifier-shaped syntax tokens from ordinary
 //! identifiers. Emitting an Aver function named `at`, `using`, or `exists`
 //! verbatim therefore produces a parse error. The test below asks the pinned
-//! Lean executable for its own token table, so a toolchain upgrade fails loudly
-//! when this snapshot needs to grow.
+//! Lean toolchain (resolved via a `lean-toolchain` file matching the one
+//! emitted proof projects carry) for its own token table, so a toolchain
+//! upgrade fails loudly when this snapshot needs to grow.
 
 /// Identifier-shaped syntax tokens registered by `import Lean` in Lean 4.32,
 /// plus global declarations whose bare names are ambiguous in generated code.
@@ -233,6 +234,25 @@ pub(crate) fn aver_name_to_lean(name: &str) -> String {
     crate::codegen::common::escape_reserved_word(name, LEAN_RESERVED, "'")
 }
 
+/// Escape every `.`-segment of a qualified module/type path — the
+/// reserved list carries identifier-shaped PascalCase tokens (`Type`,
+/// `Prop`, `Sort`) that Aver accepts as type and module names, so a
+/// dotted path like `Models.Type` must escape per segment
+/// (`Models.Type'`). Identity for paths without reserved segments.
+pub(crate) fn aver_path_to_lean(path: &str) -> String {
+    path.split('.')
+        .map(aver_name_to_lean)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Lean constructor spelling for an Aver variant name: the usual
+/// lowercase-first convention plus the reserved-token guard — an Aver
+/// variant `Match` lowers to `match`, which Lean reserves.
+pub(crate) fn lean_ctor_name(variant: &str) -> String {
+    aver_name_to_lean(&crate::codegen::common::to_lower_first(variant))
+}
+
 /// Strip the trailing keyword guard for the `--explain` un-translator.
 pub(crate) fn lean_name_to_aver(name: &str) -> String {
     if let Some(base) = name.strip_suffix('\'')
@@ -274,11 +294,21 @@ mod tests {
 
     #[test]
     fn reserved_snapshot_covers_pinned_lean_token_table() {
-        let mut probe = tempfile::Builder::new()
+        // Probe dir carries the same `lean-toolchain` pin as emitted proof
+        // projects, so elan resolves the PINNED toolchain rather than the
+        // ambient default — the snapshot is checked against the Lean version
+        // the generated code actually builds with.
+        let probe_dir = tempfile::Builder::new()
             .prefix("aver-lean-reserved-")
-            .suffix(".lean")
-            .tempfile()
-            .expect("create Lean token probe");
+            .tempdir()
+            .expect("create Lean token probe dir");
+        std::fs::write(
+            probe_dir.path().join("lean-toolchain"),
+            super::super::prelude::generate_toolchain(),
+        )
+        .expect("write probe lean-toolchain");
+        let probe_path = probe_dir.path().join("probe.lean");
+        let mut probe = std::fs::File::create(&probe_path).expect("create Lean token probe");
         probe
             .write_all(
                 br##"import Lean
@@ -296,8 +326,13 @@ elab "#aver_reserved_tokens" : command => do
 "##,
             )
             .expect("write Lean token probe");
+        drop(probe);
 
-        let output = match Command::new("lean").arg(probe.path()).output() {
+        let output = match Command::new("lean")
+            .arg(&probe_path)
+            .current_dir(probe_dir.path())
+            .output()
+        {
             Ok(output) => output,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
             Err(error) => panic!("run Lean token probe: {error}"),

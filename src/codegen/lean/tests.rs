@@ -374,6 +374,75 @@ verify addOne
 }
 
 #[test]
+fn reserved_lean_tokens_as_type_names_are_escaped() {
+    // `Type` / `Prop` are legal Aver type names (the lexer reserves only
+    // lowercase keywords) but Lean syntax tokens — declarations AND every
+    // reference (signatures, match subjects, ctor spellings) must carry the
+    // trailing-quote guard. A variant named `Match` lowers to Lean's
+    // reserved `match` and needs the same guard.
+    let mut ctx = ctx_from_source(
+        r#"
+module Reserved
+    intent = "Reserved Lean tokens as user type names."
+
+type Type
+    Scalar
+    Match
+    Vector(Int)
+
+record Prop
+    value: Int
+
+fn describe(t: Type) -> Int
+    match t
+        Type.Scalar -> 0
+        Type.Match -> 1
+        Type.Vector(n) -> n
+
+fn propValue(p: Prop) -> Int
+    p.value
+
+fn mkMatch() -> Type
+    Type.Match
+"#,
+        "reserved",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(
+        lean.contains("inductive Type' where"),
+        "sum type named `Type` must escape its declaration:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("structure Prop' where"),
+        "record named `Prop` must escape its declaration:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("(t : Type')") && lean.contains("(p : Prop')"),
+        "signature references to reserved type names must escape:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("| match'"),
+        "variant `Match` lowers to reserved `match` and must escape:\n{}",
+        lean
+    );
+    assert!(
+        lean.contains("Type'.match'"),
+        "constructor references must escape both segments:\n{}",
+        lean
+    );
+    assert!(
+        !lean.contains("inductive Type where") && !lean.contains("structure Prop where"),
+        "raw reserved declarations must not survive:\n{}",
+        lean
+    );
+}
+
+#[test]
 fn transpile_emits_native_decide_for_verify_by_default() {
     let mut ctx = empty_ctx_with_verify_case();
     let out = transpile(&mut ctx);
@@ -2299,6 +2368,52 @@ fn proof_mode_when_equivalent_to_refinement_invariant_drops_cleanly() {
     assert!(
         universal_theorem.contains("∀ (a : Natural)"),
         "expected universal to quantify over Natural, got:\n{}",
+        universal_theorem
+    );
+}
+
+#[test]
+fn proof_mode_refinement_lift_escapes_reserved_type_binder() {
+    // The refinement-lift quantifier binder interpolated the IR's canonical
+    // refined-type key as raw Lean type text. A refined record named `Type`
+    // (legal Aver — the lexer reserves only lowercase keywords) then emitted
+    // `∀ (a : Type), …` against a declaration escaped to `Type'`, so the
+    // theorem referenced Lean's `Type` sort instead of the record. The
+    // binder must route through the same spelling helper as every other
+    // type reference.
+    let src = "module Lift\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             record Type\n\
+             \x20   value: Int\n\
+             \n\
+             fn fromInt(n: Int) -> Result<Type, String>\n\
+             \x20   match n >= 0\n\
+             \x20       true  -> Result.Ok(Type(value = n))\n\
+             \x20       false -> Result.Err(\"must be >= 0\")\n\
+             \n\
+             fn identity(a: Type) -> Type\n\
+             \x20   a\n\
+             \n\
+             verify identity law selfEq\n\
+             \x20   given a: Int = [0, 1, 2]\n\
+             \x20   when a >= 0\n\
+             \x20   identity(Type(value = a)) => identity(Type(value = a))\n";
+    let mut ctx = ctx_from_source(src, "lift");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    let universal_theorem = lean
+        .lines()
+        .find(|l| l.contains("theorem identity_law_selfEq"))
+        .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
+    assert!(
+        universal_theorem.contains("∀ (a : Type')"),
+        "refinement-lifted binder must escape the reserved type name, got:\n{}",
+        universal_theorem
+    );
+    assert!(
+        !universal_theorem.contains("(a : Type)"),
+        "the raw reserved-token binder must not survive, got:\n{}",
         universal_theorem
     );
 }

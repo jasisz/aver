@@ -13,7 +13,6 @@ mod pattern;
 mod prelude;
 pub(crate) mod recurrence;
 mod sample_literal;
-mod shared;
 mod syntax;
 pub mod tactic_ir;
 #[cfg(test)]
@@ -194,7 +193,11 @@ fn verify_counter_key(vb: &crate::ast::VerifyBlock) -> String {
 }
 
 fn lean_project_name(ctx: &CodegenContext) -> String {
-    crate::codegen::common::entry_basename(ctx)
+    // The entry module name is a Lean surface like any other: an entry named
+    // `Type` must emit `Type'.lean` with a matching lakefile root, or every
+    // Lean-source reference to the root (the `--check` audit probes' `import`
+    // lines, cert model imports) hits `unexpected token 'Type'`.
+    syntax::aver_path_to_lean(&crate::codegen::common::entry_basename(ctx))
 }
 
 pub(super) fn bound_expr_to_lean(expr: &Spanned<crate::ir::hir::ResolvedExpr>) -> String {
