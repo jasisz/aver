@@ -456,8 +456,9 @@ fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
     ! [Tcp.readBytes]
     Tcp.readBytes(conn, count)
 "#;
-    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
-        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let (items, _aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
     let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
 
