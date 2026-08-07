@@ -428,6 +428,70 @@ record Box
     );
 }
 
+// Packed-sequence layouts must resolve by EXACT type name. The entry
+// module's gated `Octets` refinement earns a packed u8 layout; two dep
+// modules declare plain ungated `record Octets { values: List<Int> }`
+// records whose bare name collides, so flatten renames them to
+// `Left.Octets` / `Right.Octets`. Those renamed records are unrelated
+// to the refinement and must keep the ordinary boxed representation.
+// A qualified→bare fallback in the packed lookups would hand
+// `Left.Octets` the entry refinement's u8 layout, and the ungated
+// construct below would silently truncate 1000 to 1000 mod 256 = 232.
+#[test]
+fn cross_module_same_bare_name_record_does_not_inherit_packed_layout() {
+    let entry_src = r#"
+module Entry
+    intent = "packed layout must not leak to same-bare-name dep types"
+    depends [Left, Right]
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn main() -> Int
+    plain = Left.Octets(values = [1000])
+    match plain.values
+        [head, .._] -> head
+        [] -> 0
+"#;
+    let left_src = r#"
+module Left
+    intent = "plain record sharing the refinement's bare name"
+    exposes [Octets]
+    depends []
+
+record Octets
+    values: List<Int>
+"#;
+    let right_src = r#"
+module Right
+    intent = "second declarer forcing the bare-name collision rename"
+    exposes [Octets]
+    depends []
+
+record Octets
+    values: List<Int>
+"#;
+    let result = run_int_multi(entry_src, &[("Left", left_src), ("Right", right_src)]);
+    assert_eq!(
+        result, 1000,
+        "expected the ungated Left.Octets record to stay boxed and return \
+         1000; 232 means it inherited the entry refinement's packed u8 \
+         layout through a qualified→bare name fallback and truncated"
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────
 // List<T>
 // ────────────────────────────────────────────────────────────────────
@@ -1195,5 +1259,60 @@ fn main() -> Int
 "#
         ),
         -1
+    );
+}
+// Scalar sibling of the packed-sequence exact-name test above: the
+// carrier-i64 eligibility lookups must also resolve by EXACT type name.
+// The entry module's gated `IntRange` carrier earns i64 erasure; the
+// collision-renamed `Left.IntRange` / `Right.IntRange` dep records are
+// unrelated plain records and must stay boxed (`$AverInt`). A
+// qualified→bare fallback would erase `Left.IntRange` to i64 and the
+// beyond-i64 construct below would trap in `__aint_to_i64_checked`
+// instead of round-tripping through the bignum representation.
+#[test]
+fn cross_module_same_bare_name_record_does_not_inherit_carrier_i64_erasure() {
+    let entry_src = r#"
+module Entry
+    intent = "carrier i64 erasure must not leak to same-bare-name dep types"
+    depends [Left, Right]
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    match Bool.and(n >= 0, n <= 100)
+        true -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("oob")
+
+fn main() -> Int
+    plain = Left.IntRange(value = 10000000000000000000)
+    match plain.value == 10000000000000000000
+        true -> 1
+        false -> 0
+"#;
+    let left_src = r#"
+module Left
+    intent = "plain record sharing the carrier's bare name"
+    exposes [IntRange]
+    depends []
+
+record IntRange
+    value: Int
+"#;
+    let right_src = r#"
+module Right
+    intent = "second declarer forcing the bare-name collision rename"
+    exposes [IntRange]
+    depends []
+
+record IntRange
+    value: Int
+"#;
+    let result = run_int_multi(entry_src, &[("Left", left_src), ("Right", right_src)]);
+    assert_eq!(
+        result, 1,
+        "expected the plain Left.IntRange record to stay boxed and hold a \
+         beyond-i64 Int; a trap or 0 means it inherited the entry carrier's \
+         i64 erasure through a qualified→bare name fallback"
     );
 }

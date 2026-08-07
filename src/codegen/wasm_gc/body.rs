@@ -149,18 +149,14 @@ impl FnMap {
         }
     }
 
+    /// Exact-name lookup only — no qualified→bare fallback, mirroring
+    /// `TypeRegistry::packed_sequence`. A bare-name fallback would route
+    /// a collision-renamed dep type through an unrelated packed helper.
     pub(super) fn packed_sequence_ops_lookup(
         &self,
         type_name: &str,
     ) -> Option<super::packed_sequences::PackedSequenceOps> {
-        self.packed_sequence_ops
-            .get(type_name)
-            .copied()
-            .or_else(|| {
-                type_name
-                    .rsplit_once('.')
-                    .and_then(|(_, bare)| self.packed_sequence_ops.get(bare).copied())
-            })
+        self.packed_sequence_ops.get(type_name).copied()
     }
 
     pub(super) fn map_helpers_lookup(&self, canonical: &str) -> Option<&super::maps::MapKVHelpers> {

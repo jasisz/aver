@@ -1408,7 +1408,8 @@ impl TypeRegistry {
     /// ETAP-2 carrier-`i64`: install the set of refinement-via-opaque
     /// carrier type names whose proven bound `fits_i64`. Called once by the
     /// wasm-gc codegen entry after it derives the carrier interval table.
-    /// Keyed by bare Aver name (`"IntRange"`).
+    /// Keyed by post-flatten `TypeDef` name (`"IntRange"`, or the canonical
+    /// `"Left.IntRange"` for a collision-renamed dep type).
     pub(super) fn set_eligible_carriers(&mut self, names: std::collections::HashSet<String>) {
         self.eligible_carriers = names;
     }
@@ -1433,32 +1434,39 @@ impl TypeRegistry {
         }
     }
 
+    /// Exact-name lookup only — NO qualified→bare fallback. The layout
+    /// table keys are post-flatten `TypeDef` names (bare for entry and
+    /// non-colliding dep types, canonical `Prefix.Name` for collision-
+    /// renamed dep types), and both the collision guard and the ungated-
+    /// construction demotion scan match those names exactly. A bare-name
+    /// fallback here would hand a collision-renamed dep type (`Left.Octets`)
+    /// the packed layout of an unrelated bare-named gated type (`Octets`),
+    /// letting an ungated record silently truncate through `pack`.
     pub(super) fn packed_sequence(&self, type_name: &str) -> Option<PackedSequenceType> {
-        let trimmed = type_name.trim();
-        self.packed_sequences.get(trimmed).copied().or_else(|| {
-            trimmed
-                .rsplit_once('.')
-                .and_then(|(_, bare)| self.packed_sequences.get(bare).copied())
-        })
+        self.packed_sequences.get(type_name.trim()).copied()
     }
 
-    /// ETAP-2 carrier-`i64`: is `type_name` (bare or `Module.`-qualified) a
-    /// carrier whose erasure should be a native `i64`? A carrier in the
-    /// eligible set is ALSO a newtype (single-field opaque record of `Int`),
-    /// so `newtype_underlying` already returns `Some("Int")` for it — this
-    /// just decides whether that erasure becomes `i64` or stays `$AverInt`.
+    /// ETAP-2 carrier-`i64`: is `type_name` a carrier whose erasure should be
+    /// a native `i64`? A carrier in the eligible set is ALSO a newtype
+    /// (single-field opaque record of `Int`), so `newtype_underlying` already
+    /// returns `Some("Int")` for it — this just decides whether that erasure
+    /// becomes `i64` or stays `$AverInt`. Exact-name lookup only, matching the
+    /// post-flatten `TypeDef` name the interval table and the demotion scans
+    /// key on — a qualified→bare fallback would let a collision-renamed dep
+    /// type (`Left.IntRange`) inherit an unrelated carrier's i64 erasure and
+    /// trap on values only the bignum representation can hold.
     pub(super) fn is_eligible_carrier(&self, type_name: &str) -> bool {
         if self.eligible_carriers.is_empty() {
             return false;
         }
-        let bare = type_name.rsplit_once('.').map_or(type_name, |(_, b)| b);
-        self.eligible_carriers.contains(bare.trim())
+        self.eligible_carriers.contains(type_name.trim())
     }
 
     /// ETAP-2 multi-field carrier-`i64`: install the eligible `(record, field)`
     /// pairs whose proven bound `fits_i64`. Called once by the wasm-gc codegen
     /// entry after it derives + demotion-tightens the multi-field carrier table.
-    /// Keyed by bare record name + field name (`("Coord", "x")`).
+    /// Keyed by post-flatten record `TypeDef` name + field name
+    /// (`("Coord", "x")`).
     pub(super) fn set_eligible_carrier_fields(
         &mut self,
         fields: std::collections::HashSet<(String, String)>,
@@ -1467,18 +1475,14 @@ impl TypeRegistry {
     }
 
     /// ETAP-2 multi-field carrier-`i64`: is `(record_name, field)` a bounded
-    /// record field whose storage should be a native `i64`? `record_name` may
-    /// be bare or `Module.`-qualified; the field name is exact.
+    /// record field whose storage should be a native `i64`? Exact-name lookup
+    /// only, for the same reason as `is_eligible_carrier`.
     pub(super) fn is_eligible_carrier_field(&self, record_name: &str, field: &str) -> bool {
         if self.eligible_carrier_fields.is_empty() {
             return false;
         }
-        let bare = record_name
-            .rsplit_once('.')
-            .map_or(record_name, |(_, b)| b)
-            .trim();
         self.eligible_carrier_fields
-            .contains(&(bare.to_string(), field.to_string()))
+            .contains(&(record_name.trim().to_string(), field.to_string()))
     }
 
     pub(super) fn newtype_underlying(&self, type_name: &str) -> Option<&str> {

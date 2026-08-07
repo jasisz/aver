@@ -53,12 +53,11 @@ impl PackedSequenceHelperRegistry {
         }
     }
 
+    /// Exact-name lookup only — no qualified→bare fallback, mirroring
+    /// `TypeRegistry::packed_sequence`. A bare-name fallback would route
+    /// a collision-renamed dep type through an unrelated pack/unpack pair.
     pub(super) fn ops_for(&self, type_name: &str) -> Option<PackedSequenceOps> {
-        self.ops.get(type_name).copied().or_else(|| {
-            type_name
-                .rsplit_once('.')
-                .and_then(|(_, bare)| self.ops.get(bare).copied())
-        })
+        self.ops.get(type_name).copied()
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = (&str, PackedSequenceOps)> + '_ {
