@@ -16,11 +16,27 @@ fn allInRange(xs: List<Int>) -> Bool
             true -> allInRange(tail)
             false -> false
 
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
 fn fromList(xs: List<Int>) -> Result<Bytes, String>
     ? "Validate raw integers and construct a byte sequence."
     match allInRange(xs)
         true -> Result.Ok(Bytes(values = xs))
-        false -> Result.Err("byte value outside 0..=255")
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
 
 fn toList(bytes: Bytes) -> List<Int>
     ? "Expose the validated octets for ordinary List operations."
@@ -143,9 +159,20 @@ verify allInRange
     allInRange([-1]) => false
     allInRange([256]) => false
 
+verify firstOutOfRange
+    firstOutOfRange([]) => -1
+    firstOutOfRange([0, 256, 300]) => 256
+    firstOutOfRange([255, -7]) => -7
+
+verify firstOutOfRangeIndex
+    firstOutOfRangeIndex([]) => 0
+    firstOutOfRangeIndex([0, 256, 300]) => 1
+    firstOutOfRangeIndex([255, -7]) => 1
+
 verify fromList
     fromList([0, 127, 255]) => Result.Ok(Bytes(values = [0, 127, 255]))
-    fromList([256]) => Result.Err("byte value outside 0..=255")
+    fromList([256]) => Result.Err("byte 256 at index 0 is outside 0..=255")
+    fromList([0, 256]) => Result.Err("byte 256 at index 1 is outside 0..=255")
 
 verify parseHexChars
     parseHexChars([], []) => Result.Ok([])

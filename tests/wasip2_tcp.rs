@@ -667,7 +667,7 @@ fn main() -> Unit
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(s, "byte value outside 0..=255\n");
+    assert_eq!(s, "byte 256 at index 1 is outside 0..=255\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

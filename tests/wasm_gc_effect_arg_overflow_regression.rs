@@ -183,7 +183,7 @@ fn main() -> Unit
         Result.Err(e) -> Console.print(e)
 "#;
     let out = run_wasm_gc(src).expect("Bytes range failure must be a catchable Result.Err");
-    assert_eq!(out, "byte value outside 0..=255\n");
+    assert_eq!(out, "byte 256 at index 1 is outside 0..=255\n");
 }
 
 #[test]
@@ -201,7 +201,10 @@ fn main() -> Unit
         Result.Err(e) -> Console.print(e)
 "#;
     let out = run_wasm_gc(src).expect("big Bytes range failure must be a catchable Result.Err");
-    assert_eq!(out, "byte value outside 0..=255\n");
+    assert_eq!(
+        out,
+        "byte 1208925819614629174706176 at index 1 is outside 0..=255\n"
+    );
 }
 
 #[test]
