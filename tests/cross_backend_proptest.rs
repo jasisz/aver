@@ -122,7 +122,15 @@ fn run_rust(prefix: &str, source: &str) -> Result<String, String> {
         .parent()
         .expect("temp module has parent")
         .join("project");
-    let name = "cross_bp_rust";
+    // Crate (and therefore binary) name is derived from `prefix`, so two
+    // tests running concurrently never write the same path inside the
+    // SHARED target dir. With a single fixed name, one test's `cargo
+    // build` overwrote the binary another test was about to execute, and
+    // the victim read the other program's stdout — an assertion failure
+    // that reproduced only under the full-suite (parallel) run.
+    // Deriving from the prefix keeps the name stable per test, so the
+    // dependency compile still amortises across cases.
+    let name = &format!("cross_bp_{}", prefix.replace('-', "_"));
 
     let compile = Command::new(aver_bin)
         .current_dir(&repo_root)
@@ -733,6 +741,95 @@ fn cross_int_euclidean_divmod_vm_vs_wasm_gc() {
         "the Euclidean law `q*b + r == a, 0 <= r < |b|` failed on the VM ℤ \
          oracle for some pair (first offending around index {:?})",
         law_lines.iter().position(|l| *l != "true")
+    );
+}
+
+#[test]
+fn cross_literal_divisor_discharge_vm_vs_wasm_gc_vs_rust() {
+    // Literal-divisor discharge differential: `Int.div(a, K)` / `Int.mod(a,
+    // K)` with a syntactic nonzero literal `K` types as plain Int and lowers
+    // to the direct Euclidean intrinsic on every backend. For the whole
+    // sign/boundary matrix (both operand signs, i64::MIN, a Big dividend,
+    // K = -1 — the lifted const-fold exclusion) this asserts:
+    //   1. VM, wasm-gc and generated-Rust stdout are byte-identical;
+    //   2. in-program, the discharged value `==` the dynamic-divisor
+    //      `Result.Ok` value (the byte-identical-to-`Ok(v)` contract), on
+    //      the VM ℤ oracle.
+    let dividends = [
+        "7",
+        "(0 - 7)",
+        "0",
+        "1",
+        "9223372036854775807",             // i64::MAX
+        "((0 - 9223372036854775807) - 1)", // i64::MIN
+        "(9223372036854775807 + 1)",       // +2^63 (Big)
+    ];
+    // Each divisor appears as a SYNTACTIC literal at the call site — the
+    // exact boundary of the discharge rule. `-1` exercises the quotient
+    // `i64::MIN / -1 == +2^63` (Big) end to end.
+    let divisors = ["2", "-2", "3", "-3", "-1", "1000000000"];
+    let mut lines = String::new();
+    let mut pair_count = 0usize;
+    for a in &dividends {
+        for k in &divisors {
+            lines.push_str(&format!(
+                "    Console.print(\"{{Int.div({a}, {k})}}|{{Int.mod({a}, {k})}}\")\n"
+            ));
+            lines.push_str(&format!(
+                "    Console.print(String.fromBool(Bool.and(Int.div({a}, {k}) == dq({a}, {k}), Int.mod({a}, {k}) == mq({a}, {k}))))\n"
+            ));
+            pair_count += 1;
+        }
+    }
+    // `dq` / `mq` take the divisor as a fn param — a DYNAMIC divisor, so
+    // inside them `Int.div` / `Int.mod` keep the `Result` path; the
+    // sentinel arm is unreachable for these nonzero divisors.
+    let source = format!(
+        "module Tmp\n\
+         \n\
+         fn dq(a: Int, b: Int) -> Int\n    \
+             match Int.div(a, b)\n        \
+                 Result.Ok(q) -> q\n        \
+                 Result.Err(_) -> 0 - 424242\n\
+         \n\
+         fn mq(a: Int, b: Int) -> Int\n    \
+             match Int.mod(a, b)\n        \
+                 Result.Ok(r) -> r\n        \
+                 Result.Err(_) -> 0 - 424242\n\
+         \n\
+         fn main()\n    \
+             ! [Console.print]\n\
+         {}\n",
+        lines.trim_end()
+    );
+
+    let vm = run_vm("cross-discharge-vm", &source)
+        .expect("VM must accept the discharged-divisor harness");
+    let wg = run_wasm_gc("cross-discharge-wg", &source)
+        .expect("wasm-gc must accept the discharged-divisor harness");
+    let rs = run_rust("cross-discharge-rust", &source)
+        .expect("generated Rust must accept the discharged-divisor harness");
+
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc diverged on the discharged literal-divisor matrix \
+         ({pair_count} pairs)"
+    );
+    assert_eq!(
+        vm, rs,
+        "VM vs generated Rust diverged on the discharged literal-divisor \
+         matrix ({pair_count} pairs)"
+    );
+
+    // Every equality line is `true` on the VM: the discharged bare value
+    // equals the dynamic-divisor `Result.Ok` payload for the same operands.
+    let eq_lines: Vec<&str> = vm.lines().skip(1).step_by(2).collect();
+    assert_eq!(eq_lines.len(), pair_count, "expected one eq line per pair");
+    assert!(
+        eq_lines.iter().all(|l| *l == "true"),
+        "discharged value != dynamic Result.Ok value for some pair \
+         (first offending around index {:?})",
+        eq_lines.iter().position(|l| *l != "true")
     );
 }
 

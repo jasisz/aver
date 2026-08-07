@@ -1789,16 +1789,16 @@ impl VM {
                     self.stack.push(str_value);
                 }
 
-                // Const-divisor Euclidean div/mod (0.24 "Divide"). The MIR
-                // const-fold pass only emits these when the divisor is a
-                // literal that rules out the partial / overflow cases, so
-                // `div_euclid` / `rem_euclid` are always defined here — no
-                // trap, mirroring `i64::div_euclid` / `i64::rem_euclid` in
-                // `src/types/int.rs`.
+                // Const-divisor Euclidean div/mod (0.24 "Divide"). The HIR
+                // resolver's literal-divisor discharge (and the MIR
+                // const-fold pass) only emit these when the divisor is a
+                // nonzero literal, so `div_euclid` / `rem_euclid` are always
+                // defined here — no trap, computed on the `AverInt`
+                // arbitrary-precision carrier as in `src/types/int.rs`.
                 INT_DIV_EUCLID => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    // The const-fold emitter guarantees a non-zero divisor, so
+                    // The emitters guarantee a non-zero divisor, so
                     // `div_euclid` is defined; over ℤ it also never overflows.
                     let r = a
                         .as_aver_int(&self.arena)

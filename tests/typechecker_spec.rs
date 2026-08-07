@@ -1605,18 +1605,101 @@ fn valid_int_div() {
 }
 
 #[test]
+fn literal_divisor_discharge_types_as_int() {
+    // Literal-divisor discharge: a syntactic nonzero integer literal divisor
+    // makes `Int.div` / `Int.mod` total, so the call types as plain `Int`.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, 2)\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.mod(a, 16)\n");
+    // Negative literals (one unary minus over a literal) discharge too.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, -3)\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.mod(a, -1)\n");
+    // A BigInt literal (magnitude beyond i64) is nonzero by construction.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, 99999999999999999999)\n");
+    // The discharged value is an Int, so Result consumers reject it.
+    assert_error_containing(
+        "fn f(a: Int) -> Int\n    Result.withDefault(Int.div(a, 2), 0)\n",
+        "Argument 1 of 'Result.withDefault': expected Result<T, E>, got Int",
+    );
+}
+
+#[test]
+fn literal_divisor_discharge_boundary_zero_literal_stays_result() {
+    // `0` is a literal but not a NONZERO one — the call keeps the
+    // `Result<Int, String>` type (and errs at runtime).
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, 0)\n");
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.mod(a, 0)\n");
+}
+
+#[test]
+fn literal_divisor_discharge_boundary_is_syntactic_literals_only() {
+    // THE BOUNDARY: the discharge is keyed on a syntactic literal, nothing
+    // wider. Widening it (constant expressions, named constants, flow
+    // facts) is a deliberate design decision — if you are here to relax
+    // this test, that decision needs its own review.
+    // An identifier divisor stays `Result`, even when it is bound to a
+    // literal in plain sight.
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    k = 2\n    Int.div(a, k)\n");
+    // A constant expression divisor stays `Result` (no folding).
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, 8 + 8)\n");
+    // A doubly-negated literal is not a syntactic literal (single unary
+    // minus only).
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, --5)\n");
+    // Parenthesising an identifier does not turn it into a literal.
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    k = 2\n    Int.div(a, (k))\n");
+    // An interpolated string is not an integer literal. The discharge must
+    // not fire on it — the call keeps the registered signature and the
+    // normal argument check rejects the operand type, rather than the
+    // divisor sneaking through a discharge that skips it.
+    assert_error_containing(
+        "fn f(a: Int) -> Int\n    Int.div(a, \"{2}\")\n",
+        "Argument 2 of 'Int.div': expected Int, got String",
+    );
+    // And the discharged type does NOT satisfy a Result return.
+    assert_error_containing(
+        "fn f(a: Int) -> Result<Int, String>\n    Int.div(a, 2)\n",
+        "body returns Int but declared return type is Result<Int, String>",
+    );
+}
+
+#[test]
+fn literal_divisor_discharge_parentheses_are_transparent() {
+    // Parentheses around a single expression are ERASED by the parser, so
+    // `(16)` is literally the same AST node as `16`. The discharge rule is
+    // defined on the AST, so all three parenthesised spellings below are
+    // syntactic literals and discharge to plain `Int`:
+    //   `(16)`   — parenthesised literal
+    //   `(-16)`  — parenthesised negative literal
+    //   `-(16)`  — unary minus over a parenthesised literal
+    // The last two both reduce to a single `Neg` over an `Int` literal,
+    // which is exactly what the predicate accepts. This is consistent with
+    // "syntactic literal" (same node), not a widening of the boundary —
+    // there is no constant folding here, and `--5` two lines down in the
+    // boundary test still stays on the `Result` path.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, (16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, (-16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, -(16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.mod(a, (16))\n");
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.mod(a, -(16))\n");
+    // Nesting the parentheses changes nothing.
+    assert_no_errors("fn f(a: Int) -> Int\n    Int.div(a, ((16)))\n");
+    // Parentheses do not make a zero literal nonzero.
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, (0))\n");
+    assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.mod(a, (0))\n");
+}
+
+#[test]
 fn integer_slash_operator_is_a_type_error() {
-    // The bare `/` operator on two Ints is partial — it can fail two ways
-    // (zero divisor, and `i64::MIN / -1` overflow) — so it must be rejected
-    // in favour of `Int.div : Result<Int, String>`.
+    // The bare `/` operator on two Ints is partial (a zero divisor; over ℤ
+    // there is no `i64::MIN / -1` overflow) — so it must be rejected in
+    // favour of `Int.div : Result<Int, String>`.
     assert_error_containing(
         "fn f(a: Int, b: Int) -> Int\n    a / b\n",
         "the '/' operator is not defined for Int",
     );
-    // The diagnostic names BOTH failure modes, not just divide-by-zero.
+    // The diagnostic points at the total literal-divisor form.
     assert_error_containing(
         "fn f(a: Int, b: Int) -> Int\n    a / b\n",
-        "i64::MIN / -1 overflow",
+        "plain Int when the divisor is a nonzero literal",
     );
 }
 

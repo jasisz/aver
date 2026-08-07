@@ -254,7 +254,7 @@ verify placeGliderGun
 fn seed(s: Int, w: Int, h: Int) -> Vector<Int>
     ? "Seed the initial world with one R-pentomino and three gliders."
     empty = makeGrid(s * (h + 2))
-    g1 = placeRPentomino(empty, s, Result.withDefault(Int.div(w, 2), 0) - 1, Result.withDefault(Int.div(h, 2), 0) - 1)
+    g1 = placeRPentomino(empty, s, Int.div(w, 2) - 1, Int.div(h, 2) - 1)
     g2 = placeGlider(g1, s, 2, 2)
     g3 = placeGlider(g2, s, w - 6, 2)
     placeGlider(g3, s, 2, h - 5)
@@ -325,8 +325,8 @@ fn drawHud(st: SimState, mode: String) -> Unit
 fn formatFps(frames: Int, elapsed: Int) -> String
     ? "Format FPS with 1 decimal place."
     tenths = Result.withDefault(Int.div(frames * 10000, elapsed), 0)
-    whole = Result.withDefault(Int.div(tenths, 10), 0)
-    frac = Result.withDefault(Int.mod(tenths, 10), 0)
+    whole = Int.div(tenths, 10)
+    frac = Int.mod(tenths, 10)
     String.fromInt(whole) + "." + String.fromInt(frac)
 
 verify formatFps
@@ -467,7 +467,7 @@ fn simToEditor(st: SimState) -> Result<String, String>
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep, Time.unixMs,
     ]
-    result = editorLoop(st.grid, st.stride, st.width, st.height, Result.withDefault(Int.div(st.width, 2), 0), Result.withDefault(Int.div(st.height, 2), 0))
+    result = editorLoop(st.grid, st.stride, st.width, st.height, Int.div(st.width, 2), Int.div(st.height, 2))
     match result
         Result.Ok(newGrid) -> gameLoop(SimState.update(st, grid = newGrid, gen = 0))
         Result.Err(_) -> Result.Ok("Stopped at generation {String.fromInt(st.gen)}.")
@@ -489,7 +489,7 @@ fn run() -> Result<String, String>
     s = w + 2
     now = Time.unixMs()
     grid = seed(s, w, h)
-    editResult = editorLoop(grid, s, w, h, Result.withDefault(Int.div(w, 2), 0), Result.withDefault(Int.div(h, 2), 0))
+    editResult = editorLoop(grid, s, w, h, Int.div(w, 2), Int.div(h, 2))
     match editResult
         Result.Err(_) -> cleanup("Quit from editor.")
         Result.Ok(finalGrid) -> runSim(finalGrid, s, w, h, now)

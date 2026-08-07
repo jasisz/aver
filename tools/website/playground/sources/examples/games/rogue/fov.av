@@ -97,7 +97,7 @@ verify cellEndSlope
 
 fn minCol(startSlope: Int, row: Int) -> Int
     ? "Minimum column at this row for startSlope"
-    Result.withDefault(Int.div(startSlope * row + 500, 1000), 0)
+    Int.div(startSlope * row + 500, 1000)
 
 verify minCol
     minCol(0, 1) => 0
@@ -106,7 +106,7 @@ verify minCol
 
 fn maxCol(endSlope: Int, row: Int) -> Int
     ? "Maximum column at this row for endSlope"
-    Result.withDefault(Int.div(endSlope * row + 500, 1000), 0)
+    Int.div(endSlope * row + 500, 1000)
 
 verify maxCol
     maxCol(1000, 1) => 1

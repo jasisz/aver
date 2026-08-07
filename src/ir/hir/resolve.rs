@@ -350,6 +350,30 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 }
             }
             let resolved_callee = classify_callee(ctx, callee);
+            // Literal-divisor discharge: `Int.div(a, K)` / `Int.mod(a, K)`
+            // with a syntactic nonzero integer literal divisor is total, so
+            // it lowers straight to the Euclidean intrinsic — no `Result`
+            // wrap, direct division on every backend (VM opcode, Rust
+            // `div_euclid`, wasm-gc `__aint_divmod`, Lean `/` = `Int.ediv`,
+            // Dafny Euclidean `/`). The predicate is the SAME shared
+            // syntactic check the typechecker's discharge rule uses
+            // (`is_literal_nonzero_int_divisor`); it must key on syntax,
+            // not type stamps, because this resolver also runs in
+            // pipelines that never typecheck.
+            if let ResolvedCallee::Builtin(name) = &resolved_callee
+                && resolved_args.len() == 2
+                && args.len() == 2
+                && crate::ast::is_literal_nonzero_int_divisor(&args[1])
+            {
+                let intrinsic = match name.as_str() {
+                    "Int.div" => Some(BuiltinIntrinsic::IntDivEuclid),
+                    "Int.mod" => Some(BuiltinIntrinsic::IntModEuclid),
+                    _ => None,
+                };
+                if let Some(intrinsic) = intrinsic {
+                    return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), resolved_args);
+                }
+            }
             ResolvedExpr::Call(resolved_callee, resolved_args)
         }
         Expr::BinOp(op, l, r) => ResolvedExpr::BinOp(

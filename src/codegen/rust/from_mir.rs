@@ -3844,7 +3844,8 @@ fn try_emit_mir_fusion(
         // `ResolvedLeafOp::IntDivOrDefaultLiteral`.
         "Result.withDefault" if args.len() == 2 => {
             let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
-            // `Int.mod` fuses to `rem_euclid`; `Int.div` to truncating `/`.
+            // `Int.mod` fuses to `rem_euclid`; `Int.div` to `div_euclid`
+            // (both Euclidean — see the emission below).
             let op = match inner_name {
                 "Int.mod" => "rem_euclid",
                 "Int.div" => "div",
@@ -4478,9 +4479,10 @@ fn emit_mir_intrinsic_call(
                 arg
             ))
         }
-        // Const-divisor Euclidean div/mod (0.24 "Divide"). The MIR
-        // const-fold pass only emits these for a literal NON-ZERO divisor,
-        // so `AverInt::div_euclid` / `rem_euclid` (which are `None` only on a
+        // Const-divisor Euclidean div/mod (0.24 "Divide"). The HIR
+        // resolver's literal-divisor discharge and the MIR const-fold pass
+        // only emit these for a literal NON-ZERO divisor, so
+        // `AverInt::div_euclid` / `rem_euclid` (which are `None` only on a
         // zero divisor) are always `Some` here — the `.unwrap()` is total.
         // Same routines `Int.div` / `Int.mod` use in `src/types/int.rs`.
         BuiltinIntrinsic::IntDivEuclid => {

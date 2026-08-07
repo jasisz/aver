@@ -469,12 +469,97 @@ pub fn resolveOneCall(
                 crate::aver_generated::domain::ast::Expr::ExprCall(name, resolvedArgs)
             } else {
                 if crate::aver_generated::domain::resolver::calls::isBuiltinCallName(name.clone()) {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, resolvedArgs)
+                    crate::aver_generated::domain::resolver::calls::resolveBuiltinCall(
+                        name,
+                        &resolvedArgs,
+                    )
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCall(name, resolvedArgs)
                 }
             }
         }
+    }
+}
+
+/// Link a builtin call, discharging a literal-divisor Int.div/Int.mod to a plain Int.
+#[inline(always)]
+pub fn resolveBuiltinCall(name: AverStr, resolvedArgs: &aver_rt::AverList<Expr>) -> Expr {
+    crate::cancel_checkpoint();
+    if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(
+        name.clone(),
+        resolvedArgs,
+    ) {
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+            AverStr::from("Result.withDefault"),
+            aver_rt::AverList::from_vec(vec![
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                    name,
+                    resolvedArgs.clone(),
+                ),
+                crate::aver_generated::domain::ast::Expr::ExprInt(aver_rt::AverInt::from_i64(0)),
+            ]),
+        )
+    } else {
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, resolvedArgs.clone())
+    }
+}
+
+/// Whether this is Int.div/Int.mod over a syntactic nonzero integer literal divisor.
+#[inline(always)]
+pub fn isLiteralDivisorCall(name: AverStr, args: &aver_rt::AverList<Expr>) -> bool {
+    crate::cancel_checkpoint();
+    if (((&*name == "Int.div") || (&*name == "Int.mod"))
+        && (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(2)))
+    {
+        crate::aver_generated::domain::resolver::calls::isNonzeroIntLiteralDivisor(args)
+    } else {
+        false
+    }
+}
+
+/// Whether the second of exactly two arguments is a nonzero integer literal.
+pub fn isNonzeroIntLiteralDivisor(args: &aver_rt::AverList<Expr>) -> bool {
+    crate::cancel_checkpoint();
+    {
+        let __list_subject = args.clone();
+        if let Some((_, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            {
+                let __list_subject = rest;
+                if let Some((divisor, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    crate::aver_generated::domain::resolver::calls::isNonzeroIntLiteral(&divisor)
+                } else {
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+}
+
+/// Whether an expression is a nonzero integer literal under at most one unary minus.
+pub fn isNonzeroIntLiteral(expr: &Expr) -> bool {
+    crate::cancel_checkpoint();
+    match expr.clone() {
+        crate::aver_generated::domain::ast::Expr::ExprInt(k) => {
+            (k != aver_rt::AverInt::from_i64(0))
+        }
+        crate::aver_generated::domain::ast::Expr::ExprNeg(inner) => {
+            let inner = (*inner).clone();
+            crate::aver_generated::domain::resolver::calls::isBareNonzeroIntLiteral(&inner)
+        }
+        _ => false,
+    }
+}
+
+/// Whether an expression is a bare nonzero integer literal, with no unary minus of its own.
+pub fn isBareNonzeroIntLiteral(expr: &Expr) -> bool {
+    crate::cancel_checkpoint();
+    match expr.clone() {
+        crate::aver_generated::domain::ast::Expr::ExprInt(k) => {
+            (k != aver_rt::AverInt::from_i64(0))
+        }
+        _ => false,
     }
 }
 

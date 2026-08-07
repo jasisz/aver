@@ -97,7 +97,7 @@ verify enemyMaxHp
 
 fn dirArrow(angle: Float) -> String
     ? "Direction arrow for minimap based on player angle (8 sectors)"
-    n = Result.withDefault(Int.mod(Float.floor(angle * 4.0 / Float.pi() + 0.5), 8), 0)
+    n = Int.mod(Float.floor(angle * 4.0 / Float.pi() + 0.5), 8)
     match n
         0 -> ">"
         1 -> "v"

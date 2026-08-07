@@ -308,6 +308,56 @@ fn main()
 "#;
 const VECTOR_ALIASING_OUT: &str = "000\n000";
 
+/// Literal-divisor discharge, executed end to end. `Int.div(a, K)` /
+/// `Int.mod(a, K)` with a syntactic nonzero integer literal `K` types as
+/// plain `Int`, so every backend must return a bare integer — including
+/// the Aver-in-Aver interpreter behind `--self-host`, whose own resolver
+/// has to recognise the same shape. Without that rule the self-hosted
+/// pipeline keeps building a guest `Result`, and a program that is
+/// well-typed on the host silently prints `Result.Ok(4)` where the VM
+/// prints `4` (or dies later on an arithmetic type mismatch) — the exact
+/// divergence this pin exists to catch.
+///
+/// The matrix covers both dividend signs and zero, a negative literal
+/// divisor (`-3`), and `mixed`, which puts a discharged divisor and a
+/// dynamic-divisor `Result` call in the same expression. Every value is
+/// Euclidean: the remainder is always in `[0, |K|)`.
+const LITERAL_DIVISOR_SRC: &str = r#"module Tmp
+
+fn half(a: Int) -> Int
+    Int.div(a, 2)
+
+fn parity(a: Int) -> Int
+    Int.mod(a, 2)
+
+fn negDiv(a: Int) -> Int
+    Int.div(a, -3)
+
+fn negMod(a: Int) -> Int
+    Int.mod(a, -3)
+
+fn dynDiv(a: Int, b: Int) -> Int
+    match Int.div(a, b)
+        Result.Ok(q) -> q
+        Result.Err(_) -> 0 - 424242
+
+fn mixed(a: Int) -> Int
+    Int.div(a, 4) + dynDiv(a, 4)
+
+fn row(a: Int) -> String
+    String.fromInt(half(a)) + " " + String.fromInt(parity(a)) + " " + String.fromInt(negDiv(a)) + " " + String.fromInt(negMod(a)) + " " + String.fromInt(mixed(a))
+
+fn main()
+    ! [Console.print]
+    Console.print(row(9))
+    Console.print(row(0 - 9))
+    Console.print(row(0))
+    Console.print(row(0 - 8))
+    Console.print(String.fromInt(half(9) + parity(9)))
+"#;
+// Columns: div 2 | mod 2 | div -3 | mod -3 | div 4 + dynamic div 4.
+const LITERAL_DIVISOR_OUT: &str = "4 1 -3 0 4\n-5 1 3 0 -6\n0 0 0 0 0\n-4 0 3 1 -4\n5";
+
 // ─── Per-backend cross-checks ──────────────────────────────────────────
 //
 // One #[test] fn per (source × backend). Verbose vs a paste-macro
@@ -451,6 +501,31 @@ fn cross_vector_aliasing_pin_wasm_gc() {
         "wasm-gc",
         &run_wasm_gc("aver-cross-alias-wasmgc", VECTOR_ALIASING_SRC),
         VECTOR_ALIASING_OUT,
+    );
+}
+
+#[test]
+fn cross_literal_divisor_discharge_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-litdiv-vm", LITERAL_DIVISOR_SRC),
+        LITERAL_DIVISOR_OUT,
+    );
+}
+#[test]
+fn cross_literal_divisor_discharge_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-litdiv-wasmgc", LITERAL_DIVISOR_SRC),
+        LITERAL_DIVISOR_OUT,
+    );
+}
+#[test]
+fn cross_literal_divisor_discharge_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-litdiv-sh", LITERAL_DIVISOR_SRC),
+        LITERAL_DIVISOR_OUT,
     );
 }
 // ─── Verify cross-target ────────────────────────────────────────────────

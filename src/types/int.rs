@@ -6,14 +6,19 @@
 ///   Int.abs(n)          → Int                  — absolute value
 ///   Int.min(a, b)       → Int                  — minimum of two ints
 ///   Int.max(a, b)       → Int                  — maximum of two ints
-///   Int.mod(a, b)       → Result<Int, String>  — Euclidean modulo:
-///                                                  result has the sign of `b`
-///                                                  (always >= 0 for b > 0).
-///                                                  Errors on b == 0.
-///   Int.div(a, b)       → Result<Int, String>  — truncating integer division
-///                                                  (rounds toward zero, same as
-///                                                  the old `/` operator).
-///                                                  Errors on b == 0.
+///   Int.mod(a, b)       → Result<Int, String>  — Euclidean modulo: the result
+///                                                  is always in [0, |b|), i.e.
+///                                                  non-negative for every sign
+///                                                  of `a` and `b` (mod(7,-2) ==
+///                                                  Ok(1)). Errors on b == 0.
+///   Int.div(a, b)       → Result<Int, String>  — Euclidean integer division,
+///                                                  the unique q with a == q*b +
+///                                                  r, 0 <= r < |b| (div(-7,2) ==
+///                                                  Ok(-4)). Errors on b == 0.
+///
+/// When the divisor is a syntactic nonzero integer literal, the typechecker
+/// discharges `Int.div` / `Int.mod` to plain `Int` and the compiler emits the
+/// division directly (see `is_literal_nonzero_int_divisor` in `src/ast`).
 ///
 /// Stringification goes through `String.fromInt` (or `"{n}"` interpolation);
 /// widening to Float goes through `Float.fromInt`.

@@ -392,15 +392,16 @@ pub const BUFFER_FINALIZE: u8 = 0x93;
 
 // -- Const-divisor Euclidean div/mod (0.24 "Divide") -------------------------
 //
-// Emitted by the MIR `const_fold` pass for `Int.div(a, k)` / `Int.mod(a, k)`
-// with a literal divisor `k` whose value rules out the partial cases
-// (`k == 0` for both, plus `k == -1` for div, which the fold leaves as the
-// runtime Result). Both pop two `Int`s and push the unchecked Euclidean
-// result, mirroring `i64::div_euclid` / `i64::rem_euclid` — the same routines
-// `Int.div` / `Int.mod` use in `src/types/int.rs`.
+// Emitted for `Int.div(a, k)` / `Int.mod(a, k)` with a nonzero literal
+// divisor `k` — by the HIR resolver's literal-divisor discharge and, as a
+// belt-and-suspenders rewrite, by the MIR `const_fold` pass. Both pop two
+// `Int`s and push the unchecked Euclidean result via the `AverInt`
+// arbitrary-precision routines `Int.div` / `Int.mod` use in
+// `src/types/int.rs` — total for every `b != 0` over ℤ (`i64::MIN / -1`
+// promotes to the bignum quotient `2^63`, not an overflow).
 
-/// Pop b, pop a, push `a.div_euclid(b)` (Int). Caller guarantees `b ∉ {0, -1}`
-/// (the const-fold divisor check), so no trap / overflow is possible.
+/// Pop b, pop a, push `a.div_euclid(b)` (Int). Caller guarantees `b != 0`
+/// (the literal-divisor check), so no trap is possible.
 pub const INT_DIV_EUCLID: u8 = 0x94;
 
 /// Pop b, pop a, push `a.rem_euclid(b)` (Int). Caller guarantees `b != 0`.

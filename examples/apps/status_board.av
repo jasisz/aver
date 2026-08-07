@@ -76,7 +76,7 @@ verify minInt
 
 fn spinner(frame: Int) -> String
     ? "Cycles through four ASCII spinner frames."
-    slot = Result.withDefault(Int.mod(frame, 4), 0)
+    slot = Int.mod(frame, 4)
     match slot
         0 -> "-"
         1 -> "\\"
@@ -136,7 +136,7 @@ fn probeFrames(services: List<Service>) -> Int
     slowest = maxLatency(services)
     match slowest == 0
         true -> 6
-        false -> Result.withDefault(Int.div(slowest, 120), 0) + 4
+        false -> Int.div(slowest, 120) + 4
 
 verify probeFrames
     probeFrames([Service(name = "A", team = "x", latencyMs = 600, status = 200, headline = "ok")]) => 9
@@ -246,7 +246,7 @@ fn renderFrame(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, s
         Time.unixMs,
     ]
     nowMs = Time.unixMs()
-    visible = minInt(List.len(ready), Result.withDefault(Int.div(frame, 2), 0) + 1)
+    visible = minInt(List.len(ready), Int.div(frame, 2) + 1)
     Terminal.clear()
     drawHeader(batchIndex, batchIndex + 1, hasNext, startMs, nowMs, frame)
     drawReadyRows(ready, visible, 8)

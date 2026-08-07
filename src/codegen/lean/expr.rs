@@ -328,12 +328,12 @@ fn emit_fn_call(
         ResolvedCallee::Intrinsic(intr) => {
             use crate::ir::hir::BuiltinIntrinsic;
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-            // Const-fold Euclidean div/mod: for a non-zero constant divisor
+            // Literal-divisor discharge: for a nonzero literal divisor
             // `Int.div` / `Int.mod` are total, and Lean's `/` / `%` are
-            // Euclidean on `Int`, so render the bare op. (These intrinsics
-            // are MIR-synthesis-only and the Lean backend reads HIR, so this
-            // is unreachable today — kept total + correct if a future path
-            // ever routes them through.)
+            // Euclidean on `Int` (`Int.ediv` / `Int.emod` — matching the
+            // runtime for every sign combination), so render the bare op.
+            // The HIR resolver produces these intrinsics for every
+            // discharged source call.
             match intr {
                 BuiltinIntrinsic::IntDivEuclid if arg_strs.len() == 2 => {
                     format!("({} / {})", arg_strs[0], arg_strs[1])

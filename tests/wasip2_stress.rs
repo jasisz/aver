@@ -277,7 +277,7 @@ fn main() -> Unit
     ! [Random.int, Console.print]
     res: Tuple<Int, Int, Int> = loop_rand(10000, 0, 100, -1)
     match res
-        (sum, mn, mx) -> Console.print("avg={Result.withDefault(Int.div(sum, 10000), 0)} min={mn} max={mx}")
+        (sum, mn, mx) -> Console.print("avg={Int.div(sum, 10000)} min={mn} max={mx}")
 "#;
     let fixture = write_fixture(&dir, "random.av", src);
     let out = run_wasip2(&dir, &fixture, &[]);

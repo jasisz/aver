@@ -128,7 +128,7 @@ verify foxCount law exactlyOne
 fn lcg(seed: Int) -> Int
     ? "One linear-congruential step (glibc constants) mod 2^31. Int is ℤ, so no"
       "overflow: the modulo is explicit and keeps the state in [0, 2147483648)."
-    Result.withDefault(Int.mod(1103515245 * seed + 12345, 2147483648), 0)
+    Int.mod(1103515245 * seed + 12345, 2147483648)
 
 verify lcg
     lcg(0) => 12345
@@ -138,8 +138,8 @@ fn spawnIndex(seed: Int, mode: Mode) -> Int
     ? "PRNG-derived chute index [0,3]. mode A and mode B read the seed"
       "differently, so the two modes lay eggs in different patterns."
     match mode
-        Mode.ModeA -> Result.withDefault(Int.mod(seed, 4), 0)
-        Mode.ModeB -> Result.withDefault(Int.mod(Result.withDefault(Int.div(seed, 3), 0) + 1, 4), 0)
+        Mode.ModeA -> Int.mod(seed, 4)
+        Mode.ModeB -> Int.mod(Int.div(seed, 3) + 1, 4)
 
 verify spawnIndex
     spawnIndex(0, Mode.ModeA) => 0
@@ -167,7 +167,7 @@ verify spawnDiffers
 
 fn shouldSpawn(seed: Int, mode: Mode) -> Bool
     ? "Whether a new egg appears this tick. mode B is busier than mode A."
-    roll = Result.withDefault(Int.mod(seed, 100), 0)
+    roll = Int.mod(seed, 100)
     match mode
         Mode.ModeA -> roll < 40
         Mode.ModeB -> roll < 65
@@ -197,7 +197,7 @@ verify baseCap
 fn stepDrop(score: Int) -> Int
     ? "How much the tick delay has dropped at this score: 80ms per 200 points,"
       "capped so tempoMs never falls below 120ms."
-    Int.min(baseCap(), 80 * Result.withDefault(Int.div(score, 200), 0))
+    Int.min(baseCap(), 80 * Int.div(score, 200))
 
 verify stepDrop
     stepDrop(0) => 0
@@ -426,7 +426,7 @@ verify capMisses law inRange
 
 fn bonusCrossed(oldScore: Int, newScore: Int) -> Bool
     ? "True when the score just crossed a 200-point boundary this tick."
-    Result.withDefault(Int.div(oldScore, 200), 0) < Result.withDefault(Int.div(newScore, 200), 0)
+    Int.div(oldScore, 200) < Int.div(newScore, 200)
 
 verify bonusCrossed
     bonusCrossed(199, 200) => true
@@ -888,7 +888,7 @@ verify body
 fn bodyGap(l: String, mid: String, r: String, gap: Int) -> String
     ? "Frame row builder once the padding budget is known; splits the gap"
       "evenly (left half rounded down) around the middle segment."
-    "║" + l + spaces(Result.withDefault(Int.div(gap, 2), 0)) + mid + spaces(gap - Result.withDefault(Int.div(gap, 2), 0)) + r + "║"
+    "║" + l + spaces(Int.div(gap, 2)) + mid + spaces(gap - Int.div(gap, 2)) + r + "║"
 
 fn basketMark(fox: Chute, c: Chute) -> String
     ? "The basket sits under exactly one chute lip: a cup at the fox's"

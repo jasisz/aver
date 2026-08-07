@@ -382,10 +382,12 @@ fn main() -> Int
 
 #[test]
 fn option_with_default_rejects_result_argument() {
+    // The divisor is a fn param (dynamic), so `Int.mod` keeps its
+    // `Result` type — a literal divisor would discharge to plain `Int`.
     let items = parse_items(
         r#"
-fn main() -> Int
-    Option.withDefault(Int.mod(7, 3), 0)
+fn f(b: Int) -> Int
+    Option.withDefault(Int.mod(7, b), 0)
 "#,
     );
     let errs = errors(items);
@@ -399,10 +401,12 @@ fn main() -> Int
 
 #[test]
 fn result_with_default_accepts_result_argument() {
+    // Dynamic divisor — `Int.mod` types as `Result<Int, String>`, the
+    // shape `Result.withDefault` accepts.
     let items = parse_items(
         r#"
-fn main() -> Int
-    Result.withDefault(Int.mod(7, 3), 0)
+fn f(b: Int) -> Int
+    Result.withDefault(Int.mod(7, b), 0)
 "#,
     );
     let errs = errors(items);

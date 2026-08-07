@@ -516,7 +516,8 @@ pub(crate) fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
 }
 
 /// **syntax-discovery-only**: recognize a floor-division shrink of
-/// `param_name` — `Result.withDefault(Int.div(p, k), <int literal>)`
+/// `param_name` — bare `Int.div(p, k)` (discharged total form) or the
+/// legacy `Result.withDefault(Int.div(p, k), <int literal>)` wrapper,
 /// with literal `k >= 2`, either inlined or through a unary wrapper
 /// fn whose single-expression body is exactly that shape over its own
 /// parameter. Returns `(divisor, helper_fn)`.
@@ -555,19 +556,24 @@ pub(crate) fn floor_div_shrink_of(
     Some((divisor, Some(fd.name.clone())))
 }
 
-/// `Result.withDefault(Int.div(p, k), <int literal>)` with literal
-/// `k >= 2` — the inlined floor-division shrink shape.
+/// The inlined floor-division shrink shape: bare `Int.div(p, k)` with
+/// literal `k >= 2` (the discharged total form — a nonzero literal divisor
+/// types as plain `Int`), or the legacy `Result.withDefault(Int.div(p, k),
+/// <int literal>)` wrapper (kept so pre-discharge shapes in unchecked
+/// pipelines stay recognized).
 fn inline_floor_div_shrink(expr: &Spanned<Expr>, param_name: &str) -> Option<i64> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
+    let div_expr = match &expr.node {
+        // Legacy wrapper: peel `Result.withDefault(<div>, <int literal>)`.
+        Expr::FnCall(callee, args)
+            if expr_to_dotted_name(callee).as_deref() == Some("Result.withDefault")
+                && args.len() == 2
+                && matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(_))) =>
+        {
+            &args[0]
+        }
+        _ => expr,
     };
-    if expr_to_dotted_name(callee).as_deref() != Some("Result.withDefault") || args.len() != 2 {
-        return None;
-    }
-    if !matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(_))) {
-        return None;
-    }
-    let Expr::FnCall(div_callee, div_args) = &args[0].node else {
+    let Expr::FnCall(div_callee, div_args) = &div_expr.node else {
         return None;
     };
     if expr_to_dotted_name(div_callee).as_deref() != Some("Int.div") || div_args.len() != 2 {

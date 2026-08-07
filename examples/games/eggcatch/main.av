@@ -92,7 +92,7 @@ fn advance(gs: Core.GameState) -> Core.GameState
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
         Time.sleep,
     ]
-    pollSlices(gs, Result.withDefault(Int.div(Core.tickDelay(gs), 33), 18))
+    pollSlices(gs, Int.div(Core.tickDelay(gs), 33))
 
 fn pollSlices(gs: Core.GameState, left: Int) -> Core.GameState
     ? "Poll-and-apply loop between world ticks: sleep one slice, apply any"

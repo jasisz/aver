@@ -243,10 +243,10 @@ verify markVCorridorStep
 
 fn connectRooms(levelMap: List<String>, r1: Room, r2: Room) -> List<String>
     ? "Connect two rooms with an L-shaped corridor"
-    cx1 = r1.x + Result.withDefault(Int.div(r1.w, 2), 0)
-    cy1 = r1.y + Result.withDefault(Int.div(r1.h, 2), 0)
-    cx2 = r2.x + Result.withDefault(Int.div(r2.w, 2), 0)
-    cy2 = r2.y + Result.withDefault(Int.div(r2.h, 2), 0)
+    cx1 = r1.x + Int.div(r1.w, 2)
+    cy1 = r1.y + Int.div(r1.h, 2)
+    cx2 = r2.x + Int.div(r2.w, 2)
+    cy2 = r2.y + Int.div(r2.h, 2)
     carveV(carveH(levelMap, cx1, cx2, cy1), cx2, cy1, cy2)
 
 verify connectRooms
@@ -254,10 +254,10 @@ verify connectRooms
 
 fn connectWalls(wallMap: List<String>, r1: Room, r2: Room) -> List<String>
     ? "Mark corridor wall types between two rooms"
-    cx1 = r1.x + Result.withDefault(Int.div(r1.w, 2), 0)
-    cy1 = r1.y + Result.withDefault(Int.div(r1.h, 2), 0)
-    cx2 = r2.x + Result.withDefault(Int.div(r2.w, 2), 0)
-    cy2 = r2.y + Result.withDefault(Int.div(r2.h, 2), 0)
+    cx1 = r1.x + Int.div(r1.w, 2)
+    cy1 = r1.y + Int.div(r1.h, 2)
+    cx2 = r2.x + Int.div(r2.w, 2)
+    cy2 = r2.y + Int.div(r2.h, 2)
     markVCorridor(markHCorridor(wallMap, cx1, cx2, cy1), cx2, cy1, cy2)
 
 verify connectWalls
@@ -280,7 +280,7 @@ verify roomFromSeed
 
 fn roomCenter(room: Room) -> Tuple<Float, Float>
     ? "Center of a room as float coordinates"
-    (Float.fromInt(room.x + Result.withDefault(Int.div(room.w, 2), 0)) + 0.5, Float.fromInt(room.y + Result.withDefault(Int.div(room.h, 2), 0)) + 0.5)
+    (Float.fromInt(room.x + Int.div(room.w, 2)) + 0.5, Float.fromInt(room.y + Int.div(room.h, 2)) + 0.5)
 
 verify roomCenter
     roomCenter(Room(x = 4, y = 4, w = 6, h = 6)) => (7.5, 7.5)

@@ -29,7 +29,7 @@ verify twoPow law sumSplits
 
 fn halve(a: Int) -> Int
     ? "Floor half of a; total because the divisor is the literal 2."
-    Result.withDefault(Int.div(a, 2), 0)
+    Int.div(a, 2)
 
 verify halve
     halve(9) => 4

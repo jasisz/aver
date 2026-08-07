@@ -1461,7 +1461,18 @@ fn vm_int_abs() {
 
 #[test]
 fn vm_int_mod() {
-    let src = "fn main() -> Result<Int, String>\n    Int.mod(17, 5)\n";
+    // Literal divisor discharges: `Int.mod(17, 5)` is a bare Int.
+    let src = "fn main() -> Int\n    Int.mod(17, 5)\n";
+    let result = vm_run(src);
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 2);
+}
+
+#[test]
+fn vm_int_mod_dynamic_divisor() {
+    // A non-literal divisor keeps the `Result` path.
+    let src = "fn main() -> Result<Int, String>\n    Int.mod(17, Int.min(5, 6))\n";
     let (result, arena) = vm_run_with_arena(src);
     assert!(result.is_ok());
     let inner = result.wrapper_inner(&arena);
