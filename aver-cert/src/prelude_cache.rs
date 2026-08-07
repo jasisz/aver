@@ -350,15 +350,15 @@ mod tests {
     #[test]
     fn key_binds_wall_sources_roots_and_toolchain() {
         let baseline = static_wall_key(&static_wall_files(
-            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.2\n"),
             16384,
         ));
         let changed_source = static_wall_key(&static_wall_files(
-            &test_wall(&CHANGED_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            &test_wall(&CHANGED_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.2\n"),
             16384,
         ));
         let changed_root = static_wall_key(&static_wall_files(
-            &test_wall(&BASE_SOURCES, &CHANGED_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            &test_wall(&BASE_SOURCES, &CHANGED_ROOTS, "leanprover/lean4:v4.32.2\n"),
             16384,
         ));
         let changed_toolchain = static_wall_key(&static_wall_files(
@@ -369,7 +369,7 @@ mod tests {
         // limit is a different cache entry: cached oleans always match the
         // worker limits of the build they seed.
         let changed_limit = static_wall_key(&static_wall_files(
-            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.0\n"),
+            &test_wall(&BASE_SOURCES, &BASE_ROOTS, "leanprover/lean4:v4.32.2\n"),
             256,
         ));
 
