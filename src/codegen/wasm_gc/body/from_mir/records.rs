@@ -50,6 +50,14 @@ pub(crate) fn emit_mir_record_create(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    // Resolve an identity-preserving qualified alias spelling
+    // (`Dep.Octets`) to its canonical post-flatten name ONCE, so every
+    // lookup below (packed, newtype/carrier, plain struct + its
+    // bare-keyed `record_fields` list) keys consistently. The demotion
+    // scans canonicalize construct sites through the SAME map, so a
+    // spelling that resolves a packed/carrier layout here was already
+    // visible to them under this key.
+    let type_name = ctx.registry.canonical_type_name(type_name);
     if ctx.registry.packed_sequence(type_name).is_some() {
         let field = fields.first().ok_or(WasmGcError::Validation(format!(
             "packed record `{type_name}` requires one List<Int> field"
@@ -133,6 +141,8 @@ pub(crate) fn emit_mir_record_update(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    // Same one-shot alias canonicalization as `emit_mir_record_create`.
+    let type_name = ctx.registry.canonical_type_name(type_name);
     if ctx.registry.packed_sequence(type_name).is_some() {
         let produced = if let Some(override_field) = updates.first() {
             emit_mir_record_field_value(func, &override_field.value, "List<Int>", slots, ctx)?

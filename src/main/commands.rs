@@ -4482,16 +4482,18 @@ fn cmd_compile_wasm_gc(
         false, /* run_buffer_build */
         false, /* self_host_mode — wasm-gc compile path doesn't use self-host */
     );
-    flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
     // above; this picks up the newly appended dep FnDefs.
     aver::ir::pipeline::resolve(&mut items);
 
-    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_with_handler_and_cert_plans(
+    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened(
         &items,
         result.analysis.as_ref(),
         handler,
+        wasm_gc::TargetMode::AverBridge,
+        &type_aliases,
     ) {
         Ok(output) => output,
         Err(e) => {
@@ -4730,7 +4732,7 @@ fn cmd_compile_wasip2(
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
         // it) but does not pull `wasm`.
-        aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
         aver::ir::pipeline::resolve(&mut items);
 
         // Phase 1.6 — static effect-set check. Catches every Aver
@@ -4786,12 +4788,14 @@ fn cmd_compile_wasip2(
                 );
                 process::exit(1);
             });
-            match wasm_gc::compile_to_wasm_gc_for_wasip2_with_handler(
+            match wasm_gc::compile_to_wasm_gc_flattened(
                 &items,
                 result.analysis.as_ref(),
-                handler_name,
+                Some(handler_name),
+                wasm_gc::TargetMode::Wasip2,
+                &type_aliases,
             ) {
-                Ok(b) => b,
+                Ok(out) => out.bytes,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());
                     process::exit(1);
@@ -4809,8 +4813,14 @@ fn cmd_compile_wasip2(
                 );
                 process::exit(1);
             }
-            match wasm_gc::compile_to_wasm_gc_for_wasip2(&items, result.analysis.as_ref()) {
-                Ok(b) => b,
+            match wasm_gc::compile_to_wasm_gc_flattened(
+                &items,
+                result.analysis.as_ref(),
+                None,
+                wasm_gc::TargetMode::Wasip2,
+                &type_aliases,
+            ) {
+                Ok(out) => out.bytes,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());
                     process::exit(1);
@@ -9063,9 +9073,14 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 }
 
 /// CLI shim around the library-level wasm-gc multi-module flattener.
+/// Returns the identity-preserving qualified type-name aliases the
+/// flattener derived; thread them into the flattened compile entry.
 #[cfg(feature = "wasm")]
-pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
-    aver::codegen::wasm_gc::flatten_multimodule(items, dep_modules);
+pub(super) fn flatten_multimodule(
+    items: &mut Vec<TopLevel>,
+    dep_modules: &[ModuleInfo],
+) -> std::collections::HashMap<String, String> {
+    aver::codegen::wasm_gc::flatten_multimodule(items, dep_modules)
 }
 
 /// Load dependent modules for codegen (recursive, with circular import detection).

@@ -52,11 +52,9 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
         aver::runtime::wasm_gc::run_in_process(
             &items,
             None,
-            aver::runtime::wasm_gc::RunConfig {
-                program_args: Vec::new(),
-                entry_info: None,
-                mode: aver::runtime::wasm_gc::EffectMode::Normal,
-            },
+            // Single-file program: the default config (no argv, real
+            // effects, empty alias map) is exactly the embedding shape.
+            aver::runtime::wasm_gc::RunConfig::default(),
         )
     });
 
@@ -131,11 +129,9 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
         aver::runtime::wasm_gc::run_in_process(
             &items,
             result.analysis.as_ref(),
-            aver::runtime::wasm_gc::RunConfig {
-                program_args: Vec::new(),
-                entry_info: None,
-                mode: aver::runtime::wasm_gc::EffectMode::Normal,
-            },
+            // Single-file program: the default config (no argv, real
+            // effects, empty alias map) is exactly the embedding shape.
+            aver::runtime::wasm_gc::RunConfig::default(),
         )
     });
 

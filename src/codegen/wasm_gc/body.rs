@@ -149,9 +149,11 @@ impl FnMap {
         }
     }
 
-    /// Exact-name lookup only — no qualified→bare fallback, mirroring
+    /// Exact-name lookup — no qualified→bare suffix fallback, mirroring
     /// `TypeRegistry::packed_sequence`. A bare-name fallback would route
     /// a collision-renamed dep type through an unrelated packed helper.
+    /// The only extra keys are the flatten-derived identity-preserving
+    /// aliases registered when the map is built in `module.rs`.
     pub(super) fn packed_sequence_ops_lookup(
         &self,
         type_name: &str,

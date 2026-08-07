@@ -37,8 +37,10 @@ use aver::value::Value;
 /// through the run pipeline without inflating every `Normal` /
 /// `Record` call to recording size — clippy's `large_enum_variant`
 /// would otherwise flag the size mismatch.
+#[derive(Default)]
 pub enum EffectMode {
     /// Production path — real effects run, no recording, no replay.
+    #[default]
     Normal,
     /// `aver run --wasm-gc --record <dir>` — real effects run, every
     /// call appended to the trace, returned through
@@ -55,6 +57,14 @@ pub enum EffectMode {
 }
 
 /// Caller-supplied configuration for one `run_in_process` call.
+///
+/// `Default` is the single-file embedding shape: no argv, whole-program
+/// entry, real effects, empty alias map. A caller that flattened a
+/// multi-module program MUST override `type_aliases` with the map
+/// `flatten_multimodule` returned — leaving it empty makes qualified
+/// dep-type spellings decline fail-closed instead of resolving their
+/// canonical layouts.
+#[derive(Default)]
 pub struct RunConfig {
     /// Argv visible to the program through `Args.get` / `Args.all`.
     pub program_args: Vec<String>,
@@ -64,6 +74,10 @@ pub struct RunConfig {
     pub entry_info: Option<(String, Vec<Value>)>,
     /// Recorder / replayer state machine. See [`EffectMode`].
     pub mode: EffectMode,
+    /// Identity-preserving qualified type-name aliases returned by
+    /// `flatten_multimodule` when the caller flattened a multi-module
+    /// program. Empty for single-file programs (the fuzz harness path).
+    pub type_aliases: std::collections::HashMap<String, String>,
 }
 
 /// What one `run_in_process` invocation actually produced. Carries
@@ -120,8 +134,15 @@ pub fn run_in_process(
     analysis: Option<&AnalysisResult>,
     config: RunConfig,
 ) -> Result<RunOutcome, String> {
-    let bytes =
-        aver::codegen::wasm_gc::compile_to_wasm_gc(items, analysis).map_err(|e| format!("{e}"))?;
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        items,
+        analysis,
+        None,
+        aver::codegen::wasm_gc::TargetMode::AverBridge,
+        &config.type_aliases,
+    )
+    .map(|out| out.bytes)
+    .map_err(|e| format!("{e}"))?;
 
     let entry_fn_name: &str = config
         .entry_info

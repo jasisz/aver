@@ -52,6 +52,8 @@
 //! (`order_total.wasm` md5 `61e45b325279e17e1b0d8dce3fde43f9`, the
 //! game suite, the wasip2 stress fixtures) held across each PR.
 
+use std::collections::HashMap;
+
 use crate::ast::TopLevel;
 use crate::ir::AnalysisResult;
 
@@ -162,7 +164,33 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge).map(|(bytes, _, _)| bytes)
+    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new())
+        .map(|(bytes, _, _)| bytes)
+}
+
+/// Compile a FLATTENED multi-module program, threading the identity-
+/// preserving qualified type-name aliases that [`flatten_multimodule`]
+/// returned. Entry-side local-binding annotations may spell a dep type
+/// qualified (`o: Dep.Octets`); the pre-flatten typechecker's stamps keep
+/// that spelling into codegen, and the wasm-gc registry resolves it to the
+/// sole-declarer dep type's proof-derived layout facts through these
+/// aliases. Callers that did not flatten (single-module programs) should
+/// keep using the plain `compile_to_wasm_gc*` entries — those compile with
+/// an empty alias map.
+pub fn compile_to_wasm_gc_flattened(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    handler: Option<&str>,
+    target: TargetMode,
+    type_aliases: &HashMap<String, String>,
+) -> Result<WasmGcCompileOutput, WasmGcError> {
+    module::emit_module_with(items, handler, target, type_aliases).map(
+        |(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+            bytes,
+            mir_count,
+            fragment_plans,
+        },
+    )
 }
 
 /// `compile_to_wasm_gc` returning the MIR-coverage count alongside the
@@ -178,7 +206,7 @@ pub fn compile_to_wasm_gc_with_mir_count(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<(Vec<u8>, usize), WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge)
+    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new())
         .map(|(bytes, mir_count, _)| (bytes, mir_count))
 }
 
@@ -192,7 +220,8 @@ pub fn compile_to_wasm_gc_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge).map(|(bytes, _, _)| bytes)
+    module::emit_module_with(items, handler, TargetMode::AverBridge, &HashMap::new())
+        .map(|(bytes, _, _)| bytes)
 }
 
 /// Same bytes as [`compile_to_wasm_gc_with_handler`], plus the expression
@@ -202,7 +231,7 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge).map(
+    module::emit_module_with(items, handler, TargetMode::AverBridge, &HashMap::new()).map(
         |(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
             bytes,
             mir_count,
@@ -227,7 +256,8 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2).map(|(bytes, _, _)| bytes)
+    module::emit_module_with(items, None, TargetMode::Wasip2, &HashMap::new())
+        .map(|(bytes, _, _)| bytes)
 }
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
@@ -251,5 +281,6 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: &str,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, Some(handler), TargetMode::Wasip2).map(|(bytes, _, _)| bytes)
+    module::emit_module_with(items, Some(handler), TargetMode::Wasip2, &HashMap::new())
+        .map(|(bytes, _, _)| bytes)
 }

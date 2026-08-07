@@ -107,7 +107,7 @@ fn build_component_bytes(
     }
 
     let dep_modules = super::commands::load_compile_deps(&items, &module_root, false, false, false);
-    aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     aver::ir::pipeline::resolve(&mut items);
 
     if let Err(unsupported) = wasip2_codegen::check_supported_effects(&items) {
@@ -124,8 +124,15 @@ fn build_component_bytes(
         return Err(out);
     }
 
-    let core_bytes = wasm_gc::compile_to_wasm_gc_for_wasip2(&items, result.analysis.as_ref())
-        .map_err(|e| format!("wasm-gc lowering: {e}"))?;
+    let core_bytes = wasm_gc::compile_to_wasm_gc_flattened(
+        &items,
+        result.analysis.as_ref(),
+        None,
+        wasm_gc::TargetMode::Wasip2,
+        &type_aliases,
+    )
+    .map(|out| out.bytes)
+    .map_err(|e| format!("wasm-gc lowering: {e}"))?;
     let (component_bytes, _wit) =
         wasip2_codegen::compile_to_component(&core_bytes, wasip2_codegen::Wasip2World::CliCommand)
             .map_err(|e| format!("component wrap: {e}"))?;

@@ -89,10 +89,17 @@ pub fn compile_project_to_wasm(
         .map(|m| loaded_to_module_info(m, false))
         .collect();
 
-    codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    let type_aliases = codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
     crate::ir::pipeline::resolve(&mut entry_items);
-    codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
-        .map_err(|e| format!("{e}"))
+    codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        &entry_items,
+        pipeline_result.analysis.as_ref(),
+        None,
+        codegen::wasm_gc::TargetMode::AverBridge,
+        &type_aliases,
+    )
+    .map(|out| out.bytes)
+    .map_err(|e| format!("{e}"))
 }
 
 /// Multi-file project compile that targets a synthetic `__entry__`
@@ -144,11 +151,17 @@ pub fn compile_project_to_wasm_with_entry(
         .into_iter()
         .map(|m| loaded_to_module_info(m, false))
         .collect();
-    codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    let type_aliases = codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
     crate::ir::pipeline::resolve(&mut entry_items);
-    let bytes =
-        codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
-            .map_err(|e| format!("{e}"))?;
+    let bytes = codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        &entry_items,
+        pipeline_result.analysis.as_ref(),
+        None,
+        codegen::wasm_gc::TargetMode::AverBridge,
+        &type_aliases,
+    )
+    .map(|out| out.bytes)
+    .map_err(|e| format!("{e}"))?;
     Ok((bytes, target_fn))
 }
 

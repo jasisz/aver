@@ -170,13 +170,21 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     } else {
         Vec::new()
     };
+    let mut type_aliases = std::collections::HashMap::new();
     if !dep_modules.is_empty() {
-        crate::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        type_aliases = crate::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
         crate::ir::pipeline::resolve(&mut items);
     }
 
-    let bytes = crate::codegen::wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref())
-        .map_err(|e| format!("wasm-gc compile error: {}", e))?;
+    let bytes = crate::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        &items,
+        result.analysis.as_ref(),
+        None,
+        crate::codegen::wasm_gc::TargetMode::AverBridge,
+        &type_aliases,
+    )
+    .map(|out| out.bytes)
+    .map_err(|e| format!("wasm-gc compile error: {}", e))?;
 
     run_verify_cases_in_wasmtime(&bytes, &plans)
 }

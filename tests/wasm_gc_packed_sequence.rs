@@ -36,6 +36,47 @@ fn run(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
     )
 }
 
+/// Multi-module variant of `run`: writes `main.av` plus one dep module
+/// file, then drives `aver run main.av --module-root <dir>` so the CLI's
+/// multi-module flatten + wasm-gc path is exercised end to end.
+fn run_multi(
+    entry_src: &str,
+    dep_file: &str,
+    dep_src: &str,
+    wasm_gc: bool,
+    packed: bool,
+) -> (bool, String) {
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "aver-packed-sequence-multi-{}-{id}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("main.av");
+    std::fs::write(&path, entry_src).expect("entry source");
+    std::fs::write(dir.join(dep_file), dep_src).expect("dep source");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command.arg("run").arg(&path).arg("--module-root").arg(&dir);
+    if wasm_gc {
+        command.arg("--wasm-gc");
+    }
+    if !packed {
+        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+    }
+    let output = command.output().expect("run aver");
+    let _ = std::fs::remove_dir_all(dir);
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .trim()
+        .to_string(),
+    )
+}
+
 fn compile(source: &str, packed: bool) -> Vec<u8> {
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
@@ -180,6 +221,107 @@ fn generic_u8_refinement_matches_vm_and_boxed_wasm() {
         i8_array_count(&boxed_wasm) + 1,
         "the proof-derived layout must add one packed i8 array"
     );
+}
+
+// Entry-side qualified annotation over a SOLE-declarer packed dep type
+// (`o: Dep.Octets = ...`). The dep's gated refinement earns the packed
+// layout under its bare post-flatten name while the entry annotation's
+// qualified spelling survives in the type stamps; the flatten-derived
+// alias must resolve both spellings to the same layout, on the packed
+// path AND under the boxed differential baseline.
+const QUALIFIED_ENTRY: &str = r#"module Main
+    intent = "entry qualified annotation over sole-declarer packed dep type"
+    depends [Dep]
+    effects [Console]
+
+fn firstValue(o: Dep.Octets) -> Int
+    match o.values
+        [head, .._] -> head
+        [] -> 0 - 1
+
+fn run() -> Result<Int, String>
+    o: Dep.Octets = Dep.fromList([200])?
+    Result.Ok(firstValue(o))
+
+fn main() -> Unit
+    ! [Console.print]
+    match run()
+        Result.Ok(n) -> Console.print("{n}")
+        Result.Err(error) -> Console.print(error)
+"#;
+
+const QUALIFIED_DEP: &str = r#"module Dep
+    intent = "sole-declarer gated Octets refinement"
+    exposes [Octets, fromList]
+    depends []
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+"#;
+
+#[test]
+fn qualified_annotation_over_sole_declarer_dep_matches_vm_and_boxed_wasm() {
+    let (vm_ok, vm) = run_multi(QUALIFIED_ENTRY, "dep.av", QUALIFIED_DEP, false, true);
+    let (packed_ok, packed) = run_multi(QUALIFIED_ENTRY, "dep.av", QUALIFIED_DEP, true, true);
+    let (boxed_ok, boxed) = run_multi(QUALIFIED_ENTRY, "dep.av", QUALIFIED_DEP, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(packed, vm);
+    assert_eq!(boxed, vm);
+    assert_eq!(vm, "200");
+}
+
+// SOUNDNESS counterpart of the alias availability test above: an
+// entry-side QUALIFIED ungated constructor (`Dep.Octets(values = xs)`)
+// resolves the packed layout through the flatten-derived alias, so the
+// demotion scan must see that construct site under the SAME key — every
+// spelling that can resolve a packed layout at a construct site must be
+// visible to the scan. Before the alias-aware scan, the qualified
+// spelling never matched the bare `Octets` candidate, the type kept its
+// packed u8 storage, and the out-of-range 1000 silently truncated to
+// 232 on the packed path (the exact bug class the exact-name rule
+// killed for collision-renamed types).
+const QUALIFIED_BYPASS_ENTRY: &str = r#"module Main
+    intent = "entry-side qualified ungated constructor must demote the packed layout"
+    depends [Dep]
+    effects [Console]
+
+fn bypass(xs: List<Int>) -> Dep.Octets
+    Dep.Octets(values = xs)
+
+fn main() -> Unit
+    ! [Console.print]
+    value = bypass([1000])
+    match value.values
+        [head, .._] -> Console.print("{head}")
+        [] -> Console.print("empty")
+"#;
+
+#[test]
+fn qualified_ungated_constructor_demotes_instead_of_truncating() {
+    let (vm_ok, vm) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, false, true);
+    let (packed_ok, packed) =
+        run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, true, true);
+    let (boxed_ok, boxed) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(packed, vm, "packed wasm must not truncate the ungated 1000");
+    assert_eq!(boxed, vm);
+    assert_eq!(vm, "1000");
 }
 
 #[test]

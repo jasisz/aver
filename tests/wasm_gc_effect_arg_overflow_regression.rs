@@ -74,7 +74,10 @@ fn run_wasm_gc_with_mode(
              harness must not run it either:\n{rendered}"
         );
     }
-    aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+    // This harness flattens multi-module input, so it must thread the
+    // REAL alias map the flattener derived — the same production path
+    // `src/main/run_wasm_gc.rs` takes.
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     aver::ir::pipeline::resolve(&mut items);
 
     let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {
@@ -82,9 +85,9 @@ fn run_wasm_gc_with_mode(
             &items,
             result.analysis.as_ref(),
             aver::runtime::wasm_gc::RunConfig {
-                program_args: Vec::new(),
-                entry_info: None,
                 mode,
+                type_aliases: type_aliases.clone(),
+                ..Default::default()
             },
         )
     });

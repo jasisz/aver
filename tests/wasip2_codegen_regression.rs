@@ -86,13 +86,17 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
-    parse_pipeline_with_module_root(source, None)
+    parse_pipeline_with_module_root(source, None).map(|(items, _)| items)
 }
 
+/// Returns the flattened items PLUS the identity-preserving qualified
+/// type-name aliases `flatten_multimodule` derived — harnesses that
+/// flatten multi-module input must thread the real alias map into the
+/// compile so they exercise the same path `aver compile` takes.
 fn parse_pipeline_with_module_root(
     source: &str,
     module_root: Option<&str>,
-) -> Result<Vec<TopLevel>, String> {
+) -> Result<(Vec<TopLevel>, std::collections::HashMap<String, String>), String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
@@ -122,12 +126,30 @@ fn parse_pipeline_with_module_root(
             tc.errors.first()
         ));
     }
+    let mut type_aliases = std::collections::HashMap::new();
     if let Some(root) = module_root {
         let dep_modules = aver::source::load_compile_deps(&items, root)?;
-        aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
         aver::ir::pipeline::resolve(&mut items);
     }
-    Ok(items)
+    Ok((items, type_aliases))
+}
+
+/// Compile the wasip2 core module through the flattened entry with the
+/// real alias map, mirroring the CLI's multi-module `--target wasip2`
+/// path.
+fn compile_core_flattened(
+    items: &[TopLevel],
+    type_aliases: &std::collections::HashMap<String, String>,
+) -> Result<Vec<u8>, aver::codegen::wasm_gc::WasmGcError> {
+    aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+        items,
+        None,
+        None,
+        aver::codegen::wasm_gc::TargetMode::Wasip2,
+        type_aliases,
+    )
+    .map(|out| out.bytes)
 }
 
 #[test]
@@ -144,9 +166,10 @@ fn main() -> Result<Bytes, String>
     payload = Bytes.fromList([249, 190, 180, 217])?
     Tcp.sendBytes("127.0.0.1", 9, payload)
 "#;
-    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
-        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
-    let core_bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
     let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
         &core_bytes,
@@ -171,9 +194,10 @@ fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
     ! [Tcp.readBytes]
     Tcp.readBytes(conn, count)
 "#;
-    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
-        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
-    let core_bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
     let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
         &core_bytes,
@@ -198,9 +222,10 @@ fn write(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
     ! [Tcp.writeBytes]
     Tcp.writeBytes(conn, payload)
 "#;
-    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
-        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
-    let core_bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
     let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
         &core_bytes,

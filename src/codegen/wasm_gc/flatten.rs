@@ -41,11 +41,28 @@ use crate::codegen::common::type_def_name;
 /// appends the dep's renamed `TypeDef`s + prefixed `FnDef`s onto the entry
 /// items.
 ///
+/// Returns the identity-preserving qualified type-name aliases: for every
+/// dep type whose post-flatten `TypeDef` name stays BARE (sole declarer
+/// among the deps, and no entry type shares the bare name), the qualified
+/// spelling the entry module may have used (`"Dep.Octets"`) maps to that
+/// bare post-flatten name (`"Octets"`). Entry-side local-binding
+/// annotations keep their qualified spelling through the pre-flatten
+/// typechecker's type stamps, which survive into codegen — the wasm-gc
+/// registry registers these aliases so a stamped `Dep.Octets` resolves the
+/// SAME proof-derived layout facts as `Octets`. Fail-closed: a bare name
+/// declared by two+ deps is collision-renamed (its canonical `TypeDef`
+/// name is already the qualified form — exact lookups work, no alias), and
+/// a bare name also declared by the entry module gets NO alias because the
+/// qualified spelling would be ambiguous against the entry type.
+///
 /// Component Model is a future separate mode; this single-binary path is the
 /// bench-friendly and playground-friendly default.
-pub fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
+pub fn flatten_multimodule(
+    items: &mut Vec<TopLevel>,
+    dep_modules: &[ModuleInfo],
+) -> HashMap<String, String> {
     if dep_modules.is_empty() {
-        return;
+        return HashMap::new();
     }
 
     let prefixes: HashSet<String> = dep_modules.iter().map(|m| m.prefix.clone()).collect();
@@ -68,6 +85,24 @@ pub fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]
         .filter(|(_, owners)| owners.len() > 1)
         .map(|(bare, _)| bare.clone())
         .collect();
+
+    // Entry-declared bare type names, collected BEFORE dep typedefs are
+    // appended: a dep bare name shadowed by an entry type must not get a
+    // qualified alias (two post-flatten `TypeDef`s would share the bare
+    // key, so the alias target would be ambiguous).
+    let entry_bare_names: HashSet<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::TypeDef(td) => Some(type_def_name(td)),
+            _ => None,
+        })
+        .collect();
+    let mut type_aliases: HashMap<String, String> = HashMap::new();
+    for (bare, owners) in &bare_owners {
+        if owners.len() == 1 && !entry_bare_names.contains(bare.as_str()) {
+            type_aliases.insert(format!("{}.{}", owners[0], bare), bare.clone());
+        }
+    }
 
     let qualified_type_names: HashSet<String> = dep_modules
         .iter()
@@ -148,6 +183,8 @@ pub fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]
             items.push(TopLevel::FnDef(new_fd));
         }
     }
+
+    type_aliases
 }
 
 fn prefixed(prefix: &str, name: &str) -> String {

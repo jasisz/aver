@@ -51,11 +51,24 @@ impl PackedSequenceHelperRegistry {
                 .insert(name.clone(), (pack_type, unpack_type));
             self.order.push(name.clone());
         }
+        // Register the flatten-derived qualified aliases as extra lookup
+        // KEYS onto the canonical ops — never extra helpers (`order` and
+        // `type_indices` stay canonical-only, so slot assignment and
+        // helper emission are untouched). An alias provably denotes the
+        // same `TypeDef` (sole declarer), so sharing the pack/unpack pair
+        // is identity-correct.
+        for (alias, canonical) in &registry.type_name_aliases {
+            if let Some(ops) = self.ops.get(canonical).copied() {
+                self.ops.entry(alias.clone()).or_insert(ops);
+            }
+        }
     }
 
-    /// Exact-name lookup only — no qualified→bare fallback, mirroring
+    /// Exact-name lookup — no qualified→bare suffix fallback, mirroring
     /// `TypeRegistry::packed_sequence`. A bare-name fallback would route
     /// a collision-renamed dep type through an unrelated pack/unpack pair.
+    /// The only extra keys are the flatten-derived identity-preserving
+    /// aliases registered by `assign_slots`.
     pub(super) fn ops_for(&self, type_name: &str) -> Option<PackedSequenceOps> {
         self.ops.get(type_name).copied()
     }

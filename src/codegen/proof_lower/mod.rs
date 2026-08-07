@@ -997,6 +997,7 @@ fn rebuild_bool_and(
 pub fn field_carrier_eligible_intervals(
     inputs: &ProofLowerInputs,
     instantiations: &crate::ir::mir::InstantiationRegistry,
+    type_aliases: &HashMap<String, String>,
 ) -> HashMap<(String, String), (crate::ir::interval::Interval, bool)> {
     let table = field_carrier_interval_table(inputs);
     if table.is_empty() {
@@ -1019,8 +1020,13 @@ pub fn field_carrier_eligible_intervals(
             })
             .collect();
     }
-    let demoted_records =
-        multi_field_record_demotions(inputs, &record_candidates, &table, instantiations);
+    let demoted_records = multi_field_record_demotions(
+        inputs,
+        &record_candidates,
+        &table,
+        instantiations,
+        type_aliases,
+    );
     table
         .into_iter()
         .filter(|((rec, _), (iv, known))| {
@@ -1066,6 +1072,7 @@ fn multi_field_record_demotions(
     candidates: &HashSet<String>,
     field_intervals: &HashMap<(String, String), (crate::ir::interval::Interval, bool)>,
     instantiations: &crate::ir::mir::InstantiationRegistry,
+    type_aliases: &HashMap<String, String>,
 ) -> HashSet<String> {
     let mut demoted: HashSet<String> = HashSet::new();
     if candidates.is_empty() {
@@ -1115,11 +1122,16 @@ fn multi_field_record_demotions(
                     } => (type_name, updates),
                     _ => return,
                 };
+                // Canonicalize the construct-site spelling FIRST — same
+                // reason as the single-field scan: a qualified spelling
+                // resolves the same per-field erasure at emit time, so it
+                // must trip the same demotion key.
+                let type_name = canonical_spelling(type_name, type_aliases);
                 if !candidates.contains(type_name) {
                     return;
                 }
                 // The construct inside the record's own smart-ctor is gated.
-                if ctor_fn_of.get(type_name) == Some(&fd.name) {
+                if ctor_fn_of.get(type_name).map(String::as_str) == Some(fd.name.as_str()) {
                     return;
                 }
                 // Outside the smart-ctor: safe iff EVERY provided field value is
@@ -1128,7 +1140,7 @@ fn multi_field_record_demotions(
                 // the gate). A `RecordUpdate` that omits a bounded field copies
                 // it from the (already-gated) base, which is safe too.
                 let all_safe = create_fields.iter().all(|(fname, value)| {
-                    match field_intervals.get(&(type_name.clone(), fname.clone())) {
+                    match field_intervals.get(&(type_name.to_string(), fname.clone())) {
                         // A non-bounded field (no eligible interval) is stored
                         // boxed regardless, so it can't smuggle an i64-overflow.
                         None => true,
@@ -1137,7 +1149,7 @@ fn multi_field_record_demotions(
                     }
                 });
                 if !all_safe {
-                    demoted.insert(type_name.clone());
+                    demoted.insert(type_name.to_string());
                 }
             });
         }
@@ -1150,13 +1162,14 @@ fn multi_field_record_demotions(
             key,
             candidates,
             &record_fields,
+            type_aliases,
             &mut HashSet::new(),
             &mut demoted,
         );
     }
     for ty_str in all_type_annotations(inputs) {
         let ty = crate::types::parse_type_str(&ty_str);
-        collect_map_key_carriers(&ty, candidates, &record_fields, &mut demoted);
+        collect_map_key_carriers(&ty, candidates, &record_fields, type_aliases, &mut demoted);
     }
 
     // ---- Scan 3: Map-VALUE usage (direct + transitive, list/vec/tuple-stopped)
@@ -1184,6 +1197,7 @@ fn multi_field_record_demotions(
             value,
             candidates,
             &record_fields,
+            type_aliases,
             &mut map_value_seen,
             &mut demoted,
         );
@@ -1206,6 +1220,7 @@ fn carriers_reachable_as_map_value(
     value: &crate::ast::Type,
     candidates: &HashSet<String>,
     record_fields: &HashMap<String, Vec<String>>,
+    type_aliases: &HashMap<String, String>,
     seen: &mut HashSet<String>,
     demoted: &mut HashSet<String>,
 ) {
@@ -1216,16 +1231,44 @@ fn carriers_reachable_as_map_value(
             // Map values array, so a carrier behind them is still a direct
             // value — descend.
             Type::Option(a) => {
-                carriers_reachable_as_map_value(a, candidates, record_fields, seen, demoted);
+                carriers_reachable_as_map_value(
+                    a,
+                    candidates,
+                    record_fields,
+                    type_aliases,
+                    seen,
+                    demoted,
+                );
             }
             Type::Result(a, b) => {
-                carriers_reachable_as_map_value(a, candidates, record_fields, seen, demoted);
-                carriers_reachable_as_map_value(b, candidates, record_fields, seen, demoted);
+                carriers_reachable_as_map_value(
+                    a,
+                    candidates,
+                    record_fields,
+                    type_aliases,
+                    seen,
+                    demoted,
+                );
+                carriers_reachable_as_map_value(
+                    b,
+                    candidates,
+                    record_fields,
+                    type_aliases,
+                    seen,
+                    demoted,
+                );
             }
             // A nested `Map` value is itself a Map values array — descend into
             // its value (its key is a separate Scan-2 concern, handled there).
             Type::Map(_k, v) => {
-                carriers_reachable_as_map_value(v, candidates, record_fields, seen, demoted);
+                carriers_reachable_as_map_value(
+                    v,
+                    candidates,
+                    record_fields,
+                    type_aliases,
+                    seen,
+                    demoted,
+                );
             }
             // `List` / `Vector` / `Tuple` make the carrier a native container
             // ELEMENT (now eligible) — STOP, do not demote anything inside.
@@ -1234,6 +1277,10 @@ fn carriers_reachable_as_map_value(
         }
         return;
     };
+    // Resolved type stamps can spell a sole-declarer dep type qualified
+    // (`Dep.IntRange`) — canonicalize so the bare-keyed candidate and
+    // record-field tables see the same key the registry lookups resolve.
+    let name = canonical_spelling(name, type_aliases);
     if !seen.insert(name.to_string()) {
         return;
     }
@@ -1243,7 +1290,14 @@ fn carriers_reachable_as_map_value(
     if let Some(fields) = record_fields.get(name) {
         for field_ty in fields {
             let parsed = crate::types::parse_type_str(field_ty);
-            carriers_reachable_as_map_value(&parsed, candidates, record_fields, seen, demoted);
+            carriers_reachable_as_map_value(
+                &parsed,
+                candidates,
+                record_fields,
+                type_aliases,
+                seen,
+                demoted,
+            );
         }
     }
 }
@@ -1287,13 +1341,37 @@ fn literal_in_interval(value: &Spanned<Expr>, iv: crate::ir::interval::Interval)
     iv.contains_point(k)
 }
 
+/// Resolve one type-name spelling through the flatten-derived identity-
+/// preserving alias map (qualified spelling → canonical post-flatten
+/// `TypeDef` name); a spelling with no alias entry is returned unchanged.
+///
+/// INVARIANT: every spelling that can RESOLVE a packed/carrier layout at a
+/// construct site must also be VISIBLE to the demotion scans under the same
+/// key. The wasm-gc registry resolves entry-side qualified spellings
+/// (`Dep.Octets`) to the canonical layout facts through this exact map
+/// (`TypeRegistry::canonical_type_name` consumes the same
+/// `flatten_multimodule` return value), so the fail-closed scans must
+/// canonicalize construct-site and resolved-type spellings through the SAME
+/// map before comparing against the bare-name-keyed candidate sets —
+/// otherwise a qualified ungated constructor would escape demotion while
+/// still resolving the packed layout, silently truncating out-of-range
+/// values. The map is empty for single-module compiles (identity).
+fn canonical_spelling<'a>(name: &'a str, type_aliases: &'a HashMap<String, String>) -> &'a str {
+    type_aliases.get(name).map(String::as_str).unwrap_or(name)
+}
+
 /// Representation-independent safety scan for refinement carriers. A direct
 /// constructor or update outside the recognized smart constructor can bypass
 /// the invariant, so any such carrier must keep its ordinary representation.
+/// Construct-site spellings are canonicalized through `type_aliases` (see
+/// [`canonical_spelling`]) so an entry-side qualified constructor over a
+/// sole-declarer dep type is matched against the same bare candidate key the
+/// layout tables use.
 pub fn carrier_ungated_construction_demotions(
     inputs: &ProofLowerInputs,
     candidates: &HashSet<String>,
     intervals: &HashMap<String, (crate::ir::interval::Interval, bool)>,
+    type_aliases: &HashMap<String, String>,
 ) -> HashSet<String> {
     let mut demoted = HashSet::new();
     if candidates.is_empty() {
@@ -1340,7 +1418,14 @@ pub fn carrier_ungated_construction_demotions(
                     } => (type_name, updates),
                     _ => return,
                 };
-                if !candidates.contains(type_name) || ctor_fn_of.get(type_name) == Some(&fd.name) {
+                // Canonicalize the construct-site spelling FIRST: a
+                // qualified `Dep.Octets(values = ...)` resolves the same
+                // layout as `Octets` at emit time, so it must trip the
+                // same demotion key here.
+                let type_name = canonical_spelling(type_name, type_aliases);
+                if !candidates.contains(type_name)
+                    || ctor_fn_of.get(type_name).map(String::as_str) == Some(fd.name.as_str())
+                {
                     return;
                 }
                 let safe_literal = matches!(
@@ -1348,7 +1433,7 @@ pub fn carrier_ungated_construction_demotions(
                     Some((iv, true)) if construct_arg_is_in_interval(fields, *iv)
                 );
                 if !safe_literal {
-                    demoted.insert(type_name.clone());
+                    demoted.insert(type_name.to_string());
                 }
             });
         }
@@ -1414,8 +1499,10 @@ pub fn carrier_eligibility_demotions(
     candidates: &HashSet<String>,
     intervals: &HashMap<String, (crate::ir::interval::Interval, bool)>,
     resolved_map_keys: &[crate::ast::Type],
+    type_aliases: &HashMap<String, String>,
 ) -> HashSet<String> {
-    let mut demoted = carrier_ungated_construction_demotions(inputs, candidates, intervals);
+    let mut demoted =
+        carrier_ungated_construction_demotions(inputs, candidates, intervals, type_aliases);
     if candidates.is_empty() {
         return demoted;
     }
@@ -1441,6 +1528,7 @@ pub fn carrier_eligibility_demotions(
             key,
             candidates,
             &record_fields,
+            type_aliases,
             &mut HashSet::new(),
             &mut demoted,
         );
@@ -1454,7 +1542,7 @@ pub fn carrier_eligibility_demotions(
     // only ever ADD to `demoted` (fail-closed).
     for ty_str in all_type_annotations(inputs) {
         let ty = crate::types::parse_type_str(&ty_str);
-        collect_map_key_carriers(&ty, candidates, &record_fields, &mut demoted);
+        collect_map_key_carriers(&ty, candidates, &record_fields, type_aliases, &mut demoted);
     }
 
     demoted
@@ -1613,34 +1701,42 @@ fn collect_map_key_carriers(
     ty: &crate::ast::Type,
     candidates: &HashSet<String>,
     record_fields: &HashMap<String, Vec<String>>,
+    type_aliases: &HashMap<String, String>,
     demoted: &mut HashSet<String>,
 ) {
     use crate::ast::Type;
     match ty {
         Type::Map(key, value) => {
-            carriers_reachable_from(key, candidates, record_fields, &mut HashSet::new(), demoted);
+            carriers_reachable_from(
+                key,
+                candidates,
+                record_fields,
+                type_aliases,
+                &mut HashSet::new(),
+                demoted,
+            );
             // The KEY is the hazard; recurse into both so a nested Map in
             // either position is still inspected.
-            collect_map_key_carriers(key, candidates, record_fields, demoted);
-            collect_map_key_carriers(value, candidates, record_fields, demoted);
+            collect_map_key_carriers(key, candidates, record_fields, type_aliases, demoted);
+            collect_map_key_carriers(value, candidates, record_fields, type_aliases, demoted);
         }
         Type::Result(a, b) => {
-            collect_map_key_carriers(a, candidates, record_fields, demoted);
-            collect_map_key_carriers(b, candidates, record_fields, demoted);
+            collect_map_key_carriers(a, candidates, record_fields, type_aliases, demoted);
+            collect_map_key_carriers(b, candidates, record_fields, type_aliases, demoted);
         }
         Type::Option(a) | Type::List(a) | Type::Vector(a) => {
-            collect_map_key_carriers(a, candidates, record_fields, demoted);
+            collect_map_key_carriers(a, candidates, record_fields, type_aliases, demoted);
         }
         Type::Tuple(items) => {
             for t in items {
-                collect_map_key_carriers(t, candidates, record_fields, demoted);
+                collect_map_key_carriers(t, candidates, record_fields, type_aliases, demoted);
             }
         }
         Type::Fn(params, ret, _) => {
             for p in params {
-                collect_map_key_carriers(p, candidates, record_fields, demoted);
+                collect_map_key_carriers(p, candidates, record_fields, type_aliases, demoted);
             }
-            collect_map_key_carriers(ret, candidates, record_fields, demoted);
+            collect_map_key_carriers(ret, candidates, record_fields, type_aliases, demoted);
         }
         _ => {}
     }
@@ -1654,6 +1750,7 @@ fn carriers_reachable_from(
     key: &crate::ast::Type,
     candidates: &HashSet<String>,
     record_fields: &HashMap<String, Vec<String>>,
+    type_aliases: &HashMap<String, String>,
     seen: &mut HashSet<String>,
     demoted: &mut HashSet<String>,
 ) {
@@ -1663,25 +1760,37 @@ fn carriers_reachable_from(
         // chase the inner element types too.
         match key {
             Type::Option(a) | Type::List(a) | Type::Vector(a) => {
-                carriers_reachable_from(a, candidates, record_fields, seen, demoted);
+                carriers_reachable_from(a, candidates, record_fields, type_aliases, seen, demoted);
             }
             Type::Tuple(items) => {
                 for t in items {
-                    carriers_reachable_from(t, candidates, record_fields, seen, demoted);
+                    carriers_reachable_from(
+                        t,
+                        candidates,
+                        record_fields,
+                        type_aliases,
+                        seen,
+                        demoted,
+                    );
                 }
             }
             Type::Map(k, v) => {
-                carriers_reachable_from(k, candidates, record_fields, seen, demoted);
-                carriers_reachable_from(v, candidates, record_fields, seen, demoted);
+                carriers_reachable_from(k, candidates, record_fields, type_aliases, seen, demoted);
+                carriers_reachable_from(v, candidates, record_fields, type_aliases, seen, demoted);
             }
             Type::Result(a, b) => {
-                carriers_reachable_from(a, candidates, record_fields, seen, demoted);
-                carriers_reachable_from(b, candidates, record_fields, seen, demoted);
+                carriers_reachable_from(a, candidates, record_fields, type_aliases, seen, demoted);
+                carriers_reachable_from(b, candidates, record_fields, type_aliases, seen, demoted);
             }
             _ => {}
         }
         return;
     };
+    // A resolved Map-key type can spell a sole-declarer dep carrier
+    // qualified (`Map<Dep.IntRange, V>` from a local-binding annotation's
+    // type stamp) — canonicalize so it demotes the same bare key the
+    // registry's eligibility lookups resolve through the alias map.
+    let name = canonical_spelling(name, type_aliases);
     if !seen.insert(name.to_string()) {
         return;
     }
@@ -1691,7 +1800,14 @@ fn carriers_reachable_from(
     if let Some(fields) = record_fields.get(name) {
         for field_ty in fields {
             let parsed = crate::types::parse_type_str(field_ty);
-            carriers_reachable_from(&parsed, candidates, record_fields, seen, demoted);
+            carriers_reachable_from(
+                &parsed,
+                candidates,
+                record_fields,
+                type_aliases,
+                seen,
+                demoted,
+            );
         }
     }
 }
