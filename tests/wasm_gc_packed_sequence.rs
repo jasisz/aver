@@ -324,6 +324,85 @@ fn qualified_ungated_constructor_demotes_instead_of_truncating() {
     assert_eq!(vm, "1000");
 }
 
+// MULTI-FIELD twin of the qualified bypass above, for the carrier-i64
+// path: the record-level fail-closed scan (`multi_field_record_demotions`)
+// must see an entry-side QUALIFIED ungated construct site
+// (`Dep.Coord(x = ..., y = ...)`) under the same canonical bare key its
+// candidate set uses. If that canonicalization ever regressed, the
+// qualified spelling would escape Scan 1, `Coord`'s fields would keep
+// their native-i64 erasure, and the ungated beyond-i64 value below would
+// trap in `__aint_to_i64_checked` at the construct bridge instead of
+// demoting the record to its boxed `$AverInt` layout. The VM keeps the
+// full bignum carrier, so identical output across all three legs is the
+// soundness gate.
+const QUALIFIED_MULTI_FIELD_BYPASS_ENTRY: &str = r#"module Main
+    intent = "entry-side qualified ungated constructor must demote the multi-field carrier"
+    depends [Dep]
+    effects [Console]
+
+fn bypass(a: Int, b: Int) -> Dep.Coord
+    Dep.Coord(x = a, y = b)
+
+fn main() -> Unit
+    ! [Console.print]
+    c = bypass(10000000000000000000, 4)
+    Console.print("{c.x}")
+"#;
+
+const QUALIFIED_MULTI_FIELD_DEP: &str = r#"module Dep
+    intent = "sole-declarer gated multi-field Coord record"
+    exposes [Coord, coord]
+    depends []
+
+record Coord
+    x: Int
+    y: Int
+
+fn coord(x: Int, y: Int) -> Result<Coord, String>
+    match Bool.and(Bool.and(x >= 0, x <= 100), Bool.and(y >= 0, y <= 100))
+        true -> Result.Ok(Coord(x = x, y = y))
+        false -> Result.Err("oob")
+"#;
+
+#[test]
+fn qualified_ungated_multi_field_constructor_demotes_instead_of_trapping() {
+    let (vm_ok, vm) = run_multi(
+        QUALIFIED_MULTI_FIELD_BYPASS_ENTRY,
+        "dep.av",
+        QUALIFIED_MULTI_FIELD_DEP,
+        false,
+        true,
+    );
+    let (packed_ok, packed) = run_multi(
+        QUALIFIED_MULTI_FIELD_BYPASS_ENTRY,
+        "dep.av",
+        QUALIFIED_MULTI_FIELD_DEP,
+        true,
+        true,
+    );
+    let (boxed_ok, boxed) = run_multi(
+        QUALIFIED_MULTI_FIELD_BYPASS_ENTRY,
+        "dep.av",
+        QUALIFIED_MULTI_FIELD_DEP,
+        true,
+        false,
+    );
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(
+        packed_ok,
+        "carrier-enabled wasm failed (beyond-i64 construct trapped instead \
+         of demoting): {packed}"
+    );
+    assert!(boxed_ok, "AVER_NO_PACKED_SEQUENCES wasm failed: {boxed}");
+    assert_eq!(
+        packed, vm,
+        "carrier-enabled wasm must demote the qualified ungated Coord, not \
+         trap or truncate its beyond-i64 field"
+    );
+    assert_eq!(boxed, vm);
+    assert_eq!(vm, "10000000000000000000");
+}
+
 #[test]
 fn ungated_constructor_demotes_instead_of_truncating() {
     let (vm_ok, vm) = run(BYPASSED_OCTETS, false, true);
