@@ -203,6 +203,12 @@ fn load_recursive_from_map(
         for sub_dep in &module.depends {
             load_recursive_from_map(sub_dep, files, loaded, loading, result)?;
         }
+        // Standard modules implied by source-typed builtins load even when
+        // this module's `depends` never names them — same contract as the
+        // filesystem loaders (`load_compile_deps` and friends).
+        for implied in crate::stdlib::implicit_stdlib_deps(&items) {
+            load_recursive_from_map(&implied, files, loaded, loading, result)?;
+        }
     }
 
     loading.pop();
@@ -405,7 +411,9 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
 
 /// Load every dep module declared by `items`'s `Module.depends`, plus
 /// every transitive dep, into `codegen::ModuleInfo` records ready to
-/// hand to `PipelineConfig.dep_modules`.
+/// hand to `PipelineConfig.dep_modules`. Standard modules implied by
+/// source-typed builtins (`crate::stdlib::implicit_stdlib_deps`) load
+/// too, even when `depends` never names them.
 ///
 /// Each dep goes through the same canonical pipeline as the entry —
 /// `pipeline::run` with `TypecheckMode::Full { base_dir: module_root }`,
@@ -432,6 +440,15 @@ pub fn load_compile_deps(
     let mut loaded = HashSet::new();
     for dep_name in &module.depends {
         load_module_recursive_for_compile(dep_name, module_root, &mut result, &mut loaded)?;
+    }
+    // Builtins like `Crypto.sha256` cross nominal types owned by embedded
+    // standard modules (`Bytes`, `Digest32`). Codegen backends emit those
+    // records from the loaded module set, so the owning modules must load
+    // even when the entry never names them in `depends` — otherwise the
+    // program passes check/verify and fails late inside the generated
+    // artifact. `loaded` dedupes the overlap with the explicit list.
+    for dep_name in crate::stdlib::implicit_stdlib_deps(items) {
+        load_module_recursive_for_compile(&dep_name, module_root, &mut result, &mut loaded)?;
     }
     Ok(result)
 }
@@ -493,6 +510,13 @@ fn load_module_recursive_for_compile(
         .unwrap_or_default();
     for dep in &transitive {
         load_module_recursive_for_compile(dep, module_root, result, loaded)?;
+    }
+    // A dependency module can also call a builtin whose signature crosses
+    // stdlib-owned nominal types without naming the owning standard module
+    // in its own `depends` — load those implied modules too (see
+    // `load_compile_deps` for the entry-level counterpart).
+    for dep in crate::stdlib::implicit_stdlib_deps(&items) {
+        load_module_recursive_for_compile(&dep, module_root, result, loaded)?;
     }
 
     let depends = transitive;

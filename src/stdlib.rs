@@ -44,10 +44,16 @@ pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] = &[
     ("Tcp.writeBytes", &["Bytes"]),
 ];
 
-/// Standard modules `items` implicitly depends on because a function body or
-/// top-level statement calls a builtin whose signature crosses stdlib-owned
-/// nominal types (e.g. `Crypto.sha256` produces a `Digest32` even when
-/// `depends` never names `Crypto.Digest32`).
+/// Standard modules `items` implicitly depends on because a function body,
+/// top-level statement, or verify case calls a builtin whose signature
+/// crosses stdlib-owned nominal types (e.g. `Crypto.sha256` produces a
+/// `Digest32` even when `depends` never names `Crypto.Digest32`).
+///
+/// Verify blocks count because backends compile them too: Rust codegen
+/// emits verify cases into a `#[cfg(test)]` module, so a program whose only
+/// `Crypto.sha256` call sits in a verify case still generates code that
+/// references the `Digest32` record. Cases some backend later skips only
+/// over-load a standard module, which is harmless.
 pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
     let mut callees = std::collections::HashSet::new();
     for item in items {
@@ -57,6 +63,17 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
             }
             crate::ast::TopLevel::Stmt(stmt) => {
                 crate::call_graph::collect_callees_stmt(stmt, &mut callees);
+            }
+            crate::ast::TopLevel::Verify(vb) => {
+                for (left, right) in &vb.cases {
+                    crate::call_graph::collect_callees_expr(left, &mut callees);
+                    crate::call_graph::collect_callees_expr(right, &mut callees);
+                }
+                for givens in &vb.case_givens {
+                    for (_, expr) in givens {
+                        crate::call_graph::collect_callees_expr(expr, &mut callees);
+                    }
+                }
             }
             _ => {}
         }
@@ -99,5 +116,29 @@ mod tests {
             "module Plain\n    intent = \"no stdlib-typed builtins\"\n    depends []\n    effects []\n\nfn double(n: Int) -> Int\n    ? \"Double a number.\"\n    n * 2\n",
         );
         assert!(implicit_stdlib_deps(&items).is_empty());
+    }
+
+    #[test]
+    fn sha256_call_only_in_verify_case_implies_modules() {
+        // Rust codegen emits verify cases into a #[cfg(test)] module, so a
+        // sha256 call that appears ONLY inside a verify block still needs
+        // the Bytes/Digest32 modules in the generated project.
+        let items = parse(
+            "module VerifyOnly\n    intent = \"sha256 only in a verify case\"\n    depends [Bytes]\n    effects []\n\nfn double(n: Int) -> Int\n    ? \"Double a number.\"\n    n * 2\n\nverify double\n    Crypto.sha256(Bytes.fromList([double(0)])?) => Crypto.sha256(Bytes.fromList([0])?)\n",
+        );
+        assert_eq!(
+            implicit_stdlib_deps(&items),
+            vec!["Bytes", "Crypto.Digest32"]
+        );
+    }
+
+    #[test]
+    fn tcp_read_bytes_implies_bytes_without_any_depends() {
+        // Tcp.readBytes RETURNS Bytes, so a program can hold Bytes values
+        // without ever naming the module: read a frame, write it back.
+        let items = parse(
+            "module Relay\n    intent = \"pipe frames without naming Bytes\"\n    depends []\n    effects [Tcp]\n\nfn relay(conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"Echo one 4-byte frame back to the peer.\"\n    ! [Tcp.readBytes, Tcp.writeBytes]\n    frame = Tcp.readBytes(conn, 4)?\n    Tcp.writeBytes(conn, frame)\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Bytes"]);
     }
 }

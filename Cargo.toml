@@ -82,6 +82,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-encoder = { version = "0.248", optional = true }
 wasmparser = { version = "0.248", optional = true }
 wasmprinter = { version = "0.248", optional = true }
+sha2 = "0.10"
 wasmtime = { version = "44", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc", "component-model", "component-model-async"] }
 wasmtime-wasi = { version = "44", optional = true }
 wasmtime-wasi-http = { version = "44", optional = true }

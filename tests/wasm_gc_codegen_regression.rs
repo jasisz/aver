@@ -248,6 +248,84 @@ fn write(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
     );
 }
 
+/// `Crypto.sha256` produces a `Digest32` even when `depends` never names
+/// `Crypto.Digest32`. This build goes through the shared
+/// `aver::source::load_compile_deps` loader, which must include the
+/// standard modules implied by source-typed builtins — without them the
+/// wasm-gc backend has no `Digest32` record to emit and compilation fails
+/// after check/verify already passed.
+#[test]
+fn sha256_compiles_without_digest32_in_depends() {
+    let source = r#"module Probe
+    intent = "Hash bytes while depends omits Crypto.Digest32."
+    depends [Bytes]
+    exposes [main]
+    effects [Console.print]
+
+fn main() -> Result<String, String>
+    ? "Hash a payload and report that a digest was produced."
+    ! [Console.print]
+    payload = Bytes.fromList([1, 2, 3])?
+    digest = Crypto.sha256(payload)
+    Console.print("hashed")
+    Result.Ok("hashed")
+"#;
+    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+        .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|e| panic!("wasmparser validate: {e}\n--- source ---\n{source}"));
+}
+
+/// A program can hold `Bytes` values without ever naming the module:
+/// `Tcp.readBytes` RETURNS `Bytes`, so a read→write relay is expressible
+/// with an empty `depends` list. The implicit stdlib-dep table must load
+/// `Bytes` for the Tcp byte methods too, and both lowered host imports
+/// must survive the round trip.
+#[test]
+fn tcp_byte_relay_compiles_without_bytes_in_depends() {
+    use wasmparser::{Parser as WasmParser, Payload};
+
+    let source = r#"module Relay
+    intent = "Echo binary frames without naming Bytes in depends."
+    depends []
+    exposes [relay]
+    effects [Tcp.readBytes, Tcp.writeBytes]
+
+fn relay(conn: Tcp.Connection) -> Result<Unit, String>
+    ? "Echo one 4-byte frame back to the peer."
+    ! [Tcp.readBytes, Tcp.writeBytes]
+    frame = Tcp.readBytes(conn, 4)?
+    Tcp.writeBytes(conn, frame)
+"#;
+    let items = parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+        .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|e| panic!("wasmparser validate: {e}\n--- source ---\n{source}"));
+
+    let mut read_found = false;
+    let mut write_found = false;
+    for payload in WasmParser::new(0).parse_all(&bytes) {
+        if let Payload::ImportSection(reader) = payload.expect("generated module must parse") {
+            for import in reader.into_imports().flatten() {
+                if import.module == "aver" && matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                    read_found |= import.name == "tcp_read_bytes";
+                    write_found |= import.name == "tcp_write_bytes";
+                }
+            }
+        }
+    }
+    assert!(
+        read_found && write_found,
+        "Tcp byte methods must lower to aver.tcp_read_bytes/aver.tcp_write_bytes host imports"
+    );
+}
+
 #[test]
 fn bare_list_literal_inside_interpolation_compiles() {
     assert_compiles_and_validates(

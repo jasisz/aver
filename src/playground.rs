@@ -64,7 +64,7 @@ pub fn compile_project_to_wasm(
     // `module_depends` only reads `TopLevel::Module` declarations, which
     // TCO never touches — so extracting depends pre-pipeline is safe and
     // lets us load deps before typecheck and run the pipeline in one shot.
-    let root_depends = module_depends(&entry_items);
+    let root_depends = load_roots(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
     // Full wasm-gc pipeline — matches CLI `aver compile --target wasm-gc`
@@ -115,7 +115,7 @@ pub fn compile_project_to_wasm_with_entry(
         .get(entry)
         .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
     let mut entry_items = parse_source(entry_source)?;
-    let root_depends = module_depends(&entry_items);
+    let root_depends = load_roots(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
     let (target_fn, args) =
@@ -351,7 +351,7 @@ fn build_project_ctx(
         .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
     let mut entry_items = parse_source(entry_source)?;
 
-    let root_depends = module_depends(&entry_items);
+    let root_depends = load_roots(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
     // Build the dep-module list BEFORE pipeline::run so the pipeline
@@ -452,6 +452,21 @@ fn module_depends(items: &[TopLevel]) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Roots for the virtual-fs module loader: the entry's explicit `depends`
+/// plus standard modules implied by source-typed builtins
+/// (`crate::stdlib::implicit_stdlib_deps`), so the playground mirrors the
+/// CLI loaders — a browser project calling `Crypto.sha256` compiles even
+/// when `depends` never names `Crypto.Digest32`.
+fn load_roots(items: &[TopLevel]) -> Vec<String> {
+    let mut deps = module_depends(items);
+    for dep in crate::stdlib::implicit_stdlib_deps(items) {
+        if !deps.contains(&dep) {
+            deps.push(dep);
+        }
+    }
+    deps
+}
+
 /// Lower a single dep module from the virtual filesystem. `apply_traversal_lowering`
 /// mirrors the entry-level decision so the dep modules go through the
 /// same pipeline shape as the entry — proof exporters get source-level IR
@@ -535,7 +550,7 @@ fn analyze_project(
     // Parse once to extract depends; errors are surfaced again inside
     // analyze_source with proper diagnostic formatting.
     if let Ok(items) = parse_source(&entry_source) {
-        let depends = module_depends(&items);
+        let depends = load_roots(&items);
         if let Ok(loaded) = crate::source::load_module_tree_from_map(&depends, files) {
             opts = opts.with_loaded_modules(loaded);
         }
@@ -643,7 +658,7 @@ pub fn context_md_project(files: &HashMap<String, String>, entry: &str) -> Strin
     let mut opts = AnalyzeOptions::new("playground");
     opts.include_context_summary = true;
     if let Ok(items) = parse_source(&entry_source) {
-        let deps = module_depends(&items);
+        let deps = load_roots(&items);
         if let Ok(loaded) = crate::source::load_module_tree_from_map(&deps, files) {
             opts = opts.with_loaded_modules(loaded);
         }
@@ -703,7 +718,7 @@ pub fn audit_project(files: &HashMap<String, String>, entry: &str) -> String {
     };
     let loaded = parse_source(entry_source)
         .ok()
-        .map(|items| module_depends(&items))
+        .map(|items| load_roots(&items))
         .and_then(|deps| crate::source::load_module_tree_from_map(&deps, files).ok());
     audit_build_report(entry_source, loaded, Some(files), Some(entry), false).to_json()
 }
@@ -715,7 +730,7 @@ pub fn audit_project_hostile(files: &HashMap<String, String>, entry: &str) -> St
     };
     let loaded = parse_source(entry_source)
         .ok()
-        .map(|items| module_depends(&items))
+        .map(|items| load_roots(&items))
         .and_then(|deps| crate::source::load_module_tree_from_map(&deps, files).ok());
     audit_build_report(entry_source, loaded, Some(files), Some(entry), true).to_json()
 }
