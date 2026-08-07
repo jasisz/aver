@@ -521,22 +521,17 @@ fn main() -> Unit
 /// `cargo test` with E0433. Driving `cargo test` (not just the build) also
 /// proves the digest-equality cases hold in the generated code.
 ///
-/// The verify cases go through `forceBytes` instead of `Bytes.fromList(…)?`
-/// because `?` inside a verify case trips a pre-existing, unrelated emitter
-/// gap (the generated test fn returns `Result<(), String>` while generated
-/// stdlib fns error with `AverStr`, so the `?` conversion fails E0277).
+/// The verify cases use `Bytes.fromList(…)?` directly, which doubles as
+/// the regression for `?` inside a verify case: the generated test fn
+/// returns `Result<(), String>` while generated stdlib fns error with
+/// `AverStr`, so the emitter must convert at the `?` boundary (bare `?`
+/// used to fail `cargo test` with E0277).
 #[test]
 fn rust_sha256_verify_only_generates_testable_project() {
     let src = r#"module Sha256VerifyOnly
     intent = "A verify-only Crypto.sha256 call still generates a buildable test module"
     depends [Bytes]
     effects [Console.print]
-
-fn forceBytes(xs: List<Int>) -> Bytes
-    ? "Validate octets, retrying with an empty list on the impossible branch."
-    match Bytes.fromList(xs)
-        Result.Ok(bytes) -> bytes
-        Result.Err(_) -> forceBytes([])
 
 fn describe(same: Bool) -> String
     ? "Describe digest agreement."
@@ -550,8 +545,8 @@ fn main() -> Unit
     Console.print(describe(true))
 
 verify describe
-    describe(Crypto.sha256(forceBytes([1, 2])) == Crypto.sha256(forceBytes([1, 2]))) => "same"
-    describe(Crypto.sha256(forceBytes([1, 2])) == Crypto.sha256(forceBytes([2, 1]))) => "different"
+    describe(Crypto.sha256(Bytes.fromList([1, 2])?) == Crypto.sha256(Bytes.fromList([1, 2])?)) => "same"
+    describe(Crypto.sha256(Bytes.fromList([1, 2])?) == Crypto.sha256(Bytes.fromList([2, 1])?)) => "different"
 "#;
 
     let name = "sha256_verify_only";
