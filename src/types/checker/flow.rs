@@ -1,6 +1,19 @@
 use super::*;
 
 impl TypeChecker {
+    /// Oracle signature for `method`, re-stamped into the active `TypeId`
+    /// space. The static classification table builds types from bare
+    /// source names (`Type::Named { id: None, .. }`), while builtin
+    /// signatures crossing stdlib-owned nominals are canonicalized after
+    /// the embedded modules load (`canonicalize_source_typed_builtin_sigs`).
+    /// Oracle signatures derived from the same table must go through the
+    /// same canonicalization, or a user stub typed against the resolved
+    /// nominal `Bytes` fails to match the raw-named oracle type.
+    fn canonical_oracle_signature(&self, method: &str) -> Option<Type> {
+        super::effect_classification::oracle_signature(method)
+            .map(|sig| self.canonicalize_named(sig))
+    }
+
     fn with_verify_law_givens<T>(
         &mut self,
         givens: &[crate::ast::VerifyGiven],
@@ -14,7 +27,7 @@ impl TypeChecker {
             // capability reader for snapshot). Output effects have no oracle
             // and are rejected with a clear message.
             if let Some(c) = super::effect_classification::classify(&given.type_name) {
-                match super::effect_classification::oracle_signature(&given.type_name) {
+                match self.canonical_oracle_signature(&given.type_name) {
                     Some(sig) => {
                         self.locals.insert(given.name.clone(), sig);
                     }
@@ -31,6 +44,7 @@ impl TypeChecker {
             }
             match parse_type_str_strict(&given.type_name) {
                 Ok(ty) => {
+                    let ty = self.canonicalize_named(ty);
                     self.locals.insert(given.name.clone(), ty);
                 }
                 Err(unknown) => {
@@ -435,8 +449,7 @@ impl TypeChecker {
                             crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
                         };
                     for given in givens_iter {
-                        let Some(expected) =
-                            super::effect_classification::oracle_signature(&given.type_name)
+                        let Some(expected) = self.canonical_oracle_signature(&given.type_name)
                         else {
                             continue;
                         };
