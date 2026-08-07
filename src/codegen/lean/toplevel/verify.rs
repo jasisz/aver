@@ -418,7 +418,10 @@ fn emit_verify_law_block(
             // …) when the law body used `Natural(value = a)` etc.
             // See `refinement_lift_for_given` for the detection.
             let type_text = if let Some(refined) = lifted_vars.get(&given.name) {
-                refined.clone()
+                // `lifted_vars` values are the IR's canonical Aver keys
+                // (`Natural`, `M.Type`) — spell them as Lean type text so a
+                // reserved-token segment carries the trailing-quote guard.
+                crate::codegen::lean::types::lean_named_type_name(refined)
             } else if let Some(subtype) = bounded_oracle_subtype_for(&given.type_name) {
                 subtype.to_string()
             } else {
