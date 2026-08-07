@@ -1367,6 +1367,66 @@ fn valid_tcp_read_bytes_returns_nominal_bytes() {
 }
 
 #[test]
+fn valid_verify_trace_given_stub_for_tcp_read_bytes() {
+    // Regression: the oracle signature for the byte-carrying TCP methods
+    // is built from bare source names (`Type::Named { id: None, name:
+    // "Bytes" }`), while a user-written stub fn gets its signature
+    // canonicalized against the loaded stdlib `Bytes` module (`id:
+    // Some(..)`). Pre-fix the stub-type check rejected the given with an
+    // error printing two identical-looking signatures.
+    let src = concat!(
+        "module Prog\n",
+        "    intent = \"User stub for Tcp.readBytes must typecheck.\"\n",
+        "    depends [Bytes]\n",
+        "    effects [Tcp]\n",
+        "\n",
+        "fn readStub(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n",
+        "    ? \"Honest stub returning a fixed frame.\"\n",
+        "    Bytes.fromList([1, 2, 3, 4])\n",
+        "\n",
+        "fn readFrame(conn: Tcp.Connection) -> Result<Bytes, String>\n",
+        "    ? \"Read one 4-byte frame.\"\n",
+        "    ! [Tcp.readBytes]\n",
+        "    Tcp.readBytes(conn, 4)\n",
+        "\n",
+        "verify readFrame trace\n",
+        "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"h\", port = 1)]\n",
+        "    given reader: Tcp.readBytes = [readStub]\n",
+        "    readFrame(conn) => Bytes.fromList([1, 2, 3, 4])\n",
+    );
+    let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
+    assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+}
+
+#[test]
+fn valid_verify_trace_given_stub_for_tcp_write_bytes() {
+    // Same regression as above, exercising nominal `Bytes` in stub
+    // parameter position (`Tcp.writeBytes` consumes the payload).
+    let src = concat!(
+        "module Prog\n",
+        "    intent = \"User stub for Tcp.writeBytes must typecheck.\"\n",
+        "    depends [Bytes]\n",
+        "    effects [Tcp]\n",
+        "\n",
+        "fn writeStub(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n",
+        "    ? \"Honest stub accepting any frame.\"\n",
+        "    Result.Ok(Unit)\n",
+        "\n",
+        "fn sendFrame(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n",
+        "    ? \"Write one frame.\"\n",
+        "    ! [Tcp.writeBytes]\n",
+        "    Tcp.writeBytes(conn, payload)\n",
+        "\n",
+        "verify sendFrame trace\n",
+        "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"h\", port = 1)]\n",
+        "    given writer: Tcp.writeBytes = [writeStub]\n",
+        "    sendFrame(conn, Bytes.fromList([1, 2])?) => Result.Ok(Unit)\n",
+    );
+    let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
+    assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+}
+
+#[test]
 fn valid_tcp_close_with_connection() {
     let src = concat!(
         "fn done(conn: Tcp.Connection) -> Result<Unit, String>\n",
