@@ -136,6 +136,16 @@ pub struct MirEmitCtx<'a> {
     /// SOUNDNESS: a slot is read here as `Bare` only when the analysis
     /// proved `raw_i64_eligible && !escapes`; a missing fact is `Boxed`.
     pub bare: &'a crate::ir::mir::FnBareFacts,
+    /// Verify-case emission only: render `?` with a `map_err` that Debug-
+    /// formats the error into a `String`. The generated `#[cfg(test)]` fn
+    /// returns `Result<(), String>`, while generated fns error with
+    /// whatever type the source declared (`AverStr` for `String`, a
+    /// generated struct/enum for user error types) — none of which
+    /// implement `From` into `String`, so a bare `?` fails E0277. Every
+    /// generated error shape implements `Debug` (aver-rt value types and
+    /// derived record/sum types), which makes the Debug-format conversion
+    /// total. False everywhere except `emit_mir_verify_expr`.
+    pub try_err_to_string: bool,
 }
 
 impl<'a> MirEmitCtx<'a> {
@@ -164,6 +174,7 @@ impl<'a> MirEmitCtx<'a> {
             // matching the pre-Wave-3a coverage walk's reach.
             mir_builtins: &[],
             bare: empty_bare_facts(),
+            try_err_to_string: false,
         }
     }
 
@@ -206,6 +217,7 @@ impl<'a> MirEmitCtx<'a> {
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins,
             bare: &policy.bare,
+            try_err_to_string: false,
         }
     }
 
@@ -235,6 +247,7 @@ impl<'a> MirEmitCtx<'a> {
                 .map(|p| p.builtins.as_slice())
                 .unwrap_or(&[]),
             bare: &policy.bare,
+            try_err_to_string: false,
         }
     }
 
@@ -1185,9 +1198,23 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // rc-wrapped pass-through), and leaves an owned last-use local
             // a bare move — exactly what `?` consumes. Mirror of HIR's
             // `ErrorProp` once the inner is in an owning position.
+            //
+            // Verify-case ctx (`try_err_to_string`): the enclosing
+            // `#[test]` fn returns `Result<(), String>` while the operand
+            // errors with a generated type (`AverStr`, a user error
+            // struct/enum, …) that has no `From` into `String` — a bare
+            // `?` fails E0277. Debug-format the error at the `?` boundary
+            // so every generated error shape converts.
             let inner_code = emit_mir_expr(inner, emit_ctx)?;
             let owned = mir_clone_arg(inner_code, &inner.node, emit_ctx);
-            Some(format!("{}?", owned))
+            if emit_ctx.try_err_to_string {
+                Some(format!(
+                    "{}.map_err(|err| format!(\"{{:?}}\", err))?",
+                    owned
+                ))
+            } else {
+                Some(format!("{}?", owned))
+            }
         }
         MirExpr::Tuple(items) => {
             // `(a, b, c)` tuple literal. Mirror
@@ -1571,7 +1598,11 @@ pub(super) fn emit_mir_verify_expr(
     // Lend the grown clone's builtin table (it backs `Call(Builtin(id))`
     // resolution and may carry a builtin the lowering just interned) plus
     // the full `ctx` for the borrow / ctor helpers.
-    let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
+    let mut emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
+    // The enclosing `#[test]` fn returns `Result<(), String>`; generated
+    // fns error with generated types, so `?` must Debug-format the error
+    // into a `String` at each propagation site (see `try_err_to_string`).
+    emit_ctx.try_err_to_string = true;
     emit_mir_expr(&lowered, &emit_ctx)
 }
 
@@ -4576,6 +4607,7 @@ mod tests {
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins: BUILTINS.get_or_init(Vec::new),
             bare: &policy.bare,
+            try_err_to_string: false,
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(
@@ -5068,6 +5100,24 @@ mod tests {
         let expr = span(MirExpr::Try(Box::new(inner)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("try should emit");
         assert_eq!(emit, "aver_rt::AverInt::from_i64(7)?");
+    }
+
+    #[test]
+    fn emits_try_with_map_err_in_verify_ctx() {
+        // Verify-case ctx: the `#[test]` fn returns `Result<(), String>`
+        // while generated fns error with generated types (`AverStr`, user
+        // error structs/enums), so `Try` must Debug-format the error into
+        // a `String` at the `?` boundary — for every error shape, not
+        // just `AverStr`.
+        let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let expr = span(MirExpr::Try(Box::new(inner)));
+        let mut ctx = empty_ctx();
+        ctx.try_err_to_string = true;
+        let emit = emit_mir_expr(&expr, &ctx).expect("try should emit");
+        assert_eq!(
+            emit,
+            "aver_rt::AverInt::from_i64(7).map_err(|err| format!(\"{:?}\", err))?"
+        );
     }
 
     #[test]
