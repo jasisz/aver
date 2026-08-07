@@ -1,9 +1,6 @@
 import Bytes
 import Crypto.Digest32
 
-set_option maxRecDepth 1000000
-set_option maxHeartbeats 0
-
 namespace AverCrypto
 
 def rotr (x : UInt32) (n : Nat) : UInt32 :=
@@ -44,8 +41,9 @@ def padded (input : List Int) : Array UInt8 := Id.run do
   let mut out := input.foldl (fun acc byte => acc.push (UInt8.ofNat byte.toNat)) #[]
   let bitLength := UInt64.ofNat (out.size * 8)
   out := out.push 0x80
-  while out.size % 64 != 56 do
-    out := out.push 0
+  -- Zero-pad to 56 mod 64 with a computed count instead of a `while`-loop:
+  -- `while` bottoms out in a non-total combinator the kernel cannot unfold.
+  out := out ++ Array.replicate ((56 + 64 - out.size % 64) % 64) 0
   for shift in #[56, 48, 40, 32, 24, 16, 8, 0] do
     out := out.push ((bitLength >>> UInt64.ofNat shift).toUInt8)
   return out
@@ -91,14 +89,12 @@ def compress (state : Array UInt32) (message : Array UInt8) (offset : Nat) : Arr
     state[4]! + e, state[5]! + f, state[6]! + g, state[7]! + h
   ]
 
-def digestWords (input : List Int) : Array UInt32 := Id.run do
+def digestWords (input : List Int) : Array UInt32 :=
   let message := padded input
-  let mut state := initial
-  let mut offset := 0
-  while offset < message.size do
-    state := compress state message offset
-    offset := offset + 64
-  return state
+  -- `padded` always returns a multiple of 64 bytes, so folding over the
+  -- exact block count replaces the kernel-opaque `while`-loop over offsets.
+  (List.range (message.size / 64)).foldl
+    (fun state i => compress state message (i * 64)) initial
 
 def sha256Bytes (input : List Int) : List Int := Id.run do
   let mut out : Array Int := #[]
@@ -113,11 +109,20 @@ end AverCrypto
 
 namespace Crypto
 
+/-- Zero bytes are octets. Proven by induction because the exported
+`Bytes.allInRange` is compiled by well-founded recursion, which `decide`
+cannot evaluate through the elaborator. -/
+private theorem allInRange_replicate_zero (n : Nat) :
+    Bytes.allInRange (List.replicate n 0) = true := by
+  induction n with
+  | zero => simp [Bytes.allInRange]
+  | succ n ih => simpa [Bytes.allInRange, List.replicate] using ih
+
 private def fallbackBytes : Bytes.Bytes :=
-  ⟨List.replicate 32 0, by native_decide⟩
+  ⟨List.replicate 32 0, allInRange_replicate_zero 32⟩
 
 private def fallbackDigest : Crypto.Digest32.Digest32 :=
-  ⟨fallbackBytes, by native_decide⟩
+  ⟨fallbackBytes, by decide⟩
 
 def sha256 (bytes : Bytes.Bytes) : Crypto.Digest32.Digest32 :=
   match Bytes.fromList (AverCrypto.sha256Bytes bytes.val) with
