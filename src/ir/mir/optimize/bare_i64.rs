@@ -294,11 +294,13 @@ impl FnBareFacts {
         base: &Spanned<MirExpr>,
         field: &str,
     ) -> Option<Interval> {
+        // Exact-name lookup only — the table is keyed by post-flatten
+        // `TypeDef` names, and a qualified→bare fallback would hand a
+        // collision-renamed dep record an unrelated type's bounded-field fact.
         let name = base.ty().and_then(Type::named_name)?;
-        let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
         let (iv, known) = self
             .field_carrier_intervals
-            .get(&(bare.to_string(), field.to_string()))
+            .get(&(name.to_string(), field.to_string()))
             .copied()?;
         (known && iv.fits_i64()).then_some(iv)
     }
@@ -316,9 +318,10 @@ impl FnBareFacts {
         if !matches!(base.node, MirExpr::Project(_)) {
             return None;
         }
+        // Exact-name lookup only — same rationale as
+        // `field_carrier_field_interval`.
         let name = base.ty().and_then(Type::named_name)?;
-        let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
-        let (iv, known) = self.carrier_types.get(bare).copied()?;
+        let (iv, known) = self.carrier_types.get(name).copied()?;
         (known && iv.fits_i64()).then_some(iv)
     }
 
