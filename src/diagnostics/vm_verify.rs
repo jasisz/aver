@@ -1433,8 +1433,20 @@ fn build_case_oracle_stubs(
     if let Some(combo) = block.case_hostile_profiles.get(case_idx) {
         for (method, profile) in combo {
             let stub_fn_name = format!("__hostile_{}_{}", method.replace('.', "_"), profile);
+            // `apply_hostile_expansion` only assigns profiles for the
+            // classified non-Output effects of the fn under test, and
+            // `inject_hostile_effect_stubs_for_blocks` injects a stub
+            // FnDef for exactly that same set before type-check — so a
+            // profile that reaches this point without its stub in the
+            // VM is a pipeline bug, not a user error. Silently skipping
+            // it would run the "hostile" case against the real builtin
+            // and report a vacuous pass.
             let Some(fn_id) = machine.find_fn_id(&stub_fn_name) else {
-                continue;
+                panic!(
+                    "hostile profile stub `{stub_fn_name}` for effect `{method}` is missing \
+                     from the VM — `inject_hostile_effect_stubs_for_blocks` guarantees the \
+                     stub exists for every profile the expansion assigns (compiler bug)"
+                );
             };
             out.insert(method.clone(), fn_id);
         }
@@ -2221,5 +2233,59 @@ verify currentYear trace
         );
         assert_eq!(render_hostile_profile_label(Some(&[])), None);
         assert_eq!(render_hostile_profile_label(None), None);
+    }
+
+    /// Since the injection fix (`inject_hostile_effect_stubs_for_blocks`
+    /// keys `hostile_profiles_for` on the classified method verbatim),
+    /// every profile the expansion assigns has its stub FnDef in the VM.
+    /// A miss is a pipeline bug — the runner must fail loudly instead of
+    /// silently running the "hostile" case against the real builtin.
+    #[test]
+    #[should_panic(
+        expected = "hostile profile stub `__hostile_Time_now_frozen` for effect `Time.now` is missing"
+    )]
+    fn missing_hostile_stub_fn_is_a_hard_error() {
+        let src = "module M\n    effects []\n\nfn f() -> Int\n    ? \"toy\"\n    1\n";
+        let mut items = parse_source(src);
+        crate::ir::pipeline::resolve(&mut items);
+        let mut arena = Arena::new();
+        vm::register_service_types(&mut arena);
+        let symbol_table = crate::ir::SymbolTable::build(&items, &[]);
+        let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
+        let (code, globals) = vm::compile_program_with_modules(
+            &resolved_items,
+            &symbol_table,
+            &mut arena,
+            None,
+            "missing_stub_test.av",
+            None,
+        )
+        .expect("compile");
+        let machine = vm::VM::new(code, globals, arena);
+
+        // A hostile-expanded case referencing a profile whose stub was
+        // never injected (nothing named `__hostile_Time_now_frozen`
+        // exists in the program above).
+        let block = VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![],
+            case_spans: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![vec![("Time.now".to_string(), "frozen".to_string())]],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "test".to_string(),
+                givens: vec![],
+                when: None,
+                lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        };
+        let _ = build_case_oracle_stubs(&machine, &block, 0);
     }
 }

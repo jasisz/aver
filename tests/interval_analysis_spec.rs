@@ -524,3 +524,102 @@ fn fromInt(n: Int) -> Result<Natural, String>
         "AAA.Natural is [0,+inf], BBB.Natural is [10,+inf] — not merged"
     );
 }
+
+// ── carrier table: bare-name twins must fail closed ────────────────
+
+/// Build `ProofLowerInputs` over an entry file plus dep modules and
+/// return the carrier-`i64` interval table.
+fn carrier_table(
+    entry: &str,
+    deps: &[(&str, &str)],
+) -> std::collections::HashMap<String, (Interval, bool)> {
+    let entry_items = parse_source(entry).expect("entry parse");
+    let loaded: Vec<LoadedModule> = deps
+        .iter()
+        .map(|(name, src)| LoadedModule {
+            dep_name: name.to_string(),
+            items: parse_source(src).unwrap_or_else(|e| panic!("{name} parse: {e}")),
+            path: PathBuf::from(format!("{name}.av")),
+        })
+        .collect();
+    let modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
+    let symbols = aver::ir::SymbolTable::build(&entry_items, &modules);
+    let prefixes: std::collections::HashSet<String> =
+        modules.iter().map(|m| m.prefix.clone()).collect();
+    let recursive: std::collections::HashSet<aver::ir::FnId> = std::collections::HashSet::new();
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs {
+        entry_items: &entry_items,
+        dep_modules: &modules,
+        module_prefixes: &prefixes,
+        recursive_fns: &recursive,
+        symbol_table: &symbols,
+        program_shape: None,
+    };
+    aver::codegen::proof_lower::carrier_interval_table(&inputs)
+}
+
+const TWIN_ENTRY: &str = "\
+module Entry
+    depends [AAA, BBB]
+    intent = \"Touches both Naturals so both are in scope.\"
+
+fn main() -> Int
+    0
+";
+
+/// A module declaring a refined `Natural` whose smart-ctor guard is
+/// the given match subject expression.
+fn natural_module(label: &str, guard: &str) -> String {
+    format!(
+        "\
+module {label}
+    exposes [fromInt]
+    exposes opaque [Natural]
+    intent = \"Module {label}'s Natural.\"
+    effects []
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? \"Smart constructor.\"
+    match {guard}
+        true  -> Result.Ok(Natural(value = n))
+        false -> Result.Err(\"{label}: out of range\")
+"
+    )
+}
+
+#[test]
+fn carrier_table_drops_bare_name_twins_with_mismatched_bounds() {
+    // Two modules declare a carrier with the SAME bare name `Natural`
+    // but DIFFERENT proven bounds: AAA's is `[0,+inf]` (does NOT fit
+    // i64 — must stay boxed) while BBB's is `[0,100]` (fits). The
+    // table is keyed by the bare name only, and the MIR seed site
+    // cannot tell the twins apart — intersecting the bounds would
+    // narrow the interval to `[0,100]` and thereby wrongly license the
+    // i64 fast path for AAA's unbounded carrier. The collision must
+    // fail closed: no entry at all, both twins stay boxed.
+    let aaa = natural_module("AAA", "n >= 0");
+    let bbb = natural_module("BBB", "Bool.and(n >= 0, n <= 100)");
+    let table = carrier_table(TWIN_ENTRY, &[("AAA", &aaa), ("BBB", &bbb)]);
+    assert!(
+        !table.contains_key("Natural"),
+        "mismatched bare-name twins must be dropped, got {:?}",
+        table.get("Natural")
+    );
+}
+
+#[test]
+fn carrier_table_keeps_bare_name_twins_with_identical_bounds() {
+    // Identical twins prove the SAME bound, so the shared entry is the
+    // right fact for every slot regardless of which twin it came from.
+    let aaa = natural_module("AAA", "Bool.and(n >= 0, n <= 100)");
+    let bbb = natural_module("BBB", "Bool.and(n >= 0, n <= 100)");
+    let table = carrier_table(TWIN_ENTRY, &[("AAA", &aaa), ("BBB", &bbb)]);
+    assert_eq!(
+        table.get("Natural"),
+        Some(&(Interval::between(0, 100), true)),
+        "identical bare-name twins keep their shared bound"
+    );
+}

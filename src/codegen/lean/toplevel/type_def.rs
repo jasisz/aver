@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::expr::aver_name_to_lean;
 use super::syntax::lean_ctor_name;
@@ -78,6 +78,28 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
 }
 
 fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
+    // Lean constructor spellings are first-letter-lowercased
+    // (`lean_ctor_name`), so two variants of ONE type differing only in
+    // first-letter case (`Accept` / `accept` — legal Aver, the parser
+    // takes any Ident and PascalCase is only a lint) would silently
+    // emit the SAME Lean constructor and surface as a confusing
+    // duplicate-constructor error inside the generated project, far
+    // from the Aver source. Reject loudly at emission time instead,
+    // naming both variants. (Exact duplicates are already a typecheck
+    // error, so a collision here always involves two distinct names.)
+    let mut ctor_spellings: HashMap<String, &str> = HashMap::new();
+    for v in variants {
+        let ctor = lean_ctor_name(&v.name);
+        if let Some(earlier) = ctor_spellings.insert(ctor.clone(), v.name.as_str()) {
+            panic!(
+                "Lean export: variants `{earlier}` and `{}` of type `{name}` both lower to \
+                 Lean constructor `{ctor}` — variant names of one type may not differ only \
+                 in first-letter case; rename one of them",
+                v.name
+            );
+        }
+    }
+
     let mut lines = Vec::new();
     let is_recursive = is_recursive_type(name, variants);
 

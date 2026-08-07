@@ -525,11 +525,14 @@ fn populate_refined_type_intervals(inputs: &ProofLowerInputs, ir: &mut ProofIR) 
 /// the table entirely, so the MIR pass never sees it and the carrier stays
 /// boxed. A carrier whose proven bound does not `fits_i64` is also kept
 /// (the table carries the raw `(Interval, bool)` so the seed site can apply
-/// `fits_i64` itself — see `carrier_interval` in `bare_i64`).
+/// `fits_i64` itself — see `carrier_interval` in `bare_i64`). Two same-named
+/// carriers proving DIFFERENT bounds drop the shared bare-name key entirely
+/// (see the collision note in the body).
 pub fn carrier_interval_table(
     inputs: &ProofLowerInputs,
 ) -> HashMap<String, (crate::ir::interval::Interval, bool)> {
     let mut table = HashMap::new();
+    let mut ambiguous_names: HashSet<String> = HashSet::new();
 
     let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::TypeDef(td) => Some((None::<&str>, td)),
@@ -571,18 +574,30 @@ pub fn carrier_interval_table(
         }
         // Key by the bare type name — the `MirParam.ty` string. Two modules
         // may each declare a same-named carrier with different predicates;
-        // the bare name collides. Keep the FIRST (entry walks before deps),
-        // and on a same-name collision intersect to the tighter common bound
-        // (fail-closed: a narrower interval is always still a valid
-        // over-approximation of either inhabitant set, and a mismatch can
-        // only ever shrink eligibility, never wrongly widen it).
-        table
-            .entry(name.clone())
-            .and_modify(|(iv, known): &mut (crate::ir::interval::Interval, bool)| {
-                *iv = iv.intersect(interval);
-                *known = true;
-            })
-            .or_insert((interval, true));
+        // the bare name collides. The seed site cannot tell the twins
+        // apart (`MirParam.ty` only carries the bare name), so a merged
+        // bound would have to over-approximate BOTH inhabitant sets.
+        // Intersecting does the opposite: it NARROWS the interval, which
+        // WIDENS `fits_i64` eligibility — a twin whose real bound exceeds
+        // `i64` would be unboxed on the strength of the other twin's
+        // tighter predicate. Fail-closed instead: on a mismatched
+        // collision drop the name entirely (mirroring the
+        // `ambiguous_names` rule of `packed_sequence_layout_table`), so
+        // every same-named carrier stays boxed. Identical twins keep the
+        // shared bound — there is nothing to confuse.
+        if ambiguous_names.contains(name) {
+            continue;
+        }
+        match table.get(name) {
+            None => {
+                table.insert(name.clone(), (interval, true));
+            }
+            Some((existing, _)) if *existing == interval => {}
+            Some(_) => {
+                table.remove(name);
+                ambiguous_names.insert(name.clone());
+            }
+        }
     }
 
     table
@@ -621,6 +636,7 @@ pub fn field_carrier_interval_table(
     inputs: &ProofLowerInputs,
 ) -> HashMap<(String, String), (crate::ir::interval::Interval, bool)> {
     let mut table = HashMap::new();
+    let mut ambiguous_keys: HashSet<(String, String)> = HashSet::new();
 
     let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::TypeDef(td) => Some((None::<&str>, td)),
@@ -687,16 +703,28 @@ pub fn field_carrier_interval_table(
             if !interval_known {
                 continue;
             }
-            // Same collision discipline as the type-keyed table: on a
-            // same-`(record, field)` collision across modules, intersect to
-            // the tighter common bound (fail-closed).
-            table
-                .entry((name.clone(), fname.clone()))
-                .and_modify(|(iv, known): &mut (crate::ir::interval::Interval, bool)| {
-                    *iv = iv.intersect(interval);
-                    *known = true;
-                })
-                .or_insert((interval, true));
+            // Same collision discipline as the type-keyed table
+            // (`carrier_interval_table`): the seed site only sees the bare
+            // `(record, field)` key, so a merged bound would have to
+            // over-approximate BOTH same-named records' fields — but
+            // intersecting NARROWS the interval and thereby WIDENS
+            // `fits_i64` eligibility for the wider twin. Fail closed: on a
+            // mismatched collision drop the key entirely; identical twins
+            // keep the shared bound.
+            let key = (name.clone(), fname.clone());
+            if ambiguous_keys.contains(&key) {
+                continue;
+            }
+            match table.get(&key) {
+                None => {
+                    table.insert(key, (interval, true));
+                }
+                Some((existing, _)) if *existing == interval => {}
+                Some(_) => {
+                    table.remove(&key);
+                    ambiguous_keys.insert(key);
+                }
+            }
         }
     }
 
