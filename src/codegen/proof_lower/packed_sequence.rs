@@ -246,8 +246,18 @@ fn is_recursive_call(expr: &Expr, fn_name: &str, arg_name: &str) -> bool {
     same_callee_name(fn_name, &callee) && args.len() == 1 && expr_is_ident(&args[0], arg_name)
 }
 
+/// Callee-name comparison for the recognizer's helper lookup and
+/// recursive-call check. On the production path the table is computed
+/// post-flatten, where every declared fn name and every (rewritten)
+/// same-scope call-site name is dot-free — exact equality is the whole
+/// contract. A bare-suffix fallback (`rsplit('.')`) used to live here;
+/// it was dead on dot-free names (the suffix IS the name) but would go
+/// live on a pre-flatten walk, where it could match a same-named helper
+/// from a DIFFERENT module and key a layout on the wrong module's
+/// predicate. A dotted callee (`SomeDep.helper`) now simply declines
+/// the recognizer — fail-closed, the carrier stays unpacked.
 fn same_callee_name(declared: &str, called: &str) -> bool {
-    declared == called || declared.rsplit('.').next() == called.rsplit('.').next()
+    declared == called
 }
 
 fn expr_is_ident(expr: &Spanned<Expr>, name: &str) -> bool {

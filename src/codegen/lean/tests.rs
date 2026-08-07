@@ -443,6 +443,35 @@ fn mkMatch() -> Type
 }
 
 #[test]
+#[should_panic(
+    expected = "variants `Accept` and `accept` of type `Verdict` both lower to Lean constructor `accept`"
+)]
+fn case_colliding_variants_are_rejected_at_lean_emission() {
+    // `Accept` and `accept` are distinct, legal Aver variants (the
+    // parser takes any Ident; PascalCase is only a lint warning), but
+    // `lean_ctor_name` lowercases the first letter, so both would emit
+    // the SAME Lean constructor — pre-fix the generated inductive
+    // carried a duplicate constructor and the resulting Lean error
+    // pointed at the generated project, far from the Aver source. The
+    // emitter must fail loudly and name both variants and the type.
+    let mut ctx = ctx_from_source(
+        r#"
+module CtorCase
+    intent = "Two variants differing only in first-letter case."
+
+type Verdict
+    Accept
+    accept
+
+fn pick() -> Verdict
+    Verdict.Accept
+"#,
+        "ctorcase",
+    );
+    let _ = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+}
+
+#[test]
 fn transpile_emits_native_decide_for_verify_by_default() {
     let mut ctx = empty_ctx_with_verify_case();
     let out = transpile(&mut ctx);
