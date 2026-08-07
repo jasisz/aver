@@ -632,8 +632,12 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
         crypto_lean.contains("def sha256 (bytes : Bytes.Bytes)")
             && crypto_lean.contains("def compress")
             && !crypto_lean.contains("axiom ")
-            && !crypto_lean.contains("sorry"),
-        "Lean Crypto.sha256 must be an executable, axiom-free model:\n{crypto_lean}"
+            && !crypto_lean.contains("sorry")
+            && !crypto_lean.contains("native_decide")
+            && !crypto_lean.contains("while ")
+            && !crypto_lean.contains("partial "),
+        "Lean Crypto.sha256 must be an executable, axiom-free, kernel-reducible model \
+         (no native_decide, no `while` loops bottoming out in partial combinators):\n{crypto_lean}"
     );
 
     let dafny_out = root.join("dafny");

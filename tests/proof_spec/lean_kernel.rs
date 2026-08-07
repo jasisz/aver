@@ -1683,3 +1683,90 @@ fn proof_lean_mixed_advance_skipper_stays_fueled_stability_lemma_kernel_clean() 
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_lean_crypto_sha256_model_axiom_closure_is_core_only() {
+    // Scrub-proof gate for the exported SHA-256 model: `#print axioms
+    // Crypto.sha256` inside a generated project must report a SUBSET of
+    // Lean's core three ({propext, Classical.choice, Quot.sound}). The
+    // model once carried `native_decide` proofs on its private fallback
+    // witnesses, which added per-def `_native.native_decide.ax_1` axioms
+    // to the closure of EVERY theorem touching sha256 and defeated the
+    // axiom-whitelist gate. A static text check cannot catch every
+    // reintroduction path (e.g. a tactic that expands to native
+    // evaluation), so this probes the real axiom closure via the kernel.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping crypto sha256 axiom probe: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture = repo_root.join("tests/fixtures/stdlib_bytes_app.av");
+    let root = temp_output_dir("aver-proof-crypto-sha256-axioms");
+    let missing_module_root = root.join("no-project-modules");
+    let out = root.join("lean");
+    let export = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(&fixture)
+        .arg("--module-root")
+        .arg(&missing_module_root)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver proof export for the sha256 axiom probe");
+    assert!(
+        export.status.success(),
+        "proof export failed:\n{}",
+        format_output(&export)
+    );
+    // `lake env lean` resolves imports from built oleans, so build first.
+    let build = Command::new("lake")
+        .current_dir(&out)
+        .arg("build")
+        .output()
+        .expect("lake build for the sha256 axiom probe");
+    assert!(
+        build.status.success(),
+        "lake build failed:\n{}",
+        format_output(&build)
+    );
+    std::fs::write(
+        out.join("AxiomProbe.lean"),
+        "import Crypto\n\n#print axioms Crypto.sha256\n",
+    )
+    .expect("write AxiomProbe.lean");
+    let probe = Command::new("lake")
+        .current_dir(&out)
+        .arg("env")
+        .arg("lean")
+        .arg("AxiomProbe.lean")
+        .output()
+        .expect("lake env lean AxiomProbe.lean");
+    assert!(
+        probe.status.success(),
+        "axiom probe failed to elaborate:\n{}",
+        format_output(&probe)
+    );
+    let stdout = String::from_utf8_lossy(&probe.stdout);
+    // Two possible shapes:
+    //   'Crypto.sha256' does not depend on any axioms
+    //   'Crypto.sha256' depends on axioms: [propext, Quot.sound]
+    if !stdout.contains("does not depend on any axioms") {
+        let listed = stdout
+            .split_once('[')
+            .and_then(|(_, rest)| rest.rsplit_once(']'))
+            .map(|(inner, _)| inner)
+            .unwrap_or_else(|| panic!("unexpected `#print axioms` output:\n{stdout}"));
+        for axiom in listed.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            assert!(
+                matches!(axiom, "propext" | "Classical.choice" | "Quot.sound"),
+                "Crypto.sha256 depends on non-core axiom `{axiom}` — a \
+                 `native_decide`/`sorry` crept back into the exported model:\n{stdout}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
