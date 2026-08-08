@@ -429,6 +429,68 @@ fn main() -> Unit
     );
 }
 
+/// GRADUATED CLOSE — the effect-gating counterpart of the test above.
+/// `shutdown` takes a `Tcp.Connection` the caller already owns and
+/// declares only `! [Tcp.close]`; the program never names `Tcp.connect`,
+/// so no connect helper and no connect-gated slot exist. The close helper
+/// still needs `parse_id`, which is why `wasip2_tcp::wireup::allocate`
+/// gates `parse_id` on the UNION of the pool-consuming effects
+/// (`TcpClose` included) rather than on the connect helper: gating on
+/// connect would leave `allocate_close`'s `parse_id?` unsatisfied and the
+/// emit path would hit an `expect`. Pins that the union gate keeps
+/// working — a connect-shaped gate makes this program fail to compile.
+#[test]
+fn wasip2_tcp_close_without_connect_keeps_the_close_helper() {
+    let source = r#"module Probe
+    intent = "Close a TCP connection the caller already owns."
+    exposes [shutdown]
+    effects [Tcp.close]
+
+fn shutdown(conn: Tcp.Connection) -> Result<Unit, String>
+    ? "Release a connection handed in by the caller."
+    ! [Tcp.close]
+    Tcp.close(conn)
+"#;
+    let items = parse_pipeline(source).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+
+    let (segments, body_refs) = segments_and_body_data_refs(&bytes);
+    let referenced = |seg: u32| -> bool { body_refs.iter().any(|refs| refs.contains(&seg)) };
+
+    // Present: the close helper's own error segment. In a close-only
+    // program `__rt_tcp_close` is the sole body that can reference it —
+    // write_line / read_line / read_bytes share the text but none of
+    // their effects is declared here.
+    let unknown = segment_idx(&segments, b"tcp: unknown connection");
+    assert!(
+        referenced(unknown),
+        "Tcp.close is declared — the close helper body must be emitted even \
+         though the program never calls Tcp.connect"
+    );
+
+    // Absent: nothing declares Tcp.connect, so its pool-limit segment must
+    // not be referenced by any body (it need not be interned at all).
+    let connect_limit = b"tcp: connection limit reached (256 max)";
+    let connect_referenced = segments
+        .iter()
+        .position(|seg| seg == connect_limit)
+        .is_some_and(|idx| referenced(idx as u32));
+    assert!(
+        !connect_referenced,
+        "Tcp.connect is not declared — the connect helper must not be emitted"
+    );
+
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
 /// `Tcp.readBytes` count-error classification on native wasip2 must
 /// match the VM (`src/services/tcp.rs` `count_arg` +
 /// `aver_rt::tcp::read_bytes`), branch by branch:

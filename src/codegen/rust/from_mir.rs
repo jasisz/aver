@@ -1003,10 +1003,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 };
                 // The method receiver is borrowed for the duration of the
                 // call. If a nested RHS expression consumes that local (for
-                // example `value - highNibble(value) * 16`), Rust rejects the
-                // receiver borrow followed by the move inside the argument.
-                // Clone only for that overlap; a direct `x + x` RHS is itself
-                // borrowed by this method call and remains `x.add(&x)`.
+                // example `n * factorial(n - 1)` in
+                // `examples/core/big_integers.av`), Rust rejects the receiver
+                // borrow followed by the move inside the argument. Clone only
+                // for that overlap; a direct `x + x` RHS is itself borrowed by
+                // this method call and remains `x.add(&x)`.
                 let lhs_rhs_move_overlap = local_of(&bop.lhs.node).is_some_and(|lhs| {
                     !matches!(&bop.rhs.node, MirExpr::Local(_))
                         && mir_expr_contains_last_use_of_slot(&bop.rhs.node, lhs.slot)
