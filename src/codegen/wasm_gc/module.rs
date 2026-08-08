@@ -1223,6 +1223,15 @@ pub(super) fn emit_module_with(
     // through them without threading two extra `Option<u32>` params through
     // a dozen helper functions across maps.rs / lists.rs / eq_helpers.rs /
     // hash_helpers.rs. `Some` iff `bignum`.
+    // `__wasmgc_string_from_list_int` renders each element with the active
+    // `String.fromInt` and joins the parts with `__wasmgc_concat_n`; record
+    // both indices for the same reason (its `emit_helper_body` only receives
+    // `&registry`). `None` when the program has no interpolation at all, in
+    // which case the list-stringify helper is not registered either.
+    registry.string_from_int_fn_idx =
+        builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringFromInt);
+    registry.string_concat_n_fn_idx =
+        builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringConcatN);
     if registry.bignum {
         registry.aint_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq);
         registry.aint_hash_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintHash);
@@ -6109,6 +6118,17 @@ fn discover_builtins_in_expr(
             builtins.register(BuiltinName::StringFromInt);
             builtins.register(BuiltinName::StringFromFloat);
             builtins.register(BuiltinName::StringFromBool);
+            // A `List<Int>` embed needs its own renderer. NOT registered
+            // conservatively like the scalar ones: its signature mentions
+            // `List<Int>`, so registering it for a program that has no such
+            // list would fail slot allocation. Keyed on the part's stamped
+            // type, which is what the emitter dispatches on too.
+            if parts.iter().any(|p| {
+                matches!(p, ResolvedStrPart::Parsed(inner)
+                    if inner.ty().is_some_and(|t| t.display().trim() == "List<Int>"))
+            }) {
+                builtins.register(BuiltinName::StringFromListInt);
+            }
             for p in parts {
                 if let ResolvedStrPart::Parsed(inner) = p {
                     discover_builtins_in_expr(

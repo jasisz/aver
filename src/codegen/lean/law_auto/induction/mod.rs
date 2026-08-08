@@ -458,6 +458,22 @@ fn program_fn_lean_names(ctx: &CodegenContext) -> BTreeSet<String> {
         .collect()
 }
 
+/// The spelling a dep-module name carries in EMITTED Lean: every
+/// `.`-segment escaped against the reserved-token table, exactly as
+/// `expr::emit_expr` renders a qualified call site. Identity for an
+/// ordinary module name (`Lib` → `Lib`); a module named after a reserved
+/// token gains the guard (`Type` → `Type'`).
+///
+/// Any set or index that is compared against tokens of emitted Lean text
+/// — the dep membership index, the orientation analysis' program-fn set,
+/// a citation name spliced into a `simp` list — must be keyed on THIS
+/// spelling, never on the raw `ModuleInfo::prefix`. Raw prefixes stay the
+/// identity currency of the cone gate (`qualified_cone_name`) and of the
+/// `(module_prefix, theorem_base)` emit keys.
+fn dep_module_lean_prefix(prefix: &str) -> String {
+    crate::codegen::lean::syntax::aver_path_to_lean(prefix)
+}
+
 /// Map a cone fn to the lean name a DEP law's statement would render it
 /// as: dep-module fns are NAMESPACE-QUALIFIED (`Lib.qrev`), entry fns
 /// stay bare. The module is resolved by pointer-eq against
@@ -520,7 +536,13 @@ fn dep_law_admissible(
         crate::codegen::lean::toplevel::law_as_lemma_statement(dep_prev, dep_prev_law, ctx)
     })?;
     // Namespace-qualified citation; the entry imports + opens the dep.
-    let name = format!("{}.{}", dep_module.prefix, bare_name);
+    // The module segment carries the reserved-token guard because this
+    // name is spliced verbatim into the consumer's `simp` lists.
+    let name = format!(
+        "{}.{}",
+        dep_module_lean_prefix(&dep_module.prefix),
+        bare_name
+    );
     let text = format!("theorem {name} : {stmt} := by");
     let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, dep_index);
     if mentions.is_empty() {
@@ -777,9 +799,12 @@ pub(crate) fn admitted_dep_law_theorems(
                         &dep_index,
                         ctx,
                     ) {
-                        // `name` is `Module.<theorem_base>`; the EMIT side keys
-                        // on `(prefix, theorem_base)`.
-                        if let Some(base) = name.strip_prefix(&format!("{}.", module.prefix)) {
+                        // `name` is the CITATION spelling
+                        // (`<lean_prefix>.<theorem_base>`); the EMIT side keys
+                        // on the RAW `(prefix, theorem_base)`, so strip the
+                        // lean prefix and re-key on the raw one.
+                        let lean_prefix = dep_module_lean_prefix(&module.prefix);
+                        if let Some(base) = name.strip_prefix(&format!("{lean_prefix}.")) {
                             admitted.insert((module.prefix.clone(), base.to_string()));
                         }
                     }
@@ -820,10 +845,22 @@ pub(crate) fn admitted_dep_law_theorems(
 }
 
 /// Build the cross-file membership index for a dep module's laws: each
-/// pure fn of `module` mapped QUALIFIED → QUALIFIED (`Lib.qrev` →
-/// `Lib.qrev`), unioned with the entry/dep bare program index. Keyed on
-/// the qualified form because a dep law's statement renders dep fns
-/// namespace-qualified, so the gate compares qualified identity.
+/// pure fn of `module` mapped LEAN SPELLING → QUALIFIED IDENTITY
+/// (`Lib.qrev` → `Lib.qrev`), unioned with the entry/dep bare program
+/// index. Keyed on the qualified form because a dep law's statement
+/// renders dep fns namespace-qualified, so the gate compares qualified
+/// identity.
+///
+/// The two sides of the pair differ exactly when the module name is a
+/// reserved Lean token. `mentioned_fns` tokenizes the EMITTED statement,
+/// where the module segment carries the reserved-token guard
+/// (`Type'.double` — `aver_path_to_lean` escapes per segment), while the
+/// cone gate (`qualified_cone_name`) holds the RAW module prefix. Keying
+/// on the Lean spelling and mapping to the raw-prefix identity
+/// canonicalizes the two at this boundary: without it a dep module named
+/// after a reserved token never matches a token, `mentions` comes back
+/// empty, and every citation of its laws silently degrades to
+/// law-not-admitted.
 fn dep_membership_index(
     module: &crate::codegen::ModuleInfo,
     ctx: &CodegenContext,
@@ -832,10 +869,12 @@ fn dep_membership_index(
         .into_iter()
         .map(|l| (l.clone(), l))
         .collect();
+    let lean_prefix = dep_module_lean_prefix(&module.prefix);
     for fd in &module.fn_defs {
         if crate::codegen::common::is_pure_fn(fd) {
-            let qualified = format!("{}.{}", module.prefix, aver_name_to_lean(&fd.name));
-            idx.insert(qualified.clone(), qualified);
+            let bare = aver_name_to_lean(&fd.name);
+            let qualified = format!("{}.{}", module.prefix, bare);
+            idx.insert(format!("{lean_prefix}.{bare}"), qualified);
         }
     }
     idx
@@ -1455,15 +1494,17 @@ fn fastpath_simp_entries(
     // The orientation / loop-exclusion analysis keys on whether a
     // lemma's head is a program fn. A cross-file sibling's statement
     // renders dep fns NAMESPACE-QUALIFIED (`Lib.qrev`), so the program-
-    // fn set must carry those qualified forms too or the dep lemma is
-    // silently classified `None` and dropped from the simp set. No dep
-    // modules → no qualified names added → byte-identical to the
-    // single-file path.
+    // fn set must carry those qualified forms too — in the EMITTED
+    // spelling (`dep_module_lean_prefix`), since the head token is read
+    // off the statement text — or the dep lemma is silently classified
+    // `None` and dropped from the simp set. No dep modules → no
+    // qualified names added → byte-identical to the single-file path.
     let mut program_fns = program_fn_lean_names(ctx);
     for module in &ctx.modules {
+        let lean_prefix = dep_module_lean_prefix(&module.prefix);
         for fd in &module.fn_defs {
             if crate::codegen::common::is_pure_fn(fd) {
-                program_fns.insert(format!("{}.{}", module.prefix, aver_name_to_lean(&fd.name)));
+                program_fns.insert(format!("{lean_prefix}.{}", aver_name_to_lean(&fd.name)));
             }
         }
     }

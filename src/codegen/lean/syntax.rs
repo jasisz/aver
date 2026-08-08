@@ -270,6 +270,39 @@ mod tests {
 
     use super::aver_name_to_lean;
 
+    /// Whether a failed `lean` invocation died fetching the pinned
+    /// toolchain rather than running the probe. The `lean` on PATH is
+    /// elan's shim: with a `lean-toolchain` file in the working directory
+    /// it resolves and downloads that toolchain before handing off, so a
+    /// download error surfaces as a nonzero exit with elan's message on
+    /// stderr. Deliberately narrow — anything else (a probe that elaborated
+    /// and reported an error, a broken elab command after a toolchain
+    /// upgrade) is a real verdict and must not be retried.
+    fn toolchain_fetch_failed(stderr: &str) -> bool {
+        const FETCH_MARKERS: &[&str] = &[
+            "could not download",
+            "failed to download",
+            "error sending request",
+            "connection reset",
+            "connection refused",
+            "temporary failure in name resolution",
+            "could not resolve host",
+        ];
+        let lowered = stderr.to_ascii_lowercase();
+        FETCH_MARKERS.iter().any(|m| lowered.contains(m))
+    }
+
+    #[test]
+    fn rejects_non_fetch_probe_failures_for_retry() {
+        assert!(toolchain_fetch_failed(
+            "error: could not download file from 'https://releases.lean-lang.org/...'"
+        ));
+        assert!(!toolchain_fetch_failed(
+            "probe.lean:5:0: error: unknown identifier 'getTokenTable'"
+        ));
+        assert!(!toolchain_fetch_failed(""));
+    }
+
     #[test]
     fn escapes_reported_keyword_regressions_and_global_collisions() {
         for name in [
@@ -328,15 +361,30 @@ elab "#aver_reserved_tokens" : command => do
             .expect("write Lean token probe");
         drop(probe);
 
-        let output = match Command::new("lean")
-            .arg(&probe_path)
-            .current_dir(probe_dir.path())
-            .output()
-        {
+        let run_probe = || {
+            Command::new("lean")
+                .arg(&probe_path)
+                .current_dir(probe_dir.path())
+                .output()
+        };
+        let mut output = match run_probe() {
             Ok(output) => output,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
             Err(error) => panic!("run Lean token probe: {error}"),
         };
+        // On a runner that has never used the pinned toolchain, this first
+        // `lean` call makes elan FETCH it — a network step that is not part
+        // of what this test decides, and whose transient failure would fail
+        // the proof workflow for a reason unrelated to the snapshot. Retry
+        // exactly once, and ONLY when the probe died on that fetch. A probe
+        // that failed for any other reason — and every token-table mismatch,
+        // which is decided below on a probe that SUCCEEDED — still fails
+        // loudly on the first attempt.
+        if !output.status.success()
+            && toolchain_fetch_failed(&String::from_utf8_lossy(&output.stderr))
+        {
+            output = run_probe().expect("re-run Lean token probe after toolchain fetch failure");
+        }
         assert!(
             output.status.success(),
             "Lean token probe failed:\nstdout:\n{}\nstderr:\n{}",

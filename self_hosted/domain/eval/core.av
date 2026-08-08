@@ -724,19 +724,31 @@ fn evalStmts(stmts: List<Stmt>, env: Map<String, Val>, fns: FnStore) -> Result<V
                     [] -> Result.Ok(v)
                     _ -> evalStmts(rest, newEnv, fns)
 
+fn evalTopLevelStmts(stmts: List<Stmt>, env: Map<String, Val>, last: Val, fns: FnStore) -> Result<Tuple<Val, Map<String, Val>>, String>
+    ? "Evaluate top-level statements in source order and keep the resulting env, so top-level bindings stay visible to functions. Each statement sees the bindings before it, both directly and through any function it calls."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match stmts
+        [] -> Result.Ok((last, env))
+        [s, ..rest] -> match evalStmt(s, env, Domain.Eval.Store.withGlobals(fns, env))
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(pair) -> match pair
+                (v, newEnv) -> evalTopLevelStmts(rest, newEnv, v, fns)
+
 fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program: run top-level stmts, then call main() if it exists."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     fnsStore = Domain.Eval.Store.fnsToStore(prog.fns)
-    v = evalStmts(prog.stmts, {}, fnsStore)?
-    maybeCallMain(fnsStore, v)
+    top = evalTopLevelStmts(prog.stmts, {}, Val.ValUnit, fnsStore)?
+    match top
+        (v, globals) -> maybeCallMain(Domain.Eval.Store.withGlobals(fnsStore, globals), v)
 
 fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a program with additional functions from loaded modules."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     allFns = Domain.Eval.Store.fnsToStore(List.concat(extraFns, prog.fns))
-    v = evalStmts(prog.stmts, {}, allFns)?
-    maybeCallMain(allFns, v)
+    top = evalTopLevelStmts(prog.stmts, {}, Val.ValUnit, allFns)?
+    match top
+        (v, globals) -> maybeCallMain(Domain.Eval.Store.withGlobals(allFns, globals), v)
 
 fn maybeCallMain(fns: FnStore, fallback: Val) -> Result<Val, String>
     ? "If a main() function exists, call it. Otherwise return fallback value."
