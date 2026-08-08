@@ -8,7 +8,7 @@ set_option maxRecDepth 1000000
 def tripleSum (a : Int) (b : Int) (c : Int) : Int :=
   ((a + b) + c)
 
-example : tripleSum 1 2 3 = 6 := by native_decide
+example : tripleSum 1 2 3 = 6 := by decide +kernel
 
 -- verify law tripleSum.mirror (512 cases)
 -- given a: Int = 0..7

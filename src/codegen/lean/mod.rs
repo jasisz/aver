@@ -7,6 +7,7 @@ mod builtins;
 mod crypto;
 mod decl_order;
 mod expr;
+mod kernel_decide;
 mod law_auto;
 pub mod lemma_calc;
 mod pattern;

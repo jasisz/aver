@@ -1,0 +1,33 @@
+module KernelDecideSplit
+    intent =
+        "Pairs kernel-reducible verify cases with Float ones the kernel cannot decide."
+    exposes [scaleInt, renderInt, truncate, halveFloat]
+    effects []
+
+fn scaleInt(n: Int) -> Int
+    ? "Double an integer."
+    n * 2
+
+fn renderInt(n: Int) -> String
+    ? "Render an integer as decimal text."
+    String.fromInt(n)
+
+fn truncate(value: Float) -> Int
+    ? "Truncate a float towards zero, returning an integer."
+    Int.fromFloat(value)
+
+fn halveFloat(value: Float) -> Float
+    ? "Halve a float."
+    value / 2.0
+
+verify scaleInt
+    scaleInt(7) => 14
+
+verify renderInt
+    renderInt(12) => "12"
+
+verify truncate
+    truncate(3.7) => 3
+
+verify halveFloat
+    halveFloat(5.0) => 2.5
