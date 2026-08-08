@@ -18,12 +18,37 @@ use super::*;
 /// cover this fn", and the caller answers that by giving the whole fn
 /// an `unreachable` trap stub (`module.rs`, `emit_trap_stub_body`) —
 /// the program would compile clean and then trap at runtime with no
-/// diagnostic. Typechecked source cannot reach this arm at all: the
-/// checker's interpolation rule (`src/types/checker/infer/expr.rs`)
-/// rejects every non-`Int`/`Float`/`Bool`/`String` embed. It stays
-/// reachable from internal pipelines that drive codegen without a
-/// typecheck, and from any future checker gap — both want the loud
-/// error naming the fn and the embed type.
+/// diagnostic.
+///
+/// WHY TYPECHECKED SOURCE CANNOT REACH THE ERROR ARM. The dispatch below
+/// keys on `aver_type_str_of(inner)`, i.e. the type the CHECKER stamped on
+/// that very node (`Spanned::set_ty`, a `OnceLock` written during
+/// inference and never rewritten), so the emitter and the checker classify
+/// the same value by the same `Type`. The checker's interpolation rule
+/// (`classify_interpolation_embed` in
+/// `src/types/checker/infer/expr.rs`) partitions that `Type` with no
+/// remainder:
+///   * `Int` / `Float` / `Bool` / `Str` — accepted, and they are exactly
+///     the four cases the dispatch handles;
+///   * bare `Type::Var` — an embed inference never pinned. REJECTED, and
+///     deliberately not folded into the checker's `Invalid` acceptance: an
+///     unresolved variable is not evidence of an earlier diagnostic
+///     (`match Option.None` with an arm `Option.Some(x) -> "{x}"` is
+///     otherwise a clean program), so admitting it was a fail-open path
+///     from a CLEAN typecheck straight into this arm;
+///   * `Type::Invalid` — accepted without a second diagnostic, but only
+///     ever stamped after the checker already reported an error, so the
+///     compile is gated before codegen runs;
+///   * everything else — rejected by name.
+///
+/// Widening the dispatch below and widening that partition must happen in
+/// the same change, or this argument stops holding.
+///
+/// The arm stays reachable from internal pipelines that drive codegen
+/// without gating on the checker's errors (see
+/// `compound_interpolation_embed_is_a_loud_codegen_error_not_a_trap_stub`
+/// in `tests/wasm_gc_codegen_regression.rs`), and from any future checker
+/// gap — both want the loud error naming the fn and the embed type.
 pub(crate) fn emit_mir_interpolated_str(
     func: &mut Function,
     parts: &[MirStrPart],

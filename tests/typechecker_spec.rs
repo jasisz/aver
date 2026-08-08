@@ -4170,3 +4170,124 @@ fn interpolation_does_not_double_report_a_bad_call_embed() {
         "an already-errored embed must not draw a second diagnostic, got: {errs:?}"
     );
 }
+
+// --- Embeds whose type inference never pinned ------------------------------
+//
+// An unresolved `Type::Var` is NOT evidence of an earlier diagnostic, so it
+// must not ride the `Type::Invalid` no-double-report acceptance. Each source
+// below type-checks clean apart from the interpolation itself; admitting the
+// embed would hand a clean-typechecked program to the backends with no
+// renderable type for it.
+
+/// The exact fail-open witness: `match Option.None` binds the arm's `x` to
+/// the `T` of a bare `Option<T>` subject. Nothing else in this program is an
+/// error.
+#[test]
+fn interpolation_rejects_an_unresolved_embed_from_a_bare_none_match() {
+    let src = "fn render() -> String\n\
+               \x20   match Option.None\n\
+               \x20       Option.Some(x) -> \"{x}\"\n\
+               \x20       Option.None -> \"none\"\n";
+    let errs = errors(src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "the unresolved embed must be the ONLY error — an unresolved variable \
+         is not evidence of a prior diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs[0].contains("the type of this embed could not be determined"),
+        "expected the unresolved-embed diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs[0].contains("named function returning String"),
+        "the unresolved diagnostic must still ask for a named conversion: {errs:?}"
+    );
+}
+
+/// Same hole reached through a local binding rather than an inline subject.
+#[test]
+fn interpolation_rejects_an_unresolved_embed_bound_through_a_local() {
+    let src = "fn render() -> String\n\
+               \x20   o = Option.None\n\
+               \x20   match o\n\
+               \x20       Option.Some(x) -> \"{x}\"\n\
+               \x20       Option.None -> \"none\"\n";
+    assert_error_containing(src, "the type of this embed could not be determined");
+}
+
+/// And through a bare empty-list subject, whose element type is equally open.
+#[test]
+fn interpolation_rejects_an_unresolved_embed_from_a_bare_empty_list_match() {
+    let src = "fn render() -> String\n\
+               \x20   match []\n\
+               \x20       [] -> \"empty\"\n\
+               \x20       [head, ..tail] -> \"{head}\"\n";
+    assert_error_containing(src, "the type of this embed could not be determined");
+}
+
+/// Pinning the subject's type removes the diagnostic — the positive control
+/// proving the rule rejects genuinely-unresolved embeds, not merely
+/// pattern-bound ones.
+#[test]
+fn interpolation_accepts_a_match_binding_off_a_concrete_subject() {
+    assert_no_errors(
+        "fn render(o: Option<Int>) -> String\n\
+         \x20   match o\n\
+         \x20       Option.Some(x) -> \"{x}\"\n\
+         \x20       Option.None -> \"none\"\n",
+    );
+    assert_no_errors(
+        "fn render(xs: List<Int>) -> String\n\
+         \x20   match xs\n\
+         \x20       [] -> \"empty\"\n\
+         \x20       [head, ..tail] -> \"{head}\"\n",
+    );
+    // Plain bottom-up local binding: the shape a naive "reject Var" would
+    // break if inference deferred pinning to a later pass.
+    assert_no_errors("fn render() -> String\n    x = 5\n    \"{x}\"\n");
+}
+
+/// The parts of an interpolation are parsed by a sub-parser that sees only
+/// the `{...}` fragment, so an embed's own `line` is 1-based inside that
+/// fragment. The diagnostic must be anchored to the OUTER interpolation node
+/// instead. Both interpolation diagnostics are pinned, on a line > 1, so a
+/// refactor cannot silently regress either to line 1.
+#[test]
+fn interpolation_errors_report_the_outer_source_line() {
+    let items = parse(
+        "fn pad() -> Int\n\
+         \x20   1\n\
+         \n\
+         fn show(xs: List<Int>) -> String\n\
+         \x20   \"xs={xs}\"\n",
+    );
+    let errs = aver::types::checker::run_type_check(&items);
+    let err = errs
+        .iter()
+        .find(|e| e.message.contains("this embed is List<Int>"))
+        .unwrap_or_else(|| panic!("expected the known-type interpolation error, got: {errs:?}"));
+    assert_eq!(
+        err.line, 5,
+        "known-type interpolation error must report the outer line, got: {err:?}"
+    );
+
+    let items = parse(
+        "fn pad() -> Int\n\
+         \x20   1\n\
+         \n\
+         fn render() -> String\n\
+         \x20   match Option.None\n\
+         \x20       Option.Some(x) -> \"{x}\"\n\
+         \x20       Option.None -> \"none\"\n",
+    );
+    let errs = aver::types::checker::run_type_check(&items);
+    let err = errs
+        .iter()
+        .find(|e| e.message.contains("could not be determined"))
+        .unwrap_or_else(|| panic!("expected the unresolved interpolation error, got: {errs:?}"));
+    assert_eq!(
+        err.line, 6,
+        "unresolved interpolation error must report the outer line, got: {err:?}"
+    );
+}

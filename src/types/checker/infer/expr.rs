@@ -162,16 +162,61 @@ pub(in crate::types::checker) fn type_is_fully_concrete(ty: &Type) -> bool {
 /// either side. Every other type is a compound display and must be
 /// converted by a function the user writes.
 ///
-/// `Type::Invalid` (checker recovery after an earlier error) and
-/// `Type::Var` (a signature type variable inference never pinned) are
-/// accepted here so this rule does not pile a second diagnostic onto an
-/// expression that already produced one, matching how the neighbouring
-/// argument / element rules treat `Invalid`.
+/// `Type::Invalid` (checker recovery after an earlier error) is accepted
+/// so this rule does not pile a second diagnostic onto an expression that
+/// already produced one, matching how the neighbouring argument / element
+/// rules treat `Invalid`.
+///
+/// A bare `Type::Var` is NOT accepted — see
+/// [`InterpolationEmbed::Unresolved`].
 fn interpolation_renders_directly(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Int | Type::Float | Type::Bool | Type::Str | Type::Invalid | Type::Var(_)
+        Type::Int | Type::Float | Type::Bool | Type::Str | Type::Invalid
     )
+}
+
+/// Verdict for one `{...}` embed in a string interpolation.
+enum InterpolationEmbed<'a> {
+    /// `Int | Float | Bool | String`, or `Invalid` recovery — nothing to say.
+    Accepted,
+    /// A bare `Type::Var`: inference never pinned this embed to any type.
+    ///
+    /// This is the fail-CLOSED arm, and it is deliberately not folded into
+    /// the `Invalid` no-double-report acceptance. An unresolved variable
+    /// does NOT imply an earlier diagnostic: `match Option.None` with an
+    /// arm `Option.Some(x) -> "{x}"` binds `x` to the `T` of the bare
+    /// `Option<T>` subject, and nothing in that program is an error until
+    /// this rule speaks. Admitting it let a CLEAN typecheck hand the
+    /// backends an embed with no renderable type.
+    ///
+    /// There is no later chance to pin it, which is why the verdict is
+    /// safe to reach here rather than in a post-inference sweep:
+    ///   * `TypeChecker` carries no ambient substitution — every `subst`
+    ///     map is created inside a single `compatible` / `match_with` call
+    ///     and dropped when it returns, so there is nothing to canonicalise
+    ///     a stamped type through afterwards;
+    ///   * `Spanned::set_ty` writes a `OnceLock`, and `infer_type` stamps
+    ///     every node it visits, so the type read here is already the final
+    ///     stamp every downstream pass and backend will see;
+    ///   * the one top-down channel, `infer_type_with_expected`, fires only
+    ///     for the fixed recogniser list in `try_infer_with_expected`
+    ///     (generic constructors, list / tuple / map literals) and runs
+    ///     *instead of* bottom-up inference. Interpolation parts are never
+    ///     on that path: the expected type of an `InterpolatedStr` is
+    ///     `String`, which says nothing about a part, and no recogniser
+    ///     descends into `StrPart::Parsed`.
+    Unresolved(&'a str),
+    /// A known type outside the sanctioned set — a compound display.
+    Rejected(&'a Type),
+}
+
+fn classify_interpolation_embed(ty: &Type) -> InterpolationEmbed<'_> {
+    match ty {
+        _ if interpolation_renders_directly(ty) => InterpolationEmbed::Accepted,
+        Type::Var(name) => InterpolationEmbed::Unresolved(name),
+        other => InterpolationEmbed::Rejected(other),
+    }
 }
 
 /// Recogniser for a bare `Option.None` expression — the one constructor
@@ -571,13 +616,34 @@ impl TypeChecker {
                 // else — lists, records, tuples, `Option`/`Result`, maps,
                 // vectors, refinement/named types, `Unit`, function
                 // values — is a compound display and must go through a
-                // user-written function returning String.
+                // user-written function returning String, and an embed
+                // whose type inference never pinned is rejected too
+                // (`InterpolationEmbed::Unresolved`) rather than waved
+                // through on the assumption that something else already
+                // complained.
                 for part in parts {
                     if let crate::ast::StrPart::Parsed(inner) = part {
                         let ty = self.infer_type(inner);
-                        if interpolation_renders_directly(&ty) {
-                            continue;
-                        }
+                        let msg = match classify_interpolation_embed(&ty) {
+                            InterpolationEmbed::Accepted => continue,
+                            InterpolationEmbed::Rejected(ty) => format!(
+                                "String interpolation renders primitives only \
+                                 (Int, Float, Bool, String); this embed is {}. \
+                                 Write the conversion as a named function \
+                                 returning String and interpolate its result.",
+                                ty.display()
+                            ),
+                            InterpolationEmbed::Unresolved(name) => format!(
+                                "String interpolation renders primitives only \
+                                 (Int, Float, Bool, String); the type of this \
+                                 embed could not be determined — inference left \
+                                 it open as `{name}`. Pin the type (annotate the \
+                                 binding, or give the match subject a concrete \
+                                 type), then write the conversion as a named \
+                                 function returning String and interpolate its \
+                                 result."
+                            ),
+                        };
                         // The embed's own `line` is 1-based inside the
                         // `{...}` fragment (a sub-parser parses it in
                         // isolation), so the interpolation node's line
@@ -587,16 +653,7 @@ impl TypeChecker {
                         } else {
                             self.current_fn_line.unwrap_or(1)
                         };
-                        self.error_at_line(
-                            line,
-                            format!(
-                                "String interpolation renders primitives only \
-                                 (Int, Float, Bool, String); this embed is {}. \
-                                 Write the conversion as a named function \
-                                 returning String and interpolate its result.",
-                                ty.display()
-                            ),
-                        );
+                        self.error_at_line(line, msg);
                     }
                 }
                 Type::Str
