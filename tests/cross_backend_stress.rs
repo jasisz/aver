@@ -917,3 +917,119 @@ fn cross_vector_aliasing_pin_self_host() {
         VECTOR_ALIASING_OUT,
     );
 }
+
+// ─── Top-level bindings ────────────────────────────────────────────────
+//
+// A binding outside any `fn` is a module-level value: the host VM
+// evaluates every top-level statement in source order before `main`,
+// then exposes the results to every function regardless of where the
+// function is written. The self-hosted interpreter used to evaluate the
+// same statements into a throwaway environment and then call `main` with
+// an empty one, so any program with a top-level binding died on
+// `undefined variable` — no division, no refinement, nothing else
+// involved. This source pins the whole set of rules that made the two
+// pipelines agree again:
+//
+//   * `header` reads `title`, which is bound BELOW it — visibility does
+//     not depend on source position.
+//   * `doubled` / `kept` / `summary` read earlier top-level bindings.
+//   * `next = bump()` calls a function that reads `limit`, so bindings
+//     must already be visible to functions WHILE the top level runs, not
+//     only once `main` starts.
+//   * `scaled` shadows `limit` with a parameter and `pick` shadows it
+//     with a match-arm binding; the local must win, and the last line
+//     proves the global survived both.
+//
+// (A fn-local `x = ...` shadowing a top-level `x` is not covered here:
+// the host typechecker rejects that program on both paths before either
+// backend runs.)
+const TOP_LEVEL_BINDING_SRC: &str = r#"module Tmp
+
+fn header() -> String
+    "[" + title + "]"
+
+title = "cfg"
+limit = 3
+doubled = limit * 2
+items = [1, 2, 4, 8]
+kept = List.take(items, limit)
+summary = "{title}:{doubled}"
+
+fn bump() -> Int
+    limit + 1
+
+next = bump()
+
+fn scaled(limit: Int) -> Int
+    limit * 100
+
+fn pick(xs: List<Int>) -> Int
+    match xs
+        [limit, .._] -> limit
+        [] -> 0 - 1
+
+fn main()
+    ! [Console.print]
+    Console.print(header())
+    Console.print(summary)
+    Console.print(String.fromInt(List.len(kept)))
+    Console.print(String.fromInt(next))
+    Console.print(String.fromInt(scaled(2)))
+    Console.print(String.fromInt(pick(items)))
+    Console.print(String.fromInt(limit))
+"#;
+// header | summary | len(take(items, 3)) | bump() | scaled(2) | pick(items) | limit
+const TOP_LEVEL_BINDING_OUT: &str = "[cfg]\ncfg:6\n3\n4\n200\n1\n3";
+
+#[test]
+fn cross_top_level_bindings_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-toplevel-vm", TOP_LEVEL_BINDING_SRC),
+        TOP_LEVEL_BINDING_OUT,
+    );
+}
+
+#[test]
+fn cross_top_level_bindings_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-toplevel-sh", TOP_LEVEL_BINDING_SRC),
+        TOP_LEVEL_BINDING_OUT,
+    );
+}
+
+/// A top-level binding may carry the same name as a function. The host
+/// VM stores both under one global slot and the binding wins when the
+/// name is read as a value, so the self-hosted evaluator must consult
+/// top-level bindings BEFORE falling back to a function reference.
+const TOP_LEVEL_SHADOWS_FN_SRC: &str = r#"module Tmp
+
+fn tally() -> Int
+    1
+
+tally = 7
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(tally))
+"#;
+const TOP_LEVEL_SHADOWS_FN_OUT: &str = "7";
+
+#[test]
+fn cross_top_level_binding_shadows_fn_name_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-toplevelfn-vm", TOP_LEVEL_SHADOWS_FN_SRC),
+        TOP_LEVEL_SHADOWS_FN_OUT,
+    );
+}
+
+#[test]
+fn cross_top_level_binding_shadows_fn_name_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-toplevelfn-sh", TOP_LEVEL_SHADOWS_FN_SRC),
+        TOP_LEVEL_SHADOWS_FN_OUT,
+    );
+}

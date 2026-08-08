@@ -3,12 +3,13 @@ module Store
     intent =
         "Function-store and environment helpers for the self-hosted evaluator."
         "Keeps name-to-id lookup separate from the main eval loop."
-    exposes [FnStore, lookupVar, emptyFnStore, lookupFnId, lookupFnById, lookupFnOption, lookupFn, zipArgs, mergeBindings, fnsToStore]
+    exposes [FnStore, lookupVar, emptyFnStore, lookupFnId, lookupFnById, lookupFnOption, lookupFn, zipArgs, mergeBindings, fnsToStore, withGlobals, lookupGlobal]
     effects []
 
 record FnStore
     nameToId: Map<String, Int>
     byId: Vector<FnDef>
+    globals: Map<String, Val>
 
 fn lookupVar(env: Map<String, Val>, name: String) -> Result<Val, String>
     ? "Look up a variable in the environment."
@@ -22,10 +23,26 @@ verify lookupVar
 
 fn emptyFnStore() -> FnStore
     ? "Create an empty function store."
-    FnStore(nameToId = {}, byId = Vector.fromList([]))
+    FnStore(nameToId = {}, byId = Vector.fromList([]), globals = {})
 
 verify emptyFnStore
     emptyFnStore().nameToId => {}
+    emptyFnStore().globals => {}
+
+fn withGlobals(fns: FnStore, globals: Map<String, Val>) -> FnStore
+    ? "Attach evaluated top-level bindings so function bodies can read them."
+    FnStore(nameToId = fns.nameToId, byId = fns.byId, globals = globals)
+
+verify withGlobals
+    withGlobals(emptyFnStore(), Map.set({}, "x", Val.ValInt(1))).globals => Map.set({}, "x", Val.ValInt(1))
+
+fn lookupGlobal(fns: FnStore, name: String) -> Option<Val>
+    ? "Look up a top-level binding value by name."
+    Map.get(fns.globals, name)
+
+verify lookupGlobal
+    lookupGlobal(withGlobals(emptyFnStore(), Map.set({}, "x", Val.ValInt(1))), "x") => Option.Some(Val.ValInt(1))
+    lookupGlobal(emptyFnStore(), "x") => Option.None
 
 fn lookupFnId(fns: FnStore, name: String) -> Result<Int, String>
     ? "Look up a function id by name."
@@ -93,7 +110,7 @@ verify mergeBindings
 fn fnsToStore(fns: List<FnDef>) -> FnStore
     ? "Build a function store with a name->id index and id->FnDef table."
     nameToId = fnsToIdMap(fns, {}, 0)
-    FnStore(nameToId = nameToId, byId = Vector.fromList(fns))
+    FnStore(nameToId = nameToId, byId = Vector.fromList(fns), globals = {})
 
 verify fnsToStore
     fnsToStore([]).nameToId => {}

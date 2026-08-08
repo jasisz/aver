@@ -7,16 +7,27 @@ module Common
     effects []
 
 fn evalVarFallback(name: String, fns: FnStore) -> Result<Val, String>
-    ? "If variable not in env, try as a named function reference before falling back to a nullary variant."
+    ? "If variable not in env, try a top-level binding, then a named function reference, then a nullary variant."
+    match Domain.Eval.Store.lookupGlobal(fns, name)
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> evalVarFallbackNamed(name, fns)
+
+verify evalVarFallback
+    evalVarFallback("Token.TkPlus", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag("Token.TkPlus"), "Token.TkPlus", []))
+    evalVarFallback("xyz", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: xyz")
+    evalVarFallback("g", Domain.Eval.Store.withGlobals(Domain.Eval.Store.emptyFnStore(), Map.set({}, "g", Val.ValInt(7)))) => Result.Ok(Val.ValInt(7))
+
+fn evalVarFallbackNamed(name: String, fns: FnStore) -> Result<Val, String>
+    ? "Resolve a name that is neither a local nor a top-level binding: function reference, then nullary variant."
     match Domain.Eval.Store.lookupFnOption(fns, name)
         Option.Some(fd) -> Result.Ok(Val.ValFnRef(fd.name))
         Option.None -> match Domain.Builtins.splitDotted(name)
             Option.Some(_) -> Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag(name), name, []))
             Option.None -> Result.Err("undefined variable: {name}")
 
-verify evalVarFallback
-    evalVarFallback("Token.TkPlus", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag("Token.TkPlus"), "Token.TkPlus", []))
-    evalVarFallback("xyz", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: xyz")
+verify evalVarFallbackNamed
+    evalVarFallbackNamed("Token.TkPlus", Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag("Token.TkPlus"), "Token.TkPlus", []))
+    evalVarFallbackNamed("xyz", Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: xyz")
 
 fn propagationPrefix() -> String
     ? "Internal prefix used to distinguish ? propagation from evaluator runtime errors."

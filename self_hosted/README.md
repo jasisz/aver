@@ -10,6 +10,7 @@ This directory is the source for `aver run --self-host`. End users who install A
 - Recursive descent parser (expressions, match, fn defs, modules)
 - Compile-time variable resolver (ExprVar → ExprSlot)
 - Tree-walking evaluator with Map-based env and slot-based locals
+- Top-level bindings evaluated in source order before `main()` and visible to every function, matching the host VM
 - Guest independent products executed through the evaluator's own `?!`, so VM / compiled self-host can overlap guest branches
 - Float literals and arithmetic with Int↔Float promotion
 - Pattern matching: literals, wildcards, cons, constructors, tuples

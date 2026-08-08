@@ -9,9 +9,19 @@ use crate::aver_generated::domain::value::*;
 #[allow(unused_imports)]
 use crate::*;
 
-/// If variable not in env, try as a named function reference before falling back to a nullary variant.
+/// If variable not in env, try a top-level binding, then a named function reference, then a nullary variant.
 #[inline(always)]
 pub fn evalVarFallback(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
+    crate::cancel_checkpoint();
+    match crate::aver_generated::domain::eval::store::lookupGlobal(fns, name.clone()) {
+        Some(v) => Ok(v),
+        None => crate::aver_generated::domain::eval::common::evalVarFallbackNamed(name, fns),
+    }
+}
+
+/// Resolve a name that is neither a local nor a top-level binding: function reference, then nullary variant.
+#[inline(always)]
+pub fn evalVarFallbackNamed(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
         Some(fd) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(
