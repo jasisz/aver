@@ -61,6 +61,45 @@ fn check_warns_when_project_module_is_shadowed_by_the_stdlib() {
     assert!(stderr.contains("bytes.av"), "{stderr}");
 }
 
+/// The loader's stderr warning is deduplicated once per process per module
+/// name (`source::warn_stdlib_shadow_once`), because module resolution runs
+/// several times inside one command — the typecheck tree walk, the dep
+/// compile walk, the per-unit check pass. Without the dedup a single
+/// `aver check --deps` prints the identical paragraph four times and
+/// drowns the signal it exists to carry. Counts the LOADER line only: the
+/// structured `warning[stdlib-shadow]:` finding is a separate channel with
+/// its own (suppressible) reporting.
+#[test]
+fn stdlib_shadow_loader_warning_is_printed_once_per_command() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("bytes.av"),
+        "module Bytes\n    intent = \"project-local Bytes\"\n    exposes [fromList]\n    effects []\n\nrecord Bytes\n    values: List<Int>\n\nfn fromList(xs: List<Int>) -> Result<Bytes, String>\n    ? \"Accept anything.\"\n    Result.Ok(Bytes(values = xs))\n",
+    )
+    .expect("write bytes.av");
+    let entry = dir.path().join("main.av");
+    std::fs::write(
+        &entry,
+        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
+    )
+    .expect("write main.av");
+    let root = dir.path().to_string_lossy().into_owned();
+    let entry_path = entry.to_string_lossy().into_owned();
+
+    let check = run_aver(&["check", &entry_path, "--module-root", &root, "--deps"]);
+    assert_success("aver check --deps (shadowed)", &check);
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    let loader_lines = stderr
+        .lines()
+        .filter(|line| line.starts_with("warning: module 'Bytes' is reserved"))
+        .count();
+    assert_eq!(
+        loader_lines, 1,
+        "the loader's shadow warning must be emitted exactly once per process \
+         per module name, across every resolution phase of one command\nstderr:\n{stderr}"
+    );
+}
+
 #[test]
 fn check_stays_silent_when_no_project_file_shadows_the_stdlib() {
     let dir = tempfile::tempdir().expect("tempdir");

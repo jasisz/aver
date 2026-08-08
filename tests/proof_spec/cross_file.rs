@@ -935,3 +935,87 @@ fn entry_reserved_module_name_escapes_and_builds() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// `Lib` renamed to `Type` — a dep module whose name is a reserved Lean
+/// token, exporting the SAME proven law the split probe
+/// (`cross_file_consumer_proves_via_dep_law`) cites. The admissibility
+/// gate reads its mentions off the EMITTED statement, where the module
+/// segment carries the reserved-token guard (`Type'.qrev`), while the
+/// membership index / orientation set / citation name used to be built
+/// from the RAW `ModuleInfo::prefix` (`Type.qrev`). Nothing matched, so
+/// `mentions` came back empty and the dep law silently degraded to
+/// not-admitted: no theorem in `Type'.lean`, no citation in
+/// `Consumer.lean`. Same fixture under the name `Lib` is admitted and
+/// cited, so the module NAME alone decided proof strength.
+const TYPE_PROVEN: &str = "module Type\n\
+    \x20   intent =\n\
+    \x20       \"Reversal helpers with a proven accumulator-equivalence law.\"\n\
+    \x20   effects []\n\n\
+    fn qrev(x: List<Int>, y: List<Int>) -> List<Int>\n\
+    \x20   match x\n\
+    \x20       [] -> y\n\
+    \x20       [z, ..xs] -> qrev(xs, List.concat([z], y))\n\n\
+    fn rev(x: List<Int>) -> List<Int>\n\
+    \x20   match x\n\
+    \x20       [] -> []\n\
+    \x20       [y, ..xs] -> List.concat(rev(xs), [y])\n\n\
+    verify qrev law qrevSpec\n\
+    \x20   given x: List<Int> = [[], [1], [1, 2, 3]]\n\
+    \x20   given y: List<Int> = [[], [9], [8, 7]]\n\
+    \x20   qrev(x, y) => List.concat(rev(x), y)\n";
+
+const CONSUMER_USES_TYPE_DEP: &str = "module Consumer\n\
+    \x20   depends [Type]\n\
+    \x20   intent =\n\
+    \x20       \"Wraps Type.rev and proves it equals Type.qrev with empty accumulator.\"\n\
+    \x20   effects []\n\n\
+    fn myRev(x: List<Int>) -> List<Int>\n\
+    \x20   Type.rev(x)\n\n\
+    verify myRev law myRevQrev\n\
+    \x20   given x: List<Int> = [[], [1], [1, 2, 3]]\n\
+    \x20   myRev(x) => Type.qrev(x, [])\n";
+
+#[test]
+fn cross_file_reserved_module_name_dep_law_is_admitted_and_cited() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping reserved-module dep-law citation test: `lake` not available");
+        return;
+    }
+    let (summary, run, leans) = run_multi(
+        &[
+            ("Type.av", TYPE_PROVEN),
+            ("Consumer.av", CONSUMER_USES_TYPE_DEP),
+        ],
+        "Consumer.av",
+        &["Type'.lean", "Consumer.lean"],
+    );
+    let dep_lean = &leans["Type'.lean"];
+    assert!(
+        dep_lean.contains("theorem qrev_law_qrevSpec :"),
+        "the reserved-name dep module's cited law must be ADMITTED and therefore \
+         emitted as a theorem; empty mentions drop it silently\nType'.lean:\n{dep_lean}"
+    );
+    let consumer_lean = &leans["Consumer.lean"];
+    assert!(
+        consumer_lean.contains("Type'.qrev_law_qrevSpec"),
+        "the consumer proof must cite the dep law under its ESCAPED module \
+         segment\nConsumer.lean:\n{consumer_lean}"
+    );
+    assert!(
+        !consumer_lean.contains("Type."),
+        "no raw (unescaped) module segment may reach the emitted Lean — Lean \
+         cannot parse `Type.qrev_law_qrevSpec`\nConsumer.lean:\n{consumer_lean}"
+    );
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["universal"].as_bool(),
+            summary["universal_laws"].as_u64(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(true), Some(true), Some(1), Some(0)),
+        "the reserved-name dep must give the consumer the SAME universal credit \
+         the `Lib`-named split probe gets\n{}",
+        format_output(&run)
+    );
+}

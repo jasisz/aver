@@ -123,6 +123,13 @@ pub fn stdlib_shadow_message(name: &str, shadowed_path: &str) -> String {
 /// Resolution runs several times per command (typecheck tree walk, dep
 /// compile walk, check units), and repeating the identical warning would
 /// drown the signal.
+///
+/// NOT suppressible, unlike the `stdlib-shadow` finding `aver check`
+/// reports — that one goes through the usual `[[check.suppress]]` filter,
+/// this one does not. Deliberate asymmetry: the loader runs on every
+/// command, has no `aver.toml` in hand at this depth, and what it reports
+/// is that the program being built is not the program on disk. See the
+/// `stdlib-shadow` entry in `docs/diagnostics-slugs.md`.
 fn warn_stdlib_shadow_once(name: &str, shadowed_path: &Path) {
     use std::sync::{Mutex, OnceLock};
     static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
