@@ -9,6 +9,7 @@ use crate::*;
 pub struct FnStore {
     pub nameToId: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     pub byId: aver_rt::AverVector<FnDef>,
+    pub globals: aver_rt::AverMap<AverStr, Val>,
 }
 
 impl aver_rt::AverDisplay for FnStore {
@@ -17,7 +18,8 @@ impl aver_rt::AverDisplay for FnStore {
             "FnStore({})",
             vec![
                 format!("nameToId: {}", self.nameToId.aver_display_inner()),
-                format!("byId: {}", self.byId.aver_display_inner())
+                format!("byId: {}", self.byId.aver_display_inner()),
+                format!("globals: {}", self.globals.aver_display_inner())
             ]
             .join(", ")
         )
@@ -35,6 +37,10 @@ impl aver_replay::ReplayValue for FnStore {
             ReplayValue::to_replay_json(&self.nameToId),
         );
         fields.insert("byId".to_string(), ReplayValue::to_replay_json(&self.byId));
+        fields.insert(
+            "globals".to_string(),
+            ReplayValue::to_replay_json(&self.globals),
+        );
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
@@ -75,6 +81,11 @@ impl aver_replay::ReplayValue for FnStore {
                     .get("byId")
                     .ok_or_else(|| "$record FnStore missing field 'byId'".to_string())?,
             )?,
+            globals: <aver_rt::AverMap<AverStr, Val> as ReplayValue>::from_replay_json(
+                fields
+                    .get("globals")
+                    .ok_or_else(|| "$record FnStore missing field 'globals'".to_string())?,
+            )?,
         })
     }
 }
@@ -95,7 +106,25 @@ pub fn emptyFnStore() -> FnStore {
     crate::aver_generated::domain::eval::store::FnStore {
         nameToId: HashMap::new(),
         byId: aver_rt::AverVector::from_vec(aver_rt::AverList::empty().to_vec()),
+        globals: HashMap::new(),
     }
+}
+
+/// Attach evaluated top-level bindings so function bodies can read them.
+pub fn withGlobals(fns: &FnStore, globals: &aver_rt::AverMap<AverStr, Val>) -> FnStore {
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::eval::store::FnStore {
+        nameToId: fns.nameToId.clone(),
+        byId: fns.byId.clone(),
+        globals: globals.clone(),
+    }
+}
+
+/// Look up a top-level binding value by name.
+#[inline(always)]
+pub fn lookupGlobal(fns: &FnStore, name: AverStr) -> Option<Val> {
+    crate::cancel_checkpoint();
+    fns.globals.get(&name).cloned()
 }
 
 /// Look up a function id by name.
@@ -200,6 +229,7 @@ pub fn fnsToStore(fns: &aver_rt::AverList<FnDef>) -> FnStore {
     crate::aver_generated::domain::eval::store::FnStore {
         nameToId: nameToId,
         byId: aver_rt::AverVector::from_vec(fns.to_vec()),
+        globals: HashMap::new(),
     }
 }
 

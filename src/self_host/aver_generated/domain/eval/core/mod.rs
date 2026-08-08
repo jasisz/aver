@@ -4265,16 +4265,44 @@ pub fn evalStmts(
     }
 }
 
+/// Evaluate top-level statements in source order and keep the resulting env, so top-level bindings stay visible to functions. Each statement sees the bindings before it, both directly and through any function it calls.
+pub fn evalTopLevelStmts(
+    mut stmts: aver_rt::AverList<Stmt>,
+    mut env: aver_rt::AverMap<AverStr, Val>,
+    mut last: Val,
+    mut fns: FnStore,
+) -> Result<(Val, aver_rt::AverMap<AverStr, Val>), AverStr> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(stmts, [] => { return Ok((last, env)); }, [s, rest] => { match crate::aver_generated::domain::eval::core::evalStmt(&s, &env, &crate::aver_generated::domain::eval::store::withGlobals(&fns, &env)) { Err(e) => { return Err(e); }, Ok(pair) => { { let (v, newEnv) = pair; {
+            let __tco0 = rest;
+            let __tco1 = newEnv;
+            let __tco2 = v;
+            stmts = __tco0;
+            env = __tco1;
+            last = __tco2;
+            continue;
+        } } } } })
+    }
+}
+
 /// Evaluate a complete program: run top-level stmts, then call main() if it exists.
 pub fn evalProgram(prog: &Program) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let fnsStore = crate::aver_generated::domain::eval::store::fnsToStore(&prog.fns);
-    let v = crate::aver_generated::domain::eval::core::evalStmts(
+    let top = crate::aver_generated::domain::eval::core::evalTopLevelStmts(
         prog.stmts.clone(),
         HashMap::new(),
+        crate::aver_generated::domain::value::Val::ValUnit,
         fnsStore.clone(),
     )?;
-    crate::aver_generated::domain::eval::core::maybeCallMain(&fnsStore, &v)
+    {
+        let (v, globals) = top;
+        crate::aver_generated::domain::eval::core::maybeCallMain(
+            &crate::aver_generated::domain::eval::store::withGlobals(&fnsStore, &globals),
+            &v,
+        )
+    }
 }
 
 /// Evaluate a program with additional functions from loaded modules.
@@ -4286,12 +4314,19 @@ pub fn evalProgramWithFns(
     let allFns = crate::aver_generated::domain::eval::store::fnsToStore(
         &aver_rt::AverList::concat(&extraFns.clone(), &prog.fns.clone()),
     );
-    let v = crate::aver_generated::domain::eval::core::evalStmts(
+    let top = crate::aver_generated::domain::eval::core::evalTopLevelStmts(
         prog.stmts.clone(),
         HashMap::new(),
+        crate::aver_generated::domain::value::Val::ValUnit,
         allFns.clone(),
     )?;
-    crate::aver_generated::domain::eval::core::maybeCallMain(&allFns, &v)
+    {
+        let (v, globals) = top;
+        crate::aver_generated::domain::eval::core::maybeCallMain(
+            &crate::aver_generated::domain::eval::store::withGlobals(&allFns, &globals),
+            &v,
+        )
+    }
 }
 
 /// If a main() function exists, call it. Otherwise return fallback value.
