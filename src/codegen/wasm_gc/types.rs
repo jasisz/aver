@@ -268,15 +268,6 @@ pub(super) struct TypeRegistry {
     pub(super) aint_normalize_fn_idx: Option<u32>,
     pub(super) aint_strip_fn_idx: Option<u32>,
     pub(super) aint_umag_cmp_fn_idx: Option<u32>,
-    /// wasm fn idx of the active `String.fromInt` decimal formatter (the
-    /// `$AverInt` one under bignum, the scalar-i64 one otherwise) and of
-    /// `__wasmgc_concat_n`. Recorded by `module.rs` once
-    /// `BuiltinRegistry::assign_slots` has run, so the `List<Int>`
-    /// stringify helper can `call` both without threading two extra
-    /// indices through `emit_helper_body`. `Some` iff the corresponding
-    /// builtin was registered.
-    pub(super) string_from_int_fn_idx: Option<u32>,
-    pub(super) string_concat_n_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1156,8 +1147,6 @@ impl TypeRegistry {
             aint_normalize_fn_idx: None,
             aint_strip_fn_idx: None,
             aint_umag_cmp_fn_idx: None,
-            string_from_int_fn_idx: None,
-            string_concat_n_fn_idx: None,
         }
     }
 
@@ -2686,19 +2675,6 @@ fn collect_lists_from_expr(
         ResolvedExpr::InterpolatedStr(parts) => {
             for part in parts {
                 if let ResolvedStrPart::Parsed(inner) = part {
-                    // A `List<Int>` embed lowers through the
-                    // `__wasmgc_string_from_list_int` helper, whose signature
-                    // mentions `List<Int>`. Register the canonical from the
-                    // part's own stamp: a PROJECTION of a packed field
-                    // (`o.values`) is a `List<Int>` value whose canonical
-                    // otherwise only reaches the registry via the record's
-                    // declared field list.
-                    if inner
-                        .ty()
-                        .is_some_and(|t| t.display().trim() == "List<Int>")
-                    {
-                        collect_lists_from_str("List<Int>", out, order, next_idx);
-                    }
                     collect_lists_from_expr(inner, out, order, next_idx);
                 }
             }

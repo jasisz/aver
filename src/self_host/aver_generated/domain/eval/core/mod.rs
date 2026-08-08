@@ -648,7 +648,9 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
                                 __b.push_str(&AverStr::from("unsupported named-env expression: "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(expr))));
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::aver_generated::domain::eval::core::exprLabel(&expr)),
+                            )));
                             __b
                         }));
                     }
@@ -1665,7 +1667,7 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<Val, AverStr> 
             return crate::aver_generated::domain::eval::core::evalIndependentProductSlot(&exprs, unwrap, &env, &slotMap, &fns)
         },
         _ => {
-            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported slot expression: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(expr)))); __b }))
+            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported slot expression: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::aver_generated::domain::eval::core::exprLabel(&expr))))); __b }))
         }
     }
             }
@@ -3043,6 +3045,84 @@ pub fn evalImmediateNamedExpr(expr: &Expr) -> Option<Val> {
             Some(crate::aver_generated::domain::value::Val::ValBool(b))
         }
         _ => None,
+    }
+}
+
+/// Name the AST node kind for diagnostics; interpolation renders primitives only, so an Expr needs a named conversion.
+pub fn exprLabel(expr: &Expr) -> AverStr {
+    crate::cancel_checkpoint();
+    match expr {
+        crate::aver_generated::domain::ast::Expr::ExprInt(_) => AverStr::from("ExprInt"),
+        crate::aver_generated::domain::ast::Expr::ExprFloat(_) => AverStr::from("ExprFloat"),
+        crate::aver_generated::domain::ast::Expr::ExprStr(_) => AverStr::from("ExprStr"),
+        crate::aver_generated::domain::ast::Expr::ExprBool(_) => AverStr::from("ExprBool"),
+        crate::aver_generated::domain::ast::Expr::ExprBoolBranch(_, _, _) => {
+            AverStr::from("ExprBoolBranch")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprVar(_) => AverStr::from("ExprVar"),
+        crate::aver_generated::domain::ast::Expr::ExprSlot(_) => AverStr::from("ExprSlot"),
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_, _, _) => {
+            AverStr::from("ExprBinopSlotInt")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_, _, _) => {
+            AverStr::from("ExprBinopSlots")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_, _, _) => {
+            AverStr::from("ExprCmpSlotInt")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_, _, _) => {
+            AverStr::from("ExprCmpSlots")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(_, _, _) => {
+            AverStr::from("ExprVectorGetOrInt")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(_, _, _) => {
+            AverStr::from("ExprIntModOrInt")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprAdd(_, _) => AverStr::from("ExprAdd"),
+        crate::aver_generated::domain::ast::Expr::ExprSub(_, _) => AverStr::from("ExprSub"),
+        crate::aver_generated::domain::ast::Expr::ExprMul(_, _) => AverStr::from("ExprMul"),
+        crate::aver_generated::domain::ast::Expr::ExprDiv(_, _) => AverStr::from("ExprDiv"),
+        crate::aver_generated::domain::ast::Expr::ExprNeg(_) => AverStr::from("ExprNeg"),
+        crate::aver_generated::domain::ast::Expr::ExprEq(_, _) => AverStr::from("ExprEq"),
+        crate::aver_generated::domain::ast::Expr::ExprNeq(_, _) => AverStr::from("ExprNeq"),
+        _ => crate::aver_generated::domain::eval::core::exprLabelAggregate(expr),
+    }
+}
+
+/// Continue naming AST node kinds for the comparison, aggregate, and call forms.
+pub fn exprLabelAggregate(expr: &Expr) -> AverStr {
+    crate::cancel_checkpoint();
+    match expr {
+        crate::aver_generated::domain::ast::Expr::ExprLt(_, _) => AverStr::from("ExprLt"),
+        crate::aver_generated::domain::ast::Expr::ExprGt(_, _) => AverStr::from("ExprGt"),
+        crate::aver_generated::domain::ast::Expr::ExprLte(_, _) => AverStr::from("ExprLte"),
+        crate::aver_generated::domain::ast::Expr::ExprGte(_, _) => AverStr::from("ExprGte"),
+        crate::aver_generated::domain::ast::Expr::ExprConcat(_) => AverStr::from("ExprConcat"),
+        crate::aver_generated::domain::ast::Expr::ExprTuple(_) => AverStr::from("ExprTuple"),
+        crate::aver_generated::domain::ast::Expr::ExprList(_) => AverStr::from("ExprList"),
+        crate::aver_generated::domain::ast::Expr::ExprRecord(_, _) => AverStr::from("ExprRecord"),
+        crate::aver_generated::domain::ast::Expr::ExprFieldAccess(_, _) => {
+            AverStr::from("ExprFieldAccess")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCall(_, _) => AverStr::from("ExprCall"),
+        crate::aver_generated::domain::ast::Expr::ExprCallDirect(_, _) => {
+            AverStr::from("ExprCallDirect")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(_, _) => {
+            AverStr::from("ExprCallBuiltin")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(_, _) => {
+            AverStr::from("ExprCallBuiltinId")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprMatch(_, _) => AverStr::from("ExprMatch"),
+        crate::aver_generated::domain::ast::Expr::ExprPropagate(_) => {
+            AverStr::from("ExprPropagate")
+        }
+        crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(_, _) => {
+            AverStr::from("ExprIndependentProduct")
+        }
+        _ => AverStr::from("Expr"),
     }
 }
 

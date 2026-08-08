@@ -64,6 +64,8 @@ Expressions inside `{}` are evaluated at runtime:
 greeting = "Hello, {name}! You are {age} years old."
 ```
 
+Interpolation renders primitives only: an embedded expression must be an `Int`, a `Float`, a `Bool` or a `String`. Embedding anything else — a list, a record, a tuple, a `Map`, an `Option`/`Result`, a `Vector`, a refinement or other named type — is a type error, because an interpolation site is a display site and Aver requires every conversion to `String` to be named in the source. There is no built-in renderer for compound values and none is planned: write a function that returns `String` and interpolate its result (`"cart: {cartLine(item)}"`), or convert at the call site with an explicit conversion such as `String.fromInt(n)`. The rule is the same one that makes `Console.print(list)` a type error; the interpolated form is only sugar over the same display.
+
 ## Constructors
 
 UpperCamel callee = constructor, lowerCamel = function call. Records use named args (`User(name = "A", age = 1)`), variants use positional args (`Shape.Circle(3.14)`), zero-arg constructors are bare singletons (`Option.None`, `Shape.Point`).
@@ -87,7 +89,7 @@ match value
     _ -> "anything"                        // wildcard
     x -> "bound to {x}"                    // identifier binding
     [] -> "empty list"                     // empty list
-    [h, ..t] -> "head {h}, tail {t}"       // list cons
+    [h, ..t] -> "head {h}, {List.len(t)} more"  // list cons
     Result.Ok(v) -> "success: {v}"         // constructor
     Result.Err(e) -> "error: {e}"
     Shape.Circle(r) -> "circle r={r}"

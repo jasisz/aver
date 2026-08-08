@@ -81,7 +81,53 @@ fn evalExprCalls(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val,
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
         Expr.ExprIndependentProduct(exprs, unwrap) -> evalIndependentProduct(exprs, unwrap, env, fns)
-        _ -> Result.Err("unsupported named-env expression: {expr}")
+        _ -> Result.Err("unsupported named-env expression: {exprLabel(expr)}")
+
+fn exprLabel(expr: Expr) -> String
+    ? "Name the AST node kind for diagnostics; interpolation renders primitives only, so an Expr needs a named conversion."
+    match expr
+        Expr.ExprInt(_) -> "ExprInt"
+        Expr.ExprFloat(_) -> "ExprFloat"
+        Expr.ExprStr(_) -> "ExprStr"
+        Expr.ExprBool(_) -> "ExprBool"
+        Expr.ExprBoolBranch(_, _, _) -> "ExprBoolBranch"
+        Expr.ExprVar(_) -> "ExprVar"
+        Expr.ExprSlot(_) -> "ExprSlot"
+        Expr.ExprBinopSlotInt(_, _, _) -> "ExprBinopSlotInt"
+        Expr.ExprBinopSlots(_, _, _) -> "ExprBinopSlots"
+        Expr.ExprCmpSlotInt(_, _, _) -> "ExprCmpSlotInt"
+        Expr.ExprCmpSlots(_, _, _) -> "ExprCmpSlots"
+        Expr.ExprVectorGetOrInt(_, _, _) -> "ExprVectorGetOrInt"
+        Expr.ExprIntModOrInt(_, _, _) -> "ExprIntModOrInt"
+        Expr.ExprAdd(_, _) -> "ExprAdd"
+        Expr.ExprSub(_, _) -> "ExprSub"
+        Expr.ExprMul(_, _) -> "ExprMul"
+        Expr.ExprDiv(_, _) -> "ExprDiv"
+        Expr.ExprNeg(_) -> "ExprNeg"
+        Expr.ExprEq(_, _) -> "ExprEq"
+        Expr.ExprNeq(_, _) -> "ExprNeq"
+        _ -> exprLabelAggregate(expr)
+
+fn exprLabelAggregate(expr: Expr) -> String
+    ? "Continue naming AST node kinds for the comparison, aggregate, and call forms."
+    match expr
+        Expr.ExprLt(_, _) -> "ExprLt"
+        Expr.ExprGt(_, _) -> "ExprGt"
+        Expr.ExprLte(_, _) -> "ExprLte"
+        Expr.ExprGte(_, _) -> "ExprGte"
+        Expr.ExprConcat(_) -> "ExprConcat"
+        Expr.ExprTuple(_) -> "ExprTuple"
+        Expr.ExprList(_) -> "ExprList"
+        Expr.ExprRecord(_, _) -> "ExprRecord"
+        Expr.ExprFieldAccess(_, _) -> "ExprFieldAccess"
+        Expr.ExprCall(_, _) -> "ExprCall"
+        Expr.ExprCallDirect(_, _) -> "ExprCallDirect"
+        Expr.ExprCallBuiltin(_, _) -> "ExprCallBuiltin"
+        Expr.ExprCallBuiltinId(_, _) -> "ExprCallBuiltinId"
+        Expr.ExprMatch(_, _) -> "ExprMatch"
+        Expr.ExprPropagate(_) -> "ExprPropagate"
+        Expr.ExprIndependentProduct(_, _) -> "ExprIndependentProduct"
+        _ -> "Expr"
 
 fn evalVar(name: String, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Look up variable, Option.None, a named function reference, or a nullary variant constructor."
@@ -829,7 +875,7 @@ fn evalExprSlotCalls(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fn
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
         Expr.ExprIndependentProduct(exprs, unwrap) -> evalIndependentProductSlot(exprs, unwrap, env, slotMap, fns)
-        _ -> Result.Err("unsupported slot expression: {expr}")
+        _ -> Result.Err("unsupported slot expression: {exprLabel(expr)}")
 
 fn evalVarSlot(name: String, fns: FnStore) -> Result<Val, String>
     ? "Resolve unresolved var in slot path: builtins, named function refs, and constructors."

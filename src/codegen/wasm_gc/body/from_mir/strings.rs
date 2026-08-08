@@ -1,24 +1,29 @@
 //! String lowering: `MirExpr::InterpolatedStr` and the `String`
-//! branches of `BinOp` (`+` / `==` / `<` / …). Mirrors
-//! `emit_interpolated_str` and `emit_expr`'s String BinOp branches.
+//! branches of `BinOp` (`+` / `==` / `<` / …). Mirrors `emit_expr`'s
+//! String BinOp branches.
 
 use super::*;
 
-/// Mirror of `emit_interpolated_str` (builtins.rs): build a
-/// `Vector<String>` of the parts and concat it with `__wasmgc_concat_n`.
+/// Interpolation lowering: build a `Vector<String>` of the parts and
+/// concat it with `__wasmgc_concat_n`.
 /// Each `Literal` part becomes an `array.new_data` over its segment;
 /// each `Expr` part is emitted then stringified by the same
-/// `String.from{Int,Float,Bool}` dispatch (a `String` is identity), plus
-/// `__wasmgc_string_from_list_int` for a `List<Int>`. The result is always
-/// a `String`, so `produces` is `true` (empty interpolation allocates a
-/// zero-length array directly, same as the oracle).
+/// `String.from{Int,Float,Bool}` dispatch (a `String` is identity).
+/// The result is always a `String`, so `produces` is `true` (empty
+/// interpolation allocates a zero-length array directly, same as the
+/// oracle).
 ///
-/// A part whose type has NO stringifier here still returns `None`. There
-/// is no resolved-HIR emitter left to catch that: a `None` makes the whole
-/// enclosing fn an `unreachable` trap stub, so such a program compiles and
-/// then traps at runtime with no diagnostic. `List<Int>` was in that state
-/// until the helper above landed; records, tuples, `Option`/`Result`, maps
-/// and `List<T>` for other `T` still are.
+/// An embed of any OTHER type is a hard `WasmGcError`, not an
+/// `Ok(None)` bail. `Ok(None)` here means "the MIR walker does not
+/// cover this fn", and the caller answers that by giving the whole fn
+/// an `unreachable` trap stub (`module.rs`, `emit_trap_stub_body`) —
+/// the program would compile clean and then trap at runtime with no
+/// diagnostic. Typechecked source cannot reach this arm at all: the
+/// checker's interpolation rule (`src/types/checker/infer/expr.rs`)
+/// rejects every non-`Int`/`Float`/`Bool`/`String` embed. It stays
+/// reachable from internal pipelines that drive codegen without a
+/// typecheck, and from any future checker gap — both want the loud
+/// error naming the fn and the embed type.
 pub(crate) fn emit_mir_interpolated_str(
     func: &mut Function,
     parts: &[MirStrPart],
@@ -106,30 +111,17 @@ pub(crate) fn emit_mir_interpolated_str(
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
                     }
-                    // `List<Int>` renders via the dedicated helper, which
-                    // walks the cons chain and joins `[`, the per-element
-                    // decimals, and `]`. The value on the stack is already
-                    // the boxed cons list — a PACKED refinement field read
-                    // (`o.values`) went through `MirExpr::Project`, which
-                    // inserts the packed→list unpack bridge before we get
-                    // here, so the packed and boxed paths feed the helper
-                    // the identical representation.
-                    "List<Int>" => {
-                        let from_list_idx = ctx
-                            .fn_map
-                            .builtins
-                            .get("__wasmgc_string_from_list_int")
-                            .copied()
-                            .ok_or(WasmGcError::Validation(
-                                "interpolation of List<Int> requires \
-                                 __wasmgc_string_from_list_int builtin"
-                                    .into(),
-                            ))?;
-                        func.instruction(&Instruction::Call(from_list_idx));
+                    // No stringifier for this embed. Loud, not silent —
+                    // see the fn doc comment.
+                    other => {
+                        return Err(WasmGcError::Validation(format!(
+                            "fn `{}`: string interpolation has no stringifier for an \
+                             embed of type `{other}` — interpolation renders primitives \
+                             only (Int, Float, Bool, String). Convert the value with a \
+                             named function returning String and interpolate that.",
+                            ctx.self_fn_name
+                        )));
                     }
-                    // Compound type: `emit_interpolated_str` errors here.
-                    // Fall back so the resolved-HIR path raises it instead.
-                    _ => return Ok(None),
                 }
             }
         }

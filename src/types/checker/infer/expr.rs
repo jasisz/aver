@@ -150,6 +150,30 @@ pub(in crate::types::checker) fn type_is_fully_concrete(ty: &Type) -> bool {
     }
 }
 
+/// True iff a value of `ty` may be embedded directly in a string
+/// interpolation.
+///
+/// THE SANCTIONED SET IS `Int | Float | Bool | String`, and it is exactly
+/// what the `__to_str` lowering (`src/ir/interp_lower.rs`) can render on
+/// every backend: the wasm-gc interpolation emitter dispatches on
+/// `String` (identity), `Int`, `Float` and `Bool` and has no other
+/// stringifier. There is no `Char` type in Aver (`Char.toCode` /
+/// `Char.fromCode` work on codepoint `Int`s), so no `Char` arm exists on
+/// either side. Every other type is a compound display and must be
+/// converted by a function the user writes.
+///
+/// `Type::Invalid` (checker recovery after an earlier error) and
+/// `Type::Var` (a signature type variable inference never pinned) are
+/// accepted here so this rule does not pile a second diagnostic onto an
+/// expression that already produced one, matching how the neighbouring
+/// argument / element rules treat `Invalid`.
+fn interpolation_renders_directly(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Int | Type::Float | Type::Bool | Type::Str | Type::Invalid | Type::Var(_)
+    )
+}
+
 /// Recogniser for a bare `Option.None` expression — the one constructor
 /// with no payload to fix its `T`. Plain inference stamps it
 /// `Option<Var("T")>`, which backends keyed on the stamp (the wasm-gc
@@ -538,9 +562,41 @@ impl TypeChecker {
             },
 
             Expr::InterpolatedStr(parts) => {
+                // Conversion to String is NAMED in source (decision:
+                // ExplicitStringify). An interpolation site is a display
+                // site, so it may only auto-render the PRIMITIVES the
+                // `__to_str` lowering actually implements on every
+                // backend: Int, Float, Bool, String (there is no `Char`
+                // type — `Char.*` operates on codepoint Ints). Everything
+                // else — lists, records, tuples, `Option`/`Result`, maps,
+                // vectors, refinement/named types, `Unit`, function
+                // values — is a compound display and must go through a
+                // user-written function returning String.
                 for part in parts {
-                    if let crate::ast::StrPart::Parsed(expr) = part {
-                        self.infer_type(expr);
+                    if let crate::ast::StrPart::Parsed(inner) = part {
+                        let ty = self.infer_type(inner);
+                        if interpolation_renders_directly(&ty) {
+                            continue;
+                        }
+                        // The embed's own `line` is 1-based inside the
+                        // `{...}` fragment (a sub-parser parses it in
+                        // isolation), so the interpolation node's line
+                        // is the only source-accurate one.
+                        let line = if expr.line > 0 {
+                            expr.line
+                        } else {
+                            self.current_fn_line.unwrap_or(1)
+                        };
+                        self.error_at_line(
+                            line,
+                            format!(
+                                "String interpolation renders primitives only \
+                                 (Int, Float, Bool, String); this embed is {}. \
+                                 Write the conversion as a named function \
+                                 returning String and interpolate its result.",
+                                ty.display()
+                            ),
+                        );
                     }
                 }
                 Type::Str

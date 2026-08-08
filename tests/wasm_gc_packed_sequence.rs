@@ -70,6 +70,35 @@ fn verify(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
     )
 }
 
+/// `aver check` over a single file — for red-checks where the program
+/// must be REJECTED by the frontend before any backend runs.
+fn check(source: &str) -> (bool, String) {
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "aver-packed-sequence-check-{}-{id}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("main.av");
+    std::fs::write(&path, source).expect("source");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("check aver");
+    let _ = std::fs::remove_dir_all(dir);
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .trim()
+        .to_string(),
+    )
+}
+
 /// Multi-module variant of `run`: writes `main.av` plus one dep module
 /// file, then drives `aver run main.av --module-root <dir>` so the CLI's
 /// multi-module flatten + wasm-gc path is exercised end to end.
@@ -626,18 +655,19 @@ fn out_of_interval_literal_declines_the_discharge_on_every_backend() {
 // ─── Interpolating the carrier ──────────────────────────────────────────
 //
 // `"{o.values}"` embeds the PROJECTED `List<Int>` carrier in a string.
-// The projection itself already inserts the packed→list unpack bridge, so
-// what the interpolation receives is a plain cons list on both the packed
-// and the boxed path — but wasm-gc had no stringifier for a `List<Int>`
-// embed at all. The MIR interpolation emitter bailed on the compound type,
-// and a bail makes the WHOLE enclosing fn an `unreachable` trap stub, so
-// the program compiled and then trapped at runtime with no diagnostic.
-// The VM (and generated Rust) print `[0, 1, 127, 255]`.
+// That is a display site for a compound value, and conversion to String
+// must be NAMED in source, so the typechecker rejects it outright — see
+// the interpolation rule in `src/types/checker/infer/expr.rs`. wasm-gc
+// used to compile such a fn to an `unreachable` trap stub (silently, at
+// runtime); the rule removes the shape from typechecked programs, and
+// the emitter now raises a loud codegen error if one ever reaches it.
 //
-// The program below pins every leg of the rendering against the VM:
-// empty / single / multi carriers, a NEGATIVE and a beyond-i64 element on
-// a plain (unrefined) list so the bignum formatter is exercised too, and
-// two embeds in one literal so the parts array indexing is covered.
+// Two tests keep the coverage the original trap bug was about:
+//   * the red-check below pins the rejection and its message;
+//   * `packed_field_rendered_by_a_named_fn_matches_vm_and_boxed_wasm`
+//     keeps the three-way differential over packed-field projection +
+//     string building, now routed through an explicit local
+//     `showInts` — which is what a user writes instead.
 const INTERPOLATED_OCTETS: &str = r#"module M
     intent = "interpolate the projected carrier of a packed refinement"
     effects [Console]
@@ -667,24 +697,95 @@ fn render(xs: List<Int>) -> String
 
 fn main() -> Unit
     ! [Console.print]
+    Console.print(render(List.concat([0, 1], [127, 255])))
+"#;
+
+#[test]
+fn interpolating_a_packed_field_is_a_type_error() {
+    let (ok, out) = check(INTERPOLATED_OCTETS);
+    assert!(
+        !ok,
+        "interpolating a List<Int> carrier must be rejected, got: {out}"
+    );
+    assert!(
+        out.contains(
+            "String interpolation renders primitives only (Int, Float, Bool, String); \
+             this embed is List<Int>."
+        ),
+        "the diagnostic must name the offending type: {out}"
+    );
+    assert!(
+        out.contains("named function returning String"),
+        "the diagnostic must ask for a named conversion: {out}"
+    );
+}
+
+// Same program shape, with the display written out. `showInts` is the
+// named conversion the rule demands; it renders exactly what the VM's
+// repr does (`[]`, `[7]`, `[0, 1, 127, 255]`), so the three backends
+// stay comparable byte for byte.
+//
+// The coverage this preserves is the packed-field projection: `o.values`
+// reads the carrier of a PACKED refinement, which inserts the packed→list
+// unpack bridge before the value reaches the string builder, so the
+// packed and boxed lanes must agree. Empty / single / multi carriers, a
+// NEGATIVE and a beyond-i64 element on a plain (unrefined) list so the
+// bignum formatter is exercised too, and two embeds in one literal so the
+// parts-array indexing is covered.
+const NAMED_SHOW_OCTETS: &str = r#"module M
+    intent = "render the projected carrier of a packed refinement via a named fn"
+    effects [Console]
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _ -> "{head}, {joinInts(tail)}"
+
+fn showInts(xs: List<Int>) -> String
+    "[{joinInts(xs)}]"
+
+fn show(o: Octets) -> String
+    showInts(o.values)
+
+fn render(xs: List<Int>) -> String
+    match fromList(xs)
+        Result.Ok(o) -> show(o)
+        Result.Err(error) -> error
+
+fn main() -> Unit
+    ! [Console.print]
     empty: List<Int> = []
     Console.print(render(empty))
     Console.print(render(List.concat([7], empty)))
     Console.print(render(List.concat([0, 1], [127, 255])))
     plain = List.concat([0 - 5, 0], [10000000000000000000])
-    Console.print("plain={plain} twice={plain}")
+    Console.print("plain={showInts(plain)} twice={showInts(plain)}")
 "#;
 
 #[test]
-fn interpolated_packed_field_matches_vm_and_boxed_wasm() {
-    let (vm_ok, vm) = run(INTERPOLATED_OCTETS, false, true);
-    let (packed_ok, packed) = run(INTERPOLATED_OCTETS, true, true);
-    let (boxed_ok, boxed) = run(INTERPOLATED_OCTETS, true, false);
+fn packed_field_rendered_by_a_named_fn_matches_vm_and_boxed_wasm() {
+    let (vm_ok, vm) = run(NAMED_SHOW_OCTETS, false, true);
+    let (packed_ok, packed) = run(NAMED_SHOW_OCTETS, true, true);
+    let (boxed_ok, boxed) = run(NAMED_SHOW_OCTETS, true, false);
     assert!(vm_ok, "VM failed: {vm}");
-    assert!(
-        packed_ok,
-        "packed wasm failed (interpolating the carrier trapped): {packed}"
-    );
+    assert!(packed_ok, "packed wasm failed: {packed}");
     assert!(boxed_ok, "boxed wasm failed: {boxed}");
     assert_eq!(
         vm,
@@ -695,11 +796,11 @@ fn interpolated_packed_field_matches_vm_and_boxed_wasm() {
     assert_eq!(boxed, vm, "boxed wasm-gc diverged from the VM");
 }
 
-// Same gap, second surface: `aver verify --wasm-gc` runs cases through
-// its own wasm-gc execution path, so the trap-stub body reached it too —
-// the case bodies below returned nothing and every case failed.
-const INTERPOLATED_OCTETS_VERIFY: &str = r#"module M
-    intent = "verify an interpolated packed carrier on the wasm-gc runner"
+// Second surface: `aver verify` runs cases through its own wasm-gc
+// execution path, so a codegen gap can be red there while `aver run` is
+// green. Same named-conversion shape, driven from verify cases.
+const NAMED_SHOW_OCTETS_VERIFY: &str = r#"module M
+    intent = "verify a named-conversion render of a packed carrier on the wasm-gc runner"
     effects []
 
 record Octets
@@ -717,9 +818,19 @@ fn fromList(xs: List<Int>) -> Result<Octets, String>
         true -> Result.Ok(Octets(values = xs))
         false -> Result.Err("oob")
 
+fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _ -> "{head}, {joinInts(tail)}"
+
+fn showInts(xs: List<Int>) -> String
+    "[{joinInts(xs)}]"
+
 fn render(xs: List<Int>) -> String
     match fromList(xs)
-        Result.Ok(o) -> "{o.values}"
+        Result.Ok(o) -> showInts(o.values)
         Result.Err(error) -> error
 
 verify render
@@ -729,10 +840,10 @@ verify render
 "#;
 
 #[test]
-fn interpolated_packed_field_verifies_on_the_wasm_gc_runner() {
-    let (vm_ok, vm) = verify(INTERPOLATED_OCTETS_VERIFY, false, true);
-    let (packed_ok, packed) = verify(INTERPOLATED_OCTETS_VERIFY, true, true);
-    let (boxed_ok, boxed) = verify(INTERPOLATED_OCTETS_VERIFY, true, false);
+fn named_conversion_render_verifies_on_the_wasm_gc_runner() {
+    let (vm_ok, vm) = verify(NAMED_SHOW_OCTETS_VERIFY, false, true);
+    let (packed_ok, packed) = verify(NAMED_SHOW_OCTETS_VERIFY, true, true);
+    let (boxed_ok, boxed) = verify(NAMED_SHOW_OCTETS_VERIFY, true, false);
     assert!(vm_ok, "VM verify failed: {vm}");
     assert!(packed_ok, "packed wasm-gc verify failed: {packed}");
     assert!(boxed_ok, "boxed wasm-gc verify failed: {boxed}");

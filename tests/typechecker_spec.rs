@@ -4022,3 +4022,151 @@ fn plain_tuple_literal_accepts_expected_tuple_elements() {
     let src = "fn pair(n: Int) -> Tuple<Int, Int>\n    ? \"Pairs.\"\n    (1, n)\n";
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// String interpolation — primitives only, conversions are named in source
+// ---------------------------------------------------------------------------
+
+/// The sanctioned set, one embed per primitive. This is exactly what the
+/// `__to_str` lowering renders on every backend; if a primitive is added
+/// or dropped there, this test and the rule must move together.
+#[test]
+fn interpolation_accepts_every_primitive() {
+    assert_no_errors("fn show(n: Int) -> String\n    \"n={n}\"\n");
+    assert_no_errors("fn show(x: Float) -> String\n    \"x={x}\"\n");
+    assert_no_errors("fn show(b: Bool) -> String\n    \"b={b}\"\n");
+    assert_no_errors("fn show(s: String) -> String\n    \"s={s}\"\n");
+}
+
+#[test]
+fn interpolation_rejects_a_list_embed() {
+    assert_error_containing(
+        "fn show(xs: List<Int>) -> String\n    \"xs={xs}\"\n",
+        "String interpolation renders primitives only (Int, Float, Bool, String); \
+         this embed is List<Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_record_embed() {
+    let src = "record User\n    name: String\n    age: Int\n\n\
+               fn show(u: User) -> String\n    \"u={u}\"\n";
+    assert_error_containing(
+        src,
+        "String interpolation renders primitives only (Int, Float, Bool, String); \
+         this embed is User.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_an_option_embed() {
+    assert_error_containing(
+        "fn show(o: Option<Int>) -> String\n    \"o={o}\"\n",
+        "this embed is Option<Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_result_embed() {
+    assert_error_containing(
+        "fn show(r: Result<Int, String>) -> String\n    \"r={r}\"\n",
+        "this embed is Result<Int, String>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_map_embed() {
+    assert_error_containing(
+        "fn show(m: Map<String, Int>) -> String\n    \"m={m}\"\n",
+        "this embed is Map<String, Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_tuple_embed() {
+    assert_error_containing(
+        "fn show(t: Tuple<Int, Int>) -> String\n    \"t={t}\"\n",
+        "this embed is Tuple<Int, Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_vector_embed() {
+    assert_error_containing(
+        "fn show(v: Vector<Int>) -> String\n    \"v={v}\"\n",
+        "this embed is Vector<Int>.",
+    );
+}
+
+/// The diagnostic must point at the fix the language actually offers —
+/// a user-written conversion — and must NOT advertise a stdlib helper,
+/// because none exists and none is planned.
+#[test]
+fn interpolation_rejection_asks_for_a_named_conversion() {
+    let errs = errors("fn show(xs: List<Int>) -> String\n    \"xs={xs}\"\n");
+    let msg = errs
+        .iter()
+        .find(|m| m.contains("String interpolation renders primitives only"))
+        .expect("expected the interpolation diagnostic");
+    assert!(
+        msg.contains("named function returning String"),
+        "diagnostic must ask for a named conversion: {msg}"
+    );
+    assert!(
+        !msg.contains("String.from") && !msg.contains("List.toString"),
+        "diagnostic must not suggest a stdlib helper: {msg}"
+    );
+}
+
+/// Wrapping the value in a user-written display fn is the sanctioned
+/// spelling and must type-check clean — the positive control for the
+/// rejections above.
+#[test]
+fn interpolation_accepts_a_named_conversion_result() {
+    let src = r#"fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _ -> "{head}, {joinInts(tail)}"
+
+fn show(xs: List<Int>) -> String
+    "xs=[{joinInts(xs)}]"
+"#;
+    assert_no_errors(src);
+}
+
+/// An embed whose type the checker could not resolve already produced a
+/// diagnostic of its own; the interpolation rule must not pile a second
+/// one on top (same `Type::Invalid` discipline the neighbouring argument
+/// and element rules follow).
+#[test]
+fn interpolation_does_not_double_report_an_invalid_embed() {
+    let errs = errors("fn show() -> String\n    \"v={nope}\"\n");
+    assert_eq!(
+        errs.iter()
+            .filter(|m| m.contains("Unknown identifier 'nope'"))
+            .count(),
+        1,
+        "expected exactly one unknown-identifier error, got: {errs:?}"
+    );
+    assert_eq!(
+        errs.iter()
+            .filter(|m| m.contains("String interpolation renders primitives only"))
+            .count(),
+        0,
+        "an already-errored embed must not draw a second diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn interpolation_does_not_double_report_a_bad_call_embed() {
+    let errs = errors("fn show() -> String\n    \"v={missingFn(1)}\"\n");
+    assert_eq!(
+        errs.iter()
+            .filter(|m| m.contains("String interpolation renders primitives only"))
+            .count(),
+        0,
+        "an already-errored embed must not draw a second diagnostic, got: {errs:?}"
+    );
+}

@@ -109,16 +109,6 @@ pub(super) enum BuiltinName {
     /// over its parts and calls this) and the future `String.join`
     /// shape (interleave separator, then call this).
     StringConcatN,
-    /// `__wasmgc_string_from_list_int(xs: List<Int>) -> String` — the
-    /// `aver_repr` rendering of a list of Ints (`[1, 2, 3]`, `[]` when
-    /// empty), used by string interpolation of a `List<Int>` embed.
-    /// Without it such an embed had no stringifier, the MIR emitter bailed,
-    /// and the WHOLE enclosing fn silently became an `unreachable` trap
-    /// stub. Builds the `["[", "", e0, ", ", e1, …, "]"]` parts array and
-    /// defers to `__wasmgc_concat_n`, so the join is one O(total_len) copy.
-    /// Internal — not addressable from Aver source (no `from_dotted`
-    /// mapping); registered by interpolation discovery.
-    StringFromListInt,
     StringStartsWith,
     StringContains,
     StringSlice,
@@ -274,7 +264,6 @@ impl BuiltinName {
             Self::StringLength => "String.len",
             Self::StringByteLength => "String.byteLength",
             Self::StringConcatN => "__wasmgc_concat_n",
-            Self::StringFromListInt => "__wasmgc_string_from_list_int",
             Self::StringStartsWith => "String.startsWith",
             Self::StringContains => "String.contains",
             Self::StringSlice => "String.slice",
@@ -330,7 +319,6 @@ impl BuiltinName {
             Self::StringFromIntI64 => Ok(vec![ValType::I64]),
             Self::StringLength | Self::StringByteLength => Ok(vec![string_ref_ty(registry)?]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
-            Self::StringFromListInt => Ok(vec![list_ref_ty(registry, "List<Int>")?]),
             Self::StringStartsWith | Self::StringContains => {
                 Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?])
             }
@@ -392,7 +380,7 @@ impl BuiltinName {
         match self {
             Self::StringFromInt | Self::StringFromIntI64 => Ok(vec![string_ref_ty(registry)?]),
             Self::StringLength | Self::StringByteLength => Ok(vec![ValType::I64]),
-            Self::StringConcatN | Self::StringFromListInt => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => Ok(vec![ValType::I32]),
             Self::StringSlice
             | Self::StringToUpper
@@ -448,7 +436,6 @@ impl BuiltinName {
             Self::StringLength => emit_string_length(registry),
             Self::StringByteLength => emit_string_byte_length(registry),
             Self::StringConcatN => emit_string_concat_n(registry),
-            Self::StringFromListInt => emit_string_from_list_int(registry),
             Self::StringStartsWith => emit_string_starts_with(registry),
             Self::StringContains => emit_string_contains(registry),
             Self::StringSlice => emit_string_slice(registry),
@@ -931,200 +918,6 @@ fn emit_string_concat_n(registry: &TypeRegistry) -> Result<Function, WasmGcError
     "#
     );
     wat_helper::compile_wat_helper(&wat)
-}
-
-/// `__wasmgc_string_from_list_int(xs) -> String` — `aver_repr` of a
-/// `List<Int>`: `[]`, `[7]`, `[0, 1, 255]`.
-///
-/// Two passes over the cons chain. The first counts the elements; the
-/// second fills a `Vector<String>` of `2n + 2` parts laid out as
-/// `"["`, then per element `i` a separator (`""` for `i == 0`, `", "`
-/// otherwise) followed by its decimal rendering, then `"]"`. The
-/// variadic `__wasmgc_concat_n` joins them in a single O(total_len)
-/// copy, and the empty-list case falls out of the same layout (two
-/// parts, `"["` and `"]"`).
-///
-/// The element formatter is the module's active `String.fromInt` — the
-/// `$AverInt` one under bignum, the scalar-i64 one otherwise — which is
-/// exactly the representation a `List<Int>` cons cell stores, so no
-/// bridge is needed at the call. Digits therefore match a bare `{n}`
-/// interpolation of the same element byte for byte.
-///
-/// Raw `wasm_encoder` rather than WAT: the body needs the recursive
-/// `List<Int>` struct type, and re-declaring that (plus enough padding
-/// to align three separate user-module type slots) in a standalone WAT
-/// module is more fragile than emitting the four type indices directly.
-fn emit_string_from_list_int(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    use wasm_encoder::{BlockType, HeapType, RefType};
-
-    let string_idx = registry
-        .string_array_type_idx
-        .ok_or(WasmGcError::Validation(
-            "List<Int> stringify helper requires String slot".into(),
-        ))?;
-    let vec_idx = registry
-        .vector_type_idx("Vector<String>")
-        .ok_or(WasmGcError::Validation(
-            "List<Int> stringify helper requires Vector<String> slot".into(),
-        ))?;
-    let list_idx = registry
-        .list_type_idx("List<Int>")
-        .ok_or(WasmGcError::Validation(
-            "List<Int> stringify helper requires List<Int> slot".into(),
-        ))?;
-    let from_int = registry
-        .string_from_int_fn_idx
-        .ok_or(WasmGcError::Validation(
-            "List<Int> stringify helper requires String.fromInt".into(),
-        ))?;
-    let concat_n = registry
-        .string_concat_n_fn_idx
-        .ok_or(WasmGcError::Validation(
-            "List<Int> stringify helper requires __wasmgc_concat_n".into(),
-        ))?;
-
-    let list_ref = ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(list_idx),
-    });
-    let vec_ref = ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(vec_idx),
-    });
-    let string_ref = ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(string_idx),
-    });
-
-    // params: 0=xs. locals: 1=cur, 2=n, 3=parts, 4=i.
-    let mut f = Function::new([
-        (1, list_ref),
-        (1, ValType::I32),
-        (1, vec_ref),
-        (1, ValType::I32),
-    ]);
-
-    // Pass 1: n = length(xs).
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: list_idx,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-
-    // parts = array.new_default $vec (2n + 2)
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(2));
-    f.instruction(&Instruction::I32Mul);
-    f.instruction(&Instruction::I32Const(2));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::ArrayNewDefault(vec_idx));
-    f.instruction(&Instruction::LocalSet(3));
-
-    // parts[0] = "["
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Const(b'[' as i32));
-    f.instruction(&Instruction::ArrayNewFixed {
-        array_type_index: string_idx,
-        array_size: 1,
-    });
-    f.instruction(&Instruction::ArraySet(vec_idx));
-
-    // Pass 2: per element, write its separator then its digits.
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(4));
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::BrIf(1));
-    // parts[2i + 1] = i == 0 ? "" : ", "
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Const(2));
-    f.instruction(&Instruction::I32Mul);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Result(string_ref)));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::ArrayNewDefault(string_idx));
-    f.instruction(&Instruction::Else);
-    f.instruction(&Instruction::I32Const(b',' as i32));
-    f.instruction(&Instruction::I32Const(b' ' as i32));
-    f.instruction(&Instruction::ArrayNewFixed {
-        array_type_index: string_idx,
-        array_size: 2,
-    });
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::ArraySet(vec_idx));
-    // parts[2i + 2] = String.fromInt(cur.head)
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Const(2));
-    f.instruction(&Instruction::I32Mul);
-    f.instruction(&Instruction::I32Const(2));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: list_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::Call(from_int));
-    f.instruction(&Instruction::ArraySet(vec_idx));
-    // i += 1; cur = cur.tail
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(4));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: list_idx,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-
-    // parts[2n + 1] = "]"
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(2));
-    f.instruction(&Instruction::I32Mul);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I32Const(b']' as i32));
-    f.instruction(&Instruction::ArrayNewFixed {
-        array_type_index: string_idx,
-        array_size: 1,
-    });
-    f.instruction(&Instruction::ArraySet(vec_idx));
-
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::Call(concat_n));
-    f.instruction(&Instruction::End);
-    Ok(f)
 }
 
 /// `String.len(s) -> Int` — Unicode scalar value count, matching the
