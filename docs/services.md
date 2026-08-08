@@ -24,9 +24,22 @@ requiring exactly 32 bytes.
 Both remain ordinary Aver types and retain their invariants in Lean and Dafny
 proof export.
 
+`Bytes.fromList` written against a list literal whose every element is an
+integer literal in `0..=255` cannot fail, so it types as plain `Bytes` — no
+`?`, no `match`:
+
+```aver
+payload = Bytes.fromList([249, 190, 180, 217])   -- : Bytes
+Tcp.sendBytes("127.0.0.1", 9, payload)
+```
+
+Anything else keeps `Result<Bytes, String>`: a variable, a computed list, a
+computed element, or a literal outside `0..=255`. See
+[language.md](language.md#operators) for the exact boundary.
+
 | Function | Signature | Notes |
 |---|---|---|
-| `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet; `Result.Err` names the offending value and its index |
+| `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet; `Result.Err` names the offending value and its index. An all-literal in-range list argument discharges to plain `Bytes` — see below |
 | `Bytes.toList` | `Bytes -> List<Int>` | Exposes validated values |
 | `Bytes.fromHex` | `String -> Result<Bytes, String>` | Even length, case-insensitive, no `0x` prefix |
 | `Bytes.toHex` | `Bytes -> String` | Total, lowercase output |

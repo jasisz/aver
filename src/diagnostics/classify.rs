@@ -258,6 +258,30 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         );
     }
 
+    if msg.contains("Operator '?' can only be applied to Result") {
+        return (
+            "error-prop-non-result",
+            None,
+            Vec::new(),
+            Some(
+                "`?` unwraps a Result; this expression already has its payload type. A smart-constructor call over an all-literal list inside the refinement's proven element interval — Bytes.fromList([0, 10, 255]) — is total and returns the refined type directly, so drop the `?`"
+                    .to_string(),
+            ),
+        );
+    }
+
+    if msg.contains("but the match subject is") {
+        return (
+            "pattern-subject-mismatch",
+            None,
+            Vec::new(),
+            Some(
+                "Match the value's own shape. A Result arm cannot apply to a value that is not a Result — a smart-constructor call over an all-literal in-range list returns the refined type directly, so match on it (or bind it) instead of on Result.Ok / Result.Err"
+                    .to_string(),
+            ),
+        );
+    }
+
     ("type-error", None, Vec::new(), None)
 }
 

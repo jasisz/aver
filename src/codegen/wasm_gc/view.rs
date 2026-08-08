@@ -87,7 +87,19 @@ impl WasmGcLinkedView {
     /// flattened items carry every dep fn under prefixed names.
     pub(super) fn build(items: &[TopLevel], fn_defs: &[&FnDef]) -> Result<Self, WasmGcError> {
         let symbol_table = SymbolTable::build(items, &[]);
-        let resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
+        let mut resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
+        // Same current-module context every other resolution site uses
+        // (`resolve_program`, the Rust and Dafny lifters, `CodegenContext`):
+        // a program that declares `module Local` may spell its own members
+        // qualified, and `ResolveCtx::resolve_fn_id` only probes the entry
+        // scope for `Local.f` when it knows `Local` IS the current module.
+        // Without this, a self-qualified call resolved to `Unresolved` here
+        // and lowered to `unreachable` — while every other backend called
+        // it fine.
+        resolve_ctx.current_module = items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        });
         let resolved_fn_defs: Vec<ResolvedFnDef> = fn_defs
             .iter()
             .filter_map(|fd| resolve_fn_def_external(&resolve_ctx, fd))

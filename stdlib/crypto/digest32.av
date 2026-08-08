@@ -33,12 +33,12 @@ fn toHex(digest: Digest32) -> String
     Bytes.toHex(toBytes(digest))
 
 verify hasLength32
-    hasLength32(Bytes.fromList([])?) => false
-    hasLength32(Bytes.fromList([0, 0])?) => false
-    hasLength32(Bytes.fromList([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])?) => true
+    hasLength32(Bytes.fromList([])) => false
+    hasLength32(Bytes.fromList([0, 0])) => false
+    hasLength32(Bytes.fromList([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])) => true
 
 verify fromBytes
-    fromBytes(Bytes.fromList([0, 0])?) => Result.Err("digest must contain exactly 32 bytes")
+    fromBytes(Bytes.fromList([0, 0])) => Result.Err("digest must contain exactly 32 bytes")
 
 verify fromHex
     fromHex("0000") => Result.Err("digest must contain exactly 32 bytes")

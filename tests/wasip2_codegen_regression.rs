@@ -163,7 +163,7 @@ fn tcp_send_bytes_compiles_and_validates_as_component() {
 fn main() -> Result<Bytes, String>
     ? "Send and receive bytes without UTF-8 conversion."
     ! [Tcp.sendBytes]
-    payload = Bytes.fromList([249, 190, 180, 217])?
+    payload = Bytes.fromList([249, 190, 180, 217])
     Tcp.sendBytes("127.0.0.1", 9, payload)
 "#;
     let (items, type_aliases) =

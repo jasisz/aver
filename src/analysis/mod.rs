@@ -13,4 +13,5 @@
 //! See issue #232 (0.23 "Shape") for the architectural plan and the
 //! peer-review notes that produced this split.
 
+pub mod literal_refinement;
 pub mod shape;

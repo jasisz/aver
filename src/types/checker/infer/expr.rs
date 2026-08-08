@@ -653,9 +653,33 @@ impl TypeChecker {
                     };
 
                 if let Expr::Ident(name) = &fn_expr.node {
-                    if let Some(sig) = self.find_fn_sig(name).cloned() {
+                    if let Some((resolved_id, sig)) = self
+                        .find_fn_sig_resolved(name)
+                        .map(|(id, sig)| (id, sig.clone()))
+                    {
+                        // Literal smart-constructor discharge, bare-callee
+                        // seam — see the qualified seam below for the rule.
+                        //
+                        // INVARIANT: the discharge and the normal resolution
+                        // must agree on the callee, or the discharge
+                        // declines. `resolved_id` is the identity the very
+                        // lookup that produced `sig` settled on, so an entry
+                        // module's own `fn fromList(…)` — which shadows the
+                        // stdlib constructor under Aver's pinned shadowing
+                        // rule — keeps its own signature here AND is left
+                        // alone by the HIR rewrite, which keys on the same
+                        // identity.
+                        let discharged = resolved_id.is_some_and(|id| {
+                            self.symbol_table
+                                .literal_refinements()
+                                .discharge(id, args)
+                                .is_some()
+                        });
                         let ret = check_call(self, name, sig);
                         validate_special_call(self, name, args);
+                        if discharged && let Type::Result(payload, _) = ret {
+                            return *payload;
+                        }
                         return ret;
                     }
                     if let Some(binding_ty) = self.binding_type(name) {
@@ -772,6 +796,47 @@ impl TypeChecker {
                             return Type::Int;
                         }
                         _ => {}
+                    }
+
+                    // Literal smart-constructor discharge: a QUALIFIED call
+                    // to a recognized `List<Int>` refinement's smart
+                    // constructor whose single argument is a syntactic list
+                    // of integer literals, every one inside the interval
+                    // that refinement itself proves, cannot reach the `Err`
+                    // branch — so it types as the refined type instead of
+                    // `Result<T, String>`. The gate is derived, never named:
+                    // `LiteralRefinementTable` reads the same recognizer the
+                    // wasm-gc packed layout is derived from, so "discharged"
+                    // and "storable in the packed carrier" are the same
+                    // predicate. The HIR resolver applies the identical rule
+                    // to the identical shape.
+                    //
+                    // INVARIANT: the discharge and the normal resolution
+                    // must agree on the callee, or the discharge declines.
+                    // The identity comes out of the same lookup as the
+                    // signature the call is then checked against, so a
+                    // qualified name that resolves to some other function
+                    // cannot be discharged as this one.
+                    if let Some((Some(resolved_id), sig)) = self
+                        .find_fn_sig_resolved(&display_name)
+                        .map(|(id, sig)| (id, sig.clone()))
+                        && self
+                            .symbol_table
+                            .literal_refinements()
+                            .discharge(resolved_id, args)
+                            .is_some()
+                    {
+                        // Keep the standard arity/arg-type checks; only the
+                        // return type is discharged, and it is taken from
+                        // the constructor's own `Result<T, E>` signature so
+                        // the refined type is the exact canonical identity
+                        // the checker already resolved — never a re-derived
+                        // name.
+                        let ret = check_call(self, &display_name, sig);
+                        if let Type::Result(payload, _) = ret {
+                            return *payload;
+                        }
+                        return ret;
                     }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);

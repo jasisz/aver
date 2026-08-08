@@ -382,11 +382,9 @@ fn writeFrame(c: Tcp.Connection, payload: Bytes) -> Unit
         Result.Ok(_) -> awaitAck(c)
         Result.Err(e) -> Console.print("write err: {{e}}")
 
-fn usePayload(c: Tcp.Connection, payload: Result<Bytes, String>) -> Unit
+fn usePayload(c: Tcp.Connection, payload: Bytes) -> Unit
     ! [Tcp.writeBytes, Tcp.readLine, Tcp.close, Console.print]
-    match payload
-        Result.Ok(bytes) -> writeFrame(c, bytes)
-        Result.Err(e) -> Console.print("bytes err: {{e}}")
+    writeFrame(c, payload)
 
 fn main() -> Unit
     ! [Tcp.connect, Tcp.writeBytes, Tcp.readLine, Tcp.close, Console.print]
@@ -618,11 +616,9 @@ fn renderBytes(bytes: List<Int>) -> String
 
 fn main() -> Unit
     ! [Tcp.sendBytes, Console.print]
-    match Bytes.fromList([249, 190, 180, 217])
+    match Tcp.sendBytes("127.0.0.1", {port}, Bytes.fromList([249, 190, 180, 217]))
+        Result.Ok(r) -> Console.print("got: {{renderBytes(Bytes.toList(r))}}")
         Result.Err(e) -> Console.print("err: {{e}}")
-        Result.Ok(payload) -> match Tcp.sendBytes("127.0.0.1", {port}, payload)
-            Result.Ok(r) -> Console.print("got: {{renderBytes(Bytes.toList(r))}}")
-            Result.Err(e) -> Console.print("err: {{e}}")
 "#
     );
     let fixture = write_fixture(&dir, "send_bytes.av", &src);

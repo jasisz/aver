@@ -841,6 +841,76 @@ fn proof_export_verifies_discharged_div_law_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_discharged_bytes_law_when_lake_is_available() {
+    // Literal smart-constructor discharge, Lean side
+    // (tests/fixtures/discharged_bytes_law.av). `Bytes.fromList([0, 10,
+    // 255])` types as plain `Bytes`, so the Lean backend emits a `Subtype`
+    // construction `⟨[0, 10, 255], by …⟩` whose obligation is
+    // `Bytes.allInRange [0, 10, 255] = true` — the discharge gate's own
+    // claim, re-established by the kernel instead of assumed.
+    //
+    // That obligation is why the emitted tactic ladder grew a
+    // `simp [<predicate>]` rung. `allInRange` is compiled by well-founded
+    // recursion, which `decide` cannot evaluate through the elaborator
+    // (see the note in `src/codegen/lean/crypto_model.lean`), so
+    // `first | omega | decide | (simp_all; omega) | assumption` closes
+    // none of these goals. The rung names the predicate the refinement's
+    // own invariant applies, so it is derived, not hardcoded.
+    //
+    // The empty frame is the vacuous case, and `dynamicOctetCount` keeps
+    // the `Result` path: the file only builds if the discharged calls
+    // became direct constructions WHILE the computed-argument call stayed
+    // fallible.
+    //
+    // `frameOctets` puts both in ONE body and carries the law
+    // `literalFrameIsIndependentOfTheComputedFrame` — a single theorem
+    // obligation, universal in the computed value, over a body whose
+    // literal branch is a direct construction and whose other branch
+    // matches on the fallible constructor. Both must be true of the same
+    // body at once for it to close (and, upstream of the prover, for the
+    // file to typecheck at all: a `Result` pattern over a non-`Result`
+    // subject is an error).
+    assert_proof_builds(
+        "tests/fixtures/discharged_bytes_law.av",
+        "aver-proof-discharged-bytes-law",
+    );
+}
+
+#[test]
+fn proof_export_builds_discharged_bytes_long_literal_when_lake_is_available() {
+    // Recursion-depth stress case for the same rung: 32-element literal
+    // frames, one all-zero and one spanning the whole proven interval.
+    // Closing `Bytes.allInRange [0, 0, …] = true` needs 32 unfoldings of a
+    // well-founded recursive predicate, which is exactly the depth at
+    // which `decide` and the pre-existing ladder both fail.
+    //
+    // Lean only, deliberately: Dafny discharges the same fact as a
+    // subset-type constraint at the use site, and its default function
+    // fuel does not unfold a 32-element sequence. The shapes BOTH backends
+    // discharge live in `discharged_bytes_law.av` above.
+    assert_proof_builds(
+        "tests/fixtures/discharged_bytes_long_literal.av",
+        "aver-proof-discharged-bytes-long-literal",
+    );
+}
+
+#[test]
+fn proof_dafny_verifies_discharged_bytes_law_when_dafny_is_available() {
+    // Dafny side of the discharge. A refinement construction collapses to
+    // the bare carrier there, so `Bytes.fromList([0, 10, 255])` becomes the
+    // literal sequence and Dafny must discharge the subset-type constraint
+    // `allInRange(xs)` at the use site by unfolding the same recursive
+    // predicate the Lean obligation names. Includes the mixed-body law
+    // `frameOctets.literalFrameIsIndependentOfTheComputedFrame`, which
+    // Dafny closes as a lemma over the same one body that holds a
+    // discharged construction and a fallible call side by side.
+    assert_dafny_verifies(
+        "tests/fixtures/discharged_bytes_law.av",
+        "aver-dafny-discharged-bytes-law",
+    );
+}
+
+#[test]
 fn proof_export_builds_result_default_cone_when_lake_is_available() {
     // A law whose unfold cone contains the `Result.withDefault` builtin
     // (tests/fixtures/result_default_cone.av): the linear-arithmetic

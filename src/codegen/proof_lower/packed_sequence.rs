@@ -147,18 +147,43 @@ fn element_interval_from_refinement(
     inputs: &ProofLowerInputs<'_>,
     scope: Option<&str>,
 ) -> Option<Interval> {
-    let (predicate_fn, predicate_args) = call_target_and_args(&info.predicate.node)?;
-    if predicate_args.len() != 1 || !expr_is_ident(&predicate_args[0], info.param_name) {
+    element_interval_from_predicate(
+        info.predicate,
+        info.param_name,
+        &inputs.pure_fns_in_scope(scope),
+        &|expr| inputs.resolve_expr(expr, scope),
+    )
+}
+
+/// Derive the per-element interval of a canonical `List<Int>` refinement
+/// from the smart constructor's predicate call, the same-scope function
+/// pool, and a resolver for the per-element predicate expression.
+///
+/// Split out of [`element_interval_from_refinement`] so the analysis tier
+/// (`crate::analysis::literal_refinement`, which drives the literal
+/// discharge in the typechecker and the HIR resolver) derives the element
+/// bound through the SAME recognizer the packed layout uses, instead of
+/// re-deriving — or worse, hardcoding — a range. Both callers therefore
+/// agree by construction: a value the discharge admits is a value the
+/// packed layout can store.
+pub(crate) fn element_interval_from_predicate(
+    predicate: &Spanned<Expr>,
+    param_name: &str,
+    scope_fns: &[&FnDef],
+    resolve: &dyn Fn(&Spanned<Expr>) -> Spanned<crate::ir::hir::ResolvedExpr>,
+) -> Option<Interval> {
+    let (predicate_fn, predicate_args) = call_target_and_args(&predicate.node)?;
+    if predicate_args.len() != 1 || !expr_is_ident(&predicate_args[0], param_name) {
         return None;
     }
-    let helper = inputs
-        .pure_fns_in_scope(scope)
-        .into_iter()
+    let helper = scope_fns
+        .iter()
+        .copied()
         .find(|fd| same_callee_name(&fd.name, &predicate_fn))?;
     recursive_list_element_predicate(helper).and_then(|(element_name, element_predicate)| {
         let predicate = Predicate {
             free_vars: vec![(element_name, QuantifierType::Plain("Int".to_string()))],
-            expr: inputs.resolve_expr(element_predicate, scope),
+            expr: resolve(element_predicate),
         };
         let (interval, known) = crate::ir::interval::interval_of_invariant(&predicate);
         known.then_some(interval)

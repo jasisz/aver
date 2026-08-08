@@ -298,6 +298,17 @@ pub(super) fn run_self_host_replay(
     check_args: bool,
 ) -> Result<BackendReplayOutcome, String> {
     let replay_program_file = resolve_replay_program_file(recording, replay_module_root);
+    // Same host/guest divergence gate as `aver run --self-host`: a
+    // discharged literal smart-constructor call means the guest resolver
+    // would build a `Result` the host-checked source no longer expects.
+    if let Ok(source) = super::super::shared::read_file(&replay_program_file)
+        && let Ok(items) = super::super::shared::parse_file(&source)
+    {
+        super::super::commands::reject_literal_refinement_discharge(
+            &items,
+            Some(replay_module_root),
+        )?;
+    }
     let binary_path = find_self_host_binary()?;
     let guest_args = decode_self_host_guest_args(&recording.input)?;
 

@@ -528,6 +528,225 @@ fn cross_literal_divisor_discharge_self_host() {
         LITERAL_DIVISOR_OUT,
     );
 }
+
+/// Literal smart-constructor discharge, executed end to end.
+/// `Local.fromList([1, 2, 3])` types as the refined type — the elements are
+/// literals inside the interval the refinement's own predicate proves — so
+/// every backend must produce the carrier directly, with no `Result` to
+/// unwrap. `dynamic` keeps the fallible path in the same program, so a
+/// backend that discharged too much or too little diverges here.
+const LITERAL_REFINEMENT_SRC: &str = r#"module Local
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn count(o: Octets) -> Int
+    List.len(o.values)
+
+fn first(o: Octets) -> Int
+    match o.values
+        [head, .._] -> head
+        [] -> 0 - 1
+
+fn dynamic(xs: List<Int>) -> Int
+    match fromList(xs)
+        Result.Ok(o) -> count(o)
+        Result.Err(_) -> 0 - 2
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(count(Local.fromList([1, 2, 3]))))
+    Console.print(String.fromInt(first(Local.fromList([200, 0]))))
+    Console.print(String.fromInt(count(Local.fromList([]))))
+    Console.print(String.fromInt(dynamic([1, 2])))
+    Console.print(String.fromInt(dynamic([256])))
+"#;
+const LITERAL_REFINEMENT_OUT: &str = "3\n200\n0\n2\n-2";
+
+#[test]
+fn cross_literal_refinement_discharge_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-litref-vm", LITERAL_REFINEMENT_SRC),
+        LITERAL_REFINEMENT_OUT,
+    );
+}
+
+#[test]
+fn cross_literal_refinement_discharge_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-litref-wasmgc", LITERAL_REFINEMENT_SRC),
+        LITERAL_REFINEMENT_OUT,
+    );
+}
+
+#[test]
+fn cross_literal_refinement_discharge_rejected_by_self_host() {
+    // The self-hosted resolver has no refinement recognizer — no type
+    // defs, no dependency-module ASTs, no interval derivation — so it
+    // cannot mirror this rule the way it mirrors the purely syntactic
+    // literal-divisor one. Doing nothing would NOT be neutral: the guest
+    // would keep building a `Result` where the host-checked source expects
+    // the refined type, and the program would fail far from the cause (the
+    // pre-gate symptom was a bare `field access on non-record`). The
+    // boundary is therefore a loud, specific refusal that names the call
+    // sites, and this test is what keeps it loud.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module("aver-cross-litref-sh", LITERAL_REFINEMENT_SRC);
+    let module_root = path.parent().expect("temp module has parent");
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root)
+        .arg("--self-host")
+        .output()
+        .expect("expected `aver run --self-host` to execute");
+    cleanup(&path);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "self-host must REFUSE a discharged program, not run it:\n{combined}"
+    );
+    assert!(
+        combined.contains("does not support the literal smart-constructor discharge"),
+        "self-host refusal must name the rule:\n{combined}"
+    );
+    assert!(
+        combined.contains("Local.fromList"),
+        "self-host refusal must name the offending call sites:\n{combined}"
+    );
+}
+
+#[test]
+fn cross_literal_refinement_discharge_rejected_by_self_host_replay() {
+    // Same refusal, second entrance. `aver replay --self-host` reaches the
+    // guest through `run_self_host_replay`, not through `cmd_run_self_hosted`
+    // — a separate call site of `reject_literal_refinement_discharge` that
+    // the `aver run --self-host` test above cannot cover. Replay is where a
+    // silent divergence would be worst: the recording pins the HOST's effect
+    // trace, so a guest that rebuilt a `Result` would either mismatch far
+    // from the cause or, if the discharged value never reaches an effect,
+    // report a clean replay of a program it executed differently.
+    //
+    // The gate runs before the cached self-host binary is even looked up,
+    // so this test does not depend on that binary existing.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module("aver-cross-litref-replay", LITERAL_REFINEMENT_SRC);
+    let module_root = path.parent().expect("temp module has parent");
+    let rec_dir = module_root.join("recordings");
+
+    // Record on the VM, which runs the discharged program happily.
+    let record = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root)
+        .arg("--record")
+        .arg(&rec_dir)
+        .output()
+        .expect("expected `aver run --record` to execute");
+    assert!(
+        record.status.success(),
+        "VM record run of a discharged program must succeed:\n{}",
+        format_output(&record)
+    );
+
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("replay")
+        .arg(&rec_dir)
+        .arg("--self-host")
+        .arg("--test")
+        .output()
+        .expect("expected `aver replay --self-host` to execute");
+    cleanup(&path);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "self-host replay must REFUSE a discharged program, not replay it:\n{combined}"
+    );
+    assert!(
+        combined.contains("does not support the literal smart-constructor discharge"),
+        "self-host replay refusal must name the rule:\n{combined}"
+    );
+    assert!(
+        combined.contains("Local.fromList"),
+        "self-host replay refusal must name the offending call sites:\n{combined}"
+    );
+}
+
+// ─── Local shadowing of a recognized smart constructor ──────────────────
+//
+// A module declaring its own `fromList` shadows the dependency's
+// recognized constructor. The checker types the call as the LOCAL fn's
+// return type (pinned in `tests/typechecker_spec.rs`), so every backend
+// must EXECUTE the local fn too. Keying the discharge on a callee
+// spelling broke exactly this: the checker said `Int`, the HIR resolver
+// rewrote the body to a `Bytes` carrier construction, and the VM printed
+// `Bytes(values: [1, 2, 3])` where the program asked for a length.
+//
+// The last line keeps the dependency's constructor discharging in the
+// SAME program, so a fix that simply switched the whole rule off would
+// not pass either.
+
+const SHADOWED_CTOR_SRC: &str = r#"module Local
+    depends [Bytes]
+
+fn fromList(xs: List<Int>) -> Int
+    List.len(xs)
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(fromList([1, 2, 3])))
+    Console.print(String.fromInt(fromList([])))
+    Console.print(Bytes.toHex(Bytes.fromList([0, 10, 255])))
+"#;
+const SHADOWED_CTOR_OUT: &str = "3\n0\n000aff";
+
+#[test]
+fn cross_shadowed_smart_constructor_runs_the_local_fn_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-shadowctor-vm", SHADOWED_CTOR_SRC),
+        SHADOWED_CTOR_OUT,
+    );
+}
+
+#[test]
+fn cross_shadowed_smart_constructor_runs_the_local_fn_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-shadowctor-wasmgc", SHADOWED_CTOR_SRC),
+        SHADOWED_CTOR_OUT,
+    );
+}
+
 // ─── Verify cross-target ────────────────────────────────────────────────
 //
 // `aver verify` and `aver verify --wasm-gc` evaluate the same verify

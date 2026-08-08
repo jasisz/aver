@@ -386,6 +386,49 @@ fn run_vm_inline(name: &str, source: &str) -> Result<String, String> {
     out
 }
 
+/// Literal smart-constructor discharge on the Rust backend. A call whose
+/// argument is an all-literal list inside the interval the refinement itself
+/// proves types as the refined type and lowers to a direct carrier
+/// construction; a computed argument keeps the fallible constructor. Both
+/// shapes sit in one program, so a backend that discharged too much or too
+/// little diverges from the VM here.
+#[test]
+fn rust_literal_refinement_discharge_matches_vm() {
+    let src = r#"module LiteralRefinement
+    intent = "Discharged and fallible smart-constructor calls in one program"
+    depends [Bytes]
+    effects [Console.print]
+
+fn describe(bytes: Bytes) -> String
+    ? "Render a validated frame as hex plus its length."
+    "{Bytes.toHex(bytes)}/{List.len(Bytes.toList(bytes))}"
+
+fn dynamic(values: List<Int>) -> String
+    ? "Validate a computed list through the fallible constructor."
+    match Bytes.fromList(values)
+        Result.Ok(bytes) -> describe(bytes)
+        Result.Err(e) -> e
+
+fn main() -> Unit
+    ? "Print the discharged and fallible results side by side."
+    ! [Console.print]
+    Console.print(describe(Bytes.fromList([249, 190, 180, 217])))
+    Console.print(describe(Bytes.fromList([])))
+    Console.print(dynamic(List.concat([249, 190], [180, 217])))
+    Console.print(dynamic([65, 256]))
+"#;
+    let expected = "f9beb4d9/4\n/0\nf9beb4d9/4\nbyte 256 at index 1 is outside 0..=255";
+
+    let vm = run_vm_inline("literal_refinement_discharge", src).expect("vm run");
+    let rust = build_run_rust_inline("literal_refinement_discharge", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM literal-discharge contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust literal-discharge contract diverged from VM"
+    );
+}
+
 /// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in
 /// the emitted project, so this regression must drive `Tcp.sendBytes` through
 /// a real `cargo build`. Invalid raw lists fail at `Bytes.fromList` before any
@@ -522,11 +565,13 @@ fn main() -> Unit
 /// `cargo test` with E0433. Driving `cargo test` (not just the build) also
 /// proves the digest-equality cases hold in the generated code.
 ///
-/// The verify cases use `Bytes.fromList(…)?` directly, which doubles as
-/// the regression for `?` inside a verify case: the generated test fn
+/// The last verify case uses `Bytes.fromHex(…)?` directly, which doubles
+/// as the regression for `?` inside a verify case: the generated test fn
 /// returns `Result<(), String>` while generated stdlib fns error with
 /// `AverStr`, so the emitter must convert at the `?` boundary (bare `?`
-/// used to fail `cargo test` with E0277).
+/// used to fail `cargo test` with E0277). It also pins that a discharged
+/// literal `Bytes.fromList([1, 2])` and the equivalent value built
+/// through the fallible `fromHex` path hash to the same digest.
 #[test]
 fn rust_sha256_verify_only_generates_testable_project() {
     let src = r#"module Sha256VerifyOnly
@@ -546,8 +591,9 @@ fn main() -> Unit
     Console.print(describe(true))
 
 verify describe
-    describe(Crypto.sha256(Bytes.fromList([1, 2])?) == Crypto.sha256(Bytes.fromList([1, 2])?)) => "same"
-    describe(Crypto.sha256(Bytes.fromList([1, 2])?) == Crypto.sha256(Bytes.fromList([2, 1])?)) => "different"
+    describe(Crypto.sha256(Bytes.fromList([1, 2])) == Crypto.sha256(Bytes.fromList([1, 2]))) => "same"
+    describe(Crypto.sha256(Bytes.fromList([1, 2])) == Crypto.sha256(Bytes.fromList([2, 1]))) => "different"
+    describe(Crypto.sha256(Bytes.fromHex("0102")?) == Crypto.sha256(Bytes.fromList([1, 2]))) => "same"
 "#;
 
     let name = "sha256_verify_only";
@@ -2457,7 +2503,7 @@ fn rust_tcp_send_bytes_round_trips_non_utf8() {
 fn exchange() -> Result<Bytes, String>
     ? "Send one binary payload to a loopback echo server."
     ! [Tcp.sendBytes]
-    payload = Bytes.fromList([249, 190, 180, 217])?
+    payload = Bytes.fromList([249, 190, 180, 217])
     Tcp.sendBytes("127.0.0.1", {port}, payload)
 
 fn main() -> Unit

@@ -1382,7 +1382,7 @@ fn valid_verify_trace_given_stub_for_tcp_read_bytes() {
         "\n",
         "fn readStub(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n",
         "    ? \"Honest stub returning a fixed frame.\"\n",
-        "    Bytes.fromList([1, 2, 3, 4])\n",
+        "    Result.Ok(Bytes.fromList([1, 2, 3, 4]))\n",
         "\n",
         "fn readFrame(conn: Tcp.Connection) -> Result<Bytes, String>\n",
         "    ? \"Read one 4-byte frame.\"\n",
@@ -1392,7 +1392,7 @@ fn valid_verify_trace_given_stub_for_tcp_read_bytes() {
         "verify readFrame trace\n",
         "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"h\", port = 1)]\n",
         "    given reader: Tcp.readBytes = [readStub]\n",
-        "    readFrame(conn) => Bytes.fromList([1, 2, 3, 4])\n",
+        "    readFrame(conn) => Result.Ok(Bytes.fromList([1, 2, 3, 4]))\n",
     );
     let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
     assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
@@ -1420,7 +1420,7 @@ fn valid_verify_trace_given_stub_for_tcp_write_bytes() {
         "verify sendFrame trace\n",
         "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"h\", port = 1)]\n",
         "    given writer: Tcp.writeBytes = [writeStub]\n",
-        "    sendFrame(conn, Bytes.fromList([1, 2])?) => Result.Ok(Unit)\n",
+        "    sendFrame(conn, Bytes.fromList([1, 2])) => Result.Ok(Unit)\n",
     );
     let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
     assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
@@ -1685,6 +1685,329 @@ fn literal_divisor_discharge_parentheses_are_transparent() {
     // Parentheses do not make a zero literal nonzero.
     assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, (0))\n");
     assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.mod(a, (0))\n");
+}
+
+// ─── Literal smart-constructor discharge ────────────────────────────────
+//
+// `Bytes.fromList([<all int literals, each inside the interval the Bytes
+// refinement itself proves>])` types as plain `Bytes`. Every other
+// argument shape keeps `Result<Bytes, String>`. The tests below are named
+// after the boundary they pin; the element bound is DERIVED from
+// `stdlib/bytes.av`'s own `allInRange` predicate, never hardcoded, so a
+// program with a different refinement discharges against a different
+// range (see `src/analysis/literal_refinement.rs`).
+
+/// Program skeleton for the discharge tests: one fn body, `depends [Bytes]`.
+fn bytes_program(signature: &str, body: &str) -> String {
+    format!(
+        "module Prog\n    intent = \"literal Bytes discharge\"\n    depends [Bytes]\n    effects []\n\n{signature}\n    ? \"probe\"\n{body}\n"
+    )
+}
+
+fn assert_bytes_program_clean(signature: &str, body: &str) {
+    let src = bytes_program(signature, body);
+    let errs = errors_with_base(&src, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for:\n{src}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+fn assert_bytes_program_error(signature: &str, body: &str, snippet: &str) {
+    let src = bytes_program(signature, body);
+    let errs = errors_with_base(&src, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter().any(|e| e.contains(snippet)),
+        "expected error containing {snippet:?} for:\n{src}\ngot:\n  {}",
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+}
+
+#[test]
+fn literal_bytes_discharge_types_as_the_refined_type() {
+    assert_bytes_program_clean("fn f() -> Bytes", "    Bytes.fromList([0, 10, 255])");
+    // The empty list satisfies the element bound vacuously.
+    assert_bytes_program_clean("fn f() -> Bytes", "    Bytes.fromList([])");
+    // Interval endpoints are inclusive.
+    assert_bytes_program_clean("fn f() -> Bytes", "    Bytes.fromList([0])");
+    assert_bytes_program_clean("fn f() -> Bytes", "    Bytes.fromList([255])");
+    // The discharged value flows straight into a `Bytes` consumer.
+    assert_bytes_program_clean(
+        "fn f() -> String",
+        "    Bytes.toHex(Bytes.fromList([0, 10, 255]))",
+    );
+    // …and no longer satisfies a `Result` return or the `?` operator.
+    assert_bytes_program_error(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([1, 2])",
+        "body returns Bytes but declared return type is Result<Bytes, String>",
+    );
+    assert_bytes_program_error(
+        "fn f() -> Bytes",
+        "    Bytes.fromList([1, 2])?",
+        "can only be applied to Result",
+    );
+}
+
+#[test]
+fn literal_bytes_discharge_boundary_out_of_interval_literal_stays_result() {
+    // THE BOUNDARY, element side: a literal outside the interval the
+    // refinement proves keeps the fallible signature, because the
+    // constructor really can take its `Err` branch.
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([65, 256])",
+    );
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([-1])",
+    );
+    // A magnitude beyond `i64` is declined outright by the syntactic half
+    // of the predicate — no bignum comparison, fail-closed.
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([65, 1208925819614629174706176])",
+    );
+}
+
+#[test]
+fn literal_bytes_discharge_boundary_is_syntactic_literal_lists_only() {
+    // THE BOUNDARY, argument-shape side: the discharge is keyed on a
+    // syntactic list of syntactic literals, nothing wider. Widening it
+    // (constant folding, flow facts, a proved-in-range variable) is a
+    // deliberate design decision — if you are here to relax this test,
+    // that decision needs its own review.
+    //
+    // An identifier stays `Result`, even when it is bound to a literal
+    // list in plain sight.
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    xs = [1, 2]\n    Bytes.fromList(xs)",
+    );
+    // A parameter stays `Result`.
+    assert_bytes_program_clean(
+        "fn f(xs: List<Int>) -> Result<Bytes, String>",
+        "    Bytes.fromList(xs)",
+    );
+    // A computed list stays `Result` (no folding).
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList(List.concat([1], [2]))",
+    );
+    // A computed ELEMENT stays `Result`, even though its value is in range.
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([1 + 1])",
+    );
+    // A doubly-negated literal is not a syntactic literal.
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([--5])",
+    );
+    // One in-range element does not carry an out-of-range sibling.
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        "    Bytes.fromList([1, 2, 300])",
+    );
+    // A non-list argument does not discharge; the ordinary argument check
+    // rejects it instead of a discharge skipping past it.
+    assert_bytes_program_error(
+        "fn f() -> Bytes",
+        "    Bytes.fromList(\"0102\")",
+        "Argument 1 of 'Bytes.fromList': expected List<Int>, got String",
+    );
+}
+
+#[test]
+fn literal_bytes_discharge_decides_the_same_for_every_callee_spelling() {
+    // THE BOUNDARY, callee side: qualified and bare in-module spellings
+    // must decide IDENTICALLY. This is not a convenience — the wasm-gc
+    // backend flattens a dependency's constructor and all of its call
+    // sites, qualified and in-module alike, into one prefixed bare name
+    // before re-resolving, so after the flatten the two spellings are
+    // indistinguishable. A spelling-sensitive rule would discharge before
+    // the flatten and not after, forking the checked and unchecked
+    // pipelines. Both fns below therefore return the refined type.
+    let src = "module Local\n    intent = \"an entry-scope refinement\"\n    effects []\n\nrecord Octets\n    values: List<Int>\n\nfn allInRange(xs: List<Int>) -> Bool\n    ? \"probe\"\n    match xs\n        [] -> true\n        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)\n            true -> allInRange(tail)\n            false -> false\n\nfn fromList(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    match allInRange(xs)\n        true -> Result.Ok(Octets(values = xs))\n        false -> Result.Err(\"oob\")\n\nfn unqualified() -> Octets\n    ? \"probe\"\n    fromList([1, 2])\n\nfn qualified() -> Octets\n    ? \"probe\"\n    Local.fromList([1, 2])\n\nfn stillFallible(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    fromList(xs)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn a_result_pattern_against_a_discharged_value_is_an_error() {
+    // The migration must be LOUD. Before the discharge,
+    // `match Bytes.fromList([1, 2])` scrutinised a `Result`; now it
+    // scrutinises a `Bytes`, and the `Result.Ok` / `Result.Err` arms can
+    // never be taken. Left unchecked the match just walks off the end at
+    // runtime with no diagnostic, so the pattern checker rejects a
+    // `Result` / `Option` constructor pattern whose subject is neither.
+    assert_bytes_program_error(
+        "fn f() -> String",
+        "    match Bytes.fromList([1, 2])\n        Result.Ok(b) -> Bytes.toHex(b)\n        Result.Err(e) -> e",
+        "Pattern 'Result.Ok' matches a Result value, but the match subject is Bytes",
+    );
+    // The same guard on a plainly wrong match, discharge or not.
+    assert_error_containing(
+        "fn f(n: Int) -> Int\n    match n\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n",
+        "but the match subject is Int",
+    );
+    // A genuine Result subject is untouched.
+    assert_bytes_program_clean(
+        "fn f(values: List<Int>) -> String",
+        "    match Bytes.fromList(values)\n        Result.Ok(b) -> Bytes.toHex(b)\n        Result.Err(e) -> e",
+    );
+}
+
+#[test]
+fn literal_bytes_discharge_boundary_needs_a_recognized_smart_constructor() {
+    // THE BOUNDARY, refinement side: the gate is derived from the
+    // refinement SHAPE, not from a constructor name. A bare record with a
+    // `fromList` of its own — no validating predicate, so nothing proves
+    // an element interval — never discharges, and its declared
+    // `Result` signature stands.
+    let src = "module Local\n    intent = \"a fromList that validates nothing\"\n    effects []\n\nrecord Octets\n    values: List<Int>\n\nfn fromList(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    Result.Ok(Octets(values = xs))\n\nfn use() -> Result<Octets, String>\n    ? \"probe\"\n    Local.fromList([1, 2])\n";
+    assert_no_errors(src);
+}
+
+// ─── The discharge is keyed on RESOLVED IDENTITY, not on the spelling ───
+//
+// Aver's shadowing rule is pinned above by
+// `entry_local_fn_shadows_dep_module_bare_alias`: a bare call inside an
+// entry module that declares its own `doit` means the entry's own `doit`,
+// not the dependency's. The discharge must obey the SAME resolution — it
+// may fire only when the callee the checker resolved IS the recognized
+// smart constructor. Otherwise the checked type and the lowered IR
+// disagree about which function ran, which is a miscompilation, not a
+// missed optimisation. See `src/analysis/literal_refinement.rs`.
+
+/// Entry program with `depends [Bytes]` that declares its own `fromList`
+/// with the given signature and body, plus one caller fn.
+fn shadowing_from_list_program(
+    local_signature: &str,
+    local_body: &str,
+    caller_signature: &str,
+    caller_body: &str,
+) -> String {
+    format!(
+        "module Prog\n    intent = \"a local fromList shadowing the recognized constructor\"\n    depends [Bytes]\n    effects []\n\n{local_signature}\n    ? \"probe\"\n{local_body}\n\n{caller_signature}\n    ? \"probe\"\n{caller_body}\n"
+    )
+}
+
+#[test]
+fn a_local_from_list_returning_int_shadows_the_recognized_constructor() {
+    // The local fn wins, so the call has type `Int`. A discharge keyed on
+    // the spelling `fromList` fired here too — the checker kept `Int` only
+    // because `Int` is not a `Result` to unwrap, while the HIR resolver
+    // went ahead and rewrote the body to a `Bytes` carrier construction.
+    // The runtime half of this pin lives in `tests/cross_backend_stress.rs`
+    // (`cross_shadowed_smart_constructor_runs_the_local_fn_*`), which is
+    // where that divergence was actually observable.
+    let clean = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Int",
+        "    List.len(xs)",
+        "fn caller() -> Int",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&clean, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "the local `fromList` must type the call as its own `Int`:\n{clean}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+
+    // …and it is NOT the refined type: the call cannot satisfy a `Bytes`
+    // return, which is what a discharge would have made it do.
+    let wrong = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Int",
+        "    List.len(xs)",
+        "fn caller() -> Bytes",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&wrong, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("body returns Int but declared return type is Bytes")),
+        "expected the local fn's `Int` to clash with a `Bytes` return:\n{wrong}\ngot:\n  {}",
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+
+    // The dependency's constructor is untouched: still recognized, still
+    // discharging under its qualified spelling in the very same program.
+    let qualified = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Int",
+        "    List.len(xs)",
+        "fn caller() -> Bytes",
+        "    Bytes.fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&qualified, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "the shadowed dependency constructor must still discharge when named:\n{qualified}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn a_local_from_list_returning_a_result_keeps_its_own_result() {
+    // The sharp case. The local fn returns `Result<Int, String>`, so the
+    // spelling-keyed discharge really did strip the wrapper: the call typed
+    // as plain `Int` and the `Result` return below was reported as an
+    // error. The local fn is not a recognized refinement smart constructor
+    // — it has no refined carrier and no proven interval — so nothing about
+    // it may be discharged.
+    let clean = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Result<Int, String>",
+        "    Result.Ok(List.len(xs))",
+        "fn caller() -> Result<Int, String>",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&clean, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "the local `fromList` must keep its own `Result`:\n{clean}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+
+    // The `?` operator still applies, which it could not if the call had
+    // been discharged to the bare payload.
+    let propagated = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Result<Int, String>",
+        "    Result.Ok(List.len(xs))",
+        "fn caller() -> Result<Int, String>",
+        "    n = fromList([0, 10, 255])?\n    Result.Ok(n)",
+    );
+    let errs = errors_with_base(&propagated, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "`?` must still apply to the local fn's `Result`:\n{propagated}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+
+    // And the payload is the local fn's `Int`, not the dependency's `Bytes`.
+    let wrong = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Result<Int, String>",
+        "    Result.Ok(List.len(xs))",
+        "fn caller() -> Result<Bytes, String>",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&wrong, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter().any(|e| e.contains("Result<Bytes, String>")),
+        "expected the local fn's payload to clash with `Result<Bytes, String>`:\n{wrong}\ngot:\n  {}",
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
 }
 
 #[test]

@@ -1274,6 +1274,100 @@ pub(super) fn cmd_run_vm(
     }
 }
 
+/// Refuse a program the self-host pipeline would run with different
+/// semantics than the host.
+///
+/// The literal smart-constructor discharge is a HOST rule: the host
+/// typechecker types `Dep.fromList([1, 2, 3])` as the refined type and
+/// the host resolver lowers it to the carrier construction. The
+/// Aver-in-Aver resolver (`self_hosted/domain/resolver/calls.av`) has no
+/// refinement recognizer — it has no type defs, no dependency-module
+/// ASTs and no interval derivation — so it keeps building a guest
+/// `Result`. Mirroring the rule there is not the three syntactic
+/// predicates the literal-divisor rule needed; it is the whole
+/// recognizer. Until that lands, the boundary is a LOUD error: staying
+/// silent means the guest returns `Result.Ok(v)` where the host-checked
+/// source expects `v`, and the program dies far from the cause (or, in
+/// the worst case, does not).
+pub(super) fn reject_literal_refinement_discharge(
+    items: &[TopLevel],
+    module_root: Option<&str>,
+) -> Result<(), String> {
+    use aver::analysis::literal_refinement::discharge_sites;
+
+    let loaded = module_root
+        .and_then(|base| {
+            items
+                .iter()
+                .find_map(|item| match item {
+                    TopLevel::Module(m) => Some(m.depends.clone()),
+                    _ => None,
+                })
+                .and_then(|depends| aver::source::load_module_tree(&depends, base).ok())
+        })
+        .unwrap_or_default();
+    let dep_modules: Vec<aver::codegen::ModuleInfo> = loaded
+        .iter()
+        .map(|m| aver::codegen::ModuleInfo {
+            prefix: m.dep_name.clone(),
+            depends: Vec::new(),
+            type_defs: m
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::TypeDef(td) => Some(td.clone()),
+                    _ => None,
+                })
+                .collect(),
+            fn_defs: m
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::FnDef(fd) => Some(fd.clone()),
+                    _ => None,
+                })
+                .collect(),
+            verify_laws: Vec::new(),
+            analysis: None,
+        })
+        .collect();
+    // `SymbolTable::build` already derives the refinement table (and the
+    // scan resolves callee identities against this same table anyway), so
+    // there is nothing left to recompute here.
+    let symbols = aver::ir::SymbolTable::build(items, &dep_modules);
+
+    // Entry items resolve under their DECLARED module name (that is what
+    // `resolve_program` sets), dep items under the prefix the symbol table
+    // indexed them by. Same context as the rewrite, same answers.
+    let entry_scope = items.iter().find_map(|item| match item {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut sites = discharge_sites(&symbols, entry_scope.as_deref(), items);
+    for module in &loaded {
+        sites.extend(discharge_sites(
+            &symbols,
+            Some(&module.dep_name),
+            &module.items,
+        ));
+    }
+    if sites.is_empty() {
+        return Ok(());
+    }
+    let listed: Vec<String> = sites
+        .iter()
+        .map(|(line, callee)| format!("  line {line}: {callee}(…)"))
+        .collect();
+    Err(format!(
+        "The self-host pipeline does not support the literal smart-constructor discharge.\n\
+         These calls type as the refined type on the host but would build a Result in the \
+         self-hosted interpreter:\n{}\n\
+         Pass the list through a binding or a non-literal expression to keep the Result path, \
+         or run without --self-host.",
+        listed.join("\n")
+    ))
+}
+
 pub(super) fn cmd_run_self_hosted(
     file: &str,
     module_root_override: Option<&str>,
@@ -1315,6 +1409,10 @@ pub(super) fn cmd_run_self_hosted(
         let tc = pipeline_result.typecheck.expect("typecheck was requested");
         if !tc.errors.is_empty() {
             eprintln!("{}", format_type_errors(&tc.errors).red());
+            process::exit(1);
+        }
+        if let Err(e) = reject_literal_refinement_discharge(&items, Some(&mr)) {
+            eprintln!("{}", e.red());
             process::exit(1);
         }
     }

@@ -25,7 +25,7 @@ fn user_given_stub_for_tcp_read_bytes_typechecks_and_runs_on_vm() {
 
 fn readStub(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
     ? "Honest stub returning a fixed frame."
-    Bytes.fromList([1, 2, 3, 4])
+    Result.Ok(Bytes.fromList([1, 2, 3, 4]))
 
 fn readFrame(conn: Tcp.Connection) -> Result<Bytes, String>
     ? "Read one 4-byte frame."
@@ -35,7 +35,7 @@ fn readFrame(conn: Tcp.Connection) -> Result<Bytes, String>
 verify readFrame trace
     given conn: Tcp.Connection = [Tcp.Connection(id = "fake", host = "127.0.0.1", port = 1)]
     given reader: Tcp.readBytes = [readStub]
-    readFrame(conn) => Bytes.fromList([1, 2, 3, 4])
+    readFrame(conn) => Result.Ok(Bytes.fromList([1, 2, 3, 4]))
 "#;
     let items = parse_source(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     let results = run_verify_for_items_vm(

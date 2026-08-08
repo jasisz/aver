@@ -164,7 +164,7 @@ fn tcp_send_bytes_imports_host_function_and_validates() {
 fn main() -> Result<Bytes, String>
     ? "Send and receive bytes without UTF-8 conversion."
     ! [Tcp.sendBytes]
-    payload = Bytes.fromList([249, 190, 180, 217])?
+    payload = Bytes.fromList([249, 190, 180, 217])
     Tcp.sendBytes("127.0.0.1", 9, payload)
 "#;
     let (items, type_aliases) =
@@ -289,7 +289,7 @@ fn sha256_compiles_without_digest32_in_depends() {
 fn main() -> Result<String, String>
     ? "Hash a payload and report that a digest was produced."
     ! [Console.print]
-    payload = Bytes.fromList([1, 2, 3])?
+    payload = Bytes.fromList([1, 2, 3])
     digest = Crypto.sha256(payload)
     Console.print("hashed")
     Result.Ok("hashed")

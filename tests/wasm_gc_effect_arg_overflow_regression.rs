@@ -233,11 +233,9 @@ fn tcp_send_bytes_round_trips_nominal_bytes_on_wasm_gc() {
 
 fn main() -> Unit
     ! [Tcp.sendBytes, Console.print]
-    match Bytes.fromList([249, 190, 180, 217])
+    match Tcp.sendBytes("127.0.0.1", {port}, Bytes.fromList([249, 190, 180, 217]))
         Result.Err(e) -> Console.print("err: {{e}}")
-        Result.Ok(payload) -> match Tcp.sendBytes("127.0.0.1", {port}, payload)
-            Result.Err(e) -> Console.print("err: {{e}}")
-            Result.Ok(response) -> Console.print("{{Bytes.toList(response) == [249, 190, 180, 217]}}")
+        Result.Ok(response) -> Console.print("{{Bytes.toList(response) == [249, 190, 180, 217]}}")
 "#
     );
     let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
@@ -364,15 +362,13 @@ fn writeFrame(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
 
 fn main() -> Unit
     ! [Tcp.connect, Tcp.writeBytes, Tcp.close, Console.print]
-    match Bytes.fromList([249, 190, 180, 217])
-        Result.Err(e) -> Console.print("bytes err: {{e}}")
-        Result.Ok(payload) -> match Tcp.connect("127.0.0.1", {port})
-            Result.Err(e) -> Console.print("connect err: {{e}}")
-            Result.Ok(conn) -> match writeFrame(conn, payload)
-                Result.Err(e) -> Console.print("write err: {{e}}")
-                Result.Ok(_) -> match Tcp.close(conn)
-                    Result.Err(e) -> Console.print("close err: {{e}}")
-                    Result.Ok(_) -> Console.print("written")
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+        Result.Ok(conn) -> match writeFrame(conn, Bytes.fromList([249, 190, 180, 217]))
+            Result.Err(e) -> Console.print("write err: {{e}}")
+            Result.Ok(_) -> match Tcp.close(conn)
+                Result.Err(e) -> Console.print("close err: {{e}}")
+                Result.Ok(_) -> Console.print("written")
 "#
     );
     let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)

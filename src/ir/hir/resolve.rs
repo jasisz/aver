@@ -374,6 +374,72 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), resolved_args);
                 }
             }
+            // Literal smart-constructor discharge: a call to a recognized
+            // `List<Int>` refinement's smart constructor over an
+            // all-literal, all-in-interval list literal cannot take the
+            // `Err` branch, so it lowers to the carrier construction the
+            // `Ok` branch would have produced — no `Result` wrap to unwrap
+            // on any backend. The gate is the SAME derived table the
+            // typechecker's discharge rule reads
+            // (`SymbolTable::literal_refinements`), and it keys on the
+            // refinement's own proven element interval, never on a name.
+            //
+            // INVARIANT: the discharge and ordinary name resolution must
+            // agree on the callee, or the discharge declines. That is why
+            // the key is `resolved_callee` — the identity THIS resolver
+            // just picked — and not the callee's spelling. A spelling key
+            // would rewrite an entry module's own `fn fromList(…) -> Int`
+            // into a carrier construction while the checker, obeying
+            // Aver's shadowing rule, types the same call as `Int`. It also
+            // survives the wasm-gc flatten for free: the flattened compile
+            // unit is re-resolved against a rebuilt symbol table, so the
+            // renamed call sites resolve to the renamed constructor.
+            //
+            // Why a construct site rather than a call to the constructor:
+            // `RecordCreate` is total on every backend and needs no new IR
+            // node, the packed carrier bridge treats it identically to the
+            // constructor's own `Ok` branch, and the precedent already
+            // exists — `proof_lower::multi_field_record_demotions` treats a
+            // construct site whose every field is a literal inside the
+            // proven interval as exactly as gated as the smart constructor.
+            //
+            // What makes that safe is NOT that the demotion scans vet this
+            // node: they walk the AST, and this `RecordCreate` is HIR the
+            // resolver synthesises afterwards, so they never see it at all.
+            // Safety rests on the SHARED DERIVED INTERVAL. The discharge
+            // admits an element only if
+            // `packed_sequence::element_interval_from_predicate` — the very
+            // function the packed layout's own bound is derived from —
+            // proves it in range. "This literal discharges" and "the packed
+            // carrier can store this literal" are therefore one predicate,
+            // not two that happen to agree today.
+            let mut resolved_args = resolved_args;
+            if let ResolvedCallee::Fn(fn_id) = &resolved_callee
+                && let Some(ctor) = ctx.symbols.literal_refinements().discharge(*fn_id, args)
+                && resolved_args.len() == 1
+            {
+                let key = match ctor.scope.as_deref() {
+                    Some(prefix) => TypeKey::in_module(prefix, &ctor.type_name),
+                    None => TypeKey::entry(&ctor.type_name),
+                };
+                // Spell the construct site exactly as source in this scope
+                // would: bare inside the owning module, qualified from
+                // outside it. Backends resolve a record's layout from this
+                // spelling through the flatten-derived alias map, and a
+                // cross-module construct written bare resolves a different
+                // struct type than the surrounding expression expects.
+                let type_name = match ctor.scope.as_deref() {
+                    Some(prefix) if ctx.current_module.as_deref() != Some(prefix) => {
+                        format!("{prefix}.{}", ctor.type_name)
+                    }
+                    _ => ctor.type_name.clone(),
+                };
+                return ResolvedExpr::RecordCreate {
+                    type_id: ctx.symbols.type_id_of(&key),
+                    type_name,
+                    fields: vec![(ctor.carrier_field.clone(), resolved_args.remove(0))],
+                };
+            }
             ResolvedExpr::Call(resolved_callee, resolved_args)
         }
         Expr::BinOp(op, l, r) => ResolvedExpr::BinOp(
@@ -507,7 +573,12 @@ fn resolve_pattern(ctx: &ResolveCtx<'_>, pat: &Pattern) -> ResolvedPattern {
 /// `buffer_build`; `LocalSlot` for first-class fn values; the
 /// `Unresolved` passthrough for anything else (typechecker already
 /// reported it).
-fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCallee {
+///
+/// `pub(crate)` so the self-host discharge scan
+/// ([`crate::analysis::literal_refinement::discharge_sites`]) can ask
+/// this exact function which fn a callee denotes, rather than
+/// re-deriving it and risking a different answer than the rewrite below.
+pub(crate) fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCallee {
     match &callee.node {
         Expr::Resolved {
             slot,

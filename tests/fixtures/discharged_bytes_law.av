@@ -1,0 +1,55 @@
+module DischargedBytesLaw
+    intent =
+        "Laws and examples over literal smart-constructor discharge, on both proof backends. `Bytes.fromList([0, 10, 255])` types as plain `Bytes` because every element is an integer literal inside the interval the `Bytes` refinement itself proves, so the call constructs the carrier directly instead of returning `Result<Bytes, String>`. In Lean that lands as a `Subtype` construction whose obligation is `Bytes.allInRange [0, 10, 255] = true` — the discharge gate's own claim, re-established by the kernel rather than assumed; `allInRange` is compiled by well-founded recursion, which `decide` cannot evaluate through the elaborator, so the obligation is closed by the emitted `simp [Bytes.allInRange]` rung. In Dafny the construction collapses to the bare carrier and the subset-type constraint is discharged at the use site by unfolding the same recursive predicate over a literal sequence. Coverage: a three-element frame, the vacuous empty frame, and `dynamicOctetCount`, which keeps the `Result` path because its argument is computed — the emission-correctness pin, since the file only builds if the discharged calls became direct constructions WHILE the computed one stayed a fallible call in the same program. `frameOctets` tightens that pin to a SINGLE body: one branch constructs the carrier from an all-literal list, the other matches on the fallible constructor over a computed one-element list, and the file does not even typecheck unless the two calls got different types. Its law is the theorem obligation over that body — proving the literal branch reduces to the frame's own octets, universally in the computed value, on both backends. The long-literal stress case lives in `discharged_bytes_long_literal.av`, which is Lean-only: Dafny's default function fuel does not unfold a 32-element sequence through the recursive predicate."
+    depends [Bytes]
+    exposes [octetCount, literalFrame, emptyFrame, dynamicOctetCount, framesAgree, frameOctets]
+    effects []
+
+fn literalFrame() -> Bytes
+    ? "A three-octet frame built from an all-literal in-range list."
+    Bytes.fromList([0, 10, 255])
+
+fn emptyFrame() -> Bytes
+    ? "The empty frame; the element bound holds vacuously."
+    Bytes.fromList([])
+
+fn octetCount(bytes: Bytes) -> Int
+    ? "How many octets a validated frame carries."
+    List.len(Bytes.toList(bytes))
+
+fn dynamicOctetCount(values: List<Int>) -> Result<Int, String>
+    ? "Count octets through the fallible constructor; the argument is not a literal list."
+    bytes = Bytes.fromList(values)?
+    Result.Ok(octetCount(bytes))
+
+fn framesAgree(bytes: Bytes) -> Bool
+    ? "Whether a frame carries the same octets as the literal three-octet frame."
+    Bytes.toList(bytes) == Bytes.toList(literalFrame())
+
+fn frameOctets(mode: Int, value: Int) -> Result<List<Int>, String>
+    ? "The literal frame's octets, or a one-octet frame built from a computed value."
+    match mode == 0
+        true -> Result.Ok(Bytes.toList(Bytes.fromList([0, 10, 255])))
+        false -> match Bytes.fromList([value])
+            Result.Ok(other) -> Result.Ok(Bytes.toList(other))
+            Result.Err(message) -> Result.Err(message)
+
+verify literalFrame
+    Bytes.toHex(literalFrame()) => "000aff"
+    octetCount(literalFrame()) => 3
+
+verify emptyFrame
+    Bytes.toHex(emptyFrame()) => ""
+    octetCount(emptyFrame()) => 0
+
+verify dynamicOctetCount
+    dynamicOctetCount([0, 10, 255]) => Result.Ok(3)
+    dynamicOctetCount([0, 256]) => Result.Err("byte 256 at index 1 is outside 0..=255")
+
+verify framesAgree law literalFrameIsItsOwnOctets
+    given n: Int = 0..2
+    framesAgree(literalFrame()) => true
+
+verify frameOctets law literalFrameIsIndependentOfTheComputedFrame
+    given n: Int = 0..2
+    frameOctets(0, n) => Result.Ok([0, 10, 255])

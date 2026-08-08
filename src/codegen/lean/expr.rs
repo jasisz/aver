@@ -185,14 +185,31 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // structure shape and a plain `{ value := … }` record
             // literal, so this fast-path is gated on the carrier
             // matching.
-            if crate::codegen::common::find_refined_type(ctx, type_name).is_some()
+            //   * for a structural carrier the predicate is a
+            //     recursive helper compiled by well-founded
+            //     recursion, which `decide` cannot evaluate through
+            //     the elaborator (see `crypto_model.lean`). Those
+            //     goals need the helper's equation lemmas, so a
+            //     final `simp [<predicate>]` rung is appended when
+            //     the invariant's head is a nameable function — the
+            //     name is read off the refinement's own invariant,
+            //     never hardcoded. This is the rung that closes the
+            //     literal smart-constructor discharge
+            //     (`Bytes.fromList([0, 10, 255])` → `⟨[0, 10, 255],
+            //     by … simp [Bytes.allInRange]⟩`): the emitted proof
+            //     re-establishes, in Lean, exactly the fact the
+            //     discharge gate claimed.
+            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
                 let value_str = emit_expr(value_expr, ctx);
-                return format!(
-                    "⟨{value_str}, by first | omega | decide | (simp_all; omega) | assumption⟩"
-                );
+                let mut ladder =
+                    "first | omega | decide | (simp_all; omega) | assumption".to_string();
+                if let Some(predicate) = invariant_head_name(&decl.invariant.expr, ctx) {
+                    ladder.push_str(&format!(" | simp [{predicate}]"));
+                }
+                return format!("⟨{value_str}, by {ladder}⟩");
             }
             let parts: Vec<String> = fields
                 .iter()
@@ -287,6 +304,30 @@ fn emit_literal(lit: &Literal) -> String {
 
 fn escape_lean_string(s: &str) -> String {
     crate::codegen::common::escape_string_literal(s)
+}
+
+/// Lean name of the function a refinement's invariant applies, when the
+/// invariant is a single call (`allInRange xs`). Used to give the
+/// Subtype-construction tactic ladder an unfolding rung for predicates
+/// the elaborator cannot evaluate — structural helpers compiled by
+/// well-founded recursion. A non-call invariant (a bare comparison such
+/// as `n >= 0`) has no name to unfold and returns `None`; those goals
+/// are already closed by `omega` / `decide`.
+fn invariant_head_name(invariant: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> Option<String> {
+    // Only a USER function has equation lemmas worth unfolding; a builtin
+    // head (`Bool.and`, a comparison) is already in `simp`'s reach and
+    // rendering one here would need its arguments anyway.
+    let ResolvedExpr::Call(ResolvedCallee::Fn(fn_id), _) = &invariant.node else {
+        return None;
+    };
+    let entry = ctx.symbol_table.fn_entry(*fn_id);
+    let bare = aver_name_to_lean(entry.key.name.as_str());
+    Some(match entry.key.scope_str() {
+        Some(prefix) if !ctx.modules.is_empty() => {
+            format!("{}.{}", super::syntax::aver_path_to_lean(prefix), bare)
+        }
+        _ => bare,
+    })
 }
 
 fn emit_fn_call(
