@@ -221,7 +221,79 @@ fn is_wrapper_over_recursion_inner(ctx: &CodegenContext, fd: &crate::ast::FnDef)
     })
 }
 
+/// Tokens that make an emitted declaration unreducible in the kernel: a
+/// `partial def` / `opaque` / `unsafe` constant has no definitional unfolding,
+/// and a `sorry` is not a value at all.
+///
+/// A `panic!` arm (the fuel wrappers' exhaustion case) is listed for a
+/// different reason: it DOES reduce — silently, to `default` — where native
+/// evaluation prints the `PANIC at …` line that `aver proof --check` charges
+/// as a hard failure. Kernel-deciding such a case would blind that gate.
+const KERNEL_OPAQUE_TOKENS: [&str; 5] = ["partial def", "opaque ", "unsafe ", "sorry", "panic!"];
+
+/// `true` iff the kernel cannot see through what the emitter just wrote for
+/// this component.
+///
+/// Reads the fact off the emitted TEXT rather than re-deriving it from the
+/// source shape, so a new emission strategy cannot silently widen the
+/// kernel-decided set. Mutual groups are rejected wholesale: whether fuelized
+/// or well-founded, their compiled recursor is not something to bet a user's
+/// `lake build` on.
+fn component_is_kernel_opaque(comp: &[&crate::ast::FnDef], emitted: &[String]) -> bool {
+    comp.len() > 1
+        || emitted
+            .iter()
+            .any(|code| code_has_kernel_opaque_token(code))
+}
+
+/// Token scan over emitted Lean, ignoring `/-- … -/` doc comments and `--`
+/// lines. The doc text is user prose lifted from the Aver `?` description, so
+/// scanning it would classify a fn whose description merely says "opaque" as
+/// kernel-opaque. Code lines are matched with a plain `contains`: a false hit
+/// (the word inside a Lean string literal) only routes the case back to
+/// `native_decide`, which is always safe.
+fn code_has_kernel_opaque_token(code: &str) -> bool {
+    let mut in_doc = false;
+    for raw in code.lines() {
+        let line = raw.trim_start();
+        if in_doc {
+            in_doc = !line.contains("-/");
+            continue;
+        }
+        if line.starts_with("/-") {
+            in_doc = !line.contains("-/");
+            continue;
+        }
+        if line.starts_with("--") {
+            continue;
+        }
+        if KERNEL_OPAQUE_TOKENS.iter().any(|tok| line.contains(tok)) {
+            return true;
+        }
+    }
+    false
+}
+
 fn emit_pure_component(
+    comp: &[&crate::ast::FnDef],
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+    emit_mode: LeanEmitMode,
+    recursive_names: &HashSet<String>,
+    recursive_fns: &HashSet<String>,
+    opaque_fns: &mut HashSet<crate::ir::FnId>,
+) -> Vec<String> {
+    let out = emit_pure_component_code(comp, scope, ctx, emit_mode, recursive_names, recursive_fns);
+    if component_is_kernel_opaque(comp, &out) {
+        opaque_fns.extend(
+            comp.iter()
+                .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
+        );
+    }
+    out
+}
+
+fn emit_pure_component_code(
     comp: &[&crate::ast::FnDef],
     scope: Option<&str>,
     ctx: &CodegenContext,
@@ -394,25 +466,12 @@ pub(super) fn transpile_unified(
         }
     }
 
-    let mut entry_verify_sections: Vec<String> = Vec::new();
-    let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
-    // Certificate model modules omit the `verify` sample-check `example`
-    // blocks: they are decided by `native_decide`, need the recursive-type
-    // `DecidableEq` shim the cert mode also drops, and a certificate carries
-    // its own decode-to-Int/bytes anti-vacuity guards instead.
-    if !cert_model {
-        for item in &ctx.items {
-            if let TopLevel::Verify(vb) = item {
-                let key = verify_counter_key(vb);
-                let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
-                let (emitted, next_idx) =
-                    toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
-                verify_case_counters.insert(key, next_idx);
-                entry_verify_sections.push(emitted);
-                entry_verify_sections.push(String::new());
-            }
-        }
-    }
+    // Fns whose emission the kernel cannot see through, accumulated by every
+    // `emit_pure_component` call below. The sampled-`verify` classifier reads
+    // it AFTER both declaration passes have run — which is why the entry
+    // verify blocks are emitted at the end of this fn rather than here (their
+    // position in the output is unchanged).
+    let mut opaque_fns: HashSet<crate::ir::FnId> = HashSet::new();
 
     // ---- Per-module file bodies ----
     let mut module_files: Vec<(String, String)> = Vec::new();
@@ -463,6 +522,7 @@ pub(super) fn transpile_unified(
                         emit_mode,
                         &recursive_names,
                         &recursive_fns,
+                        &mut opaque_fns,
                     ));
                 }
             }
@@ -528,8 +588,16 @@ pub(super) fn transpile_unified(
                     }
                     let key = verify_counter_key(vb);
                     let start_idx = *dep_verify_counters.get(&key).unwrap_or(&0);
-                    let (emitted, next_idx) =
-                        toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
+                    // Law blocks only (the `continue` above filters the rest),
+                    // and a law's proof never routes through the sampled-case
+                    // classifier — so no classification is available or needed.
+                    let (emitted, next_idx) = toplevel::emit_verify_block(
+                        vb,
+                        ctx,
+                        verify_mode,
+                        start_idx,
+                        &super::kernel_decide::CaseDecidability::disabled(),
+                    );
                     dep_verify_counters.insert(key, next_idx);
                     body_sections.push(emitted);
                     body_sections.push(String::new());
@@ -603,10 +671,48 @@ pub(super) fn transpile_unified(
                     emit_mode,
                     &recursive_names,
                     &recursive_fns,
+                    &mut opaque_fns,
                 ));
             }
         }
     }
+
+    // ---- Sampled `verify` cases (entry only) ----
+    // Emitted last so the per-case kernel-decidability classifier can read the
+    // opacity of every declaration this transpile actually produced. Only
+    // proof mode is classified: the standard emit spells every recursive fn
+    // `partial`, which no kernel reduction sees through anyway.
+    let case_decidability = match emit_mode {
+        LeanEmitMode::Proof => {
+            super::kernel_decide::CaseDecidability::new(opaque_fns, recursive_types.clone())
+        }
+        LeanEmitMode::Standard => super::kernel_decide::CaseDecidability::disabled(),
+    };
+    let mut entry_verify_sections: Vec<String> = Vec::new();
+    let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
+    // Certificate model modules omit the `verify` sample-check `example`
+    // blocks: they are decided by `native_decide`, need the recursive-type
+    // `DecidableEq` shim the cert mode also drops, and a certificate carries
+    // its own decode-to-Int/bytes anti-vacuity guards instead.
+    if !cert_model {
+        for item in &ctx.items {
+            if let TopLevel::Verify(vb) = item {
+                let key = verify_counter_key(vb);
+                let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
+                let (emitted, next_idx) = toplevel::emit_verify_block(
+                    vb,
+                    ctx,
+                    verify_mode,
+                    start_idx,
+                    &case_decidability,
+                );
+                verify_case_counters.insert(key, next_idx);
+                entry_verify_sections.push(emitted);
+                entry_verify_sections.push(String::new());
+            }
+        }
+    }
+
     entry_body_sections.extend(entry_lifted_sections);
     entry_body_sections.extend(entry_decision_sections);
     entry_body_sections.extend(entry_verify_sections);

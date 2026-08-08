@@ -48,9 +48,11 @@ classified effect set, stub signatures, Oracle law syntax, and trace assertions.
 
 `verify` blocks become Lean proof obligations:
 
-- default (`--verify-mode auto`): `example : <lhs> = <rhs> := by native_decide`
+- default (`--verify-mode auto`): `example : <lhs> = <rhs> := by decide +kernel` when the case's whole closure is known to reduce in the Lean kernel, `:= by native_decide` otherwise
 - fallback (`--verify-mode sorry`): `example : <lhs> = <rhs> := by sorry`
 - theorem stubs (`--verify-mode theorem-skeleton`): named `theorem ... := by sorry`
+
+The tactic is chosen per case, and conservatively: `decide +kernel` costs no trust (the axiom closure stays inside Lean's core three, with no `Lean.ofReduceBool`) but only works when everything the case mentions unfolds in the kernel, so a case is routed there only when the emitter can positively establish that. Anything else — a `Float` anywhere in the closure, a fn this export spelled `partial def`, a fuel wrapper's `panic!` arm, a mutual group, a case whose expected side is not a VM ground-truth literal — stays on `native_decide`.
 
 `verify ... law ...` always emits expanded sample theorems from `given` domains:
 - `theorem ..._sample_n := by native_decide`
@@ -158,7 +160,7 @@ aver proof my_module.av --verify-mode auto -o out/
 ```
 
 That combination means:
-- regular `verify` cases become executable Lean checks via `native_decide`
+- regular `verify` cases become executable Lean checks — `decide +kernel` where the closure reduces in the kernel, `native_decide` elsewhere
 - supported `verify law` shapes get real universal proofs
 - unsupported `verify law` shapes emit the universal theorem with a `sorry` body and an inline comment, plus the per-sample + `_checked_domain` theorems as kernel-checked evidence
 - recursive pure code inside the supported proof subset is emitted as total Lean defs

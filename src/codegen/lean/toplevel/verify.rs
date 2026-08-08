@@ -1,5 +1,6 @@
 use super::VerifyEmitMode;
 use super::expr::{aver_name_to_lean, emit_expr_legacy};
+use super::kernel_decide::CaseDecidability;
 use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
 use super::types::type_annotation_to_lean;
 use crate::ast::*;
@@ -110,13 +111,16 @@ fn emit_sample_guard_resolved(
 
 /// Emit verify blocks as Lean 4 `example` declarations.
 ///
-/// `native_decide` gives executable proof checks for decidable goals.
-/// `sorry` is available as explicit fallback mode.
+/// A sampled case is a ground equation, so it is closed by evaluation;
+/// `decidability` picks the evaluator PER CASE — `decide +kernel` when the
+/// case's emitted closure provably reduces in the kernel, `native_decide`
+/// otherwise. `sorry` is available as explicit fallback mode.
 pub fn emit_verify_block(
     vb: &VerifyBlock,
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
     case_index_start: usize,
+    decidability: &CaseDecidability,
 ) -> (String, usize) {
     if let VerifyKind::Law(law) = &vb.kind {
         return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start);
@@ -145,13 +149,16 @@ pub fn emit_verify_block(
         // without an entry (verify failed/skipped, Float-carrying value —
         // decimal repr isn't bit-exact — or a shape that doesn't round-trip)
         // keep the source RHS and rely on the `--check` panic gate.
-        let right_str = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
-            .unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
+        let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx);
+        let has_ground_truth = ground_truth.is_some();
+        let right_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
-                    "example : {} = {} := by native_decide",
-                    left_str, right_str
+                    "example : {} = {} := by {}",
+                    left_str,
+                    right_str,
+                    decidability.tactic_for(left, &left_str, has_ground_truth, ctx)
                 ));
             }
             VerifyEmitMode::Sorry => {

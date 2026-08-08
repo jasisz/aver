@@ -1770,3 +1770,259 @@ fn proof_lean_crypto_sha256_model_axiom_closure_is_core_only() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Split each `#print axioms <name>` block in `lake env lean` stdout into a
+/// `(name, axioms)` pair. Both shapes the command emits are handled:
+///
+/// ```text
+/// 'foo' does not depend on any axioms
+/// 'foo' depends on axioms: [propext, Quot.sound]
+/// ```
+fn axiom_report_pairs(stdout: &str) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let Some(rest) = line.strip_prefix('\'') else {
+            continue;
+        };
+        let Some((name, tail)) = rest.split_once('\'') else {
+            continue;
+        };
+        let axioms = match tail.split_once('[') {
+            Some((_, listed)) => listed
+                .trim_end_matches(']')
+                .split(',')
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string)
+                .collect(),
+            None => Vec::new(),
+        };
+        out.push((name.to_string(), axioms));
+    }
+    out
+}
+
+#[test]
+fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
+    // Per-case tactic routing for sampled `verify` cases. A case whose whole
+    // emitted closure reduces in the kernel is closed by `decide +kernel`, so
+    // nothing beyond the kernel is trusted. `stdlib_bytes_app` is the
+    // discriminating fixture: its SHA-256 and byte-range cases route through
+    // the total, axiom-free crypto model and the well-founded `Bytes` helpers
+    // (all kernel-reducible), while its hex cases route through
+    // `Bytes.parseHexChars`, which the proof backend emits as `partial def` —
+    // an opaque constant the kernel can never unfold. One file, both verdicts,
+    // so a classifier that collapses to "always native" or "always kernel"
+    // fails here.
+    //
+    // Then the real gate: `#print axioms`. `native_decide` puts
+    // `Lean.ofReduceBool` into a theorem's axiom closure; `decide +kernel`
+    // must not. Emitted `example` declarations are anonymous (Lean adds no
+    // name to the environment), so the probe restates each kernel-decided case
+    // VERBATIM as a named theorem with the emitted tactic and audits that.
+    // A misclassified case fails to elaborate there, which fails this test.
+    //
+    // The routing half needs no `lake`; only the build + axiom audit do.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = temp_output_dir("aver-proof-crypto-kernel-decide");
+    let missing_module_root = root.join("no-project-modules");
+    let out = root.join("lean");
+    let export = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/stdlib_bytes_app.av")
+        .arg("--module-root")
+        .arg(&missing_module_root)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver proof export for the crypto kernel-decide probe");
+    assert!(
+        export.status.success(),
+        "proof export failed:\n{}",
+        format_output(&export)
+    );
+    let entry = std::fs::read_to_string(out.join("StdlibBytesApp.lean"))
+        .expect("read emitted StdlibBytesApp.lean");
+    let cases: Vec<&str> = entry
+        .lines()
+        .filter(|l| l.starts_with("example : "))
+        .collect();
+
+    for (fns, tactic, why) in [
+        (
+            [
+                "shaHex ",
+                "doubleShaHex ",
+                "roundTrip ",
+                "checkedDigestLength ",
+            ]
+            .as_slice(),
+            "decide +kernel",
+            "reduces in the kernel end to end",
+        ),
+        (
+            ["hexRoundTrip ", "checkedDigestHex "].as_slice(),
+            "native_decide",
+            "routes through the `partial def` hex parser",
+        ),
+    ] {
+        for needle in fns {
+            let matching: Vec<&&str> = cases.iter().filter(|l| l.contains(needle)).collect();
+            assert!(
+                !matching.is_empty(),
+                "no emitted case mentions `{needle}`:\n{entry}"
+            );
+            for line in matching {
+                assert!(
+                    line.ends_with(&format!(":= by {tactic}")),
+                    "`{needle}` {why}, so it must be closed by `{tactic}`:\n{line}"
+                );
+            }
+        }
+    }
+
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping crypto kernel-decide build + axiom audit: `lake` not available");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let build = Command::new("lake")
+        .current_dir(&out)
+        .arg("build")
+        .output()
+        .expect("lake build for the crypto kernel-decide probe");
+    assert!(
+        build.status.success(),
+        "lake build failed — a kernel-decided case did not reduce:\n{}",
+        format_output(&build)
+    );
+
+    let mut probe = String::from("import StdlibBytesApp\n\nset_option maxRecDepth 1000000\n\n");
+    let mut probe_names = Vec::new();
+    for (idx, line) in cases
+        .iter()
+        .filter(|l| l.ends_with(":= by decide +kernel"))
+        .enumerate()
+    {
+        let prop = line
+            .trim_start_matches("example : ")
+            .trim_end_matches(":= by decide +kernel")
+            .trim();
+        let name = format!("averKernelCase{}", idx + 1);
+        probe.push_str(&format!("theorem {name} : {prop} := by decide +kernel\n"));
+        probe_names.push(name);
+    }
+    assert!(
+        probe_names.len() >= 7,
+        "expected the crypto fixture to contribute several kernel cases, got {}",
+        probe_names.len()
+    );
+    for name in &probe_names {
+        probe.push_str(&format!("#print axioms {name}\n"));
+    }
+    std::fs::write(out.join("KernelAxiomProbe.lean"), probe).expect("write KernelAxiomProbe.lean");
+    let audit = Command::new("lake")
+        .current_dir(&out)
+        .arg("env")
+        .arg("lean")
+        .arg("KernelAxiomProbe.lean")
+        .output()
+        .expect("lake env lean KernelAxiomProbe.lean");
+    assert!(
+        audit.status.success(),
+        "kernel-decided cases failed to re-elaborate as named theorems:\n{}",
+        format_output(&audit)
+    );
+    let stdout = String::from_utf8_lossy(&audit.stdout);
+    let reports = axiom_report_pairs(&stdout);
+    assert_eq!(
+        reports.len(),
+        probe_names.len(),
+        "expected one axiom report per kernel-decided case:\n{stdout}"
+    );
+    for (name, axioms) in reports {
+        for axiom in axioms {
+            assert!(
+                matches!(
+                    axiom.as_str(),
+                    "propext" | "Classical.choice" | "Quot.sound"
+                ),
+                "kernel-decided case `{name}` depends on non-core axiom `{axiom}` — \
+                 `decide +kernel` must not pull `Lean.ofReduceBool`:\n{stdout}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn proof_lean_float_verify_cases_stay_native_decide() {
+    // Conservative half of the classifier. Lean ships no `DecidableEq Float`
+    // — the prelude supplies one through an `@[implemented_by]` `opaque`
+    // constant the kernel can never reduce — and Float literals are
+    // `OfScientific` applications it does not evaluate either. So no case
+    // whose closure touches a Float may be routed to `decide +kernel`, and
+    // that includes `truncate`, whose RESULT is an `Int`: the Float only
+    // appears in its parameter and inside `AverFloat.toInt`.
+    //
+    // The fixture pairs the Float cases with Int/String twins in ONE file, so
+    // the pin catches both a classifier that lets Float through and one that
+    // has quietly stopped classifying anything.
+    //
+    // The routing half needs no `lake`; only the build does.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = temp_output_dir("aver-proof-kernel-decide-split");
+    let export = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/kernel_decide_split.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver proof export for the Float verify-tactic pin");
+    assert!(
+        export.status.success(),
+        "proof export failed:\n{}",
+        format_output(&export)
+    );
+    let entry = std::fs::read_to_string(out.join("KernelDecideSplit.lean"))
+        .expect("read emitted KernelDecideSplit.lean");
+    for (needle, tactic) in [
+        ("scaleInt 7", "decide +kernel"),
+        ("renderInt 12", "decide +kernel"),
+        ("truncate 3.7", "native_decide"),
+        ("halveFloat 5.0", "native_decide"),
+    ] {
+        let line = entry
+            .lines()
+            .find(|l| l.starts_with("example : ") && l.contains(needle))
+            .unwrap_or_else(|| panic!("no emitted case for `{needle}`:\n{entry}"));
+        assert!(
+            line.ends_with(&format!(":= by {tactic}")),
+            "case `{needle}` must be closed by `{tactic}`:\n{line}"
+        );
+    }
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Float verify-tactic build: `lake` not available");
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let build = Command::new("lake")
+        .current_dir(&out)
+        .arg("build")
+        .output()
+        .expect("lake build for the Float verify-tactic pin");
+    assert!(
+        build.status.success(),
+        "lake build failed:\n{}",
+        format_output(&build)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
