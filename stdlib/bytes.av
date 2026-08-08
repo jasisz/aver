@@ -102,42 +102,12 @@ fn hexDigit(value: Int) -> String
         _ -> ""
 
 fn highNibble(value: Int) -> Int
-    ? "Compute a validated octet's high nibble without fallible arithmetic."
-    match value < 16
-        true -> 0
-        false -> match value < 32
-            true -> 1
-            false -> match value < 48
-                true -> 2
-                false -> match value < 64
-                    true -> 3
-                    false -> match value < 80
-                        true -> 4
-                        false -> match value < 96
-                            true -> 5
-                            false -> match value < 112
-                                true -> 6
-                                false -> match value < 128
-                                    true -> 7
-                                    false -> match value < 144
-                                        true -> 8
-                                        false -> match value < 160
-                                            true -> 9
-                                            false -> match value < 176
-                                                true -> 10
-                                                false -> match value < 192
-                                                    true -> 11
-                                                    false -> match value < 208
-                                                        true -> 12
-                                                        false -> match value < 224
-                                                            true -> 13
-                                                            false -> match value < 240
-                                                                true -> 14
-                                                                false -> 15
+    ? "Compute a validated octet's high nibble by total division on a literal divisor."
+    Int.div(value, 16)
 
 fn lowNibble(value: Int) -> Int
-    ? "Compute a validated octet's low nibble without fallible arithmetic."
-    value - highNibble(value) * 16
+    ? "Compute a validated octet's low nibble by total modulo on a literal divisor."
+    Int.mod(value, 16)
 
 fn byteToHex(value: Int) -> String
     ? "Encode one validated octet as two lowercase hexadecimal characters."

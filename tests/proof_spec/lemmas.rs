@@ -1717,6 +1717,227 @@ fn lean_escape_roundtrip_template_regression_degrades_to_caught_sorry_when_lake_
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// Litmus fixture for the FULL control threshold: an escaped wire
+/// format that hex-escapes EVERY octet (threshold 256, the widest the
+/// `Bytes.fromList` payload can carry), with a terminator / escape
+/// introducer / opening delimiter above the threshold (`Ā` / `ā` /
+/// `Ă`, codes 256-258) so the printable branch still has chars to
+/// pass through. The old two-case (`< 16` / `< 32`) control-escape
+/// proof could only reach 32; the definitional
+/// `Bytes.byteToHex = hexDigit (v / 16) + hexDigit (v % 16)` closes
+/// the whole octet range in one `simp`.
+const WIDE_ESCAPE_FIXTURE: &str = r#"module WideEsc
+    intent = "a full-octet escaped wire format whose control threshold is 256"
+    depends [Bytes]
+    effects []
+
+type WideVal
+    WText(String)
+
+type WideOut
+    Settled(WideVal, Int)
+    Broken(String, Int)
+
+fn escapeWide(s: String) -> String
+    ? "Escape a value for the Ā-terminated wide wire format."
+    packWide(String.chars(s), "")
+
+verify escapeWide law wideRoundtrip
+    given s: String = ["", "Ăok", "aĀb", "xāy", "line\nz", "\t", "😀"]
+    unpackWide("Ă" + escapeWide(s) + "Ā", 1) => WideOut.Settled(WideVal.WText(s), String.len(escapeWide(s)) + 2)
+
+fn packWide(chars: List<String>, acc: String) -> String
+    ? "Escape each char onto an accumulator."
+    match chars
+        [] -> acc
+        [c, ..rest] -> packWide(rest, acc + packWideChar(c))
+
+fn packWideChar(c: String) -> String
+    ? "Two-char escapes for the wire format's reserved chars."
+    match c
+        "Ā" -> "ās"
+        "ā" -> "āp"
+        "\n" -> "ān"
+        _ -> packWideLow(c)
+
+fn packWideLow(c: String) -> String
+    ? "Tab gets a two-char escape; every other sub-256 char goes hex."
+    code = Char.toCode(c)
+    match code == 9
+        true -> "āt"
+        false -> match code < 256
+            true -> packWideHex(c, code)
+            false -> c
+
+fn packWideHex(c: String, code: Int) -> String
+    ? "Hex escape for one octet."
+    match Bytes.fromList([code])
+        Result.Ok(bytes) -> "āh00" + Bytes.toHex(bytes)
+        Result.Err(_) -> c
+
+fn wideHexVal(c: String) -> Option<Int>
+    ? "Hex digit value: 0-9, a-f. None for non-hex."
+    code = Char.toCode(c)
+    match code >= 48
+        true -> match code <= 57
+            true -> Option.Some(code - 48)
+            false -> wideHexAlpha(code)
+        false -> Option.None
+
+fn wideHexAlpha(code: Int) -> Option<Int>
+    ? "Lowercase hex letter value."
+    match code >= 97
+        true -> match code <= 102
+            true -> Option.Some(code - 87)
+            false -> Option.None
+        false -> Option.None
+
+fn unpackWide(s: String, pos: Int) -> WideOut
+    ? "Parse one Ā-terminated value starting at pos."
+    unpackWideChunk(s, pos, pos, [])
+
+fn unpackWideChunk(s: String, pos: Int, segStart: Int, parts: List<String>) -> WideOut
+    ? "Scan the value, collecting segment chunks."
+    match String.charAt(s, pos)
+        Option.None -> WideOut.Broken("unterminated value", pos)
+        Option.Some(c) -> match c
+            "Ā" -> sealWide(s, pos + 1, segStart, parts)
+            "ā" -> unpackWideEscape(s, pos + 1, pos, segStart, parts)
+            _ -> guardWideChar(s, pos, segStart, parts, c)
+
+fn sealWide(s: String, nextPos: Int, segStart: Int, parts: List<String>) -> WideOut
+    ? "Flush the open segment and finish the value."
+    segment = String.slice(s, segStart, nextPos - 1)
+    all = String.join(List.concat(parts, [segment]), "")
+    WideOut.Settled(WideVal.WText(all), nextPos)
+
+fn guardWideChar(s: String, pos: Int, segStart: Int, parts: List<String>, c: String) -> WideOut
+    ? "Reject unescaped sub-256 chars; pass everything above the threshold."
+    match Char.toCode(c) < 256
+        true -> WideOut.Broken("unescaped low char", pos)
+        false -> unpackWideChunk(s, pos + 1, segStart, parts)
+
+fn unpackWideEscape(s: String, pos: Int, markPos: Int, segStart: Int, parts: List<String>) -> WideOut
+    ? "Decode one escape letter."
+    segment = String.slice(s, segStart, markPos)
+    base = List.concat(parts, [segment])
+    match String.charAt(s, pos)
+        Option.None -> WideOut.Broken("unterminated escape", pos)
+        Option.Some(c) -> match c
+            "s" -> unpackWideChunk(s, pos + 1, pos + 1, List.concat(base, ["Ā"]))
+            "p" -> unpackWideChunk(s, pos + 1, pos + 1, List.concat(base, ["ā"]))
+            "n" -> unpackWideChunk(s, pos + 1, pos + 1, List.concat(base, ["\n"]))
+            "t" -> unpackWideChunk(s, pos + 1, pos + 1, List.concat(base, ["\t"]))
+            "q" -> unpackWideChunk(s, pos + 1, pos + 1, List.concat(base, ["Ă"]))
+            "h" -> unpackWideHex(s, pos + 1, pos + 1, base)
+            _ -> WideOut.Broken("unknown escape", pos)
+
+fn unpackWideHex(s: String, pos: Int, escapePos: Int, parts: List<String>) -> WideOut
+    ? "Decode an āh00HH hex escape."
+    match readWideQuad(s, pos, 0, 0)
+        Option.None -> WideOut.Broken("bad hex escape", escapePos)
+        Option.Some(cp) -> unpackWideCodePoint(s, pos + 4, escapePos, parts, cp)
+
+fn unpackWideCodePoint(s: String, pos: Int, escapePos: Int, parts: List<String>, cp: Int) -> WideOut
+    ? "Reject surrogate halves; place anything else."
+    match wideHighHalf(cp)
+        true -> WideOut.Broken("surrogate", escapePos)
+        false -> match wideLowHalf(cp)
+            true -> WideOut.Broken("surrogate", escapePos)
+            false -> placeWideCodePoint(s, pos, escapePos, parts, cp)
+
+fn wideHighHalf(cp: Int) -> Bool
+    ? "High surrogate range check."
+    match cp >= 55296
+        true -> cp <= 56319
+        false -> false
+
+fn wideLowHalf(cp: Int) -> Bool
+    ? "Low surrogate range check."
+    match cp >= 56320
+        true -> cp <= 57343
+        false -> false
+
+fn placeWideCodePoint(s: String, pos: Int, escapePos: Int, parts: List<String>, cp: Int) -> WideOut
+    ? "Flush the decoded char as its own chunk."
+    match Char.fromCode(cp)
+        Option.None -> WideOut.Broken("bad code point", escapePos)
+        Option.Some(ch) -> unpackWideChunk(s, pos, pos, List.concat(parts, [ch]))
+
+fn readWideQuad(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
+    ? "Read exactly four hex digits."
+    match count == 4
+        true -> Option.Some(acc)
+        false -> match String.charAt(s, pos)
+            Option.None -> Option.None
+            Option.Some(c) -> match wideHexVal(c)
+                Option.None -> Option.None
+                Option.Some(v) -> readWideQuad(s, pos + 1, acc * 16 + v, count + 1)
+"#;
+
+/// LITMUS: a producer whose control threshold is far ABOVE 32 must
+/// certify universal. While `Bytes.highNibble` was a 16-branch
+/// comparison ladder the synthesized control-escape lemma had to
+/// enumerate one `by_cases` arm per nibble, so the detector gate was
+/// narrowed to `1..=32` and this shape declined (it falls to a caught
+/// `sorry`, `universal:false`). With the nibbles back on total
+/// literal-divisor `Int.div` / `Int.mod`, `Bytes.byteToHex` unfolds
+/// definitionally to `hexDigit (v / 16) + hexDigit (v % 16)` and the
+/// gate is back at the octet range `1..=256`.
+#[test]
+fn lean_proves_full_octet_escape_threshold_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping full-octet-threshold test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-wideesc-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), WIDE_ESCAPE_FIXTURE).expect("write");
+    let out = temp_output_dir("aver-wideesc-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("0")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "a 256-threshold escaped-string roundtrip must close sorry-free\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "the full octet control threshold must certify universal via the \
+         definitional nibble division\n{}",
+        format_output(&run)
+    );
+    let lean = std::fs::read_to_string(out.join("WideEsc.lean")).expect("WideEsc.lean");
+    assert!(
+        lean.contains("_chunk_inv :"),
+        "the suffix-invariant skeleton must be the closing proof\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// Negated-premise comparison bridge (`le-totality`: `when Bool.not(le a b)`
 /// -> `le b a => true`). The `(le a b = true) = (a ≤ b)` bridge cannot rewrite
 /// the negated hypothesis `(!le a b) = true`, so the emitter adds the FALSE
