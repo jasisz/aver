@@ -1293,7 +1293,7 @@ pub(super) fn reject_literal_refinement_discharge(
     items: &[TopLevel],
     module_root: Option<&str>,
 ) -> Result<(), String> {
-    use aver::analysis::literal_refinement::{LiteralRefinementTable, discharge_sites};
+    use aver::analysis::literal_refinement::discharge_sites;
 
     let loaded = module_root
         .and_then(|base| {
@@ -1331,12 +1331,25 @@ pub(super) fn reject_literal_refinement_discharge(
             analysis: None,
         })
         .collect();
+    // `SymbolTable::build` already derives the refinement table (and the
+    // scan resolves callee identities against this same table anyway), so
+    // there is nothing left to recompute here.
     let symbols = aver::ir::SymbolTable::build(items, &dep_modules);
-    let table = LiteralRefinementTable::build(items, &dep_modules, &symbols);
 
-    let mut sites = discharge_sites(&table, items);
+    // Entry items resolve under their DECLARED module name (that is what
+    // `resolve_program` sets), dep items under the prefix the symbol table
+    // indexed them by. Same context as the rewrite, same answers.
+    let entry_scope = items.iter().find_map(|item| match item {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut sites = discharge_sites(&symbols, entry_scope.as_deref(), items);
     for module in &loaded {
-        sites.extend(discharge_sites(&table, &module.items));
+        sites.extend(discharge_sites(
+            &symbols,
+            Some(&module.dep_name),
+            &module.items,
+        ));
     }
     if sites.is_empty() {
         return Ok(());

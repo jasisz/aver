@@ -33,20 +33,38 @@
 //! store it" MUST be the same predicate. They are — literally the same
 //! function.
 //!
+//! # The discharge is keyed on RESOLVED IDENTITY, never on spelling
+//!
+//! **Invariant.** The discharge fires only when ordinary name resolution —
+//! the checker's own resolved signature, the HIR resolver's own
+//! [`crate::ir::hir::ResolvedCallee::Fn`] — lands on the recognized smart
+//! constructor's [`FnId`]. If the two disagree about which function the
+//! call site denotes, the discharge DECLINES. That is what makes the
+//! checked type and the lowered IR the same decision rather than two
+//! opinions about a name.
+//!
+//! Spelling would be the wrong key in both directions:
+//!
+//! * It under-fires. The wasm-gc backend re-resolves a FLATTENED compile
+//!   unit in which `flatten_multimodule` has renamed a dependency's
+//!   `fromList` to the entry-scope `Dep_fromList` and rewritten BOTH the
+//!   qualified and the in-module call sites to that one bare name. Keyed on
+//!   identity, the flatten is invisible: the rebuilt symbol table resolves
+//!   the renamed call sites to the renamed constructor's `FnId`.
+//! * It OVER-fires, which is a miscompilation. An entry module that
+//!   declares its own `fn fromList(xs: List<Int>) -> Int` shadows the
+//!   stdlib constructor — Aver's pinned shadowing rule, so the checker
+//!   types `fromList([1, 2, 3])` as `Int`. A name-keyed discharge would
+//!   still have rewritten that body to a `Bytes` carrier construction, and
+//!   the checked type and the emitted code would disagree.
+//!
+//! Two recognized constructors that collapse onto one `FnId` (one scope
+//! declaring the same constructor name twice, where the symbol table keys
+//! one `FnKey` to one `FnId`) are fail-closed: neither discharges, because
+//! no call site can name one without naming the other.
+//!
 //! # Boundary
 //!
-//! * Every callee spelling that DENOTES the recognized constructor decides
-//!   the same way — qualified (`Bytes.fromList(…)`) and bare in-module
-//!   (`fromList(…)` inside `stdlib/bytes.av` itself) alike. Spelling
-//!   insensitivity is not a convenience: the wasm-gc backend re-resolves a
-//!   FLATTENED compile unit in which `flatten_multimodule` has renamed a
-//!   dependency's `fromList` to the entry-scope `Dep_fromList` and
-//!   rewritten BOTH the qualified and the in-module call sites to that one
-//!   bare name. After the flatten the two spellings are indistinguishable,
-//!   so a spelling-sensitive rule would discharge before it and not after
-//!   — the checked/unchecked fork this rule must not create. A bare
-//!   spelling shared by two recognized constructors is fail-closed: it
-//!   denotes neither.
 //! * Exactly one argument, and it must be a syntactic list literal whose
 //!   every element is a plain integer literal with at most one unary minus
 //!   (`crate::ast::literal_int_list_elements`). An identifier, a call, a
@@ -57,18 +75,23 @@
 //!   vacuously, and the constructor's predicate is `true` on `[]` by the
 //!   recognized shape's own base case.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::analysis::shape::{ModulePattern, detect_module_patterns};
 use crate::ast::{Expr, FnDef, Spanned, TopLevel};
 use crate::codegen::ModuleInfo;
 use crate::ir::SymbolTable;
+use crate::ir::hir::{ResolveCtx, ResolvedCallee};
+use crate::ir::identity::{FnId, FnKey};
 use crate::ir::interval::Interval;
 
 /// One recognized smart constructor over a `List<Int>` carrier whose
 /// element interval the refinement itself proves.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListRefinementCtor {
+    /// Resolved identity of the smart constructor — the ONLY key a call
+    /// site is matched against. See the module-level invariant.
+    pub fn_id: FnId,
     /// Dependency-module prefix that owns the refinement (`"Bytes"`), or
     /// `None` when the refinement is declared in the entry file.
     pub scope: Option<String>,
@@ -76,22 +99,18 @@ pub struct ListRefinementCtor {
     pub type_name: String,
     /// The record's single carrier field (`"values"`).
     pub carrier_field: String,
-    /// Bare source name of the smart constructor (`"fromList"`).
+    /// Bare source name of the smart constructor (`"fromList"`). Carried
+    /// for diagnostics only; it is never a lookup key.
     pub constructor_fn: String,
     /// Interval proven for EVERY element of the carrier list.
     pub element_interval: Interval,
 }
 
 /// Every literal-dischargeable smart constructor in one compilation,
-/// addressed by the qualified callee spelling a call site writes.
+/// addressed by the [`FnId`] name resolution assigns the callee.
 #[derive(Debug, Clone, Default)]
 pub struct LiteralRefinementTable {
     ctors: Vec<ListRefinementCtor>,
-    /// Prefix an entry-scope refinement is addressable under, taken from
-    /// the entry file's own `module X` declaration. Aver lets a module
-    /// spell its own members qualified, so `X.fromList([…])` in an entry
-    /// file that declares `module X` reaches the same constructor.
-    entry_prefix: Option<String>,
 }
 
 impl LiteralRefinementTable {
@@ -181,7 +200,19 @@ impl LiteralRefinementTable {
             if !seen.insert((scope.clone(), type_name.clone())) {
                 continue;
             }
+            // The one key a call site is ever matched against. A
+            // constructor the symbol table doesn't index cannot be named
+            // by any resolved callee, so it is dropped rather than kept
+            // under a spelling.
+            let key = match scope.as_deref() {
+                Some(prefix) => FnKey::in_module(prefix, &constructor_fn),
+                None => FnKey::entry(&constructor_fn),
+            };
+            let Some(fn_id) = symbols.fn_id_of(&key) else {
+                continue;
+            };
             ctors.push(ListRefinementCtor {
+                fn_id,
                 scope,
                 type_name,
                 carrier_field,
@@ -190,15 +221,17 @@ impl LiteralRefinementTable {
             });
         }
 
-        let entry_prefix = entry_items.iter().find_map(|item| match item {
-            TopLevel::Module(m) => Some(m.name.clone()),
-            _ => None,
-        });
-
-        Self {
-            ctors,
-            entry_prefix,
+        // Fail-closed on a shared identity: one scope declaring the same
+        // constructor name twice collapses both refinements onto a single
+        // `FnId`, and no call site can then denote one without denoting
+        // the other. Neither discharges.
+        let mut per_identity: HashMap<FnId, usize> = HashMap::new();
+        for ctor in &ctors {
+            *per_identity.entry(ctor.fn_id).or_default() += 1;
         }
+        ctors.retain(|ctor| per_identity[&ctor.fn_id] == 1);
+
+        Self { ctors }
     }
 
     /// `true` when nothing in this program is dischargeable — lets callers
@@ -209,56 +242,35 @@ impl LiteralRefinementTable {
 
     /// Decide the discharge for one call site.
     ///
-    /// `callee` is the dotted spelling the source wrote — qualified
-    /// (`"Bytes.fromList"`) or bare (`"fromList"` from inside the owning
-    /// module). Returns the constructor whose refined type the call now
-    /// produces, or `None` to keep the declared `Result<T, E>` signature.
-    ///
-    /// Every spelling that DENOTES the recognized constructor decides the
-    /// same way, deliberately: the wasm-gc backend flattens a dependency's
-    /// `fromList` and every one of its call sites — qualified and
-    /// in-module alike — into a single bare `Dep_fromList` before
-    /// re-resolving, so a spelling-sensitive rule would discharge before
-    /// the flatten and not after.
-    pub fn discharge(&self, callee: &str, args: &[Spanned<Expr>]) -> Option<&ListRefinementCtor> {
+    /// `callee` is the [`FnId`] ORDINARY NAME RESOLUTION assigned this
+    /// call — the checker's own resolved signature, or the HIR resolver's
+    /// own [`ResolvedCallee::Fn`]. Never a spelling: a caller that passes
+    /// an identity it did not itself resolve breaks the invariant this
+    /// whole module exists to hold. Returns the constructor whose refined
+    /// type the call now produces, or `None` to keep the declared
+    /// `Result<T, E>` signature.
+    pub fn discharge(&self, callee: FnId, args: &[Spanned<Expr>]) -> Option<&ListRefinementCtor> {
         if args.len() != 1 {
             return None;
         }
-        let ctor = self.resolve_ctor(callee)?;
+        let ctor = self.ctors.iter().find(|c| c.fn_id == callee)?;
         let elements = crate::ast::literal_int_list_elements(&args[0])?;
         elements
             .iter()
             .all(|k| ctor.element_interval.contains_point(*k))
             .then_some(ctor)
     }
-
-    /// Which recognized constructor a callee spelling denotes, if any.
-    /// Fail-closed on ambiguity: when two refinements in the program share
-    /// a bare constructor name, a bare call site denotes neither.
-    fn resolve_ctor(&self, callee: &str) -> Option<&ListRefinementCtor> {
-        // Qualified spelling: `<dep prefix>.<ctor>`, or `<entry module
-        // name>.<ctor>` for a refinement declared in the entry file.
-        if let Some((prefix, fn_name)) = callee.rsplit_once('.')
-            && let Some(ctor) = self.ctors.iter().find(|c| {
-                c.constructor_fn == fn_name
-                    && match c.scope.as_deref() {
-                        Some(scope) => scope == prefix,
-                        None => self.entry_prefix.as_deref() == Some(prefix),
-                    }
-            })
-        {
-            return Some(ctor);
-        }
-        // Bare spelling: an in-module call, or a post-flatten call to the
-        // prefixed name flatten gave the dependency's function.
-        let mut matches = self.ctors.iter().filter(|c| c.constructor_fn == callee);
-        let first = matches.next()?;
-        matches.next().is_none().then_some(first)
-    }
 }
 
 /// Every call site in `items` the discharge rewrites, as
-/// `(line, qualified callee)`, in source order.
+/// `(line, callee spelling)`, in source order.
+///
+/// `scope` is the module prefix `items` belong to (`None` for the entry
+/// file), because the callee identity is resolved exactly the way the HIR
+/// resolver resolves it — through
+/// [`crate::ir::hir::resolve::classify_callee`] against the same symbol
+/// table and the same current-module context. Same resolver, same answer:
+/// a call the rewrite will not fire on is not reported here either.
 ///
 /// Exists for the self-host boundary: the Aver-in-Aver resolver has no
 /// refinement recognizer, so a discharged program would build a guest
@@ -266,25 +278,31 @@ impl LiteralRefinementTable {
 /// divergence is SILENT (the guest fails much later, or not at all), so
 /// the self-host driver refuses such a program up front and points at
 /// the exact call sites.
-pub fn discharge_sites(table: &LiteralRefinementTable, items: &[TopLevel]) -> Vec<(usize, String)> {
+pub fn discharge_sites(
+    symbols: &SymbolTable,
+    scope: Option<&str>,
+    items: &[TopLevel],
+) -> Vec<(usize, String)> {
     let mut out = Vec::new();
-    if table.is_empty() {
+    if symbols.literal_refinements().is_empty() {
         return out;
     }
+    let mut ctx = ResolveCtx::new(symbols);
+    ctx.current_module = scope.map(str::to_string);
     for item in items {
         match item {
             TopLevel::FnDef(fd) => {
                 for stmt in fd.body.stmts() {
                     let (crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e)) = stmt;
-                    walk(table, e, &mut out);
+                    walk(&ctx, e, &mut out);
                 }
             }
             TopLevel::Stmt(crate::ast::Stmt::Binding(_, _, e))
-            | TopLevel::Stmt(crate::ast::Stmt::Expr(e)) => walk(table, e, &mut out),
+            | TopLevel::Stmt(crate::ast::Stmt::Expr(e)) => walk(&ctx, e, &mut out),
             TopLevel::Verify(block) => {
                 for (left, right) in &block.cases {
-                    walk(table, left, &mut out);
-                    walk(table, right, &mut out);
+                    walk(&ctx, left, &mut out);
+                    walk(&ctx, right, &mut out);
                 }
             }
             TopLevel::Module(_) | TopLevel::Decision(_) | TopLevel::TypeDef(_) => {}
@@ -297,65 +315,71 @@ pub fn discharge_sites(table: &LiteralRefinementTable, items: &[TopLevel]) -> Ve
 /// Exhaustive `Expr` walk. Deliberately has NO catch-all arm: a new
 /// expression form must be classified here explicitly, or the self-host
 /// rejection could silently miss a discharged call nested inside it.
-fn walk(table: &LiteralRefinementTable, expr: &Spanned<Expr>, out: &mut Vec<(usize, String)>) {
+fn walk(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>, out: &mut Vec<(usize, String)>) {
     match &expr.node {
         Expr::FnCall(callee, args) => {
-            if let Some(dotted) = crate::codegen::common::expr_to_dotted_name(&callee.node)
-                && table.discharge(&dotted, args).is_some()
+            if let ResolvedCallee::Fn(fn_id) = crate::ir::hir::resolve::classify_callee(ctx, callee)
+                && ctx
+                    .symbols
+                    .literal_refinements()
+                    .discharge(fn_id, args)
+                    .is_some()
             {
-                out.push((expr.line, dotted));
+                let spelling = crate::codegen::common::expr_to_dotted_name(&callee.node)
+                    .unwrap_or_else(|| ctx.symbols.fn_entry(fn_id).key.name.clone());
+                out.push((expr.line, spelling));
             }
-            walk(table, callee, out);
+            walk(ctx, callee, out);
             for a in args {
-                walk(table, a, out);
+                walk(ctx, a, out);
             }
         }
-        Expr::Attr(obj, _) => walk(table, obj, out),
+        Expr::Attr(obj, _) => walk(ctx, obj, out),
         Expr::BinOp(_, l, r) => {
-            walk(table, l, out);
-            walk(table, r, out);
+            walk(ctx, l, out);
+            walk(ctx, r, out);
         }
         Expr::Neg(inner) | Expr::ErrorProp(inner) | Expr::Constructor(_, Some(inner)) => {
-            walk(table, inner, out)
+            walk(ctx, inner, out)
         }
         Expr::Match { subject, arms } => {
-            walk(table, subject, out);
+            walk(ctx, subject, out);
             for arm in arms {
-                walk(table, &arm.body, out);
+                walk(ctx, &arm.body, out);
             }
         }
         Expr::InterpolatedStr(parts) => {
             for part in parts {
                 if let crate::ast::StrPart::Parsed(inner) = part {
-                    walk(table, inner, out);
+                    walk(ctx, inner, out);
                 }
             }
         }
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
-                walk(table, item, out);
+                walk(ctx, item, out);
             }
         }
         Expr::MapLiteral(pairs) => {
             for (k, v) in pairs {
-                walk(table, k, out);
-                walk(table, v, out);
+                walk(ctx, k, out);
+                walk(ctx, v, out);
             }
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, value) in fields {
-                walk(table, value, out);
+                walk(ctx, value, out);
             }
         }
         Expr::RecordUpdate { base, updates, .. } => {
-            walk(table, base, out);
+            walk(ctx, base, out);
             for (_, value) in updates {
-                walk(table, value, out);
+                walk(ctx, value, out);
             }
         }
         Expr::TailCall(data) => {
             for a in &data.args {
-                walk(table, a, out);
+                walk(ctx, a, out);
             }
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {}
@@ -381,17 +405,22 @@ fn is_int_list_carrier_product(td: &crate::ast::TypeDef) -> bool {
 mod tests {
     use super::*;
 
-    fn table_for(entry: &str, dep: Option<(&str, &str)>) -> LiteralRefinementTable {
+    /// Build the program's `SymbolTable` — the discharge table hangs off
+    /// it, and so does the name resolution every lookup below goes
+    /// through. Tests never address a constructor by spelling alone;
+    /// they resolve the spelling first, exactly as the compiler does.
+    fn symbols_for(entry: &str, deps: &[(&str, &str)]) -> SymbolTable {
         let parse = |src: &str| {
             let mut lexer = crate::lexer::Lexer::new(src);
             let tokens = lexer.tokenize().expect("lex");
             crate::parser::Parser::new(tokens).parse().expect("parse")
         };
         let entry_items = parse(entry);
-        let dep_modules: Vec<ModuleInfo> = dep
+        let dep_modules: Vec<ModuleInfo> = deps
+            .iter()
             .map(|(prefix, src)| {
                 let items = parse(src);
-                vec![ModuleInfo {
+                ModuleInfo {
                     prefix: prefix.to_string(),
                     depends: Vec::new(),
                     type_defs: items
@@ -410,11 +439,30 @@ mod tests {
                         .collect(),
                     verify_laws: Vec::new(),
                     analysis: None,
-                }]
+                }
             })
-            .unwrap_or_default();
-        let symbols = SymbolTable::build(&entry_items, &dep_modules);
-        LiteralRefinementTable::build(&entry_items, &dep_modules, &symbols)
+            .collect();
+        SymbolTable::build(&entry_items, &dep_modules)
+    }
+
+    /// Decide one call site the way a compiler pass does: resolve the
+    /// callee spelling against `symbols` from `scope`, then discharge on
+    /// the identity that came back. An unresolvable spelling declines.
+    fn discharges_from(symbols: &SymbolTable, scope: Option<&str>, call: &str) -> bool {
+        let mut ctx = ResolveCtx::new(symbols);
+        ctx.current_module = scope.map(str::to_string);
+        let expr = expr_of(call);
+        let Expr::FnCall(callee, args) = &expr.node else {
+            panic!("expected a call expression, got {expr:?}");
+        };
+        let ResolvedCallee::Fn(fn_id) = crate::ir::hir::resolve::classify_callee(&ctx, callee)
+        else {
+            return false;
+        };
+        symbols
+            .literal_refinements()
+            .discharge(fn_id, args)
+            .is_some()
     }
 
     const OCTETS: &str = r#"
@@ -451,7 +499,7 @@ fn go() -> Int
     1
 "#;
 
-    fn list(src: &str) -> Spanned<Expr> {
+    fn expr_of(src: &str) -> Spanned<Expr> {
         let mut lexer = crate::lexer::Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex");
         let items = crate::parser::Parser::new(tokens).parse().expect("parse");
@@ -463,10 +511,14 @@ fn go() -> Int
 
     #[test]
     fn derives_the_element_interval_without_naming_the_refinement() {
-        let table = table_for(CONSUMER, Some(("Octets", OCTETS)));
+        let symbols = symbols_for(CONSUMER, &[("Octets", OCTETS)]);
+        let fn_id = symbols
+            .fn_id_of(&FnKey::in_module("Octets", "fromList"))
+            .expect("Octets.fromList must be indexed");
         assert_eq!(
-            table.ctors,
+            symbols.literal_refinements().ctors,
             vec![ListRefinementCtor {
+                fn_id,
                 scope: Some("Octets".to_string()),
                 type_name: "Octets".to_string(),
                 carrier_field: "values".to_string(),
@@ -478,12 +530,13 @@ fn go() -> Int
 
     #[test]
     fn derives_the_element_interval_for_the_real_standard_library_bytes_module() {
-        let table = table_for(
+        let symbols = symbols_for(
             CONSUMER,
-            Some(("Bytes", include_str!("../../stdlib/bytes.av"))),
+            &[("Bytes", include_str!("../../stdlib/bytes.av"))],
         );
         assert_eq!(
-            table
+            symbols
+                .literal_refinements()
                 .ctors
                 .iter()
                 .find(|c| c.type_name == "Bytes")
@@ -494,8 +547,9 @@ fn go() -> Int
 
     #[test]
     fn discharges_only_all_literal_in_interval_lists() {
-        let table = table_for(CONSUMER, Some(("Octets", OCTETS)));
-        let discharges = |src: &str| table.discharge("Octets.fromList", &[list(src)]).is_some();
+        let symbols = symbols_for(CONSUMER, &[("Octets", OCTETS)]);
+        let discharges =
+            |arg: &str| discharges_from(&symbols, None, &format!("Octets.fromList({arg})"));
 
         assert!(discharges("[1, 2, 3]"));
         assert!(discharges("[]"));
@@ -512,28 +566,108 @@ fn go() -> Int
     }
 
     #[test]
-    fn accepts_every_spelling_that_denotes_the_constructor() {
-        let table = table_for(CONSUMER, Some(("Octets", OCTETS)));
-        // Qualified, and the bare in-module / post-flatten spelling.
-        assert!(
-            table
-                .discharge("Octets.fromList", &[list("[1, 2]")])
-                .is_some()
-        );
-        assert!(table.discharge("fromList", &[list("[1, 2]")]).is_some());
-        // A different module's same-named function denotes nothing here.
-        assert!(
-            table
-                .discharge("Tree.fromList", &[list("[1, 2]")])
-                .is_none()
-        );
-        assert!(table.discharge("toList", &[list("[1, 2]")]).is_none());
+    fn accepts_every_spelling_that_resolves_to_the_constructor() {
+        let symbols = symbols_for(CONSUMER, &[("Octets", OCTETS)]);
+        // Qualified from the consumer.
+        assert!(discharges_from(&symbols, None, "Octets.fromList([1, 2])"));
+        // Bare from inside the owning module — the in-module spelling and
+        // the post-flatten spelling both resolve to the same `FnId`.
+        assert!(discharges_from(
+            &symbols,
+            Some("Octets"),
+            "fromList([1, 2])"
+        ));
+        // Bare from the consumer resolves to nothing at all here.
+        assert!(!discharges_from(&symbols, None, "fromList([1, 2])"));
+        // A different module's same-named function is a different identity.
+        assert!(!discharges_from(&symbols, None, "Tree.fromList([1, 2])"));
+        assert!(!discharges_from(&symbols, None, "Octets.toList([1, 2])"));
     }
 
     #[test]
-    fn a_bare_spelling_shared_by_two_refinements_is_fail_closed() {
-        // Two recognized constructors with the same bare name: the
-        // qualified spellings still decide, the bare one denotes neither.
+    fn a_local_fn_shadowing_the_constructor_keeps_its_own_identity() {
+        // THE MISCOMPILATION GUARD. An entry module declaring its own
+        // `fromList` shadows the dependency's constructor (Aver's pinned
+        // shadowing rule), so `fromList([1, 2])` in that entry denotes the
+        // LOCAL fn. A spelling-keyed discharge fired here and rewrote the
+        // body to a carrier construction while the checker typed the call
+        // as the local fn's return type.
+        let shadowing_entry = r#"
+module Consumer
+    intent = "declares its own fromList over the dependency's"
+    depends [Octets]
+    exposes [go]
+    effects []
+
+fn fromList(xs: List<Int>) -> Int
+    List.len(xs)
+
+fn go() -> Int
+    fromList([1, 2])
+"#;
+        let symbols = symbols_for(shadowing_entry, &[("Octets", OCTETS)]);
+        assert!(
+            !symbols.literal_refinements().is_empty(),
+            "the dependency's constructor is still recognized"
+        );
+        assert!(!discharges_from(&symbols, None, "fromList([1, 2])"));
+        // The dependency's own constructor is untouched: still reachable
+        // qualified, and still discharging.
+        assert!(discharges_from(&symbols, None, "Octets.fromList([1, 2])"));
+    }
+
+    #[test]
+    fn same_bare_name_in_two_modules_resolves_per_scope() {
+        // Two recognized constructors, one per module, sharing a bare
+        // name. Identity keying makes each in-module call discharge
+        // against its OWN interval — the derived bound follows the
+        // resolved callee, not the spelling.
+        let nibbles = r#"
+module Nibbles
+    intent = "a second refinement whose constructor shares the bare name"
+    exposes [fromList]
+    exposes opaque [Nibbles]
+    effects []
+
+record Nibbles
+    values: List<Int>
+
+fn inNibbleRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 15)
+            true -> inNibbleRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Nibbles, String>
+    match inNibbleRange(xs)
+        true -> Result.Ok(Nibbles(values = xs))
+        false -> Result.Err("oob")
+"#;
+        let symbols = symbols_for(CONSUMER, &[("Octets", OCTETS), ("Nibbles", nibbles)]);
+        assert_eq!(
+            symbols.literal_refinements().ctors.len(),
+            2,
+            "expected two recognized constructors"
+        );
+        // 200 is inside Octets' interval and outside Nibbles'.
+        assert!(discharges_from(&symbols, Some("Octets"), "fromList([200])"));
+        assert!(!discharges_from(
+            &symbols,
+            Some("Nibbles"),
+            "fromList([200])"
+        ));
+        assert!(discharges_from(&symbols, Some("Nibbles"), "fromList([15])"));
+        // Qualified spellings decide the same way from any scope.
+        assert!(discharges_from(&symbols, None, "Octets.fromList([200])"));
+        assert!(!discharges_from(&symbols, None, "Nibbles.fromList([200])"));
+    }
+
+    #[test]
+    fn two_constructors_collapsed_onto_one_identity_are_fail_closed() {
+        // One module declaring `fromList` twice: the symbol table keys one
+        // `FnKey` to one `FnId`, so no call site can denote one refinement
+        // without denoting the other. Neither discharges.
         let second = r#"
 record Nibbles
     values: List<Int>
@@ -551,14 +685,18 @@ fn fromList(xs: List<Int>) -> Result<Nibbles, String>
         false -> Result.Err("oob")
 "#;
         let dep = format!("{OCTETS}{second}");
-        let table = table_for(CONSUMER, Some(("Octets", &dep)));
-        assert_eq!(table.ctors.len(), 2, "expected two recognized constructors");
-        assert!(table.discharge("fromList", &[list("[1, 2]")]).is_none());
+        let symbols = symbols_for(CONSUMER, &[("Octets", &dep)]);
         assert!(
-            table
-                .discharge("Octets.fromList", &[list("[1, 2]")])
-                .is_some()
+            symbols.literal_refinements().is_empty(),
+            "a shared identity must retire both constructors, got: {:?}",
+            symbols.literal_refinements().ctors
         );
+        assert!(!discharges_from(&symbols, None, "Octets.fromList([1, 2])"));
+        assert!(!discharges_from(
+            &symbols,
+            Some("Octets"),
+            "fromList([1, 2])"
+        ));
     }
 
     #[test]
@@ -574,18 +712,25 @@ record Octets
 fn go() -> Int
     1
 "#;
-        let table = table_for(src, None);
-        assert!(table.is_empty());
+        let symbols = symbols_for(src, &[]);
+        assert!(symbols.literal_refinements().is_empty());
     }
 
     #[test]
     fn addresses_an_entry_scope_refinement_through_the_entry_module_prefix() {
-        let table = table_for(OCTETS, None);
-        assert!(table.discharge("Octets.fromList", &[list("[7]")]).is_some());
-        assert!(
-            table
-                .discharge("Octets.fromList", &[list("[700]")])
-                .is_none()
-        );
+        let symbols = symbols_for(OCTETS, &[]);
+        // The entry file declares `module Octets`, so both the bare and
+        // the self-qualified spelling resolve to the same entry-scope fn.
+        assert!(discharges_from(
+            &symbols,
+            Some("Octets"),
+            "Octets.fromList([7])"
+        ));
+        assert!(discharges_from(&symbols, Some("Octets"), "fromList([7])"));
+        assert!(!discharges_from(
+            &symbols,
+            Some("Octets"),
+            "Octets.fromList([700])"
+        ));
     }
 }

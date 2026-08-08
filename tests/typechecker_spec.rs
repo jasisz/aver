@@ -1873,6 +1873,143 @@ fn literal_bytes_discharge_boundary_needs_a_recognized_smart_constructor() {
     assert_no_errors(src);
 }
 
+// ─── The discharge is keyed on RESOLVED IDENTITY, not on the spelling ───
+//
+// Aver's shadowing rule is pinned above by
+// `entry_local_fn_shadows_dep_module_bare_alias`: a bare call inside an
+// entry module that declares its own `doit` means the entry's own `doit`,
+// not the dependency's. The discharge must obey the SAME resolution — it
+// may fire only when the callee the checker resolved IS the recognized
+// smart constructor. Otherwise the checked type and the lowered IR
+// disagree about which function ran, which is a miscompilation, not a
+// missed optimisation. See `src/analysis/literal_refinement.rs`.
+
+/// Entry program with `depends [Bytes]` that declares its own `fromList`
+/// with the given signature and body, plus one caller fn.
+fn shadowing_from_list_program(
+    local_signature: &str,
+    local_body: &str,
+    caller_signature: &str,
+    caller_body: &str,
+) -> String {
+    format!(
+        "module Prog\n    intent = \"a local fromList shadowing the recognized constructor\"\n    depends [Bytes]\n    effects []\n\n{local_signature}\n    ? \"probe\"\n{local_body}\n\n{caller_signature}\n    ? \"probe\"\n{caller_body}\n"
+    )
+}
+
+#[test]
+fn a_local_from_list_returning_int_shadows_the_recognized_constructor() {
+    // The local fn wins, so the call has type `Int`. A discharge keyed on
+    // the spelling `fromList` fired here too — the checker kept `Int` only
+    // because `Int` is not a `Result` to unwrap, while the HIR resolver
+    // went ahead and rewrote the body to a `Bytes` carrier construction.
+    // The runtime half of this pin lives in `tests/cross_backend_stress.rs`
+    // (`cross_shadowed_smart_constructor_runs_the_local_fn_*`), which is
+    // where that divergence was actually observable.
+    let clean = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Int",
+        "    List.len(xs)",
+        "fn caller() -> Int",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&clean, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "the local `fromList` must type the call as its own `Int`:\n{clean}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+
+    // …and it is NOT the refined type: the call cannot satisfy a `Bytes`
+    // return, which is what a discharge would have made it do.
+    let wrong = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Int",
+        "    List.len(xs)",
+        "fn caller() -> Bytes",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&wrong, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("body returns Int but declared return type is Bytes")),
+        "expected the local fn's `Int` to clash with a `Bytes` return:\n{wrong}\ngot:\n  {}",
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+
+    // The dependency's constructor is untouched: still recognized, still
+    // discharging under its qualified spelling in the very same program.
+    let qualified = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Int",
+        "    List.len(xs)",
+        "fn caller() -> Bytes",
+        "    Bytes.fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&qualified, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "the shadowed dependency constructor must still discharge when named:\n{qualified}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn a_local_from_list_returning_a_result_keeps_its_own_result() {
+    // The sharp case. The local fn returns `Result<Int, String>`, so the
+    // spelling-keyed discharge really did strip the wrapper: the call typed
+    // as plain `Int` and the `Result` return below was reported as an
+    // error. The local fn is not a recognized refinement smart constructor
+    // — it has no refined carrier and no proven interval — so nothing about
+    // it may be discharged.
+    let clean = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Result<Int, String>",
+        "    Result.Ok(List.len(xs))",
+        "fn caller() -> Result<Int, String>",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&clean, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "the local `fromList` must keep its own `Result`:\n{clean}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+
+    // The `?` operator still applies, which it could not if the call had
+    // been discharged to the bare payload.
+    let propagated = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Result<Int, String>",
+        "    Result.Ok(List.len(xs))",
+        "fn caller() -> Result<Int, String>",
+        "    n = fromList([0, 10, 255])?\n    Result.Ok(n)",
+    );
+    let errs = errors_with_base(&propagated, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.is_empty(),
+        "`?` must still apply to the local fn's `Result`:\n{propagated}\ngot:\n  {}",
+        errs.join("\n  ")
+    );
+
+    // And the payload is the local fn's `Int`, not the dependency's `Bytes`.
+    let wrong = shadowing_from_list_program(
+        "fn fromList(xs: List<Int>) -> Result<Int, String>",
+        "    Result.Ok(List.len(xs))",
+        "fn caller() -> Result<Bytes, String>",
+        "    fromList([0, 10, 255])",
+    );
+    let errs = errors_with_base(&wrong, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter().any(|e| e.contains("Result<Bytes, String>")),
+        "expected the local fn's payload to clash with `Result<Bytes, String>`:\n{wrong}\ngot:\n  {}",
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+}
+
 #[test]
 fn integer_slash_operator_is_a_type_error() {
     // The bare `/` operator on two Ints is partial (a zero divisor; over ℤ

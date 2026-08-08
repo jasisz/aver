@@ -861,6 +861,15 @@ fn proof_export_builds_discharged_bytes_law_when_lake_is_available() {
     // the `Result` path: the file only builds if the discharged calls
     // became direct constructions WHILE the computed-argument call stayed
     // fallible.
+    //
+    // `frameOctets` puts both in ONE body and carries the law
+    // `literalFrameIsIndependentOfTheComputedFrame` — a single theorem
+    // obligation, universal in the computed value, over a body whose
+    // literal branch is a direct construction and whose other branch
+    // matches on the fallible constructor. Both must be true of the same
+    // body at once for it to close (and, upstream of the prover, for the
+    // file to typecheck at all: a `Result` pattern over a non-`Result`
+    // subject is an error).
     assert_proof_builds(
         "tests/fixtures/discharged_bytes_law.av",
         "aver-proof-discharged-bytes-law",
@@ -891,7 +900,10 @@ fn proof_dafny_verifies_discharged_bytes_law_when_dafny_is_available() {
     // the bare carrier there, so `Bytes.fromList([0, 10, 255])` becomes the
     // literal sequence and Dafny must discharge the subset-type constraint
     // `allInRange(xs)` at the use site by unfolding the same recursive
-    // predicate the Lean obligation names.
+    // predicate the Lean obligation names. Includes the mixed-body law
+    // `frameOctets.literalFrameIsIndependentOfTheComputedFrame`, which
+    // Dafny closes as a lemma over the same one body that holds a
+    // discharged construction and a fallible call side by side.
     assert_dafny_verifies(
         "tests/fixtures/discharged_bytes_law.av",
         "aver-dafny-discharged-bytes-law",

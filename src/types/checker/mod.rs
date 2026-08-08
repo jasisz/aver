@@ -981,6 +981,22 @@ impl TypeChecker {
     // -- Unified lookups ---------------------------------------------------
 
     fn find_fn_sig(&self, key: &str) -> Option<&FnSig> {
+        self.find_fn_sig_resolved(key).map(|(_, sig)| sig)
+    }
+
+    /// [`Self::find_fn_sig`] plus the resolved user-fn identity the
+    /// signature came from.
+    ///
+    /// The `FnId` is `Some` EXACTLY when the returned signature is the one
+    /// `fn_sigs[id]` holds — i.e. when the reference resolved to a
+    /// program-declared function. Builtin and constructor signatures come
+    /// out of `extra_sigs`, which has no identity, so they answer `None`.
+    ///
+    /// Callers that key a rewrite on "which function is this really" must
+    /// use this and not re-resolve the name themselves: the whole point is
+    /// that the identity and the signature the call is checked against are
+    /// produced by one lookup and therefore cannot disagree.
+    pub(crate) fn find_fn_sig_resolved(&self, key: &str) -> Option<(Option<FnId>, &FnSig)> {
         // Phase B: user fns live in `fn_sigs` keyed by `FnId`; everything
         // else (builtins + sum-type variant constructors) stays in
         // `extra_sigs`. Direct hit on `extra_sigs` covers references that
@@ -989,16 +1005,16 @@ impl TypeChecker {
         if let Some(id) = self.resolve_fn_id(key)
             && let Some(sig) = self.fn_sigs.get(&id)
         {
-            return Some(sig);
+            return Some((Some(id), sig));
         }
         if let Some(sig) = self.extra_sigs.get(key) {
-            return Some(sig);
+            return Some((None, sig));
         }
         // Try canonicalised form for type-derived keys
         // (`"Module.Type.Variant"`).
         let canonical = self.canonical_extra_key(key);
         if canonical != key {
-            return self.extra_sigs.get(&canonical);
+            return self.extra_sigs.get(&canonical).map(|sig| (None, sig));
         }
         None
     }

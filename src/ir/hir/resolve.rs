@@ -383,10 +383,17 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // typechecker's discharge rule reads
             // (`SymbolTable::literal_refinements`), and it keys on the
             // refinement's own proven element interval, never on a name.
-            // Every spelling that denotes the constructor decides alike:
-            // this resolver also runs over a FLATTENED wasm-gc compile
-            // unit, where the qualified and in-module spellings have
-            // already collapsed into one prefixed bare name.
+            //
+            // INVARIANT: the discharge and ordinary name resolution must
+            // agree on the callee, or the discharge declines. That is why
+            // the key is `resolved_callee` — the identity THIS resolver
+            // just picked — and not the callee's spelling. A spelling key
+            // would rewrite an entry module's own `fn fromList(…) -> Int`
+            // into a carrier construction while the checker, obeying
+            // Aver's shadowing rule, types the same call as `Int`. It also
+            // survives the wasm-gc flatten for free: the flattened compile
+            // unit is re-resolved against a rebuilt symbol table, so the
+            // renamed call sites resolve to the renamed constructor.
             //
             // Why a construct site rather than a call to the constructor:
             // `RecordCreate` is total on every backend and needs no new IR
@@ -395,11 +402,20 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // exists — `proof_lower::multi_field_record_demotions` treats a
             // construct site whose every field is a literal inside the
             // proven interval as exactly as gated as the smart constructor.
-            // The rewrite runs on resolved HIR, so the AST-walking demotion
-            // scans still see only the smart-constructor call.
+            //
+            // What makes that safe is NOT that the demotion scans vet this
+            // node: they walk the AST, and this `RecordCreate` is HIR the
+            // resolver synthesises afterwards, so they never see it at all.
+            // Safety rests on the SHARED DERIVED INTERVAL. The discharge
+            // admits an element only if
+            // `packed_sequence::element_interval_from_predicate` — the very
+            // function the packed layout's own bound is derived from —
+            // proves it in range. "This literal discharges" and "the packed
+            // carrier can store this literal" are therefore one predicate,
+            // not two that happen to agree today.
             let mut resolved_args = resolved_args;
-            if let Some(dotted) = expr_to_dotted_name(&callee.node)
-                && let Some(ctor) = ctx.symbols.literal_refinements().discharge(&dotted, args)
+            if let ResolvedCallee::Fn(fn_id) = &resolved_callee
+                && let Some(ctor) = ctx.symbols.literal_refinements().discharge(*fn_id, args)
                 && resolved_args.len() == 1
             {
                 let key = match ctor.scope.as_deref() {
@@ -557,7 +573,12 @@ fn resolve_pattern(ctx: &ResolveCtx<'_>, pat: &Pattern) -> ResolvedPattern {
 /// `buffer_build`; `LocalSlot` for first-class fn values; the
 /// `Unresolved` passthrough for anything else (typechecker already
 /// reported it).
-fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCallee {
+///
+/// `pub(crate)` so the self-host discharge scan
+/// ([`crate::analysis::literal_refinement::discharge_sites`]) can ask
+/// this exact function which fn a callee denotes, rather than
+/// re-deriving it and risking a different answer than the rewrite below.
+pub(crate) fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCallee {
     match &callee.node {
         Expr::Resolved {
             slot,

@@ -653,20 +653,28 @@ impl TypeChecker {
                     };
 
                 if let Expr::Ident(name) = &fn_expr.node {
-                    if let Some(sig) = self.find_fn_sig(name).cloned() {
+                    if let Some((resolved_id, sig)) = self
+                        .find_fn_sig_resolved(name)
+                        .map(|(id, sig)| (id, sig.clone()))
+                    {
                         // Literal smart-constructor discharge, bare-callee
                         // seam — see the qualified seam below for the rule.
-                        // A module's own unqualified call to its recognized
-                        // constructor must decide exactly as the qualified
-                        // spelling does: the wasm-gc backend flattens both
-                        // to one prefixed bare name before re-resolving, so
-                        // a seam that discharged only one of them would fork
-                        // the checked and unchecked pipelines.
-                        let discharged = self
-                            .symbol_table
-                            .literal_refinements()
-                            .discharge(name, args)
-                            .is_some();
+                        //
+                        // INVARIANT: the discharge and the normal resolution
+                        // must agree on the callee, or the discharge
+                        // declines. `resolved_id` is the identity the very
+                        // lookup that produced `sig` settled on, so an entry
+                        // module's own `fn fromList(…)` — which shadows the
+                        // stdlib constructor under Aver's pinned shadowing
+                        // rule — keeps its own signature here AND is left
+                        // alone by the HIR rewrite, which keys on the same
+                        // identity.
+                        let discharged = resolved_id.is_some_and(|id| {
+                            self.symbol_table
+                                .literal_refinements()
+                                .discharge(id, args)
+                                .is_some()
+                        });
                         let ret = check_call(self, name, sig);
                         validate_special_call(self, name, args);
                         if discharged && let Type::Result(payload, _) = ret {
@@ -802,12 +810,21 @@ impl TypeChecker {
                     // and "storable in the packed carrier" are the same
                     // predicate. The HIR resolver applies the identical rule
                     // to the identical shape.
-                    if self
-                        .symbol_table
-                        .literal_refinements()
-                        .discharge(&display_name, args)
-                        .is_some()
-                        && let Some(sig) = self.find_fn_sig(&display_name).cloned()
+                    //
+                    // INVARIANT: the discharge and the normal resolution
+                    // must agree on the callee, or the discharge declines.
+                    // The identity comes out of the same lookup as the
+                    // signature the call is then checked against, so a
+                    // qualified name that resolves to some other function
+                    // cannot be discharged as this one.
+                    if let Some((Some(resolved_id), sig)) = self
+                        .find_fn_sig_resolved(&display_name)
+                        .map(|(id, sig)| (id, sig.clone()))
+                        && self
+                            .symbol_table
+                            .literal_refinements()
+                            .discharge(resolved_id, args)
+                            .is_some()
                     {
                         // Keep the standard arity/arg-type checks; only the
                         // return type is discharged, and it is taken from
