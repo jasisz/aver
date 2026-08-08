@@ -352,18 +352,26 @@ fn relay(conn: Tcp.Connection) -> Result<Unit, String>
     );
 }
 
+/// A bare `List<Int>` literal in argument position. The literal used to
+/// sit directly inside an interpolation (`"{[1, 2, 3]}"`); interpolation
+/// renders primitives only now, so it reaches the same lowering through
+/// the named conversion a user writes instead.
 #[test]
-fn bare_list_literal_inside_interpolation_compiles() {
+fn bare_list_literal_through_a_named_conversion_compiles() {
     assert_compiles_and_validates(
         r#"module Probe
     intent = "Minimal List<Int> literal for wasm-gc compilation."
     exposes [main]
     effects [Console.print]
 
+fn describe(xs: List<Int>) -> String
+    ? "Name the conversion to String."
+    "len={List.len(xs)}"
+
 fn main() -> Unit
     ? "Print a list literal."
     ! [Console.print]
-    Console.print("{[1, 2, 3]}")
+    Console.print(describe([1, 2, 3]))
 "#,
     );
 }
@@ -542,4 +550,101 @@ fn json_sum_uses_nominal_root_in_variants_tuple_and_dispatch() {
         dispatch_targets.iter().all(|idx| *idx != 0),
         "specific pattern tests/casts must target concrete variants, not the sum root"
     );
+}
+
+// ─── Compound string interpolation is a LOUD codegen error ──────────────
+//
+// The typechecker rejects a non-primitive interpolation embed outright,
+// so `aver run` / `aver compile` never reach the wasm-gc emitter with
+// one. Internal pipelines that drive codegen WITHOUT gating on the
+// checker's errors still can, and so would any future checker gap. The
+// emitter must answer with an error naming the fn and the embed type —
+// not by bailing to `Ok(None)`, which hands the whole fn an
+// `unreachable` trap stub and ships a program that compiles clean and
+// then traps at runtime with no diagnostic.
+
+/// Frontend pipeline that IGNORES typecheck errors — the shape an
+/// eval-style internal harness has. `pipeline::run` skips every later
+/// stage once the checker reports an error, so the typecheck is driven
+/// separately (it stamps types into the AST as it walks, errors or not)
+/// and the pipeline then runs unguarded. Codegen therefore sees the same
+/// stamped `List<Int>` embed a checker gap would let through.
+fn parse_pipeline_ignoring_type_errors(source: &str) -> Vec<TopLevel> {
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    let tc = ir::pipeline::typecheck(&items, &ir::TypecheckMode::Full { base_dir: None });
+    assert!(
+        !tc.errors.is_empty(),
+        "this harness exists to model an UNGATED pipeline — the program is \
+         expected to be rejected by the checker"
+    );
+    ir::pipeline::run(
+        &mut items,
+        ir::PipelineConfig {
+            typecheck: None,
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    items
+}
+
+#[test]
+fn compound_interpolation_embed_is_a_loud_codegen_error_not_a_trap_stub() {
+    let source = r#"module M
+    intent = "reach the interpolation emitter with a compound embed"
+    effects [Console]
+
+fn describe(xs: List<Int>) -> String
+    "xs={xs}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe([1, 2, 3]))
+"#;
+    let items = parse_pipeline_ignoring_type_errors(source);
+    let err = aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None)
+        .expect_err("a compound interpolation embed must fail the wasm-gc compile");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("describe"),
+        "the codegen error must name the offending fn: {msg}"
+    );
+    assert!(
+        msg.contains("List<Int>"),
+        "the codegen error must name the embed type: {msg}"
+    );
+    assert!(
+        msg.contains("no stringifier"),
+        "the codegen error must say what is missing: {msg}"
+    );
+}
+
+/// Positive control: the same program with the conversion NAMED compiles
+/// and validates, so the test above is pinning the compound embed and
+/// not some unrelated breakage in the shape.
+#[test]
+fn named_conversion_interpolation_still_compiles_and_validates() {
+    let source = r#"module M
+    intent = "render a list through a named conversion"
+    effects [Console]
+
+fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _ -> "{head}, {joinInts(tail)}"
+
+fn describe(xs: List<Int>) -> String
+    "xs=[{joinInts(xs)}]"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe([1, 2, 3]))
+"#;
+    assert_compiles_and_validates(source);
 }

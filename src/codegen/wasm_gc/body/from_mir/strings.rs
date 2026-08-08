@@ -1,24 +1,54 @@
 //! String lowering: `MirExpr::InterpolatedStr` and the `String`
-//! branches of `BinOp` (`+` / `==` / `<` / …). Mirrors
-//! `emit_interpolated_str` and `emit_expr`'s String BinOp branches.
+//! branches of `BinOp` (`+` / `==` / `<` / …). Mirrors `emit_expr`'s
+//! String BinOp branches.
 
 use super::*;
 
-/// Mirror of `emit_interpolated_str` (builtins.rs): build a
-/// `Vector<String>` of the parts and concat it with `__wasmgc_concat_n`.
+/// Interpolation lowering: build a `Vector<String>` of the parts and
+/// concat it with `__wasmgc_concat_n`.
 /// Each `Literal` part becomes an `array.new_data` over its segment;
 /// each `Expr` part is emitted then stringified by the same
-/// `String.from{Int,Float,Bool}` dispatch (a `String` is identity), plus
-/// `__wasmgc_string_from_list_int` for a `List<Int>`. The result is always
-/// a `String`, so `produces` is `true` (empty interpolation allocates a
-/// zero-length array directly, same as the oracle).
+/// `String.from{Int,Float,Bool}` dispatch (a `String` is identity).
+/// The result is always a `String`, so `produces` is `true` (empty
+/// interpolation allocates a zero-length array directly, same as the
+/// oracle).
 ///
-/// A part whose type has NO stringifier here still returns `None`. There
-/// is no resolved-HIR emitter left to catch that: a `None` makes the whole
-/// enclosing fn an `unreachable` trap stub, so such a program compiles and
-/// then traps at runtime with no diagnostic. `List<Int>` was in that state
-/// until the helper above landed; records, tuples, `Option`/`Result`, maps
-/// and `List<T>` for other `T` still are.
+/// An embed of any OTHER type is a hard `WasmGcError`, not an
+/// `Ok(None)` bail. `Ok(None)` here means "the MIR walker does not
+/// cover this fn", and the caller answers that by giving the whole fn
+/// an `unreachable` trap stub (`module.rs`, `emit_trap_stub_body`) —
+/// the program would compile clean and then trap at runtime with no
+/// diagnostic.
+///
+/// WHY TYPECHECKED SOURCE CANNOT REACH THE ERROR ARM. The dispatch below
+/// keys on `aver_type_str_of(inner)`, i.e. the type the CHECKER stamped on
+/// that very node (`Spanned::set_ty`, a `OnceLock` written during
+/// inference and never rewritten), so the emitter and the checker classify
+/// the same value by the same `Type`. The checker's interpolation rule
+/// (`classify_interpolation_embed` in
+/// `src/types/checker/infer/expr.rs`) partitions that `Type` with no
+/// remainder:
+///   * `Int` / `Float` / `Bool` / `Str` — accepted, and they are exactly
+///     the four cases the dispatch handles;
+///   * bare `Type::Var` — an embed inference never pinned. REJECTED, and
+///     deliberately not folded into the checker's `Invalid` acceptance: an
+///     unresolved variable is not evidence of an earlier diagnostic
+///     (`match Option.None` with an arm `Option.Some(x) -> "{x}"` is
+///     otherwise a clean program), so admitting it was a fail-open path
+///     from a CLEAN typecheck straight into this arm;
+///   * `Type::Invalid` — accepted without a second diagnostic, but only
+///     ever stamped after the checker already reported an error, so the
+///     compile is gated before codegen runs;
+///   * everything else — rejected by name.
+///
+/// Widening the dispatch below and widening that partition must happen in
+/// the same change, or this argument stops holding.
+///
+/// The arm stays reachable from internal pipelines that drive codegen
+/// without gating on the checker's errors (see
+/// `compound_interpolation_embed_is_a_loud_codegen_error_not_a_trap_stub`
+/// in `tests/wasm_gc_codegen_regression.rs`), and from any future checker
+/// gap — both want the loud error naming the fn and the embed type.
 pub(crate) fn emit_mir_interpolated_str(
     func: &mut Function,
     parts: &[MirStrPart],
@@ -106,30 +136,17 @@ pub(crate) fn emit_mir_interpolated_str(
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
                     }
-                    // `List<Int>` renders via the dedicated helper, which
-                    // walks the cons chain and joins `[`, the per-element
-                    // decimals, and `]`. The value on the stack is already
-                    // the boxed cons list — a PACKED refinement field read
-                    // (`o.values`) went through `MirExpr::Project`, which
-                    // inserts the packed→list unpack bridge before we get
-                    // here, so the packed and boxed paths feed the helper
-                    // the identical representation.
-                    "List<Int>" => {
-                        let from_list_idx = ctx
-                            .fn_map
-                            .builtins
-                            .get("__wasmgc_string_from_list_int")
-                            .copied()
-                            .ok_or(WasmGcError::Validation(
-                                "interpolation of List<Int> requires \
-                                 __wasmgc_string_from_list_int builtin"
-                                    .into(),
-                            ))?;
-                        func.instruction(&Instruction::Call(from_list_idx));
+                    // No stringifier for this embed. Loud, not silent —
+                    // see the fn doc comment.
+                    other => {
+                        return Err(WasmGcError::Validation(format!(
+                            "fn `{}`: string interpolation has no stringifier for an \
+                             embed of type `{other}` — interpolation renders primitives \
+                             only (Int, Float, Bool, String). Convert the value with a \
+                             named function returning String and interpolate that.",
+                            ctx.self_fn_name
+                        )));
                     }
-                    // Compound type: `emit_interpolated_str` errors here.
-                    // Fall back so the resolved-HIR path raises it instead.
-                    _ => return Ok(None),
                 }
             }
         }

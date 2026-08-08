@@ -25,9 +25,20 @@
 //! non-string parts.
 //!
 //! The pass runs *after* the type checker (the checker still sees
-//! `InterpolatedStr` and approves it as `String`) and *before* the
+//! `InterpolatedStr` and types it as `String`) and *before* the
 //! resolver (the desugared form contains bare `Expr::Ident` callees
 //! the resolver later annotates).
+//!
+//! `__to_str` is the whole reason the checker restricts an interpolated
+//! part to `Int` / `Float` / `Bool` / `String` (decision:
+//! ExplicitStringify — conversion to String is named in source). Those
+//! four are what every backend's `__to_str` renders; the VM's lowering
+//! (a CONCAT against `""`, which calls `NanValue::repr`) happens to
+//! render compounds too, but that is dead weight reachable only from
+//! internal pipelines that skip the typecheck. Do not extend it, and do
+//! not widen the checker's set without widening the wasm-gc dispatch in
+//! `codegen/wasm_gc/body/from_mir/strings.rs` in the same change — the
+//! rule and this lowering must agree exactly.
 
 use crate::ast::{Expr, Literal, Spanned, Stmt, StrPart, TopLevel, Type};
 

@@ -222,7 +222,7 @@ Rules:
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
-- String interpolation: `"Hello, {name}!"`
+- String interpolation: `"Hello, {name}!"` — **primitives only** (`Int`, `Float`, `Bool`, `String`). Embedding a list, record, tuple, `Map`, `Option`/`Result`, `Vector` or any named type is a type error; write a function returning `String` and interpolate its result.
 
 **These operators do NOT exist** — do not use them:
 
@@ -257,7 +257,7 @@ Key `String` API:
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
 - `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
-- string interpolation: `"Hello, {name}!"` is the idiomatic way to render values into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`)
+- string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
 
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`

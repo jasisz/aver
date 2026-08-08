@@ -4022,3 +4022,272 @@ fn plain_tuple_literal_accepts_expected_tuple_elements() {
     let src = "fn pair(n: Int) -> Tuple<Int, Int>\n    ? \"Pairs.\"\n    (1, n)\n";
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// String interpolation — primitives only, conversions are named in source
+// ---------------------------------------------------------------------------
+
+/// The sanctioned set, one embed per primitive. This is exactly what the
+/// `__to_str` lowering renders on every backend; if a primitive is added
+/// or dropped there, this test and the rule must move together.
+#[test]
+fn interpolation_accepts_every_primitive() {
+    assert_no_errors("fn show(n: Int) -> String\n    \"n={n}\"\n");
+    assert_no_errors("fn show(x: Float) -> String\n    \"x={x}\"\n");
+    assert_no_errors("fn show(b: Bool) -> String\n    \"b={b}\"\n");
+    assert_no_errors("fn show(s: String) -> String\n    \"s={s}\"\n");
+}
+
+#[test]
+fn interpolation_rejects_a_list_embed() {
+    assert_error_containing(
+        "fn show(xs: List<Int>) -> String\n    \"xs={xs}\"\n",
+        "String interpolation renders primitives only (Int, Float, Bool, String); \
+         this embed is List<Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_record_embed() {
+    let src = "record User\n    name: String\n    age: Int\n\n\
+               fn show(u: User) -> String\n    \"u={u}\"\n";
+    assert_error_containing(
+        src,
+        "String interpolation renders primitives only (Int, Float, Bool, String); \
+         this embed is User.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_an_option_embed() {
+    assert_error_containing(
+        "fn show(o: Option<Int>) -> String\n    \"o={o}\"\n",
+        "this embed is Option<Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_result_embed() {
+    assert_error_containing(
+        "fn show(r: Result<Int, String>) -> String\n    \"r={r}\"\n",
+        "this embed is Result<Int, String>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_map_embed() {
+    assert_error_containing(
+        "fn show(m: Map<String, Int>) -> String\n    \"m={m}\"\n",
+        "this embed is Map<String, Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_tuple_embed() {
+    assert_error_containing(
+        "fn show(t: Tuple<Int, Int>) -> String\n    \"t={t}\"\n",
+        "this embed is Tuple<Int, Int>.",
+    );
+}
+
+#[test]
+fn interpolation_rejects_a_vector_embed() {
+    assert_error_containing(
+        "fn show(v: Vector<Int>) -> String\n    \"v={v}\"\n",
+        "this embed is Vector<Int>.",
+    );
+}
+
+/// The diagnostic must point at the fix the language actually offers —
+/// a user-written conversion — and must NOT advertise a stdlib helper,
+/// because none exists and none is planned.
+#[test]
+fn interpolation_rejection_asks_for_a_named_conversion() {
+    let errs = errors("fn show(xs: List<Int>) -> String\n    \"xs={xs}\"\n");
+    let msg = errs
+        .iter()
+        .find(|m| m.contains("String interpolation renders primitives only"))
+        .expect("expected the interpolation diagnostic");
+    assert!(
+        msg.contains("named function returning String"),
+        "diagnostic must ask for a named conversion: {msg}"
+    );
+    assert!(
+        !msg.contains("String.from") && !msg.contains("List.toString"),
+        "diagnostic must not suggest a stdlib helper: {msg}"
+    );
+}
+
+/// Wrapping the value in a user-written display fn is the sanctioned
+/// spelling and must type-check clean — the positive control for the
+/// rejections above.
+#[test]
+fn interpolation_accepts_a_named_conversion_result() {
+    let src = r#"fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _ -> "{head}, {joinInts(tail)}"
+
+fn show(xs: List<Int>) -> String
+    "xs=[{joinInts(xs)}]"
+"#;
+    assert_no_errors(src);
+}
+
+/// An embed whose type the checker could not resolve already produced a
+/// diagnostic of its own; the interpolation rule must not pile a second
+/// one on top (same `Type::Invalid` discipline the neighbouring argument
+/// and element rules follow).
+#[test]
+fn interpolation_does_not_double_report_an_invalid_embed() {
+    let errs = errors("fn show() -> String\n    \"v={nope}\"\n");
+    assert_eq!(
+        errs.iter()
+            .filter(|m| m.contains("Unknown identifier 'nope'"))
+            .count(),
+        1,
+        "expected exactly one unknown-identifier error, got: {errs:?}"
+    );
+    assert_eq!(
+        errs.iter()
+            .filter(|m| m.contains("String interpolation renders primitives only"))
+            .count(),
+        0,
+        "an already-errored embed must not draw a second diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn interpolation_does_not_double_report_a_bad_call_embed() {
+    let errs = errors("fn show() -> String\n    \"v={missingFn(1)}\"\n");
+    assert_eq!(
+        errs.iter()
+            .filter(|m| m.contains("String interpolation renders primitives only"))
+            .count(),
+        0,
+        "an already-errored embed must not draw a second diagnostic, got: {errs:?}"
+    );
+}
+
+// --- Embeds whose type inference never pinned ------------------------------
+//
+// An unresolved `Type::Var` is NOT evidence of an earlier diagnostic, so it
+// must not ride the `Type::Invalid` no-double-report acceptance. Each source
+// below type-checks clean apart from the interpolation itself; admitting the
+// embed would hand a clean-typechecked program to the backends with no
+// renderable type for it.
+
+/// The exact fail-open witness: `match Option.None` binds the arm's `x` to
+/// the `T` of a bare `Option<T>` subject. Nothing else in this program is an
+/// error.
+#[test]
+fn interpolation_rejects_an_unresolved_embed_from_a_bare_none_match() {
+    let src = "fn render() -> String\n\
+               \x20   match Option.None\n\
+               \x20       Option.Some(x) -> \"{x}\"\n\
+               \x20       Option.None -> \"none\"\n";
+    let errs = errors(src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "the unresolved embed must be the ONLY error — an unresolved variable \
+         is not evidence of a prior diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs[0].contains("the type of this embed could not be determined"),
+        "expected the unresolved-embed diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs[0].contains("named function returning String"),
+        "the unresolved diagnostic must still ask for a named conversion: {errs:?}"
+    );
+}
+
+/// Same hole reached through a local binding rather than an inline subject.
+#[test]
+fn interpolation_rejects_an_unresolved_embed_bound_through_a_local() {
+    let src = "fn render() -> String\n\
+               \x20   o = Option.None\n\
+               \x20   match o\n\
+               \x20       Option.Some(x) -> \"{x}\"\n\
+               \x20       Option.None -> \"none\"\n";
+    assert_error_containing(src, "the type of this embed could not be determined");
+}
+
+/// And through a bare empty-list subject, whose element type is equally open.
+#[test]
+fn interpolation_rejects_an_unresolved_embed_from_a_bare_empty_list_match() {
+    let src = "fn render() -> String\n\
+               \x20   match []\n\
+               \x20       [] -> \"empty\"\n\
+               \x20       [head, ..tail] -> \"{head}\"\n";
+    assert_error_containing(src, "the type of this embed could not be determined");
+}
+
+/// Pinning the subject's type removes the diagnostic — the positive control
+/// proving the rule rejects genuinely-unresolved embeds, not merely
+/// pattern-bound ones.
+#[test]
+fn interpolation_accepts_a_match_binding_off_a_concrete_subject() {
+    assert_no_errors(
+        "fn render(o: Option<Int>) -> String\n\
+         \x20   match o\n\
+         \x20       Option.Some(x) -> \"{x}\"\n\
+         \x20       Option.None -> \"none\"\n",
+    );
+    assert_no_errors(
+        "fn render(xs: List<Int>) -> String\n\
+         \x20   match xs\n\
+         \x20       [] -> \"empty\"\n\
+         \x20       [head, ..tail] -> \"{head}\"\n",
+    );
+    // Plain bottom-up local binding: the shape a naive "reject Var" would
+    // break if inference deferred pinning to a later pass.
+    assert_no_errors("fn render() -> String\n    x = 5\n    \"{x}\"\n");
+}
+
+/// The parts of an interpolation are parsed by a sub-parser that sees only
+/// the `{...}` fragment, so an embed's own `line` is 1-based inside that
+/// fragment. The diagnostic must be anchored to the OUTER interpolation node
+/// instead. Both interpolation diagnostics are pinned, on a line > 1, so a
+/// refactor cannot silently regress either to line 1.
+#[test]
+fn interpolation_errors_report_the_outer_source_line() {
+    let items = parse(
+        "fn pad() -> Int\n\
+         \x20   1\n\
+         \n\
+         fn show(xs: List<Int>) -> String\n\
+         \x20   \"xs={xs}\"\n",
+    );
+    let errs = aver::types::checker::run_type_check(&items);
+    let err = errs
+        .iter()
+        .find(|e| e.message.contains("this embed is List<Int>"))
+        .unwrap_or_else(|| panic!("expected the known-type interpolation error, got: {errs:?}"));
+    assert_eq!(
+        err.line, 5,
+        "known-type interpolation error must report the outer line, got: {err:?}"
+    );
+
+    let items = parse(
+        "fn pad() -> Int\n\
+         \x20   1\n\
+         \n\
+         fn render() -> String\n\
+         \x20   match Option.None\n\
+         \x20       Option.Some(x) -> \"{x}\"\n\
+         \x20       Option.None -> \"none\"\n",
+    );
+    let errs = aver::types::checker::run_type_check(&items);
+    let err = errs
+        .iter()
+        .find(|e| e.message.contains("could not be determined"))
+        .unwrap_or_else(|| panic!("expected the unresolved interpolation error, got: {errs:?}"));
+    assert_eq!(
+        err.line, 6,
+        "unresolved interpolation error must report the outer line, got: {err:?}"
+    );
+}
