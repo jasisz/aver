@@ -44,52 +44,77 @@
 //!   reducing SILENTLY in the kernel. Requiring the literal keeps the equation
 //!   pinned to the value the program actually computed, so a defaulted model
 //!   cannot satisfy it and the anti-vacuity gate stays meaningful.
+//! - **Builtins whose lowering can panic, or can narrow past the VM.** The
+//!   literal alone does NOT close the vacuity hole above: a defaulted model
+//!   satisfies the equation whenever `default` happens to equal the value the
+//!   VM computed. That is not exotic — `Bool`'s default is `false`, and half
+//!   of all predicate cases expect `false`. So the second half of the gate is
+//!   per-builtin: a lowering that can reach `panic!` on an input a program
+//!   can supply is not kernel-eligible. Neither is one that NARROWS an
+//!   argument the VM rejected into one it accepts (`Int.toNat` maps every
+//!   negative index to `0`), because the model then evaluates a branch the VM
+//!   never took — and from that branch any other builtin's `panic!` is back
+//!   in play, defaulted and silent. See [`builtin_panic_capability`] for the
+//!   audit of every entry against the prelude definition it reaches.
 //!
 //! - **Oversized cases.** Kernel reduction is real work and, unlike the
 //!   elaborator, it has no heartbeat limit to stop it — see
 //!   [`KERNEL_DECIDE_TERM_BUDGET`].
 //!
-//! The remaining question is per-builtin, and [`builtin_is_kernel_reducible`]
-//! answers it from a table pinned empirically against Lean 4.32.
+//! The remaining question is per-builtin, and two tables answer it: does the
+//! lowering REDUCE in the kernel ([`builtin_reduces_in_kernel`], pinned
+//! empirically against Lean 4.32), and is the reduction FAITHFUL to what the
+//! VM computed ([`builtin_panic_capability`], audited against the prelude).
+//! Both are exhaustive matches, so a new `Builtin` variant must be classified
+//! on both axes before it compiles.
 
 use std::collections::HashSet;
 
 use crate::ast::{Literal, Spanned, Type, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::builtins::{Builtin, recognize_builtin};
-use crate::ir::FnId;
 use crate::ir::hir::{
     BuiltinIntrinsic, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedPattern, ResolvedStmt,
     ResolvedStrPart,
 };
+use crate::ir::{FnId, TypeId};
 
 /// Kernel-checked evaluation: no `Lean.ofReduceBool` in the axiom closure.
 pub(super) const KERNEL_DECIDE_TACTIC: &str = "decide +kernel";
 /// Native evaluation: fast, but the theorem trusts the compiler.
 pub(super) const NATIVE_DECIDE_TACTIC: &str = "native_decide";
 
-/// Data-size budget, in characters of the emitted left-hand term, above which
-/// a case keeps `native_decide` no matter how kernel-reducible it is.
+/// Data-size budget, in characters of the emitted EQUATION — both sides —
+/// above which a case keeps `native_decide` no matter how kernel-reducible it
+/// is.
 ///
 /// Kernel reduction is not heartbeat-limited — an oversized case does not
 /// error out, it just makes `lake build` slow — so the only bound available at
-/// emit time is the size of the literal data the term carries. Measured on
-/// Lean 4.32 with the most expensive shape the backend has (SHA-256 over a
-/// byte-list literal, which also folds the list through the `Bytes` range
-/// check and the hex encoder):
+/// emit time is the size of the literal data the term carries. Both sides
+/// count: the expected side is the VM ground-truth literal, and the kernel
+/// must reduce the `Decidable` instance for the WHOLE equation, so a
+/// three-token call returning a four-kilobyte list is exactly as much work as
+/// the four-kilobyte argument that produced it. Budgeting the left side alone
+/// let that shape through.
+///
+/// Measured on Lean 4.32 with the most expensive shape the backend has
+/// (SHA-256 over a byte-list literal, which also folds the list through the
+/// `Bytes` range check and the hex encoder). Each case carries a constant
+/// 75-character expected side (`Except.ok "<64 hex chars>"`), so as full
+/// equations the measured points read:
 ///
 /// ```text
-/// 257 chars (56-byte FIPS vector)   3.1 s
-/// 586 chars (128 bytes)             5.5 s
-/// 1177 chars (256 bytes)            9.0 s
-/// 2347 chars (512 bytes)           21.3 s
+/// 332 chars (56-byte FIPS vector)   3.1 s
+/// 661 chars (128 bytes)             5.5 s
+/// 1252 chars (256 bytes)            9.0 s
+/// 2422 chars (512 bytes)           21.3 s
 /// ```
 ///
-/// 1 KiB keeps that worst shape under ten seconds while leaving four times the
-/// headroom the FIPS vectors need. Cheaper shapes (plain Int / List cases) pay
-/// far less per character, so the budget rejects some of them needlessly —
-/// which costs nothing but a missed opportunity, the same trade every other
-/// decline in this module makes.
+/// 1 KiB admits the 128-byte shape at 5.5 s and declines everything past it,
+/// while still leaving three times the headroom the FIPS vectors need.
+/// Cheaper shapes (plain Int / List cases) pay far less per character, so the
+/// budget rejects some of them needlessly — which costs nothing but a missed
+/// opportunity, the same trade every other decline in this module makes.
 const KERNEL_DECIDE_TERM_BUDGET: usize = 1024;
 
 /// Per-transpile classifier for sampled `verify` cases.
@@ -124,21 +149,24 @@ impl CaseDecidability {
     /// Tactic for one sampled case.
     ///
     /// `lhs` is the case's left side (the side that routes through the model)
-    /// and `emitted_lhs` is the Lean text the emitter produced for it.
-    /// `ground_truth_expected` says the emitted right side is the literal the
-    /// VM computed rather than the source RHS — required, see the module docs.
-    /// The literal itself needs no walk: it is pure data of the left side's
-    /// type, which the walk already proves kernel-safe.
+    /// and `emitted_lhs` / `emitted_rhs` are the Lean texts the emitter
+    /// produced for the two sides. `ground_truth_expected` says the emitted
+    /// right side is the literal the VM computed rather than the source RHS —
+    /// required, see the module docs. The literal itself needs no walk: it is
+    /// pure data of the left side's type, which the walk already proves
+    /// kernel-safe. It does count against the budget, though — the kernel
+    /// reduces the equation, not the left side.
     pub(super) fn tactic_for(
         &self,
         lhs: &Spanned<crate::ast::Expr>,
         emitted_lhs: &str,
+        emitted_rhs: &str,
         ground_truth_expected: bool,
         ctx: &CodegenContext,
     ) -> &'static str {
         if self.enabled
             && ground_truth_expected
-            && emitted_lhs.len() <= KERNEL_DECIDE_TERM_BUDGET
+            && emitted_lhs.len() + emitted_rhs.len() <= KERNEL_DECIDE_TERM_BUDGET
             && self.closure_is_kernel_decidable(lhs, ctx)
         {
             KERNEL_DECIDE_TACTIC
@@ -263,18 +291,20 @@ impl Walk<'_> {
             }
             ResolvedExpr::Ctor(ctor, args) => self.ctor(ctor) && self.exprs(args),
             ResolvedExpr::RecordCreate {
-                type_name, fields, ..
+                type_id,
+                type_name,
+                fields,
             } => {
-                self.named_type_is_kernel_safe(type_name)
+                self.named_type_is_kernel_safe(*type_id, type_name)
                     && fields.iter().all(|(_, e)| self.expr(e))
             }
             ResolvedExpr::RecordUpdate {
+                type_id,
                 type_name,
                 base,
                 updates,
-                ..
             } => {
-                self.named_type_is_kernel_safe(type_name)
+                self.named_type_is_kernel_safe(*type_id, type_name)
                     && self.expr(base)
                     && updates.iter().all(|(_, e)| self.expr(e))
             }
@@ -293,7 +323,7 @@ impl Walk<'_> {
                 true
             }
             ResolvedCallee::Builtin(name) => {
-                recognize_builtin(name).is_some_and(builtin_is_kernel_reducible)
+                recognize_builtin(name).is_some_and(builtin_is_kernel_eligible)
             }
             // Total Euclidean `Int` division / modulo — the literal-divisor
             // discharge. Lean's `Int` division reduces in the kernel.
@@ -309,9 +339,8 @@ impl Walk<'_> {
     fn ctor(&mut self, ctor: &ResolvedCtor) -> bool {
         match ctor {
             ResolvedCtor::Builtin(_) => true,
-            ResolvedCtor::User { type_id, .. } => {
-                let type_name = self.ctx.symbol_table.type_entry(*type_id).key.name.clone();
-                self.named_type_is_kernel_safe(&type_name)
+            ResolvedCtor::User { type_id, name, .. } => {
+                self.named_type_is_kernel_safe(Some(*type_id), name)
             }
             ResolvedCtor::Unresolved { .. } => false,
         }
@@ -348,7 +377,7 @@ impl Walk<'_> {
                 self.type_is_kernel_safe(a) && self.type_is_kernel_safe(b)
             }
             Type::Tuple(items) => items.iter().all(|item| self.type_is_kernel_safe(item)),
-            Type::Named { name, .. } => self.named_type_is_kernel_safe(name),
+            Type::Named { id, name } => self.named_type_is_kernel_safe(*id, name),
             // Fn values, uninstantiated type vars, checker-recovery
             // sentinels: nothing positively known.
             Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => false,
@@ -358,17 +387,35 @@ impl Walk<'_> {
     /// Resolve a named type to its declaration and scan its field types. An
     /// unresolvable name (builtin service record, foreign type) is rejected —
     /// the conservative default.
-    fn named_type_is_kernel_safe(&mut self, name: &str) -> bool {
-        let bare = name.rsplit('.').next().unwrap_or(name).to_string();
-        if self.opaque_eq_types.contains(&bare) {
+    ///
+    /// IDENTITY: the declaration is found through the `TypeId` the
+    /// typechecker stamped on the reference, so two dependency modules'
+    /// same-bare-name types are distinct keys here and one cannot be scanned
+    /// in the other's place. Only a reference the symbol table never bound
+    /// (`id: None` — a builtin service record, a foreign name) falls back to
+    /// the source-faithful name, and that fallback either resolves to a
+    /// declaration or declines the case.
+    fn named_type_is_kernel_safe(&mut self, id: Option<TypeId>, name: &str) -> bool {
+        let key = match id {
+            Some(type_id) => self.ctx.symbol_table.type_entry(type_id).key.canonical(),
+            None => name.to_string(),
+        };
+        // The recursive-type `DecidableEq` shim is registered under the BARE
+        // name, because the Lean surface is flat: `recursive_type_names`
+        // collects `type_def_name`, and `emit_recursive_decidable_eq` emits
+        // against that same bare name. Asking the bare tail here is the
+        // conservative side of that flattening — a same-bare-name twin of a
+        // recursive type is rejected along with it.
+        let bare = key.rsplit('.').next().unwrap_or(&key);
+        if self.opaque_eq_types.contains(bare) {
             return false;
         }
-        if !self.seen_types.insert(bare.clone()) {
+        if !self.seen_types.insert(key.clone()) {
             // Already being scanned higher in this walk; a genuinely
             // recursive type was rejected by `opaque_eq_types` above.
             return true;
         }
-        let Some(annotations) = self.field_annotations_of(&bare) else {
+        let Some(annotations) = self.field_annotations_of(id, &key) else {
             return false;
         };
         annotations.iter().all(|annotation| {
@@ -377,10 +424,17 @@ impl Walk<'_> {
         })
     }
 
-    /// Every field / variant-field type annotation declared under the bare
-    /// name `bare`, across the entry scope and every dependency module.
-    /// `None` when no declaration carries that name.
-    fn field_annotations_of(&self, bare: &str) -> Option<Vec<String>> {
+    /// Every field / variant-field type annotation of the declaration the
+    /// canonical `key` identifies, across the entry scope and every
+    /// dependency module. `None` when no declaration carries that key.
+    ///
+    /// A STAMPED reference matches one declaration: the one whose own
+    /// `type_key_for_decl` canonicalises to the same key. An UNSTAMPED one
+    /// has nothing but a source name to go on, so it matches by bare name and
+    /// unions whatever it finds — which can only widen the annotation set,
+    /// i.e. decline more cases.
+    fn field_annotations_of(&self, id: Option<TypeId>, key: &str) -> Option<Vec<String>> {
+        let bare = key.rsplit('.').next().unwrap_or(key);
         let mut found = false;
         let mut annotations = Vec::new();
         let all_defs = self
@@ -389,7 +443,13 @@ impl Walk<'_> {
             .iter()
             .chain(self.ctx.modules.iter().flat_map(|m| m.type_defs.iter()));
         for td in all_defs {
-            if crate::codegen::common::type_def_name(td) != bare {
+            let matches = match id {
+                Some(_) => {
+                    crate::codegen::common::type_key_for_decl(self.ctx, td).canonical() == key
+                }
+                None => crate::codegen::common::type_def_name(td) == bare,
+            };
+            if !matches {
                 continue;
             }
             found = true;
@@ -406,6 +466,155 @@ impl Walk<'_> {
     }
 }
 
+/// Whether a builtin may appear in a `decide +kernel` case at all: its
+/// lowering must both REDUCE in the kernel and be FAITHFUL to the value the
+/// VM computed.
+fn builtin_is_kernel_eligible(builtin: Builtin) -> bool {
+    builtin_reduces_in_kernel(builtin) && builtin_panic_capability(builtin).is_kernel_safe()
+}
+
+/// How a builtin's Lean lowering can leave the ground the VM pinned.
+///
+/// The anti-vacuity gate rests on ONE assumption: the equation states the
+/// value the program actually computed, so a model that gives up and returns
+/// `default` cannot satisfy it. Two things break that assumption, and Lean's
+/// kernel breaks both of them silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanicCapability {
+    /// Total in the Lean model, and it agrees with the VM across the whole
+    /// argument domain.
+    Total,
+    /// Reaches a panicking construct (`panic!`, `Array.get!`, `Array.set!`),
+    /// but only at indices the definition itself fixes — no argument a
+    /// program can supply moves them out of bounds.
+    UnreachableByConstruction,
+    /// Reaches `panic!` on an input a program can supply. NOT kernel-eligible:
+    /// Lean's `panic!` returns `default` and, under kernel reduction, does so
+    /// with no diagnostic at all, so the case can prove `default = <literal>`
+    /// whenever the two coincide.
+    Reachable,
+    /// Narrows an argument the VM REJECTED into one it accepts, so the model
+    /// evaluates a branch the VM never took. NOT kernel-eligible: the values
+    /// then have no VM ground truth behind them, and the branch can reach
+    /// another builtin's `panic!` — which is how `Vector.get(v, -1)` ends up
+    /// defaulting `Char.toCode ""` to `0`.
+    NarrowsPastVm,
+}
+
+impl PanicCapability {
+    fn is_kernel_safe(self) -> bool {
+        match self {
+            PanicCapability::Total | PanicCapability::UnreachableByConstruction => true,
+            PanicCapability::Reachable | PanicCapability::NarrowsPastVm => false,
+        }
+    }
+}
+
+/// Audit of every builtin's Lean lowering (`lean::builtins::emit_builtin_call`)
+/// against the prelude definitions it reaches (`lean::prelude`,
+/// `lean::crypto_model`), for the two ways a model can drift off the VM's
+/// ground truth. Exhaustive on purpose: a new `Builtin` variant is a compile
+/// error here, so it cannot inherit kernel eligibility by default.
+fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
+    use Builtin::*;
+    use PanicCapability::*;
+    match builtin {
+        // `Char.toCode` (prelude `LEAN_PRELUDE_CHAR_CODE`) is
+        //   `match s.toList.head? with … | none => panic! "…: string is empty"`.
+        // The empty string reaches it, and the panic defaults to `0` — equal
+        // to the VM's answer for plenty of neighbouring inputs, and equal to
+        // nothing the VM ever returns here (the VM raises a RuntimeError).
+        CharToCode => Reachable,
+
+        // `Vector.get` lowers to `arr[Int.toNat i]?`. `Int.toNat` maps EVERY
+        // negative index to `0`, so a negative index reads element 0 in the
+        // model while the VM (`types/vector.rs`, `idx.to_usize()` → `None`)
+        // returns `Option.None`. The model then walks the `Some` arm the
+        // program never took.
+        VectorGet => NarrowsPastVm,
+        // `Vector.set` lowers to
+        //   `if i < arr.size then some (arr.set! (Int.toNat i) v) else none`.
+        // Same narrowing (the VM returns `None` for a negative index), and
+        // the guard does not cover it: on an EMPTY array `-1 < 0` holds, so
+        // the model calls `Array.set!` out of bounds and panics.
+        VectorSet => NarrowsPastVm,
+
+        // `Int.toNat` again, but here the VM narrows IDENTICALLY —
+        // `list::clamp_count` sends every count `<= 0` to `0` — so no input
+        // steers the model off the VM's path.
+        ListTake | ListDrop => Total,
+        // `String.sliceAv` clamps both bounds with `if x < 0 then 0 else …`,
+        // and `runtime::string_slice` clamps to `[0, len]` the same way.
+        StringSlice => Total,
+        // `String.charAtAv` and `Char.fromCode` GUARD their conversions
+        // (`if i < 0 then none`, `if n < 0 || n > 1114111 then none`), so the
+        // `.toNat` is only reached where it is exact — matching the VM's
+        // `to_usize()` / `to_u32()` `None`s.
+        StringCharAt | CharFromCode => Total,
+
+        // `AverCrypto.compress` uses `Array.get!` / `Array.set!`, but every
+        // index is fixed by the definition: `words` is `Array.replicate 64`
+        // indexed under 64, `constants` / `initial` are 64- and 8-element
+        // literals, and the message offsets come from `List.range
+        // (message.size / 64)`, which `padded` pads to a multiple of 64. The
+        // `Bytes` refinement carries the 0..=255 proof its `UInt8.ofNat
+        // byte.toNat` needs.
+        CryptoSha256 => UnreachableByConstruction,
+
+        // Plain inductives and their total combinators — `Except.ok/error`,
+        // `some`, `Except.withDefault`, `Option.getD`, `Option.toExcept`.
+        ResultOk | ResultErr | OptionSome | ResultWithDefault | OptionWithDefault
+        | OptionToResult => Total,
+
+        // `Int.natAbs`, `min`/`max`, the zero-guarded `Except`-returning
+        // `%`/`/`, and `Int.fromString` (total, `Except`-returning, over the
+        // total `AverDigits.parseNatChars`).
+        IntAbs | IntMin | IntMax | IntMod | IntDiv | IntFromString => Total,
+        // `AverFloat.toInt` saturates at both ends and maps NaN to `0` —
+        // total. (Declined by the kernel table below regardless: Float.)
+        IntFromFloat => Total,
+
+        // Lean-core Float ops plus the total prelude wrappers
+        // (`AverFloat.pow/round/floor/ceil`, `Float.fromString`, which
+        // `takeWhile Char.isDigit`-guards its digit arithmetic). None panics.
+        // All are declined by the kernel table below regardless: Lean has no
+        // kernel-reducible `DecidableEq Float`.
+        FloatAbs | FloatSqrt | FloatPow | FloatRound | FloatFloor | FloatCeil | FloatFromInt
+        | FloatFromString | FloatPi | FloatMin | FloatMax | FloatSin | FloatCos | FloatAtan2 => {
+            Total
+        }
+
+        // Lean-core string operations and the total prelude helpers
+        // (`String.charsAv`, `AverString.split`, `String.fromInt` over
+        // `AverDigits.natDigits`, `String.fromFloat`). No `panic!`, no
+        // unguarded narrowing.
+        StringLen | StringChars | StringContains | StringStartsWith | StringEndsWith
+        | StringTrim | StringSplit | StringJoin | StringReplace | StringToUpper | StringToLower
+        | StringFromInt | StringFromFloat | StringByteLength => Total,
+        // No prelude definition exists for these three, so nothing can panic;
+        // the kernel table below declines them for that same reason.
+        StringRepeat | StringIndexOf | StringFromBool => Total,
+
+        BoolOr | BoolAnd | BoolNot => Total,
+
+        // `List.head?` / `tail?` / `take` / `drop` and friends are the total
+        // members of Lean's list API — no `head!` / `getElem!` anywhere.
+        // `find?` / `any` are total too (declined below: higher-order).
+        ListLen | ListHead | ListTail | ListPrepend | ListConcat | ListReverse | ListContains
+        | ListZip | ListFind | ListAny => Total,
+
+        // `Array.size` / `List.toArray` / `Array.toList` are total.
+        // `Array.mkArray` is gone in Lean 4.32, which the kernel table below
+        // catches; a missing constant is a build error, not a silent default.
+        VectorLen | VectorFromList | ListFromVector | VectorNew => Total,
+
+        // `AverMap.*` is a total association-list API (`get` returns `Option`,
+        // `remove` is `filter`, `len` is `length`) — no partial accessor.
+        MapGet | MapSet | MapHas | MapRemove | MapKeys | MapValues | MapEntries | MapLen
+        | MapFromList => Total,
+    }
+}
+
 /// Whether a builtin's Lean lowering reduces in the KERNEL.
 ///
 /// Pinned empirically against Lean 4.32: every entry was exported through
@@ -413,8 +622,9 @@ impl Walk<'_> {
 /// `decide +kernel` (`tests/fixtures/kernel_decide_split.av` keeps the
 /// discriminating pairs as a regression). The match is exhaustive on purpose —
 /// a new `Builtin` variant is a compile error here rather than a silent
-/// reclassification.
-fn builtin_is_kernel_reducible(builtin: Builtin) -> bool {
+/// reclassification. Reducibility is necessary but NOT sufficient: see
+/// [`builtin_panic_capability`] for the faithfulness half.
+fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
     use Builtin::*;
     match builtin {
         // Result / Option — plain inductives.
@@ -452,6 +662,8 @@ fn builtin_is_kernel_reducible(builtin: Builtin) -> bool {
 
         BoolOr | BoolAnd | BoolNot => true,
 
+        // Both reduce; `Char.toCode` is nevertheless declined, by the
+        // faithfulness table (its `panic!` arm).
         CharToCode | CharFromCode => true,
 
         // The exported SHA-256 model is total and axiom-free (it folds over a
@@ -464,6 +676,8 @@ fn builtin_is_kernel_reducible(builtin: Builtin) -> bool {
         // Take a fn value; the walk cannot follow a higher-order argument.
         ListFind | ListAny => false,
 
+        // All reduce; `Vector.get` / `Vector.set` are nevertheless declined,
+        // by the faithfulness table (their `Int.toNat` index narrowing).
         VectorGet | VectorSet | VectorLen | VectorFromList | ListFromVector => true,
         // Lowers to `Array.mkArray`, which Lean 4.32 no longer defines.
         VectorNew => false,

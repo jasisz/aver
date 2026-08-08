@@ -158,7 +158,7 @@ pub fn emit_verify_block(
                     "example : {} = {} := by {}",
                     left_str,
                     right_str,
-                    decidability.tactic_for(left, &left_str, has_ground_truth, ctx)
+                    decidability.tactic_for(left, &left_str, &right_str, has_ground_truth, ctx)
                 ));
             }
             VerifyEmitMode::Sorry => {

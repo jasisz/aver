@@ -52,7 +52,9 @@ classified effect set, stub signatures, Oracle law syntax, and trace assertions.
 - fallback (`--verify-mode sorry`): `example : <lhs> = <rhs> := by sorry`
 - theorem stubs (`--verify-mode theorem-skeleton`): named `theorem ... := by sorry`
 
-The tactic is chosen per case, and conservatively: `decide +kernel` costs no trust (the axiom closure stays inside Lean's core three, with no `Lean.ofReduceBool`) but only works when everything the case mentions unfolds in the kernel, so a case is routed there only when the emitter can positively establish that. Anything else — a `Float` anywhere in the closure, a fn this export spelled `partial def`, a fuel wrapper's `panic!` arm, a mutual group, a case whose expected side is not a VM ground-truth literal — stays on `native_decide`.
+The tactic is chosen per case, and conservatively: `decide +kernel` costs no trust (the axiom closure stays inside Lean's core three, with no `Lean.ofReduceBool`) but only works when everything the case mentions unfolds in the kernel, so a case is routed there only when the emitter can positively establish that. Anything else — a `Float` anywhere in the closure, a fn this export spelled `partial def`, a fuel wrapper's `panic!` arm, a mutual group, a case whose expected side is not a VM ground-truth literal, a case whose emitted equation is larger than the term budget — stays on `native_decide`.
+
+Two builtin families stay on `native_decide` even though they reduce in the kernel perfectly well, because their exported model can disagree with what your program computed. `Char.toCode` panics in the model on an empty string, and a Lean `panic!` returns `default` — silently, under kernel reduction — so the case can still "prove" the recorded value. `Vector.get` / `Vector.set` narrow a negative index to `0` where the runtime returns `Option.None`, which walks the model down a branch your program never took. On `native_decide` both surface as the `PANIC at …` line `aver proof --check` fails on, so you find out instead of getting a green build.
 
 `verify ... law ...` always emits expanded sample theorems from `given` domains:
 - `theorem ..._sample_n := by native_decide`

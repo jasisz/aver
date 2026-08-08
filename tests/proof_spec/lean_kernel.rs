@@ -2026,3 +2026,276 @@ fn proof_lean_float_verify_cases_stay_native_decide() {
     );
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// Emitted `example` line whose statement contains `needle`.
+fn emitted_case_line<'a>(entry: &'a str, needle: &str) -> &'a str {
+    entry
+        .lines()
+        .find(|l| l.starts_with("example : ") && l.contains(needle))
+        .unwrap_or_else(|| panic!("no emitted case for `{needle}`:\n{entry}"))
+}
+
+/// Export `tests/fixtures/kernel_decide_declines.av` and return the emitted
+/// entry module. Shared by the two classifier-decline pins below.
+fn export_kernel_decide_declines(out: &std::path::Path) -> String {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let export = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/kernel_decide_declines.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(out)
+        .output()
+        .expect("aver proof export for the kernel-decide decline pins");
+    assert!(
+        export.status.success(),
+        "proof export failed:\n{}",
+        format_output(&export)
+    );
+    std::fs::read_to_string(out.join("KernelDecideDeclines.lean"))
+        .expect("read emitted KernelDecideDeclines.lean")
+}
+
+#[test]
+fn proof_lean_panic_capable_builtins_stay_native_decide() {
+    // The ground-truth literal alone does NOT close the vacuity hole. Lean's
+    // `panic!` returns `default`, and under KERNEL reduction it does so with
+    // no diagnostic — so a model that panics still proves the equation
+    // whenever `default` equals what the VM computed. `false` is `Bool`'s
+    // default, which is half of all predicate cases.
+    //
+    // `narrowedIndex` is the two-step version an audit of single builtins
+    // misses: `Vector.get(v, -1)` lowers to `v[Int.toNat (-1)]?` = `v[0]?`, so
+    // the model takes the `Some` arm the VM never took (the VM returns
+    // `Option.None`), lands on `Char.toCode ""`, and defaults that panic to
+    // `0`. `0 == 65` is `false` — the very literal the VM recorded. Under
+    // `decide +kernel` that builds green and silent; under `native_decide` the
+    // `PANIC at …` line makes `aver proof --check` fail the run.
+    //
+    // So both seams are declined per-builtin: `Char.toCode` because it can
+    // panic on an input a program can supply, `Vector.get` because it narrows
+    // a negative index the VM rejected into one it accepts. The decline is
+    // keyed on the BUILTIN, not on the case — `charCode "A"` and
+    // `firstItem [7, 8]` never come near a bad index, and still route native.
+    // Proving in-bounds-ness per case is exactly the reasoning this
+    // classifier refuses to do.
+    //
+    // The twins are the other half: `List.take` narrows through the SAME
+    // `Int.toNat`, but the VM clamps identically (`list::clamp_count`), so it
+    // stays kernel-decided — the audit is per-lowering, not a retreat from
+    // `Int.toNat`. `scaleInt` pins that plain Int cases survive too.
+    //
+    // The routing half needs no `lake`; only the panic-gate half does.
+    let out = temp_output_dir("aver-proof-kernel-decide-declines");
+    let entry = export_kernel_decide_declines(&out);
+    for (needle, tactic, why) in [
+        (
+            "narrowedIndex",
+            "native_decide",
+            "reaches a defaulted `Char.toCode` panic through a narrowed index",
+        ),
+        (
+            "charCode \"A\"",
+            "native_decide",
+            "calls the panic-capable `Char.toCode`",
+        ),
+        (
+            "firstItem [7, 8]",
+            "native_decide",
+            "calls the index-narrowing `Vector.get`",
+        ),
+        (
+            "takeNegative [1, 2, 3]",
+            "decide +kernel",
+            "narrows its count exactly as the VM does",
+        ),
+        ("scaleInt 7", "decide +kernel", "is plain Int arithmetic"),
+    ] {
+        let line = emitted_case_line(&entry, needle);
+        assert!(
+            line.ends_with(&format!(":= by {tactic}")),
+            "case `{needle}` {why}, so it must be closed by `{tactic}`:\n{line}"
+        );
+    }
+
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping kernel-decide decline panic gate: `lake` not available");
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    // The demotion has to make the panic VISIBLE, not merely move it: with
+    // `narrowedIndex` on `native_decide`, `aver proof --check` sees the
+    // `PANIC at …` line and fails the run. Under `decide +kernel` the same
+    // file reported `model_panicked: false, passed: true`.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let checked = temp_output_dir("aver-proof-kernel-decide-declines-check");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/kernel_decide_declines.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&checked)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof --check --check-json for the panic gate");
+    let json_line = String::from_utf8_lossy(&run.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["model_panicked"].as_bool(),
+            summary["passed"].as_bool(),
+            summary["build_errors"].as_u64(),
+        ),
+        (Some(true), Some(false), Some(0)),
+        "the demoted case must surface its model panic as a HARD `--check` \
+         failure (and the kernel-decided twins must still build):\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&checked);
+}
+
+#[test]
+fn proof_lean_oversized_expected_literal_falls_back_to_native() {
+    // The term budget guards `lake build` wall-clock, and the kernel reduces
+    // the EQUATION — so both sides count. `banner` is the shape a left-side-
+    // only budget lets through: a six-character call whose ground-truth
+    // literal is 1280 characters of string data. The pin asserts the fallback
+    // AND that the left side is comfortably under budget on its own, so the
+    // test cannot pass for the wrong reason.
+    let out = temp_output_dir("aver-proof-kernel-decide-budget");
+    let entry = export_kernel_decide_declines(&out);
+    let line = emitted_case_line(&entry, "banner = ");
+    let statement = line
+        .trim_start_matches("example : ")
+        .trim_end_matches(":= by native_decide")
+        .trim();
+    let (lhs, rhs) = statement
+        .split_once(" = ")
+        .unwrap_or_else(|| panic!("expected an equation:\n{statement}"));
+    assert!(
+        lhs.len() < 64 && rhs.len() > 1024,
+        "the budget fixture must pair a tiny left side with an oversized \
+         expected literal, got {} / {} chars",
+        lhs.len(),
+        rhs.len()
+    );
+    assert!(
+        line.ends_with(":= by native_decide"),
+        "a case whose expected literal blows the term budget must fall back to \
+         `native_decide`:\n{}",
+        &line[..line.len().min(120)]
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_kernel_decide_keys_named_types_by_stamped_identity() {
+    // The classifier walks a case's named types to rule out Float and the
+    // `opaque`-`DecidableEq` shim. Which DECLARATION a `Type::Named` refers to
+    // is a typed-identity question, not a string one: `Metrics.Reading` and
+    // `Sensors.Reading` are two records with one bare name, and only the
+    // second carries a Float. Keying the field scan on the bare name unions
+    // both declarations, so `Metrics.Reading` inherits a Float it does not
+    // have and every case touching it falls to `native_decide` — a silent
+    // loss of kernel coverage that grows with every same-named type in the
+    // dependency graph. The scan follows the `TypeId` the typechecker stamped
+    // instead, so `tally` stays kernel-decided even though a Float-carrying
+    // namesake is in scope. (Revert to the bare-name scan and this case emits
+    // `native_decide`.)
+    //
+    // Routing only — no `lake` needed.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-kernel-decide-identity-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("Metrics.av"),
+        "module Metrics\n\
+         \x20   intent =\n\
+         \x20       \"Counter readings carrying whole units only.\"\n\
+         \x20   exposes [Reading, of, count]\n\
+         \x20   effects []\n\n\
+         record Reading\n\
+         \x20   count: Int\n\n\
+         fn of(n: Int) -> Reading\n\
+         \x20   ? \"Wrap a whole-unit count.\"\n\
+         \x20   Reading(count = n)\n\n\
+         fn count(r: Reading) -> Int\n\
+         \x20   ? \"Read the whole-unit count back.\"\n\
+         \x20   r.count\n",
+    )
+    .expect("write Metrics.av");
+    std::fs::write(
+        src.join("Sensors.av"),
+        "module Sensors\n\
+         \x20   intent =\n\
+         \x20       \"Analogue readings carrying a fractional level.\"\n\
+         \x20   exposes [Reading, of, tag]\n\
+         \x20   effects []\n\n\
+         record Reading\n\
+         \x20   tag: Int\n\
+         \x20   level: Float\n\n\
+         fn of(n: Int) -> Reading\n\
+         \x20   ? \"Wrap a tag alongside a fixed level.\"\n\
+         \x20   Reading(tag = n, level = 0.5)\n\n\
+         fn tag(r: Reading) -> Int\n\
+         \x20   ? \"Read the tag back.\"\n\
+         \x20   r.tag\n",
+    )
+    .expect("write Sensors.av");
+    std::fs::write(
+        src.join("Consumer.av"),
+        "module Consumer\n\
+         \x20   intent =\n\
+         \x20       \"Reads two dependency modules that both declare a type named Reading.\"\n\
+         \x20   depends [Metrics, Sensors]\n\
+         \x20   exposes [tally]\n\
+         \x20   effects []\n\n\
+         fn tally(n: Int) -> Int\n\
+         \x20   ? \"Round-trip a count through the whole-unit reading.\"\n\
+         \x20   Metrics.count(Metrics.of(n))\n\n\
+         verify tally\n\
+         \x20   tally(7) => 7\n",
+    )
+    .expect("write Consumer.av");
+    let out = temp_output_dir("aver-kernel-decide-identity-out");
+    let export = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("Consumer.av"))
+        .arg("--module-root")
+        .arg(&src)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver proof export for the named-type identity pin");
+    assert!(
+        export.status.success(),
+        "proof export failed:\n{}",
+        format_output(&export)
+    );
+    let entry = std::fs::read_to_string(out.join("Consumer.lean")).expect("read Consumer.lean");
+    let line = emitted_case_line(&entry, "tally 7");
+    assert!(
+        line.ends_with(":= by decide +kernel"),
+        "`Metrics.Reading` carries only an Int, so the case must stay \
+         kernel-decided — a Float-carrying `Sensors.Reading` namesake must not \
+         be scanned in its place:\n{line}"
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
