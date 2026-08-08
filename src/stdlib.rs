@@ -123,8 +123,14 @@ mod tests {
         // Rust codegen emits verify cases into a #[cfg(test)] module, so a
         // sha256 call that appears ONLY inside a verify block still needs
         // the Bytes/Digest32 modules in the generated project.
+        //
+        // The two sides of the case sit on opposite sides of the literal
+        // discharge boundary on purpose: `[double(0)]` has a computed
+        // element so it keeps `Result` (hence the `?`), while `[0]` is an
+        // all-literal in-range list and types as `Bytes` directly. The
+        // implicit-dependency scan must reach both spellings.
         let items = parse(
-            "module VerifyOnly\n    intent = \"sha256 only in a verify case\"\n    depends [Bytes]\n    effects []\n\nfn double(n: Int) -> Int\n    ? \"Double a number.\"\n    n * 2\n\nverify double\n    Crypto.sha256(Bytes.fromList([double(0)])?) => Crypto.sha256(Bytes.fromList([0])?)\n",
+            "module VerifyOnly\n    intent = \"sha256 only in a verify case\"\n    depends [Bytes]\n    effects []\n\nfn double(n: Int) -> Int\n    ? \"Double a number.\"\n    n * 2\n\nverify double\n    Crypto.sha256(Bytes.fromList([double(0)])?) => Crypto.sha256(Bytes.fromList([0]))\n",
         );
         assert_eq!(
             implicit_stdlib_deps(&items),

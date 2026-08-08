@@ -374,6 +374,56 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), resolved_args);
                 }
             }
+            // Literal smart-constructor discharge: a call to a recognized
+            // `List<Int>` refinement's smart constructor over an
+            // all-literal, all-in-interval list literal cannot take the
+            // `Err` branch, so it lowers to the carrier construction the
+            // `Ok` branch would have produced — no `Result` wrap to unwrap
+            // on any backend. The gate is the SAME derived table the
+            // typechecker's discharge rule reads
+            // (`SymbolTable::literal_refinements`), and it keys on the
+            // refinement's own proven element interval, never on a name.
+            // Every spelling that denotes the constructor decides alike:
+            // this resolver also runs over a FLATTENED wasm-gc compile
+            // unit, where the qualified and in-module spellings have
+            // already collapsed into one prefixed bare name.
+            //
+            // Why a construct site rather than a call to the constructor:
+            // `RecordCreate` is total on every backend and needs no new IR
+            // node, the packed carrier bridge treats it identically to the
+            // constructor's own `Ok` branch, and the precedent already
+            // exists — `proof_lower::multi_field_record_demotions` treats a
+            // construct site whose every field is a literal inside the
+            // proven interval as exactly as gated as the smart constructor.
+            // The rewrite runs on resolved HIR, so the AST-walking demotion
+            // scans still see only the smart-constructor call.
+            let mut resolved_args = resolved_args;
+            if let Some(dotted) = expr_to_dotted_name(&callee.node)
+                && let Some(ctor) = ctx.symbols.literal_refinements().discharge(&dotted, args)
+                && resolved_args.len() == 1
+            {
+                let key = match ctor.scope.as_deref() {
+                    Some(prefix) => TypeKey::in_module(prefix, &ctor.type_name),
+                    None => TypeKey::entry(&ctor.type_name),
+                };
+                // Spell the construct site exactly as source in this scope
+                // would: bare inside the owning module, qualified from
+                // outside it. Backends resolve a record's layout from this
+                // spelling through the flatten-derived alias map, and a
+                // cross-module construct written bare resolves a different
+                // struct type than the surrounding expression expects.
+                let type_name = match ctor.scope.as_deref() {
+                    Some(prefix) if ctx.current_module.as_deref() != Some(prefix) => {
+                        format!("{prefix}.{}", ctor.type_name)
+                    }
+                    _ => ctor.type_name.clone(),
+                };
+                return ResolvedExpr::RecordCreate {
+                    type_id: ctx.symbols.type_id_of(&key),
+                    type_name,
+                    fields: vec![(ctor.carrier_field.clone(), resolved_args.remove(0))],
+                };
+            }
             ResolvedExpr::Call(resolved_callee, resolved_args)
         }
         Expr::BinOp(op, l, r) => ResolvedExpr::BinOp(

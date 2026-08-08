@@ -170,7 +170,8 @@ verify firstOutOfRangeIndex
     firstOutOfRangeIndex([255, -7]) => 1
 
 verify fromList
-    fromList([0, 127, 255]) => Result.Ok(Bytes(values = [0, 127, 255]))
+    fromList([0, 127, 255]) => Bytes(values = [0, 127, 255])
+    fromList(List.concat([0, 127], [255])) => Result.Ok(Bytes(values = [0, 127, 255]))
     fromList([256]) => Result.Err("byte 256 at index 0 is outside 0..=255")
     fromList([0, 256]) => Result.Err("byte 256 at index 1 is outside 0..=255")
 
@@ -216,5 +217,5 @@ verify fromHex
     fromHex("0g") => Result.Err("Bytes.fromHex: invalid hexadecimal character 'g'")
 
 verify toHex
-    toHex(fromList([])?) => ""
-    toHex(fromList([0, 10, 255])?) => "000aff"
+    toHex(fromList([])) => ""
+    toHex(fromList([0, 10, 255])) => "000aff"

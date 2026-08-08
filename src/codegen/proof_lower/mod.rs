@@ -2868,7 +2868,7 @@ mod induction;
 mod inequality;
 mod int_decimal_roundtrip;
 mod map_laws;
-mod packed_sequence;
+pub(crate) mod packed_sequence;
 mod refinement;
 mod ring;
 mod simp;

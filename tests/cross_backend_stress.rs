@@ -528,6 +528,115 @@ fn cross_literal_divisor_discharge_self_host() {
         LITERAL_DIVISOR_OUT,
     );
 }
+
+/// Literal smart-constructor discharge, executed end to end.
+/// `Local.fromList([1, 2, 3])` types as the refined type — the elements are
+/// literals inside the interval the refinement's own predicate proves — so
+/// every backend must produce the carrier directly, with no `Result` to
+/// unwrap. `dynamic` keeps the fallible path in the same program, so a
+/// backend that discharged too much or too little diverges here.
+const LITERAL_REFINEMENT_SRC: &str = r#"module Local
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn count(o: Octets) -> Int
+    List.len(o.values)
+
+fn first(o: Octets) -> Int
+    match o.values
+        [head, .._] -> head
+        [] -> 0 - 1
+
+fn dynamic(xs: List<Int>) -> Int
+    match fromList(xs)
+        Result.Ok(o) -> count(o)
+        Result.Err(_) -> 0 - 2
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(count(Local.fromList([1, 2, 3]))))
+    Console.print(String.fromInt(first(Local.fromList([200, 0]))))
+    Console.print(String.fromInt(count(Local.fromList([]))))
+    Console.print(String.fromInt(dynamic([1, 2])))
+    Console.print(String.fromInt(dynamic([256])))
+"#;
+const LITERAL_REFINEMENT_OUT: &str = "3\n200\n0\n2\n-2";
+
+#[test]
+fn cross_literal_refinement_discharge_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-litref-vm", LITERAL_REFINEMENT_SRC),
+        LITERAL_REFINEMENT_OUT,
+    );
+}
+
+#[test]
+fn cross_literal_refinement_discharge_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-litref-wasmgc", LITERAL_REFINEMENT_SRC),
+        LITERAL_REFINEMENT_OUT,
+    );
+}
+
+#[test]
+fn cross_literal_refinement_discharge_rejected_by_self_host() {
+    // The self-hosted resolver has no refinement recognizer — no type
+    // defs, no dependency-module ASTs, no interval derivation — so it
+    // cannot mirror this rule the way it mirrors the purely syntactic
+    // literal-divisor one. Doing nothing would NOT be neutral: the guest
+    // would keep building a `Result` where the host-checked source expects
+    // the refined type, and the program would fail far from the cause (the
+    // pre-gate symptom was a bare `field access on non-record`). The
+    // boundary is therefore a loud, specific refusal that names the call
+    // sites, and this test is what keeps it loud.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module("aver-cross-litref-sh", LITERAL_REFINEMENT_SRC);
+    let module_root = path.parent().expect("temp module has parent");
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root)
+        .arg("--self-host")
+        .output()
+        .expect("expected `aver run --self-host` to execute");
+    cleanup(&path);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "self-host must REFUSE a discharged program, not run it:\n{combined}"
+    );
+    assert!(
+        combined.contains("does not support the literal smart-constructor discharge"),
+        "self-host refusal must name the rule:\n{combined}"
+    );
+    assert!(
+        combined.contains("Local.fromList"),
+        "self-host refusal must name the offending call sites:\n{combined}"
+    );
+}
+
 // ─── Verify cross-target ────────────────────────────────────────────────
 //
 // `aver verify` and `aver verify --wasm-gc` evaluate the same verify

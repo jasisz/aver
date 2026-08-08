@@ -522,7 +522,7 @@ fn firstValue(o: Dep.Octets) -> Int
         [] -> 0 - 1
 
 fn run() -> Result<Int, String>
-    o: Dep.Octets = Dep.fromList([200])?
+    o: Dep.Octets = Dep.fromList([200])
     Result.Ok(firstValue(o))
 
 fn main() -> Int

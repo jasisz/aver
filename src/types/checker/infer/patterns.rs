@@ -126,6 +126,27 @@ impl TypeChecker {
                     }
                     return;
                 }
+                // A `Result` / `Option` constructor pattern against a
+                // subject that is neither is always a bug: no value of the
+                // subject's type can ever take the arm, so the match walks
+                // off the end at runtime with no diagnostic. The literal
+                // smart-constructor discharge makes this reachable by
+                // ordinary edits — `match Bytes.fromList([1, 2])` used to
+                // scrutinise a `Result` and now scrutinises a `Bytes` — so
+                // the migration has to be loud instead of silent.
+                if matches!(type_prefix, "Result" | "Option")
+                    && !matches!(
+                        subject_ty,
+                        Type::Result(_, _) | Type::Option(_) | Type::Invalid | Type::Var(_)
+                    )
+                {
+                    self.error(format!(
+                        "Pattern '{}' matches a {} value, but the match subject is {}",
+                        name,
+                        type_prefix,
+                        subject_ty.display()
+                    ));
+                }
                 let binding_tys =
                     self.pattern_constructor_binding_types(name, subject_ty, bindings.len());
                 for (bind_name, bind_ty) in bindings.iter().zip(binding_tys) {

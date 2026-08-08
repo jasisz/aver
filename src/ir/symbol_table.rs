@@ -120,6 +120,9 @@ pub struct SymbolTable {
     ctor_index: HashMap<(TypeId, String), CtorId>,
     /// Builtin canonical name → `BuiltinId` (Phase 6 wave 11).
     builtin_index: HashMap<String, BuiltinId>,
+    /// Recognized literal-dischargeable smart constructors — see
+    /// [`SymbolTable::literal_refinements`].
+    literal_refinements: crate::analysis::literal_refinement::LiteralRefinementTable,
 }
 
 /// Phase 6 wave 11 — interned record for a built-in fn name.
@@ -237,7 +240,36 @@ impl SymbolTable {
             }
         }
 
+        // Derived last: the recognizer resolves each refinement's
+        // per-element predicate against the table that is being built,
+        // so it needs every fn/type already indexed. It reads the table
+        // through the ordinary resolver, whose own discharge rewrite
+        // consults `literal_refinements` — still empty at this point, so
+        // the derivation can never recurse into itself.
+        table.literal_refinements =
+            crate::analysis::literal_refinement::LiteralRefinementTable::build(
+                entry_items,
+                dep_modules,
+                &table,
+            );
+
         table
+    }
+
+    /// Derived gate for the literal smart-constructor discharge.
+    ///
+    /// Lives on the symbol table because that is the single place where
+    /// entry items and dependency modules are jointly in hand, and
+    /// because the coupling is exactly right: a qualified
+    /// `Dep.fromList(…)` can only RESOLVE against a table that knows
+    /// `Dep`, so every consumer able to resolve the call is also able to
+    /// see whether it discharges. Both the typechecker and the HIR
+    /// resolver read this one table, which is what keeps the checked and
+    /// unchecked pipelines from forking.
+    pub fn literal_refinements(
+        &self,
+    ) -> &crate::analysis::literal_refinement::LiteralRefinementTable {
+        &self.literal_refinements
     }
 
     /// Resolve a `FnKey` to its `FnId`. `None` when the key

@@ -654,8 +654,24 @@ impl TypeChecker {
 
                 if let Expr::Ident(name) = &fn_expr.node {
                     if let Some(sig) = self.find_fn_sig(name).cloned() {
+                        // Literal smart-constructor discharge, bare-callee
+                        // seam — see the qualified seam below for the rule.
+                        // A module's own unqualified call to its recognized
+                        // constructor must decide exactly as the qualified
+                        // spelling does: the wasm-gc backend flattens both
+                        // to one prefixed bare name before re-resolving, so
+                        // a seam that discharged only one of them would fork
+                        // the checked and unchecked pipelines.
+                        let discharged = self
+                            .symbol_table
+                            .literal_refinements()
+                            .discharge(name, args)
+                            .is_some();
                         let ret = check_call(self, name, sig);
                         validate_special_call(self, name, args);
+                        if discharged && let Type::Result(payload, _) = ret {
+                            return *payload;
+                        }
                         return ret;
                     }
                     if let Some(binding_ty) = self.binding_type(name) {
@@ -772,6 +788,38 @@ impl TypeChecker {
                             return Type::Int;
                         }
                         _ => {}
+                    }
+
+                    // Literal smart-constructor discharge: a QUALIFIED call
+                    // to a recognized `List<Int>` refinement's smart
+                    // constructor whose single argument is a syntactic list
+                    // of integer literals, every one inside the interval
+                    // that refinement itself proves, cannot reach the `Err`
+                    // branch — so it types as the refined type instead of
+                    // `Result<T, String>`. The gate is derived, never named:
+                    // `LiteralRefinementTable` reads the same recognizer the
+                    // wasm-gc packed layout is derived from, so "discharged"
+                    // and "storable in the packed carrier" are the same
+                    // predicate. The HIR resolver applies the identical rule
+                    // to the identical shape.
+                    if self
+                        .symbol_table
+                        .literal_refinements()
+                        .discharge(&display_name, args)
+                        .is_some()
+                        && let Some(sig) = self.find_fn_sig(&display_name).cloned()
+                    {
+                        // Keep the standard arity/arg-type checks; only the
+                        // return type is discharged, and it is taken from
+                        // the constructor's own `Result<T, E>` signature so
+                        // the refined type is the exact canonical identity
+                        // the checker already resolved — never a re-derived
+                        // name.
+                        let ret = check_call(self, &display_name, sig);
+                        if let Type::Result(payload, _) = ret {
+                            return *payload;
+                        }
+                        return ret;
                     }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);

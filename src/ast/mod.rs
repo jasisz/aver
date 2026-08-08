@@ -135,6 +135,50 @@ pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
     }
 }
 
+/// Syntactic value of an integer literal, allowing at most ONE unary minus:
+/// `7` → `Some(7)`, `-7` → `Some(-7)`, `--7` / `x` / `3 + 4` → `None`.
+/// A `BigInt` literal (magnitude beyond `i64`) declines by construction —
+/// every interval a refinement can prove fits `i64`, so a magnitude that
+/// overflows it can never be inside one, and declining keeps the predicate
+/// fail-closed rather than making it depend on bignum parsing.
+pub fn single_negation_int_literal(expr: &Spanned<Expr>) -> Option<i128> {
+    fn plain(node: &Expr) -> Option<i128> {
+        match node {
+            Expr::Literal(Literal::Int(k)) => Some(*k as i128),
+            _ => None,
+        }
+    }
+    match &expr.node {
+        Expr::Neg(inner) => plain(&inner.node).map(|k| -k),
+        node => plain(node),
+    }
+}
+
+/// Literal-list discharge predicate, shared by the typechecker and the HIR
+/// resolver: the SYNTACTIC half of the "all-literal list argument" rule.
+/// Returns the element values exactly when `expr` is a syntactic list
+/// literal (`[…]`) whose every element is a plain integer literal with at
+/// most one unary minus. An empty list literal returns an empty vector — it
+/// satisfies any element-wise bound vacuously.
+///
+/// Declines for every other argument shape: an identifier, a call, a
+/// `List.concat` / spread, an interpolated element, a `BigInt` literal, a
+/// double negation. The boundary is deliberately syntactic and this
+/// function is deliberately blind to WHICH refinement is being constructed
+/// — the element bound comes from the derived refinement interval
+/// (`crate::analysis::literal_refinement`), never from a hardcoded range.
+///
+/// Both consumers MUST share this one predicate. Real pipelines resolve
+/// without typechecking (`tests/eval_spec.rs` compiles straight from the
+/// resolver), so the HIR rewrite cannot key on type stamps — a stamp-keyed
+/// rewrite would fork semantics between checked and unchecked pipelines.
+pub fn literal_int_list_elements(expr: &Spanned<Expr>) -> Option<Vec<i128>> {
+    let Expr::List(items) = &expr.node else {
+        return None;
+    };
+    items.iter().map(single_negation_int_literal).collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
     Add,

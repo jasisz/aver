@@ -110,6 +110,45 @@ fn compile(source: &str, packed: bool) -> Vec<u8> {
     wasm
 }
 
+/// Multi-module variant of `compile`: emits the wasm-gc module for an
+/// entry that depends on one module file, so type-section assertions can
+/// be made about a refinement declared in a dependency.
+fn compile_multi(entry_src: &str, dep_file: &str, dep_src: &str, packed: bool) -> Vec<u8> {
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "aver-packed-sequence-compile-multi-{}-{id}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("main.av");
+    let out_dir = dir.join("out");
+    std::fs::write(&path, entry_src).expect("entry source");
+    std::fs::write(dir.join(dep_file), dep_src).expect("dep source");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command
+        .arg("compile")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(&dir)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("-o")
+        .arg(&out_dir);
+    if !packed {
+        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+    }
+    let output = command.output().expect("compile aver");
+    assert!(
+        output.status.success(),
+        "compile failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let wasm = std::fs::read(out_dir.join("main.wasm")).expect("compiled wasm");
+    let _ = std::fs::remove_dir_all(dir);
+    wasm
+}
+
 fn i8_array_count(wasm: &[u8]) -> usize {
     use wasmparser::{CompositeInnerType, Parser, Payload, StorageType};
 
@@ -159,7 +198,7 @@ fn same(left: Octets, right: Octets) -> Bool
 
 fn main() -> Unit
     ! [Console.print]
-    match fromList([0, 1, 127, 128, 255])
+    match fromList(List.concat([0, 1, 127], [128, 255]))
         Result.Ok(value) -> match Vector.get(Vector.fromList([value]), 0)
             Option.Some(first) -> match Map.get(Map.set({}, "value", first), "value")
                 Option.Some(stored) -> match Map.get(Map.set({}, stored, "present"), value)
@@ -240,7 +279,7 @@ fn firstValue(o: Dep.Octets) -> Int
         [] -> 0 - 1
 
 fn run() -> Result<Int, String>
-    o: Dep.Octets = Dep.fromList([200])?
+    o: Dep.Octets = Dep.fromList([200])
     Result.Ok(firstValue(o))
 
 fn main() -> Unit
@@ -411,4 +450,141 @@ fn ungated_constructor_demotes_instead_of_truncating() {
     assert!(wasm_ok, "wasm failed: {wasm}");
     assert_eq!(wasm, vm);
     assert_eq!(vm, "256");
+}
+
+// ─── Literal smart-constructor discharge ────────────────────────────────
+//
+// `Dep.fromList([<all literals inside the proven interval>])` types as
+// `Dep.Octets` and lowers to the carrier construction instead of a
+// `Result`. The packed layout must survive that, and it does by
+// construction: the discharge gate reads the SAME derived element
+// interval the packed layout is chosen from, so an admitted value is
+// always storable in the packed `i8` array. The two tests below pin both
+// halves — the representation (type-section shape) and the value
+// (VM / packed wasm-gc / boxed wasm-gc all agree).
+
+const DISCHARGED_ENTRY: &str = r#"module Main
+    intent = "a discharged literal smart-constructor call over a packed dep carrier"
+    depends [Dep]
+    effects [Console]
+
+fn firstValue(o: Dep.Octets) -> Int
+    match o.values
+        [head, .._] -> head
+        [] -> 0 - 1
+
+fn describe(discharged: Dep.Octets, gated: Dep.Octets) -> String
+    match discharged == gated
+        true -> "{firstValue(discharged)} {List.len(Dep.toList(discharged))} same"
+        false -> "different"
+
+fn run() -> Result<String, String>
+    discharged = Dep.fromList([200, 0, 255])
+    gated = Dep.fromList(List.concat([200], [0, 255]))?
+    Result.Ok(describe(discharged, gated))
+
+fn main() -> Unit
+    ! [Console.print]
+    match run()
+        Result.Ok(text) -> Console.print(text)
+        Result.Err(error) -> Console.print(error)
+"#;
+
+// Same program with an out-of-interval element. The discharge declines,
+// the smart constructor runs, and every backend reports its error —
+// nothing reaches the packed store, whose element write is a raw
+// `array.set` with no range check.
+const DISCHARGE_DECLINED_ENTRY: &str = r#"module Main
+    intent = "an out-of-interval literal keeps the fallible constructor"
+    depends [Dep]
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    match Dep.fromList([65, 256])
+        Result.Ok(value) -> Console.print("unexpected {List.len(Dep.toList(value))}")
+        Result.Err(error) -> Console.print(error)
+"#;
+
+const DISCHARGE_DEP: &str = r#"module Dep
+    intent = "sole-declarer gated Octets refinement with a reader"
+    exposes [Octets, fromList, toList]
+    depends []
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn toList(o: Octets) -> List<Int>
+    o.values
+"#;
+
+#[test]
+fn discharged_literal_construction_keeps_the_packed_layout_and_matches_vm() {
+    let (vm_ok, vm) = run_multi(DISCHARGED_ENTRY, "dep.av", DISCHARGE_DEP, false, true);
+    let (packed_ok, packed) = run_multi(DISCHARGED_ENTRY, "dep.av", DISCHARGE_DEP, true, true);
+    let (boxed_ok, boxed) = run_multi(DISCHARGED_ENTRY, "dep.av", DISCHARGE_DEP, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    // The discharged value is indistinguishable from the one the smart
+    // constructor builds, on every backend.
+    assert_eq!(vm, "200 3 same");
+    assert_eq!(packed, vm, "packed wasm-gc diverged from the VM");
+    assert_eq!(boxed, vm, "boxed wasm-gc diverged from the VM");
+
+    // Representation: the discharged construct site is NOT an ungated
+    // construction. The proof-derived packed layout is still installed, so
+    // the packed module carries exactly one more `i8` array than the boxed
+    // one — the same delta a gated-only program produces.
+    let packed_wasm = compile_multi(DISCHARGED_ENTRY, "dep.av", DISCHARGE_DEP, true);
+    let boxed_wasm = compile_multi(DISCHARGED_ENTRY, "dep.av", DISCHARGE_DEP, false);
+    assert_eq!(
+        i8_array_count(&packed_wasm),
+        i8_array_count(&boxed_wasm) + 1,
+        "a discharged literal construct site must keep the proof-derived \
+         packed layout"
+    );
+}
+
+#[test]
+fn out_of_interval_literal_declines_the_discharge_on_every_backend() {
+    let (vm_ok, vm) = run_multi(
+        DISCHARGE_DECLINED_ENTRY,
+        "dep.av",
+        DISCHARGE_DEP,
+        false,
+        true,
+    );
+    let (packed_ok, packed) = run_multi(
+        DISCHARGE_DECLINED_ENTRY,
+        "dep.av",
+        DISCHARGE_DEP,
+        true,
+        true,
+    );
+    let (boxed_ok, boxed) = run_multi(
+        DISCHARGE_DECLINED_ENTRY,
+        "dep.av",
+        DISCHARGE_DEP,
+        true,
+        false,
+    );
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(vm, "oob");
+    assert_eq!(packed, vm, "packed wasm-gc must not silently truncate 256");
+    assert_eq!(boxed, vm);
 }

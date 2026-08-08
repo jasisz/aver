@@ -58,23 +58,11 @@ verify parseSlice
 
 fn isLeapYear(year: Int) -> Bool
     ? "Gregorian leap year rule."
-    match Int.mod(year, 400)
-        Result.Ok(rem400) -> match rem400 == 0
-            true -> true
-            false -> match Int.mod(year, 100)
-                Result.Ok(rem100) -> match rem100 == 0
-                    true -> false
-                    false -> match Int.mod(year, 4)
-                        Result.Ok(rem4) -> rem4 == 0
-                        _ -> false
-                _ -> false
-        _ -> match Int.mod(year, 100)
-            Result.Ok(rem100) -> match rem100 == 0
-                true -> false
-                false -> match Int.mod(year, 4)
-                    Result.Ok(rem4) -> rem4 == 0
-                    _ -> false
-            _ -> false
+    match Int.mod(year, 400) == 0
+        true -> true
+        false -> match Int.mod(year, 100) == 0
+            true -> false
+            false -> Int.mod(year, 4) == 0
 
 verify isLeapYear
     isLeapYear(2024) => true
@@ -190,7 +178,7 @@ verify parseIsoKnownShape
 fn leapYearsBefore(year: Int) -> Int
     ? "Number of leap years before January 1 of the given year."
     prev = year - 1
-    Result.withDefault(Int.div(prev, 4), 0) - Result.withDefault(Int.div(prev, 100), 0) + Result.withDefault(Int.div(prev, 400), 0)
+    Int.div(prev, 4) - Int.div(prev, 100) + Int.div(prev, 400)
 
 verify leapYearsBefore
     leapYearsBefore(1) => 0

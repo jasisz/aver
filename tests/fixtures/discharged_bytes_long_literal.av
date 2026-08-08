@@ -1,0 +1,24 @@
+module DischargedBytesLongLiteral
+    intent =
+        "Long-literal stress case for the literal smart-constructor discharge, Lean only. A 32-element all-literal in-range list types as plain `Bytes`, and Lean must close `Bytes.allInRange [0, 0, …] = true` through 32 unfoldings of a well-founded recursive predicate — the depth at which `decide` and the pre-existing tactic ladder both fail and the emitted `simp [Bytes.allInRange]` rung is doing the work. Dafny is deliberately NOT gated on this file: a refinement construction collapses to the bare carrier there and the subset-type constraint is discharged at the use site, which Dafny's default function fuel does not unfold that far. The three-element and empty frames, which BOTH backends discharge, live in `discharged_bytes_law.av`."
+    depends [Bytes]
+    exposes [digestSizedFrame, octetCount]
+    effects []
+
+fn digestSizedFrame() -> Bytes
+    ? "A 32-octet frame built from an all-literal in-range list."
+    Bytes.fromList([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+fn mixedLongFrame() -> Bytes
+    ? "A 32-octet frame spanning the whole proven element interval."
+    Bytes.fromList([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255])
+
+fn octetCount(bytes: Bytes) -> Int
+    ? "How many octets a validated frame carries."
+    List.len(Bytes.toList(bytes))
+
+verify digestSizedFrame
+    octetCount(digestSizedFrame()) => 32
+
+verify mixedLongFrame
+    octetCount(mixedLongFrame()) => 32
