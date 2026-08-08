@@ -36,6 +36,40 @@ fn run(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
     )
 }
 
+/// `aver verify` twin of `run` — the verify runner has its own wasm-gc
+/// execution path (`aver verify --wasm-gc`), so a codegen gap can be red
+/// there while `aver run` is green (and vice versa).
+fn verify(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "aver-packed-sequence-verify-{}-{id}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("main.av");
+    std::fs::write(&path, source).expect("source");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command.arg("verify").arg(&path);
+    if wasm_gc {
+        command.arg("--wasm-gc");
+    }
+    if !packed {
+        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+    }
+    let output = command.output().expect("verify aver");
+    let _ = std::fs::remove_dir_all(dir);
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .trim()
+        .to_string(),
+    )
+}
+
 /// Multi-module variant of `run`: writes `main.av` plus one dep module
 /// file, then drives `aver run main.av --module-root <dir>` so the CLI's
 /// multi-module flatten + wasm-gc path is exercised end to end.
@@ -587,4 +621,125 @@ fn out_of_interval_literal_declines_the_discharge_on_every_backend() {
     assert_eq!(vm, "oob");
     assert_eq!(packed, vm, "packed wasm-gc must not silently truncate 256");
     assert_eq!(boxed, vm);
+}
+
+// ─── Interpolating the carrier ──────────────────────────────────────────
+//
+// `"{o.values}"` embeds the PROJECTED `List<Int>` carrier in a string.
+// The projection itself already inserts the packed→list unpack bridge, so
+// what the interpolation receives is a plain cons list on both the packed
+// and the boxed path — but wasm-gc had no stringifier for a `List<Int>`
+// embed at all. The MIR interpolation emitter bailed on the compound type,
+// and a bail makes the WHOLE enclosing fn an `unreachable` trap stub, so
+// the program compiled and then trapped at runtime with no diagnostic.
+// The VM (and generated Rust) print `[0, 1, 127, 255]`.
+//
+// The program below pins every leg of the rendering against the VM:
+// empty / single / multi carriers, a NEGATIVE and a beyond-i64 element on
+// a plain (unrefined) list so the bignum formatter is exercised too, and
+// two embeds in one literal so the parts array indexing is covered.
+const INTERPOLATED_OCTETS: &str = r#"module M
+    intent = "interpolate the projected carrier of a packed refinement"
+    effects [Console]
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn show(o: Octets) -> String
+    "{o.values}"
+
+fn render(xs: List<Int>) -> String
+    match fromList(xs)
+        Result.Ok(o) -> show(o)
+        Result.Err(error) -> error
+
+fn main() -> Unit
+    ! [Console.print]
+    empty: List<Int> = []
+    Console.print(render(empty))
+    Console.print(render(List.concat([7], empty)))
+    Console.print(render(List.concat([0, 1], [127, 255])))
+    plain = List.concat([0 - 5, 0], [10000000000000000000])
+    Console.print("plain={plain} twice={plain}")
+"#;
+
+#[test]
+fn interpolated_packed_field_matches_vm_and_boxed_wasm() {
+    let (vm_ok, vm) = run(INTERPOLATED_OCTETS, false, true);
+    let (packed_ok, packed) = run(INTERPOLATED_OCTETS, true, true);
+    let (boxed_ok, boxed) = run(INTERPOLATED_OCTETS, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(
+        packed_ok,
+        "packed wasm failed (interpolating the carrier trapped): {packed}"
+    );
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(
+        vm,
+        "[]\n[7]\n[0, 1, 127, 255]\nplain=[-5, 0, 10000000000000000000] \
+         twice=[-5, 0, 10000000000000000000]"
+    );
+    assert_eq!(packed, vm, "packed wasm-gc diverged from the VM");
+    assert_eq!(boxed, vm, "boxed wasm-gc diverged from the VM");
+}
+
+// Same gap, second surface: `aver verify --wasm-gc` runs cases through
+// its own wasm-gc execution path, so the trap-stub body reached it too —
+// the case bodies below returned nothing and every case failed.
+const INTERPOLATED_OCTETS_VERIFY: &str = r#"module M
+    intent = "verify an interpolated packed carrier on the wasm-gc runner"
+    effects []
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn render(xs: List<Int>) -> String
+    match fromList(xs)
+        Result.Ok(o) -> "{o.values}"
+        Result.Err(error) -> error
+
+verify render
+    render([]) => "[]"
+    render([0, 1, 127, 255]) => "[0, 1, 127, 255]"
+    render([256]) => "oob"
+"#;
+
+#[test]
+fn interpolated_packed_field_verifies_on_the_wasm_gc_runner() {
+    let (vm_ok, vm) = verify(INTERPOLATED_OCTETS_VERIFY, false, true);
+    let (packed_ok, packed) = verify(INTERPOLATED_OCTETS_VERIFY, true, true);
+    let (boxed_ok, boxed) = verify(INTERPOLATED_OCTETS_VERIFY, true, false);
+    assert!(vm_ok, "VM verify failed: {vm}");
+    assert!(packed_ok, "packed wasm-gc verify failed: {packed}");
+    assert!(boxed_ok, "boxed wasm-gc verify failed: {boxed}");
+    for (label, out) in [("packed", &packed), ("boxed", &boxed)] {
+        assert!(
+            out.contains("3/3 cases passed"),
+            "{label} wasm-gc verify did not pass every case: {out}"
+        );
+    }
 }
