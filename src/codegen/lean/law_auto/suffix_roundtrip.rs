@@ -556,6 +556,12 @@ pub(super) fn emit_string_escape_roundtrip_law(
             ),
         ));
     }
+    // The control escape's hex payload, definitionally. `Bytes.byteToHex`
+    // is `hexDigit (v / 16) + hexDigit (v % 16)` after `Bytes.highNibble`
+    // / `Bytes.lowNibble` unfold to the total literal-divisor intrinsics,
+    // so the whole encoder chain collapses by `simp` for ANY octet — the
+    // only side conditions are the `Bytes.fromList` octet bounds, both
+    // omega-derivable from `c.toNat < T` with `T <= 256`.
     {
         let ladder_hyps: String = ladder_pairs
             .iter()
@@ -566,7 +572,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
                 "private theorem {p}_control_u {{c : Char}} (h32 : c.toNat < {t}){ladder_hyps} :\n    {ctl} (Char.toString c) =\n      {prefix_s} + (Bytes.hexDigit ((c.toNat : Int) / 16) + Bytes.hexDigit ((c.toNat : Int) % 16))"
             ),
             &format!(
-                "simp only [{ctl}]\nrw [{p}_toCode_toString]\nsimp [{ladder_ne_shows}\n  show ((c.toNat : Int) < {t}) from by omega]\nhave h255 : (c.toNat : Int) ≤ 255 := by omega\nby_cases h16 : (c.toNat : Int) < 16\n· have hdiv16 : (c.toNat : Int) / 16 = 0 := by omega\n  have hmod16 : (c.toNat : Int) % 16 = (c.toNat : Int) := by omega\n  simp [{cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.toList, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble, h16, h255, hdiv16, hmod16]\n· have h32i : (c.toNat : Int) < 32 := by omega\n  have hdiv32 : (c.toNat : Int) / 16 = 1 := by omega\n  have hmod32 : (c.toNat : Int) % 16 = (c.toNat : Int) - 16 := by omega\n  simp [{cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.toList, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble, h16, h32i, h255, hdiv32, hmod32]"
+                "simp only [{ctl}]\nrw [{p}_toCode_toString]\nsimp [{ladder_ne_shows}\n  show ((c.toNat : Int) < {t}) from by omega,\n  {cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.toList, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble,\n  show ((c.toNat : Int) ≥ 0) from by omega,\n  show ((c.toNat : Int) ≤ 255) from by omega]"
             ),
         ));
     }

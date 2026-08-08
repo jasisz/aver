@@ -58,8 +58,8 @@ use crate::ir::{EscapePairSpec, StringEscapeRoundtripPin};
 /// classifier pairs with codes >= the control threshold; control
 /// ladder codes sit below the threshold and never duplicate a
 /// classifier pair; the threshold matches between producer and
-/// validator and stays <= 32 (the JSON control-character range, safely inside
-/// the `Bytes.fromList` octet range and below the
+/// validator and stays <= 256 (the `Bytes.fromList` octet range, since a
+/// `"00" + two hex digits` payload encodes exactly one octet, and below the
 /// surrogate guards' bounds); the control-escape prefix is exactly
 /// `[ESC, UNI, '0', '0']` (4 chars, so a hex escape is consumed by
 /// 1 escape hop + 4 `readHex` digits); the scanner SCC members carry
@@ -460,9 +460,9 @@ pub(super) fn detect_string_escape_roundtrip(
         .then_some(())?;
         *threshold
     };
-    // `Bytes.fromList` range on the producer side (`¬ code > 255` must be
-    // omega-derivable from `code < threshold`).
-    if !(1..=32).contains(&control_threshold) {
+    // `Bytes.fromList` range on the producer side (`0 <= code <= 255` must
+    // be omega-derivable from `code < threshold`).
+    if !(1..=256).contains(&control_threshold) {
         return None;
     }
 
