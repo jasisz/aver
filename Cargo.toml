@@ -18,6 +18,8 @@ categories = ["compilers"]
 include = [
     "/src/**",
     "!/src/bin/**",
+    "/stdlib/**",
+    "/wit/**",
     "/build.rs",
     "/README.md",
     "/LICENSE",
@@ -65,7 +67,7 @@ wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-parser", "dep:wasmtime",
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
-aver-cert = { path = "aver-cert", version = "=0.1.1", optional = true, default-features = false, features = ["plans"] }
+aver-cert = { path = "aver-cert", version = "=0.1.2", optional = true, default-features = false, features = ["plans"] }
 aver-memory = { path = "aver-memory", version = "=0.2.13" }
 aver-rt = { path = "aver-rt", version = "=0.4.10", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
