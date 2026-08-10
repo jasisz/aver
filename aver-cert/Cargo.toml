@@ -12,7 +12,8 @@ keywords = ["aver", "lean", "verification", "webassembly"]
 categories = ["development-tools", "wasm"]
 include = [
     "/src/**",
-    "/assets/wall/**",
+    "/assets/wall/**/*.lean",
+    "/assets/wall/**/lean-toolchain",
     "/LICENSE",
     "/README.md",
 ]
