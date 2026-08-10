@@ -1,6 +1,6 @@
 [package]
 name = "aver-memory"
-version = "0.2.12"
+version = "0.2.13"
 edition = "2024"
 license = "MIT"
 description = "NaN-boxed arena memory for the Aver language"
@@ -16,5 +16,5 @@ std = []
 runtime = ["dep:aver-rt"]
 
 [dependencies]
-aver-rt = { path = "../aver-rt", version = "=0.4.9", optional = true }
+aver-rt = { path = "../aver-rt", version = "=0.4.10", optional = true }
 num-bigint = "0.4"
