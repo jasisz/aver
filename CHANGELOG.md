@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.28.0 "Oktet" (unreleased)
+## 0.28.0 "Oktet" — 2026-08-10
 
 Named for the humble byte: this release gives Aver a real binary story — validated bytes as a type, exact TCP reads and writes, SHA-256 — with the proofs to match, and it starts deleting `Result` ceremony wherever the compiler can see the answer.
 
