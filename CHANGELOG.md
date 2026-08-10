@@ -2,6 +2,37 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.28.0 "Oktet" (unreleased)
+
+Named for the humble byte: this release gives Aver a real binary story — validated bytes as a type, exact TCP reads and writes, SHA-256 — with the proofs to match, and it starts deleting `Result` ceremony wherever the compiler can see the answer.
+
+### Added
+
+- **A `Bytes` type and `Crypto.Digest32`, the first embedded standard-library modules.** `Bytes.fromList` / `Bytes.fromHex` validate octets once at construction; `toHex`/`toList` round-trip; `Digest32` guarantees exactly 32 bytes. Both are ordinary Aver source, so every backend and both proof backends share one definition.
+- **Binary TCP: `Tcp.sendBytes`, `Tcp.readBytes`, and `Tcp.writeBytes`.** One-shot calls and persistent connections can now put exact bytes on the wire and read exact-length frames (short read is an error, not a truncated success), with hostile test profiles included. Binary protocols — length-prefixed frames, non-UTF-8 payloads — are now expressible end to end.
+- **`Crypto.sha256 : Bytes -> Digest32` — pure, total, no `Result`.** The types carry the guarantees. Four independent implementations (VM, generated Rust, in-module WASM, and the Lean/Dafny proof models) are differential-tested against the FIPS vectors; on WASM the hash is computed inside the sealed module, so a hostile host cannot lie about a digest.
+- **Literal discharge: the compiler deletes `Result` where it can decide the answer at compile time.** `Int.div(x, 16)` and `Int.mod(x, 16)` with a nonzero literal divisor are plain `Int`; `Bytes.fromList([1, 2, 3])` with in-range literals is plain `Bytes`. The boundary is strict and syntactic — a variable divisor or a computed list keeps the explicit `Result` path.
+- **Certificates cover more programs.** Record type declarations and field reads are certified end to end, along with runtime `Int` comparisons, enum-to-constant classifiers, bounds-checked vector reads, eager `Bool.and`, and string concatenation in carrierless modules; a coverage counter with a checked baseline tracks certified functions per release.
+- **Decidable verify cases are now checked by the Lean kernel itself.** Concrete examples over `Int`/`Bool`/`String`/`List` — including the SHA-256 FIPS vectors — close with `decide +kernel` and carry no native-evaluation axioms; cases the kernel cannot decide (floats, panics, oversized terms) conservatively keep `native_decide`.
+- **`Bytes`-like refinements are real byte arrays on wasm-gc.** A record over `List<Int>` whose constructor proves an octet range is stored packed — the proof justifies the layout — so hashing and byte I/O run without per-element boxing.
+- **`aver check` warns when a project module is shadowed by the standard library**, instead of silently ignoring the project file.
+
+### Changed
+
+- **Breaking: string interpolation renders primitives only** (`Int`, `Float`, `Bool`, `String`). Any other embed — including one whose type inference cannot pin — is a type error; write a named conversion function returning `String` and interpolate its result. Display decisions belong in source, not in the compiler.
+- **Breaking: literal-divisor division no longer returns `Result`,** so existing `match`/`?`/`withDefault` handling around `Int.div(x, LITERAL)` is a type error — the fix is deleting the ceremony.
+- **The pinned Lean toolchain is v4.32.2,** picking up two upstream kernel soundness fixes. The certificate wall identity rotates with it: previously issued certificates verify only with their paired release — re-certify with 0.28.0.
+
+### Fixed
+
+- **Programs may name things after Lean tokens.** Functions, types, and modules called `Type`, `sorry`, `at`, and the rest of Lean's reserved tokens now export buildable proof projects, guarded against future toolchain drift in CI.
+- **The `?` operator compiles inside verify blocks on the generated-Rust backend** for every error shape.
+- **Interpolating an unsupported value can no longer compile into a silent runtime trap on wasm-gc** — it is a type error at check time, and internal pipelines get a loud codegen error instead of a function replaced by `unreachable`.
+- **Carrier-erased memory layouts resolve by exact type identity, never by name,** closing a class where a same-named type from another module could silently inherit a representation, and module-qualified type annotations over dependency types work throughout.
+- **`--self-host` supports top-level bindings** with host-VM semantics, and self-qualified module calls no longer trap on wasm-gc.
+
+Binary TCP and `Crypto.sha256` were contributed by Robin Owens ([@n1bor](https://github.com/n1bor)) — Aver's first external contributor.
+
 ## 0.27.1 — 2026-07-19
 
 ### Added
