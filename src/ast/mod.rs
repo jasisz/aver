@@ -103,6 +103,28 @@ pub enum Literal {
     Unit,
 }
 
+/// Constructor-spelling predicate, shared by the surface parser and the HIR
+/// resolver: a dotted name denotes a sum-type constructor exactly when its
+/// last two segments both begin with an uppercase letter, so the tail spells
+/// `Type.Variant`. Any number of module segments may precede it —
+/// `Shade.Dark`, `Palette.Shade.Dark` and `Domain.Colour.Shade.Dark` are the
+/// same constructor written from different distances.
+///
+/// Both consumers MUST share this one predicate. The parser applies it to
+/// decide whether a dotted pattern is a constructor pattern; the resolver
+/// applies it to decide whether a dotted expression is a constructor
+/// reference rather than a chain of field accesses. A program the parser
+/// accepts as a pattern and the resolver declines as an expression is the
+/// shape where a module can pass `aver check` and then fail at run time.
+pub fn dotted_name_spells_constructor(name: &str) -> bool {
+    let mut tail = name.rsplit('.');
+    let begins_uppercase =
+        |segment: Option<&str>| segment.is_some_and(|s| s.starts_with(char::is_uppercase));
+    let variant = tail.next();
+    let type_name = tail.next();
+    begins_uppercase(variant) && begins_uppercase(type_name)
+}
+
 /// Literal-divisor discharge predicate, shared by the typechecker and the
 /// HIR resolver: `Int.div(a, K)` / `Int.mod(a, K)` type and lower as TOTAL
 /// (plain `Int`, direct Euclidean division) exactly when the divisor `K` is
