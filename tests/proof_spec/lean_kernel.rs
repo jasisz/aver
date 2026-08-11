@@ -1,6 +1,99 @@
 use super::*;
 
 #[test]
+fn proof_lean_failing_verify_case_with_question_mark_cannot_build_green() {
+    // A verify case whose `?` hits `Err` FAILED — `aver verify` reports
+    // `verify-unexpected-err`. The export must not be able to certify it.
+    //
+    // The dangerous coincidence is an expected value that equals the type's
+    // `Inhabited.default`: lowering `?` to `withDefault default` substitutes
+    // exactly that value on the error path, so `f(0)? => 0` over `Int` used to
+    // export as a TRUE theorem and `lake build` went green on a red suite.
+    // Emitting the case inside a Result `do` block makes the left side reduce
+    // to `Except.error` while the expected side reads `Except.ok`, so the
+    // kernel rejects it.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping failing-case export test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-failing-case-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        r#"module Hole
+    intent = "A verify case whose `?` hits Err, expecting a value equal to Lean's default."
+    exposes [f]
+    effects []
+
+fn f(n: Int) -> Result<Int, String>
+    ? "Fails for zero."
+    match n == 0
+        true -> Result.Err("boom")
+        false -> Result.Ok(n)
+
+verify f
+    f(0)? => 0
+"#,
+    )
+    .expect("write m.av");
+    let verify = Command::new(aver_bin)
+        .arg("verify")
+        .arg(src.join("m.av"))
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        !verify.status.success()
+            && String::from_utf8_lossy(&verify.stdout).contains("verify-unexpected-err"),
+        "the case must fail at run time, otherwise this test proves nothing:\n{}",
+        format_output(&verify)
+    );
+
+    let out = temp_output_dir("aver-failing-case-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("Hole.lean")).expect("read Hole.lean");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|line| {
+            std::str::from_utf8(line)
+                .ok()
+                .filter(|text| text.starts_with('{'))
+        })
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(false),
+        "a failing verify case must not export as a provable theorem:\n{}\n{lean}",
+        format_output(&run)
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "verify-case `?` must short-circuit instead of substituting a default:\n{lean}"
+    );
+    assert!(
+        lean.contains("example : (do pure ((<- f 0))) = Except.ok (0)"),
+        "the case must be stated as an `Except` action against `Except.ok`:\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_nested_question_mark_agrees_with_bound_form_on_error_path() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping nested question-mark test: `lake` not available");

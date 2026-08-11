@@ -126,9 +126,9 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             if ctx.lean_do_block.get() {
                 format!("(<- {})", inner_str)
             } else {
-                // Verify cases and law statements are not emitted inside `do`,
-                // so they retain the legacy fallback until their propagation
-                // semantics can be modeled separately.
+                // Law statements are not emitted inside `do`, so they retain
+                // the legacy fallback until their propagation semantics can be
+                // modeled separately.
                 format!("(({}).withDefault default)", inner_str)
             }
         }
@@ -629,7 +629,7 @@ fn emit_match(
     }
 }
 
-fn resolved_expr_contains_error_prop(expr: &Spanned<ResolvedExpr>) -> bool {
+pub(super) fn resolved_expr_contains_error_prop(expr: &Spanned<ResolvedExpr>) -> bool {
     match &expr.node {
         ResolvedExpr::ErrorProp(_) => true,
         ResolvedExpr::Attr(obj, _) => resolved_expr_contains_error_prop(obj),

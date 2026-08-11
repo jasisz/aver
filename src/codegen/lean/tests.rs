@@ -219,10 +219,10 @@ fn divL(n: Int, d: Int) -> Result<Int, String>
 }
 
 #[test]
-fn error_prop_in_verify_case_keeps_with_default_lowering() {
+fn error_prop_in_verify_case_states_an_except_action() {
     let mut ctx = ctx_from_source(
         r#"
-module VerifyFallback
+module VerifyCase
     effects []
 
 fn addOne(x: Int) -> Int
@@ -234,16 +234,35 @@ fn quotient(n: Int, d: Int) -> Result<Int, String>
 
 verify quotient
     addOne(quotient(10, 2)?) => 6
+    quotient(10, 2) => Result.Ok(5)
 "#,
-        "VerifyFallback",
+        "VerifyCase",
     );
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
+    let examples: Vec<&str> = lean
+        .lines()
+        .filter(|line| line.starts_with("example :"))
+        .collect();
 
     assert!(
-        lean.lines()
-            .any(|line| line.starts_with("example :") && line.contains(".withDefault default")),
-        "verify-case emission must retain its non-`do` fallback:\n{lean}"
+        examples.iter().any(
+            |line| line.contains("(do pure (addOne (<- quotient 10 2)))")
+                && line.contains("= Except.ok (6)")
+        ),
+        "a verify case carrying `?` must state an `Except` action:\n{lean}"
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "verify-case `?` must not substitute a default on the error path:\n{lean}"
+    );
+    // The `do` context is scoped to the cases that need it: a case without
+    // `?` keeps the plain equation, neither wrapped nor lifted.
+    assert!(
+        examples
+            .iter()
+            .any(|line| line.starts_with("example : quotient 10 2 = Except.ok 5 ")),
+        "a verify case without `?` must keep its plain equation:\n{lean}"
     );
 }
 

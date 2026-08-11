@@ -140,7 +140,7 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        let left_str = emit_expr_legacy(left, ctx, None);
+        let (left_str, propagates_error) = emit_verify_case_lhs(left, ctx);
         // Expected side: prefer the VM ground-truth literal over the source
         // RHS. A source RHS that calls a user fn (`verify f: f(x) => g(x)`)
         // routes BOTH sides through the model — vacuously true under fuel
@@ -151,7 +151,16 @@ pub fn emit_verify_block(
         // keep the source RHS and rely on the `--check` panic gate.
         let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx);
         let has_ground_truth = ground_truth.is_some();
-        let right_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
+        let expected_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
+        // A case carrying `?` denotes an `Except` action (see
+        // `emit_verify_case_lhs`), so the expected value is lifted into the
+        // same monad. Both expected-side sources go through here, so the
+        // ground-truth literal and the source fallback stay interchangeable.
+        let right_str = if propagates_error {
+            format!("Except.ok ({})", expected_str)
+        } else {
+            expected_str
+        };
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
@@ -182,6 +191,28 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+/// Emit a verify case's left side, and report whether it propagates an error.
+///
+/// A `?` in a case means "run this, and fail the case if it errors" — so the
+/// faithful Lean statement is about an `Except` action, not about a bare
+/// value. Emitting the case inside a `do` block gives `?` a monadic bind to
+/// lower into, exactly as a function body gets, and the caller lifts the
+/// expected value with `Except.ok` so both sides agree. Without the `do`
+/// context `?` falls back to `withDefault default`, which substitutes a value
+/// on the error path — a case that fails at run time can then still be true as
+/// a theorem whenever the expected value happens to be that default.
+///
+/// Cases without `?` keep the plain emission, so only this one shape changes.
+fn emit_verify_case_lhs(left: &Spanned<Expr>, ctx: &CodegenContext) -> (String, bool) {
+    let scope = ctx.active_module_scope();
+    let resolved = ctx.resolve_expr(left, scope.as_deref());
+    if !super::expr::resolved_expr_contains_error_prop(&resolved) {
+        return (super::expr::emit_expr(&resolved, ctx), false);
+    }
+    let body = ctx.with_lean_do_block(true, || super::expr::emit_expr(&resolved, ctx));
+    (format!("(do pure ({}))", body), true)
 }
 
 /// Oracle v1: emit proof-side assertions for a `verify fn trace`
