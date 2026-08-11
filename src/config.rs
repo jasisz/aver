@@ -18,7 +18,9 @@ use std::path::Path;
 pub struct EffectPolicy {
     /// Allowed HTTP hosts (exact or wildcard `*.domain`).
     pub hosts: Vec<String>,
-    /// Allowed filesystem paths (exact or recursive `/**`).
+    /// Allowed filesystem paths. Concrete paths and `<path>/**` include the
+    /// same subtree; `.`, `./`, and `./**` mean the project-relative subtree,
+    /// while `/` and `/**` mean the filesystem root.
     pub paths: Vec<String>,
     /// Allowed environment variable keys (exact or wildcard `PREFIX_*`).
     pub keys: Vec<String>,
@@ -144,6 +146,9 @@ impl ProjectConfig {
                 } else {
                     Vec::new()
                 };
+                for (index, host) in hosts.iter().enumerate() {
+                    validate_host_pattern(name, index, host)?;
+                }
 
                 let paths = if let Some(val) = section.get("paths") {
                     let arr = val.as_array().ok_or_else(|| {
@@ -163,6 +168,9 @@ impl ProjectConfig {
                 } else {
                     Vec::new()
                 };
+                for (index, path) in paths.iter().enumerate() {
+                    validate_path_pattern(name, index, path)?;
+                }
 
                 let keys = if let Some(val) = section.get("keys") {
                     let arr = val.as_array().ok_or_else(|| {
@@ -182,6 +190,9 @@ impl ProjectConfig {
                 } else {
                     Vec::new()
                 };
+                for (index, key) in keys.iter().enumerate() {
+                    validate_env_key_pattern(name, index, key)?;
+                }
 
                 effect_policies.insert(name.clone(), EffectPolicy { hosts, paths, keys });
             }
@@ -383,30 +394,93 @@ fn normalize_path(path: &str) -> String {
 }
 
 /// Check if a normalized path matches an allowed pattern.
-/// Supports:
-///   - Exact prefix match: "./data" matches "./data" and "./data/file.txt"
-///   - Recursive glob: "./data/**" matches everything under ./data/
+/// Concrete paths and `<path>/**` include the same subtree. `.`, `./`, and
+/// `./**` match the project-relative subtree; `/` and `/**` match absolute
+/// paths from the filesystem root. Other `*` forms and `..`-rooted patterns
+/// never match.
 fn path_matches(normalized: &str, pattern: &str) -> bool {
-    let clean_pattern = if let Some(base) = pattern.strip_suffix("/**") {
-        normalize_path(base)
-    } else {
-        normalize_path(pattern)
+    if pattern.is_empty() || pattern == "**" {
+        return false;
+    }
+
+    let body = match pattern.strip_suffix("/**") {
+        Some("") => "/",
+        Some(base) => base,
+        None => pattern,
     };
-
-    // The path must start with the allowed base
-    if normalized == clean_pattern {
-        return true;
+    if body.contains('*') {
+        return false;
     }
 
-    // Check if it's under the allowed directory
-    if normalized.starts_with(&clean_pattern) {
-        let rest = &normalized[clean_pattern.len()..];
-        if rest.starts_with('/') {
-            return true;
-        }
+    let base = normalize_path(body);
+    if base.is_empty() {
+        return !normalized.starts_with('/')
+            && normalized != ".."
+            && !normalized.starts_with("../");
+    }
+    if base == "/" {
+        return normalized.starts_with('/');
+    }
+    if base == ".." || base.starts_with("../") {
+        return false;
     }
 
-    false
+    normalized == base
+        || (normalized.len() > base.len()
+            && normalized.starts_with(&base)
+            && normalized.as_bytes()[base.len()] == b'/')
+}
+
+fn validate_path_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+    let prefix = format!("aver.toml: [effects.{effect}].paths[{index}]");
+    if raw.is_empty() {
+        return Err(format!(
+            "{prefix} is empty; use \".\" for the project directory or \"/\" for the filesystem root"
+        ));
+    }
+    if raw == "**" {
+        return Err(format!(
+            "{prefix} is ambiguous: '**'; use \"./**\" for the project subtree or \"/**\" for the filesystem root"
+        ));
+    }
+
+    let body = match raw.strip_suffix("/**") {
+        Some("") => "/",
+        Some(base) => base,
+        None => raw,
+    };
+    if body.contains('*') {
+        return Err(format!(
+            "{prefix} contains an unsupported glob '{raw}'; only a trailing \"/**\" is supported (for example, \"./data/**\")"
+        ));
+    }
+
+    let base = normalize_path(body);
+    if base == ".." || base.starts_with("../") {
+        return Err(format!(
+            "{prefix} escapes the project directory: '{raw}'; use an absolute pattern (for example, \"/srv/data/**\") to allow files outside the project"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_host_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+    if raw == "*" || raw == "**" {
+        return Err(format!(
+            "aver.toml: [effects.{effect}].hosts[{index}] contains an unsupported wildcard '{raw}'; use an exact host or a subdomain wildcard such as \"*.example.com\""
+        ));
+    }
+    Ok(())
+}
+
+fn validate_env_key_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+    if raw == "**" {
+        return Err(format!(
+            "aver.toml: [effects.{effect}].keys[{index}] contains an unsupported wildcard '**'; use \"*\" for every key or a prefix wildcard such as \"APP_*\""
+        ));
+    }
+    Ok(())
 }
 
 /// Check if an env key matches an allowed pattern.
@@ -758,33 +832,103 @@ hosts = ["*.internal.corp"]
     }
 
     #[test]
-    fn test_check_disk_path_allowed() {
-        let toml = r#"
-[effects.Disk]
-paths = ["./data/**"]
-"#;
-        let config = ProjectConfig::parse(toml).unwrap();
+    fn disk_path_pattern_matrix() {
+        let cases = [
+            // pattern, loads, relative, absolute, escaping relative
+            ("", false, false, false, false),
+            (".", true, true, false, false),
+            ("./", true, true, false, false),
+            ("./**", true, true, false, false),
+            ("**", false, false, false, false),
+            ("/", true, false, true, false),
+            ("/**", true, false, true, false),
+            ("./data/**", true, true, false, false),
+            ("../**", false, false, false, false),
+        ];
+
+        for (pattern, loads, allows_relative, allows_absolute, allows_escape) in cases {
+            let probes = [
+                ("data/ok.txt", allows_relative),
+                ("/etc/passwd", allows_absolute),
+                ("../outside.txt", allows_escape),
+            ];
+            for (probe, expected) in probes {
+                assert_eq!(
+                    path_matches(&normalize_path(probe), pattern),
+                    expected,
+                    "matcher verdict for pattern {pattern:?} and path {probe:?}"
+                );
+            }
+
+            let parsed = ProjectConfig::parse(&format!("[effects.Disk]\npaths = [{pattern:?}]\n"));
+            assert_eq!(
+                parsed.is_ok(),
+                loads,
+                "config-load verdict for pattern {pattern:?}: {parsed:?}"
+            );
+            if let Ok(config) = parsed {
+                for (probe, expected) in probes {
+                    assert_eq!(
+                        config.check_disk_path("Disk.readText", probe).is_ok(),
+                        expected,
+                        "policy verdict for pattern {pattern:?} and path {probe:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn disk_path_degenerate_patterns_are_config_errors() {
+        let cases = [
+            ("", "is empty"),
+            ("**", "use \"./**\" for the project subtree or \"/**\""),
+            ("*", "unsupported glob"),
+            ("./*", "unsupported glob"),
+            ("*.txt", "unsupported glob"),
+            ("data/**/logs", "unsupported glob"),
+            ("..", "escapes the project directory"),
+            ("../**", "escapes the project directory"),
+            ("./data/../..", "escapes the project directory"),
+        ];
+
+        for (pattern, phrase) in cases {
+            let error = ProjectConfig::parse(&format!("[effects.Disk]\npaths = [{pattern:?}]\n"))
+                .expect_err("degenerate path pattern must be rejected");
+            assert!(
+                error.contains("[effects.Disk].paths[0]") && error.contains(phrase),
+                "unexpected error for pattern {pattern:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn disk_path_project_root_pattern_denies_absolute() {
+        let config = ProjectConfig::parse("[effects.Disk]\npaths = [\"./**\"]\n").unwrap();
         assert!(
             config
-                .check_disk_path("Disk.readText", "data/file.txt")
+                .check_disk_path("Disk.readText", "data/ok.txt")
                 .is_ok()
         );
         assert!(
             config
-                .check_disk_path("Disk.readText", "data/sub/deep.txt")
-                .is_ok()
+                .check_disk_path("Disk.readText", "/etc/passwd")
+                .is_err()
         );
     }
 
     #[test]
-    fn test_check_disk_path_denied() {
-        let toml = r#"
-[effects.Disk]
-paths = ["./data/**"]
-"#;
-        let config = ProjectConfig::parse(toml).unwrap();
-        let result = config.check_disk_path("Disk.readText", "/etc/passwd");
-        assert!(result.is_err());
+    fn disk_path_plain_and_recursive_forms_agree() {
+        let plain = ProjectConfig::parse("[effects.Disk]\npaths = [\"./data\"]\n").unwrap();
+        let recursive = ProjectConfig::parse("[effects.Disk]\npaths = [\"./data/**\"]\n").unwrap();
+
+        for probe in ["data", "data/sub/x", "datax/y", "/data/x"] {
+            assert_eq!(
+                plain.check_disk_path("Disk.readText", probe).is_ok(),
+                recursive.check_disk_path("Disk.readText", probe).is_ok(),
+                "plain and recursive forms differ for {probe:?}"
+            );
+        }
     }
 
     #[test]
@@ -934,6 +1078,30 @@ keys = ["PUBLIC_*"]
     }
 
     #[test]
+    fn host_degenerate_patterns_are_config_errors() {
+        for pattern in ["*", "**"] {
+            let error = ProjectConfig::parse(&format!("[effects.Http]\nhosts = [{pattern:?}]\n"))
+                .expect_err("degenerate host pattern must be rejected");
+            assert!(
+                error.contains("[effects.Http].hosts[0]") && error.contains("unsupported wildcard"),
+                "unexpected error for pattern {pattern:?}: {error}"
+            );
+        }
+
+        let config = ProjectConfig::parse("[effects.Http]\nhosts = [\"*.example.com\"]\n").unwrap();
+        assert!(
+            config
+                .check_http_host("Http.get", "https://sub.example.com/")
+                .is_ok()
+        );
+        assert!(
+            config
+                .check_http_host("Http.get", "https://example.com/")
+                .is_err()
+        );
+    }
+
+    #[test]
     fn env_key_matches_exact() {
         assert!(env_key_matches("TOKEN", "TOKEN"));
         assert!(!env_key_matches("TOKEN", "TOK"));
@@ -944,6 +1112,82 @@ keys = ["PUBLIC_*"]
         assert!(env_key_matches("APP_PORT", "APP_*"));
         assert!(env_key_matches("APP_", "APP_*"));
         assert!(!env_key_matches("PORT", "APP_*"));
+    }
+
+    #[test]
+    fn env_key_degenerate_pattern_is_config_error() {
+        let error = ProjectConfig::parse("[effects.Env]\nkeys = [\"**\"]\n")
+            .expect_err("degenerate key pattern must be rejected");
+        assert!(error.contains("[effects.Env].keys[0]"));
+        assert!(error.contains("unsupported wildcard"));
+
+        let config = ProjectConfig::parse("[effects.Env]\nkeys = [\"*\"]\n").unwrap();
+        assert!(config.check_env_key("Env.get", "HOME").is_ok());
+    }
+
+    fn extract_path_matcher(source: &str) -> &str {
+        let signature = "fn path_matches(normalized: &str, pattern: &str) -> bool {";
+        let start = source
+            .find(signature)
+            .unwrap_or_else(|| panic!("missing path matcher in source"));
+        let function = &source[start..];
+        let mut depth = 0usize;
+        for (offset, byte) in function.bytes().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &function[..=offset];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unterminated path matcher")
+    }
+
+    fn without_whitespace(source: &str) -> String {
+        source.split_whitespace().collect()
+    }
+
+    #[test]
+    fn path_matcher_copies_do_not_drift() {
+        let canonical = without_whitespace(extract_path_matcher(include_str!("config.rs")));
+        let copies = [
+            (
+                "embedded policy template",
+                include_str!("codegen/rust/policy.rs"),
+            ),
+            (
+                "runtime policy snippet",
+                include_str!("codegen/rust/replay.rs"),
+            ),
+            (
+                "self-host runtime",
+                include_str!("self_host/replay_support.rs"),
+            ),
+        ];
+
+        for (name, source) in copies {
+            assert_eq!(
+                without_whitespace(extract_path_matcher(source)),
+                canonical,
+                "{name} path matcher drifted from src/config.rs"
+            );
+        }
+
+        let raw_self_host =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("self_hosted/out/src/replay_support.rs");
+        match std::fs::read_to_string(&raw_self_host) {
+            Ok(source) => assert_eq!(
+                without_whitespace(extract_path_matcher(&source)),
+                canonical,
+                "raw self-host output path matcher drifted from src/config.rs"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("could not read {}: {error}", raw_self_host.display()),
+        }
     }
 
     // --- check.suppress tests ---

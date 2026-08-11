@@ -331,3 +331,14 @@ reason = "Tree-walking interpreter — CPS would destroy correspondence."
 ```
 
 Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
+
+Disk path patterns have deliberately small, explicit semantics:
+
+| Pattern | Meaning |
+|---|---|
+| `path` or `path/**` | That path and its entire subtree |
+| `.`, `./`, or `./**` | The project-relative subtree |
+| `/` or `/**` | Every absolute path from the filesystem root |
+| `**` | Invalid; use `./**` or `/**` to state the intended boundary |
+
+An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
