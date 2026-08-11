@@ -83,11 +83,10 @@ impl TypeChecker {
                 if matches!(elem, Type::Var(_)) {
                     elem = val_ty.clone();
                 } else if !self.compatible(&val_ty, &elem) {
+                    let (want, got) = self.describe_type_pair(&elem, &val_ty);
                     self.error(format!(
                         "Argument 3 of '{}': expected {}, got {}",
-                        name,
-                        elem.display(),
-                        val_ty.display()
+                        name, want, got
                     ));
                 }
                 Some(option_ty(vector_ty(elem)))

@@ -97,11 +97,10 @@ impl TypeChecker {
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !self.compatible(&key_ty, &k) {
+                    let (want, got) = self.describe_type_pair(&k, &key_ty);
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
-                        name,
-                        k.display(),
-                        key_ty.display()
+                        name, want, got
                     ));
                 }
                 ensure_hashable_key(self, &k, name, 1);
@@ -117,11 +116,10 @@ impl TypeChecker {
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !self.compatible(&key_ty, &k) {
+                    let (want, got) = self.describe_type_pair(&k, &key_ty);
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
-                        name,
-                        k.display(),
-                        key_ty.display()
+                        name, want, got
                     ));
                 }
                 ensure_hashable_key(self, &k, name, 1);
@@ -137,11 +135,10 @@ impl TypeChecker {
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !self.compatible(&key_ty, &k) {
+                    let (want, got) = self.describe_type_pair(&k, &key_ty);
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
-                        name,
-                        k.display(),
-                        key_ty.display()
+                        name, want, got
                     ));
                 }
                 ensure_hashable_key(self, &k, name, 1);
@@ -159,21 +156,19 @@ impl TypeChecker {
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !self.compatible(&key_ty, &k) {
+                    let (want, got) = self.describe_type_pair(&k, &key_ty);
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
-                        name,
-                        k.display(),
-                        key_ty.display()
+                        name, want, got
                     ));
                 }
                 if matches!(v, Type::Var(_)) {
                     v = val_ty.clone();
                 } else if !self.compatible(&val_ty, &v) {
+                    let (want, got) = self.describe_type_pair(&v, &val_ty);
                     self.error(format!(
                         "Argument 3 of '{}': expected {}, got {}",
-                        name,
-                        v.display(),
-                        val_ty.display()
+                        name, want, got
                     ));
                 }
                 ensure_hashable_key(self, &k, name, 1);

@@ -72,62 +72,6 @@ fn ident_namespace_diagnostic(
     None
 }
 
-fn display_type_for_expected(ty: &Type) -> String {
-    match ty {
-        // Named vars (`Var("K")`, `Var("T")`, ...) display as their name.
-        Type::Var(name) => name.clone(),
-        // Recovery after an earlier error. It is not a top type.
-        Type::Invalid => "Invalid".to_string(),
-        Type::Int => "Int".to_string(),
-        Type::Float => "Float".to_string(),
-        Type::Str => "String".to_string(),
-        Type::Bool => "Bool".to_string(),
-        Type::Unit => "Unit".to_string(),
-        Type::Result(ok, err) => format!(
-            "Result<{}, {}>",
-            display_type_for_expected(ok),
-            display_type_for_expected(err)
-        ),
-        Type::Option(inner) => format!("Option<{}>", display_type_for_expected(inner)),
-        Type::List(inner) => format!("List<{}>", display_type_for_expected(inner)),
-        Type::Vector(inner) => format!("Vector<{}>", display_type_for_expected(inner)),
-        Type::Tuple(items) => format!(
-            "Tuple<{}>",
-            items
-                .iter()
-                .map(display_type_for_expected)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Type::Map(key, value) => format!(
-            "Map<{}, {}>",
-            display_type_for_expected(key),
-            display_type_for_expected(value)
-        ),
-        Type::Fn(params, ret, effects) => {
-            let ps = params
-                .iter()
-                .map(display_type_for_expected)
-                .collect::<Vec<_>>();
-            if effects.is_empty() {
-                format!(
-                    "Fn({}) -> {}",
-                    ps.join(", "),
-                    display_type_for_expected(ret)
-                )
-            } else {
-                format!(
-                    "Fn({}) -> {} ! [{}]",
-                    ps.join(", "),
-                    display_type_for_expected(ret),
-                    effects.join(", ")
-                )
-            }
-        }
-        Type::Named { name, .. } => name.clone(),
-    }
-}
-
 /// True iff `ty` contains no `Type::Invalid` or `Type::Var(_)` anywhere in
 /// its structure. Used to gate expected-type
 /// propagation: a formal param like `Map<Var("K"), Var("V")>` must
@@ -312,11 +256,12 @@ impl TypeChecker {
                     for (idx, item) in items.iter().enumerate() {
                         let item_ty = self.infer_type_with_expected(item, Some(inner));
                         if !self.compatible(&item_ty, inner) {
+                            let (want, got) = self.describe_type_pair(inner, &item_ty);
                             self.error(format!(
                                 "List element {}: expected {}, got {}",
                                 idx + 1,
-                                inner.display(),
-                                item_ty.display()
+                                want,
+                                got
                             ));
                         }
                     }
@@ -338,11 +283,12 @@ impl TypeChecker {
                     for (idx, (item, elem_expected)) in items.iter().zip(elems.iter()).enumerate() {
                         let item_ty = self.infer_type_with_expected(item, Some(elem_expected));
                         if !self.compatible(&item_ty, elem_expected) {
+                            let (want, got) = self.describe_type_pair(elem_expected, &item_ty);
                             self.error(format!(
                                 "Tuple element {}: expected {}, got {}",
                                 idx + 1,
-                                elem_expected.display(),
-                                item_ty.display()
+                                want,
+                                got
                             ));
                         }
                         out.push(item_ty);
@@ -403,10 +349,10 @@ impl TypeChecker {
                         let list_ty =
                             self.infer_type_with_expected(&args[0], Some(&expected_pairs));
                         if !self.compatible(&list_ty, &expected_pairs) {
+                            let (want, got) = self.describe_type_pair(&expected_pairs, &list_ty);
                             self.error(format!(
                                 "Argument 1 of 'Map.fromList': expected {}, got {}",
-                                expected_pairs.display(),
-                                list_ty.display()
+                                want, got
                             ));
                         }
                         Some(expected.clone())
@@ -418,10 +364,10 @@ impl TypeChecker {
                         let expected_list = Type::List(inner.clone());
                         let list_ty = self.infer_type_with_expected(&args[0], Some(&expected_list));
                         if !self.compatible(&list_ty, &expected_list) {
+                            let (want, got) = self.describe_type_pair(&expected_list, &list_ty);
                             self.error(format!(
                                 "Argument 1 of 'Vector.fromList': expected {}, got {}",
-                                expected_list.display(),
-                                list_ty.display()
+                                want, got
                             ));
                         }
                         Some(expected.clone())
@@ -435,24 +381,24 @@ impl TypeChecker {
                         let key_ty = self.infer_type_with_expected(&args[1], Some(k));
                         let val_ty = self.infer_type_with_expected(&args[2], Some(v));
                         if !self.compatible(&map_ty, &expected_map) {
+                            let (want, got) = self.describe_type_pair(&expected_map, &map_ty);
                             self.error(format!(
                                 "Argument 1 of 'Map.set': expected {}, got {}",
-                                expected_map.display(),
-                                map_ty.display()
+                                want, got
                             ));
                         }
                         if !self.compatible(&key_ty, k) {
+                            let (want, got) = self.describe_type_pair(k, &key_ty);
                             self.error(format!(
                                 "Argument 2 of 'Map.set': expected {}, got {}",
-                                k.display(),
-                                key_ty.display()
+                                want, got
                             ));
                         }
                         if !self.compatible(&val_ty, v) {
+                            let (want, got) = self.describe_type_pair(v, &val_ty);
                             self.error(format!(
                                 "Argument 3 of 'Map.set': expected {}, got {}",
-                                v.display(),
-                                val_ty.display()
+                                want, got
                             ));
                         }
                         Some(expected_map)
@@ -564,19 +510,19 @@ impl TypeChecker {
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !self.compatible(&key_ty, &k) {
+                    let (want, got) = self.describe_type_pair(&k, &key_ty);
                     self.error(format!(
                         "Argument 2 of 'Map.set': expected {}, got {}",
-                        k.display(),
-                        key_ty.display()
+                        want, got
                     ));
                 }
                 if matches!(v, Type::Var(_)) {
                     v = val_ty.clone();
                 } else if !self.compatible(&val_ty, &v) {
+                    let (want, got) = self.describe_type_pair(&v, &val_ty);
                     self.error(format!(
                         "Argument 3 of 'Map.set': expected {}, got {}",
-                        v.display(),
-                        val_ty.display()
+                        want, got
                     ));
                 }
                 let expected_map = Type::Map(Box::new(k), Box::new(v));
@@ -606,10 +552,10 @@ impl TypeChecker {
                     }
                 };
                 if !matches!(elem_ty, Type::Var(_)) && !self.compatible(&val_ty, &elem_ty) {
+                    let (want, got) = self.describe_type_pair(&elem_ty, &val_ty);
                     self.error(format!(
                         "Argument 1 of 'List.prepend': expected {}, got {}",
-                        elem_ty.display(),
-                        val_ty.display()
+                        want, got
                     ));
                 }
                 Some(Type::List(Box::new(elem_ty)))
@@ -796,14 +742,15 @@ impl TypeChecker {
                             arg_types.iter().zip(sig.params.iter()).enumerate()
                         {
                             if !tc.match_with(arg_ty, param_ty, &mut subst) {
+                                let (want, got) = tc.describe_type_pair(param_ty, arg_ty);
                                 tc.error_at_line(
                                     err_line,
                                     format!(
                                         "Argument {} of '{}': expected {}, got {}",
                                         i + 1,
                                         display_name,
-                                        display_type_for_expected(param_ty),
-                                        arg_ty.display()
+                                        want,
+                                        got
                                     ),
                                 );
                             }
@@ -1033,13 +980,12 @@ impl TypeChecker {
                                 && !matches!(actual_ctx, Type::Invalid)
                                 && !self.compatible(actual_ctx, expected_ctx)
                             {
+                                let (want, got) = self.describe_type_pair(expected_ctx, actual_ctx);
                                 self.error_at_line(
                                     err_line,
                                     format!(
                                         "Argument 2 of '{}': context type {} must match handler's first parameter type {}",
-                                        display_name,
-                                        actual_ctx.display(),
-                                        expected_ctx.display(),
+                                        display_name, got, want,
                                     ),
                                 );
                             }
@@ -1243,10 +1189,11 @@ impl TypeChecker {
                                     Some(Type::Result(_, fn_err_ty)) => {
                                         let mut subst = HashMap::new();
                                         if !self.match_with(&err_ty, &fn_err_ty, &mut subst) {
+                                            let (got, want) =
+                                                self.describe_type_pair(&err_ty, &fn_err_ty);
                                             self.error_at_line(prop_line, format!(
                                                 "Independent product '?!': Err type {} is incompatible with function's Err type {}",
-                                                err_ty.display(),
-                                                fn_err_ty.display()
+                                                got, want
                                             ));
                                         }
                                     }
@@ -1310,10 +1257,10 @@ impl TypeChecker {
                     } else if !matches!(current_key, Type::Invalid)
                         && !self.compatible(&current_key, &key_ty)
                     {
+                        let (first, next) = self.describe_type_pair(&key_ty, &current_key);
                         self.error(format!(
                             "Map literal contains incompatible key types: {} vs {}",
-                            key_ty.display(),
-                            current_key.display()
+                            first, next
                         ));
                     }
 
@@ -1322,10 +1269,10 @@ impl TypeChecker {
                     } else if !matches!(current_val, Type::Invalid)
                         && !self.compatible(&current_val, &val_ty)
                     {
+                        let (first, next) = self.describe_type_pair(&val_ty, &current_val);
                         self.error(format!(
                             "Map literal contains incompatible value types: {} vs {}",
-                            val_ty.display(),
-                            current_val.display()
+                            first, next
                         ));
                     }
                 }
@@ -1372,10 +1319,10 @@ impl TypeChecker {
                             && !matches!(first_ty, Type::Invalid)
                             && !matches!(arm_ty, Type::Invalid)
                         {
+                            let (first, next) = self.describe_type_pair(&first_ty, &arm_ty);
                             self.error(format!(
                                 "Match arms return incompatible types: {} vs {}",
-                                first_ty.display(),
-                                arm_ty.display()
+                                first, next
                             ));
                         }
                     }
@@ -1401,10 +1348,10 @@ impl TypeChecker {
                                 let err_matches = matches!(err_ty.as_ref(), Type::Var(_))
                                     || self.match_with(&err_ty, &fn_err_ty, &mut subst);
                                 if !err_matches {
+                                    let (got, want) = self.describe_type_pair(&err_ty, &fn_err_ty);
                                     self.error_at_line(prop_line, format!(
                                         "Operator '?': Err type {} is incompatible with function's Err type {}",
-                                        err_ty.display(),
-                                        fn_err_ty.display()
+                                        got, want
                                     ));
                                 }
                             }

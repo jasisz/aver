@@ -159,41 +159,63 @@ impl Type {
     }
 
     pub fn display(&self) -> String {
+        self.display_with(&|_| None)
+    }
+
+    /// [`Type::display`] with a caller-supplied spelling for resolved
+    /// `Named` references. `rename` receives the [`TypeId`] and may
+    /// return a name to print in place of the source spelling —
+    /// diagnostics that show two types at once use it to qualify each
+    /// side with its declaring module when the source spellings
+    /// collide. Returning `None` keeps the source spelling, so
+    /// `display()` is this function with a rename that never fires.
+    pub fn display_with<F>(&self, rename: &F) -> String
+    where
+        F: Fn(TypeId) -> Option<String>,
+    {
         match self {
             Type::Int => "Int".to_string(),
             Type::Float => "Float".to_string(),
             Type::Str => "String".to_string(),
             Type::Bool => "Bool".to_string(),
             Type::Unit => "Unit".to_string(),
-            Type::Result(ok, err) => format!("Result<{}, {}>", ok.display(), err.display()),
-            Type::Option(inner) => format!("Option<{}>", inner.display()),
-            Type::List(inner) => format!("List<{}>", inner.display()),
+            Type::Result(ok, err) => format!(
+                "Result<{}, {}>",
+                ok.display_with(rename),
+                err.display_with(rename)
+            ),
+            Type::Option(inner) => format!("Option<{}>", inner.display_with(rename)),
+            Type::List(inner) => format!("List<{}>", inner.display_with(rename)),
             Type::Tuple(items) => format!(
                 "Tuple<{}>",
                 items
                     .iter()
-                    .map(Type::display)
+                    .map(|item| item.display_with(rename))
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Type::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
-            Type::Vector(inner) => format!("Vector<{}>", inner.display()),
+            Type::Map(key, value) => format!(
+                "Map<{}, {}>",
+                key.display_with(rename),
+                value.display_with(rename)
+            ),
+            Type::Vector(inner) => format!("Vector<{}>", inner.display_with(rename)),
             Type::Fn(params, ret, effects) => {
-                let ps: Vec<String> = params.iter().map(|p| p.display()).collect();
+                let ps: Vec<String> = params.iter().map(|p| p.display_with(rename)).collect();
                 if effects.is_empty() {
-                    format!("Fn({}) -> {}", ps.join(", "), ret.display())
+                    format!("Fn({}) -> {}", ps.join(", "), ret.display_with(rename))
                 } else {
                     format!(
                         "Fn({}) -> {} ! [{}]",
                         ps.join(", "),
-                        ret.display(),
+                        ret.display_with(rename),
                         effects.join(", ")
                     )
                 }
             }
             Type::Var(name) => name.clone(),
             Type::Invalid => "Invalid".to_string(),
-            Type::Named { name, .. } => name.clone(),
+            Type::Named { id, name } => id.and_then(rename).unwrap_or_else(|| name.clone()),
         }
     }
 }

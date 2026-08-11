@@ -978,6 +978,44 @@ impl TypeChecker {
         }
     }
 
+    /// Render the two types of a "expected X, got Y" diagnostic.
+    ///
+    /// Aver lets a module declare a type whose bare name a dependency
+    /// also declares; the two are distinct types and the reference
+    /// resolves to the local one. Both then print as the same source
+    /// spelling, so the plain message reads `expects Thing, got Thing`
+    /// and looks like the compiler contradicting itself. When the two
+    /// spellings collide but the identities differ, qualify each side
+    /// with the module that declares it.
+    ///
+    /// When the spellings already differ, the pair is returned exactly
+    /// as [`Type::display`] renders it — every existing message keeps
+    /// its wording.
+    pub(crate) fn describe_type_pair(&self, expected: &Type, actual: &Type) -> (String, String) {
+        let plain = (expected.display(), actual.display());
+        if plain.0 != plain.1 {
+            return plain;
+        }
+        let rename = |id: TypeId| self.declaring_module_name(id);
+        let qualified = (expected.display_with(&rename), actual.display_with(&rename));
+        if qualified.0 == qualified.1 {
+            return plain;
+        }
+        qualified
+    }
+
+    /// `Module.Type` for a resolved type reference, or `None` when no
+    /// declaring module can be named (an entry-scope type in a file
+    /// with no `module` declaration).
+    fn declaring_module_name(&self, id: TypeId) -> Option<String> {
+        let entry = self.symbol_table.types.get(id.0 as usize)?;
+        let scope = entry
+            .key
+            .scope_str()
+            .or(self.current_module_prefix.as_deref())?;
+        Some(crate::visibility::qualified_name(scope, &entry.key.name))
+    }
+
     // -- Unified lookups ---------------------------------------------------
 
     fn find_fn_sig(&self, key: &str) -> Option<&FnSig> {

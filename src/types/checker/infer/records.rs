@@ -60,12 +60,10 @@ impl TypeChecker {
 
             if let Some(expected_ty) = expected.get(field_name) {
                 if !self.compatible(&actual_ty, expected_ty) {
+                    let (want, got) = self.describe_type_pair(expected_ty, &actual_ty);
                     self.error(format!(
                         "Record '{}' field '{}' expects {}, got {}",
-                        type_name,
-                        field_name,
-                        expected_ty.display(),
-                        actual_ty.display()
+                        type_name, field_name, want, got
                     ));
                 }
             } else {
@@ -115,11 +113,10 @@ impl TypeChecker {
         // the same form `infer_type` stamps onto the base expression.
         let expected_ty = self.canonicalize_named(Type::named(type_name.to_string()));
         if !self.compatible(&base_ty, &expected_ty) {
+            let (want, got) = self.describe_type_pair(&expected_ty, &base_ty);
             self.error(format!(
                 "{}.update: base has type {}, expected {}",
-                type_name,
-                base_ty.display(),
-                type_name
+                type_name, got, want
             ));
         }
 
@@ -140,12 +137,10 @@ impl TypeChecker {
             }
             if let Some(expected_ty) = expected_fields.get(field_name) {
                 if !self.compatible(&actual_ty, expected_ty) {
+                    let (want, got) = self.describe_type_pair(expected_ty, &actual_ty);
                     self.error(format!(
                         "Record '{}' field '{}' expects {}, got {}",
-                        type_name,
-                        field_name,
-                        expected_ty.display(),
-                        actual_ty.display()
+                        type_name, field_name, want, got
                     ));
                 }
             } else {

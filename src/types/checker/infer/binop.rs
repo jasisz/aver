@@ -11,10 +11,10 @@ impl TypeChecker {
                     || (matches!(lt, Type::Float) && matches!(rt, Type::Float))
                     || (matches!(lt, Type::Str) && matches!(rt, Type::Str));
                 if !ok {
+                    let (left, right) = self.describe_type_pair(lt, rt);
                     self.error_at_line(line, format!(
                         "Operator '+' requires matching types (Int+Int, Float+Float, or String+String), got {} and {}",
-                        lt.display(),
-                        rt.display()
+                        left, right
                     ));
                 }
             }
@@ -42,21 +42,21 @@ impl TypeChecker {
                 let ok = (matches!(lt, Type::Int) && matches!(rt, Type::Int))
                     || (matches!(lt, Type::Float) && matches!(rt, Type::Float));
                 if !ok {
+                    let (left, right) = self.describe_type_pair(lt, rt);
                     self.error_at_line(line, format!(
                         "Arithmetic operator requires matching numeric types (Int+Int or Float+Float), got {} and {}",
-                        lt.display(),
-                        rt.display()
+                        left, right
                     ));
                 }
             }
             BinOp::Eq | BinOp::Neq => {
                 if !self.compatible(lt, rt) && !self.compatible(rt, lt) {
+                    let (left, right) = self.describe_type_pair(lt, rt);
                     self.error_at_line(
                         line,
                         format!(
                             "Equality operator requires same types, got {} and {}",
-                            lt.display(),
-                            rt.display()
+                            left, right
                         ),
                     );
                 }
@@ -66,12 +66,12 @@ impl TypeChecker {
                     || (matches!(lt, Type::Float) && matches!(rt, Type::Float))
                     || (matches!(lt, Type::Str) && matches!(rt, Type::Str));
                 if !ok {
+                    let (left, right) = self.describe_type_pair(lt, rt);
                     self.error_at_line(
                         line,
                         format!(
                             "Comparison operator requires matching types, got {} and {}",
-                            lt.display(),
-                            rt.display()
+                            left, right
                         ),
                     );
                 }

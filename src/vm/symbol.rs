@@ -202,6 +202,11 @@ impl VmSymbolTable {
         let info = &mut self.symbols[symbol_id as usize];
         match info.kind {
             Some(VmSymbolKind::VariantCtor(existing)) => {
+                // Callers key `name` by the declaring scope
+                // (`Module.Type.Variant`, bare `Type.Variant` for the
+                // entry), and a scope may not declare one type name
+                // twice, so a re-registration is always the same
+                // constructor.
                 debug_assert_eq!(existing, ctor);
             }
             None => info.kind = Some(VmSymbolKind::VariantCtor(ctor)),

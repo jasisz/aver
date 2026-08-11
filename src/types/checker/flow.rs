@@ -151,12 +151,11 @@ impl TypeChecker {
                     col: 0,
                     label: format!("returns {}", last_type.display()),
                 });
+                let (got, want) = self.describe_type_pair(&last_type, &declared_ret);
                 self.errors.push(TypeError {
                     message: format!(
                         "Function '{}': body returns {} but declared return type is {}",
-                        f.name,
-                        last_type.display(),
-                        declared_ret.display()
+                        f.name, got, want
                     ),
                     line: f.line,
                     col: 0,
@@ -225,9 +224,11 @@ impl TypeChecker {
                                         self.report_ambiguous_named(&annotated, expr.line, &ctx);
                                         self.reject_fn_in_type(&annotated, false, expr.line, &ctx);
                                         if !self.compatible(&inferred, &annotated) {
+                                            let (got, want) =
+                                                self.describe_type_pair(&inferred, &annotated);
                                             self.error(format!(
                                                 "Binding '{}': expression has type {}, annotation says {}",
-                                                name, inferred.display(), annotated.display()
+                                                name, got, want
                                             ));
                                         }
                                         annotated
@@ -457,6 +458,7 @@ impl TypeChecker {
                             for v in vals {
                                 let actual = self.infer_type(v);
                                 if !self.compatible(&actual, &expected) {
+                                    let (want, got) = self.describe_type_pair(&expected, &actual);
                                     self.error_at_line(
                                         v.line,
                                         format!(
@@ -465,8 +467,8 @@ impl TypeChecker {
                                              generative effects take a leading (BranchPath, Int).",
                                             name = given.name,
                                             effect = given.type_name,
-                                            exp = expected.display(),
-                                            act = actual.display(),
+                                            exp = want,
+                                            act = got,
                                         ),
                                     );
                                 }
@@ -604,6 +606,7 @@ impl TypeChecker {
                         && !self.compatible(&left_ty, &right_ty)
                         && !self.compatible(&right_ty, &left_ty)
                     {
+                        let (left, right) = self.describe_type_pair(&left_ty, &right_ty);
                         self.error_at_line(
                             case_line,
                             format!(
@@ -611,8 +614,8 @@ impl TypeChecker {
                                 vb.fn_name,
                                 law.name,
                                 idx + 1,
-                                left_ty.display(),
-                                right_ty.display()
+                                left,
+                                right
                             ),
                         );
                     }
@@ -689,9 +692,11 @@ impl TypeChecker {
                                     self.report_ambiguous_named(&annotated, expr.line, &ctx);
                                     self.reject_fn_in_type(&annotated, false, expr.line, &ctx);
                                     if !self.compatible(&inferred, &annotated) {
+                                        let (got, want) =
+                                            self.describe_type_pair(&inferred, &annotated);
                                         self.error(format!(
                                             "Binding '{}': expression has type {}, annotation says {}",
-                                            name, inferred.display(), annotated.display()
+                                            name, got, want
                                         ));
                                     }
                                     annotated
