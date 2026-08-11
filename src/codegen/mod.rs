@@ -291,6 +291,11 @@ pub struct CodegenContext {
     /// Empty by default. Set with [`Self::with_module_scope`] in a
     /// scoped manner.
     pub current_module_scope: std::cell::RefCell<Option<String>>,
+    /// Whether the Lean emitter is currently rendering a function body inside
+    /// a `do` block. This scopes `?` emission: nested error propagation uses a
+    /// monadic bind only where Lean has a surrounding action to lift it into,
+    /// while verify cases and law statements keep their non-`do` fallback.
+    pub lean_do_block: std::cell::Cell<bool>,
     /// Per-dep resolved fn defs, parallel to `modules`.
     ///
     /// **Compatibility projection of `resolved_program.modules[i].fn_defs`**
@@ -687,6 +692,7 @@ pub fn build_context(
         resolved_fn_defs,
         resolved_module_fn_defs,
         current_module_scope: std::cell::RefCell::new(None),
+        lean_do_block: std::cell::Cell::new(false),
         program_shape,
         resolved_program,
         mir_program,
@@ -717,6 +723,14 @@ impl CodegenContext {
             .replace(scope.map(|s| s.to_string()));
         let out = f();
         *self.current_module_scope.borrow_mut() = prev;
+        out
+    }
+
+    /// Set the Lean `do`-block emission mode for the duration of `f`.
+    pub fn with_lean_do_block<R>(&self, on: bool, f: impl FnOnce() -> R) -> R {
+        let prev = self.lean_do_block.replace(on);
+        let out = f();
+        self.lean_do_block.set(prev);
         out
     }
 

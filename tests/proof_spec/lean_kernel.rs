@@ -1,6 +1,137 @@
 use super::*;
 
 #[test]
+fn proof_lean_nested_question_mark_agrees_with_bound_form_on_error_path() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping nested question-mark test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-nested-question-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        r#"module NestedQuestion
+    intent = "Exercise error propagation in every nested expression position."
+    effects []
+
+fn addOne(x: Int) -> Int
+    x + 1
+
+fn divL(n: Int, d: Int) -> Result<Int, String>
+    ? "Divide or return the left-side error."
+    match d == 0
+        true -> Result.Err("left")
+        false -> Result.Ok(Int.div(n, d)?)
+
+fn divR(n: Int, d: Int) -> Result<Int, String>
+    ? "Divide or return the right-side error."
+    match d == 0
+        true -> Result.Err("right")
+        false -> Result.Ok(Int.div(n, d)?)
+
+fn boundForm(n: Int, d: Int) -> Result<Int, String>
+    ? "Propagate a division error from a binding."
+    q = Int.div(n, d)?
+    Result.Ok(addOne(q))
+
+fn nestedArg(n: Int, d: Int) -> Result<Int, String>
+    ? "Propagate a division error from a call argument."
+    Result.Ok(addOne(Int.div(n, d)?))
+
+fn twoNested(n: Int, d: Int, e: Int) -> Result<Int, String>
+    ? "Propagate the first error from two operands."
+    Result.Ok(divL(n, d)? + divR(n, e)?)
+
+fn inInterp(n: Int, d: Int) -> Result<String, String>
+    ? "Propagate an error from string interpolation."
+    Result.Ok("q={divL(n, d)?}")
+
+fn inBinding(n: Int, d: Int) -> Result<Int, String>
+    ? "Propagate an error nested in a binding expression."
+    q = divL(n, d)? + 1
+    Result.Ok(q)
+
+fn scalarArm(n: Int, d: Int, b: Bool) -> Result<Int, String>
+    ? "Propagate an error from an integer-valued match arm."
+    x = match b
+        true -> divL(n, d)?
+        false -> 0
+    Result.Ok(x + 1)
+
+verify boundForm
+    boundForm(10, 2) => Result.Ok(6)
+    boundForm(10, 0) => Result.Err("division by zero")
+
+verify nestedArg
+    nestedArg(10, 2) => Result.Ok(6)
+    nestedArg(10, 0) => Result.Err("division by zero")
+
+verify twoNested
+    twoNested(10, 2, 5) => Result.Ok(7)
+    twoNested(10, 0, 0) => Result.Err("left")
+    twoNested(10, 5, 0) => Result.Err("right")
+
+verify inInterp
+    inInterp(10, 2) => Result.Ok("q=5")
+    inInterp(10, 0) => Result.Err("left")
+
+verify inBinding
+    inBinding(10, 2) => Result.Ok(6)
+    inBinding(10, 0) => Result.Err("left")
+
+verify scalarArm
+    scalarArm(10, 2, true) => Result.Ok(6)
+    scalarArm(10, 0, true) => Result.Err("left")
+    scalarArm(10, 0, false) => Result.Ok(1)
+"#,
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-nested-question-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean =
+        std::fs::read_to_string(out.join("NestedQuestion.lean")).expect("read NestedQuestion.lean");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|line| {
+            std::str::from_utf8(line)
+                .ok()
+                .filter(|text| text.starts_with('{'))
+        })
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["build_errors"].as_u64(),
+        ),
+        (Some(true), Some(0)),
+        "nested `?` error paths must agree with the bound form in Lean:\n{}",
+        format_output(&run)
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "function-body `?` must use short-circuiting binds:\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_peano_lift_nat_arith_kernel_clean() {
     // Proof-only Peano representation lift: a canonical `type Nat { Z; S(Nat) }`
     // is emitted as Lean's builtin `Nat` (no `inductive`, `Z`→`0`, `S(x)`→`x+1`,

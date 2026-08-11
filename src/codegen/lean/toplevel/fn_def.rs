@@ -548,9 +548,11 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
 fn emit_fn_body_result_do(body: &FnBody, ctx: &CodegenContext) -> String {
     let stmts = body.stmts();
     let mut lines = vec!["  do".to_string()];
-    for (i, stmt) in stmts.iter().enumerate() {
-        lines.push(emit_do_stmt(stmt, ctx, i == stmts.len() - 1));
-    }
+    ctx.with_lean_do_block(true, || {
+        for (i, stmt) in stmts.iter().enumerate() {
+            lines.push(emit_do_stmt(stmt, ctx, i == stmts.len() - 1));
+        }
+    });
     lines.join("\n")
 }
 

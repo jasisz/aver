@@ -59,6 +59,7 @@ fn empty_ctx() -> CodegenContext {
         resolved_fn_defs: Vec::new(),
         resolved_module_fn_defs: Vec::new(),
         current_module_scope: std::cell::RefCell::new(None),
+        lean_do_block: std::cell::Cell::new(false),
         resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         program_shape: None,
         mir_program: None,
@@ -144,6 +145,106 @@ fn generated_lean_file(out: &crate::codegen::ProjectOutput) -> String {
         })
         .collect::<Vec<&str>>()
         .join("\n")
+}
+
+#[test]
+fn nested_error_prop_lowers_to_monadic_bind_not_with_default() {
+    let mut ctx = ctx_from_source(
+        r#"
+module Nested
+    effects []
+
+fn addOne(x: Int) -> Int
+    x + 1
+
+fn boundForm(n: Int, d: Int) -> Result<Int, String>
+    ? "Propagate division errors before adding one."
+    q = Int.div(n, d)?
+    Result.Ok(addOne(q))
+
+fn nestedArg(n: Int, d: Int) -> Result<Int, String>
+    ? "Propagate division errors from a nested argument."
+    Result.Ok(addOne(Int.div(n, d)?))
+"#,
+        "Nested",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    let nested_arg = lean
+        .split_once("def nestedArg")
+        .map(|(_, body)| body)
+        .expect("nestedArg definition should be emitted");
+
+    assert!(
+        nested_arg.contains("(<- "),
+        "nested `?` must lower to a monadic bind:\n{lean}"
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "function-body `?` must not swallow errors:\n{lean}"
+    );
+    assert!(
+        lean.contains("| .ok q =>")
+            && lean.contains("| .error __qm_err_0 => Except.error __qm_err_0"),
+        "statement-level `?` lowering must retain its short-circuiting match:\n{lean}"
+    );
+}
+
+#[test]
+fn nested_error_prop_in_match_arm_monadifies_the_branch() {
+    let mut ctx = ctx_from_source(
+        r#"
+module NestedMatch
+    effects []
+
+fn divL(n: Int, d: Int) -> Result<Int, String>
+    ? "Return a labeled error for a zero divisor."
+    match d == 0
+        true -> Result.Err("left")
+        false -> Result.Ok(Int.div(n, d)?)
+"#,
+        "NestedMatch",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(
+        lean.contains("(<- (do"),
+        "a `?` inside a match arm needs a nested monadic action:\n{lean}"
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "match-arm `?` must not swallow errors:\n{lean}"
+    );
+}
+
+#[test]
+fn error_prop_in_verify_case_keeps_with_default_lowering() {
+    let mut ctx = ctx_from_source(
+        r#"
+module VerifyFallback
+    effects []
+
+fn addOne(x: Int) -> Int
+    x + 1
+
+fn quotient(n: Int, d: Int) -> Result<Int, String>
+    ? "Divide two integers."
+    Int.div(n, d)
+
+verify quotient
+    addOne(quotient(10, 2)?) => 6
+"#,
+        "VerifyFallback",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    assert!(
+        lean.lines()
+            .any(|line| line.starts_with("example :") && line.contains(".withDefault default")),
+        "verify-case emission must retain its non-`do` fallback:\n{lean}"
+    );
 }
 
 fn empty_ctx_with_verify_case() -> CodegenContext {
