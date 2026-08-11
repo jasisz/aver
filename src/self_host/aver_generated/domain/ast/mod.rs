@@ -3042,6 +3042,136 @@ pub fn userCtorTagStep(acc: aver_rt::AverInt, code: aver_rt::AverInt) -> aver_rt
         .unwrap()
 }
 
+/// One spelling per constructor: drop the declaring-module qualifier from a Module.Type.Variant reference, so a variant a dependency builds as Shade.Dark and its caller writes as Palette.Shade.Dark is the same constructor.
+#[inline(always)]
+pub fn canonicalCtorName(name: AverStr) -> AverStr {
+    crate::cancel_checkpoint();
+    let total = aver_rt::AverInt::from_i64(name.chars().count() as i64);
+    crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot(
+        name.clone(),
+        total.clone(),
+        crate::aver_generated::domain::ast::lastDotAtOrBefore(
+            name,
+            total.sub(&aver_rt::AverInt::from_i64(1)),
+        ),
+    )
+}
+
+/// A name with at most one dot is already the shortest spelling it has.
+#[inline(always)]
+pub fn canonicalCtorNameAtLastDot(
+    name: AverStr,
+    total: aver_rt::AverInt,
+    lastDot: aver_rt::AverInt,
+) -> AverStr {
+    crate::cancel_checkpoint();
+    if (lastDot > aver_rt::AverInt::from_i64(0)) {
+        crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots(
+            name.clone(),
+            total,
+            lastDot.clone(),
+            crate::aver_generated::domain::ast::lastDotAtOrBefore(
+                name,
+                lastDot.sub(&aver_rt::AverInt::from_i64(1)),
+            ),
+        )
+    } else {
+        name
+    }
+}
+
+/// Keep only the trailing pair when a module qualifier precedes a Type.Variant reference; leave every other dotted name whole.
+#[inline(always)]
+pub fn canonicalCtorNameAtBothDots(
+    name: AverStr,
+    total: aver_rt::AverInt,
+    lastDot: aver_rt::AverInt,
+    prevDot: aver_rt::AverInt,
+) -> AverStr {
+    crate::cancel_checkpoint();
+    if (prevDot < aver_rt::AverInt::from_i64(0)) {
+        name
+    } else {
+        if crate::aver_generated::domain::ast::isTypeVariantTail(
+            (aver_rt::string_slice(
+                &name,
+                crate::aver_int_clamp_i64(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                crate::aver_int_clamp_i64(&lastDot),
+            ))
+            .into_aver(),
+            (aver_rt::string_slice(
+                &name,
+                crate::aver_int_clamp_i64(&lastDot.add(&aver_rt::AverInt::from_i64(1))),
+                crate::aver_int_clamp_i64(&total),
+            ))
+            .into_aver(),
+        ) {
+            (aver_rt::string_slice(
+                &name,
+                crate::aver_int_clamp_i64(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                crate::aver_int_clamp_i64(&total),
+            ))
+            .into_aver()
+        } else {
+            name
+        }
+    }
+}
+
+/// Whether the trailing two segments spell Type.Variant. Both begin with an uppercase letter, the same rule the surface parser applies to constructor patterns.
+#[inline(always)]
+pub fn isTypeVariantTail(typeName: AverStr, variantName: AverStr) -> bool {
+    crate::cancel_checkpoint();
+    (crate::aver_generated::domain::ast::beginsUppercase(typeName)
+        && crate::aver_generated::domain::ast::beginsUppercase(variantName))
+}
+
+/// Whether a dotted-name segment begins with an uppercase letter.
+#[inline(always)]
+pub fn beginsUppercase(segment: AverStr) -> bool {
+    crate::cancel_checkpoint();
+    match ((aver_rt::AverInt::from_i64(0))
+        .to_usize()
+        .and_then(|__i| segment.chars().nth(__i).map(|c| c.to_string())))
+    .into_aver()
+    {
+        Some(c) => (c != (c.to_lowercase()).into_aver()),
+        None => false,
+    }
+}
+
+/// Index of the last '.' at or before pos, or -1 when that prefix holds none.
+#[inline(always)]
+pub fn lastDotAtOrBefore(mut name: AverStr, mut pos: aver_rt::AverInt) -> aver_rt::AverInt {
+    loop {
+        crate::cancel_checkpoint();
+        if (pos < aver_rt::AverInt::from_i64(0)) {
+            return aver_rt::AverInt::from_i64(-1);
+        } else {
+            match ((pos)
+                .to_usize()
+                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
+            .into_aver()
+            {
+                Some(c) => {
+                    if (c == AverStr::from(".")) {
+                        return pos;
+                    } else {
+                        {
+                            let __tco1 = pos.sub(&aver_rt::AverInt::from_i64(1));
+                            pos = __tco1;
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return aver_rt::AverInt::from_i64(-1);
+                }
+            }
+        }
+    }
+}
+
 /// Map builtin function names to integer IDs for fast dispatch.
 #[inline(always)]
 pub fn builtinNameToId(name: AverStr) -> Option<aver_rt::AverInt> {

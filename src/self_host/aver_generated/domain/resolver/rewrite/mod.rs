@@ -317,9 +317,14 @@ pub fn rewriteInternalExprAfterArith(expr: &Expr) -> Expr {
                 field,
             )
         }
+        crate::aver_generated::domain::ast::Expr::ExprVar(name) => {
+            crate::aver_generated::domain::ast::Expr::ExprVar(
+                crate::aver_generated::domain::ast::canonicalCtorName(name),
+            )
+        }
         crate::aver_generated::domain::ast::Expr::ExprCall(name, args) => {
             crate::aver_generated::domain::ast::Expr::ExprCall(
-                name,
+                crate::aver_generated::domain::ast::canonicalCtorName(name),
                 crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
                     args,
                     aver_rt::AverList::empty(),
@@ -430,11 +435,12 @@ pub fn rewritePattern(pat: &Pattern) -> Pattern {
     }
 }
 
-/// Convert PatConstructor to PatConstructorId with stable tag and full constructor name.
+/// Convert PatConstructor to PatConstructorId with stable tag and canonical constructor name, so a pattern that names the declaring module matches values the module itself built.
 pub fn rewritePatConstructor(name: AverStr, bindings: &aver_rt::AverList<AverStr>) -> Pattern {
     crate::cancel_checkpoint();
-    let tag = crate::aver_generated::domain::ast::ctorNameToTag(name.clone());
-    crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, name, bindings.clone())
+    let canonical = crate::aver_generated::domain::ast::canonicalCtorName(name);
+    let tag = crate::aver_generated::domain::ast::ctorNameToTag(canonical.clone());
+    crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, canonical, bindings.clone())
 }
 
 /// Rewrite a list of patterns.
