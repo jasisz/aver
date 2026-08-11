@@ -8,20 +8,23 @@
 //! Type identity follows two rules:
 //!
 //! - **Non-colliding types** (a bare name declared by exactly one dep
-//!   module): the dep `TypeDef.name` stays bare. Entry-side qualified
-//!   references like `record Wrapper { status: TmpReviewB.Status }` get
-//!   their module prefix stripped to the bare form, matching the registry's
-//!   bare key. Stamped expression types from the pre-flatten typechecker
-//!   also use bare names and resolve correctly.
+//!   module and not by the entry module): the dep `TypeDef.name` stays
+//!   bare. Entry-side qualified references like
+//!   `record Wrapper { status: TmpReviewB.Status }` get their module prefix
+//!   stripped to the bare form, matching the registry's bare key. Stamped
+//!   expression types from the pre-flatten typechecker also use bare names
+//!   and resolve correctly.
 //! - **Colliding types** (same bare name declared by two or more dep
-//!   modules — see #180 Phase 6 PR 3): dep `TypeDef.name` gets renamed to
-//!   the canonical `"Prefix.Name"` form (`Left.Box`, `Right.Box`) so the
+//!   modules — see #180 Phase 6 PR 3 — or by a dep module and the entry
+//!   module, where the language rule is that the local declaration shadows
+//!   the dependency's): dep `TypeDef.name` gets renamed to the canonical
+//!   `"Prefix.Name"` form (`Left.Box`, `Right.Box`, `Palette.Colour`) so the
 //!   wasm-gc `TypeRegistry` keys them into distinct slots. Dep-internal
 //!   bare references to the colliding own type (in `TypeDef` field types,
 //!   `FnDef` signatures, body `Constructor` / `RecordCreate` / `RecordUpdate`
 //!   / pattern heads, let-binding annotations) get rewritten to canonical
-//!   so the post-flatten resolver + registry agree. Entry-side qualified
-//!   references stay verbatim (no strip) for the same reason.
+//!   so the post-flatten resolver + registry agree. Qualified references
+//!   from other modules stay verbatim (no strip) for the same reason.
 //!
 //! Treating collision as the trigger keeps the migration narrow: the legacy
 //! strip path and bare-name lookups continue to work for every existing
@@ -80,23 +83,31 @@ pub fn flatten_multimodule(
                 .push(dep.prefix.clone());
         }
     }
-    let colliding_bare_names: HashSet<String> = bare_owners
-        .iter()
-        .filter(|(_, owners)| owners.len() > 1)
-        .map(|(bare, _)| bare.clone())
-        .collect();
 
     // Entry-declared bare type names, collected BEFORE dep typedefs are
-    // appended: a dep bare name shadowed by an entry type must not get a
-    // qualified alias (two post-flatten `TypeDef`s would share the bare
-    // key, so the alias target would be ambiguous).
-    let entry_bare_names: HashSet<&str> = items
+    // appended: the entry module owns the bare spelling of any name it
+    // declares, so a dep type of that name is just as ambiguous as a
+    // dep-dep twin and must be canonicalised too.
+    let entry_bare_names: HashSet<String> = items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::TypeDef(td) => Some(type_def_name(td)),
+            TopLevel::TypeDef(td) => Some(type_def_name(td).to_string()),
             _ => None,
         })
         .collect();
+
+    // A bare name is ambiguous when two or more deps declare it, OR when
+    // the entry module declares it as well: a local declaration shadows a
+    // dependency's same-named one, so the two are distinct types that need
+    // distinct registry slots. The entry keeps the bare spelling (matching
+    // the canonical key the symbol table hands `named_type_registry_key`)
+    // and the dep declaration is renamed to `Prefix.Name`.
+    let colliding_bare_names: HashSet<String> = bare_owners
+        .iter()
+        .filter(|(bare, owners)| owners.len() > 1 || entry_bare_names.contains(bare.as_str()))
+        .map(|(bare, _)| bare.clone())
+        .collect();
+
     let mut type_aliases: HashMap<String, String> = HashMap::new();
     for (bare, owners) in &bare_owners {
         if owners.len() == 1 && !entry_bare_names.contains(bare.as_str()) {
@@ -119,13 +130,21 @@ pub fn flatten_multimodule(
     let empty_own_colliding: HashSet<String> = HashSet::new();
     let empty_set: HashSet<String> = HashSet::new();
 
+    let entry_ctx = RewriteCtx {
+        prefixes: &prefixes,
+        same_module_prefix: None,
+        same_module_fns: &empty_set,
+        own_colliding: &empty_own_colliding,
+        dep_prefix: "",
+        colliding_bare_names: &colliding_bare_names,
+    };
     for item in items.iter_mut() {
         match item {
             TopLevel::FnDef(fd) => {
                 rewrite_fn_signature(fd, &qualified_type_names, &colliding_bare_names);
                 let body_arc = std::sync::Arc::make_mut(&mut fd.body);
                 let FnBody::Block(stmts) = body_arc;
-                rewrite_stmts(stmts, &prefixes, None, &empty_set, &empty_own_colliding, "");
+                rewrite_stmts(stmts, &entry_ctx);
             }
             TopLevel::TypeDef(td) => {
                 rewrite_type_def(td, &qualified_type_names, &colliding_bare_names);
@@ -153,6 +172,14 @@ pub fn flatten_multimodule(
                 }
             })
             .collect();
+        let dep_ctx = RewriteCtx {
+            prefixes: &prefixes,
+            same_module_prefix: Some(&dep.prefix),
+            same_module_fns: &same_module_fns,
+            own_colliding: &own_colliding,
+            dep_prefix: &dep.prefix,
+            colliding_bare_names: &colliding_bare_names,
+        };
 
         for td in &dep.type_defs {
             let mut new_td = td.clone();
@@ -170,14 +197,7 @@ pub fn flatten_multimodule(
 
             let body_arc = std::sync::Arc::make_mut(&mut new_fd.body);
             let FnBody::Block(stmts) = body_arc;
-            rewrite_stmts(
-                stmts,
-                &prefixes,
-                Some(&dep.prefix),
-                &same_module_fns,
-                &own_colliding,
-                &dep.prefix,
-            );
+            rewrite_stmts(stmts, &dep_ctx);
 
             new_fd.name = prefixed(&dep.prefix, &fd.name);
             items.push(TopLevel::FnDef(new_fd));
@@ -364,121 +384,79 @@ fn attr_chain_to_dotted(expr: &Expr) -> Option<String> {
     }
 }
 
-fn rewrite_expr(
-    expr: &mut Expr,
-    prefixes: &HashSet<String>,
-    same_module_prefix: Option<&str>,
-    same_module_fns: &HashSet<String>,
-    own_colliding: &HashSet<String>,
-    dep_prefix: &str,
-) {
+/// Invariants for one body-rewriting traversal. `dep_prefix` /
+/// `own_colliding` are empty while the entry module's own items are
+/// walked, so the canonicalisation passes keyed on them are inert there.
+struct RewriteCtx<'a> {
+    /// Every dep module path, used to spot cross-module references.
+    prefixes: &'a HashSet<String>,
+    /// The owning dep's path while its own fn bodies are walked.
+    same_module_prefix: Option<&'a str>,
+    /// Fn names declared by the module being walked.
+    same_module_fns: &'a HashSet<String>,
+    /// Bare type names the module being walked declares that are ambiguous
+    /// program-wide, so its own references to them need canonicalising.
+    own_colliding: &'a HashSet<String>,
+    /// The owning dep's path, or `""` for the entry module.
+    dep_prefix: &'a str,
+    /// Every ambiguous bare type name in the program — a reference to one
+    /// of these through another module's path keeps the qualified spelling.
+    colliding_bare_names: &'a HashSet<String>,
+}
+
+fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
     match expr {
         Expr::FnCall(callee, args) => {
             let mut new_callee: Option<Expr> = None;
             if let Expr::Attr(parent, member) = &callee.node {
                 if let Expr::Ident(p) = &parent.node
-                    && prefixes.contains(p)
+                    && ctx.prefixes.contains(p)
                 {
                     new_callee = Some(Expr::Ident(prefixed(p, member)));
                 } else if let Some(dotted) = attr_chain_to_dotted(&callee.node) {
-                    new_callee = rewrite_dotted_module_ref(&dotted, prefixes);
+                    new_callee =
+                        rewrite_dotted_module_ref(&dotted, ctx.prefixes, ctx.colliding_bare_names);
                 }
             }
             if new_callee.is_none()
                 && let Expr::Ident(name) = &callee.node
-                && let Some(prefix) = same_module_prefix
-                && same_module_fns.contains(name)
+                && let Some(prefix) = ctx.same_module_prefix
+                && ctx.same_module_fns.contains(name)
             {
                 new_callee = Some(Expr::Ident(prefixed(prefix, name)));
             }
             if let Some(rep) = new_callee {
                 callee.node = rep;
             }
-            rewrite_expr(
-                &mut callee.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
+            rewrite_expr(&mut callee.node, ctx);
             for arg in args.iter_mut() {
-                rewrite_expr(
-                    &mut arg.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut arg.node, ctx);
             }
         }
         Expr::TailCall(boxed) => {
-            if let Some(prefix) = same_module_prefix
-                && same_module_fns.contains(&boxed.target)
+            if let Some(prefix) = ctx.same_module_prefix
+                && ctx.same_module_fns.contains(&boxed.target)
             {
                 boxed.target = prefixed(prefix, &boxed.target);
             }
             for arg in boxed.args.iter_mut() {
-                rewrite_expr(
-                    &mut arg.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut arg.node, ctx);
             }
         }
         Expr::BinOp(_, left, right) => {
-            rewrite_expr(
-                &mut left.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
-            rewrite_expr(
-                &mut right.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
+            rewrite_expr(&mut left.node, ctx);
+            rewrite_expr(&mut right.node, ctx);
         }
         Expr::Neg(inner) => {
-            rewrite_expr(
-                &mut inner.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
+            rewrite_expr(&mut inner.node, ctx);
         }
         Expr::Match { subject, arms } => {
-            rewrite_expr(
-                &mut subject.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
+            rewrite_expr(&mut subject.node, ctx);
             for arm in arms.iter_mut() {
-                if !dep_prefix.is_empty() {
-                    canonicalise_pattern(&mut arm.pattern, dep_prefix, own_colliding);
+                if !ctx.dep_prefix.is_empty() {
+                    canonicalise_pattern(&mut arm.pattern, ctx.dep_prefix, ctx.own_colliding);
                 }
-                rewrite_expr(
-                    &mut arm.body.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut arm.body.node, ctx);
             }
         }
         Expr::Attr(_, _) => {
@@ -487,54 +465,34 @@ fn rewrite_expr(
             // own-colliding canonicalisation before this would let the
             // canonicalised form be mis-matched as a cross-module access
             // and unrewritten back to bare.
-            let rewrite = attr_chain_to_dotted(expr)
-                .and_then(|dotted| rewrite_dotted_module_ref(&dotted, prefixes));
+            let rewrite = attr_chain_to_dotted(expr).and_then(|dotted| {
+                rewrite_dotted_module_ref(&dotted, ctx.prefixes, ctx.colliding_bare_names)
+            });
             if let Some(new_node) = rewrite {
                 *expr = new_node;
                 return;
             }
-            if !dep_prefix.is_empty() {
-                canonicalise_attr_head_for_own_colliding(expr, dep_prefix, own_colliding);
+            if !ctx.dep_prefix.is_empty() {
+                canonicalise_attr_head_for_own_colliding(expr, ctx.dep_prefix, ctx.own_colliding);
             }
             if let Expr::Attr(obj, _) = expr {
-                rewrite_expr(
-                    &mut obj.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut obj.node, ctx);
             }
         }
         Expr::Constructor(name, payload) => {
-            if !dep_prefix.is_empty() {
-                canonicalise_constructor_name(name, dep_prefix, own_colliding);
+            if !ctx.dep_prefix.is_empty() {
+                canonicalise_constructor_name(name, ctx.dep_prefix, ctx.own_colliding);
             }
             if let Some(payload) = payload.as_deref_mut() {
-                rewrite_expr(
-                    &mut payload.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut payload.node, ctx);
             }
         }
         Expr::RecordCreate { type_name, fields } => {
-            if !dep_prefix.is_empty() {
-                canonicalise_bare_type_name(type_name, dep_prefix, own_colliding);
+            if !ctx.dep_prefix.is_empty() {
+                canonicalise_bare_type_name(type_name, ctx.dep_prefix, ctx.own_colliding);
             }
             for (_, expr) in fields.iter_mut() {
-                rewrite_expr(
-                    &mut expr.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut expr.node, ctx);
             }
         }
         Expr::RecordUpdate {
@@ -542,81 +500,32 @@ fn rewrite_expr(
             base,
             updates,
         } => {
-            if !dep_prefix.is_empty() {
-                canonicalise_bare_type_name(type_name, dep_prefix, own_colliding);
+            if !ctx.dep_prefix.is_empty() {
+                canonicalise_bare_type_name(type_name, ctx.dep_prefix, ctx.own_colliding);
             }
-            rewrite_expr(
-                &mut base.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
+            rewrite_expr(&mut base.node, ctx);
             for (_, expr) in updates.iter_mut() {
-                rewrite_expr(
-                    &mut expr.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut expr.node, ctx);
             }
         }
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items.iter_mut() {
-                rewrite_expr(
-                    &mut item.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut item.node, ctx);
             }
         }
         Expr::MapLiteral(entries) => {
             for (key, value) in entries.iter_mut() {
-                rewrite_expr(
-                    &mut key.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
-                rewrite_expr(
-                    &mut value.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut key.node, ctx);
+                rewrite_expr(&mut value.node, ctx);
             }
         }
         Expr::ErrorProp(inner) => {
-            rewrite_expr(
-                &mut inner.node,
-                prefixes,
-                same_module_prefix,
-                same_module_fns,
-                own_colliding,
-                dep_prefix,
-            );
+            rewrite_expr(&mut inner.node, ctx);
         }
         Expr::InterpolatedStr(parts) => {
             for part in parts.iter_mut() {
                 if let crate::ast::StrPart::Parsed(inner) = part {
-                    rewrite_expr(
-                        &mut inner.node,
-                        prefixes,
-                        same_module_prefix,
-                        same_module_fns,
-                        own_colliding,
-                        dep_prefix,
-                    );
+                    rewrite_expr(&mut inner.node, ctx);
                 }
             }
         }
@@ -676,7 +585,11 @@ fn canonicalise_pattern(pat: &mut Pattern, dep_prefix: &str, own_colliding: &Has
     }
 }
 
-fn rewrite_dotted_module_ref(dotted: &str, prefixes: &HashSet<String>) -> Option<Expr> {
+fn rewrite_dotted_module_ref(
+    dotted: &str,
+    prefixes: &HashSet<String>,
+    colliding_bare_names: &HashSet<String>,
+) -> Option<Expr> {
     let segments: Vec<&str> = dotted.split('.').collect();
     if segments.len() < 2 {
         return None;
@@ -697,47 +610,32 @@ fn rewrite_dotted_module_ref(dotted: &str, prefixes: &HashSet<String>) -> Option
         0 => return None,
         1 => Expr::Ident(prefixed(&prefix_dotted, segments[split])),
         _ => {
-            let type_name = segments[split..segments.len() - 1].join("_");
+            let mut type_name = segments[split..segments.len() - 1].join("_");
+            // A colliding dep type keeps its canonical `Prefix.Name` spelling
+            // post-flatten, so the qualified reference must not collapse to
+            // the bare name — that name denotes another module's declaration.
+            if colliding_bare_names.contains(&type_name) {
+                type_name = format!("{prefix_dotted}.{type_name}");
+            }
             let last = segments[segments.len() - 1].to_string();
             Expr::Attr(Box::new(Spanned::bare(Expr::Ident(type_name))), last)
         }
     })
 }
 
-fn rewrite_stmts(
-    stmts: &mut [Stmt],
-    prefixes: &HashSet<String>,
-    same_module_prefix: Option<&str>,
-    same_module_fns: &HashSet<String>,
-    own_colliding: &HashSet<String>,
-    dep_prefix: &str,
-) {
+fn rewrite_stmts(stmts: &mut [Stmt], ctx: &RewriteCtx<'_>) {
     for stmt in stmts.iter_mut() {
         match stmt {
             Stmt::Binding(_, type_ann, expr) => {
-                if !dep_prefix.is_empty()
+                if !ctx.dep_prefix.is_empty()
                     && let Some(ty) = type_ann.as_mut()
                 {
-                    *ty = canonicalise_own_colliding(ty, dep_prefix, own_colliding);
+                    *ty = canonicalise_own_colliding(ty, ctx.dep_prefix, ctx.own_colliding);
                 }
-                rewrite_expr(
-                    &mut expr.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut expr.node, ctx);
             }
             Stmt::Expr(expr) => {
-                rewrite_expr(
-                    &mut expr.node,
-                    prefixes,
-                    same_module_prefix,
-                    same_module_fns,
-                    own_colliding,
-                    dep_prefix,
-                );
+                rewrite_expr(&mut expr.node, ctx);
             }
         }
     }
