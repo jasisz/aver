@@ -126,9 +126,10 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             if ctx.lean_do_block.get() {
                 format!("(<- {})", inner_str)
             } else {
-                // Law statements are not emitted inside `do`, so they retain
-                // the legacy fallback until their propagation semantics can be
-                // modeled separately.
+                // Reached only where the emitted position is not an action a
+                // bind could lift into — a `when` premise, a trace projection,
+                // an auto-proof strategy re-emitting a subterm. Fn bodies,
+                // verify cases and law statements all supply a `do` context.
                 format!("(({}).withDefault default)", inner_str)
             }
         }

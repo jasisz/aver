@@ -266,6 +266,97 @@ verify quotient
     );
 }
 
+#[test]
+fn error_prop_in_law_states_an_except_action_in_all_three_statements() {
+    let mut ctx = ctx_from_source(
+        r#"
+module LawStatement
+    effects []
+
+fn addOne(x: Int) -> Int
+    x + 1
+
+fn safe(n: Int) -> Result<Int, String>
+    ? "Fails for negative input."
+    match n < 0
+        true -> Result.Err("negative")
+        false -> Result.Ok(n)
+
+verify safe law shifts
+    given a: Int = 1..2
+    addOne(safe(a)?) => a + 1
+"#,
+        "LawStatement",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    // A law emits three kinds of statement, and all three must say the same
+    // thing about `?`: the quantified universal, the checked-domain
+    // conjunction, and one theorem per sample.
+    assert!(
+        lean.contains(
+            "theorem safe_law_shifts : ∀ (a : Int), \
+             (do pure (addOne (<- safe a))) = Except.ok ((a + 1))"
+        ),
+        "the universal law theorem must state an `Except` action:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "theorem safe_law_shifts_checked_domain : \
+             ((do pure (addOne (<- safe 1))) = Except.ok ((1 + 1))) ∧ \
+             ((do pure (addOne (<- safe 2))) = Except.ok ((2 + 1)))"
+        ),
+        "the checked-domain conjunction must state `Except` actions:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "theorem safe_law_shifts_sample_1 : \
+             (do pure (addOne (<- safe 1))) = Except.ok ((1 + 1))"
+        ),
+        "each sample theorem must state an `Except` action:\n{lean}"
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "law `?` must not substitute a default on the error path:\n{lean}"
+    );
+}
+
+#[test]
+fn law_without_error_prop_keeps_its_plain_statements() {
+    let mut ctx = ctx_from_source(
+        r#"
+module PlainLaw
+    effects []
+
+fn addOne(x: Int) -> Int
+    x + 1
+
+verify addOne law shifts
+    given a: Int = 1..2
+    addOne(a) => a + 1
+"#,
+        "PlainLaw",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    // The `do` context is scoped to the statements that need it: a law
+    // without `?` is neither wrapped nor lifted.
+    assert!(
+        lean.contains("theorem addOne_law_shifts : ∀ (a : Int), addOne a = (a + 1)"),
+        "a law without `?` must keep its plain universal:\n{lean}"
+    );
+    assert!(
+        lean.contains("theorem addOne_law_shifts_sample_1 : addOne 1 = (1 + 1)"),
+        "a law without `?` must keep its plain samples:\n{lean}"
+    );
+    assert!(
+        !lean.contains("do pure"),
+        "a law without `?` must not gain a `do` context:\n{lean}"
+    );
+}
+
 fn empty_ctx_with_verify_case() -> CodegenContext {
     let mut ctx = empty_ctx();
     ctx.items.push(TopLevel::Verify(VerifyBlock {

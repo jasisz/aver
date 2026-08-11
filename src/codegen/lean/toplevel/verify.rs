@@ -140,7 +140,7 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        let (left_str, propagates_error) = emit_verify_case_lhs(left, ctx);
+        let (left_str, propagates_error) = emit_statement_lhs(left, ctx);
         // Expected side: prefer the VM ground-truth literal over the source
         // RHS. A source RHS that calls a user fn (`verify f: f(x) => g(x)`)
         // routes BOTH sides through the model — vacuously true under fuel
@@ -153,14 +153,9 @@ pub fn emit_verify_block(
         let has_ground_truth = ground_truth.is_some();
         let expected_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
         // A case carrying `?` denotes an `Except` action (see
-        // `emit_verify_case_lhs`), so the expected value is lifted into the
-        // same monad. Both expected-side sources go through here, so the
-        // ground-truth literal and the source fallback stay interchangeable.
-        let right_str = if propagates_error {
-            format!("Except.ok ({})", expected_str)
-        } else {
-            expected_str
-        };
+        // `emit_statement_lhs`), so the expected value is lifted into the same
+        // monad.
+        let right_str = lift_expected(expected_str, propagates_error);
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
@@ -193,19 +188,21 @@ pub fn emit_verify_block(
     (lines.join("\n"), case_index_start + vb.cases.len())
 }
 
-/// Emit a verify case's left side, and report whether it propagates an error.
+/// Emit the left side of a verify case or a law statement, and report whether
+/// it propagates an error.
 ///
-/// A `?` in a case means "run this, and fail the case if it errors" — so the
-/// faithful Lean statement is about an `Except` action, not about a bare
-/// value. Emitting the case inside a `do` block gives `?` a monadic bind to
-/// lower into, exactly as a function body gets, and the caller lifts the
-/// expected value with `Except.ok` so both sides agree. Without the `do`
-/// context `?` falls back to `withDefault default`, which substitutes a value
-/// on the error path — a case that fails at run time can then still be true as
-/// a theorem whenever the expected value happens to be that default.
+/// A `?` means "run this, and fail if it errors" — so the faithful Lean
+/// statement is about an `Except` action, not about a bare value. Emitting the
+/// left side inside a `do` block gives `?` a monadic bind to lower into,
+/// exactly as a function body gets, and [`lift_expected`] lifts the expected
+/// value with `Except.ok` so both sides agree. Without the `do` context `?`
+/// falls back to `withDefault default`, which substitutes a value on the error
+/// path — a case that fails at run time can then still be true as a theorem
+/// whenever the expected value happens to be that default.
 ///
-/// Cases without `?` keep the plain emission, so only this one shape changes.
-fn emit_verify_case_lhs(left: &Spanned<Expr>, ctx: &CodegenContext) -> (String, bool) {
+/// Left sides without `?` keep the plain emission, so only this one shape
+/// changes.
+fn emit_statement_lhs(left: &Spanned<Expr>, ctx: &CodegenContext) -> (String, bool) {
     let scope = ctx.active_module_scope();
     let resolved = ctx.resolve_expr(left, scope.as_deref());
     if !super::expr::resolved_expr_contains_error_prop(&resolved) {
@@ -213,6 +210,18 @@ fn emit_verify_case_lhs(left: &Spanned<Expr>, ctx: &CodegenContext) -> (String, 
     }
     let body = ctx.with_lean_do_block(true, || super::expr::emit_expr(&resolved, ctx));
     (format!("(do pure ({}))", body), true)
+}
+
+/// Lift the expected side into the monad the left side runs in.
+///
+/// Both expected-side sources — the VM ground-truth literal and the source
+/// right-hand side — go through here, so they stay interchangeable.
+fn lift_expected(expected: String, propagates_error: bool) -> String {
+    if propagates_error {
+        format!("Except.ok ({})", expected)
+    } else {
+        expected
+    }
 }
 
 /// Oracle v1: emit proof-side assertions for a `verify fn trace`
@@ -414,8 +423,12 @@ fn emit_verify_law_block(
     } else {
         crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars, ctx)
     };
-    let lhs_template = emit_expr_legacy(&law_lhs, ctx, None);
-    let rhs_template = emit_expr_legacy(&law_rhs, ctx, None);
+    // A law body carrying `?` states an `Except` action on the left and is
+    // compared against `Except.ok` of the expected value — see
+    // `emit_statement_lhs`. The universal theorem, `_checked_domain` and every
+    // `_sample_N` all take this shape, so the three agree on what the law says.
+    let (lhs_template, propagates_error) = emit_statement_lhs(&law_lhs, ctx);
+    let rhs_template = lift_expected(emit_expr_legacy(&law_rhs, ctx, None), propagates_error);
     // The `when` clause references the same oracle bindings the law
     // body does, so it needs the same subtype projection. Without this
     // a `when rng(root, 0, 1, 6) >= 1` clause would emit `rng ...`
@@ -999,14 +1012,16 @@ fn emit_verify_law_block(
                     |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                     mode,
                 );
-                let left_str = emit_expr_legacy(&left_rw, ctx, None);
+                let (left_str, propagates_error) = emit_statement_lhs(&left_rw, ctx);
                 // Model-vs-ground-truth: same literalization as the per-case
                 // `_sample_N` theorems below (see the comment there); this
                 // arm is reached only for non-refinement-lifted laws, where
                 // the carrier-typed VM literal matches the statement type.
-                let right_str =
+                let right_str = lift_expected(
                     super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
-                        .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None));
+                        .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None)),
+                    propagates_error,
+                );
                 if let Some(guard) = law.sample_guards.get(idx) {
                     // Int-ascribed guard rendering — see `emit_sample_guard`
                     // (a bare numeral premise with subtraction elaborates as
@@ -1141,7 +1156,7 @@ fn emit_verify_law_block(
             |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode,
         );
-        let left_str = emit_expr_legacy(&left_rw, ctx, None);
+        let (left_str, propagates_error) = emit_statement_lhs(&left_rw, ctx);
         // Expected side from VM ground truth: the `_sample_N` theorem is
         // `impl(sample) = spec(sample)` by construction — BOTH sides through
         // the model, vacuously provable when fuel exhaustion collapses both
@@ -1154,12 +1169,15 @@ fn emit_verify_law_block(
         // (failed/skipped at `aver verify`, Float-carrying values — decimal
         // repr isn't bit-exact — or non-round-tripping shapes) fall back to
         // the source spec side.
-        let right_str = if lifted_vars.is_empty() {
-            super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
-                .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None))
-        } else {
-            emit_expr_legacy(&right_rw, ctx, None)
-        };
+        let right_str = lift_expected(
+            if lifted_vars.is_empty() {
+                super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
+                    .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None))
+            } else {
+                emit_expr_legacy(&right_rw, ctx, None)
+            },
+            propagates_error,
+        );
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
             // Int-ascribed guard rendering — see `emit_sample_guard` (a bare
             // numeral premise with subtraction elaborates as truncated `Nat`
@@ -1376,6 +1394,16 @@ pub(crate) fn law_as_lemma_statement(
         {
             return None;
         }
+    }
+    // A law body carrying `?` states an `Except` action compared against
+    // `Except.ok` (see `emit_statement_lhs`), not an equation between the
+    // values the source mentions — so it is not a rewrite rule over those
+    // values. Decline rather than report a statement the emitted theorem
+    // does not have.
+    let scope = ctx.active_module_scope();
+    if super::expr::resolved_expr_contains_error_prop(&ctx.resolve_expr(&law_lhs, scope.as_deref()))
+    {
+        return None;
     }
     let lhs = emit_expr_legacy(&law_lhs, ctx, None);
     let rhs = emit_expr_legacy(&law_rhs, ctx, None);

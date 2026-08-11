@@ -94,6 +94,113 @@ verify f
 }
 
 #[test]
+fn proof_lean_failing_law_sample_with_question_mark_cannot_build_green() {
+    // Same coincidence as the verify-case test above, one layer up: a law
+    // sample whose `?` hits `Err` FAILED under `aver verify`, and the expected
+    // value equals `Inhabited.default` for `Int`, so `withDefault default`
+    // substituted exactly the expected value and the sample proved.
+    //
+    // A law emits three statements, and the universal one was already failing
+    // for an unrelated reason (an auto-proof tactic that does not close), so
+    // "the build is red" proves nothing on its own. Assert instead that the
+    // kernel rejects the two statements that mirror what `aver verify` ran:
+    // `_checked_domain` and the failing `_sample_N`.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping failing-law export test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-failing-law-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        r#"module Hole
+    intent = "A law sample whose `?` hits Err, expecting a value equal to Lean's default."
+    exposes [f]
+    effects []
+
+fn f(n: Int) -> Result<Int, String>
+    ? "Fails for negative input."
+    match n < 0
+        true -> Result.Err("boom")
+        false -> Result.Ok(0)
+
+verify f law zero
+    given a: Int = -1..0
+    f(a)? => 0
+"#,
+    )
+    .expect("write m.av");
+    let verify = Command::new(aver_bin)
+        .arg("verify")
+        .arg(src.join("m.av"))
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        !verify.status.success()
+            && String::from_utf8_lossy(&verify.stdout).contains("verify-unexpected-err"),
+        "the sample must fail at run time, otherwise this test proves nothing:\n{}",
+        format_output(&verify)
+    );
+
+    // Human-readable `--check` (not `--check-json`): the verifier's own
+    // diagnostics are what carries the per-theorem attribution below.
+    let out = temp_output_dir("aver-failing-law-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .output()
+        .expect("expected `aver proof --check` to run");
+    let lean = std::fs::read_to_string(out.join("Hole.lean")).expect("read Hole.lean");
+
+    assert!(
+        !run.status.success(),
+        "a failing law sample must not export as a provable theorem:\n{}\n{lean}",
+        format_output(&run)
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "law `?` must short-circuit instead of substituting a default:\n{lean}"
+    );
+    assert!(
+        lean.contains("theorem f_law_zero : ∀ (a : Int), (do pure ((<- f a))) = Except.ok (0)"),
+        "the universal law theorem must be stated as an `Except` action:\n{lean}"
+    );
+
+    // Attribute the rejection: the verifier reports failures as
+    // `Hole.lean:<line>:<col>`, and both statements are emitted on one
+    // physical line each, so the line number identifies the theorem.
+    let line_of = |name: &str| {
+        lean.lines()
+            .position(|line| line.starts_with(&format!("theorem {name} :")))
+            .map(|idx| idx + 1)
+            .unwrap_or_else(|| panic!("no `{name}` theorem emitted:\n{lean}"))
+    };
+    let report = format_output(&run);
+    for name in ["f_law_zero_checked_domain", "f_law_zero_sample_1"] {
+        let needle = format!("Hole.lean:{}:", line_of(name));
+        assert!(
+            report.contains(&needle),
+            "the kernel must reject `{name}` (expected a failure at {needle}):\n{report}\n{lean}"
+        );
+    }
+    // The sample the run-time check PASSED must still be provable, so the
+    // rejection above is about the error path and not about the shape.
+    let passing = format!("Hole.lean:{}:", line_of("f_law_zero_sample_2"));
+    assert!(
+        !report.contains(&passing),
+        "a passing law sample must keep proving:\n{report}\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_nested_question_mark_agrees_with_bound_form_on_error_path() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping nested question-mark test: `lake` not available");
