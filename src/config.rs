@@ -227,10 +227,31 @@ impl ProjectConfig {
     /// Returns `true` if a diagnostic with the given `slug` at `file_path`
     /// is suppressed by any `[[check.suppress]]` rule.
     pub fn is_check_suppressed(&self, slug: &str, file_path: &str) -> bool {
-        self.check_suppressions.iter().any(|s| {
-            s.slug == slug
-                && (s.files.is_empty() || s.files.iter().any(|g| glob_matches(file_path, g)))
-        })
+        (0..self.check_suppressions.len())
+            .any(|idx| self.check_suppression_applies(idx, slug, file_path))
+    }
+
+    /// Whether the rule at `idx` waives `slug` for `file_path`. Callers that
+    /// report on waiver hygiene need to know *which* rules did the work, not
+    /// just that some rule did.
+    pub fn check_suppression_applies(&self, idx: usize, slug: &str, file_path: &str) -> bool {
+        match self.check_suppressions.get(idx) {
+            Some(rule) => rule.slug == slug && self.suppression_covers_file(idx, file_path),
+            None => false,
+        }
+    }
+
+    /// Whether the rule at `idx` covers `file_path` by its file globs alone,
+    /// ignoring the slug. A rule with no globs covers every file. This is what
+    /// separates "the waiver points at a path nothing in the run touched" from
+    /// "the file was checked and the warning it waives no longer fires".
+    pub fn suppression_covers_file(&self, idx: usize, file_path: &str) -> bool {
+        match self.check_suppressions.get(idx) {
+            Some(rule) => {
+                rule.files.is_empty() || rule.files.iter().any(|g| glob_matches(file_path, g))
+            }
+            None => false,
+        }
     }
 
     /// Check whether an HTTP call to `url_str` is allowed by the policy.
@@ -690,13 +711,27 @@ fn parse_check_suppressions(table: &toml::Table) -> Result<Vec<CheckSuppression>
     Ok(suppressions)
 }
 
+/// Drop any leading `./` segments. Matching is anchored, so `./a/b.av` and
+/// `a/b.av` would otherwise be different paths to the same file.
+fn strip_dot_slash(s: &str) -> &str {
+    let mut rest = s;
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped;
+    }
+    rest
+}
+
 /// Simple glob match for file paths.
 /// Supports `**` (any path segments) and `*` (any single segment chars).
+/// A leading `./` is insignificant on both sides.
 fn glob_matches(path: &str, pattern: &str) -> bool {
     // Normalize separators
     let path = path.replace('\\', "/");
     let pattern = pattern.replace('\\', "/");
-    glob_match_recursive(path.as_bytes(), pattern.as_bytes())
+    glob_match_recursive(
+        strip_dot_slash(&path).as_bytes(),
+        strip_dot_slash(&pattern).as_bytes(),
+    )
 }
 
 fn glob_match_recursive(path: &[u8], pattern: &[u8]) -> bool {
@@ -1355,6 +1390,91 @@ reason = "Not yet ready for verify"
     fn test_glob_matches_exact() {
         assert!(glob_matches("self_hosted/eval.av", "self_hosted/eval.av"));
         assert!(!glob_matches("self_hosted/other.av", "self_hosted/eval.av"));
+    }
+
+    #[test]
+    fn test_glob_matches_leading_dot_slash_on_path() {
+        assert!(glob_matches("./self_hosted/eval.av", "self_hosted/eval.av"));
+        assert!(glob_matches("./self_hosted/eval.av", "self_hosted/**"));
+        assert!(!glob_matches("./examples/hello.av", "self_hosted/**"));
+    }
+
+    #[test]
+    fn test_glob_matches_leading_dot_slash_on_pattern() {
+        assert!(glob_matches("self_hosted/eval.av", "./self_hosted/eval.av"));
+        assert!(glob_matches("self_hosted/sub/deep.av", "./self_hosted/**"));
+    }
+
+    #[test]
+    fn test_glob_matches_leading_dot_slash_on_both() {
+        assert!(glob_matches(
+            "./self_hosted/eval.av",
+            "./self_hosted/eval.av"
+        ));
+        assert!(glob_matches("././a/b.av", "./a/b.av"));
+    }
+
+    #[test]
+    fn test_check_suppression_applies_identifies_each_rule() {
+        let toml = r#"
+[[check.suppress]]
+slug = "missing-verify"
+files = ["domain/**"]
+reason = "First rule"
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["self_hosted/**"]
+reason = "Second rule"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.check_suppression_applies(1, "non-tail-recursion", "self_hosted/eval.av"));
+        assert!(!config.check_suppression_applies(0, "non-tail-recursion", "self_hosted/eval.av"));
+        assert!(config.check_suppression_applies(0, "missing-verify", "domain/version.av"));
+        assert!(!config.check_suppression_applies(1, "missing-verify", "domain/version.av"));
+        // Out-of-range index is never a match.
+        assert!(!config.check_suppression_applies(2, "missing-verify", "domain/version.av"));
+    }
+
+    #[test]
+    fn test_overlapping_rules_both_apply() {
+        // Two rules can waive the same diagnostic. Waiver-hygiene reporting
+        // must credit both, or the narrower one looks dead.
+        let toml = r#"
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**"]
+reason = "Broad rule"
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["self_hosted/eval.av"]
+reason = "Narrow rule"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.check_suppression_applies(0, "non-tail-recursion", "self_hosted/eval.av"));
+        assert!(config.check_suppression_applies(1, "non-tail-recursion", "self_hosted/eval.av"));
+    }
+
+    #[test]
+    fn test_suppression_covers_file_ignores_slug() {
+        let toml = r#"
+[[check.suppress]]
+slug = "a-slug-that-never-fires"
+files = ["domain/**"]
+reason = "Scoped rule"
+
+[[check.suppress]]
+slug = "missing-verify"
+reason = "Global rule"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert!(config.suppression_covers_file(0, "domain/version.av"));
+        assert!(config.suppression_covers_file(0, "./domain/version.av"));
+        assert!(!config.suppression_covers_file(0, "other/version.av"));
+        // No globs = covers every file.
+        assert!(config.suppression_covers_file(1, "anything/at/all.av"));
+        assert!(!config.suppression_covers_file(2, "domain/version.av"));
     }
 
     #[test]

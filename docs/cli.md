@@ -342,3 +342,10 @@ Disk path patterns have deliberately small, explicit semantics:
 | `**` | Invalid; use `./**` or `/**` to state the intended boundary |
 
 An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
+
+`[[check.suppress]]` rules in detail:
+
+- `files` globs match the file's path **relative to the module root**, so a leading `./` is insignificant on either side and every spelling of the same file (`aver check domain/version.av`, `aver check ./domain/version.av`, `aver check .`, an absolute path, or a dependency pulled in by `--deps`) honours the same rule. A rule with no `files` key applies everywhere.
+- `aver check` and `aver audit` apply the same rules. Both print how many warnings a file's waivers removed.
+- Suppression applies to warnings only. It can never hide an `error[...]`, a verify failure, or the `needs-format` result, so a waiver can never change a command's exit code.
+- A rule that removes nothing during a whole-directory run (`aver check .`, `aver audit .`) is reported on stderr, telling you whether its globs matched no checked file at all or matched files whose warning no longer fires. Single-file runs stay quiet, since they legitimately never exercise rules scoped to other paths.
