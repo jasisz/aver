@@ -654,6 +654,35 @@ fn match_with_wildcard() {
 }
 
 #[test]
+fn match_string_literal_pattern() {
+    let src = "fn f(cmd: String) -> Int\n    match cmd\n        \"verack\" -> 1\n        _ -> 0\n";
+    let items = parse(src);
+    if let TopLevel::FnDef(fd) = &items[0] {
+        if let Expr::Match { arms, .. } = single_expr_body(fd) {
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Str(s)) if s == "verack"));
+            assert!(matches!(arms[1].pattern, Pattern::Wildcard));
+        } else {
+            panic!("expected match body");
+        }
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn negative_int_literal_pattern_is_rejected() {
+    let src =
+        "fn f(n: Int) -> String\n    match n\n        -1 -> \"neg\"\n        _ -> \"other\"\n";
+    let err = parse_error(src);
+    assert!(
+        err.contains("Expected match pattern"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[test]
 fn match_subject_colon_is_not_type_ascription() {
     let items = parse("match xs\n    [] -> 0\n    _ -> 1\n");
     assert!(matches!(

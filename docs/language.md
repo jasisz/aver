@@ -87,7 +87,8 @@ Option.None
 
 ```aver
 match value
-    42 -> "exact"                          // literal
+    42 -> "exact"                          // Int literal
+    "verack" -> "known command"            // String literal
     _ -> "anything"                        // wildcard
     x -> "bound to {x}"                    // identifier binding
     [] -> "empty list"                     // empty list
@@ -103,6 +104,39 @@ match value
 Constructor patterns are always qualified (`Result.Ok`, `Option.None`, `Shape.Circle`). Records do not support positional destructuring in patterns; bind the whole record and use field access (`user.name`, `user.age`).
 
 Nested match in match arms is supported. Arm body must follow `->` on the same line — extract complex expressions into a named function.
+
+### Literal patterns
+
+An arm may be a literal instead of a binding; it fires when the subject equals it. This is how you dispatch on a command name or a tag byte — there is no `else if` to reach for, and no reason to spread the decision over a chain of single-purpose helper functions:
+
+```aver
+fn handle(command: String) -> Int
+    ? "Dispatch on the wire command name."
+    match command
+        "verack" -> 1
+        "version" -> 2
+        "inv" -> 3
+        "tx" -> 4
+        _ -> 0
+
+fn varIntWidth(head: Int) -> Int
+    ? "253 introduces two more bytes, 254 four, 255 eight."
+    match head
+        253 -> 2
+        254 -> 4
+        255 -> 8
+        _ -> 1
+```
+
+`Int`, `String`, `Float` and `Bool` literals are all valid patterns. `Bool` is the only one a match can exhaust by listing (`true` and `false`), so it is the only one that needs no catch-all; an `Int`, `String` or `Float` match must end in a wildcard `_` or an identifier arm, or the checker rejects it with `Non-exhaustive match: missing catch-all (_) pattern`. Repeating a literal is rejected too — the later arm can never fire, and the error names the line that already covers it.
+
+Three things that look like literal patterns are parse errors:
+
+- a negative number — `-1 -> …` does not parse, because the `-` is a separate token and a pattern is not an expression. Branch on a comparison instead (`match n < 0` with `true ->` / `false ->`), or normalize the subject before the match.
+- an integer beyond 64 bits, even though `Int` itself is arbitrary-precision. The error points at the replacement: `match n == 1267650600228229401496703205376`.
+- an interpolated string — `"{x}" -> …` is rejected, because a pattern is a constant. Compare with `==` when the expected value is computed.
+
+`Float` literal patterns compare exactly, so `0.1 + 0.2` does not match a `0.3` arm. Use them only for sentinels you produced yourself; otherwise branch on a comparison.
 
 ## Record update
 
