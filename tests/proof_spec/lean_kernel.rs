@@ -2232,7 +2232,9 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
         format_output(&build)
     );
 
-    let mut probe = String::from("import StdlibBytesApp\n\nset_option maxRecDepth 1000000\n\n");
+    let mut probe = String::from(
+        "import StdlibBytesApp\n\nset_option maxRecDepth 1000000\n\nnamespace StdlibBytesApp\n\n",
+    );
     let mut probe_names = Vec::new();
     for (idx, line) in cases
         .iter()
@@ -2245,13 +2247,14 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
             .trim();
         let name = format!("averKernelCase{}", idx + 1);
         probe.push_str(&format!("theorem {name} : {prop} := by decide +kernel\n"));
-        probe_names.push(name);
+        probe_names.push(format!("StdlibBytesApp.{name}"));
     }
     assert!(
         probe_names.len() >= 7,
         "expected the crypto fixture to contribute several kernel cases, got {}",
         probe_names.len()
     );
+    probe.push_str("\nend StdlibBytesApp\n\n");
     for name in &probe_names {
         probe.push_str(&format!("#print axioms {name}\n"));
     }

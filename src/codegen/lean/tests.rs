@@ -717,6 +717,8 @@ fn transpile_can_emit_theorem_skeletons_for_verify() {
         .expect("expected generated Lean file");
     assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
     assert!(lean.contains("  sorry"));
+    assert!(lean.contains("namespace Verify_mode"));
+    assert!(lean.contains("end Verify_mode"));
 }
 
 #[test]
@@ -1873,11 +1875,11 @@ verify mirror law involutive
     assert!(lean.contains("  induction t with"));
     assert!(
         lean.contains(
-            "  | leaf f0 => first | (simp [_root_.mirror]; done) | (simp [_root_.mirror]; omega) | sorry"
+            "  | leaf f0 => first | (simp [Mirror.mirror]; done) | (simp [Mirror.mirror]; omega) | sorry"
         )
     );
     assert!(lean.contains(
-            "  | node f0 f1 ih0 ih1 => first | (simp_all [_root_.mirror]; done) | (simp_all [_root_.mirror]; omega) | sorry"
+        "  | node f0 f1 ih0 ih1 => first | (simp_all [Mirror.mirror]; done) | (simp_all [Mirror.mirror]; omega) | sorry"
         ));
     assert!(!lean.contains(
             "-- universal theorem mirror_law_involutive omitted: sampled law shape is not auto-proved yet"

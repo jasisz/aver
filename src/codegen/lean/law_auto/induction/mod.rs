@@ -1385,7 +1385,7 @@ fn b_tight_decomposition_arms(
         lean_nat_lift_support(law, ctx, law_uid, &cited_fns);
     let defs: Vec<String> = law_simp_defs(ctx, vb, law)
         .into_iter()
-        .filter(|n| !bridged_fns.contains(n.trim_start_matches("_root_.")))
+        .filter(|n| !bridged_fns.contains(super::shared::bare_lean_name(n)))
         .collect();
     let cited_names: Vec<String> = cites.iter().map(|(n, _)| n.clone()).collect();
 
@@ -1983,7 +1983,6 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
         return None;
     }
     let subject_fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
-    let subject = aver_name_to_lean(&vb.fn_name);
     let intro = format!("  intro {} h_when", intro_names.join(" "));
     // The wrapper's error branches each dispatch on `Bool.not(g(…))` for some
     // Bool guard predicate `g`. A guard a premise already pins (`isFp p`, decided
@@ -2004,11 +2003,11 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
         collect_called_dotted(when, &mut premise_fns);
     }
     guards.retain(|g| !premise_fns.contains(g));
-    let mut unfold = vec![format!("_root_.{subject}")];
+    let mut unfold = vec![super::shared::entry_qualified_lean_name(ctx, &vb.fn_name)];
     unfold.extend(
         guards
             .iter()
-            .map(|g| format!("_root_.{}", aver_name_to_lean(g))),
+            .map(|g| super::shared::entry_qualified_lean_name(ctx, g)),
     );
     let unfold_set = unfold.join(", ");
     // Subject (+ derived guard predicate) unfold; the premises (decomposed by
@@ -3465,7 +3464,7 @@ fn emit_count_composition_rung(
         support.push(h.text);
     }
 
-    // Arm simp sets. `base`: law defs (`_root_.`-prefixed) + the add bridge + the
+    // Arm simp sets. `base`: module-qualified law defs + the add bridge + the
     // nil-helper. The `zero` arm closes by `cases c <;> simp_all [base]` (the
     // bridge turns `op a 0` into `a + 0 = a`); the `succ` arm peels the list and
     // chains the IH after rewriting `op a (k+1)` to `(a + k) + 1` (so `f` peels)
@@ -3590,7 +3589,7 @@ fn emit_synchronous_multivar_induction(
         }
     }
 
-    // The arm `simp_all` set: the law defs (`_root_.`-prefixed via `law_simp_defs`)
+    // The arm `simp_all` set: the module-qualified law defs from `law_simp_defs`
     // + the proved nil-helpers + the append-peeling lemmas. `List.cons_append` /
     // `List.nil_append` let the appended list (`[y] ++ zs` in lemma_04) peel a
     // cons in lockstep with the recursing fn.
@@ -4716,12 +4715,11 @@ fn emit_simple_induction(
     let mul_ac_arm: Option<(String, String)> = if arith_bridges.iter().any(|b| b == "Nat.mul_assoc")
     {
         let bridge_thms = arith_bridges.iter().filter(|b| b.starts_with(&law_uid));
-        // `law_simp_defs` may `_root_.`-prefix an entry-module fn; `bridged_fns`
-        // holds the bare lean name, so strip the prefix before testing membership
-        // (otherwise the bridged `mul`/`plus` def survives and fights its bridge).
+        // `law_simp_defs` may qualify an entry-module fn; `bridged_fns` holds
+        // the bare Lean name, so compare basenames.
         let mut acset: Vec<String> = law_simp_defs(ctx, vb, law)
             .into_iter()
-            .filter(|d| !bridged_fns.contains(d.trim_start_matches("_root_.")))
+            .filter(|d| !bridged_fns.contains(super::shared::bare_lean_name(d)))
             .collect();
         acset.extend(bridge_thms.cloned());
         for lemma in [

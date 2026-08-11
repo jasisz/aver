@@ -1575,7 +1575,7 @@ fn assert_hostile_mutual_model_shard_is_declined(shard: usize) {
         std::fs::write(&model, edited).unwrap();
         let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
         assert!(
-            manifest.contains(&format!("model := fun ns => {name} (ns.headD 0)")),
+            manifest.contains(&format!("model := fun ns => CertGoals.{name} (ns.headD 0)")),
             "{name} hostile regression must leave the manifest model reference untouched"
         );
 
@@ -1637,7 +1637,7 @@ fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     );
     let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
     assert!(
-        manifest.contains("model := fun ns => addTwo (ns.headD 0)"),
+        manifest.contains("model := fun ns => CertGoals.addTwo (ns.headD 0)"),
         "expr-fragment hostile regression must leave the manifest model reference untouched"
     );
 
@@ -1785,7 +1785,7 @@ fn cert_hostile_model_fueled_recursion_definition_is_declined() {
     std::fs::write(&model, edited).unwrap();
     let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
     assert!(
-        manifest.contains("model := fun ns => sumFrom (ns.headD 0)"),
+        manifest.contains("model := fun ns => CertGoals.sumFrom (ns.headD 0)"),
         "recursion hostile regression must leave the manifest model reference untouched"
     );
 
@@ -3271,7 +3271,7 @@ fn certify_arity_three_fragment_certifies_and_lake_builds() {
     let manifest_lean = std::fs::read_to_string(out_dir.join("cert").join("Manifest.lean"))
         .expect("Manifest.lean exists");
     assert!(
-        manifest_lean.contains("model := fun p => tripleCheck p.1 p.2.1 p.2.2"),
+        manifest_lean.contains("model := fun p => Arity3Probe.tripleCheck p.1 p.2.1 p.2.2"),
         "arity-3 obligation must uncurry over the right-nested product:\n{manifest_lean}"
     );
     let certificate = std::fs::read_to_string(out_dir.join("cert").join("Certificate.lean"))

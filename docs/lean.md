@@ -32,6 +32,11 @@ out/
   <Project>.lean
 ```
 
+Every Aver module, including the entry module, emits its definitions inside
+its corresponding Lean namespace. A function `decode` in module `Packet` is
+therefore exposed as `Packet.decode`; theorem-skeleton declarations follow the
+same rule, for example `Packet.decode_verify_1`.
+
 ## Scope
 
 - exports pure core logic: types, pure functions, and decisions

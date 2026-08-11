@@ -7262,13 +7262,14 @@ impl LeanLawAudit {
 /// before the counts existed.
 fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     use std::process::Command;
-    // Import every root from the lakefile so unqualified law-theorem names
-    // resolve. The law theorems live at top level in the entry root;
-    // importing all roots is robust without identifying which is the entry.
+    // The first lakefile root is the entry module. Its law theorem source names
+    // stay stable, while Lean declarations are qualified by that root.
     let roots = lean_lakefile_roots(dir);
     if roots.is_empty() {
         return LeanLawAudit::FAIL_CLOSED;
     }
+    let entry_root = &roots[0];
+    let entry_file_name = format!("{entry_root}.lean");
     // Collect the main universal law theorems across the emitted sources,
     // plus the emitter's per-theorem statement-class markers.
     let mut law_thms: Vec<String> = Vec::new();
@@ -7279,7 +7280,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".lean") || name == "lakefile.lean" {
+            if name != entry_file_name {
                 continue;
             }
             if let Ok(contents) = std::fs::read_to_string(entry.path()) {
@@ -7296,14 +7297,8 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                 if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
                     continue;
                 }
-                // Track `namespace … end` nesting so dep-module law theorems
-                // (emitted INSIDE `namespace M` by the cross-file law pool) are
-                // skipped here: the entry's own law theorems live at top level,
-                // and a consumer law's `#print axioms` already inherits the dep
-                // theorem's axiom footprint transitively. Probing the dep
-                // theorem directly by its bare (unqualified) name would fail to
-                // resolve and wrongly zero the metric. Single-file files have no
-                // namespaces, so this is a no-op there (byte-identical metric).
+                // Entry declarations live one level below the entry namespace.
+                // Ignore any deeper helper namespace while retaining those laws.
                 let mut namespace_depth = 0usize;
                 for line in contents.lines() {
                     let trimmed = line.trim_start();
@@ -7324,7 +7319,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                         }
                         continue;
                     }
-                    if namespace_depth > 0 {
+                    if namespace_depth > 1 {
                         continue;
                     }
                     if let Some(rest) = line.strip_prefix("theorem ") {
@@ -7437,6 +7432,8 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     }
     for t in &law_thms {
         src.push_str("#print axioms ");
+        src.push_str(entry_root);
+        src.push('.');
         src.push_str(t);
         src.push('\n');
     }
@@ -7488,7 +7485,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             let universal_laws = if o.status.success() {
                 universal_classed
                     .iter()
-                    .filter(|t| theorem_credit_from_axioms(&combined, t))
+                    .filter(|t| theorem_credit_from_axioms(&combined, &format!("{entry_root}.{t}")))
                     .count()
             } else {
                 0
@@ -7505,13 +7502,15 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             for thm in &universal_classed {
                 let key = law_dedup_key(thm, &classes);
                 let label = manifest_label_for(key, &labels);
-                let credited = o.status.success() && theorem_credit_from_axioms(&combined, thm);
+                let qualified = format!("{entry_root}.{thm}");
+                let credited =
+                    o.status.success() && theorem_credit_from_axioms(&combined, &qualified);
                 let tier = if credited {
                     LawTier::Universal
                 } else {
                     LawTier::Failed
                 };
-                let axioms = axioms_for_theorem(&combined, thm).unwrap_or_default();
+                let axioms = axioms_for_theorem(&combined, &qualified).unwrap_or_default();
                 let record = ManifestLaw {
                     law: label.clone(),
                     backend: "lean".to_string(),
@@ -7583,7 +7582,11 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
     if locations.is_empty() {
         return Vec::new();
     }
-    // Per emitted file: its top-level `theorem <name>` declarations as
+    let Some(entry_root) = lean_lakefile_roots(dir).into_iter().next() else {
+        return Vec::new();
+    };
+    let entry_file_name = format!("{entry_root}.lean");
+    // In the entry file: its `theorem <name>` declarations as
     // `(1-based line, name)`, plus the global `theorem -> fn.law` label map read
     // off the class markers (same shape `emitted_main_law_theorems` reads).
     let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -7592,7 +7595,7 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".lean") || name == "lakefile.lean" {
+            if name != entry_file_name {
                 continue;
             }
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
@@ -7650,17 +7653,22 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
 /// without the label, matching `manifest_label_for`). Used by `--explain` to
 /// build the open-law set DIRECTLY from the markers — robust to the audit
 /// returning early (no manifest record) for a sorry-floored universal-classed
-/// law. Returns `(fn.law, theorem)` pairs, deduped by theorem name. Top-level
-/// theorems only (namespace-nested dep-module law theorems are skipped, mirroring
-/// `lean_universal_audit`).
+/// law. Returns `(fn.law, theorem)` pairs, deduped by theorem name. Only the
+/// entry module's namespace is scanned; dependency law pools remain transitive
+/// inputs to those theorems.
 fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
+    let roots = lean_lakefile_roots(dir);
+    let Some(entry_root) = roots.first() else {
+        return Vec::new();
+    };
+    let entry_file_name = format!("{entry_root}.lean");
     let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut thms: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".lean") || name == "lakefile.lean" {
+            if name != entry_file_name {
                 continue;
             }
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
@@ -7686,7 +7694,7 @@ fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
                     }
                     continue;
                 }
-                if namespace_depth > 0 {
+                if namespace_depth > 1 {
                     continue;
                 }
                 if let Some(rest) = line.strip_prefix("theorem ") {
@@ -7740,6 +7748,8 @@ fn lean_residual_goals(
     if roots.is_empty() {
         return out;
     }
+    let entry_root = &roots[0];
+    let entry_file_name = format!("{entry_root}.lean");
     // Map the requested theorem names to their `fn.law` identity (the caller
     // already pairs them, but we key the scan on theorem name to find each
     // theorem's emitted source block). `theorem -> fn.law`.
@@ -7758,7 +7768,7 @@ fn lean_residual_goals(
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".lean") || name == "lakefile.lean" {
+            if name != entry_file_name {
                 continue;
             }
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
@@ -7787,6 +7797,7 @@ fn lean_residual_goals(
                             if tj.starts_with("theorem ")
                                 || tj.starts_with(lean_codegen::LAW_CLASS_MARKER_PREFIX.trim())
                                 || tj.starts_with("-- verify law ")
+                                || tj == format!("end {entry_root}")
                             {
                                 break;
                             }
@@ -7815,6 +7826,7 @@ fn lean_residual_goals(
         src.push_str(r);
         src.push('\n');
     }
+    src.push_str(&lean_entry_scope_header(dir, entry_root));
     // `probe theorem name -> fn.law`, and the emit order so we can map a parsed
     // error line back to the enclosing probe theorem.
     let mut probe_to_law: std::collections::HashMap<String, String> =
@@ -7837,6 +7849,7 @@ fn lean_residual_goals(
     if probe_to_law.is_empty() {
         return out;
     }
+    src.push_str(&format!("end {entry_root}\n"));
 
     let probe_file = std::path::Path::new(dir).join("_aver_residual_probe.lean");
     if std::fs::write(&probe_file, &src).is_err() {
@@ -7947,6 +7960,8 @@ fn lean_goal_json(
     if roots.is_empty() {
         return out;
     }
+    let entry_root = &roots[0];
+    let entry_file_name = format!("{entry_root}.lean");
     let want: std::collections::HashSet<&str> =
         open_laws.iter().map(|(_, thm)| thm.as_str()).collect();
 
@@ -7958,7 +7973,7 @@ fn lean_goal_json(
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".lean") || name == "lakefile.lean" {
+            if name != entry_file_name {
                 continue;
             }
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
@@ -7985,6 +8000,7 @@ fn lean_goal_json(
                             if tj.starts_with("theorem ")
                                 || tj.starts_with(lean_codegen::LAW_CLASS_MARKER_PREFIX.trim())
                                 || tj.starts_with("-- verify law ")
+                                || tj == format!("end {entry_root}")
                             {
                                 break;
                             }
@@ -8033,7 +8049,9 @@ fn lean_goal_json(
     }
     // All imports (roots + the meta-tactic's `import Lean`) must precede any
     // declaration, so the root imports lead, then the elaborator, then probes.
-    let src = format!("{import_src}{AVER_DUMP_GOAL_ELAB}\n{body_src}");
+    let scope_header = lean_entry_scope_header(dir, entry_root);
+    let src =
+        format!("{import_src}{AVER_DUMP_GOAL_ELAB}\n{scope_header}{body_src}end {entry_root}\n");
 
     let probe_file = std::path::Path::new(dir).join("_aver_goal_json_probe.lean");
     if std::fs::write(&probe_file, &src).is_err() {
@@ -8810,6 +8828,28 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+fn lean_entry_scope_header(dir: &str, entry_root: &str) -> String {
+    let path = std::path::Path::new(dir).join(format!("{entry_root}.lean"));
+    let opens = std::fs::read_to_string(path)
+        .ok()
+        .into_iter()
+        .flat_map(|contents| {
+            contents
+                .lines()
+                .filter(|line| line.starts_with("open "))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut header = String::new();
+    if !opens.is_empty() {
+        header.push_str(&opens.join("\n"));
+        header.push('\n');
+    }
+    header.push_str(&format!("namespace {entry_root}\n\n"));
+    header
 }
 
 fn cmd_proof_lean(

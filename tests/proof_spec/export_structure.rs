@@ -1115,9 +1115,9 @@ fn proof_export_lean_at_edge_domain_is_byte_identical_to_baseline() {
     // whose case product (8x8x8 = 512) sits exactly at the 512-case edge
     // must emit byte-for-byte the same `LargeDomainLaw.lean` the
     // pre-partitioning emitter did. The golden snapshot
-    // (`tests/fixtures/large_domain_law.baseline.lean`) was captured from
-    // the unpatched binary; any drift means the partitioning moved an
-    // at/below-edge export. Fast (no lake).
+    // (`tests/fixtures/large_domain_law.baseline.lean`) preserves that
+    // pre-partitioning output inside the entry module namespace; any other
+    // drift means the partitioning moved an at/below-edge export. Fast (no lake).
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = temp_output_dir("aver-large-domain-byte-identity");
@@ -1134,9 +1134,10 @@ fn proof_export_lean_at_edge_domain_is_byte_identical_to_baseline() {
     assert!(run.status.success(), "{}", format_output(&run));
     let emitted =
         std::fs::read_to_string(out.join("LargeDomainLaw.lean")).expect("read emitted Lean");
-    let baseline =
+    let baseline_file =
         std::fs::read_to_string(repo_root.join("tests/fixtures/large_domain_law.baseline.lean"))
             .expect("read baseline golden Lean");
+    let baseline = baseline_file.strip_suffix('\n').unwrap_or(&baseline_file);
     assert_eq!(
         emitted, baseline,
         "at/below-edge export must stay byte-identical to the pre-partitioning \

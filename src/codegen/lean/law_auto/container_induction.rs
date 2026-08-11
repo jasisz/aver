@@ -77,13 +77,6 @@ fn law_id(vb: &VerifyBlock, law: &VerifyLaw) -> String {
     format!("{}.{}", vb.fn_name, law.name)
 }
 
-/// `_root_.`-qualified Lean name for an entry-module top-level user fn — the same
-/// disambiguation `law_simp_defs` applies (a user fn shadowing a stdlib symbol
-/// needs `_root_.`; `.induct`/the def all resolve through it).
-fn root_lean(src: &str) -> String {
-    format!("_root_.{}", aver_name_to_lean(src))
-}
-
 pub(in crate::codegen::lean) fn emit_container_induction_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -94,8 +87,8 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
     if intro_names.len() != 1 {
         return None;
     }
-    let f = root_lean(&pair.f_src);
-    let flist = root_lean(&pair.flist_src);
+    let f = shared::entry_qualified_lean_name(ctx, &pair.f_src);
+    let flist = shared::entry_qualified_lean_name(ctx, &pair.flist_src);
     let induct = format!("{f}.induct");
     let uid = format!(
         "{}_{}",
@@ -118,8 +111,8 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
             (Vec::new(), motive2, cases)
         }
         Claim::Equational { g_src, glist_src } => {
-            let g = root_lean(g_src);
-            let glist = root_lean(glist_src);
+            let g = shared::entry_qualified_lean_name(ctx, g_src);
+            let glist = shared::entry_qualified_lean_name(ctx, glist_src);
             // motive2 ts := fList (gList ts) = fList ts  (R_naive).
             let motive2 = format!("fun ts => {flist} ({glist} ts) = {flist} ts");
             // Container lemmas (numeric walker × ++/reverse), floored so a
@@ -174,9 +167,8 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
     })
 }
 
-/// Lean name of the (entry-module) ADT — the emitter renders a user sum type at
-/// the Lean root under its own name, so `List Tree` needs the bare capitalized
-/// name (no `_root_.`, which does not compose with the `List _` application).
+/// Lean name of the entry-module ADT. The proof is emitted inside the same
+/// namespace, so `List Tree` uses the bare capitalized type name.
 fn adt_lean(adt: &str) -> String {
     aver_name_to_lean(adt)
 }
@@ -267,8 +259,8 @@ fn recognize(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<
 /// calls a sibling `fList` on the child list; `fList` is the canonical list-walker
 /// over `List<T>` calling back `f`; and the mutual SCC is EXACTLY `{f, fList}`.
 fn recognize_pair(f_src: &str, ctx: &CodegenContext) -> Option<Pair> {
-    // Entry-module only: `_root_.` qualification and the top-level `.induct` name
-    // assume the fns render at the Lean root.
+    // Entry-module only: the generated `.induct` name belongs to the entry
+    // module's definition, not to a dependency with the same bare name.
     if ctx.active_module_scope().is_some() {
         return None;
     }
