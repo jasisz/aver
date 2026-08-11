@@ -436,6 +436,302 @@ record Box
     );
 }
 
+// ────────────────────────────────────────────────────────────────────
+// A local type shadows a dependency's same-named one (#848)
+//
+// The rule is settled for records (#818) and for sum types, and both
+// the VM and the self-hosted interpreter implement it. Before the fix
+// the wasm-gc flatten pass only counted a bare name as ambiguous when
+// two DEP modules declared it, so an entry declaration sharing the name
+// left both `TypeDef`s under one bare registry key. The two same-named
+// sums then merged their slot indices and the module failed validation
+// with `supertypes must be defined before subtypes`.
+//
+// The first two tests below are the shadowing cases; the two after them
+// are controls that must keep passing, so the feature cannot be
+// "fixed" by refusing multi-module programs or sum types outright.
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn local_sum_type_shadows_dep_sum_type_of_the_same_name() {
+    // The issue's reproduction. Both sums also share the variant name
+    // `Red`, so the entry's `Colour.Red` must route to the entry's own
+    // constructor (2) and not to the dependency's.
+    let entry_src = r#"
+module Entry
+    intent = "a local sum type shadows the dependency's same-named one"
+    depends [Palette]
+
+type Colour
+    Green
+    Red
+
+fn code(c: Colour) -> Int
+    match c
+        Colour.Green -> 1
+        Colour.Red -> 2
+
+fn main() -> Int
+    code(Colour.Red)
+"#;
+    let palette_src = r#"
+module Palette
+    intent = "dependency declaring the shadowed name"
+    exposes [Colour]
+    depends []
+
+type Colour
+    Red
+    Blue
+"#;
+    let result = run_int_multi(entry_src, &[("Palette", palette_src)]);
+    assert_eq!(
+        result, 2,
+        "expected the entry module's own `Colour.Red` to number 2, \
+         matching the VM and the self-host"
+    );
+}
+
+#[test]
+fn local_sum_type_shadowing_keeps_the_dep_type_reachable_by_module_path() {
+    // Identity check for the same shadowing pair: the entry uses its own
+    // `Colour` AND the dependency's, the latter through the module path.
+    // A single merged registry slot would answer both with one layout.
+    // Disjoint variant names on the two sums, so nothing but the type
+    // identity can carry the result: 2 + 20 = 22.
+    let entry_src = r#"
+module Entry
+    intent = "both the shadowing type and the shadowed one are used"
+    depends [Palette]
+
+type Colour
+    Green
+    Red
+
+fn code(c: Colour) -> Int
+    match c
+        Colour.Green -> 1
+        Colour.Red -> 2
+
+fn main() -> Int
+    code(Colour.Red) + Palette.weight(Palette.Colour.Blue)
+"#;
+    let palette_src = r#"
+module Palette
+    intent = "dependency declaring the shadowed name"
+    exposes [Colour, weight]
+    depends []
+
+type Colour
+    Cyan
+    Blue
+
+fn weight(c: Colour) -> Int
+    match c
+        Colour.Cyan -> 10
+        Colour.Blue -> 20
+"#;
+    let result = run_int_multi(entry_src, &[("Palette", palette_src)]);
+    assert_eq!(
+        result, 22,
+        "expected the entry `Colour.Red` (2) plus the dependency's \
+         `Palette.Colour.Blue` (20); a divergence means the two \
+         same-named sums share one wasm-gc slot"
+    );
+}
+
+#[test]
+fn local_sum_type_shadowing_allows_a_qualified_signature_and_pattern() {
+    // The entry module names the shadowed dependency type in a signature
+    // and in match patterns. That reaches the fn-signature prefix strip
+    // and the pattern head, not just the constructor expression.
+    let entry_src = r#"
+module Entry
+    intent = "entry-side qualified signature over a shadowed dep type"
+    depends [Palette]
+
+type Colour
+    Green
+    Red
+
+fn code(c: Colour) -> Int
+    match c
+        Colour.Green -> 1
+        Colour.Red -> 2
+
+fn depCode(c: Palette.Colour) -> Int
+    match c
+        Palette.Colour.Cyan -> 10
+        Palette.Colour.Blue -> 20
+
+fn main() -> Int
+    code(Colour.Red) + depCode(Palette.Colour.Blue)
+"#;
+    let palette_src = r#"
+module Palette
+    intent = "dependency declaring the shadowed name"
+    exposes [Colour]
+    depends []
+
+type Colour
+    Cyan
+    Blue
+"#;
+    let result = run_int_multi(entry_src, &[("Palette", palette_src)]);
+    assert_eq!(
+        result, 22,
+        "expected 2 from the entry `Colour` plus 20 from the qualified \
+         `Palette.Colour`"
+    );
+}
+
+#[test]
+fn single_module_sum_type_control() {
+    // Control: one module, one sum type, no dependency. Pins that the
+    // shadowing fix is not paid for by dropping plain sum-type support.
+    let source = r#"module Tmp
+    intent = "single-module sum type control"
+    depends []
+
+type Colour
+    Green
+    Red
+
+fn code(c: Colour) -> Int
+    match c
+        Colour.Green -> 1
+        Colour.Red -> 2
+
+fn main() -> Int
+    code(Colour.Red)
+"#;
+    assert_eq!(
+        run_int(source),
+        2,
+        "single-module sum type must still compile"
+    );
+}
+
+#[test]
+fn two_modules_sum_types_without_a_name_collision_control() {
+    // Control: two modules, a sum type in each, different bare names —
+    // the dependency's type keeps its bare spelling through flatten.
+    // Pins that the fix is not paid for by canonicalising every dep type
+    // (which would break the bare-name lookups this path relies on).
+    let entry_src = r#"
+module Entry
+    intent = "two modules, sum types, no name collision"
+    depends [Palette]
+
+type Colour
+    Green
+    Red
+
+fn code(c: Colour) -> Int
+    match c
+        Colour.Green -> 1
+        Colour.Red -> 2
+
+fn main() -> Int
+    code(Colour.Red)
+"#;
+    let palette_src = r#"
+module Palette
+    intent = "dependency with an unrelated sum type"
+    exposes [Shade]
+    depends []
+
+type Shade
+    Dark
+    Light
+"#;
+    let result = run_int_multi(entry_src, &[("Palette", palette_src)]);
+    assert_eq!(
+        result, 2,
+        "two modules whose sum types do not share a name must still compile"
+    );
+}
+
+#[test]
+fn local_sum_type_shadowing_carries_through_a_string_returning_fn() {
+    // The `String` payload path reaches a different set of emit sites
+    // than the `Int` one (string literal segments, `$string` array slots).
+    // `String.len("red")` is 3.
+    let entry_src = r#"
+module Entry
+    intent = "shadowed sum type feeding a String-returning fn"
+    depends [Palette]
+
+type Colour
+    Green
+    Red
+
+fn label(c: Colour) -> String
+    match c
+        Colour.Green -> "green"
+        Colour.Red -> "red"
+
+fn main() -> Int
+    String.len(label(Colour.Red))
+"#;
+    let palette_src = r#"
+module Palette
+    intent = "dependency declaring the shadowed name"
+    exposes [Colour]
+    depends []
+
+type Colour
+    Red
+    Blue
+"#;
+    let result = run_int_multi(entry_src, &[("Palette", palette_src)]);
+    assert_eq!(
+        result, 3,
+        "expected `String.len(\"red\")` = 3 from the entry module's own \
+         `Colour.Red` arm"
+    );
+}
+
+#[test]
+fn local_record_type_shadows_dep_record_type_of_the_same_name() {
+    // Record counterpart of the sum-type shadowing pair. The two `Box`
+    // records carry different field names, so a merged registry slot
+    // surfaces as a missing field list rather than a wrong number.
+    let entry_src = r#"
+module Entry
+    intent = "a local record shadows the dependency's same-named one"
+    depends [Store]
+
+record Box
+    value: Int
+
+fn read(b: Box) -> Int
+    b.value
+
+fn main() -> Int
+    read(Box(value = 2)) + Store.unwrap(Store.Box(weight = 20))
+"#;
+    let store_src = r#"
+module Store
+    intent = "dependency declaring the shadowed record name"
+    exposes [Box, unwrap]
+    depends []
+
+record Box
+    weight: Int
+
+fn unwrap(b: Box) -> Int
+    b.weight
+"#;
+    let result = run_int_multi(entry_src, &[("Store", store_src)]);
+    assert_eq!(
+        result, 22,
+        "expected the entry `Box(value = 2)` plus the dependency's \
+         `Store.Box(weight = 20)`; the two same-named records must keep \
+         separate field lists"
+    );
+}
+
 // Packed-sequence layouts must resolve by EXACT type name. The entry
 // module's gated `Octets` refinement earns a packed u8 layout; two dep
 // modules declare plain ungated `record Octets { values: List<Int> }`
