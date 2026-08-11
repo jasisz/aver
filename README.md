@@ -191,7 +191,7 @@ No `if`/`else`. No loops. No exceptions. No nulls. No implicit side effects.
 
 Aver is intentionally opinionated. These omissions are part of the design, not missing features:
 
-- no `if`/`else` — branching goes through `match`
+- no `if`/`else` — branching goes through `match`, which dispatches directly on literals (`"verack" ->`, `253 ->`), constructors, lists and tuples, not only on booleans
 - no `for`/`while` — iteration is recursion or explicit list operations
 - no exceptions — failure is `Result`
 - no `null` — absence is `Option`

@@ -1059,6 +1059,23 @@ fn match_literal_wildcard() {
 }
 
 #[test]
+fn match_string_literal_dispatch() {
+    let src = "fn handle(cmd: String) -> Int\n    match cmd\n        \"verack\" -> 1\n        \"tx\" -> 4\n        _ -> 0\n";
+    assert_eq!(
+        call_fn(src, "handle", vec![Value::Str("verack".to_string())]),
+        Value::int(1)
+    );
+    assert_eq!(
+        call_fn(src, "handle", vec![Value::Str("tx".to_string())]),
+        Value::int(4)
+    );
+    assert_eq!(
+        call_fn(src, "handle", vec![Value::Str("nope".to_string())]),
+        Value::int(0)
+    );
+}
+
+#[test]
 fn match_ok_constructor() {
     let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(

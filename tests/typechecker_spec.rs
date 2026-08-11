@@ -2383,6 +2383,17 @@ fn error_non_exhaustive_int_without_catch_all() {
 }
 
 #[test]
+fn error_non_exhaustive_string_without_catch_all() {
+    let src = concat!(
+        "fn f(s: String) -> Int\n",
+        "  match s\n",
+        "    \"a\" -> 1\n",
+        "    \"b\" -> 2\n",
+    );
+    assert_error_containing(src, "catch-all");
+}
+
+#[test]
 fn exhaustive_int_with_wildcard() {
     let src = concat!(
         "fn f(n: Int) -> Int\n",

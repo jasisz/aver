@@ -91,6 +91,8 @@ Rules:
 - list patterns: `[]` and `[head, ..tail]` (the `..` rest must be named)
 - tuple patterns: `(a, b)`
 - constructor patterns always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
+- literal patterns: `253 -> …` (`Int`), `"verack" -> …` (`String`), `1.5 -> …` (`Float`), `true` / `false` (`Bool`). An `Int` / `String` / `Float` match still needs a trailing `_ ->` or identifier arm; `-1 ->` is a parse error (no negative literal patterns) and so is an integer beyond 64 bits
+- prefer one literal-pattern `match` over a chain of `match x == "lit"` with `true ->` / `false ->` helper functions — same behaviour, far less code
 - boolean branching: `match x > 0` with `true ->` / `false ->`
 - nested match in match arms is supported
 
@@ -333,6 +335,7 @@ match Map.get(ages, "alice")
 19. `()` as a Unit value literal — there is no `()` literal. Write `Unit`. Diagnostics render the value as `()`, but in source the only spelling is `Unit` (matches `Map<T, Unit>` set semantics, `Unit` field annotations, etc.). `Console.print(...)` returning Unit is implicit — you almost never write the literal directly
 20. `expr?` on an `Option<T>` — `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly — wrap the value first
 21. `(A, B)` as a tuple type — type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different so grep-for-type and grep-for-value don't collide
+22. Dispatching on a `String` or an `Int` through a chain of `match x == "lit"` with `true ->` / `false ->` helper functions — literal patterns exist: `match cmd { "verack" -> 1 ; "tx" -> 4 ; _ -> 0 }`. Only the trailing `_` arm is mandatory
 
 ### Style
 
