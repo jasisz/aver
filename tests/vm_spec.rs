@@ -1730,6 +1730,55 @@ fn vm_respects_aver_toml_runtime_policy() {
 }
 
 #[test]
+fn vm_project_root_policy_denies_absolute_path() {
+    let module_root = temp_module_root("project_root_policy");
+    std::fs::write(
+        module_root.join("aver.toml"),
+        "[effects.Disk]\npaths = [\"./**\"]\n",
+    )
+    .expect("write aver.toml");
+    let config = ProjectConfig::load_from_dir(&module_root)
+        .expect("load aver.toml")
+        .expect("aver.toml should exist");
+
+    let run = |src: &str| {
+        let mut items = parse(src);
+        tco::transform_program(&mut items);
+        resolver::resolve_program(&mut items);
+
+        let mut arena = Arena::new();
+        let (resolved, symbols) = resolve_for_vm(&items);
+        let (code, globals) = vm::compile_program_with_modules(
+            &resolved,
+            &symbols,
+            &mut arena,
+            Some(
+                module_root
+                    .to_str()
+                    .expect("module root must be valid UTF-8"),
+            ),
+            "",
+            None,
+        )
+        .expect("compile failed");
+        let mut machine = vm::VM::new(code, globals, arena);
+        machine.set_runtime_policy(config.clone());
+        machine.run()
+    };
+
+    let absolute = "fn main() -> Bool\n    ! [Disk.exists]\n    Disk.exists(\"/etc/passwd\")\n";
+    let error = run(absolute).expect_err("project-root policy must deny absolute paths");
+    assert!(
+        error.to_string().contains("denied by aver.toml policy"),
+        "error should mention aver.toml policy, got: {error}"
+    );
+
+    let relative = "fn main() -> Bool\n    ! [Disk.exists]\n    Disk.exists(\"data/ok.txt\")\n";
+    let result = run(relative).expect("project-root policy must allow relative paths");
+    assert!(result.is_bool());
+}
+
+#[test]
 fn vm_cancel_mode_stops_independent_product_sibling_early() {
     let marker_path = std::env::temp_dir().join(format!(
         "aver_vm_independence_{}_{}.txt",

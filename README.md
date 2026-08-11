@@ -339,6 +339,8 @@ paths = ["./data/**"]
 keys = ["APP_*", "PUBLIC_*"]
 ```
 
+Disk paths accept concrete subtrees, `./**` for the project-relative subtree, and `/**` for the filesystem root. Bare `**`, empty entries, unsupported glob spellings, and `..`-rooted entries are rejected when `aver.toml` loads; see [the CLI reference](docs/cli.md#avertoml) for the full grammar and string-only matching limitation.
+
 Think of this as two separate controls:
 
 - code answers: what kind of I/O is allowed?

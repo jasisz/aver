@@ -178,17 +178,36 @@ const POLICY_TEMPLATE: &str = r#"pub mod aver_policy {
     }
 
     fn path_matches(normalized: &str, pattern: &str) -> bool {
-        let clean_pattern = normalize_path(pattern.strip_suffix("/**").unwrap_or(pattern));
-        if normalized == clean_pattern {
-            return true;
+        if pattern.is_empty() || pattern == "**" {
+            return false;
         }
-        if normalized.starts_with(&clean_pattern) {
-            let rest = &normalized[clean_pattern.len()..];
-            if rest.starts_with('/') {
-                return true;
-            }
+
+        let body = match pattern.strip_suffix("/**") {
+            Some("") => "/",
+            Some(base) => base,
+            None => pattern,
+        };
+        if body.contains('*') {
+            return false;
         }
-        false
+
+        let base = normalize_path(body);
+        if base.is_empty() {
+            return !normalized.starts_with('/')
+                && normalized != ".."
+                && !normalized.starts_with("../");
+        }
+        if base == "/" {
+            return normalized.starts_with('/');
+        }
+        if base == ".." || base.starts_with("../") {
+            return false;
+        }
+
+        normalized == base
+            || (normalized.len() > base.len()
+                && normalized.starts_with(&base)
+                && normalized.as_bytes()[base.len()] == b'/')
     }
 
     fn env_key_matches(key: &str, pattern: &str) -> bool {
@@ -203,3 +222,14 @@ const POLICY_TEMPLATE: &str = r#"pub mod aver_policy {
     }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::POLICY_TEMPLATE;
+
+    #[test]
+    fn policy_template_mirrors_project_root_semantics() {
+        assert!(POLICY_TEMPLATE.contains("if pattern.is_empty() || pattern == \"**\""));
+        assert!(POLICY_TEMPLATE.contains("Some(\"\") => \"/\""));
+    }
+}

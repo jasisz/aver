@@ -440,12 +440,24 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
                     let section = value
                         .as_table()
                         .ok_or_else(|| format!("aver.toml: [effects.{}] must be a table", name))?;
+                    let hosts = parse_policy_list(section, "hosts", name)?;
+                    for (index, host) in hosts.iter().enumerate() {
+                        validate_host_pattern(name, index, host)?;
+                    }
+                    let paths = parse_policy_list(section, "paths", name)?;
+                    for (index, path) in paths.iter().enumerate() {
+                        validate_path_pattern(name, index, path)?;
+                    }
+                    let keys = parse_policy_list(section, "keys", name)?;
+                    for (index, key) in keys.iter().enumerate() {
+                        validate_env_key_pattern(name, index, key)?;
+                    }
                     effect_policies.insert(
                         name.clone(),
                         RuntimeEffectPolicy {
-                            hosts: parse_policy_list(section, "hosts", name)?,
-                            paths: parse_policy_list(section, "paths", name)?,
-                            keys: parse_policy_list(section, "keys", name)?,
+                            hosts,
+                            paths,
+                            keys,
                         },
                     );
                 }
@@ -572,6 +584,58 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
             .collect()
     }
 
+    fn validate_path_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+        let prefix = format!("aver.toml: [effects.{effect}].paths[{index}]");
+        if raw.is_empty() {
+            return Err(format!(
+                "{prefix} is empty; use \".\" for the project directory or \"/\" for the filesystem root"
+            ));
+        }
+        if raw == "**" {
+            return Err(format!(
+                "{prefix} is ambiguous: '**'; use \"./**\" for the project subtree or \"/**\" for the filesystem root"
+            ));
+        }
+
+        let body = match raw.strip_suffix("/**") {
+            Some("") => "/",
+            Some(base) => base,
+            None => raw,
+        };
+        if body.contains('*') {
+            return Err(format!(
+                "{prefix} contains an unsupported glob '{raw}'; only a trailing \"/**\" is supported (for example, \"./data/**\")"
+            ));
+        }
+
+        let base = normalize_path(body);
+        if base == ".." || base.starts_with("../") {
+            return Err(format!(
+                "{prefix} escapes the project directory: '{raw}'; use an absolute pattern (for example, \"/srv/data/**\") to allow files outside the project"
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_host_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+        if raw == "*" || raw == "**" {
+            return Err(format!(
+                "aver.toml: [effects.{effect}].hosts[{index}] contains an unsupported wildcard '{raw}'; use an exact host or a subdomain wildcard such as \"*.example.com\""
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_env_key_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+        if raw == "**" {
+            return Err(format!(
+                "aver.toml: [effects.{effect}].keys[{index}] contains an unsupported wildcard '**'; use \"*\" for every key or a prefix wildcard such as \"APP_*\""
+            ));
+        }
+        Ok(())
+    }
+
     fn check_policy(effect_type: &str, args: &[ReplayJson]) {
         let policy = SCOPE_STATE.with(|cell| match &*cell.borrow() {
             ScopeState::Inactive => None,
@@ -657,17 +721,36 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
     }
 
     fn path_matches(normalized: &str, pattern: &str) -> bool {
-        let clean_pattern = normalize_path(pattern.strip_suffix("/**").unwrap_or(pattern));
-        if normalized == clean_pattern {
-            return true;
+        if pattern.is_empty() || pattern == "**" {
+            return false;
         }
-        if normalized.starts_with(&clean_pattern) {
-            let rest = &normalized[clean_pattern.len()..];
-            if rest.starts_with('/') {
-                return true;
-            }
+
+        let body = match pattern.strip_suffix("/**") {
+            Some("") => "/",
+            Some(base) => base,
+            None => pattern,
+        };
+        if body.contains('*') {
+            return false;
         }
-        false
+
+        let base = normalize_path(body);
+        if base.is_empty() {
+            return !normalized.starts_with('/')
+                && normalized != ".."
+                && !normalized.starts_with("../");
+        }
+        if base == "/" {
+            return normalized.starts_with('/');
+        }
+        if base == ".." || base.starts_with("../") {
+            return false;
+        }
+
+        normalized == base
+            || (normalized.len() > base.len()
+                && normalized.starts_with(&base)
+                && normalized.as_bytes()[base.len()] == b'/')
     }
 
     fn env_key_matches(key: &str, pattern: &str) -> bool {
@@ -680,6 +763,24 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
             false
         }
     }"#;
+
+#[cfg(test)]
+mod policy_tests {
+    use super::RUNTIME_POLICY_CHECK_SNIPPET;
+
+    #[test]
+    fn runtime_policy_snippet_mirrors_project_root_semantics() {
+        assert!(
+            RUNTIME_POLICY_CHECK_SNIPPET.contains("if pattern.is_empty() || pattern == \"**\"")
+        );
+        assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("Some(\"\") => \"/\""));
+        assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("validate_path_pattern(name, index, path)"));
+        assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("validate_host_pattern(name, index, host)"));
+        assert!(
+            RUNTIME_POLICY_CHECK_SNIPPET.contains("validate_env_key_pattern(name, index, key)")
+        );
+    }
+}
 
 const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     use std::cell::RefCell;
