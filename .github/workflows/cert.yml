@@ -38,6 +38,16 @@ jobs:
     # prefix out. A model or fixture added to the lists inside a suite lands in
     # an existing shard test, so these lanes never need editing for coverage —
     # only to add throughput.
+    #
+    # Lane counts are sized from measured wall-clock, not from test counts:
+    # slice partitioning splits by name, so equal slices are not equal work.
+    # The budget that matters is the runner pool, which caps concurrency at 20
+    # for the whole repository — CI and Proof draw from the same pool, so lanes
+    # past that cap do not shorten the run, they only push the other workflows
+    # further back in the queue. Splitting a family finer than its share of the
+    # pool costs more than it saves. Re-measure before changing a count: the
+    # useful figure is each lane's duration, and the target is that no lane is
+    # much longer than the total kernel time divided by the lane count.
     name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -71,25 +81,10 @@ jobs:
             filter: 'test(/^cert_hostile_model_/)'
             partition: 5/5
           - suite: cert_certify_spec
-            lane: adt-witnesses-1/4
+            lane: adt-witnesses
             mode: nextest
             filter: 'test(/^cert_adt_witness_/)'
-            partition: 1/4
-          - suite: cert_certify_spec
-            lane: adt-witnesses-2/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 2/4
-          - suite: cert_certify_spec
-            lane: adt-witnesses-3/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 3/4
-          - suite: cert_certify_spec
-            lane: adt-witnesses-4/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 4/4
+            partition: 1/1
           - suite: cert_certify_spec
             lane: rest
             mode: nextest
@@ -105,33 +100,25 @@ jobs:
             lane: ''
             mode: cargo
           - suite: cert_whole_module_guard_iso
-            lane: ''
-            mode: cargo
+            lane: 1/2
+            mode: nextest
+            filter: 'all()'
+            partition: 1/2
+          - suite: cert_whole_module_guard_iso
+            lane: 2/2
+            mode: nextest
+            filter: 'all()'
+            partition: 2/2
           - suite: cert_verify_spec
-            lane: tripwires-1/5
+            lane: tripwires-1/2
             mode: nextest
             filter: 'test(/^cert_tripwire_/)'
-            partition: 1/5
+            partition: 1/2
           - suite: cert_verify_spec
-            lane: tripwires-2/5
+            lane: tripwires-2/2
             mode: nextest
             filter: 'test(/^cert_tripwire_/)'
-            partition: 2/5
-          - suite: cert_verify_spec
-            lane: tripwires-3/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 3/5
-          - suite: cert_verify_spec
-            lane: tripwires-4/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 4/5
-          - suite: cert_verify_spec
-            lane: tripwires-5/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 5/5
+            partition: 2/2
           - suite: cert_verify_spec
             lane: plans-authority-1/3
             mode: nextest
@@ -148,45 +135,50 @@ jobs:
             filter: 'test(/^cert_plans_authority_/)'
             partition: 3/3
           - suite: cert_verify_spec
-            lane: rest-1/8
+            lane: rest-1/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 1/8
+            partition: 1/9
           - suite: cert_verify_spec
-            lane: rest-2/8
+            lane: rest-2/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 2/8
+            partition: 2/9
           - suite: cert_verify_spec
-            lane: rest-3/8
+            lane: rest-3/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 3/8
+            partition: 3/9
           - suite: cert_verify_spec
-            lane: rest-4/8
+            lane: rest-4/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 4/8
+            partition: 4/9
           - suite: cert_verify_spec
-            lane: rest-5/8
+            lane: rest-5/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 5/8
+            partition: 5/9
           - suite: cert_verify_spec
-            lane: rest-6/8
+            lane: rest-6/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 6/8
+            partition: 6/9
           - suite: cert_verify_spec
-            lane: rest-7/8
+            lane: rest-7/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 7/8
+            partition: 7/9
           - suite: cert_verify_spec
-            lane: rest-8/8
+            lane: rest-8/9
             mode: nextest
             filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 8/8
+            partition: 8/9
+          - suite: cert_verify_spec
+            lane: rest-9/9
+            mode: nextest
+            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
+            partition: 9/9
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
