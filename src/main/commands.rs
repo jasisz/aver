@@ -991,6 +991,140 @@ pub(super) fn display_check_path(path: &str, module_root: &str) -> String {
     path.to_string()
 }
 
+/// The path key `[[check.suppress]]` globs are matched against: the file's
+/// location relative to the module root, with no leading `./`.
+///
+/// Deliberately not `display_check_path`: that one keeps whatever spelling
+/// the command line used, which is what the user should read back, but it
+/// makes the same file match a waiver under one spelling and miss it under
+/// another. Suppression must not depend on how the path was typed.
+pub(super) fn suppression_path(path: &str, module_root: &str) -> String {
+    let p = Path::new(path);
+    let root = Path::new(module_root);
+
+    if let Some(rel) = relativize_to_canonical(root, p).or_else(|| relativize_to(root, p)) {
+        return rel;
+    }
+
+    // The file may not exist on disk (or may sit outside the module root),
+    // so fall back to a purely lexical cleanup.
+    let mut lexical = PathBuf::new();
+    for component in p.components() {
+        if matches!(component, std::path::Component::CurDir) {
+            continue;
+        }
+        lexical.push(component.as_os_str());
+    }
+    if lexical.as_os_str().is_empty() {
+        path.to_string()
+    } else {
+        path_to_string(&lexical)
+    }
+}
+
+/// Per-rule bookkeeping for `[[check.suppress]]`, so a run can tell the
+/// user which waivers did nothing.
+struct SuppressionTracker {
+    /// Some checked file fell inside the rule's file globs.
+    covered: Vec<bool>,
+    /// The rule actually removed at least one diagnostic.
+    fired: Vec<bool>,
+}
+
+impl SuppressionTracker {
+    fn new(config: Option<&aver::config::ProjectConfig>) -> Self {
+        let len = config.map_or(0, |cfg| cfg.check_suppressions.len());
+        SuppressionTracker {
+            covered: vec![false; len],
+            fired: vec![false; len],
+        }
+    }
+
+    fn note_file(&mut self, config: Option<&aver::config::ProjectConfig>, key: &str) {
+        let Some(cfg) = config else {
+            return;
+        };
+        for (idx, covered) in self.covered.iter_mut().enumerate() {
+            *covered |= cfg.suppression_covers_file(idx, key);
+        }
+    }
+}
+
+/// Drop the warnings waived by `[[check.suppress]]` and return how many went.
+/// Shared by `aver check` and `aver audit` so the two commands cannot drift.
+fn apply_check_suppressions(
+    diagnostics: &mut Vec<diagnostic::Diagnostic>,
+    config: Option<&aver::config::ProjectConfig>,
+    key: &str,
+    tracker: &mut SuppressionTracker,
+) -> usize {
+    let Some(cfg) = config else {
+        return 0;
+    };
+    let before = diagnostics.len();
+    diagnostics.retain(|diag| {
+        // Warnings only. Keying on anything wider would let a waiver hide an
+        // error or a verify failure, and with it the command's exit code.
+        if !diag.is_warning() {
+            return true;
+        }
+        // Every matching rule is credited, not just the first, so an
+        // overlapping waiver is never reported as dead.
+        let mut suppressed = false;
+        for idx in 0..cfg.check_suppressions.len() {
+            if cfg.check_suppression_applies(idx, diag.slug, key) {
+                suppressed = true;
+                if let Some(fired) = tracker.fired.get_mut(idx) {
+                    *fired = true;
+                }
+            }
+        }
+        !suppressed
+    });
+    before - diagnostics.len()
+}
+
+/// Report `[[check.suppress]]` rules that removed nothing. Only meaningful
+/// when the run walked a whole directory: checking a single file legitimately
+/// leaves waivers for other paths untouched.
+///
+/// Written to stderr so `--json` stdout stays a clean stream, and never
+/// changes the exit code.
+fn report_dead_suppressions(
+    config: Option<&aver::config::ProjectConfig>,
+    tracker: &SuppressionTracker,
+    whole_tree: bool,
+) {
+    if !whole_tree {
+        return;
+    }
+    let Some(cfg) = config else {
+        return;
+    };
+    for (idx, rule) in cfg.check_suppressions.iter().enumerate() {
+        if tracker.fired.get(idx).copied().unwrap_or(false) {
+            continue;
+        }
+        let scope = if rule.files.is_empty() {
+            "every file".to_string()
+        } else {
+            rule.files.join(", ")
+        };
+        let detail = if tracker.covered.get(idx).copied().unwrap_or(false) {
+            "matched files in this run but suppressed nothing — the warning it waives no longer fires"
+        } else {
+            "matched no checked file — the path may be stale"
+        };
+        eprintln!(
+            "{} aver.toml [[check.suppress]] slug = \"{}\" (files: {}) {}",
+            "warning:".yellow(),
+            rule.slug,
+            scope,
+            detail
+        );
+    }
+}
+
 pub(super) fn cmd_run_vm(
     file: &str,
     module_root_override: Option<&str>,
@@ -1496,6 +1630,7 @@ fn run_check_for_file(
     deps: bool,
     verbose: bool,
     json: bool,
+    tracker: &mut SuppressionTracker,
 ) -> Result<bool, String> {
     let units = collect_check_units(file, module_root, deps)?;
     let _entry_module = units.first().and_then(|(_, _, items)| module_name(items));
@@ -1514,6 +1649,8 @@ fn run_check_for_file(
 
     for (idx, (path, source, items)) in units.iter().enumerate() {
         let shown_path = display_check_path(path, module_root);
+        let suppress_key = suppression_path(path, module_root);
+        tracker.note_file(config, &suppress_key);
         if !json {
             if idx > 0 {
                 println!();
@@ -1549,13 +1686,8 @@ fn run_check_for_file(
         }
 
         // --- Filter suppressed warnings ---
-        let total_before = diagnostics.len();
-        if let Some(cfg) = config {
-            diagnostics.retain(|diag| {
-                !diag.is_warning() || !cfg.is_check_suppressed(diag.slug, &shown_path)
-            });
-        }
-        let suppressed_count = total_before - diagnostics.len();
+        let suppressed_count =
+            apply_check_suppressions(&mut diagnostics, config, &suppress_key, tracker);
 
         // --- Emit ---
         if json {
@@ -1621,6 +1753,13 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
     use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
 
     let module_root = crate::shared::resolve_module_root(module_root_override);
+    let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
     let inputs = match resolve_av_inputs(path) {
         Ok(v) => v,
         Err(e) => {
@@ -1635,6 +1774,9 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
             process::exit(1);
         }
     };
+
+    let batch = Path::new(path).is_dir();
+    let mut tracker = SuppressionTracker::new(config.as_ref());
 
     let mut total_check_errors = 0usize;
     let mut total_verify_failures = 0usize;
@@ -1663,6 +1805,19 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         opts.include_verify_run = true;
         opts.verify_run_hostile = hostile;
         let mut report = analyze_source(&source, &opts);
+
+        // Suppression runs before the format check on purpose: `needs-format`
+        // still increments `total_format_needed` and still forces exit 1, so
+        // letting a waiver delete the diagnostic would report a clean file
+        // that fails anyway.
+        let suppress_key = suppression_path(file, &module_root);
+        tracker.note_file(config.as_ref(), &suppress_key);
+        let suppressed_count = apply_check_suppressions(
+            &mut report.diagnostics,
+            config.as_ref(),
+            &suppress_key,
+            &mut tracker,
+        );
 
         // Format check: append needs-format diagnostic with structured
         // per-rule violations (capped at the factory's MAX_VIOLATION_REGIONS).
@@ -1706,9 +1861,11 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         if json {
             println!("{}", report.to_json());
         } else {
-            render_audit_tty(&shown_path, &report, needs_format);
+            render_audit_tty(&shown_path, &report, needs_format, suppressed_count);
         }
     }
+
+    report_dead_suppressions(config.as_ref(), &tracker, batch);
 
     if json {
         println!(
@@ -1740,6 +1897,7 @@ fn render_audit_tty(
     shown_path: &str,
     report: &aver::diagnostics::AnalysisReport,
     needs_format: bool,
+    suppressed_count: usize,
 ) {
     println!();
     println!("{}", format!("Audit: {}", shown_path).cyan());
@@ -1788,6 +1946,9 @@ fn render_audit_tty(
     if needs_format {
         println!("  {} needs format", "!".yellow());
     }
+    if suppressed_count > 0 {
+        println!("  {} warning(s) suppressed by aver.toml", suppressed_count);
+    }
 }
 
 fn severity_tag(diag: &aver::diagnostics::Diagnostic) -> colored::ColoredString {
@@ -1825,6 +1986,7 @@ pub(super) fn cmd_check(
 
     let batch = Path::new(path).is_dir();
     let mut failed_files = Vec::new();
+    let mut tracker = SuppressionTracker::new(config.as_ref());
 
     for (idx, file) in inputs.iter().enumerate() {
         if !json && batch && idx > 0 {
@@ -1835,7 +1997,15 @@ pub(super) fn cmd_check(
             println!("Input: {}", display_check_path(file, &module_root).cyan());
         }
 
-        match run_check_for_file(file, &module_root, config.as_ref(), deps, verbose, json) {
+        match run_check_for_file(
+            file,
+            &module_root,
+            config.as_ref(),
+            deps,
+            verbose,
+            json,
+            &mut tracker,
+        ) {
             Ok(has_errors) => {
                 if has_errors {
                     failed_files.push(file.clone());
@@ -1847,6 +2017,8 @@ pub(super) fn cmd_check(
             }
         }
     }
+
+    report_dead_suppressions(config.as_ref(), &tracker, batch);
 
     if json {
         let passed = inputs.len().saturating_sub(failed_files.len());
@@ -9451,7 +9623,8 @@ fn load_module_recursive(
 #[cfg(test)]
 mod tests {
     use super::{
-        codegen_uses_self_host_runtime, resolve_av_inputs, validate_self_host_guest_entry_contract,
+        codegen_uses_self_host_runtime, resolve_av_inputs, suppression_path,
+        validate_self_host_guest_entry_contract,
     };
     use aver::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, TopLevel};
     use aver::codegen::CodegenContext;
@@ -10351,6 +10524,34 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
                 dir.join("b.av").to_string_lossy().to_string(),
                 nested.join("a.av").to_string_lossy().to_string(),
             ]
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn suppression_path_strips_dot_slash_and_relativizes() {
+        let dir = temp_case_dir("suppress_key");
+        let nested = dir.join("domain");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::write(nested.join("version.av"), "module Version\n").expect("write version.av");
+        let root = dir.to_str().expect("utf8 path");
+
+        assert_eq!(
+            suppression_path(nested.join("version.av").to_str().expect("utf8 path"), root),
+            "domain/version.av"
+        );
+        assert_eq!(
+            suppression_path(
+                dir.join("./domain/version.av").to_str().expect("utf8 path"),
+                root
+            ),
+            "domain/version.av"
+        );
+        // No filesystem answer available: fall back to a lexical cleanup.
+        assert_eq!(
+            suppression_path("./domain/missing.av", "."),
+            "domain/missing.av"
         );
 
         fs::remove_dir_all(&dir).expect("cleanup temp dir");
