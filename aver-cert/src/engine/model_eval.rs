@@ -43,15 +43,15 @@ struct ModelInfo {
     /// Keyed by the FLAT (wasm-export-space) name: for a def inside
     /// `namespace P` the key is `P` with dots replaced by underscores,
     /// joined to the bare name with `_` — exactly the compiler's dependency
-    /// flattening. Entry-level defs are keyed by their bare name unchanged.
+    /// flattening. Definitions in the entry module's namespace are keyed by
+    /// their bare export name because the compiler does not flatten that prefix.
     fns: std::collections::HashMap<String, FnSig>,
-    /// Keyed by the QUALIFIED Lean name (`P.Ty` inside `namespace P`, the
-    /// bare name at entry level).
+    /// Keyed by the qualified Lean name (`P.Ty` inside `namespace P`).
     inductives: std::collections::HashMap<String, InductiveInfo>,
-    /// Flat forms (dots replaced by underscores) of every namespace the model
-    /// files open. An export name shaped like `<prefix>_<rest>` for one of
-    /// these prefixes MAY be a dependency-module function, so its Lean
-    /// identifier can never be assumed to be the export name itself.
+    /// Flat forms (dots replaced by underscores) of every dependency namespace.
+    /// An export name shaped like `<prefix>_<rest>` for one of these prefixes
+    /// may be a dependency function, so its Lean identifier cannot be assumed
+    /// to be the export name itself.
     module_prefix_flats: Vec<String>,
     /// Flat keys claimed by two DIFFERENT qualified names. A lookup on such a
     /// key must fail (fail-closed): citing either candidate would be a guess.
@@ -59,10 +59,9 @@ struct ModelInfo {
 }
 
 struct FnSig {
-    /// Fully qualified Lean identifier of this def (equals the bare name at
-    /// entry level, `P.name` inside `namespace P`).
+    /// Fully qualified Lean identifier of this def (`P.name`).
     lean_name: String,
-    /// Dotted namespace prefix the def was parsed under (empty at entry level).
+    /// Dotted namespace prefix the def was parsed under.
     prefix: String,
     params: Vec<String>,
     ret: String,
@@ -93,15 +92,36 @@ fn is_user_model_file(path: &str) -> bool {
     path.ends_with(".lean") && path != "AverCommon.lean" && path != "lakefile.lean"
 }
 
+fn entry_model_root(model_files: &[(String, String)]) -> Option<String> {
+    let lakefile = model_files
+        .iter()
+        .find_map(|(path, contents)| (path == "lakefile.lean").then_some(contents))?;
+    lakefile.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("roots := #[`")?;
+        let root = rest.split([',', ']']).next()?.trim();
+        (!root.is_empty()).then(|| root.to_string())
+    })
+}
+
+fn model_file_root(path: &str) -> Option<String> {
+    path.strip_suffix(".lean").map(|stem| stem.replace('/', "."))
+}
+
 impl ModelInfo {
     /// Parse the USER model modules only — see `is_user_model_file`.
     fn from_files(model_files: &[(String, String)]) -> Self {
         let mut info = Self::default();
+        let entry_root = entry_model_root(model_files);
         for (path, content) in model_files {
             if !is_user_model_file(path) {
                 continue;
             }
-            info.parse_lean(content);
+            let entry_namespace = if model_file_root(path).as_ref() == entry_root.as_ref() {
+                entry_root.as_deref()
+            } else {
+                None
+            };
+            info.parse_lean(content, entry_namespace);
         }
         info
     }
@@ -110,8 +130,7 @@ impl ModelInfo {
     /// of export `name`, or `None` when it cannot be derived (then the export
     /// must decline rather than cite a guess).
     ///
-    /// - A parsed model def with this flat key resolves to its qualified name
-    ///   (identity for entry-level defs).
+    /// - A parsed model def with this flat key resolves to its qualified name.
     /// - Two distinct defs flattening to the same key are ambiguous: `None`.
     /// - With no parsed def, the export name itself is citable only when no
     ///   model namespace flattens to a prefix of it — otherwise the export may
@@ -155,7 +174,7 @@ impl ModelInfo {
             .map(|ind| (written.to_string(), ind))
     }
 
-    fn parse_lean(&mut self, content: &str) {
+    fn parse_lean(&mut self, content: &str, entry_namespace: Option<&str>) {
         let lines: Vec<&str> = content.lines().collect();
         // Namespace stack: `namespace X` pushes (X may be dotted), a matching
         // `end X` pops. A bare `end` (a `mutual` block) never pops.
@@ -169,9 +188,11 @@ impl ModelInfo {
             {
                 ns_stack.push(name.to_string());
                 let prefix = ns_stack.join(".");
-                let flat = prefix.replace('.', "_");
-                if !self.module_prefix_flats.contains(&flat) {
-                    self.module_prefix_flats.push(flat);
+                if entry_namespace != Some(prefix.as_str()) {
+                    let flat = prefix.replace('.', "_");
+                    if !self.module_prefix_flats.contains(&flat) {
+                        self.module_prefix_flats.push(flat);
+                    }
                 }
                 i += 1;
                 continue;
@@ -224,7 +245,11 @@ impl ModelInfo {
                 && let Some((name, mut sig)) = parse_def_sig(line)
             {
                 let qualified = qualify(&prefix, &name);
-                let flat = qualified.replace('.', "_");
+                let flat = if entry_namespace == Some(prefix.as_str()) {
+                    name.clone()
+                } else {
+                    qualified.replace('.', "_")
+                };
                 sig.lean_name = qualified;
                 sig.prefix = prefix.clone();
                 if self.ambiguous.contains(&flat) {
@@ -307,8 +332,9 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
 mod model_name_space_tests {
     /// A single-file (no dependency module) program's model tree still ships
     /// the compiler prelude, which carries its own namespaces and dotted
-    /// top-level defs. None of it may enter the name space: a flat program has
-    /// no module prefixes at all, so every export resolves to itself.
+    /// top-level defs. None of it may enter the dependency name space: a flat
+    /// program has no dependency prefixes, and its bare Wasm exports resolve to
+    /// definitions in the entry module namespace.
     #[test]
     fn prelude_namespaces_stay_out_of_the_flat_key_space() {
         // Abridged from a real `AverCommon.lean`: a namespace block and the
@@ -325,11 +351,17 @@ def get (m : Int) (k : Int) : Int :=\n\
   0\n\
 end AverMap\n";
         let entry = "\
+namespace Program
+\
 def addTwo (n : Int) : Int :=\n\
-  n + 2\n";
+  n + 2\n\
+end Program\n";
         let info = super::ModelInfo::from_files(&[
             ("AverCommon.lean".to_string(), prelude.to_string()),
-            ("lakefile.lean".to_string(), "import Lake\n".to_string()),
+            (
+                "lakefile.lean".to_string(),
+                "roots := #[`Program, `AverCommon]\n".to_string(),
+            ),
             ("Program.lean".to_string(), entry.to_string()),
         ]);
 
@@ -351,8 +383,8 @@ def addTwo (n : Int) : Int :=\n\
         }
         assert_eq!(
             info.model_lean_name("addTwo").as_deref(),
-            Some("addTwo"),
-            "an entry-level export resolves to itself"
+            Some("Program.addTwo"),
+            "an entry export resolves to its module-qualified Lean name"
         );
         // The regression this guards: an export colliding with a prelude def's
         // flattened key must still resolve, not decline as ambiguous.

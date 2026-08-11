@@ -295,6 +295,20 @@ fn model_lean_files(repo: &Path, av_path: &Path, out: &Path) -> Vec<(String, Str
             }
         }
     }
+    // The rendered certificate omits the model project's build files. Restore
+    // the entry-root metadata that the certificate engine originally received.
+    if let Ok(source) = std::fs::read_to_string(av_path)
+        && let Some(module_name) = source.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("module ")
+                .and_then(|rest| rest.split_whitespace().next())
+        })
+    {
+        files.push((
+            "lakefile.lean".to_string(),
+            format!("roots := #[`{module_name}]\n"),
+        ));
+    }
     files
 }
 

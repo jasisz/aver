@@ -11,6 +11,14 @@ fn proof_export_builds_fibonacci_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_entry_that_shares_function_names_with_dependency() {
+    assert_proof_builds(
+        "stdlib/crypto/digest32.av",
+        "aver-proof-entry-namespace-collision",
+    );
+}
+
+#[test]
 fn proof_export_builds_log_line_length_when_lake_is_available() {
     // Pure builtin String-length additivity (`String.len(a + b) =
     // String.len(a) + String.len(b)`) on a life-like log-line byte-budget

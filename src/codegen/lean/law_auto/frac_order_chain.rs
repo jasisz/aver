@@ -459,15 +459,15 @@ pub(super) fn emit_frac_order_chain_law(
     let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
     let when = render(law.when.as_ref()?);
     // The conclusion subject call, exactly as the law writes it (its own args —
-    // NOT every quantified given), and the subject fn Lean name (for the
-    // `simp only [_root_.<subject>]` unfold).
+    // NOT every quantified given), and the subject fn's qualified Lean name.
     let lhs = render(&law.lhs);
-    let subject = aver_name_to_lean(&expr_dotted_name(&{
+    let subject_source = expr_dotted_name(&{
         let Expr::FnCall(callee, _) = &law.lhs.node else {
             return None;
         };
         (**callee).clone()
-    })?);
+    })?;
+    let subject = super::shared::entry_qualified_lean_name(ctx, &subject_source);
     let intros: Vec<String> = law
         .givens
         .iter()
@@ -627,7 +627,7 @@ theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = true := by
   first
   | (simp only [Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne, ne_eq] at h_when
      obtain ⟨⟨⟨h1, h2⟩, hsd2⟩, h3⟩ := h_when
-     simp only [_root_.{subject}]
+     simp only [{subject}]
      have hA := {p}frac_lt_imp_le ({m}) ({sgn} ({small})) h2
      have hScaled := {p}frac_le_mul_pos ({k}) ({m}) ({sgn} ({small})) (by decide) (by decide) hA
      have hDbl := {p}pow2Signed_double ({small})

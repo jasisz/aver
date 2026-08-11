@@ -1292,24 +1292,14 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     // must be EXCLUDED: `simp only [pow2]` errors trying to reduce the recursive
     // match on a symbolic argument, failing the whole arm. They stay abstract
     // and the pool law (the `pow2` homomorphism) reasons about them instead.
-    // `law_simp_defs` emits fully-qualified `_root_.<name>` simp targets, but
-    // `recursive_pure_fn_names` (via `aver_name_to_lean`) yields bare names. Strip
-    // the `_root_.` namespace prefix on BOTH sides before comparing, or the
-    // recursive filter silently misses (`"_root_.pow2" != "pow2"`) and a
-    // recursive cone fn leaks into `simp only`, breaking simp on its symbolic
-    // recursive match (the measured `e2` failure mode).
+    // `law_simp_defs` emits module-qualified entry simp targets, while
+    // `recursive_pure_fn_names` yields bare names. Compare their basenames so a
+    // recursive cone fn cannot leak into `simp only` on a symbolic match.
     // Compare on the BARE basename. `recursive_pure_fn_names` yields bare names
-    // (`pow2`), but `law_simp_defs` QUALIFIES a dep-module fn (`Domain.Fprep.pow2`,
-    // and entry fns carry a `_root_.` prefix). Stripping only `_root_.` left a dep
-    // recursive fn (`Domain.Fprep.pow2`) unmatched against the bare `pow2`, so it
-    // leaked into `simp only [...]` — and `simp only` on a recursive fn's symbolic
-    // match ERRORS, failing the whole keystone arm (the cross-module miss that
-    // sent every dep-cone conditional law to its bounded fallback). Drop the
-    // `_root_.` prefix AND the module path on both sides so a dep recursive cone
-    // fn is excluded exactly like an entry one.
+    // (`pow2`), but simp targets may carry either the entry or a dependency
+    // module path. Drop that path on both sides so both cases are excluded.
     fn bare_basename(n: &str) -> &str {
-        let n = n.strip_prefix("_root_.").unwrap_or(n);
-        n.rsplit('.').next().unwrap_or(n)
+        super::super::shared::bare_lean_name(n)
     }
     let mut abstract_fns: std::collections::HashSet<String> =
         super::super::recursive_pure_fn_names(ctx)

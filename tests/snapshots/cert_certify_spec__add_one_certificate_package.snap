@@ -66,7 +66,7 @@ abbrev addOneOb : Schema.Obligation :=
     Dom := List Int, Cod := Int,
     domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,
     codRepr := fun S n w => intRepr S n w,
-    model := fun ns => addOne (ns.headD 0) }
+    model := fun ns => CertificateHello.addOne (ns.headD 0) }
 
 def manifest : Schema.Manifest :=
   { subject :=

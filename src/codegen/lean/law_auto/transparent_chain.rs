@@ -519,8 +519,5 @@ fn scoped_key(scope: Option<&str>, name: &str) -> String {
 }
 
 fn bare_basename(name: &str) -> &str {
-    name.trim_start_matches("_root_.")
-        .rsplit('.')
-        .next()
-        .unwrap_or(name)
+    super::shared::bare_lean_name(name)
 }

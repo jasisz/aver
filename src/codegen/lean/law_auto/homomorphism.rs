@@ -470,7 +470,7 @@ theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
                 .collect();
             let mut unfold: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
             if let Op1::Concat(cat_src) = &shape.op1 {
-                let cat = format!("_root_.{}", aver_name_to_lean(cat_src));
+                let cat = super::shared::entry_qualified_lean_name(ctx, cat_src);
                 if !unfold.contains(&cat) {
                     unfold.push(cat);
                 }

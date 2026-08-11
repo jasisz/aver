@@ -268,7 +268,7 @@ pub(super) struct FracOrderTransitivity {
     lo: String,
     /// The chain links `L → n1 → … → R`.
     links: Vec<Link>,
-    /// Subject fn Lean name (for the `simp only [_root_.<subject>]` unfold).
+    /// Qualified subject fn Lean name used as an unambiguous unfold target.
     subject: String,
     /// Rational order primitive Lean names (qualified), derived from the body.
     lessthan: String,
@@ -491,7 +491,7 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     Some(FracOrderTransitivity {
         lo,
         links,
-        subject: aver_name_to_lean(&subject_src),
+        subject: super::shared::entry_qualified_lean_name(ctx, &subject_src),
         lessthan,
         isnonneg,
         minus,
@@ -723,7 +723,7 @@ theorem {p}frac_lt_le_trans (a b cc : Fraction) (hc : cc.bottom ≠ 0)
         // `obtain` pattern does not bind in core Lean, so name it with `have`.
         block.push(format!("     have {obtain} := h_when"));
     }
-    block.push(format!("     simp only [_root_.{subject}]"));
+    block.push(format!("     simp only [{subject}]"));
     for s in &steps {
         block.push(format!("     {s}"));
     }

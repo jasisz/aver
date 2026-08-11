@@ -4,6 +4,8 @@ set_option linter.unusedVariables false
 
 set_option maxRecDepth 1000000
 
+namespace LargeDomainLaw
+
 /-- Sum of the three arguments. -/
 def tripleSum (a : Int) (b : Int) (c : Int) : Int :=
   ((a + b) + c)
@@ -562,3 +564,5 @@ theorem tripleSum_law_mirror_sample_509 : tripleSum 7 7 4 = 18 := by native_deci
 theorem tripleSum_law_mirror_sample_510 : tripleSum 7 7 5 = 19 := by native_decide
 theorem tripleSum_law_mirror_sample_511 : tripleSum 7 7 6 = 20 := by native_decide
 theorem tripleSum_law_mirror_sample_512 : tripleSum 7 7 7 = 21 := by native_decide
+
+end LargeDomainLaw

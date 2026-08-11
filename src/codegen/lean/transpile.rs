@@ -722,6 +722,10 @@ pub(super) fn transpile_unified(
     union_body.push('\n');
 
     let project_name = lean_project_name(ctx);
+    let namespaced_entry_body = format!(
+        "namespace {}\n\n{}\nend {}",
+        project_name, entry_body, project_name
+    );
     let mut entry_imports = vec!["import AverCommon".to_string()];
     if entry_body.contains("Crypto.sha256") {
         entry_imports.push("import Crypto".to_string());
@@ -779,7 +783,7 @@ pub(super) fn transpile_unified(
         union_body.push('\n');
         entry_parts.push(subtype_block);
     }
-    entry_parts.push(entry_body);
+    entry_parts.push(namespaced_entry_body);
     let entry_content = entry_parts.join("\n\n");
 
     // ---- AverCommon.lean ----

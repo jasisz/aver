@@ -344,8 +344,7 @@ fn rf_is_floordiv_wrapper(ctx: &CodegenContext, bare: &str) -> bool {
 }
 
 pub(super) fn rf_bare_basename(n: &str) -> &str {
-    let n = n.strip_prefix("_root_.").unwrap_or(n);
-    n.rsplit('.').next().unwrap_or(n)
+    super::super::shared::bare_lean_name(n)
 }
 
 /// The cone simp set for a law, EXCLUDING the recursive power-of-two fn and the
@@ -636,7 +635,7 @@ fn rf_window_law(
             continue;
         }
         let thm = format!("{}_law_{}", aver_name_to_lean(&prev.fn_name), prev_law.name);
-        let unfold = format!("_root_.{}", aver_name_to_lean(&prev.fn_name));
+        let unfold = super::super::shared::entry_qualified_lean_name(ctx, &prev.fn_name);
         return Some((thm, unfold));
     }
     None

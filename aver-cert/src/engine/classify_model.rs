@@ -93,12 +93,18 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
     // so the key is dropped and the recursion classifier declines rather than
     // reading the operator off whichever definition happened to parse last.
     let mut ambiguous = std::collections::HashSet::new();
+    let entry_root = entry_model_root(model_files);
     for (path, content) in model_files {
         // Same user-only file predicate as `ModelInfo::from_files`: the
         // prelude defines no user model and must not claim flat keys.
         if !is_user_model_file(path) {
             continue;
         }
+        let entry_namespace = if model_file_root(path).as_ref() == entry_root.as_ref() {
+            entry_root.as_deref()
+        } else {
+            None
+        };
         let lines: Vec<&str> = content.lines().collect();
         // Track the namespace stack exactly like `ModelInfo::parse_lean`, so
         // a dependency module's `X__fuel` is keyed by its FLAT export-space
@@ -134,7 +140,11 @@ fn model_step_ops(model_files: &[(String, String)]) -> std::collections::HashMap
             } else {
                 format!("{prefix}.{bare}")
             };
-            let name = qualified.replace('.', "_");
+            let name = if entry_namespace == Some(prefix.as_str()) {
+                bare.to_string()
+            } else {
+                qualified.replace('.', "_")
+            };
             if ambiguous.contains(&name) {
                 continue;
             }

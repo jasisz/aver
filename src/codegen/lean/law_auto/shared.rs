@@ -629,22 +629,29 @@ pub(super) fn law_simp_defs(
         .into_iter()
         .map(|name| {
             let rendered = aver_name_to_lean(&name);
-            // Entry-module fns are emitted at the Lean root, so a user fn whose
-            // name shadows a stdlib symbol (e.g. `insert` vs the `Insert.insert`
-            // class method) makes a bare `simp only [insert]` error ("proposition
-            // expected") — the equation compiler can't pick the user def.
-            // `_root_.insert` always resolves to it and is a no-op otherwise.
-            // Dep-module fns are NOT at root: they live under their module
-            // namespace (`Lib.qrev`) and reach the consumer via `open Lib`, so a
-            // `_root_.` prefix would FAIL to resolve. Leave those bare — `open`
-            // resolves them exactly as before this change.
+            // Entry-module fns use their module-qualified name so a user fn
+            // shadowing a stdlib symbol (for example `insert`) remains an
+            // unambiguous simp target. Dependency fns already live under an
+            // opened module namespace and keep their existing bare spelling.
             if is_dep_module_fn(ctx, &name) {
                 rendered
             } else {
-                format!("_root_.{rendered}")
+                entry_qualified_lean_name(ctx, &name)
             }
         })
         .collect()
+}
+
+pub(super) fn entry_qualified_lean_name(ctx: &CodegenContext, source_name: &str) -> String {
+    format!(
+        "{}.{}",
+        super::super::lean_project_name(ctx),
+        aver_name_to_lean(source_name)
+    )
+}
+
+pub(super) fn bare_lean_name(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }
 
 /// A simp-set name belongs to a dependency module iff its `FnDef` lives in
