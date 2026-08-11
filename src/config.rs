@@ -755,8 +755,14 @@ mod tests {
     #[test]
     fn path_matcher_copies_agree_on_root_pattern_semantics() {
         const MARKERS: [(&str, &str); 3] = [
-            (r#"pattern == "**""#, "bare `**` is refused, never allow-all"),
-            (r#"Some("") => "/""#, "a bare trailing `/**` means the filesystem root"),
+            (
+                r#"pattern == "**""#,
+                "bare `**` is refused, never allow-all",
+            ),
+            (
+                r#"Some("") => "/""#,
+                "a bare trailing `/**` means the filesystem root",
+            ),
             (r#"base == "/""#, "the root base admits absolute paths only"),
         ];
         let copies: [(&str, &str); 4] = [
