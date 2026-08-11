@@ -116,6 +116,63 @@ def run(
     return subprocess.run(cmd, cwd=cwd, check=check, env=env)
 
 
+def ci_verified_head() -> tuple[bool, str]:
+    """Whether CI already ran the test suite on exactly this commit.
+
+    Only the full `cargo test` run below is skippable this way, and only when
+    every workflow that gates `main` reported success for this exact SHA. The
+    other release checks stay unconditional: they cover paths CI does not run
+    at all, which is how three wasm-gc handler-mode bugs survived from 0.16 to
+    0.17.2. Any doubt resolves to running the tests — a slow release is
+    cheaper than an unverified one.
+
+    Expect this to decline during a run of merges: the workflows cancel each
+    other in progress, so a commit that was overtaken carries `cancelled`
+    rather than `success` and the tests run. Releasing from a settled `main`
+    is what makes it fire.
+    """
+    required = {"CI", "Proof", "Certification"}
+    try:
+        head = run(
+            ["git", "rev-parse", "HEAD"], capture=True, check=True
+        ).stdout.strip()
+        upstream = run(
+            ["git", "rev-parse", "origin/main"], capture=True, check=True
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False, "cannot read git refs"
+    if head != upstream:
+        return False, "HEAD is not origin/main"
+    try:
+        raw = run(
+            [
+                "gh",
+                "run",
+                "list",
+                "--commit",
+                head,
+                "--limit",
+                "50",
+                "--json",
+                "name,conclusion,status",
+            ],
+            capture=True,
+            check=True,
+        ).stdout
+        runs = json.loads(raw)
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return False, "cannot read CI results for this commit"
+    if any(r.get("status") != "completed" for r in runs):
+        return False, "CI is still running on this commit"
+    if any(r.get("conclusion") == "failure" for r in runs):
+        return False, "CI failed on this commit"
+    succeeded = {r["name"] for r in runs if r.get("conclusion") == "success"}
+    missing = required - succeeded
+    if missing:
+        return False, f"no successful run of {', '.join(sorted(missing))}"
+    return True, f"CI green on {head[:8]}"
+
+
 def current_version() -> str:
     text = (REPO_ROOT / "Cargo.toml").read_text()
     m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
@@ -1061,8 +1118,16 @@ def verify(dry_run: bool) -> None:
     # wasip2 codegen / component-model surface was never gated by the
     # release check. Enable both (they share `wasm-compile`) so the
     # wasip2_* suites actually run.
-    print("  verify: cargo test --features wasm,wasip2", flush=True)
-    run(["cargo", "test", "--features", "wasm,wasip2"])
+    skip_tests, why = ci_verified_head()
+    if skip_tests:
+        print(
+            f"  verify: cargo test --features wasm,wasip2 — SKIPPED ({why});"
+            " every other release check below still runs",
+            flush=True,
+        )
+    else:
+        print(f"  verify: cargo test --features wasm,wasip2 ({why})", flush=True)
+        run(["cargo", "test", "--features", "wasm,wasip2"])
 
     # Bench smoke. Runs every scenario in `bench/scenarios/` end-to-end on
     # the VM target — catches pipeline / VM regressions that the unit tests
