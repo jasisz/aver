@@ -44,6 +44,22 @@ impl TypeChecker {
             .clone()
             .or_else(|| Self::module_decl(items).map(|m| m.name.clone()))
             .unwrap_or_default();
+        // Establish every local identity before resolving member annotations so
+        // declaration order cannot change which nominal type an annotation names.
+        for item in items {
+            if let TopLevel::TypeDef(td) = item {
+                let type_name = match td {
+                    TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+                };
+                let canonical_type = canonical_name(&module_name, type_name);
+                if let Some(id) = self.type_id_for_canonical(&canonical_type) {
+                    self.mark_type_visible(id);
+                    if canonical_type != *type_name {
+                        self.merge_bare_type_alias(type_name.clone(), id);
+                    }
+                }
+            }
+        }
         for item in items {
             if let TopLevel::TypeDef(td) = item {
                 self.register_type_def_sigs(td, &module_name);
@@ -420,19 +436,7 @@ impl TypeChecker {
                     effects: vec![],
                 };
                 self.insert_fn_sig(&canonical_type, type_sig);
-                // Mark the type itself visible to the current scope —
-                // own-module types are always visible to their own
-                // module. `type_id_for_canonical` bypasses the
-                // visibility filter so we can register it.
-                if let Some(id) = self.type_id_for_canonical(&canonical_type) {
-                    self.mark_type_visible(id);
-                    // Bare alias for the type name so bodies inside the
-                    // same module can reference `Shape` and have it
-                    // resolve to its TypeId.
-                    if canonical_type != *type_name {
-                        self.merge_bare_type_alias(type_name.clone(), id);
-                    }
-                }
+                // Visibility and bare aliases are registered by build_signatures.
                 // Register each constructor with a qualified key.
                 for variant in variants {
                     let params: Vec<Type> = variant
@@ -518,12 +522,7 @@ impl TypeChecker {
                     effects: vec![],
                 };
                 self.insert_fn_sig(&canonical_type, prod_sig);
-                if let Some(id) = self.type_id_for_canonical(&canonical_type) {
-                    self.mark_type_visible(id);
-                    if canonical_type != *type_name {
-                        self.merge_bare_type_alias(type_name.clone(), id);
-                    }
-                }
+                // Visibility and bare aliases are registered by build_signatures.
                 // Register per-field types so dot-access is checked.
                 // Phase B: single entry under canonical `(Module.Type,
                 // field)` — the bare-alias mirror that pre-phase-B

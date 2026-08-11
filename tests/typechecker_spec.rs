@@ -2642,6 +2642,186 @@ fn bad(d: Discount) -> Float
 }
 
 #[test]
+fn forward_declared_record_field_type_is_constructible() {
+    assert_no_errors(
+        r#"record Holder
+    item: Thing
+
+record Thing
+    value: Int
+
+fn value() -> Int
+    Holder(item = Thing(value = 1)).item.value
+"#,
+    );
+}
+
+#[test]
+fn forward_declared_types_resolve_at_all_three_member_sites() {
+    assert_no_errors(
+        r#"record Outer
+    items: List<Inner>
+
+type Wrapper
+    Wrap(Inner)
+    Nothing
+
+record Inner
+    value: Int
+
+fn makeOuter() -> Outer
+    Outer(items = [Inner(value = 1)])
+
+fn makeWrapper() -> Wrapper
+    Wrapper.Wrap(Inner(value = 2))
+"#,
+    );
+}
+
+#[test]
+fn type_def_order_does_not_change_the_check_result() {
+    let defs = [
+        "record Holder\n    item: Thing\n",
+        "type Wrapper\n    Wrap(Thing)\n    Nothing\n",
+        "record Thing\n    value: Int\n",
+    ];
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let src = format!(
+            "{}\n{}\n{}\nfn makeHolder() -> Holder\n    Holder(item = Thing(value = 1))\n\nfn makeWrapper() -> Wrapper\n    Wrapper.Wrap(Thing(value = 2))\n",
+            defs[order[0]], defs[order[1]], defs[order[2]]
+        );
+        let errs = errors(&src);
+        assert!(errs.is_empty(), "order {order:?} failed: {errs:?}");
+    }
+}
+
+#[test]
+fn dependency_module_internal_forward_reference_is_constructible() {
+    let root = temp_module_root("dep_forward_type");
+    std::fs::write(
+        root.join("Beta.av"),
+        r#"module Beta
+    exposes [Outer, Inner, mkOuter]
+    intent = "Build a forward-referencing record."
+
+record Outer
+    item: Inner
+
+record Inner
+    value: Int
+
+fn mkOuter(v: Int) -> Outer
+    Outer(item = Inner(value = v))
+"#,
+    )
+    .expect("write Beta.av failed");
+    let src = r#"module App
+    depends [Beta]
+    intent = "Use the dependency record."
+
+fn value() -> Int
+    Beta.mkOuter(3).item.value
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn opaque_dep_type_is_not_readable_through_a_forward_declared_local_record() {
+    let root = temp_module_root("opaque_forward_capture");
+    std::fs::write(
+        root.join("Discount.av"),
+        r#"module Discount
+    exposes [mkDiscount]
+    exposes opaque [Discount]
+    intent = "Opaque discount."
+
+record Discount
+    percent: Float
+
+fn mkDiscount(p: Float) -> Result<Discount, String>
+    Result.Ok(Discount(percent = p))
+"#,
+    )
+    .expect("write Discount.av failed");
+    let src = r#"module App
+    depends [Discount]
+    intent = "Keep dependency values opaque."
+
+record Holder
+    item: Discount
+
+record Discount
+    percent: Float
+
+fn bad() -> Float
+    match Discount.mkDiscount(50.0)
+        Result.Ok(d) -> Holder(item = d).item.percent
+        Result.Err(_) -> 0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Record 'Holder' field 'item'")),
+        "expected local/dependency type mismatch, got: {errs:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn embedded_stdlib_opaque_type_is_not_readable_through_a_forward_declared_local_record() {
+    let src = r#"module App
+    depends [Bytes]
+    intent = "Keep standard-library values opaque."
+
+record Holder
+    item: Bytes
+
+record Bytes
+    values: List<Int>
+
+fn bad() -> Int
+    match Bytes.fromHex("010203")
+        Result.Ok(b) -> List.len(Holder(item = b).item.values)
+        Result.Err(_) -> 0
+"#;
+    let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Record 'Holder' field 'item'")),
+        "expected local/stdlib type mismatch, got: {errs:?}"
+    );
+}
+
+#[test]
+fn locally_declared_type_cannot_enter_a_dependency_slot() {
+    let src = r#"module App
+    depends [Bytes]
+    intent = "Keep local values out of standard-library slots."
+
+record Bytes
+    values: List<Int>
+
+fn bad() -> String
+    Bytes.toHex(Bytes(values = [999, -1]))
+"#;
+    let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'Bytes.toHex'")),
+        "expected dependency-slot type mismatch, got: {errs:?}"
+    );
+}
+
+#[test]
 fn opaque_type_usable_in_signatures() {
     let root = temp_module_root("opaque_sig");
     let pricing_dir = root.join("Pricing");
@@ -3262,6 +3442,61 @@ fn pick() -> Int
         errs.join("\n  ")
     );
 
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn local_type_declared_after_use_still_shadows_a_dependency_bare_name() {
+    let root = temp_module_root("local_type_shadows_dep");
+    std::fs::write(
+        root.join("Alpha.av"),
+        r#"module Alpha
+    exposes [Thing, mkThing]
+    intent = "Expose a dependency Thing."
+
+record Thing
+    tag: String
+
+fn mkThing(tag: String) -> Thing
+    Thing(tag = tag)
+"#,
+    )
+    .expect("write Alpha.av failed");
+    let local_src = r#"module App
+    depends [Alpha]
+    intent = "The local Thing shadows Alpha.Thing."
+
+record Holder
+    item: Thing
+
+record Thing
+    value: Int
+
+fn local() -> Holder
+    Holder(item = Thing(value = 1))
+"#;
+    let local_errs = errors_with_base(local_src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        local_errs.is_empty(),
+        "local construction should typecheck, got: {local_errs:?}"
+    );
+
+    let captured_src = format!(
+        "{local_src}\nfn captured() -> Holder\n    Holder(item = Alpha.mkThing(\"hello\"))\n"
+    );
+    let captured_errs = errors_with_base(&captured_src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        captured_errs
+            .iter()
+            .any(|e| e.contains("Record 'Holder' field 'item'")),
+        "dependency value should be rejected, got: {captured_errs:?}"
+    );
+    assert!(
+        captured_errs
+            .iter()
+            .all(|e| !e.contains("Ambiguous type name 'Thing'")),
+        "local shadowing must not become ambiguity: {captured_errs:?}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
