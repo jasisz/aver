@@ -1228,6 +1228,24 @@ impl TypeChecker {
         });
     }
 
+    /// Current length of the diagnostic list, for use with
+    /// [`Self::discard_errors_since`].
+    pub(super) fn error_mark(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// Drop every diagnostic recorded since `mark`.
+    ///
+    /// Only for a recogniser that inferred a subexpression to decide
+    /// whether it applies and then declined. Inference is not free of
+    /// side effects: it appends diagnostics. The caller returning `None`
+    /// hands the same node back to the general path, which re-infers it
+    /// and reports for itself, so anything the probe recorded would
+    /// otherwise be reported twice.
+    pub(super) fn discard_errors_since(&mut self, mark: usize) {
+        self.errors.truncate(mark);
+    }
+
     fn insert_sig(&mut self, name: &str, params: &[Type], ret: Type, effects: &[&str]) {
         // Builtins (Int.add, Console.print, …) are not part of the
         // user-program symbol table, so they always land in

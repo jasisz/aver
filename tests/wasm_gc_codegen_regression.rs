@@ -648,3 +648,31 @@ fn main() -> Unit
 "#;
     assert_compiles_and_validates(source);
 }
+
+/// An empty literal defaulted through `Result.withDefault` /
+/// `Option.withDefault` in a binding with no expected type anywhere.
+///
+/// This shape used to type-check clean while stamping `List<Var("T")>` /
+/// `Map<Var("K"), Var("V")>`, and the backend then refused it — "List op
+/// called but `List<T>` helper wasn't registered", "cannot lower type
+/// `K` to a wasm representation". `aver check` passing and
+/// `--target wasm-gc` failing is the pairing this pins shut: the
+/// default now takes its element type from the subject's payload, so
+/// the stamp is concrete and the instantiation registry has an entry.
+#[test]
+fn empty_default_with_no_expected_type_compiles() {
+    assert_compiles_and_validates(
+        r#"module Probe
+    intent = "Empty defaults with nothing to fix their element type."
+    exposes [countList, countMap]
+
+fn countList(r: Result<List<Int>, String>) -> Int
+    xs = Result.withDefault(r, [])
+    List.len(xs)
+
+fn countMap(o: Option<Map<String, Int>>) -> Int
+    m = Option.withDefault(o, {})
+    Map.len(m)
+"#,
+    );
+}

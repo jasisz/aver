@@ -432,6 +432,134 @@ fn main() -> Int
 }
 
 #[test]
+fn with_default_types_empty_literals_from_the_subject() {
+    // An empty literal has nothing of its own to fix its element type,
+    // so it takes it from the subject's Ok/Some payload. Every position
+    // here failed before: return, annotated binding, argument, and a
+    // plain binding with no expected type at all — the last one used to
+    // pass silently with a `List<T>` stamp.
+    let items = parse_items(
+        r#"
+fn size(xs: List<Int>) -> Int
+    List.len(xs)
+
+fn inReturn(r: Result<List<Int>, String>) -> List<Int>
+    Result.withDefault(r, [])
+
+fn inReturnOption(o: Option<List<Int>>) -> List<Int>
+    Option.withDefault(o, [])
+
+fn inReturnMap(r: Result<Map<String, Int>, String>) -> Map<String, Int>
+    Result.withDefault(r, {})
+
+fn inAnnotatedBinding(r: Result<List<Int>, String>) -> Int
+    xs: List<Int> = Result.withDefault(r, [])
+    size(xs)
+
+fn inArgument(r: Result<List<Int>, String>) -> Int
+    size(Result.withDefault(r, []))
+
+fn inBareBinding(r: Result<List<Int>, String>) -> Int
+    xs = Result.withDefault(r, [])
+    size(xs)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.is_empty(),
+        "expected empty defaults to adopt the subject's payload type, got: {errs:?}"
+    );
+}
+
+#[test]
+fn option_to_result_types_empty_error_from_expected() {
+    // The error argument is unrelated to the subject's payload, so its
+    // type can only come from the expected `Result`'s error side.
+    let items = parse_items(
+        r#"
+fn reasons(r: Result<Int, List<String>>) -> Int
+    match r
+        Result.Ok(_) -> 0
+        Result.Err(rs) -> List.len(rs)
+
+fn inReturn(o: Option<Int>) -> Result<Int, List<String>>
+    Option.toResult(o, [])
+
+fn inAnnotatedBinding(o: Option<Int>) -> Int
+    r: Result<Int, List<String>> = Option.toResult(o, [])
+    reasons(r)
+
+fn inArgument(o: Option<Int>) -> Int
+    reasons(Option.toResult(o, []))
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.is_empty(),
+        "expected the empty error value to adopt the expected error type, got: {errs:?}"
+    );
+}
+
+#[test]
+fn with_default_rejects_subject_that_is_not_a_carrier() {
+    // The payload recogniser declines for anything that is not a
+    // concrete Result/Option, which hands the call back to the general
+    // path — the only place the argument-shape check lives. Without the
+    // hand-back this would type-check silently.
+    let items = parse_items(
+        r#"
+fn f() -> Int
+    Result.withDefault(1, 0)
+
+fn g() -> Int
+    Option.withDefault("x", 0)
+
+fn h() -> Result<Int, String>
+    Option.toResult(7, "missing")
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter()
+            .any(|e| e
+                .contains("Argument 1 of 'Result.withDefault': expected Result<T, E>, got Int")),
+        "expected Result.withDefault to reject an Int subject, got: {errs:?}"
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e
+                .contains("Argument 1 of 'Option.withDefault': expected Option<T>, got String")),
+        "expected Option.withDefault to reject a String subject, got: {errs:?}"
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'Option.toResult': expected Option<T>, got Int")),
+        "expected Option.toResult to reject an Int subject, got: {errs:?}"
+    );
+}
+
+#[test]
+fn with_default_reports_a_broken_subject_once() {
+    // The recogniser infers the subject to decide whether it applies.
+    // When it declines, the general path re-infers the same node, so the
+    // probe's diagnostics have to be dropped or every such subject would
+    // be reported twice.
+    let items = parse_items(
+        r#"
+fn f() -> Int
+    xs = Result.withDefault(nosuch(), [])
+    List.len(xs)
+"#,
+    );
+    let errs = errors(items);
+    let reported = errs
+        .iter()
+        .filter(|e| e.contains("Call to unknown function 'nosuch'"))
+        .count();
+    assert_eq!(reported, 1, "expected exactly one report, got: {errs:?}");
+}
+
+#[test]
 fn http_server_listen_with_rejects_mismatched_context() {
     // listenWith carries a user-defined context type; the second arg's
     // type must match the handler's first parameter type. Builtin sigs

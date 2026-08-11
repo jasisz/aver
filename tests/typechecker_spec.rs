@@ -162,6 +162,25 @@ fn valid_option_to_result_infers_type() {
 }
 
 #[test]
+fn valid_empty_list_default_through_with_default() {
+    let src = "fn f(r: Result<List<Int>, String>) -> List<Int>\n    Result.withDefault(r, [])\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_empty_map_default_through_with_default() {
+    let src =
+        "fn f(o: Option<Map<String, Int>>) -> Map<String, Int>\n    Option.withDefault(o, {})\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_empty_error_value_through_option_to_result() {
+    let src = "fn f(o: Option<Int>) -> Result<Int, List<String>>\n    Option.toResult(o, [])\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_list_pattern_matching() {
     let src = "fn score(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h + List.len(t)\n";
     assert_no_errors(src);
