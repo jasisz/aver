@@ -745,6 +745,47 @@ fn glob_match_recursive(path: &[u8], pattern: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    /// The path matcher is duplicated into every artifact that enforces a
+    /// policy without linking this crate: the two generated-Rust templates and
+    /// the self-hosted replay support. A fix applied only here would still ship
+    /// a compiler that emits the old behaviour into user projects, which is how
+    /// the inverted `./**` semantics survived. Each copy is checked for the
+    /// three decisions that define the semantics rather than for byte equality,
+    /// so the copies may differ in formatting but not in meaning.
+    #[test]
+    fn path_matcher_copies_agree_on_root_pattern_semantics() {
+        const MARKERS: [(&str, &str); 3] = [
+            (r#"pattern == "**""#, "bare `**` is refused, never allow-all"),
+            (r#"Some("") => "/""#, "a bare trailing `/**` means the filesystem root"),
+            (r#"base == "/""#, "the root base admits absolute paths only"),
+        ];
+        let copies: [(&str, &str); 4] = [
+            ("src/config.rs", include_str!("config.rs")),
+            (
+                "src/codegen/rust/policy.rs",
+                include_str!("codegen/rust/policy.rs"),
+            ),
+            (
+                "src/codegen/rust/replay.rs",
+                include_str!("codegen/rust/replay.rs"),
+            ),
+            (
+                "src/self_host/replay_support.rs",
+                include_str!("self_host/replay_support.rs"),
+            ),
+        ];
+        for (name, body) in copies {
+            for (marker, meaning) in MARKERS {
+                assert!(
+                    body.contains(marker),
+                    "{name} is missing `{marker}` — {meaning}. \
+                     Every copy of path_matches must carry the same decisions; \
+                     update all of them together."
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_parse_empty_toml() {
         let config = ProjectConfig::parse("").unwrap();
