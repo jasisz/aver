@@ -7,6 +7,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Fixed
 
 - **Disk allowlists now honor explicit project and filesystem roots.** `paths = ["./**"]` now allows relative paths inside the project and denies absolute paths outside it, while `/` and `/**` allow absolute paths from the filesystem root. Bare `**`, empty entries, unsupported glob spellings, and `..`-rooted paths are rejected when `aver.toml` loads, as are non-matching `*`/`**` host entries and `**` environment-key entries.
+- **The VM keeps same-named record types from different modules distinct.** A private dependency record can no longer corrupt the field layout of an entry-module record with the same bare name.
 - **Lean proof exports preserve `?` error propagation inside nested expressions.** Proofs can now rely on calls, operators, interpolation, bindings, and match arms returning the original `Result.Err` instead of continuing with a default value.
 
 ## 0.28.0 "Oktet" — 2026-08-10
