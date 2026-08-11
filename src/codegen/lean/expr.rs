@@ -122,9 +122,15 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         ResolvedExpr::Match { subject, arms } => emit_match(subject, arms, expr.line, ctx),
         ResolvedExpr::Ctor(ctor, args) => emit_constructor(ctor, args, ctx),
         ResolvedExpr::ErrorProp(inner) => {
-            // ? operator — unwrap Except using withDefault
             let inner_str = emit_expr(inner, ctx);
-            format!("(({}).withDefault default)", inner_str)
+            if ctx.lean_do_block.get() {
+                format!("(<- {})", inner_str)
+            } else {
+                // Verify cases and law statements are not emitted inside `do`,
+                // so they retain the legacy fallback until their propagation
+                // semantics can be modeled separately.
+                format!("(({}).withDefault default)", inner_str)
+            }
         }
         ResolvedExpr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
         ResolvedExpr::List(elements) => {
@@ -520,9 +526,16 @@ fn emit_match(
 ) -> String {
     // Bool match → if/then/else (avoids Lean dependent elimination issues)
     if let Some((true_body, false_body)) = extract_bool_arms(arms) {
+        let monadify_arms = ctx.lean_do_block.get()
+            && (resolved_expr_contains_error_prop(true_body)
+                || resolved_expr_contains_error_prop(false_body));
         let cond = emit_expr(subject, ctx);
-        let t = emit_expr(true_body, ctx);
-        let f = emit_expr(false_body, ctx);
+        let mut t = emit_expr(true_body, ctx);
+        let mut f = emit_expr(false_body, ctx);
+        if monadify_arms {
+            t = format!("(do pure ({t}))");
+            f = format!("(do pure ({f}))");
+        }
         // Dependent `if h : cond then T else F` ONLY when the true
         // branch contains a refinement-Subtype constructor — those
         // need the predicate as a hypothesis in scope to discharge
@@ -538,15 +551,30 @@ fn emit_match(
         // transparent to Lean's elaborator and tactics (same `ite`).
         if true_body_uses_refinement_subtype(true_body, ctx) {
             let hyp = format!("h_{line}");
+            if monadify_arms {
+                // Lean's `do` notation is layout-sensitive: `if` and `else`
+                // must align and remain strictly inside the nested action.
+                return format!("(<- (do\n     if {hyp} : {cond} then {t}\n     else {f}))");
+            }
             return format!("(if {hyp} : {cond} then {t}\n  else {f})");
+        }
+        if monadify_arms {
+            return format!("(<- (do\n     if {cond} then {t}\n     else {f}))");
         }
         return format!("(if {cond} then {t}\n  else {f})");
     }
+    let monadify_arms = ctx.lean_do_block.get()
+        && arms
+            .iter()
+            .any(|arm| resolved_expr_contains_error_prop(&arm.body));
     let subj = emit_expr(subject, ctx);
     let mut arm_strs = Vec::new();
     for arm in arms {
         let pat = emit_pattern(&arm.pattern, ctx);
-        let body = emit_expr(&arm.body, ctx);
+        let mut body = emit_expr(&arm.body, ctx);
+        if monadify_arms {
+            body = format!("(do pure ({body}))");
+        }
         if body.contains('\n') {
             let body_lines: Vec<&str> = body.lines().collect();
             let mut rendered = vec![format!("  | {} => {}", pat, body_lines[0])];
@@ -583,11 +611,69 @@ fn emit_match(
         &subject.node,
         ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
     );
-    if needs_eq_binder {
+    let emitted_match = if needs_eq_binder {
         let eq_name = format!("h_{}", line);
         format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))
     } else {
         format!("match {} with\n{}", subj, arm_strs.join("\n"))
+    };
+    if monadify_arms {
+        let nested_match = emitted_match
+            .lines()
+            .map(|line| format!("     {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("(<- (do\n{nested_match}))")
+    } else {
+        emitted_match
+    }
+}
+
+fn resolved_expr_contains_error_prop(expr: &Spanned<ResolvedExpr>) -> bool {
+    match &expr.node {
+        ResolvedExpr::ErrorProp(_) => true,
+        ResolvedExpr::Attr(obj, _) => resolved_expr_contains_error_prop(obj),
+        ResolvedExpr::Call(callee, args) => {
+            let callee_contains = match callee {
+                ResolvedCallee::Unresolved { callee } => resolved_expr_contains_error_prop(callee),
+                _ => false,
+            };
+            callee_contains || args.iter().any(resolved_expr_contains_error_prop)
+        }
+        ResolvedExpr::BinOp(_, left, right) => {
+            resolved_expr_contains_error_prop(left) || resolved_expr_contains_error_prop(right)
+        }
+        ResolvedExpr::Neg(inner) => resolved_expr_contains_error_prop(inner),
+        ResolvedExpr::Match { subject, arms } => {
+            resolved_expr_contains_error_prop(subject)
+                || arms
+                    .iter()
+                    .any(|arm| resolved_expr_contains_error_prop(&arm.body))
+        }
+        ResolvedExpr::Ctor(_, args) => args.iter().any(resolved_expr_contains_error_prop),
+        ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            ResolvedStrPart::Parsed(expr) => resolved_expr_contains_error_prop(expr),
+            ResolvedStrPart::Literal(_) => false,
+        }),
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => {
+            items.iter().any(resolved_expr_contains_error_prop)
+        }
+        ResolvedExpr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
+            resolved_expr_contains_error_prop(key) || resolved_expr_contains_error_prop(value)
+        }),
+        ResolvedExpr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| resolved_expr_contains_error_prop(value)),
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            resolved_expr_contains_error_prop(base)
+                || updates
+                    .iter()
+                    .any(|(_, value)| resolved_expr_contains_error_prop(value))
+        }
+        ResolvedExpr::TailCall { args, .. } => args.iter().any(resolved_expr_contains_error_prop),
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => false,
     }
 }
 
