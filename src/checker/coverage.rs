@@ -1,16 +1,18 @@
 use std::collections::BTreeSet;
 
-use crate::ast::{Expr, FnDef, Literal, Pattern, TopLevel};
+use crate::ast::{Expr, FnDef, Literal, Pattern, TopLevel, VerifyBlock};
 use crate::call_graph::find_recursive_fns;
 use crate::types::Type;
 use crate::types::parse_type_str_strict;
 
+use super::coverage_flow::flow_covered_fns;
 use super::{
     CheckFinding, collect_target_call_args, constructor_tag_from_expr, expr_is_bool_case,
     expr_is_empty_list_case, expr_is_empty_string_case, expr_is_int_literal_case,
     expr_is_non_empty_list_case, expr_is_option_none_case, expr_is_option_some_case,
     expr_is_result_err_case, expr_is_result_ok_case, local_sum_type_constructors,
-    merge_verify_blocks, module_name_for_items, verify_cases_block_is_well_formed,
+    merge_verify_blocks, module_name_for_items, verify_case_unwraps_target,
+    verify_cases_block_is_well_formed,
 };
 
 fn direct_match_target(f: &FnDef) -> Option<(usize, &[crate::ast::MatchArm])> {
@@ -59,6 +61,109 @@ fn list_match_coverage_target(f: &FnDef) -> Option<usize> {
         .then_some(param_index)
 }
 
+/// The return-shape gaps in one verify block, as diagnostic messages.
+///
+/// `None` when the return type carries no shape this lint enumerates. That is
+/// distinct from `Some(vec![])`: a function with no shaped return has no arms,
+/// so its examples cannot discharge a callee's obligation either.
+pub(super) fn return_shape_gaps(
+    f: &FnDef,
+    block: &VerifyBlock,
+    items: &[TopLevel],
+) -> Option<Vec<String>> {
+    let name = block.fn_name.as_str();
+    let mut gaps = Vec::new();
+    match parse_type_str_strict(&f.return_type).ok()? {
+        Type::Result(_, _) => {
+            if !block.cases.iter().any(|(left, right)| {
+                expr_is_result_ok_case(right) || verify_case_unwraps_target(left, name)
+            }) {
+                gaps.push(format!(
+                    "verify examples for {} do not include any Result.Ok case",
+                    name
+                ));
+            }
+            if !block
+                .cases
+                .iter()
+                .any(|(_, right)| expr_is_result_err_case(right))
+            {
+                gaps.push(format!(
+                    "verify examples for {} do not include any Result.Err case",
+                    name
+                ));
+            }
+        }
+        Type::Option(_) => {
+            if !block
+                .cases
+                .iter()
+                .any(|(_, right)| expr_is_option_some_case(right))
+            {
+                gaps.push(format!(
+                    "verify examples for {} do not include any Option.Some case",
+                    name
+                ));
+            }
+            if !block
+                .cases
+                .iter()
+                .any(|(_, right)| expr_is_option_none_case(right))
+            {
+                gaps.push(format!(
+                    "verify examples for {} do not include any Option.None case",
+                    name
+                ));
+            }
+        }
+        Type::Bool => {
+            if !block
+                .cases
+                .iter()
+                .any(|(_, right)| expr_is_bool_case(right, true))
+            {
+                gaps.push(format!(
+                    "verify examples for {} do not include any `true` result",
+                    name
+                ));
+            }
+            if !block
+                .cases
+                .iter()
+                .any(|(_, right)| expr_is_bool_case(right, false))
+            {
+                gaps.push(format!(
+                    "verify examples for {} do not include any `false` result",
+                    name
+                ));
+            }
+        }
+        Type::Named {
+            name: type_name, ..
+        } => {
+            let constructors = local_sum_type_constructors(items, &type_name)?;
+            let mut covered = BTreeSet::new();
+            for (_, right) in &block.cases {
+                if let Some(tag) = constructor_tag_from_expr(right)
+                    && constructors.contains(&tag)
+                {
+                    covered.insert(tag);
+                }
+            }
+            if covered.len() < constructors.len() {
+                gaps.push(format!(
+                    "verify examples for {} cover {}/{} output constructors",
+                    name,
+                    covered.len(),
+                    constructors.len()
+                ));
+            }
+        }
+        _ => return None,
+    }
+    Some(gaps)
+}
+
 pub fn collect_verify_coverage_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
     collect_verify_coverage_warnings_in(items, None)
 }
@@ -79,6 +184,7 @@ pub fn collect_verify_coverage_warnings_in(
             }
         })
         .collect();
+    let flow_covered = flow_covered_fns(items);
 
     let mut warnings = Vec::new();
     for block in merge_verify_blocks(items) {
@@ -99,149 +205,22 @@ pub fn collect_verify_coverage_warnings_in(
             continue;
         };
 
-        if let Ok(ret_ty) = parse_type_str_strict(&f.return_type) {
-            if matches!(ret_ty, Type::Result(_, _))
-                && !block
-                    .cases
-                    .iter()
-                    .any(|(_, right)| expr_is_result_ok_case(right))
-            {
+        // A private helper with a single covered caller inherits that caller's
+        // return-shape coverage. Only the return shape: the caller's vectors
+        // say nothing about the helper's own argument domain, which is what
+        // the input-shape checks below claim.
+        if !flow_covered.contains(block.fn_name.as_str())
+            && let Some(gaps) = return_shape_gaps(f, &block, items)
+        {
+            for message in gaps {
                 warnings.push(CheckFinding {
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
                     fn_name: None,
-                    message: format!(
-                        "verify examples for {} do not include any Result.Ok case",
-                        block.fn_name
-                    ),
+                    message,
                     extra_spans: vec![],
                 });
-            }
-
-            if matches!(ret_ty, Type::Result(_, _))
-                && !block
-                    .cases
-                    .iter()
-                    .any(|(_, right)| expr_is_result_err_case(right))
-            {
-                warnings.push(CheckFinding {
-                    line: block.line,
-                    module: module_name.clone(),
-                    file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
-                    message: format!(
-                        "verify examples for {} do not include any Result.Err case",
-                        block.fn_name
-                    ),
-                    extra_spans: vec![],
-                });
-            }
-
-            if matches!(ret_ty, Type::Option(_))
-                && !block
-                    .cases
-                    .iter()
-                    .any(|(_, right)| expr_is_option_some_case(right))
-            {
-                warnings.push(CheckFinding {
-                    line: block.line,
-                    module: module_name.clone(),
-                    file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
-                    message: format!(
-                        "verify examples for {} do not include any Option.Some case",
-                        block.fn_name
-                    ),
-                    extra_spans: vec![],
-                });
-            }
-
-            if matches!(ret_ty, Type::Option(_))
-                && !block
-                    .cases
-                    .iter()
-                    .any(|(_, right)| expr_is_option_none_case(right))
-            {
-                warnings.push(CheckFinding {
-                    line: block.line,
-                    module: module_name.clone(),
-                    file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
-                    message: format!(
-                        "verify examples for {} do not include any Option.None case",
-                        block.fn_name
-                    ),
-                    extra_spans: vec![],
-                });
-            }
-
-            if matches!(ret_ty, Type::Bool)
-                && !block
-                    .cases
-                    .iter()
-                    .any(|(_, right)| expr_is_bool_case(right, true))
-            {
-                warnings.push(CheckFinding {
-                    line: block.line,
-                    module: module_name.clone(),
-                    file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
-                    message: format!(
-                        "verify examples for {} do not include any `true` result",
-                        block.fn_name
-                    ),
-                    extra_spans: vec![],
-                });
-            }
-
-            if matches!(ret_ty, Type::Bool)
-                && !block
-                    .cases
-                    .iter()
-                    .any(|(_, right)| expr_is_bool_case(right, false))
-            {
-                warnings.push(CheckFinding {
-                    line: block.line,
-                    module: module_name.clone(),
-                    file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
-                    message: format!(
-                        "verify examples for {} do not include any `false` result",
-                        block.fn_name
-                    ),
-                    extra_spans: vec![],
-                });
-            }
-
-            if let Type::Named {
-                name: type_name, ..
-            } = ret_ty
-                && let Some(constructors) = local_sum_type_constructors(items, &type_name)
-            {
-                let mut covered = BTreeSet::new();
-                for (_, right) in &block.cases {
-                    if let Some(tag) = constructor_tag_from_expr(right)
-                        && constructors.contains(&tag)
-                    {
-                        covered.insert(tag);
-                    }
-                }
-                if covered.len() < constructors.len() {
-                    warnings.push(CheckFinding {
-                        line: block.line,
-                        module: module_name.clone(),
-                        file: source_file.map(|s| s.to_string()),
-                        fn_name: None,
-                        message: format!(
-                            "verify examples for {} cover {}/{} output constructors",
-                            block.fn_name,
-                            covered.len(),
-                            constructors.len()
-                        ),
-                        extra_spans: vec![],
-                    });
-                }
             }
         }
 
