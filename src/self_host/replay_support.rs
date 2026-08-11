@@ -678,14 +678,20 @@ pub mod aver_replay {
                     let section = value
                         .as_table()
                         .ok_or_else(|| format!("aver.toml: [effects.{}] must be a table", name))?;
-                    effect_policies.insert(
-                        name.clone(),
-                        RuntimeEffectPolicy {
-                            hosts: parse_policy_list(section, "hosts", name)?,
-                            paths: parse_policy_list(section, "paths", name)?,
-                            keys: parse_policy_list(section, "keys", name)?,
-                        },
-                    );
+                    let hosts = parse_policy_list(section, "hosts", name)?;
+                    for (index, host) in hosts.iter().enumerate() {
+                        validate_host_pattern(name, index, host)?;
+                    }
+                    let paths = parse_policy_list(section, "paths", name)?;
+                    for (index, path) in paths.iter().enumerate() {
+                        validate_path_pattern(name, index, path)?;
+                    }
+                    let keys = parse_policy_list(section, "keys", name)?;
+                    for (index, key) in keys.iter().enumerate() {
+                        validate_env_key_pattern(name, index, key)?;
+                    }
+                    effect_policies
+                        .insert(name.clone(), RuntimeEffectPolicy { hosts, paths, keys });
                 }
             }
 
@@ -808,6 +814,58 @@ pub mod aver_replay {
                 })
             })
             .collect()
+    }
+
+    fn validate_path_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+        let prefix = format!("aver.toml: [effects.{effect}].paths[{index}]");
+        if raw.is_empty() {
+            return Err(format!(
+                "{prefix} is empty; use \".\" for the project directory or \"/\" for the filesystem root"
+            ));
+        }
+        if raw == "**" {
+            return Err(format!(
+                "{prefix} is ambiguous: '**'; use \"./**\" for the project subtree or \"/**\" for the filesystem root"
+            ));
+        }
+
+        let body = match raw.strip_suffix("/**") {
+            Some("") => "/",
+            Some(base) => base,
+            None => raw,
+        };
+        if body.contains('*') {
+            return Err(format!(
+                "{prefix} contains an unsupported glob '{raw}'; only a trailing \"/**\" is supported (for example, \"./data/**\")"
+            ));
+        }
+
+        let base = normalize_path(body);
+        if base == ".." || base.starts_with("../") {
+            return Err(format!(
+                "{prefix} escapes the project directory: '{raw}'; use an absolute pattern (for example, \"/srv/data/**\") to allow files outside the project"
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_host_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+        if raw == "*" || raw == "**" {
+            return Err(format!(
+                "aver.toml: [effects.{effect}].hosts[{index}] contains an unsupported wildcard '{raw}'; use an exact host or a subdomain wildcard such as \"*.example.com\""
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_env_key_pattern(effect: &str, index: usize, raw: &str) -> Result<(), String> {
+        if raw == "**" {
+            return Err(format!(
+                "aver.toml: [effects.{effect}].keys[{index}] contains an unsupported wildcard '**'; use \"*\" for every key or a prefix wildcard such as \"APP_*\""
+            ));
+        }
+        Ok(())
     }
 
     fn check_policy(effect_type: &str, args: &[ReplayJson]) {

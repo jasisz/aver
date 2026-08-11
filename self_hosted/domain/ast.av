@@ -2,7 +2,7 @@ module Ast
     intent =
         "AST node types for the mini Aver interpreter."
         "Covers: literals, binops, comparisons, variables, bindings, function defs/calls, match."
-    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf, tagResultOk, tagResultErr, tagOptionSome, tagOptionNone, tagUserBase, ctorNameToTag, builtinNameToId]
+    exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf, tagResultOk, tagResultErr, tagOptionSome, tagOptionNone, tagUserBase, ctorNameToTag, canonicalCtorName, builtinNameToId]
     effects []
 
 type Expr
@@ -194,6 +194,82 @@ verify ctorNameToTag
     ctorNameToTag("Option.Some") => 3
     ctorNameToTag("Option.None") => 4
     ctorNameToTag("Shape.Circle") > tagUserBase() => true
+
+fn canonicalCtorName(name: String) -> String
+    ? "One spelling per constructor: drop the declaring-module qualifier from a Module.Type.Variant reference, so a variant a dependency builds as Shade.Dark and its caller writes as Palette.Shade.Dark is the same constructor."
+    total = String.len(name)
+    canonicalCtorNameAtLastDot(name, total, lastDotAtOrBefore(name, total - 1))
+
+verify canonicalCtorName
+    canonicalCtorName("Palette.Shade.Dark") => "Shade.Dark"
+    canonicalCtorName("Shade.Dark") => "Shade.Dark"
+    canonicalCtorName("Domain.Value.Val.ValOk") => "Val.ValOk"
+    canonicalCtorName("Result.Ok") => "Result.Ok"
+    canonicalCtorName("Palette.pick") => "Palette.pick"
+    canonicalCtorName("Domain.Eval.Store.emptyFnStore") => "Domain.Eval.Store.emptyFnStore"
+    canonicalCtorName("Palette.Config.update") => "Palette.Config.update"
+    canonicalCtorName("noDot") => "noDot"
+    canonicalCtorName("") => ""
+
+fn canonicalCtorNameAtLastDot(name: String, total: Int, lastDot: Int) -> String
+    ? "A name with at most one dot is already the shortest spelling it has."
+    match lastDot <= 0
+        true -> name
+        false -> canonicalCtorNameAtBothDots(name, total, lastDot, lastDotAtOrBefore(name, lastDot - 1))
+
+verify canonicalCtorNameAtLastDot
+    canonicalCtorNameAtLastDot("Shade.Dark", 10, 5) => "Shade.Dark"
+    canonicalCtorNameAtLastDot("noDot", 5, -1) => "noDot"
+    canonicalCtorNameAtLastDot("Palette.Shade.Dark", 18, 13) => "Shade.Dark"
+
+fn canonicalCtorNameAtBothDots(name: String, total: Int, lastDot: Int, prevDot: Int) -> String
+    ? "Keep only the trailing pair when a module qualifier precedes a Type.Variant reference; leave every other dotted name whole."
+    match prevDot < 0
+        true -> name
+        false -> match isTypeVariantTail(String.slice(name, prevDot + 1, lastDot), String.slice(name, lastDot + 1, total))
+            true -> String.slice(name, prevDot + 1, total)
+            false -> name
+
+verify canonicalCtorNameAtBothDots
+    canonicalCtorNameAtBothDots("Palette.Shade.Dark", 18, 13, 7) => "Shade.Dark"
+    canonicalCtorNameAtBothDots("Domain.Eval.Store.emptyFnStore", 30, 17, 11) => "Domain.Eval.Store.emptyFnStore"
+    canonicalCtorNameAtBothDots("Domain.Value.Val.ValOk", 22, 16, 12) => "Val.ValOk"
+
+fn isTypeVariantTail(typeName: String, variantName: String) -> Bool
+    ? "Whether the trailing two segments spell Type.Variant. Both begin with an uppercase letter, the same rule the surface parser applies to constructor patterns."
+    Bool.and(beginsUppercase(typeName), beginsUppercase(variantName))
+
+verify isTypeVariantTail
+    isTypeVariantTail("Shade", "Dark") => true
+    isTypeVariantTail("Store", "emptyFnStore") => false
+    isTypeVariantTail("pick", "Dark") => false
+
+fn beginsUppercase(segment: String) -> Bool
+    ? "Whether a dotted-name segment begins with an uppercase letter."
+    match String.charAt(segment, 0)
+        Option.Some(c) -> c != String.toLower(c)
+        Option.None -> false
+
+verify beginsUppercase
+    beginsUppercase("Dark") => true
+    beginsUppercase("pick") => false
+    beginsUppercase("") => false
+
+fn lastDotAtOrBefore(name: String, pos: Int) -> Int
+    ? "Index of the last '.' at or before pos, or -1 when that prefix holds none."
+    match pos < 0
+        true -> -1
+        false -> match String.charAt(name, pos)
+            Option.Some(c) -> match c == "."
+                true -> pos
+                false -> lastDotAtOrBefore(name, pos - 1)
+            Option.None -> -1
+
+verify lastDotAtOrBefore
+    lastDotAtOrBefore("A.B", 2) => 1
+    lastDotAtOrBefore("A.B.C", 4) => 3
+    lastDotAtOrBefore("A.B.C", 2) => 1
+    lastDotAtOrBefore("AB", 1) => -1
 
 fn builtinNameToId(name: String) -> Option<Int>
     ? "Map builtin function names to integer IDs for fast dispatch."

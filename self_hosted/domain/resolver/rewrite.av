@@ -84,7 +84,8 @@ fn rewriteInternalExprAfterArith(expr: Expr) -> Expr
         Expr.ExprList(exprs) -> Expr.ExprList(rewriteInternalExprs(exprs, []))
         Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, rewriteInternalFields(fields, []))
         Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(rewriteInternalExpr(obj), field)
-        Expr.ExprCall(name, args) -> Expr.ExprCall(name, rewriteInternalExprs(args, []))
+        Expr.ExprVar(name) -> Expr.ExprVar(Domain.Ast.canonicalCtorName(name))
+        Expr.ExprCall(name, args) -> Expr.ExprCall(Domain.Ast.canonicalCtorName(name), rewriteInternalExprs(args, []))
         Expr.ExprCallDirect(fnId, args) -> Expr.ExprCallDirect(fnId, rewriteInternalExprs(args, []))
         Expr.ExprCallBuiltin(name, args) -> rewriteInternalBuiltin(name, rewriteInternalExprs(args, []))
         Expr.ExprCallBuiltinId(id, args) -> Expr.ExprCallBuiltinId(id, rewriteInternalExprs(args, []))
@@ -171,13 +172,15 @@ verify rewritePattern
     rewritePattern(Pattern.PatTuple([Pattern.PatWild])) => Pattern.PatTuple([Pattern.PatWild])
 
 fn rewritePatConstructor(name: String, bindings: List<String>) -> Pattern
-    ? "Convert PatConstructor to PatConstructorId with stable tag and full constructor name."
-    tag = Domain.Ast.ctorNameToTag(name)
-    Pattern.PatConstructorId(tag, name, bindings)
+    ? "Convert PatConstructor to PatConstructorId with stable tag and canonical constructor name, so a pattern that names the declaring module matches values the module itself built."
+    canonical = Domain.Ast.canonicalCtorName(name)
+    tag = Domain.Ast.ctorNameToTag(canonical)
+    Pattern.PatConstructorId(tag, canonical, bindings)
 
 verify rewritePatConstructor
     rewritePatConstructor("Result.Ok", ["x"]) => Pattern.PatConstructorId(1, "Result.Ok", ["x"])
     rewritePatConstructor("Result.Err", ["e"]) => Pattern.PatConstructorId(2, "Result.Err", ["e"])
+    rewritePatConstructor("Palette.Shade.Dark", []) => Pattern.PatConstructorId(Domain.Ast.ctorNameToTag("Shade.Dark"), "Shade.Dark", [])
 
 fn rewritePatterns(pats: List<Pattern>, acc: List<Pattern>) -> List<Pattern>
     ? "Rewrite a list of patterns."
