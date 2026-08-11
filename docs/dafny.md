@@ -99,7 +99,7 @@ Fuel metric depends on the plan: `natAbs(n) + 1` for `MutualIntCountdown`, `(|s|
 
 **Axiom fallback** (`function {:axiom} fn(args): T` — signature without body) — for:
 - SCCs whose return type admits no obvious total default (left-recursive Named ADTs, function types).
-- Single fns whose body uses `?` that the lowering pass can't elaborate into a pure match — keeps the name in scope for downstream references instead of silently dropping the fn.
+- Fns whose body still uses `?` after the lowering pass — a `?` nested inside a larger expression, which no pure match can replace. Keeps the name in scope for downstream references instead of silently dropping the fn. A mutual-SCC member in this shape leaves the fuel group; its peers still emit as one.
 
 Lemmas whose `ensures` references an opaque fn (axiom or fuel-guarded) short-circuit their body to `assume {:axiom} <ensures>;` — parallel to Lean's `sorry`, accepted on trust rather than derived from unfolding. Dafny still type-checks the whole file; users add their own lemma proofs where the axiom fallback bites.
 
