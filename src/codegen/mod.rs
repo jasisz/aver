@@ -291,10 +291,11 @@ pub struct CodegenContext {
     /// Empty by default. Set with [`Self::with_module_scope`] in a
     /// scoped manner.
     pub current_module_scope: std::cell::RefCell<Option<String>>,
-    /// Whether the Lean emitter is currently rendering a function body inside
-    /// a `do` block. This scopes `?` emission: nested error propagation uses a
-    /// monadic bind only where Lean has a surrounding action to lift it into,
-    /// while verify cases and law statements keep their non-`do` fallback.
+    /// Whether the Lean emitter is currently rendering inside a `do` block.
+    /// This scopes `?` emission: nested error propagation uses a monadic bind
+    /// only where Lean has a surrounding action to lift it into. Function
+    /// bodies, verify cases and law statements all set it; positions that are
+    /// not actions — a `when` premise, a trace projection — do not.
     pub lean_do_block: std::cell::Cell<bool>,
     /// Per-dep resolved fn defs, parallel to `modules`.
     ///
