@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Changed
+
+- **Breaking: `Str` is no longer accepted as a spelling of `String`.** The string type has exactly one name, the way `Int`, `Float`, `Bool` and `Unit` each do. `Str` was an undocumented alias that `aver check` and the VM accepted but the wasm-gc backend did not, so `fn label() -> Str` checked, ran, and then failed to compile with `cannot lower type 'Str'`. Replace every `Str` in a type annotation with `String`.
+
 ### Fixed
 
 - **Type declarations are now order-independent within a file.** Record fields, sum-variant fields, and constructor parameters can name types declared later, and a local type consistently shadows a dependency exposing the same bare name, preventing dependency values from being read through an unrelated local record layout.

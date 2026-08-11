@@ -56,7 +56,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
     match s {
         "Int" => Ok(Type::Int),
         "Float" => Ok(Type::Float),
-        "String" | "Str" => Ok(Type::Str),
+        "String" => Ok(Type::Str),
         "Bool" => Ok(Type::Bool),
         "Unit" => Ok(Type::Unit),
         _ => {
@@ -135,7 +135,7 @@ pub fn parse_type_str(s: &str) -> Type {
     match s {
         "Int" => Type::Int,
         "Float" => Type::Float,
-        "String" | "Str" => Type::Str,
+        "String" => Type::Str,
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,
         "" => Type::Invalid,
@@ -540,6 +540,17 @@ mod tests {
         );
         // Lowercase unknown types still fail
         assert!(parse_type_str_strict("integ").is_err());
+    }
+
+    #[test]
+    fn test_str_is_not_a_spelling_of_string() {
+        // `Str` used to be an alias for `String` that only the checker and the
+        // VM knew, so a program using it failed on the wasm-gc backend. It is
+        // now an ordinary undeclared type name in both parsers.
+        assert_eq!(parse_type_str_strict("Str").unwrap(), Type::named("Str"));
+        assert_eq!(parse_type_str("Str"), Type::named("Str"));
+        assert_eq!(parse_type_str_strict("String").unwrap(), Type::Str);
+        assert_eq!(parse_type_str("String"), Type::Str);
     }
 
     #[test]

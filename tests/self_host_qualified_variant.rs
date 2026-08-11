@@ -44,7 +44,7 @@ fn other() -> Shade
     ? "Hand out Light."
     Shade.Light
 
-fn label(s: Shade) -> Str
+fn label(s: Shade) -> String
     ? "Name the shade from inside the owning module."
     match s
         Shade.Dark -> "in:dark"
@@ -79,7 +79,7 @@ const ENTRY_SRC: &str = r#"module Main
     exposes [main]
     effects [Console.print]
 
-fn name(s: Palette.Shade) -> Str
+fn name(s: Palette.Shade) -> String
     ? "Name the shade from outside the owning module."
     match s
         Palette.Shade.Dark -> "out:dark"
@@ -89,7 +89,7 @@ verify name
     name(Palette.Shade.Dark) => "out:dark"
     name(Palette.Shade.Light) => "out:light"
 
-fn describe(t: Palette.Tone) -> Str
+fn describe(t: Palette.Tone) -> String
     ? "Describe a tone from outside the owning module, binding its fields."
     match t
         Palette.Tone.Solid(v) -> "out:solid:{v}"
@@ -129,7 +129,7 @@ type Shade
     Dark
     Light
 
-fn name(s: Shade) -> Str
+fn name(s: Shade) -> String
     ? "Name the local shade."
     match s
         Shade.Dark -> "local:dark"
@@ -162,7 +162,7 @@ type Shade
     Dark
     Light
 
-fn localName(s: Shade) -> Str
+fn localName(s: Shade) -> String
     ? "Name the local shade."
     match s
         Shade.Dark -> "local:dark"
@@ -172,7 +172,7 @@ verify localName
     localName(Shade.Dark) => "local:dark"
     localName(Shade.Light) => "local:light"
 
-fn depName(s: Palette.Shade) -> Str
+fn depName(s: Palette.Shade) -> String
     ? "Name the dependency's shade."
     match s
         Palette.Shade.Dark -> "dep:dark"

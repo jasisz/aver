@@ -37,7 +37,7 @@ xs: List<Int> = []
 
 ### Types
 
-Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
+Primitives: `Int`, `Float`, `String`, `Bool`, `Unit` — each has exactly one spelling; the string type is `String`, never abbreviated
 
 Compound:
 - `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`

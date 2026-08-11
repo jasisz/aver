@@ -576,7 +576,7 @@ fn aver_type_name(v: &Value, ctx: &UntranslateCtx) -> Option<String> {
         return Some(match name {
             "Int" => "Int".to_string(),
             "Bool" => "Bool".to_string(),
-            "String" => "Str".to_string(),
+            "String" => "String".to_string(),
             "Nat" => match &ctx.peano {
                 Some(p) => p.type_name.clone(),
                 None => lean_dotted_to_aver("Nat"),
@@ -1088,10 +1088,32 @@ mod tests {
     }
 
     #[test]
+    fn a_lean_string_binder_names_the_aver_string_type() {
+        // A residual's given types are re-parsed as Aver type annotations when
+        // the candidate law is emitted and sample-checked, so the name here has
+        // to be a spelling the language accepts.
+        let claim = format!(
+            r#"{{"app":{{"fn":{{"const":"Eq"}},"args":[{{"const":"String"}},{{"app":{{"fn":{{"const":"f"}},"args":[{}]}}}},{}]}}}}"#,
+            var("s"),
+            var("s"),
+        );
+        let json = forall("s", r#"{"const":"String"}"#, &claim);
+        let g = untranslate_goal(&json).expect("in grammar");
+        assert_eq!(g.givens, vec![("s".to_string(), "String".to_string())]);
+        assert!(
+            crate::types::parse_type_str_strict(&g.givens[0].1).is_ok(),
+            "given type must parse as an Aver type annotation"
+        );
+    }
+
+    #[test]
     fn type_name_tokens_splits_containers() {
         assert_eq!(type_name_tokens("List<Nat>"), vec!["List", "Nat"]);
         assert_eq!(type_name_tokens("Nat"), vec!["Nat"]);
-        assert_eq!(type_name_tokens("Map<Str, Int>"), vec!["Map", "Str", "Int"]);
+        assert_eq!(
+            type_name_tokens("Map<String, Int>"),
+            vec!["Map", "String", "Int"]
+        );
     }
 
     #[test]
