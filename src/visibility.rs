@@ -77,18 +77,24 @@ pub fn module_decl(items: &[TopLevel]) -> Option<&Module> {
     })
 }
 
-/// Collect all exported items from a parsed module.
-/// Applies visibility rules: exposes list, underscore convention, opaque types.
-pub fn collect_module_exports<'a>(items: &'a [TopLevel]) -> ModuleExports<'a> {
-    let module = module_decl(items);
-
-    let exposes: Option<&[String]> = module.and_then(|m| {
+/// The explicit `exposes` list a file declares, if any.
+/// The single derivation of the argument `is_exposed` expects, so lints and
+/// codegen can never disagree about what "private" means.
+pub fn effective_exposes(items: &[TopLevel]) -> Option<&[String]> {
+    module_decl(items).and_then(|m| {
         if m.exposes.is_empty() {
             None
         } else {
             Some(m.exposes.as_slice())
         }
-    });
+    })
+}
+
+/// Collect all exported items from a parsed module.
+/// Applies visibility rules: exposes list, underscore convention, opaque types.
+pub fn collect_module_exports<'a>(items: &'a [TopLevel]) -> ModuleExports<'a> {
+    let module = module_decl(items);
+    let exposes = effective_exposes(items);
 
     let opaque_names: Vec<&str> = module
         .map(|m| m.exposes_opaque.iter().map(|s| s.as_str()).collect())

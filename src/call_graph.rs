@@ -9,9 +9,11 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{Expr, FnBody, Spanned, Stmt, StrPart, TopLevel};
 
 mod codegen;
+mod flow;
 mod scc;
 
 pub use codegen::{ordered_fn_components, tailcall_scc_components};
+pub use flow::{TOP_LEVEL_CALLER, call_components, callers_of};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -196,7 +198,7 @@ fn expr_to_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     }
 }
 
-fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
     visit(&expr.node);
     match &expr.node {
         Expr::FnCall(func, args) => {

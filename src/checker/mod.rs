@@ -1,4 +1,5 @@
 mod coverage;
+mod coverage_flow;
 mod cse;
 mod independence;
 mod intent;
@@ -187,6 +188,34 @@ fn expr_is_result_ok_case(expr: &Spanned<Expr>) -> bool {
         Expr::Constructor(name, _) => {
             normalize_constructor_tag(name).is_some_and(|tag| tag == "Result.Ok")
         }
+        _ => false,
+    }
+}
+
+/// True when the left side of a verify case applies `?` directly to a call of
+/// the function under verification, however that `?` is wrapped —
+/// `readOne([7, 9])?.value => 7` or `List.len(readOne(xs)?.rest) => 1`.
+///
+/// Such a case establishes `Result.Ok` at least as strongly as an explicit
+/// `=> Result.Ok(...)`: had the call produced an error, `?` would have
+/// propagated it and the case would not pass. The `?` must sit on a call of
+/// the target itself — `helper(other(x)?)` says nothing about `helper`.
+fn verify_case_unwraps_target(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+    let mut found = false;
+    crate::call_graph::walk_expr(expr, &mut |node| {
+        if let Expr::ErrorProp(inner) = node
+            && expr_is_target_call(inner, fn_name)
+        {
+            found = true;
+        }
+    });
+    found
+}
+
+fn expr_is_target_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
+    match &expr.node {
+        Expr::FnCall(callee, _) => callee_is_target(callee, fn_name),
+        Expr::TailCall(boxed) => boxed.target == fn_name,
         _ => false,
     }
 }
