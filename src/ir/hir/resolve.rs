@@ -303,18 +303,26 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
         },
         Expr::Attr(obj, field) => {
             // Nullary constructor in value position — `Option.None`,
-            // `Color.Black`, etc. These only got recognized in call
-            // position (`Expr::FnCall`); in value position they arrived
-            // here as a bare `Attr(Ident(Type), Variant)` and stalled MIR
+            // `Color.Black`, `Palette.Shade.Dark`, etc. These only got
+            // recognized in call position (`Expr::FnCall`); in value
+            // position they arrived here as an `Attr` chain and stalled MIR
             // lowering with `UnresolvedIdent`. A non-nullary ctor can't
             // appear un-applied as a value (Aver has no first-class
-            // partial constructors), so an `Attr` whose `Type.Member`
-            // resolves to a ctor is necessarily a nullary reference —
-            // lower it to the zero-arg `Ctor` shape both walkers already
-            // handle (LOAD_CONST NONE / VARIANT_NEW with no fields).
-            if let Expr::Ident(ns) = &obj.node {
-                let qualified = format!("{ns}.{field}");
-                let ctor = classify_ctor(ctx, &qualified);
+            // partial constructors), so a dotted name that spells
+            // `Type.Variant` and resolves to a ctor is necessarily a
+            // nullary reference — lower it to the zero-arg `Ctor` shape
+            // both walkers already handle (LOAD_CONST NONE / VARIANT_NEW
+            // with no fields).
+            //
+            // The whole dotted path is offered to the resolver, not just
+            // the innermost `Type.Variant` pair: module qualifiers are part
+            // of the name a constructor may be written with, and the same
+            // path is what the call arm below and `Pattern::Constructor`
+            // already hand over.
+            if let Some(dotted) = expr_to_dotted_name(&expr.node)
+                && crate::ast::dotted_name_spells_constructor(&dotted)
+            {
+                let ctor = classify_ctor(ctx, &dotted);
                 let nullary = matches!(
                     ctor,
                     ResolvedCtor::Builtin(BuiltinCtor::OptionNone) | ResolvedCtor::User { .. }

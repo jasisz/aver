@@ -160,8 +160,8 @@ jobs:
         # also built unrelated integration tests and bins with the full
         # component-model dependency graph, which was enough to exhaust the
         # hosted runner during link. This list is the feature-gated wasm
-        # corpus plus the one ordinary regression file that contains an
-        # extra wasm-gc test behind `#[cfg(feature = "wasm")]`.
+        # corpus plus the ordinary regression files that contain an extra
+        # wasm-gc test behind `#[cfg(feature = "wasm")]`.
         #
         # Proptest budget — split per-PR vs nightly. The wasm-feature
         # proptests include the cross-backend DIFFERENTIAL sweeps
@@ -189,6 +189,7 @@ jobs:
             cross_backend_proptest \
             cross_backend_stress \
             verify_runner_regressions \
+            vm_self_qualified_type \
             wasm_gc_capture_output \
             wasm_gc_carrier_i64_differential \
             wasm_gc_codegen_regression \
