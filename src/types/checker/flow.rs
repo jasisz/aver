@@ -17,6 +17,7 @@ impl TypeChecker {
     fn with_verify_law_givens<T>(
         &mut self,
         givens: &[crate::ast::VerifyGiven],
+        line: usize,
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let prev_locals = self.locals.clone();
@@ -45,6 +46,8 @@ impl TypeChecker {
             match parse_type_str_strict(&given.type_name) {
                 Ok(ty) => {
                     let ty = self.canonicalize_named(ty);
+                    let ctx = format!("Verify law given '{}'", given.name);
+                    self.report_ambiguous_named(&ty, line, &ctx);
                     self.locals.insert(given.name.clone(), ty);
                 }
                 Err(unknown) => {
@@ -502,7 +505,7 @@ impl TypeChecker {
                     .unwrap_or_default();
                 let caller = format!("<verify:{}>", vb.fn_name);
                 if let crate::ast::VerifyKind::Law(law) = &vb.kind {
-                    self.with_verify_law_givens(&law.givens, |checker| {
+                    self.with_verify_law_givens(&law.givens, vb.line, |checker| {
                         if let Some(when_expr) = &law.when {
                             let when_ty = checker.infer_type(when_expr);
                             if !checker.compatible(&when_ty, &Type::Bool) {

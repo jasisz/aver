@@ -3279,7 +3279,16 @@ fn terminal_read_key_returns_option_string() {
 /// with a circular `A → List<A>` entry. Belt + suspenders fix.
 #[test]
 fn polymorphic_recursion_with_t_into_list_t_is_type_error() {
-    let src = concat!("fn nest(v: A) -> Unit\n", "    nest([v])\n",);
+    // `A` is a declared nominal type. Aver has no user-written generic
+    // parameters — a bare capitalised name in type position names a type
+    // and nothing else — so leaving `A` undeclared would make this an
+    // undeclared-name test (#859) instead of the recursion-shape test it is.
+    let src = concat!(
+        "record A\n",
+        "    v: Int\n",
+        "fn nest(v: A) -> Unit\n",
+        "    nest([v])\n",
+    );
     let errs = errors(src);
     assert!(
         !errs.is_empty(),
@@ -3298,7 +3307,12 @@ fn polymorphic_recursion_with_t_into_list_t_is_type_error() {
 /// generic calls.
 #[test]
 fn monomorphic_recursion_at_same_type_param_is_fine() {
-    let src = concat!("fn identityChain(v: A) -> Unit\n", "    identityChain(v)\n",);
+    let src = concat!(
+        "record A\n",
+        "    v: Int\n",
+        "fn identityChain(v: A) -> Unit\n",
+        "    identityChain(v)\n",
+    );
     assert_no_errors(src);
 }
 
@@ -4555,4 +4569,165 @@ fn interpolation_errors_report_the_outer_source_line() {
         err.line, 6,
         "unresolved interpolation error must report the outer line, got: {err:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Undeclared type names (#859)
+// ---------------------------------------------------------------------------
+
+/// The exact repro from #859: a function whose parameter and return type are
+/// the same name nobody declared. Nothing ever confronts the phantom type
+/// with a real value, so before this check the program passed `aver check`,
+/// `aver verify` and the proof export — and only the wasm-gc backend refused
+/// it, with an unlocated "cannot lower type" long after the annotation.
+#[test]
+fn undeclared_type_name_is_reported_at_the_annotation() {
+    let errs = errors(
+        "fn twice(s: Wibble) -> Wibble\n\
+         \x20   s\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Function 'twice', parameter 's'")
+                && e.contains("Unknown type 'Wibble'")),
+        "expected the parameter annotation to be reported, got: {errs:?}"
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Function 'twice' return type")
+                && e.contains("Unknown type 'Wibble'")),
+        "expected the return annotation to be reported, got: {errs:?}"
+    );
+}
+
+/// Every position that accepts a type annotation reports its own phantom
+/// name: record fields, sum-variant fields, binding annotations, verify-law
+/// `given` binders, and names nested inside a compound type.
+#[test]
+fn undeclared_type_name_is_reported_in_every_annotation_position() {
+    let errs = errors(
+        "record Holder\n\
+         \x20   slot: Ghost\n\
+         \n\
+         type Choice\n\
+         \x20   One(Phantom)\n\
+         \n\
+         fn nested(xs: List<Result<Apparition, String>>) -> Int\n\
+         \x20   1\n\
+         \n\
+         fn binding(n: Int) -> Int\n\
+         \x20   v: Wraith = n\n\
+         \x20   n\n\
+         \n\
+         fn lawful(n: Int) -> Int\n\
+         \x20   n\n\
+         \n\
+         verify lawful law identity\n\
+         \x20   given k: Poltergeist = [1, 2]\n\
+         \x20   lawful(k) => k\n",
+    );
+    for (position, name) in [
+        ("Type 'Holder', field 'slot'", "Ghost"),
+        ("Type 'Choice', variant 'One'", "Phantom"),
+        ("Function 'nested', parameter 'xs'", "Apparition"),
+        ("Binding 'v' annotation", "Wraith"),
+        ("Verify law given 'k'", "Poltergeist"),
+    ] {
+        assert!(
+            errs.iter()
+                .any(|e| e.contains(position) && e.contains(&format!("Unknown type '{name}'"))),
+            "expected {position} to report Unknown type '{name}', got: {errs:?}"
+        );
+    }
+}
+
+/// The names the compiler itself declares have no `type` declaration to
+/// resolve against, yet a user may legitimately write every one of them in an
+/// annotation: the host records effect signatures hand back, the opaque `Tcp`
+/// handle, the Oracle nominals, and the embedded standard library's
+/// refinements. `Result` and `Option` written without their parameters keep
+/// working too. This is the guard against the undeclared-name rule turning
+/// into a false positive on a real program.
+#[test]
+fn compiler_declared_type_names_stay_writable_in_annotations() {
+    assert_no_errors(
+        "fn takeResp(r: HttpResponse) -> Int\n\
+         \x20   r.status\n\
+         \n\
+         fn takeReq(r: HttpRequest) -> String\n\
+         \x20   r.path\n\
+         \n\
+         fn takeConn(c: Tcp.Connection) -> Tcp.Connection\n\
+         \x20   c\n\
+         \n\
+         fn takeSize(s: Terminal.Size) -> Int\n\
+         \x20   s.width\n\
+         \n\
+         fn takeTrace(t: Trace) -> List<EffectEvent>\n\
+         \x20   t.events\n\
+         \n\
+         fn takeEvent(e: EffectEvent) -> String\n\
+         \x20   e.method\n\
+         \n\
+         fn takePath(p: BranchPath) -> BranchPath\n\
+         \x20   p\n\
+         \n\
+         fn takeBytes(b: Bytes) -> Digest32\n\
+         \x20   Crypto.sha256(b)\n\
+         \n\
+         fn takeResult(r: Result) -> Result\n\
+         \x20   r\n\
+         \n\
+         fn takeOption(o: Option) -> Option\n\
+         \x20   o\n",
+    );
+}
+
+/// A type declared later in the same file, and a type a dependency exposes —
+/// bare or qualified — are declared names, so neither may be reported. The
+/// dependency half is what separates "nothing declares this" from "the
+/// declaration lives in another file".
+#[test]
+fn declared_type_names_are_never_reported_as_unknown() {
+    let root = temp_module_root("declared_named_types");
+    std::fs::write(
+        root.join("Handle.av"),
+        r#"module Handle
+    exposes [Token, Colour]
+    intent = "A dependency exposing two types."
+
+record Token
+    v: Int
+
+type Colour
+    Red
+    Blue
+"#,
+    )
+    .expect("write Handle.av failed");
+
+    let src = r#"module Main
+    depends [Handle]
+    intent = "Local types declared after use, plus imported ones."
+
+fn later(b: Box) -> Shade
+    Shade.Dark
+
+fn imported(t: Token) -> Handle.Colour
+    Handle.Colour.Red
+
+record Box
+    v: Int
+
+type Shade
+    Dark
+    Light
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        !errs.iter().any(|e| e.contains("Unknown type")),
+        "no declared name may be reported as unknown, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
 }
