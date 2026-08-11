@@ -498,7 +498,7 @@ struct TypeChecker {
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
-    /// (HttpResponse, Header). Single entry per (canonical type name, field);
+    /// (HttpResponse, Trace, …). Single entry per (canonical type name, field);
     /// lookup canonicalises `type_name` through `SymbolTable` at read time.
     /// Enables checked dot-access on Named types.
     record_field_types: HashMap<RecordFieldKey, Type>,
@@ -521,6 +521,21 @@ struct TypeChecker {
     current_fn_line: Option<usize>,
     /// Type names that are opaque in this module's context (imported via `exposes opaque`).
     opaque_types: HashSet<String>,
+    /// Every named type the compiler itself declares — the host
+    /// records effect signatures hand back (`HttpResponse`,
+    /// `Tcp.Connection`, `Terminal.Size`, …), the Oracle nominals
+    /// (`Trace`, `EffectEvent`, `BranchPath`) and the embedded
+    /// standard library's refinements (`Bytes`, `Digest32`).
+    ///
+    /// Derived, never hand-listed: [`Self::record_builtin_type_names`]
+    /// harvests it from the signatures `register_builtins` just
+    /// registered, so a name stops being writable the moment the
+    /// builtin that mentions it goes away, and a new builtin type is
+    /// admitted without touching this file. A user may legitimately
+    /// write any of these in an annotation even though none of them
+    /// has a `type` declaration to resolve against, so
+    /// [`Self::named_type_is_declared`] treats them as declared.
+    builtin_type_names: HashSet<String>,
     /// When `true`, opaque-type construction + field-access + pattern-match
     /// checks are bypassed. Used only by the self-host compile path
     /// (`aver compile --with-self-host-support`) where
@@ -581,6 +596,7 @@ impl TypeChecker {
             current_fn_ret: None,
             current_fn_line: None,
             opaque_types: HashSet::new(),
+            builtin_type_names: HashSet::new(),
             self_host_mode: false,
             used_names: HashSet::new(),
             fn_bindings: Vec::new(),
@@ -588,7 +604,63 @@ impl TypeChecker {
             in_verify_trace_context: false,
         };
         tc.register_builtins();
+        tc.record_builtin_type_names();
         tc
+    }
+
+    /// Snapshot every named type the just-registered builtin
+    /// signatures mention, before a single user declaration lands in
+    /// the same maps. Reads four sources: the record schemas
+    /// (`HttpResponse`, `Trace`, `Terminal.Size`, …) by key and by
+    /// field type, the opaque host handles, the namespace-method
+    /// signatures (which is where `BranchPath`, `Bytes` and
+    /// `Digest32` surface), and the nullary value members.
+    ///
+    /// Must stay the last step of construction: `record_field_types`
+    /// and `extra_sigs` both go on to hold user declarations, and
+    /// those must not be mistaken for compiler-declared names.
+    fn record_builtin_type_names(&mut self) {
+        let mut names: HashSet<String> = HashSet::new();
+        for key in self.record_field_types.keys() {
+            names.insert(key.type_name.clone());
+        }
+        let collect = |ty: &Type, into: &mut HashSet<String>| {
+            let mut stack = vec![ty.clone()];
+            while let Some(t) = stack.pop() {
+                match t {
+                    Type::Named { name, .. } => {
+                        into.insert(name);
+                    }
+                    Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                        stack.push(*inner)
+                    }
+                    Type::Result(a, b) | Type::Map(a, b) => {
+                        stack.push(*a);
+                        stack.push(*b);
+                    }
+                    Type::Tuple(items) => stack.extend(items),
+                    Type::Fn(params, ret, _) => {
+                        stack.extend(params);
+                        stack.push(*ret);
+                    }
+                    _ => {}
+                }
+            }
+        };
+        for ty in self.record_field_types.values() {
+            collect(ty, &mut names);
+        }
+        for ty in self.value_members.values() {
+            collect(ty, &mut names);
+        }
+        for sig in self.extra_sigs.values() {
+            for p in &sig.params {
+                collect(p, &mut names);
+            }
+            collect(&sig.ret, &mut names);
+        }
+        names.extend(self.opaque_types.iter().cloned());
+        self.builtin_type_names = names;
     }
 
     // -- Identity resolution (phase B) -------------------------------------
@@ -673,13 +745,43 @@ impl TypeChecker {
         out
     }
 
+    /// `true` when something in scope actually declares `name`.
+    ///
+    /// A capitalised identifier in type position parses into
+    /// `Type::Named` whatever it says, so this is the only question
+    /// that separates a real type from a typo. Four things count as a
+    /// declaration:
+    ///
+    ///   - a `type` / `record` reachable through the symbol table —
+    ///     the current module's own, or one a `depends` module
+    ///     exposes;
+    ///   - a name the compiler itself declares
+    ///     ([`Self::builtin_type_names`]);
+    ///   - an opaque type, which has no structure at the use site but
+    ///     is nameable in a signature;
+    ///   - a name the checker registered a record schema or a variant
+    ///     list for, which covers `Result` / `Option` written without
+    ///     their parameters and any type whose identity landed in the
+    ///     local maps without a symbol-table entry.
+    ///
+    /// Anything else names nothing, and every position that accepts a
+    /// type annotation reports it through
+    /// [`Self::report_ambiguous_named`].
+    pub(crate) fn named_type_is_declared(&self, name: &str) -> bool {
+        self.resolve_type_id(name).is_some()
+            || self.builtin_type_names.contains(name)
+            || self.opaque_types.contains(name)
+            || self.has_record_schema(name)
+            || self.has_variants_for(name)
+    }
+
     /// Walk `ty` and emit diagnostics for every distinct unresolved
     /// reason the typechecker deliberately blocked resolution.
     /// Called from the signature-registration boundary
     /// (`build_signatures`, `register_type_def_sigs`, flow's binding
-    /// annotations) so the user gets a clean explanation instead of
-    /// downstream `expected X, got X` cascades. Two reasons are
-    /// surfaced:
+    /// annotations, verify-law `given` binders) so the user gets a
+    /// clean explanation instead of downstream `expected X, got X`
+    /// cascades. Three reasons are surfaced:
     ///
     ///   - Ambiguous bare reference: `Foo` matches multiple
     ///     visibility-exposed `TypeId`s. Diagnostic suggests the
@@ -687,10 +789,23 @@ impl TypeChecker {
     ///   - Private qualified import: `Module.Foo` exists in the
     ///     symbol table but isn't on `Module`'s `exposes` list.
     ///     Diagnostic names the dep + asks for the export.
+    ///   - Undeclared name: nothing anywhere declares `Foo`. Before
+    ///     this check a phantom type propagated silently all the way
+    ///     into the proof export, and only the wasm-gc backend ever
+    ///     refused it (#859).
     pub(super) fn report_ambiguous_named(&mut self, ty: &Type, line: usize, source_ctx: &str) {
         let mut seen_ambig: HashSet<String> = HashSet::new();
         let mut seen_private: HashSet<String> = HashSet::new();
-        self.collect_unresolved_into(ty, &mut seen_ambig, &mut seen_private);
+        let mut seen_unknown: HashSet<String> = HashSet::new();
+        self.collect_unresolved_into(ty, &mut seen_ambig, &mut seen_private, &mut seen_unknown);
+        let mut unknown: Vec<String> = seen_unknown.into_iter().collect();
+        unknown.sort();
+        for name in unknown {
+            self.error_at_line(
+                line,
+                format!("{source_ctx}: Unknown type '{name}' — no type of that name is declared in this module or exposed by one it depends on"),
+            );
+        }
         for name in seen_ambig {
             let candidates = self.ambiguous_type_candidates(&name);
             if candidates.is_empty() {
@@ -736,6 +851,7 @@ impl TypeChecker {
         ty: &Type,
         ambig: &mut HashSet<String>,
         private: &mut HashSet<String>,
+        unknown: &mut HashSet<String>,
     ) {
         match ty {
             Type::Named { id: None, name } => {
@@ -743,6 +859,8 @@ impl TypeChecker {
                     ambig.insert(name.clone());
                 } else if self.type_name_is_private_import(name) {
                     private.insert(name.clone());
+                } else if !self.named_type_is_declared(name) {
+                    unknown.insert(name.clone());
                 }
             }
             Type::Named { .. }
@@ -754,26 +872,26 @@ impl TypeChecker {
             | Type::Var(_)
             | Type::Invalid => {}
             Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
-                self.collect_unresolved_into(inner, ambig, private);
+                self.collect_unresolved_into(inner, ambig, private, unknown);
             }
             Type::Result(ok, err) => {
-                self.collect_unresolved_into(ok, ambig, private);
-                self.collect_unresolved_into(err, ambig, private);
+                self.collect_unresolved_into(ok, ambig, private, unknown);
+                self.collect_unresolved_into(err, ambig, private, unknown);
             }
             Type::Map(k, v) => {
-                self.collect_unresolved_into(k, ambig, private);
-                self.collect_unresolved_into(v, ambig, private);
+                self.collect_unresolved_into(k, ambig, private, unknown);
+                self.collect_unresolved_into(v, ambig, private, unknown);
             }
             Type::Tuple(items) => {
                 for item in items {
-                    self.collect_unresolved_into(item, ambig, private);
+                    self.collect_unresolved_into(item, ambig, private, unknown);
                 }
             }
             Type::Fn(params, ret, _) => {
                 for p in params {
-                    self.collect_unresolved_into(p, ambig, private);
+                    self.collect_unresolved_into(p, ambig, private, unknown);
                 }
-                self.collect_unresolved_into(ret, ambig, private);
+                self.collect_unresolved_into(ret, ambig, private, unknown);
             }
         }
     }

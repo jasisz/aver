@@ -4,7 +4,7 @@ impl TypeChecker {
     pub(super) fn register_builtins(&mut self) {
         // No flat builtins — all functions live in namespaces.
 
-        // Register built-in record field types for HttpResponse / HttpRequest and Header.
+        // Register built-in record field types for HttpResponse / HttpRequest.
         // This enables checked dot-access: resp.status → Int, req.path → String, etc.
         // HTTP headers are `Map<String, List<String>>` — multi-value
         // semantics match HTTP (RFC 9110 same-name fields, RFC 6265

@@ -26,10 +26,18 @@ pub enum Type {
     /// User-defined or builtin named type. The `id` is `Some` once the
     /// typechecker has resolved the reference against the program's
     /// [`crate::ir::SymbolTable`] (#138 phase B). The `id` is `None` for
-    /// transient parser output (before typecheck has run), for builtin
-    /// record types (`HttpResponse`, `Header`, `Tcp.Connection`,
-    /// `Buffer`, …) that aren't registered in the user-program symbol
-    /// table, and for stamps the checker couldn't resolve.
+    /// transient parser output (before typecheck has run), for the
+    /// types the compiler declares itself rather than registering in
+    /// the user-program symbol table (`HttpResponse`, `Tcp.Connection`,
+    /// `Terminal.Size`, `Trace`, `BranchPath`, …), for names
+    /// synthesised after typecheck (`Buffer`, from the accumulator
+    /// rewrite in `crate::ir::buffer_build`), and for stamps the
+    /// checker couldn't resolve.
+    ///
+    /// An unresolved stamp that came from a source annotation is a
+    /// typo, and the typechecker reports it (#859) — see
+    /// `TypeChecker::named_type_is_declared` for what counts as a
+    /// declaration.
     ///
     /// Identity:
     /// - two `Named` with both `id = Some` compare by `id` (typed
