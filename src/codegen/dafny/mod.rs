@@ -24,28 +24,61 @@ fn body_uses_error_prop(body: &std::sync::Arc<crate::ast::FnBody>) -> bool {
     }
 }
 
+// Exhaustive on `Expr`: a variant this misses routes a fn carrying `?`
+// to ordinary emission, where the `?` renders as the error marker in
+// `expr::emit_expr`.
 fn expr_uses_error_prop(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
     use crate::ast::Expr;
     match &expr.node {
         Expr::ErrorProp(_) => true,
         Expr::FnCall(f, args) => expr_uses_error_prop(f) || args.iter().any(expr_uses_error_prop),
         Expr::BinOp(_, l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),
+        Expr::Neg(inner) => expr_uses_error_prop(inner),
         Expr::Match { subject, arms, .. } => {
             expr_uses_error_prop(subject) || arms.iter().any(|a| expr_uses_error_prop(&a.body))
         }
         Expr::Constructor(_, Some(arg)) => expr_uses_error_prop(arg),
-        Expr::List(elems) | Expr::Tuple(elems) => elems.iter().any(expr_uses_error_prop),
+        Expr::List(elems) | Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
+            elems.iter().any(expr_uses_error_prop)
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_uses_error_prop(k) || expr_uses_error_prop(v)),
         Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_error_prop(e)),
         Expr::RecordUpdate { base, updates, .. } => {
             expr_uses_error_prop(base) || updates.iter().any(|(_, e)| expr_uses_error_prop(e))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
             crate::ast::StrPart::Parsed(e) => expr_uses_error_prop(e),
-            _ => false,
+            crate::ast::StrPart::Literal(_) => false,
         }),
         Expr::Attr(obj, _) => expr_uses_error_prop(obj),
         Expr::TailCall(inner) => inner.args.iter().any(expr_uses_error_prop),
-        _ => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
+            false
+        }
+    }
+}
+
+/// Does `?` survive the pure `?!`/`?` lowering that every Dafny
+/// emission path runs first?
+///
+/// The lowering rewrites `?` at statement position into a `match`
+/// cascade, but recurses *through* a `?` sitting inside an expression
+/// and leaves it in place. So the question the emitter has to ask is
+/// whether the lowered body still carries a `?`, not whether the
+/// lowering produced anything: a residual `?` has no Dafny expression
+/// form and the function must be emitted as an opaque axiom instead.
+fn body_keeps_error_prop_after_lowering(fd: &FnDef) -> bool {
+    if !body_uses_error_prop(&fd.body) {
+        return false;
+    }
+    match crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        .ok()
+        .flatten()
+    {
+        Some(lowered) => body_uses_error_prop(&lowered.body),
+        None => true,
     }
 }
 
@@ -107,7 +140,14 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             }
         })
         .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
-        .filter(|fd| is_mutual_lex(fd))
+        // A fn whose lowered body still carries a `?` has to reach
+        // `emit_fn_def_axiom` — and exactly once. Both the fuel and the
+        // native-`decreases` emitters lower `?` themselves and would
+        // render a body for it here, on top of the axiom
+        // `emit_pure_or_axiom` emits below, so keep those fns out of the
+        // group selection entirely. Peers left in the SCC still emit as
+        // a group; their calls to the excluded fn resolve to its axiom.
+        .filter(|fd| is_mutual_lex(fd) && !body_keeps_error_prop_after_lowering(fd))
         .collect();
     let mutual_components =
         crate::call_graph::ordered_fn_components(&mutual_fns_all, &ctx.module_prefixes);
@@ -218,18 +258,11 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         }
     }
 
-    let needs_axiom_for_error_prop = |fd: &FnDef| -> bool {
-        body_uses_error_prop(&fd.body)
-            && crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
-                .ok()
-                .flatten()
-                .is_none()
-    };
     let id_in = |set: &HashSet<crate::ir::FnId>, fd: &FnDef| -> bool {
         crate::codegen::common::fn_id_for_decl(ctx, fd).is_some_and(|id| set.contains(&id))
     };
     let emit_pure_or_axiom = |fd: &FnDef| -> String {
-        if needs_axiom_for_error_prop(fd) {
+        if body_keeps_error_prop_after_lowering(fd) {
             toplevel::emit_fn_def_axiom(fd, ctx)
         } else if id_in(&fuel_emitted, fd) || id_in(&native_emitted, fd) {
             String::new()

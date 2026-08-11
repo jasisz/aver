@@ -1208,3 +1208,124 @@ fn proof_export_rational_ring_laws_carry_ac_ring_package() {
 
     let _ = std::fs::remove_dir_all(&lean_dir);
 }
+
+#[test]
+fn proof_export_dafny_routes_nested_error_prop_to_an_axiom() {
+    // #825: the pure `?` lowering rewrites `?` at statement position
+    // into a `match` cascade, but recurses through a `?` nested inside
+    // an expression and leaves it there. The Dafny axiom gate used to
+    // ask whether the lowering had produced anything at all, so a
+    // nested `?` read as "handled" and fell through to ordinary
+    // emission — where `emit_expr` rendered it as the error marker it
+    // documents as unreachable, and `dafny verify` rejected the file
+    // with an arity error naming the innocent helper.
+    //
+    // `stepA`/`stepB` cover the second half: a residual `?` inside a
+    // mutual-recursion SCC must be excluded from the fuel group, or it
+    // gets a fuel definition AND an axiom — the same function declared
+    // twice.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-dafny-nested-error-prop");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("nested.av"),
+        "module NestedErrorProp\n\
+         \x20   effects []\n\
+         \x20   intent = \"Nested `?`, plain and inside a mutual SCC.\"\n\
+         \n\
+         fn addOne(x: Int) -> Int\n\
+         \x20   ? \"Add one.\"\n\
+         \x20   x + 1\n\
+         \n\
+         fn nestedArg(n: Int, d: Int) -> Result<Int, String>\n\
+         \x20   ? \"`?` nested as a call argument.\"\n\
+         \x20   Result.Ok(addOne(Int.div(n, d)?))\n\
+         \n\
+         fn stepA(n: Int) -> Result<Int, String>\n\
+         \x20   ? \"Counts down to its peer, nesting `?` as a call argument.\"\n\
+         \x20   match n\n\
+         \x20       0 -> Result.Ok(0)\n\
+         \x20       _ -> Result.Ok(addOne(stepB(n - 1)?))\n\
+         \n\
+         fn stepB(n: Int) -> Result<Int, String>\n\
+         \x20   ? \"Counts down to its peer.\"\n\
+         \x20   match n\n\
+         \x20       0 -> Result.Ok(1)\n\
+         \x20       _ -> stepA(n - 1)\n",
+    )
+    .expect("write nested.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("nested.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof --backend dafny");
+    assert!(
+        proof.status.success(),
+        "`aver proof --backend dafny` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let dfy = std::fs::read_to_string(out_dir.join("NestedErrorProp.dfy"))
+        .expect("read NestedErrorProp.dfy");
+
+    // Both halves are asserted: either one alone can pass while the
+    // other regresses (a marker-free body, or an axiom that still
+    // carries the marker in a sibling).
+    assert!(
+        dfy.contains("function {:axiom} nestedArg("),
+        "a fn with a nested `?` must export as an axiom, not a body:\n{dfy}"
+    );
+    assert!(
+        !dfy.contains("ERROR:"),
+        "the emitted Dafny must carry no error marker:\n{dfy}"
+    );
+
+    assert!(
+        dfy.contains("function {:axiom} stepA("),
+        "the fuel-recursive fn with a nested `?` must export as an axiom:\n{dfy}"
+    );
+    assert!(
+        !dfy.contains("stepA__fuel"),
+        "the axiomized fn must not also get a fuel definition:\n{dfy}"
+    );
+    let step_a_decls = dfy
+        .lines()
+        .filter(|line| line.starts_with("function") && line.contains("stepA("))
+        .count();
+    assert_eq!(
+        step_a_decls, 1,
+        "stepA must be declared exactly once, got {step_a_decls}:\n{dfy}"
+    );
+    // The SCC peer keeps its fuel encoding — exclusion is per-fn, not
+    // per-group.
+    assert!(
+        dfy.contains("function stepB__fuel("),
+        "the peer without a residual `?` must keep its fuel definition:\n{dfy}"
+    );
+
+    if Command::new("dafny").arg("--version").output().is_ok() {
+        let verify = Command::new("dafny")
+            .current_dir(&out_dir)
+            .arg("verify")
+            .arg("NestedErrorProp.dfy")
+            .output()
+            .expect("dafny verify");
+        assert!(
+            verify.status.success(),
+            "`dafny verify` rejected the export:\n{}",
+            format_output(&verify)
+        );
+    } else {
+        eprintln!("skipping `dafny verify`: `dafny` not available");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
