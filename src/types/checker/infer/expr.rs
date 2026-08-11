@@ -504,6 +504,29 @@ impl TypeChecker {
                         Some(Type::Result(ok.clone(), Box::new(inferred)))
                     }
 
+                    // Option.toResult(o, e) — push the expected error type
+                    // into the error argument so a generic literal there
+                    // (`[]`, `{}`) picks up its element type.
+                    //
+                    // Unlike the `withDefault` pair, this one cannot be
+                    // driven from the subject: `o` carries the ok payload
+                    // only, and the error value is unrelated to it. The
+                    // expected type is the sole source, so the recogniser
+                    // has to sit here.
+                    ("Option.toResult", 2, Type::Result(_, err)) => {
+                        let mark = self.error_mark();
+                        let subject = self.infer_type(&args[0]);
+                        // Declining hands the call back to the general
+                        // path, which owns the "expected Option<T>, got
+                        // ..." argument check.
+                        let Type::Option(inner) = subject else {
+                            self.discard_errors_since(mark);
+                            return None;
+                        };
+                        let err_ty = self.infer_type_with_expected(&args[1], Some(err));
+                        Some(Type::Result(inner, Box::new(err_ty)))
+                    }
+
                     _ => None,
                 }
             }
@@ -590,6 +613,44 @@ impl TypeChecker {
                     ));
                 }
                 Some(Type::List(Box::new(elem_ty)))
+            }
+            // `Result.withDefault(r, d)` / `Option.withDefault(o, d)` —
+            // the default shares the subject's payload type, so infer the
+            // subject first and offer that payload as the expected type
+            // for the default. A generic literal in default position
+            // (`[]`, `{}`, `Option.None`) has nothing else to fix its
+            // element type and would otherwise stamp a bare type
+            // variable, which then fails against the surrounding context
+            // — or, where there is no surrounding context, survives
+            // silently as `List<T>`.
+            //
+            // The expectation comes from the subject rather than from
+            // outer context deliberately: it is available in return
+            // position, annotated-binding position, argument position and
+            // bare-binding position alike, so one recogniser covers all
+            // four.
+            ("Result.withDefault", 2) | ("Option.withDefault", 2) => {
+                let mark = self.error_mark();
+                let subject = self.infer_type(&args[0]);
+                let payload = match (&subject, display_name.as_str()) {
+                    (Type::Result(ok, _), "Result.withDefault") => Some((**ok).clone()),
+                    (Type::Option(inner), "Option.withDefault") => Some((**inner).clone()),
+                    _ => None,
+                };
+                // Declining is load-bearing. `Some(..)` short-circuits
+                // `infer_type`, and the check that rejects an `Option`
+                // subject for `Result.withDefault` (and the reverse)
+                // lives on the general path below.
+                let Some(payload) = payload.filter(type_is_fully_concrete) else {
+                    self.discard_errors_since(mark);
+                    return None;
+                };
+                let default_ty = self.infer_type_with_expected(&args[1], Some(&payload));
+                if !self.compatible(&default_ty, &payload) {
+                    self.discard_errors_since(mark);
+                    return None;
+                }
+                Some(default_ty)
             }
             _ => None,
         }
