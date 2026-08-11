@@ -350,11 +350,11 @@ scenario" into "every scenario", which is not what the user wrote.
 
 **Value-side boundary sets:**
 
-- `Int`   → `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`
-- `Float` → `0.0`, `1.0`, `-1.0`, `MIN`, `MAX`, `+/-Inf`, `NaN`
-- `Bool`  → both
-- `Str`   → `""`, `"a"`, 1024×`x`, `"\0"` (NUL embedded), multi-byte UTF-8
-- `Unit`  → `Unit`
+- `Int`    → `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`
+- `Float`  → `0.0`, `1.0`, `-1.0`, `MIN`, `MAX`, `+/-Inf`, `NaN`
+- `Bool`   → both
+- `String` → `""`, `"a"`, 1024×`x`, `"\0"` (NUL embedded), multi-byte UTF-8
+- `Unit`   → `Unit`
 
 These augment the declared list — duplicates are dropped, so a value the
 user already wrote is not re-run.

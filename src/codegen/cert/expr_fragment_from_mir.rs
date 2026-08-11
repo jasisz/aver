@@ -211,8 +211,12 @@ fn sym_ty_from_mir_name(ty: &str) -> Option<SymTy> {
         "Int" => Some(SymTy::Int),
         "Float" => Some(SymTy::Float),
         "Bool" => Some(SymTy::Bool),
-        // MIR carries the resolver type's Debug rendering: the source String
-        // type prints as `Str`.
+        // Two producers feed this function and they spell the string type
+        // differently. Signature types (`MirFn::return_type`, `MirParam::ty`)
+        // are the resolver `Type`'s Debug rendering, where `Type::Str` prints
+        // as `Str`. Record field types come from the wasm-gc registry, which
+        // keeps the annotation as written in the source — `String`. Neither
+        // arm is the removed `Str` surface alias, so neither can be dropped.
         "String" | "Str" => Some(SymTy::String),
         "" => None,
         other => {

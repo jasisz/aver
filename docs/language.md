@@ -13,6 +13,8 @@ For Oracle laws and trace assertions over classified effects, see [oracle.md](or
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
 Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 
+Each primitive has exactly one spelling — the string type is written `String`, never abbreviated.
+
 There is no dedicated `Set` type — use `Map<T, Unit>` (see [Sets](#sets) below).
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
