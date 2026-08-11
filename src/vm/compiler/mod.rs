@@ -539,7 +539,8 @@ impl ProgramCompiler {
             let type_name = match et.def {
                 TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
             };
-            if let Some(type_symbol_id) = self.symbols.find(type_name) {
+            let qualified = visibility::qualified_name(dep_name, type_name);
+            if let Some(type_symbol_id) = self.symbols.find(&qualified) {
                 let member_symbol_id = self.symbols.intern_name(type_name);
                 self.symbols.add_namespace_member_by_id(
                     module_symbol_id,
@@ -604,6 +605,13 @@ impl ProgramCompiler {
 
     /// Register type symbols in VmSymbolTable for namespace resolution.
     /// Arena registration is handled separately via shared `collect_module_types`.
+    ///
+    /// Symbols are keyed by the type's canonical name — `Module.Type` for
+    /// a dependency's declaration, the bare name for the entry's own. Two
+    /// modules may each declare a `Colour`; those are distinct types (the
+    /// local one shadows the dependency's), so their constructors must not
+    /// land in one `Colour.Red` slot. The arena is keyed the same way, so
+    /// both registries agree on identity.
     fn register_type_in_symbols(
         &mut self,
         td: &TypeDef,
@@ -618,8 +626,8 @@ impl ProgramCompiler {
             None => name.to_string(),
         };
         match td {
-            TypeDef::Product { name, fields, .. } => {
-                self.symbols.intern_namespace_path(name)?;
+            TypeDef::Product { fields, .. } => {
+                self.symbols.intern_namespace(&arena_name)?;
                 let type_id = arena
                     .find_type_id(&arena_name)
                     .unwrap_or_else(|| panic!("type `{arena_name}` already registered in Arena"));
@@ -629,8 +637,8 @@ impl ProgramCompiler {
                     .collect();
                 self.code.register_record_fields(type_id, &field_symbol_ids);
             }
-            TypeDef::Sum { name, variants, .. } => {
-                let type_symbol_id = self.symbols.intern_namespace_path(name)?;
+            TypeDef::Sum { variants, .. } => {
+                let type_symbol_id = self.symbols.intern_namespace(&arena_name)?;
                 let type_id = arena
                     .find_type_id(&arena_name)
                     .unwrap_or_else(|| panic!("type `{arena_name}` already registered in Arena"));
@@ -638,7 +646,7 @@ impl ProgramCompiler {
                     let ctor_id = arena
                         .find_ctor_id(type_id, variant_id as u16)
                         .expect("ctor id");
-                    let qualified_name = visibility::member_key(name, &variant.name);
+                    let qualified_name = visibility::member_key(&arena_name, &variant.name);
                     let ctor_symbol_id = self.symbols.intern_variant_ctor(
                         &qualified_name,
                         VmVariantCtor {

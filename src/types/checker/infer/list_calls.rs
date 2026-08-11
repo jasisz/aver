@@ -53,11 +53,10 @@ impl TypeChecker {
                 if matches!(elem_ty, Type::Var(_)) {
                     elem_ty = val_ty;
                 } else if !self.compatible(&val_ty, &elem_ty) {
+                    let (want, got) = self.describe_type_pair(&elem_ty, &val_ty);
                     self.error(format!(
                         "Argument 1 of '{}': expected {}, got {}",
-                        name,
-                        elem_ty.display(),
-                        val_ty.display()
+                        name, want, got
                     ));
                 }
                 Some(Type::List(Box::new(elem_ty)))
@@ -90,11 +89,10 @@ impl TypeChecker {
                     // the raw `Type::compatible`'s suffix fallback.
                     _ if self.compatible(&left_ty, &right_ty) => left_ty,
                     _ => {
+                        let (left, right) = self.describe_type_pair(&left_ty, &right_ty);
                         self.error(format!(
                             "Arguments of '{}': list element types differ: {} vs {}",
-                            name,
-                            left_ty.display(),
-                            right_ty.display()
+                            name, left, right
                         ));
                         Type::Invalid
                     }
@@ -118,11 +116,10 @@ impl TypeChecker {
                     && !matches!(needle_ty, Type::Var(_) | Type::Invalid)
                     && !self.compatible(&needle_ty, &elem_ty)
                 {
+                    let (want, got) = self.describe_type_pair(&elem_ty, &needle_ty);
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
-                        name,
-                        elem_ty.display(),
-                        needle_ty.display()
+                        name, want, got
                     ));
                 }
                 Some(Type::Bool)

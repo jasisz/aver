@@ -1,4 +1,12 @@
-//! VM arena identity regressions for records that share a bare name across modules.
+//! VM identity regressions for types that share a bare name across modules.
+//!
+//! A module may declare a type whose bare name a dependency also
+//! declares; the local declaration shadows the imported one and the two
+//! stay distinct. The arena keys them by canonical `Module.Type` name,
+//! and (#830) so does the VM symbol table — two modules each declaring
+//! `Colour` used to register both `Red` constructors into one
+//! `Colour.Red` slot, which tripped an internal assertion in the
+//! debug build and silently kept the first registration otherwise.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -72,6 +80,46 @@ fn probe() -> Int
     Left.mk()
 "#;
 
+const LEFT_COLOUR_SRC: &str = r#"module Left
+    intent = "Dependency with its own Colour sum type."
+    exposes [pick, describe, Colour]
+    effects []
+
+type Colour
+    Red
+    Blue
+
+fn pick() -> Colour
+    ? "Pick the dependency's colour."
+    Colour.Blue
+
+fn describe(c: Colour) -> String
+    ? "Describe the dependency's colour."
+    match c
+        Colour.Red -> "left-red"
+        Colour.Blue -> "left-blue"
+"#;
+
+const COLOUR_ENTRY_SRC: &str = r#"module Main
+    intent = "Entry with its own Colour sum type."
+    depends [Left]
+    effects []
+
+type Colour
+    Green
+    Red
+
+fn name(c: Colour) -> String
+    ? "Name the entry's colour."
+    match c
+        Colour.Green -> "green"
+        Colour.Red -> "red"
+
+fn probe() -> String
+    ? "Name colours drawn from both vocabularies."
+    "{name(Colour.Green)}|{name(Colour.Red)}|{Left.describe(Left.pick())}|{Left.describe(Left.Colour.Red)}"
+"#;
+
 struct CompiledFixture {
     code: vm::CodeStore,
     globals: Vec<NanValue>,
@@ -79,10 +127,14 @@ struct CompiledFixture {
 }
 
 fn compile_fixture(entry_source: &str) -> CompiledFixture {
+    compile_fixture_with_dep(entry_source, LEFT_SRC)
+}
+
+fn compile_fixture_with_dep(entry_source: &str, dep_source: &str) -> CompiledFixture {
     let mut entry_items = parse_source(entry_source).expect("entry parse");
     let loaded = vec![LoadedModule {
         dep_name: "Left".to_string(),
-        items: parse_source(LEFT_SRC).expect("Left parse"),
+        items: parse_source(dep_source).expect("Left parse"),
         path: PathBuf::from("left.av"),
     }];
     let modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
@@ -220,6 +272,44 @@ fn verify_passes_for_shadowed_record_layout() {
     assert!(
         stdout.contains("1/1"),
         "unexpected verify output:\n{stdout}"
+    );
+}
+
+#[test]
+fn arena_keys_entry_and_dep_sum_types_separately() {
+    let fixture = compile_fixture_with_dep(COLOUR_ENTRY_SRC, LEFT_COLOUR_SRC);
+    let entry_id = fixture.arena.find_type_id("Colour").expect("entry Colour");
+    let dep_id = fixture
+        .arena
+        .find_type_id("Left.Colour")
+        .expect("dependency Left.Colour");
+
+    assert_ne!(entry_id, dep_id);
+    assert_eq!(fixture.arena.find_variant_id(entry_id, "Green"), Some(0));
+    assert_eq!(fixture.arena.find_variant_id(entry_id, "Red"), Some(1));
+    assert_eq!(fixture.arena.find_variant_id(dep_id, "Red"), Some(0));
+    assert_eq!(fixture.arena.find_variant_id(dep_id, "Blue"), Some(1));
+}
+
+#[test]
+fn vm_compiles_sum_types_that_share_a_bare_name_across_modules() {
+    // Compiling alone is the #830 regression: registering the entry's
+    // `Colour.Red` on top of the dependency's tripped a `debug_assert`
+    // in the VM symbol table, so this used to abort here.
+    let CompiledFixture {
+        code,
+        globals,
+        arena,
+    } = compile_fixture_with_dep(COLOUR_ENTRY_SRC, LEFT_COLOUR_SRC);
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.run_top_level().expect("run top level");
+    let result = machine
+        .run_named_function("probe", &[])
+        .expect("run probe")
+        .to_value(&machine.arena);
+    assert_eq!(
+        result,
+        Value::Str("green|red|left-blue|left-red".to_string())
     );
 }
 
