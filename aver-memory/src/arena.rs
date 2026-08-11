@@ -13,6 +13,7 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
+            type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
             type_variant_names: Vec::new(),
@@ -39,6 +40,7 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
+            type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
             type_variant_names: self.type_variant_names.clone(),
@@ -631,8 +633,19 @@ impl<T: ArenaTypes> Arena<T> {
     // -- Type registry -----------------------------------------------------
 
     pub fn register_record_type(&mut self, name: &str, field_names: Vec<String>) -> u32 {
-        let id = self.type_names.len() as u32;
-        self.type_names.push(String::from(name));
+        self.register_record_type_keyed(name, name, field_names)
+    }
+
+    pub fn register_record_type_keyed(
+        &mut self,
+        key: &str,
+        display: &str,
+        field_names: Vec<String>,
+    ) -> u32 {
+        let id = self.type_keys.len() as u32;
+        self.type_keys.push(String::from(key));
+        self.type_names.push(String::from(display));
+        debug_assert_eq!(self.type_keys.len(), self.type_names.len());
         self.type_field_names.push(field_names);
         self.type_variant_names.push(Vec::new());
         self.type_variant_ctor_ids.push(Vec::new());
@@ -640,8 +653,19 @@ impl<T: ArenaTypes> Arena<T> {
     }
 
     pub fn register_sum_type(&mut self, name: &str, variant_names: Vec<String>) -> u32 {
-        let id = self.type_names.len() as u32;
-        self.type_names.push(String::from(name));
+        self.register_sum_type_keyed(name, name, variant_names)
+    }
+
+    pub fn register_sum_type_keyed(
+        &mut self,
+        key: &str,
+        display: &str,
+        variant_names: Vec<String>,
+    ) -> u32 {
+        let id = self.type_keys.len() as u32;
+        self.type_keys.push(String::from(key));
+        self.type_names.push(String::from(display));
+        debug_assert_eq!(self.type_keys.len(), self.type_names.len());
         self.type_field_names.push(Vec::new());
         let ctor_ids: Vec<u32> = (0..variant_names.len())
             .map(|variant_idx| {
@@ -684,7 +708,7 @@ impl<T: ArenaTypes> Arena<T> {
     }
 
     pub fn find_type_id(&self, name: &str) -> Option<u32> {
-        self.type_names
+        self.type_keys
             .iter()
             .position(|n| n == name)
             .map(|i| i as u32)

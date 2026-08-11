@@ -1218,13 +1218,18 @@ pub struct Arena<T: ArenaTypes> {
     scratch_stable: Vec<u32>,
     peak_usage: ArenaUsage,
     alloc_space: AllocSpace,
+    /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
+    /// builtin types, and module-qualified for dependency types. Kept in
+    /// lockstep with `type_names`.
+    pub type_keys: Vec<String>,
+    /// Source-facing display spellings used by value conversion and rendering.
     pub type_names: Vec<String>,
     pub type_field_names: Vec<Vec<String>>,
     pub type_variant_names: Vec<Vec<String>>,
     pub type_variant_ctor_ids: Vec<Vec<u32>>,
     pub ctor_to_type_variant: Vec<(u32, u16)>,
     pub symbol_entries: Vec<ArenaSymbol<T>>,
-    /// Qualified-name aliases for types (e.g. "Data.Shape" → type_id for "Shape").
+    /// Fallback aliases for types (e.g. bare "Shape" → type_id for "Data.Shape").
     pub type_aliases: Vec<(String, u32)>,
 }
 

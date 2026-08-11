@@ -233,7 +233,7 @@ fn compile_program_inner(
                     }
                 }
                 // VM-specific: register type symbols
-                compiler.register_type_in_symbols(td, arena)?;
+                compiler.register_type_in_symbols(td, None, arena)?;
             }
             _ => {}
         }
@@ -427,24 +427,22 @@ impl ProgramCompiler {
         crate::ir::pipeline::tco(&mut mod_items);
         crate::ir::pipeline::resolve(&mut mod_items);
 
-        // Register types in Arena with qualified aliases.
+        // Dependency types use qualified canonical keys. Their bare display
+        // spellings remain fallback aliases for the Value/JSON boundary.
         for mt in visibility::collect_module_types(&mod_items) {
-            let type_id = match &mt.kind {
-                visibility::ModuleTypeKind::Record { field_names } => {
-                    arena.register_record_type(&mt.bare_name, field_names.clone())
-                }
-                visibility::ModuleTypeKind::Sum { variant_names } => {
-                    arena.register_sum_type(&mt.bare_name, variant_names.clone())
-                }
-            };
-            arena.register_type_alias(
-                &visibility::qualified_name(dep_name, &mt.bare_name),
-                type_id,
-            );
+            let qualified = visibility::qualified_name(dep_name, &mt.bare_name);
+            let type_id =
+                match &mt.kind {
+                    visibility::ModuleTypeKind::Record { field_names } => arena
+                        .register_record_type_keyed(&qualified, &mt.bare_name, field_names.clone()),
+                    visibility::ModuleTypeKind::Sum { variant_names } => arena
+                        .register_sum_type_keyed(&qualified, &mt.bare_name, variant_names.clone()),
+                };
+            arena.register_type_alias(&mt.bare_name, type_id);
         }
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
-                self.register_type_in_symbols(td, arena)?;
+                self.register_type_in_symbols(td, Some(dep_name), arena)?;
             }
         }
 
@@ -609,14 +607,22 @@ impl ProgramCompiler {
     fn register_type_in_symbols(
         &mut self,
         td: &TypeDef,
+        scope: Option<&str>,
         arena: &Arena,
     ) -> Result<(), CompileError> {
+        let name = match td {
+            TypeDef::Product { name, .. } | TypeDef::Sum { name, .. } => name,
+        };
+        let arena_name = match scope {
+            Some(module) => visibility::qualified_name(module, name),
+            None => name.to_string(),
+        };
         match td {
             TypeDef::Product { name, fields, .. } => {
                 self.symbols.intern_namespace_path(name)?;
                 let type_id = arena
-                    .find_type_id(name)
-                    .expect("type already registered in Arena");
+                    .find_type_id(&arena_name)
+                    .unwrap_or_else(|| panic!("type `{arena_name}` already registered in Arena"));
                 let field_symbol_ids: Vec<u32> = fields
                     .iter()
                     .map(|(field_name, _)| self.symbols.intern_name(field_name))
@@ -626,8 +632,8 @@ impl ProgramCompiler {
             TypeDef::Sum { name, variants, .. } => {
                 let type_symbol_id = self.symbols.intern_namespace_path(name)?;
                 let type_id = arena
-                    .find_type_id(name)
-                    .expect("type already registered in Arena");
+                    .find_type_id(&arena_name)
+                    .unwrap_or_else(|| panic!("type `{arena_name}` already registered in Arena"));
                 for (variant_id, variant) in variants.iter().enumerate() {
                     let ctor_id = arena
                         .find_ctor_id(type_id, variant_id as u16)
