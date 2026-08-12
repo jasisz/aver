@@ -720,6 +720,17 @@ fn lift_classified_call(
                     .ok_or_else(|| LiftError::MissingOracle {
                         method: effect_name.to_string(),
                     })?;
+            // Lift the arguments BEFORE claiming this call's counter. The VM
+            // evaluates arguments eagerly and only then takes its oracle
+            // coordinates, so a generative call nested inside the arguments
+            // consumes the LOWER index and the surrounding call the higher one
+            // (`Random.int(1, Random.int(2, 6))` charges the inner read first).
+            // Claiming this call's counter first inverted the two, and the
+            // inversion is invisible: a law that holds at runtime then exports a
+            // theorem the kernel refutes, while the law matching the export
+            // fails `verify`. Same hazard the Output arm above documents, in the
+            // opposite direction.
+            let lifted_args = lift_args(args, cfg, path_expr, counter)?;
             let current_counter = *counter;
             *counter += 1;
             let path_arg = path_expr.clone();
@@ -728,7 +739,7 @@ fn lift_classified_call(
                 original.line,
             );
             let mut new_args = vec![path_arg, counter_arg];
-            new_args.extend(lift_args(args, cfg, path_expr, counter)?);
+            new_args.extend(lifted_args);
             Ok(Expr::FnCall(
                 Box::new(Spanned::new(
                     Expr::Ident(oracle_name.clone()),
