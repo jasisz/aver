@@ -58,7 +58,6 @@ pub struct EffectClassification {
 /// Converted into [`Type`] on demand via [`runtime_type`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeType {
-    FormattedValue,
     Unit,
     Int,
     Float,
@@ -89,7 +88,6 @@ pub enum RuntimeType {
 impl RuntimeType {
     fn as_type(self) -> Type {
         match self {
-            RuntimeType::FormattedValue => Type::Var("FormattedValue".to_string()),
             RuntimeType::Unit => Type::Unit,
             RuntimeType::Int => Type::Int,
             RuntimeType::Float => Type::Float,
@@ -357,19 +355,19 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
     EffectClassification {
         method: "Console.print",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::FormattedValue],
+        runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
         method: "Console.error",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::FormattedValue],
+        runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
         method: "Console.warn",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::FormattedValue],
+        runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
@@ -393,7 +391,7 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
     EffectClassification {
         method: "Terminal.print",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::FormattedValue],
+        runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
@@ -466,6 +464,50 @@ pub fn is_classified(method: &str) -> bool {
     classify(method).is_some()
 }
 
+/// Render the classified set as a namespace-grouped list for diagnostics:
+/// `Args.get, Console.error/.print/.readLine/.warn, Disk.appendText/…`.
+///
+/// Derived from [`CLASSIFICATIONS`] so a message that tells the user which
+/// effects the proof subset covers can never name a different set than the
+/// one the checker enforces. The hand-written version of this sentence had
+/// drifted to 34 of the 47 methods — `Terminal.size` was missing from it
+/// while `examples/formal/terminal_size_snapshot.av` demonstrated it.
+///
+/// Namespaces and methods are both sorted, so the rendering does not depend
+/// on the order of the table and cannot change when an entry is moved.
+pub fn classified_effects_summary() -> String {
+    use std::collections::BTreeMap;
+
+    let mut grouped: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
+    for c in CLASSIFICATIONS {
+        let (namespace, method) = match c.method.split_once('.') {
+            Some(parts) => parts,
+            // Every classified effect is `Namespace.method`; a bare name has
+            // no namespace to group under, so it stands on its own.
+            None => (c.method, ""),
+        };
+        grouped.entry(namespace).or_default().push(method);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(namespace, mut methods)| {
+            methods.sort_unstable();
+            methods.dedup();
+            let mut rendered = String::from(namespace);
+            for (index, method) in methods.iter().enumerate() {
+                if method.is_empty() {
+                    continue;
+                }
+                rendered.push_str(if index == 0 { "." } else { "/." });
+                rendered.push_str(method);
+            }
+            rendered
+        })
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
 /// Opaque types that are runtime handles (id + connection metadata),
 /// not domain-invariant smart-constructor types. These may be fabricated
 /// inside verify-trace context so that Oracle stubs can return them
@@ -525,6 +567,25 @@ pub fn oracle_signature(method: &str) -> Option<Type> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_names_every_classified_method() {
+        // The diagnostic that tells a user which effects the proof subset
+        // covers is derived from this table, so it cannot name a smaller set
+        // than the checker enforces. The hand-written sentence it replaced had
+        // drifted to 34 of the 47 methods.
+        let summary = classified_effects_summary();
+        for c in CLASSIFICATIONS {
+            let (namespace, method) = c.method.split_once('.').expect("dotted effect name");
+            let grouped = format!("/.{method}");
+            let leading = format!("{namespace}.{method}");
+            assert!(
+                summary.contains(&leading) || summary.contains(&grouped),
+                "{} is classified but missing from the diagnostic summary:\n{summary}",
+                c.method
+            );
+        }
+    }
 
     #[test]
     fn classify_returns_none_for_unknown() {

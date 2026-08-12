@@ -346,14 +346,12 @@ impl TypeChecker {
                              {effects}. These effects are ambient state, protocol/session state, modal \
                              terminal state, or higher-order callbacks and cannot be lifted to pure form. \
                              Use 'aver record' / 'aver replay' for deterministic reproduction. \
-                             Oracle v1's classified effects: Args.get, Env.get, Console.readLine, \
-                             Random.int/.float, Time.now/.unixMs/.sleep, Disk.readText/.exists/.listDir/\
-                             .writeText/.appendText/.delete/.deleteDir/.makeDir, Http.get/.head/.delete/\
-                             .post/.put/.patch, Tcp.send/.ping, Console.print/.error/.warn, \
-                             Terminal.clear/.moveTo/.print/.readKey/.hideCursor/.showCursor/.flush.",
+                             Oracle v1's classified effects: {classified}.",
                             kind_label = kind_label,
                             fn_name = vb.fn_name,
                             effects = unclassified_effects.join(", "),
+                            classified =
+                                super::effect_classification::classified_effects_summary(),
                         ),
                     );
                 }

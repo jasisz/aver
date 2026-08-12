@@ -20,6 +20,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **The error that lists which effects `verify law` can cover now lists all of them.** Writing a law over an effect outside the proof subset reports what that subset contains — and the sentence naming it was maintained by hand and had fallen thirteen effects behind, among them `Terminal.size`, `Env.set`, `Tcp.connect` and every byte-carrying `Tcp` method. `Terminal.size` was missing while `examples/formal/terminal_size_snapshot.av` shipped as a worked example of proving over it, so the diagnostic told you a supported effect was unsupported. The list is now derived from the same table the checker enforces, and grouped by namespace, so it cannot fall behind again.
+
 - **A law over an effect call nested inside another effect call's arguments is provable again.** `Random.int(1, Random.int(2, 6))` ran one way and exported a proof about the other: the run charges the inner read the first oracle index and the outer read the second, but the export numbered them the other way round. Nothing said so. The law that matched the run passed `aver verify` and then `aver proof --check` refuted it in Lean, while the law that matched the export failed `verify` — so a correct program was simply unprovable and each tool pointed at the other. Oracle indices are now assigned in evaluation order on both sides. Laws that only read effects one at a time, or read them in separate statements, were never affected and their exported proofs are unchanged.
 
 ### Changed
