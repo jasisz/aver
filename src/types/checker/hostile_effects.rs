@@ -734,47 +734,30 @@ mod tests {
     #[test]
     fn stub_bodies_typecheck_with_signature_matching_oracle_classification() {
         use crate::source::parse_source;
+        use crate::types::Type;
+        use crate::types::checker::effect_classification::{
+            EffectDimension, classifications_for_proof_subset, oracle_signature,
+        };
         use crate::types::checker::run_type_check_full;
 
-        // Every method that ships a stub. Add new ones here as
-        // `hostile_profiles_for` grows.
-        let methods = [
-            "Args.get",
-            "Env.get",
-            "Terminal.size",
-            "Random.int",
-            "Random.float",
-            "Time.now",
-            "Time.unixMs",
-            "Disk.readText",
-            "Disk.exists",
-            "Disk.listDir",
-            "Console.readLine",
-            "Http.get",
-            "Http.head",
-            "Http.delete",
-            "Http.post",
-            "Http.put",
-            "Http.patch",
-            "Disk.writeText",
-            "Disk.appendText",
-            "Disk.delete",
-            "Disk.deleteDir",
-            "Disk.makeDir",
-            "Tcp.send",
-            "Tcp.sendBytes",
-            "Tcp.ping",
-            "Tcp.connect",
-            "Tcp.readLine",
-            "Tcp.readBytes",
-            "Tcp.writeLine",
-            "Tcp.writeBytes",
-            "Tcp.close",
-            "Terminal.readKey",
-        ];
-        for method in methods {
+        // The method list is derived, not written down. Hand-listing it meant
+        // an effect could gain profiles without ever being checked here, which
+        // is the failure this test exists to prevent one level down.
+        for classification in classifications_for_proof_subset() {
+            let method = classification.method;
+            // Output effects have no oracle channel for a hostile world to
+            // answer through; the injector skips them by design.
+            if matches!(classification.dimension, EffectDimension::Output) {
+                continue;
+            }
+            let Some(Type::Fn(oracle_params, oracle_ret, _)) = oracle_signature(method) else {
+                panic!("{method} is not Output-dimension but has no oracle signature");
+            };
+            let want_params: Vec<String> = oracle_params.iter().map(|t| t.display()).collect();
+            let want_ret = oracle_ret.display();
+
             for p in hostile_profiles_for(method) {
-                let depends = if matches!(method, "Tcp.readBytes" | "Tcp.writeBytes") {
+                let depends = if p.stub_body.contains("Bytes") {
                     "    depends [Bytes]\n"
                 } else {
                     ""
@@ -800,6 +783,34 @@ mod tests {
                         p.stub_body
                     );
                 }
+
+                // The half the doc comment above has always promised and this
+                // test never performed: a stub that parses and typechecks can
+                // still have the wrong shape for the oracle slot it is injected
+                // into — a missing `(path, n)` prefix on a generative effect, a
+                // record with the wrong field names, a parameter inherited from
+                // a neighbouring method. Compared by rendered type, because the
+                // classification table names nominals before the module graph
+                // assigns them ids while a typechecked signature carries them.
+                let (params, ret, _) = result
+                    .fn_sigs
+                    .get(&p.stub_fn_name)
+                    .unwrap_or_else(|| panic!("{}/{}: stub fn not registered", method, p.name));
+                let got_params: Vec<String> = params.iter().map(|t| t.display()).collect();
+                assert_eq!(
+                    got_params, want_params,
+                    "{}/{}: stub takes different parameters than the oracle slot it is \
+                     injected into",
+                    method, p.name
+                );
+                assert_eq!(
+                    ret.display(),
+                    want_ret,
+                    "{}/{}: stub returns a different type than the oracle slot it is \
+                     injected into",
+                    method,
+                    p.name
+                );
             }
         }
     }
