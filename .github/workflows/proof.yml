@@ -55,24 +55,49 @@ jobs:
         # a different `lean-toolchain` still trigger elan to fetch the
         # matching version on first `lake build`.
         run: |
-          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
-            https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain stable
+          # `curl | sh` hides a failing curl behind a shell that succeeds on
+          # empty input, so the retry below could not see it without this.
+          set -o pipefail
+          # elan's own download of the toolchain tarball runs its own curl
+          # with no retry, so flags on the installer fetch do not cover it.
+          # A transient 503 from the releases CDN therefore failed the job
+          # outright; retry the whole install instead.
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain stable; then break; fi
+            if [ $attempt -eq 4 ]; then exit 1; fi
+            echo "elan install failed (attempt $attempt), retrying in 20s"
+            sleep 20
+          done
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      - name: Verify `lake` reachable
-        # The first lake/lean invocation lazily fetches the pinned toolchain
-        # from releases.lean-lang.org; that download has no built-in retry and
-        # times out on transient network blips (the same failure mode the
-        # Dafny arm already hardens against with `curl --retry`). Retry the
-        # toolchain materialization a few times before failing the job.
+      - name: Verify `lake` reachable and materialize the pinned toolchain
+        # The first lake/lean invocation lazily fetches a toolchain from
+        # releases.lean-lang.org; that download has no built-in retry and fails
+        # on transient network blips (the same failure mode the Dafny arm
+        # already hardens against with `curl --retry`).
+        #
+        # `lake --version` only warms the *default* toolchain that elan was
+        # installed with. The reserved-token probe below runs Lean at the
+        # version pinned for the certificate wall, and that one was still being
+        # fetched lazily — from inside `cargo test`, where no retry can reach
+        # it. A run died exactly there:
+        #
+        #   downloading .../lean-4.32.2-linux.tar.zst
+        #   error: [52] Server returned nothing (Empty reply from server)
+        #
+        # So warm the pinned toolchain here too, under the same retry, and read
+        # the version from the file that defines it rather than repeating it.
         run: |
+          pinned="$(cat aver-cert/assets/wall/current/lean-toolchain)"
+          echo "pinned toolchain: ${pinned}"
           for attempt in 1 2 3 4 5 6; do
-            if lake --version; then exit 0; fi
-            echo "::warning::lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
+            if lake --version && elan toolchain install "${pinned}"; then exit 0; fi
+            echo "::warning::toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
             sleep 15
           done
-          echo "::error::lake unreachable after 6 attempts (toolchain download)"
+          echo "::error::toolchain unreachable after 6 attempts"
           exit 1
 
       - name: Check reserved-token snapshot against pinned Lean

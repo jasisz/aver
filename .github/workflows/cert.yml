@@ -150,16 +150,31 @@ jobs:
           fi
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
+      - name: Cache wasm-tools
+        id: cache-wasm-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/wasm-tools
+          key: wasm-tools-${{ runner.os }}-1.246.2
+
       - name: Install wasm-tools
-        # Only the decode differential suite shells out to `wasm-tools print`
-        # (tools/certkit/decode_ref.py); harmless to install for the others.
-        if: matrix.suite == 'cert_decode_spec'
+        # Retrying was not enough on its own: a run burned all six attempts
+        # over ninety seconds against a releases CDN that stayed down for
+        # longer than that. A pinned binary does not need re-fetching every
+        # run, so the cache above removes the download from the common path
+        # and the retry only covers a genuine cache miss.
+        if: steps.cache-wasm-tools.outputs.cache-hit != 'true'
         run: |
+          mkdir -p "$HOME/.local/bin"
           curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/wasm-tools.tar.gz \
             https://github.com/bytecodealliance/wasm-tools/releases/download/v1.246.2/wasm-tools-1.246.2-x86_64-linux.tar.gz
           tar -xzf /tmp/wasm-tools.tar.gz -C /tmp
-          sudo mv /tmp/wasm-tools-1.246.2-x86_64-linux/wasm-tools /usr/local/bin/wasm-tools
-          wasm-tools --version
+          mv /tmp/wasm-tools-1.246.2-x86_64-linux/wasm-tools "$HOME/.local/bin/wasm-tools"
+
+      - name: Put wasm-tools on PATH
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/wasm-tools" --version
 
       - name: Verify pinned `lake` reachable
         run: |
