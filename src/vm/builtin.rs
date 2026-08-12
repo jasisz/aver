@@ -5,7 +5,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::services::http;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
-use crate::services::{console, disk, env, random, tcp, time};
+use crate::services::{args, console, disk, env, random, tcp, time};
 use crate::types::{
     bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
 };
@@ -285,6 +285,8 @@ impl VmBuiltin {
             | Self::DiskListDir
             | Self::DiskMakeDir => disk::effects(self.name()),
 
+            Self::ArgsGet => args::effects(self.name()),
+
             Self::EnvGet | Self::EnvSet => env::effects(self.name()),
             Self::RandomInt | Self::RandomFloat => random::effects(self.name()),
 
@@ -533,6 +535,35 @@ impl VmBuiltin {
 #[cfg(test)]
 mod tests {
     use super::VmBuiltin;
+
+    #[test]
+    fn every_classified_effect_is_visible_to_the_vm() {
+        // `effects()` is what makes the VM record a call in the verify trace.
+        // `Args.get` was missing its arm and fell through the `_ => &[]`
+        // wildcard, so it read the real process arguments and then left no
+        // trace entry — a `trace.length()` law counted one event where two had
+        // fired, and the law stating the truth failed instead. `Env.get`, the
+        // same dimension, had its arm and behaved correctly, which is what
+        // made the omission invisible rather than obviously broken.
+        //
+        // Every effect the proof pipeline classifies has to be observable to
+        // the VM, or the trace those proofs are checked against is missing
+        // events.
+        use crate::types::checker::effect_classification::classifications_for_proof_subset;
+
+        for classification in classifications_for_proof_subset() {
+            let method = classification.method;
+            let builtin = VmBuiltin::ALL
+                .iter()
+                .find(|b| b.name() == method)
+                .unwrap_or_else(|| panic!("{method} is classified but the VM has no builtin"));
+            assert!(
+                builtin.effects().contains(&method),
+                "{method} is classified for proof but `VmBuiltin::effects()` does not report \
+                 it, so calls to it never reach the verify trace"
+            );
+        }
+    }
 
     #[test]
     fn builtin_names_are_unique() {
