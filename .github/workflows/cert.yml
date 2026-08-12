@@ -1,10 +1,17 @@
 name: Certification
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  # The full matrix runs on a timer rather than on every push to main. It is
+  # 330 minutes of kernel work across 30 lanes, on a runner pool shared with
+  # every other workflow here, so paying it per push made each pull request
+  # queue behind roughly forty minutes of certification that almost never
+  # changed. The guard in `decide` skips the run outright when main has not
+  # moved since the last one, so a quiet stretch costs nothing.
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -14,7 +21,78 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  decide:
+    name: Decide lanes
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.pick.outputs.lanes }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the lane partitions still cover every test
+        run: |
+          python3 - <<'EOF'
+          import json, re, sys
+          lanes = json.load(open('.github/cert-lanes.json'))
+          # The comment on cert-kernel promises each suite's shards are disjoint
+          # and exhaustive — no overlap doubling kernel work, no gap silently
+          # dropping a soundness gate. That held while the shards sat in the
+          # matrix literal and a reviewer could see them together; now they live
+          # in a data file, so the promise is checked instead of stated.
+          groups = {}
+          for lane in lanes:
+              part = lane.get('partition')
+              if not part:
+                  continue
+              k, n = (int(x) for x in part.split('/'))
+              family = re.sub(r'-\d+/\d+$', '', lane.get('lane') or '')
+              groups.setdefault((lane['suite'], family, n), set()).add(k)
+          bad = []
+          for (suite, family, n), seen in sorted(groups.items()):
+              if seen != set(range(1, n + 1)):
+                  bad.append(f"{suite} {family}: expected 1..{n}, got {sorted(seen)}")
+          if not any(lane.get('smoke') for lane in lanes):
+              bad.append("no lane is marked smoke — every pull request would run nothing")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print(f"{len(lanes)} lanes, {len(groups)} partitioned families, all complete")
+          EOF
+
+      - name: Pick lanes for this event
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # A pull request runs the smoke lanes only: the five cheapest that
+          # still reach all four suites, about five minutes of wall clock. They
+          # are marked in .github/cert-lanes.json rather than listed here, so
+          # the full set stays the single source and a lane cannot be dropped
+          # from one place and kept in the other.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "lanes=$(jq -c '[.[] | select(.smoke)]' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Scheduled run: certify main only if it moved. `head_sha` of the last
+          # successful scheduled run is the last commit this suite passed on.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            last=$(gh api \
+              "repos/${{ github.repository }}/actions/workflows/cert.yml/runs?event=schedule&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // ""')
+            if [ "$last" = "${{ github.sha }}" ]; then
+              echo "main unchanged since ${last} — nothing to certify"
+              echo "lanes=[]" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "lanes=$(jq -c '.' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
+
   cert-kernel:
+    needs: decide
+    if: needs.decide.outputs.lanes != '[]'
     # Every lane is a name filter plus a slice partition. Each filter and its
     # suite-specific complement are disjoint and exhaustive, so each test in a
     # suite is selected exactly once: no overlap (which would double the kernel
@@ -44,149 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: cert_certify_spec
-            lane: hostile-models-1/5
-            mode: nextest
-            filter: 'test(/^cert_hostile_model_/)'
-            partition: 1/5
-          - suite: cert_certify_spec
-            lane: hostile-models-2/5
-            mode: nextest
-            filter: 'test(/^cert_hostile_model_/)'
-            partition: 2/5
-          - suite: cert_certify_spec
-            lane: hostile-models-3/5
-            mode: nextest
-            filter: 'test(/^cert_hostile_model_/)'
-            partition: 3/5
-          - suite: cert_certify_spec
-            lane: hostile-models-4/5
-            mode: nextest
-            filter: 'test(/^cert_hostile_model_/)'
-            partition: 4/5
-          - suite: cert_certify_spec
-            lane: hostile-models-5/5
-            mode: nextest
-            filter: 'test(/^cert_hostile_model_/)'
-            partition: 5/5
-          - suite: cert_certify_spec
-            lane: adt-witnesses-1/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 1/4
-          - suite: cert_certify_spec
-            lane: adt-witnesses-2/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 2/4
-          - suite: cert_certify_spec
-            lane: adt-witnesses-3/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 3/4
-          - suite: cert_certify_spec
-            lane: adt-witnesses-4/4
-            mode: nextest
-            filter: 'test(/^cert_adt_witness_/)'
-            partition: 4/4
-          - suite: cert_certify_spec
-            lane: rest
-            mode: nextest
-            filter: 'not (test(/^cert_hostile_model_/) or test(/^cert_adt_witness_/))'
-            partition: 1/1
-          - suite: cert_decode_spec
-            lane: ''
-            mode: cargo
-          - suite: cert_toindex_differential
-            lane: ''
-            mode: cargo
-          - suite: cert_intcmp_differential
-            lane: ''
-            mode: cargo
-          - suite: cert_whole_module_guard_iso
-            lane: ''
-            mode: cargo
-          - suite: cert_verify_spec
-            lane: tripwires-1/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 1/5
-          - suite: cert_verify_spec
-            lane: tripwires-2/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 2/5
-          - suite: cert_verify_spec
-            lane: tripwires-3/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 3/5
-          - suite: cert_verify_spec
-            lane: tripwires-4/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 4/5
-          - suite: cert_verify_spec
-            lane: tripwires-5/5
-            mode: nextest
-            filter: 'test(/^cert_tripwire_/)'
-            partition: 5/5
-          - suite: cert_verify_spec
-            lane: plans-authority-1/3
-            mode: nextest
-            filter: 'test(/^cert_plans_authority_/)'
-            partition: 1/3
-          - suite: cert_verify_spec
-            lane: plans-authority-2/3
-            mode: nextest
-            filter: 'test(/^cert_plans_authority_/)'
-            partition: 2/3
-          - suite: cert_verify_spec
-            lane: plans-authority-3/3
-            mode: nextest
-            filter: 'test(/^cert_plans_authority_/)'
-            partition: 3/3
-          - suite: cert_verify_spec
-            lane: rest-1/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 1/8
-          - suite: cert_verify_spec
-            lane: rest-2/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 2/8
-          - suite: cert_verify_spec
-            lane: rest-3/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 3/8
-          - suite: cert_verify_spec
-            lane: rest-4/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 4/8
-          - suite: cert_verify_spec
-            lane: rest-5/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 5/8
-          - suite: cert_verify_spec
-            lane: rest-6/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 6/8
-          - suite: cert_verify_spec
-            lane: rest-7/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 7/8
-          - suite: cert_verify_spec
-            lane: rest-8/8
-            mode: nextest
-            filter: 'not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))'
-            partition: 8/8
+        include: ${{ fromJSON(needs.decide.outputs.lanes) }}
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'

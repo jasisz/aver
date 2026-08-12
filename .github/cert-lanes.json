@@ -1,0 +1,209 @@
+[
+  {
+    "suite": "cert_certify_spec",
+    "lane": "hostile-models-1/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_hostile_model_/)",
+    "partition": "1/5"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "hostile-models-2/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_hostile_model_/)",
+    "partition": "2/5"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "hostile-models-3/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_hostile_model_/)",
+    "partition": "3/5"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "hostile-models-4/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_hostile_model_/)",
+    "partition": "4/5"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "hostile-models-5/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_hostile_model_/)",
+    "partition": "5/5"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "adt-witnesses-1/4",
+    "mode": "nextest",
+    "filter": "test(/^cert_adt_witness_/)",
+    "partition": "1/4"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "adt-witnesses-2/4",
+    "mode": "nextest",
+    "filter": "test(/^cert_adt_witness_/)",
+    "partition": "2/4"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "adt-witnesses-3/4",
+    "mode": "nextest",
+    "filter": "test(/^cert_adt_witness_/)",
+    "partition": "3/4",
+    "smoke": true
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "adt-witnesses-4/4",
+    "mode": "nextest",
+    "filter": "test(/^cert_adt_witness_/)",
+    "partition": "4/4"
+  },
+  {
+    "suite": "cert_certify_spec",
+    "lane": "rest",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_hostile_model_/) or test(/^cert_adt_witness_/))",
+    "partition": "1/1"
+  },
+  {
+    "suite": "cert_decode_spec",
+    "lane": "",
+    "mode": "cargo",
+    "smoke": true
+  },
+  {
+    "suite": "cert_toindex_differential",
+    "lane": "",
+    "mode": "cargo",
+    "smoke": true
+  },
+  {
+    "suite": "cert_intcmp_differential",
+    "lane": "",
+    "mode": "cargo",
+    "smoke": true
+  },
+  {
+    "suite": "cert_whole_module_guard_iso",
+    "lane": "",
+    "mode": "cargo"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "tripwires-1/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_tripwire_/)",
+    "partition": "1/5"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "tripwires-2/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_tripwire_/)",
+    "partition": "2/5",
+    "smoke": true
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "tripwires-3/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_tripwire_/)",
+    "partition": "3/5"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "tripwires-4/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_tripwire_/)",
+    "partition": "4/5"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "tripwires-5/5",
+    "mode": "nextest",
+    "filter": "test(/^cert_tripwire_/)",
+    "partition": "5/5"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "plans-authority-1/3",
+    "mode": "nextest",
+    "filter": "test(/^cert_plans_authority_/)",
+    "partition": "1/3"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "plans-authority-2/3",
+    "mode": "nextest",
+    "filter": "test(/^cert_plans_authority_/)",
+    "partition": "2/3"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "plans-authority-3/3",
+    "mode": "nextest",
+    "filter": "test(/^cert_plans_authority_/)",
+    "partition": "3/3"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-1/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "1/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-2/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "2/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-3/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "3/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-4/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "4/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-5/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "5/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-6/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "6/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-7/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "7/8"
+  },
+  {
+    "suite": "cert_verify_spec",
+    "lane": "rest-8/8",
+    "mode": "nextest",
+    "filter": "not (test(/^cert_tripwire_/) or test(/^cert_plans_authority_/))",
+    "partition": "8/8"
+  }
+]
