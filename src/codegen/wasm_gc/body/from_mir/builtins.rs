@@ -1027,20 +1027,28 @@ pub(crate) fn emit_mir_bits(
         heap_type: wasm_encoder::HeapType::Concrete(res_idx),
     }));
     let to_i64_sat = helper("__aint_to_i64_sat")?;
-    let [value_slot, count_slot] = slots.bits_scratch.ok_or(WasmGcError::Validation(format!(
-        "{dotted} needs the Bits operand scratch pair but none was reserved"
-    )))?;
+    let [value_slot, count_slot, _] =
+        slots
+            .aint_operand_scratch
+            .ok_or(WasmGcError::Validation(format!(
+                "{dotted} needs the operand scratch slots but none were reserved"
+            )))?;
 
     // Evaluate BOTH operands exactly once, in source order, BEFORE the
     // branch. The VM evaluates arguments left to right and then calls the
-    // builtin, so both run whichever way the guard goes. Emitting them
-    // inside the arms instead would run the count twice on the Ok path and
-    // skip the value entirely on the Err path -- and with eager effects that
-    // is observable, not just wasteful.
+    // builtin, so both run whichever way the guard goes; emitting them
+    // inside the arms instead runs the count twice on the Ok path and skips
+    // the value entirely on the Err path, which eager effects make
+    // observable.
+    //
+    // Both onto the stack FIRST, then drained in reverse. Writing each slot
+    // right after its own operand would let a nested call
+    // (`Bits.shiftLeft(x, Bits.low(a, w))`) clobber the outer value with the
+    // inner one, since both share these slots.
     e!(&args[0]);
-    func.instruction(&Instruction::LocalSet(value_slot));
     e!(&args[1]);
     func.instruction(&Instruction::LocalSet(count_slot));
+    func.instruction(&Instruction::LocalSet(value_slot));
 
     // if count < 0 -> Result.Err(<message>)
     func.instruction(&Instruction::LocalGet(count_slot));
@@ -1221,6 +1229,13 @@ fn emit_mir_aint_div_mod_boxed(
         };
     }
 
+    // Bound before the macros below: `macro_rules!` resolves a free local
+    // at its DEFINITION site, so `emit_ok!` cannot see a binding introduced
+    // after it.
+    let [a_slot, b_slot, _] = slots.aint_operand_scratch.ok_or(WasmGcError::Validation(
+        "bignum Int.div/mod needs the operand scratch slots but none were reserved".into(),
+    ))?;
+
     let res_block = wasm_encoder::BlockType::Result(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(res_idx),
@@ -1240,8 +1255,8 @@ fn emit_mir_aint_div_mod_boxed(
     macro_rules! emit_ok {
         () => {{
             func.instruction(&Instruction::I32Const(1));
-            e!(a);
-            e!(b);
+            func.instruction(&Instruction::LocalGet(a_slot));
+            func.instruction(&Instruction::LocalGet(b_slot));
             func.instruction(&Instruction::I32Const(if is_div { 0 } else { 1 }));
             func.instruction(&Instruction::Call(divmod_idx));
             emit_default_value(func, "String", ctx.registry)?;
@@ -1249,14 +1264,29 @@ fn emit_mir_aint_div_mod_boxed(
         }};
     }
 
-    // if b == 0 (canonical zero is Small(0): `$magf == null && $small == 0`)
+    // Evaluate BOTH operands exactly once, in source order, before the
+    // guard. The zero test reads `b` twice (its `$magf` then its `$small`)
+    // and the Ok arm needs both again, so re-emitting ran `b` three times
+    // and `a` once, in the order b, b, a, b. The VM runs each argument once,
+    // left to right, and Aver's effects are eager — `Int.div(value(),
+    // count())` printed its trace three times over on wasm-gc and once on
+    // the VM.
+    //
+    // Both onto the stack FIRST, then drained in reverse, so a nested call
+    // sharing these slots finishes before this one writes them.
+    e!(a);
     e!(b);
+    func.instruction(&Instruction::LocalSet(b_slot));
+    func.instruction(&Instruction::LocalSet(a_slot));
+
+    // if b == 0 (canonical zero is Small(0): `$magf == null && $small == 0`)
+    func.instruction(&Instruction::LocalGet(b_slot));
     func.instruction(&Instruction::StructGet {
         struct_type_index: aint_idx,
         field_index: 1,
     });
     func.instruction(&Instruction::RefIsNull);
-    e!(b);
+    func.instruction(&Instruction::LocalGet(b_slot));
     func.instruction(&Instruction::StructGet {
         struct_type_index: aint_idx,
         field_index: 0,
@@ -1332,15 +1362,38 @@ pub(crate) fn emit_mir_result_with_default(
                 let block_ty = wasm_encoder::BlockType::Result(
                     crate::codegen::wasm_gc::types::struct_ref(aint_idx),
                 );
+                // All THREE operands run exactly once, in source order,
+                // before the guard: `a` and `b` because the call evaluates
+                // them, and `default` because it is an argument of
+                // `Result.withDefault` itself. Re-emitting per arm ran `b`
+                // three times and dropped whichever of `a` / `default` the
+                // taken arm did not mention — with eager effects that is a
+                // visible difference, not an optimisation detail.
+                //
+                // Stack first, drained in reverse, so a nested call sharing
+                // these slots finishes before this one writes them.
+                let [a_slot, b_slot, default_slot] =
+                    slots.aint_operand_scratch.ok_or(WasmGcError::Validation(
+                        "bignum Result.withDefault(Int.div/mod) needs the operand scratch \
+                         slots but none were reserved"
+                            .into(),
+                    ))?;
+                e!(a);
+                e!(b);
+                e!(default);
+                func.instruction(&Instruction::LocalSet(default_slot));
+                func.instruction(&Instruction::LocalSet(b_slot));
+                func.instruction(&Instruction::LocalSet(a_slot));
+
                 // if b == 0 (`$magf == null && $small == 0`) -> default,
                 // else __aint_divmod(a, b, want_mod)
-                e!(b);
+                func.instruction(&Instruction::LocalGet(b_slot));
                 func.instruction(&Instruction::StructGet {
                     struct_type_index: aint_idx,
                     field_index: 1,
                 });
                 func.instruction(&Instruction::RefIsNull);
-                e!(b);
+                func.instruction(&Instruction::LocalGet(b_slot));
                 func.instruction(&Instruction::StructGet {
                     struct_type_index: aint_idx,
                     field_index: 0,
@@ -1348,10 +1401,10 @@ pub(crate) fn emit_mir_result_with_default(
                 func.instruction(&Instruction::I64Eqz);
                 func.instruction(&Instruction::I32And);
                 func.instruction(&Instruction::If(block_ty));
-                e!(default);
+                func.instruction(&Instruction::LocalGet(default_slot));
                 func.instruction(&Instruction::Else);
-                e!(a);
-                e!(b);
+                func.instruction(&Instruction::LocalGet(a_slot));
+                func.instruction(&Instruction::LocalGet(b_slot));
                 func.instruction(&Instruction::I32Const(if is_mod { 1 } else { 0 }));
                 func.instruction(&Instruction::Call(divmod_idx));
                 func.instruction(&Instruction::End);

@@ -105,19 +105,36 @@ pub(super) struct SlotTable {
     /// and break the differential-gate invariant that `build_for_fn`
     /// reads only the resolver tables, not the MIR body).
     pub(super) const_cmp_scratch: Option<u32>,
-    /// Scratch `(ref null $AverInt)` PAIR for a count-taking `Bits` call:
-    /// `[value, count]`. Both operands are stashed once, in source order,
-    /// before the negative-count branch — because that branch reads the
-    /// count and each arm needs both operands, so re-emitting them would
-    /// evaluate `count` twice on the `Ok` path and skip `value` entirely on
-    /// the `Err` path. The VM evaluates each argument exactly once, left to
-    /// right, whichever way the branch goes; eager effects make that
-    /// difference observable, not merely a performance detail.
+    /// Scratch `(ref null $AverInt)` TRIPLE for a guarded builtin whose
+    /// operands must outlive the guard: `Bits.shiftLeft/shiftRight/low`
+    /// (value, count), boxed `Int.div`/`Int.mod` (a, b), and the fused
+    /// `Result.withDefault(Int.div/mod(a, b), default)` (a, b, default).
     ///
-    /// Reserved whenever `bignum` is active, for the same reason as
-    /// `const_cmp_scratch`: the slot index stays a pure function of the
-    /// registry flag rather than of the MIR body.
-    pub(super) bits_scratch: Option<[u32; 2]>,
+    /// These lowerings test one operand to pick an arm, and both arms need
+    /// the operands again. Re-emitting them per arm evaluates some twice and
+    /// others not at all — `Int.div(value(), count(n))` ran the count three
+    /// times and, on the `Bits` error path, skipped the value entirely. The
+    /// VM evaluates each argument exactly once, left to right, whichever way
+    /// the branch goes, and Aver's effects are eager, so the difference is
+    /// observable rather than merely wasteful.
+    ///
+    /// USE ORDER MATTERS. Emit every operand onto the stack first, then pop
+    /// them into these slots in REVERSE. Writing each slot right after its
+    /// own operand looks equivalent and is not: a nested call
+    /// (`Bits.shiftLeft(x, Bits.low(a, w))`) reuses the same slots, so the
+    /// inner call would clobber an already-stashed outer operand. Draining
+    /// the stack afterwards means every nested use has finished before the
+    /// enclosing one writes anything.
+    ///
+    /// Reserved only when the body actually reaches one of those guarded
+    /// builtins — the same body-conditional shape `args_get_scratch` and
+    /// `console_print_wasip2_scratch` use, and deliberately NOT the
+    /// unconditional shape of `const_cmp_scratch`. Locals are part of a
+    /// function body, so reserving these for every bignum function would
+    /// change the emitted bytes of every bignum program, and a certificate
+    /// pins the artifact hash: a program that only adds would have had its
+    /// certificate invalidated by a fix to division it never calls.
+    pub(super) aint_operand_scratch: Option<[u32; 3]>,
 }
 
 impl SlotTable {
@@ -340,15 +357,15 @@ impl SlotTable {
         } else {
             None
         };
-        // Count-taking `Bits` operand pair — see the field docs. Same
-        // registry-keyed reservation as `const_cmp_scratch` above.
-        let bits_scratch = match (registry.bignum, registry.aint_struct_idx) {
-            (true, Some(aint_idx)) => {
-                let value = by_slot.len() as u32;
-                by_slot.push(struct_ref(aint_idx));
-                let count = by_slot.len() as u32;
-                by_slot.push(struct_ref(aint_idx));
-                Some([value, count])
+        // Guarded-builtin operand triple — see the field docs.
+        let aint_operand_scratch = match (registry.aint_struct_idx, fn_needs_aint_operands(fd)) {
+            (Some(aint_idx), true) if registry.bignum => {
+                let mut slot = || {
+                    let idx = by_slot.len() as u32;
+                    by_slot.push(struct_ref(aint_idx));
+                    idx
+                };
+                Some([slot(), slot(), slot()])
             }
             _ => None,
         };
@@ -362,13 +379,73 @@ impl SlotTable {
             env_get_wasip2_scratch,
             random_int_wasip2_min_scratch,
             const_cmp_scratch,
-            bits_scratch,
+            aint_operand_scratch,
         })
     }
 
     pub(super) fn extra_locals(&self, params_count: usize) -> Vec<ValType> {
         self.by_slot.iter().skip(params_count).copied().collect()
     }
+}
+
+/// True if the body reaches a builtin whose lowering GUARDS one operand and
+/// then needs the operands again in both arms: boxed `Int.div` / `Int.mod`
+/// (guarded on a zero divisor) and the three count-taking `Bits` operations
+/// (guarded on a negative count).
+///
+/// `Bits.and` / `.or` / `.xor` / `.not` are absent: they have no guard, so
+/// emitting their operands inline already evaluates each exactly once. The
+/// discharged intrinsics are absent for the same reason.
+fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
+    fn guarded(callee: &ResolvedCallee) -> bool {
+        matches!(
+            callee,
+            ResolvedCallee::Builtin(name)
+                if matches!(
+                    name.as_str(),
+                    "Int.div"
+                        | "Int.mod"
+                        | "Bits.shiftLeft"
+                        | "Bits.shiftRight"
+                        | "Bits.low"
+                )
+        )
+    }
+    fn walk(e: &ResolvedExpr) -> bool {
+        let any = |xs: &[Spanned<ResolvedExpr>]| xs.iter().any(|x| walk(&x.node));
+        match e {
+            ResolvedExpr::Call(callee, args) => guarded(callee) || any(args),
+            ResolvedExpr::Match { subject, arms } => {
+                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+            }
+            ResolvedExpr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            ResolvedExpr::Neg(inner) | ResolvedExpr::ErrorProp(inner) => walk(&inner.node),
+            ResolvedExpr::Attr(obj, _) => walk(&obj.node),
+            ResolvedExpr::TailCall { args, .. } => any(args),
+            ResolvedExpr::Ctor(_, args) => any(args),
+            ResolvedExpr::List(xs)
+            | ResolvedExpr::Tuple(xs)
+            | ResolvedExpr::IndependentProduct(xs, _) => any(xs),
+            ResolvedExpr::MapLiteral(pairs) => {
+                pairs.iter().any(|(k, v)| walk(&k.node) || walk(&v.node))
+            }
+            ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+                ResolvedStrPart::Parsed(inner) => walk(&inner.node),
+                ResolvedStrPart::Literal(_) => false,
+            }),
+            ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            ResolvedExpr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
+            }
+            ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
+                false
+            }
+        }
+    }
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(|stmt| match stmt {
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node),
+    })
 }
 
 /// True if the body reaches an `Args.get()` call (no args). The inline

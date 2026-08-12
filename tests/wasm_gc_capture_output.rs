@@ -396,3 +396,135 @@ fn main() -> Unit
     assert_eq!(vm, "2\n");
     assert_eq!(wasm, vm);
 }
+
+/// Boxed `Int.div` / `Int.mod` had the same operand-evaluation defect the
+/// `Bits` lowering did, and worse: the zero test reads the divisor twice (its
+/// `$magf`, then its `$small`) and the `Ok` arm needs it again, so a divisor
+/// with effects ran THREE times.
+///
+/// ```text
+/// VM       value, count -1, ok -3
+/// wasm-gc  count -1, count -1, value, count -1, ok -3
+/// ```
+///
+/// This predates `Bits`; it is fixed here because the fix is the same
+/// mechanism.
+#[test]
+fn wasm_gc_boxed_int_div_evaluates_each_argument_once_in_source_order() {
+    let src = r#"module M
+    intent =
+        "argument evaluation order for a boxed Int.div"
+    effects [Console]
+
+fn value() -> Int
+    ! [Console.print]
+    Console.print("value")
+    3
+
+fn count(n: Int) -> Int
+    ! [Console.print]
+    Console.print("count {n}")
+    n
+
+fn divided(n: Int) -> String
+    ! [Console.print]
+    match Int.div(value(), count(n))
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(divided(1))
+    Console.print("--")
+    Console.print(divided(0))
+"#;
+    let (vm, wasm) = vm_and_wasm_gc_stdout(src);
+    assert_eq!(
+        vm, "value\ncount 1\nok 3\n--\nvalue\ncount 0\nerr division by zero\n",
+        "the VM's own evaluation contract changed"
+    );
+    assert_eq!(wasm, vm, "wasm-gc boxed Int.div diverged from the VM");
+}
+
+/// The FUSED `Result.withDefault(Int.mod(a, b), default)` shape has three
+/// operands, and the default is an argument too — so it runs whether or not
+/// the divisor turns out to be zero. The unfixed lowering ran the divisor
+/// three times and dropped whichever of the value / default the taken arm did
+/// not mention.
+#[test]
+fn wasm_gc_fused_result_with_default_evaluates_all_three_operands_once() {
+    let src = r#"module M
+    intent =
+        "argument evaluation order for the fused Result.withDefault(Int.mod(..))"
+    effects [Console]
+
+fn value() -> Int
+    ! [Console.print]
+    Console.print("value")
+    7
+
+fn divisor(n: Int) -> Int
+    ! [Console.print]
+    Console.print("divisor {n}")
+    n
+
+fn fallback() -> Int
+    ! [Console.print]
+    Console.print("fallback")
+    -1
+
+fn run(n: Int) -> Int
+    ! [Console.print]
+    Result.withDefault(Int.mod(value(), divisor(n)), fallback())
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{run(3)}")
+    Console.print("--")
+    Console.print("{run(0)}")
+"#;
+    let (vm, wasm) = vm_and_wasm_gc_stdout(src);
+    assert_eq!(
+        vm, "value\ndivisor 3\nfallback\n1\n--\nvalue\ndivisor 0\nfallback\n-1\n",
+        "the VM's own evaluation contract changed"
+    );
+    assert_eq!(wasm, vm, "wasm-gc fused withDefault diverged from the VM");
+}
+
+/// The operand scratch slots are per-FUNCTION, not per-call-site, so a
+/// guarded call nested inside another guarded call reuses them. Draining the
+/// stack after both operands are evaluated is what makes that safe; writing
+/// each slot right after its own operand let the inner call overwrite the
+/// outer value, silently computing `Bits.shiftLeft(12, 4)` instead of
+/// `Bits.shiftLeft(7, 4)`.
+#[test]
+fn wasm_gc_nested_guarded_calls_do_not_clobber_the_operand_scratch() {
+    let src = r#"module M
+    intent =
+        "a guarded call whose operand is itself a guarded call"
+    effects [Console]
+
+fn outer(x: Int, a: Int, w: Int) -> String
+    match Bits.shiftLeft(x, Result.withDefault(Bits.low(a, w), 0))
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
+fn divNested(x: Int, a: Int, b: Int) -> String
+    match Int.div(x, Result.withDefault(Int.div(a, b), 1))
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(outer(7, 12, 3))
+    Console.print(divNested(100, 40, 4))
+"#;
+    let (vm, wasm) = vm_and_wasm_gc_stdout(src);
+    // Bits.low(12, 3) = 4, so 7 * 2^4 = 112 -- NOT 12 * 2^4 = 192.
+    // Int.div(40, 4) = 10, so 100 / 10 = 10.
+    assert_eq!(vm, "ok 112\nok 10\n");
+    assert_eq!(
+        wasm, vm,
+        "a nested guarded call must not clobber the enclosing call's operands"
+    );
+}
