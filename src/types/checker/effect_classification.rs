@@ -21,7 +21,16 @@
 //! - Rejection diagnostics for unclassified effects.
 //!
 //! Source of runtime signatures: `src/services/*.rs` and `docs/services.md`.
-//! Keep this table synchronized with the real built-ins.
+//!
+//! The parameter and return types below are cross-checked against the
+//! signatures `builtins.rs` actually registers — see
+//! `every_classified_entry_matches_the_registered_builtin_signature`. The
+//! agreement used to rest on a comment asking the reader to keep the two in
+//! sync, and that had already failed: `Console.print` carried a printable type
+//! variable here for twelve minor releases after 0.16 gave it a plain string.
+//! What is still hand-authored, and cannot be derived, is the DIMENSION —
+//! `FnSig` records no such thing, so adding an effect to `builtins.rs` still
+//! means deciding here how a proof is allowed to model it.
 
 use super::super::Type;
 use crate::types::branch_path;
@@ -567,6 +576,48 @@ pub fn oracle_signature(method: &str) -> Option<Type> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_classified_entry_matches_the_registered_builtin_signature() {
+        // This table and `builtins.rs` describe the same effects twice: the
+        // table for the proof pipeline, `builtins.rs` for the checker. Keeping
+        // them in agreement was a comment ("Keep this table synchronized with
+        // the real built-ins") and nothing else, and it had already failed —
+        // `Console.print` carried a printable type variable here for twelve
+        // minor releases after 0.16 made it take a plain string.
+        //
+        // It survived that long because the drifted field is unreachable for
+        // output-dimension effects, so nothing downstream ever read it. The
+        // next drift need not be so lucky, hence a mechanical cross-check
+        // rather than a stricter comment.
+        let items = crate::source::parse_source(
+            "module TableCrossCheck\n    intent = \"Cross-check the classification table against the registered builtins.\"\n",
+        )
+        .expect("the cross-check module must parse");
+        let checked = super::super::run_type_check_full(&items, None);
+
+        for c in CLASSIFICATIONS {
+            let (params, ret, _) = checked.fn_sigs.get(c.method).unwrap_or_else(|| {
+                panic!(
+                    "{} is classified for proof but no builtin of that name is registered",
+                    c.method
+                )
+            });
+            let expected_params: Vec<Type> =
+                c.runtime_params.iter().copied().map(runtime_type).collect();
+            assert_eq!(
+                params, &expected_params,
+                "{} takes different parameters here than builtins.rs registers",
+                c.method
+            );
+            assert_eq!(
+                ret,
+                &runtime_type(c.runtime_return),
+                "{} returns something different here than builtins.rs registers",
+                c.method
+            );
+        }
+    }
 
     #[test]
     fn summary_names_every_classified_method() {
