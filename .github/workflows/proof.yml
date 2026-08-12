@@ -55,9 +55,21 @@ jobs:
         # a different `lean-toolchain` still trigger elan to fetch the
         # matching version on first `lake build`.
         run: |
-          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
-            https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain stable
+          # `curl | sh` hides a failing curl behind a shell that succeeds on
+          # empty input, so the retry below could not see it without this.
+          set -o pipefail
+          # elan's own download of the toolchain tarball runs its own curl
+          # with no retry, so flags on the installer fetch do not cover it.
+          # A transient 503 from the releases CDN therefore failed the job
+          # outright; retry the whole install instead.
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain stable; then break; fi
+            if [ $attempt -eq 4 ]; then exit 1; fi
+            echo "elan install failed (attempt $attempt), retrying in 20s"
+            sleep 20
+          done
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Verify `lake` reachable
