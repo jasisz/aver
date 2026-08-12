@@ -734,11 +734,11 @@ mod tests {
     #[test]
     fn stub_bodies_typecheck_with_signature_matching_oracle_classification() {
         use crate::source::parse_source;
+        use crate::types::Type;
         use crate::types::checker::effect_classification::{
             EffectDimension, classifications_for_proof_subset, oracle_signature,
         };
         use crate::types::checker::run_type_check_full;
-        use crate::types::Type;
 
         // The method list is derived, not written down. Hand-listing it meant
         // an effect could gain profiles without ever being checked here, which
@@ -808,7 +808,8 @@ mod tests {
                     want_ret,
                     "{}/{}: stub returns a different type than the oracle slot it is \
                      injected into",
-                    method, p.name
+                    method,
+                    p.name
                 );
             }
         }
