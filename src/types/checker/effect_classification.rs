@@ -34,6 +34,7 @@
 
 use super::super::Type;
 use crate::types::branch_path;
+use std::sync::OnceLock;
 
 /// Proof dimension(s) an effect participates in. `!`-combinations are
 /// modelled directly rather than as flags for readability at call sites.
@@ -51,421 +52,383 @@ pub enum EffectDimension {
     GenerativeOutput,
 }
 
-/// Classification of one effect method. `runtime_params` and
-/// `runtime_return` mirror the surface signature at call sites in user
-/// code; oracle signatures are derived from them (see [`oracle_signature`]).
+/// Classification of one effect method. `params` and `ret` mirror the surface
+/// signature at call sites in user code; oracle signatures are derived from
+/// them (see [`oracle_signature`]).
 #[derive(Debug, Clone)]
 pub struct EffectClassification {
     pub method: &'static str,
     pub dimension: EffectDimension,
-    pub runtime_params: &'static [RuntimeType],
-    pub runtime_return: RuntimeType,
+    pub params: Vec<Type>,
+    pub ret: Type,
 }
 
-/// Compact carrier for runtime signature components — kept separate from
-/// the full [`Type`] enum so the static table can live as a const array.
-/// Converted into [`Type`] on demand via [`runtime_type`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeType {
-    Unit,
-    Int,
-    Float,
-    Str,
-    Bool,
-    OptionStr,
-    ListStr,
-    ResultUnitStr,
-    ResultStrStr,
-    ResultListStrStr,
-    HttpResponseResult,
-    /// `Map<String, List<String>>` — the headers argument on
-    /// `Http.post/put/patch`. Matches the runtime `HttpHeaders` type
-    /// and the `HttpRequest`/`HttpResponse` `headers` field.
-    MapStrListStr,
-    /// `Terminal.Size` record — the return of `Terminal.size`.
-    TerminalSize,
-    /// `Tcp.Connection` opaque token — argument/return of `Tcp.*` session methods.
-    TcpConnection,
-    /// `Result<Tcp.Connection, Str>` — return of `Tcp.connect`.
-    ResultTcpConnectionStr,
-    /// Nominal `Bytes` refinement — payload of byte-clean TCP writes.
-    Bytes,
-    /// `Result<Bytes, Str>` — return of `Tcp.sendBytes`.
-    ResultBytesStr,
+/// `Result<ok, String>` — the shape every fallible service method returns.
+/// Spelled once here so the table below reads as the signatures do, rather
+/// than as a wall of `Box::new`.
+fn err_str(ok: Type) -> Type {
+    Type::Result(Box::new(ok), Box::new(Type::Str))
 }
 
-impl RuntimeType {
-    fn as_type(self) -> Type {
-        match self {
-            RuntimeType::Unit => Type::Unit,
-            RuntimeType::Int => Type::Int,
-            RuntimeType::Float => Type::Float,
-            RuntimeType::Str => Type::Str,
-            RuntimeType::Bool => Type::Bool,
-            RuntimeType::OptionStr => Type::Option(Box::new(Type::Str)),
-            RuntimeType::ListStr => Type::List(Box::new(Type::Str)),
-            RuntimeType::ResultUnitStr => Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
-            RuntimeType::ResultStrStr => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
-            RuntimeType::ResultListStrStr => Type::Result(
-                Box::new(Type::List(Box::new(Type::Str))),
-                Box::new(Type::Str),
-            ),
-            RuntimeType::HttpResponseResult => {
-                Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str))
-            }
-            RuntimeType::MapStrListStr => Type::Map(
-                Box::new(Type::Str),
-                Box::new(Type::List(Box::new(Type::Str))),
-            ),
-            RuntimeType::TerminalSize => Type::named("Terminal.Size"),
-            RuntimeType::TcpConnection => Type::named("Tcp.Connection"),
-            RuntimeType::ResultTcpConnectionStr => {
-                Type::Result(Box::new(Type::named("Tcp.Connection")), Box::new(Type::Str))
-            }
-            RuntimeType::Bytes => Type::named("Bytes"),
-            RuntimeType::ResultBytesStr => {
-                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str))
-            }
-        }
-    }
+/// Full classification table, built once on first use.
+///
+/// It was a `const` array until now, which forced every parameter and return
+/// type through a closed `RuntimeType` enum whose only purpose was to be
+/// const-constructible — `Type` carries `Box` and `String`, so it cannot
+/// appear in a `const`. That enum had to gain a variant for every type shape
+/// any effect could mention, and it is where `FormattedValue` went stale for
+/// twelve releases: a carrier nobody reads is a carrier nobody notices.
+///
+/// A table built at runtime holds ordinary `Type` values, so the shapes are
+/// spelled the way `builtins.rs` spells them and there is no second
+/// vocabulary to keep in step. It is also the shape this has to be in before
+/// an effect can come from anywhere but this file — a `const` can never hold
+/// an entry a program contributes.
+fn classifications() -> &'static [EffectClassification] {
+    static REGISTRY: OnceLock<Vec<EffectClassification>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        vec![
+            // Snapshot
+            EffectClassification {
+                method: "Args.get",
+                dimension: EffectDimension::Snapshot,
+                params: vec![],
+                ret: Type::List(Box::new(Type::Str)),
+            },
+            EffectClassification {
+                method: "Env.get",
+                dimension: EffectDimension::Snapshot,
+                params: vec![Type::Str],
+                ret: Type::Option(Box::new(Type::Str)),
+            },
+            // Terminal.size: stable within a verify scope (a resize while
+            // proving is not modelled). Snapshot-shape oracle: () -> Terminal.Size.
+            EffectClassification {
+                method: "Terminal.size",
+                dimension: EffectDimension::Snapshot,
+                params: vec![],
+                ret: Type::named("Terminal.Size"),
+            },
+            // Generative
+            EffectClassification {
+                method: "Random.int",
+                dimension: EffectDimension::Generative,
+                params: vec![Type::Int, Type::Int],
+                ret: Type::Int,
+            },
+            EffectClassification {
+                method: "Random.float",
+                dimension: EffectDimension::Generative,
+                params: vec![],
+                ret: Type::Float,
+            },
+            EffectClassification {
+                method: "Time.now",
+                dimension: EffectDimension::Generative,
+                params: vec![],
+                ret: Type::Str,
+            },
+            EffectClassification {
+                method: "Time.unixMs",
+                dimension: EffectDimension::Generative,
+                params: vec![],
+                ret: Type::Int,
+            },
+            EffectClassification {
+                method: "Disk.readText",
+                dimension: EffectDimension::Generative,
+                params: vec![Type::Str],
+                ret: err_str(Type::Str),
+            },
+            EffectClassification {
+                method: "Disk.exists",
+                dimension: EffectDimension::Generative,
+                params: vec![Type::Str],
+                ret: Type::Bool,
+            },
+            EffectClassification {
+                method: "Disk.listDir",
+                dimension: EffectDimension::Generative,
+                params: vec![Type::Str],
+                ret: err_str(Type::List(Box::new(Type::Str))),
+            },
+            EffectClassification {
+                method: "Console.readLine",
+                dimension: EffectDimension::Generative,
+                params: vec![],
+                ret: err_str(Type::Str),
+            },
+            // Generative + output (Http)
+            EffectClassification {
+                method: "Http.get",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str],
+                ret: err_str(Type::named("HttpResponse")),
+            },
+            EffectClassification {
+                method: "Http.head",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str],
+                ret: err_str(Type::named("HttpResponse")),
+            },
+            EffectClassification {
+                method: "Http.delete",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str],
+                ret: err_str(Type::named("HttpResponse")),
+            },
+            // Http.post/.put/.patch — four-arg form `(url, body, contentType, headers)`.
+            EffectClassification {
+                method: "Http.post",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![
+                    Type::Str,
+                    Type::Str,
+                    Type::Str,
+                    Type::Map(
+                        Box::new(Type::Str),
+                        Box::new(Type::List(Box::new(Type::Str))),
+                    ),
+                ],
+                ret: err_str(Type::named("HttpResponse")),
+            },
+            EffectClassification {
+                method: "Http.put",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![
+                    Type::Str,
+                    Type::Str,
+                    Type::Str,
+                    Type::Map(
+                        Box::new(Type::Str),
+                        Box::new(Type::List(Box::new(Type::Str))),
+                    ),
+                ],
+                ret: err_str(Type::named("HttpResponse")),
+            },
+            EffectClassification {
+                method: "Http.patch",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![
+                    Type::Str,
+                    Type::Str,
+                    Type::Str,
+                    Type::Map(
+                        Box::new(Type::Str),
+                        Box::new(Type::List(Box::new(Type::Str))),
+                    ),
+                ],
+                ret: err_str(Type::named("HttpResponse")),
+            },
+            // Disk writes/deletes are modelled like HTTP writes: the operation is
+            // emitted to the trace, and success/failure comes from the oracle. Oracle
+            // does not assert persistent filesystem state after the operation.
+            EffectClassification {
+                method: "Disk.writeText",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str, Type::Str],
+                ret: err_str(Type::Unit),
+            },
+            EffectClassification {
+                method: "Disk.appendText",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str, Type::Str],
+                ret: err_str(Type::Unit),
+            },
+            EffectClassification {
+                method: "Disk.delete",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str],
+                ret: err_str(Type::Unit),
+            },
+            EffectClassification {
+                method: "Disk.deleteDir",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str],
+                ret: err_str(Type::Unit),
+            },
+            EffectClassification {
+                method: "Disk.makeDir",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str],
+                ret: err_str(Type::Unit),
+            },
+            // One-shot TCP operations — request is trace output, response comes from oracle.
+            EffectClassification {
+                method: "Tcp.send",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str, Type::Int, Type::Str],
+                ret: err_str(Type::Str),
+            },
+            EffectClassification {
+                method: "Tcp.sendBytes",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str, Type::Int, Type::named("Bytes")],
+                ret: err_str(Type::named("Bytes")),
+            },
+            EffectClassification {
+                method: "Tcp.ping",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str, Type::Int],
+                ret: err_str(Type::Unit),
+            },
+            // Session TCP — connection is an opaque token. Stubs are stateless: a
+            // `writeLine` does not affect a later `readLine`. If a test wants
+            // request/response symmetry, it must encode that explicitly in the stub.
+            EffectClassification {
+                method: "Tcp.connect",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::Str, Type::Int],
+                ret: err_str(Type::named("Tcp.Connection")),
+            },
+            EffectClassification {
+                method: "Tcp.readLine",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::named("Tcp.Connection")],
+                ret: err_str(Type::Str),
+            },
+            EffectClassification {
+                method: "Tcp.readBytes",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::named("Tcp.Connection"), Type::Int],
+                ret: err_str(Type::named("Bytes")),
+            },
+            EffectClassification {
+                method: "Tcp.writeLine",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::named("Tcp.Connection"), Type::Str],
+                ret: err_str(Type::Unit),
+            },
+            EffectClassification {
+                method: "Tcp.writeBytes",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::named("Tcp.Connection"), Type::named("Bytes")],
+                ret: err_str(Type::Unit),
+            },
+            EffectClassification {
+                method: "Tcp.close",
+                dimension: EffectDimension::GenerativeOutput,
+                params: vec![Type::named("Tcp.Connection")],
+                ret: err_str(Type::Unit),
+            },
+            // Output-only — no oracle signature, but classified for completeness.
+            // Env.set is stateless under Oracle: emitted to trace, but does NOT
+            // make a later `Env.get` return the written value. If the program
+            // depends on read-after-write consistency, the model belongs in pure
+            // user code, not in the effect oracle.
+            EffectClassification {
+                method: "Env.set",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Str, Type::Str],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Console.print",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Str],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Console.error",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Str],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Console.warn",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Str],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Time.sleep",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Int],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.clear",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.moveTo",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Int, Type::Int],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.print",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Str],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.readKey",
+                dimension: EffectDimension::Generative,
+                params: vec![],
+                ret: Type::Option(Box::new(Type::Str)),
+            },
+            EffectClassification {
+                method: "Terminal.hideCursor",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.showCursor",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.flush",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+            // Terminal modal/visual — output only. Mode and color changes are
+            // observable via trace; the oracle does NOT model that a later `print`
+            // is "now in raw mode" or "now in red". If a test cares, it asserts the
+            // sequence of trace events.
+            EffectClassification {
+                method: "Terminal.enableRawMode",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.disableRawMode",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.setColor",
+                dimension: EffectDimension::Output,
+                params: vec![Type::Str],
+                ret: Type::Unit,
+            },
+            EffectClassification {
+                method: "Terminal.resetColor",
+                dimension: EffectDimension::Output,
+                params: vec![],
+                ret: Type::Unit,
+            },
+        ]
+    })
 }
-
-fn runtime_type(rt: RuntimeType) -> Type {
-    rt.as_type()
-}
-
-/// Full classification table. This is the closed set for Oracle v1.
-const CLASSIFICATIONS: &[EffectClassification] = &[
-    // Snapshot
-    EffectClassification {
-        method: "Args.get",
-        dimension: EffectDimension::Snapshot,
-        runtime_params: &[],
-        runtime_return: RuntimeType::ListStr,
-    },
-    EffectClassification {
-        method: "Env.get",
-        dimension: EffectDimension::Snapshot,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::OptionStr,
-    },
-    // Terminal.size: stable within a verify scope (a resize while
-    // proving is not modelled). Snapshot-shape oracle: () -> Terminal.Size.
-    EffectClassification {
-        method: "Terminal.size",
-        dimension: EffectDimension::Snapshot,
-        runtime_params: &[],
-        runtime_return: RuntimeType::TerminalSize,
-    },
-    // Generative
-    EffectClassification {
-        method: "Random.int",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[RuntimeType::Int, RuntimeType::Int],
-        runtime_return: RuntimeType::Int,
-    },
-    EffectClassification {
-        method: "Random.float",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Float,
-    },
-    EffectClassification {
-        method: "Time.now",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Str,
-    },
-    EffectClassification {
-        method: "Time.unixMs",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Int,
-    },
-    EffectClassification {
-        method: "Disk.readText",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::ResultStrStr,
-    },
-    EffectClassification {
-        method: "Disk.exists",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::Bool,
-    },
-    EffectClassification {
-        method: "Disk.listDir",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::ResultListStrStr,
-    },
-    EffectClassification {
-        method: "Console.readLine",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[],
-        runtime_return: RuntimeType::ResultStrStr,
-    },
-    // Generative + output (Http)
-    EffectClassification {
-        method: "Http.get",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::HttpResponseResult,
-    },
-    EffectClassification {
-        method: "Http.head",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::HttpResponseResult,
-    },
-    EffectClassification {
-        method: "Http.delete",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::HttpResponseResult,
-    },
-    // Http.post/.put/.patch — four-arg form `(url, body, contentType, headers)`.
-    EffectClassification {
-        method: "Http.post",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[
-            RuntimeType::Str,
-            RuntimeType::Str,
-            RuntimeType::Str,
-            RuntimeType::MapStrListStr,
-        ],
-        runtime_return: RuntimeType::HttpResponseResult,
-    },
-    EffectClassification {
-        method: "Http.put",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[
-            RuntimeType::Str,
-            RuntimeType::Str,
-            RuntimeType::Str,
-            RuntimeType::MapStrListStr,
-        ],
-        runtime_return: RuntimeType::HttpResponseResult,
-    },
-    EffectClassification {
-        method: "Http.patch",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[
-            RuntimeType::Str,
-            RuntimeType::Str,
-            RuntimeType::Str,
-            RuntimeType::MapStrListStr,
-        ],
-        runtime_return: RuntimeType::HttpResponseResult,
-    },
-    // Disk writes/deletes are modelled like HTTP writes: the operation is
-    // emitted to the trace, and success/failure comes from the oracle. Oracle
-    // does not assert persistent filesystem state after the operation.
-    EffectClassification {
-        method: "Disk.writeText",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Str],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    EffectClassification {
-        method: "Disk.appendText",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Str],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    EffectClassification {
-        method: "Disk.delete",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    EffectClassification {
-        method: "Disk.deleteDir",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    EffectClassification {
-        method: "Disk.makeDir",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    // One-shot TCP operations — request is trace output, response comes from oracle.
-    EffectClassification {
-        method: "Tcp.send",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Int, RuntimeType::Str],
-        runtime_return: RuntimeType::ResultStrStr,
-    },
-    EffectClassification {
-        method: "Tcp.sendBytes",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Int, RuntimeType::Bytes],
-        runtime_return: RuntimeType::ResultBytesStr,
-    },
-    EffectClassification {
-        method: "Tcp.ping",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Int],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    // Session TCP — connection is an opaque token. Stubs are stateless: a
-    // `writeLine` does not affect a later `readLine`. If a test wants
-    // request/response symmetry, it must encode that explicitly in the stub.
-    EffectClassification {
-        method: "Tcp.connect",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Int],
-        runtime_return: RuntimeType::ResultTcpConnectionStr,
-    },
-    EffectClassification {
-        method: "Tcp.readLine",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::TcpConnection],
-        runtime_return: RuntimeType::ResultStrStr,
-    },
-    EffectClassification {
-        method: "Tcp.readBytes",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::Int],
-        runtime_return: RuntimeType::ResultBytesStr,
-    },
-    EffectClassification {
-        method: "Tcp.writeLine",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::Str],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    EffectClassification {
-        method: "Tcp.writeBytes",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::Bytes],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    EffectClassification {
-        method: "Tcp.close",
-        dimension: EffectDimension::GenerativeOutput,
-        runtime_params: &[RuntimeType::TcpConnection],
-        runtime_return: RuntimeType::ResultUnitStr,
-    },
-    // Output-only — no oracle signature, but classified for completeness.
-    // Env.set is stateless under Oracle: emitted to trace, but does NOT
-    // make a later `Env.get` return the written value. If the program
-    // depends on read-after-write consistency, the model belongs in pure
-    // user code, not in the effect oracle.
-    EffectClassification {
-        method: "Env.set",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Str, RuntimeType::Str],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Console.print",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Console.error",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Console.warn",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Time.sleep",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Int],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.clear",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.moveTo",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Int, RuntimeType::Int],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.print",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.readKey",
-        dimension: EffectDimension::Generative,
-        runtime_params: &[],
-        runtime_return: RuntimeType::OptionStr,
-    },
-    EffectClassification {
-        method: "Terminal.hideCursor",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.showCursor",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.flush",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-    // Terminal modal/visual — output only. Mode and color changes are
-    // observable via trace; the oracle does NOT model that a later `print`
-    // is "now in raw mode" or "now in red". If a test cares, it asserts the
-    // sequence of trace events.
-    EffectClassification {
-        method: "Terminal.enableRawMode",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.disableRawMode",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.setColor",
-        dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Str],
-        runtime_return: RuntimeType::Unit,
-    },
-    EffectClassification {
-        method: "Terminal.resetColor",
-        dimension: EffectDimension::Output,
-        runtime_params: &[],
-        runtime_return: RuntimeType::Unit,
-    },
-];
 
 /// Classify a built-in effect method, if it's in Oracle v1's closed set.
 pub fn classify(method: &str) -> Option<&'static EffectClassification> {
-    CLASSIFICATIONS.iter().find(|c| c.method == method)
+    classifications().iter().find(|c| c.method == method)
 }
 
 /// Closed Oracle v1 proof-subset table, exposed for proof metadata
 /// generation. Callers must treat the returned slice as read-only metadata.
 pub fn classifications_for_proof_subset() -> &'static [EffectClassification] {
-    CLASSIFICATIONS
+    classifications()
 }
 
 /// Return `true` if the given name refers to an effect covered by Oracle v1.
@@ -476,7 +439,7 @@ pub fn is_classified(method: &str) -> bool {
 /// Render the classified set as a namespace-grouped list for diagnostics:
 /// `Args.get, Console.error/.print/.readLine/.warn, Disk.appendText/…`.
 ///
-/// Derived from [`CLASSIFICATIONS`] so a message that tells the user which
+/// Derived from [`classifications()`] so a message that tells the user which
 /// effects the proof subset covers can never name a different set than the
 /// one the checker enforces. The hand-written version of this sentence had
 /// drifted to 34 of the 47 methods — `Terminal.size` was missing from it
@@ -488,7 +451,7 @@ pub fn classified_effects_summary() -> String {
     use std::collections::BTreeMap;
 
     let mut grouped: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
-    for c in CLASSIFICATIONS {
+    for c in classifications() {
         let (namespace, method) = match c.method.split_once('.') {
             Some(parts) => parts,
             // Every classified effect is `Namespace.method`; a bare name has
@@ -546,7 +509,7 @@ pub fn is_verify_fabricable_handle(canonical_type: &str) -> bool {
 /// - Snapshot: capability reader — unchanged from runtime signature,
 ///   wrapped in a function type. `Args.get` → `() -> List<String>`.
 /// - Generative / GenerativeOutput: branch-indexed oracle —
-///   `(BranchPath, Int, <runtime_params...>) -> <runtime_return>`.
+///   `(BranchPath, Int, <params...>) -> <ret>`.
 /// - Output: `None` — output effects don't bind oracles (trace API
 ///   handles assertions about emissions).
 pub fn oracle_signature(method: &str) -> Option<Type> {
@@ -554,21 +517,13 @@ pub fn oracle_signature(method: &str) -> Option<Type> {
     match c.dimension {
         EffectDimension::Output => None,
         EffectDimension::Snapshot => {
-            let params: Vec<Type> = c.runtime_params.iter().copied().map(runtime_type).collect();
-            Some(Type::Fn(
-                params,
-                Box::new(runtime_type(c.runtime_return)),
-                vec![],
-            ))
+            let params: Vec<Type> = c.params.clone();
+            Some(Type::Fn(params, Box::new(c.ret.clone()), vec![]))
         }
         EffectDimension::Generative | EffectDimension::GenerativeOutput => {
             let mut params = vec![Type::named(branch_path::TYPE_NAME.to_string()), Type::Int];
-            params.extend(c.runtime_params.iter().copied().map(runtime_type));
-            Some(Type::Fn(
-                params,
-                Box::new(runtime_type(c.runtime_return)),
-                vec![],
-            ))
+            params.extend(c.params.iter().cloned());
+            Some(Type::Fn(params, Box::new(c.ret.clone()), vec![]))
         }
     }
 }
@@ -596,23 +551,21 @@ mod tests {
         .expect("the cross-check module must parse");
         let checked = super::super::run_type_check_full(&items, None);
 
-        for c in CLASSIFICATIONS {
+        for c in classifications() {
             let (params, ret, _) = checked.fn_sigs.get(c.method).unwrap_or_else(|| {
                 panic!(
                     "{} is classified for proof but no builtin of that name is registered",
                     c.method
                 )
             });
-            let expected_params: Vec<Type> =
-                c.runtime_params.iter().copied().map(runtime_type).collect();
+            let expected_params: Vec<Type> = c.params.clone();
             assert_eq!(
                 params, &expected_params,
                 "{} takes different parameters here than builtins.rs registers",
                 c.method
             );
             assert_eq!(
-                ret,
-                &runtime_type(c.runtime_return),
+                ret, &c.ret,
                 "{} returns something different here than builtins.rs registers",
                 c.method
             );
@@ -626,7 +579,7 @@ mod tests {
         // than the checker enforces. The hand-written sentence it replaced had
         // drifted to 34 of the 47 methods.
         let summary = classified_effects_summary();
-        for c in CLASSIFICATIONS {
+        for c in classifications() {
             let (namespace, method) = c.method.split_once('.').expect("dotted effect name");
             let grouped = format!("/.{method}");
             let leading = format!("{namespace}.{method}");
@@ -981,8 +934,8 @@ mod tests {
     fn terminal_size_is_snapshot() {
         let c = classify("Terminal.size").expect("Terminal.size should be classified");
         assert_eq!(c.dimension, EffectDimension::Snapshot);
-        assert!(c.runtime_params.is_empty());
-        assert_eq!(c.runtime_return, RuntimeType::TerminalSize);
+        assert!(c.params.is_empty());
+        assert_eq!(c.ret, Type::named("Terminal.Size"));
 
         // Oracle signature: () -> Terminal.Size
         let sig = oracle_signature("Terminal.size").unwrap();
