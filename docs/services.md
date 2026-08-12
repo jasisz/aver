@@ -161,7 +161,7 @@ Prefer `Bits.low` over a magic mask — it states the protocol invariant instead
 
 ```aver
 top = Bits.shiftRight(checksum, 25)
-shifted = Bits.low(Bits.shiftLeft(checksum, 5), 25)
+shifted = Bits.shiftLeft(Bits.low(checksum, 25), 5)
 mixed = Bits.xor(shifted, value)
 ```
 
