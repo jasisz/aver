@@ -90,6 +90,7 @@ pub fn is_builtin_namespace(name: &str) -> bool {
     matches!(
         name,
         "Args"
+            | "Bits"
             | "Bool"
             | "BranchPath"
             | "Char"

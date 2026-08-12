@@ -407,6 +407,27 @@ pub const INT_DIV_EUCLID: u8 = 0x94;
 /// Pop b, pop a, push `a.rem_euclid(b)` (Int). Caller guarantees `b != 0`.
 pub const INT_MOD_EUCLID: u8 = 0x95;
 
+// --- Const-count bit-level view (`Bits`) -------------------------------
+//
+// The three `Bits` operations that take a shift amount or a bit width are
+// partial ONLY below zero. The HIR resolver's literal-count discharge emits
+// these opcodes exactly where the count is a syntactic non-negative integer
+// literal, so no `Result` is built and no error is reachable. Computed on
+// the same `AverInt` routines the `Bits.*` builtins use
+// (`src/types/bits.rs`), so the discharged and undischarged forms cannot
+// drift apart.
+
+/// Pop n, pop x, push `x * 2^n` (Int). Caller guarantees `n >= 0`.
+pub const BITS_SHIFT_LEFT: u8 = 0x96;
+
+/// Pop n, pop x, push `floor(x / 2^n)` (Int) — ARITHMETIC shift, so the
+/// sign tail shifts in. Caller guarantees `n >= 0`.
+pub const BITS_SHIFT_RIGHT: u8 = 0x97;
+
+/// Pop w, pop x, push `x mod 2^w` (Int), always in `[0, 2^w)`. Caller
+/// guarantees `w >= 0`.
+pub const BITS_LOW: u8 = 0x98;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -498,6 +519,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         BUFFER_FINALIZE => "BUFFER_FINALIZE",
         INT_DIV_EUCLID => "INT_DIV_EUCLID",
         INT_MOD_EUCLID => "INT_MOD_EUCLID",
+        BITS_SHIFT_LEFT => "BITS_SHIFT_LEFT",
+        BITS_SHIFT_RIGHT => "BITS_SHIFT_RIGHT",
+        BITS_LOW => "BITS_LOW",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -556,6 +580,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | BUFFER_FINALIZE
         | INT_DIV_EUCLID
         | INT_MOD_EUCLID
+        | BITS_SHIFT_LEFT
+        | BITS_SHIFT_RIGHT
+        | BITS_LOW
         | NOP => 0,
 
         // 1-byte

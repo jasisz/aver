@@ -488,7 +488,14 @@ fn parse_error_diagnostic(msg: &str, source: &str, file: &str) -> Diagnostic {
     };
     Diagnostic {
         severity: Severity::Error,
-        slug: "parse-error",
+        // A rejected operator is not a syntax slip — it is a redirection to
+        // the named function that replaces it, and tooling (and the reader)
+        // should be able to tell the two apart.
+        slug: if body.contains("operator does not exist in Aver") {
+            "rejected-operator"
+        } else {
+            "parse-error"
+        },
         summary: body.to_string(),
         span: Span {
             file: file.to_string(),
@@ -532,7 +539,26 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
     // points at a likely fix instead of leaving the user staring at
     // "found EOF".
     use super::model::Repair;
-    let hint = if body.contains("after '?'") {
+    // Every operator Aver rejects names its replacement in the message
+    // itself (`lexer::rejected_operator_hint` and the shift arm in
+    // `parser::parse_comparison`). The repair adds the shape of the call —
+    // and, for the bit-level family, the one fact a reader coming from
+    // another language most needs: `Bits` is a namespace, not a type.
+    let hint = if body.contains("operator does not exist in Aver") {
+        if body.contains("Bits.") {
+            Some(
+                "Bit-level operations live in the `Bits` namespace: Bits.and / Bits.or / Bits.xor / Bits.not are Int -> Int, and Bits.shiftLeft / Bits.shiftRight / Bits.low return Result<Int, String> (plain Int when the count is a non-negative literal). `Bits` is a namespace, not a type — its arguments and results are ordinary mathematical Int values",
+            )
+        } else if body.contains("Int.mod") {
+            Some(
+                "Use Int.mod(a, b) : Result<Int, String>; handle the failure with `match` or `Result.withDefault(Int.mod(a, b), fallback)`. With a nonzero literal divisor, Int.mod(a, k) is total and returns plain Int",
+            )
+        } else {
+            Some(
+                "Use the named function, or a nested `match` — Aver has no short-circuit operators because effects are eager",
+            )
+        }
+    } else if body.contains("after '?'") {
         Some("Description needs a string literal: `? \"what this does\"`")
     } else if body.contains("after 'intent ='") {
         Some(

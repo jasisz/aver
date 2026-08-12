@@ -98,7 +98,7 @@ use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{
-    TypeRegistry, param_types_with_repr, record_struct_type, return_results_with_repr,
+    TypeRegistry, fn_uses_bits, param_types_with_repr, record_struct_type, return_results_with_repr,
 };
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
@@ -551,6 +551,21 @@ pub(super) fn emit_module_with(
         ] {
             builtin_registry.register(b);
         }
+    }
+    // The `Bits` namespace's two primitives, registered ONLY when a `Bits`
+    // call can reach them — unlike the arithmetic prelude above, whose fn
+    // indices the literal / BinOp / Neg re-point sites assume unconditionally.
+    //
+    // Conditional AND last, both deliberately. Registration order is fn-index
+    // order, and a certificate's `hostRoleTable` pins those indices: adding
+    // these to the unconditional list moved `toIndex` from 18 to 20 and
+    // changed the artifact hash of every certified program, including ones
+    // that never twiddle a bit. `wasm-opt -Oz` would strip the dead helpers
+    // but not un-shift the indices, so the cost is paid at certification
+    // time, not at size time.
+    if registry.bignum && resolved_fn_defs.iter().any(fn_uses_bits) {
+        builtin_registry.register(BuiltinName::AintBitwise);
+        builtin_registry.register(BuiltinName::AintPow2);
     }
     if registry.bignum
         && effect_registry

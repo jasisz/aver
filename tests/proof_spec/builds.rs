@@ -90,6 +90,31 @@ fn proof_export_builds_int_abs_laws_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_bits_laws_when_lake_is_available() {
+    // The `Bits` proof model is a DEFINITION, not an assumption: Lean's
+    // `AverBits` prelude builds the pointwise operations from `Nat` bitwise
+    // ops on the two's-complement magnitude, and the shifts are the
+    // specification written out (`x * 2^n`, `x / 2^n`, `x % 2^w`). Sorry
+    // budget 0 — if the model ever regressed to something opaque, these three
+    // universals would stop closing and land here as sorries rather than
+    // quietly passing on the sampled rows alone.
+    assert_proof_builds_with_sorry_budget(
+        "examples/formal/bits_laws.av",
+        "aver-proof-bits-laws",
+        0,
+    );
+}
+
+#[test]
+fn proof_dafny_verifies_bits_laws_when_dafny_is_available() {
+    // The same three universals through Z3. Dafny has no bitwise operators on
+    // `int` at all, so this also pins that the prelude's recursive definitions
+    // TERMINATE and that `BitsPow2(n) > 0` discharges the division-by-zero
+    // obligation `shiftRight` / `low` would otherwise carry.
+    assert_dafny_verifies("examples/formal/bits_laws.av", "aver-dafny-bits-laws");
+}
+
+#[test]
 fn proof_export_failsoft_sos_probe_a_degrades_to_sorry_when_lake_is_available() {
     // Regression for the fail-soft floor: the guarded nonlinear nonnegativity
     // certificate can leave the fragment, but it must degrade to a counted

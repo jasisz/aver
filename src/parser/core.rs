@@ -47,6 +47,23 @@ impl Parser {
     }
 
     #[allow(dead_code)]
+    /// `Some("<<")` / `Some(">>")` when the cursor sits on two ADJACENT `<`
+    /// or `>` tokens — an attempted bit shift. Adjacency (same line, next
+    /// column) is what separates it from a spaced comparison; the caller is
+    /// responsible for only asking in operator position, where a nested
+    /// generic's closing `>>` cannot appear.
+    pub(super) fn attempted_shift_operator(&self) -> Option<&'static str> {
+        let (first, second) = (self.current(), self.peek(1));
+        if first.line != second.line || second.col != first.col + 1 {
+            return None;
+        }
+        match (&first.kind, &second.kind) {
+            (TokenKind::Lt, TokenKind::Lt) => Some("<<"),
+            (TokenKind::Gt, TokenKind::Gt) => Some(">>"),
+            _ => None,
+        }
+    }
+
     pub(super) fn peek(&self, offset: usize) -> &Token {
         let idx = self.pos + offset;
         if idx < self.tokens.len() {

@@ -2,6 +2,26 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Added
+
+- **`Bits` — a bit-level view of `Int`.** `Bits.and`, `Bits.or`, `Bits.xor` and `Bits.not` are `Int -> Int`; `Bits.shiftLeft(x, n)`, `Bits.shiftRight(x, n)` and `Bits.low(x, width)` return `Result<Int, String>`. Bit-level algorithms — CRCs, checksums, Bech32, bit-packed wire formats — no longer have to be rebuilt out of `Int.div` and `Int.mod` one bit at a time.
+
+  `Bits` is a **namespace, not a type**. Its arguments and results are ordinary mathematical `Int` values; the namespace only says how to *read* them for the duration of one call, as an infinite two's-complement bit sequence (a non-negative integer has infinitely many leading zeroes, a negative one infinitely many leading ones). So `Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`, `Bits.or(-1, x) == -1`. There is no `Word32`, no `Word64`, no machine word and no wraparound: `Bits.shiftLeft(1, 100)` is `1267650600228229401496703205376`, exactly, on every backend.
+
+  For a non-negative count, `Bits.shiftLeft(x, n)` is `x * 2^n`, `Bits.shiftRight(x, n)` is `floor(x / 2^n)` — an **arithmetic** shift, so `Bits.shiftRight(-3, 1) == -2` — and `Bits.low(x, width)` is `x mod 2^width`, the non-negative value of the lowest `width` bits (`Bits.low(-1, 8) == 255`, `Bits.low(x, 0) == 0`). Fixed width is always requested explicitly through `Bits.low` rather than implied by a mask, so `Bits.low(Bits.shiftLeft(checksum, 5), 25)` states the protocol invariant instead of hiding it in `33554431`.
+
+  A negative shift count or width is `Result.Err`, never a panic and never a silent direction flip. As with `Int.div` and `Int.mod`, a syntactic non-negative integer literal count discharges that error at compile time: `Bits.low(x, 32)` types as plain `Int`, while `Bits.low(x, width)` keeps `Result<Int, String>`.
+
+  No bitwise operators were added — the named API is deliberate, the same choice `/` and `%` already made. The compiler now says so: see below.
+
+- **Every rejected operator now names the function that replaces it.** Writing `a ^ b` reported `Unknown character: '^'`, which tells you nothing about `Bits.xor` — so a deliberate design choice read as a gap. `^`, `&`, `&&`, `|`, `||`, `~`, `%`, `<<` and `>>` now each report what they are and what to use instead, carrying the `rejected-operator` slug and a repair that spells out the call. `/` on `Int` already did this and is unchanged. Nested generics (`Map<String, List<Int>>`) and ordinary comparisons are unaffected — the shift diagnostic only fires on two adjacent `<` or `>` in operator position, which a type annotation never reaches.
+
+### Changed
+
+- **A module named `Bits` can no longer define a function named `and`, `or`, `xor`, `not`, `shiftLeft`, `shiftRight` or `low`.** This is the existing rule for every builtin namespace — a module named `Bool` has never been able to define `fn and` — now extended to seven more names. A project-local `Bits` module still shadows the namespace for any *other* function name; only a direct collision is rejected, with the same "already defined in this module" diagnostic.
+
 ## 0.28.1 — 2026-08-12
 
 ### Changed

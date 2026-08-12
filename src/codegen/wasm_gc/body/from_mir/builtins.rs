@@ -932,6 +932,267 @@ pub(crate) fn emit_mir_int_div_mod_boxed(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
+/// The `Bits` namespace on wasm-gc. Every operation here is `Int -> Int`
+/// under infinite two's complement, on the `$AverInt` carrier — never a
+/// fixed-width bit-vector and never a raw i64, so nothing truncates.
+///
+/// Only the bignum representation is served. That is not a gap: a `Bits`
+/// call flips the bignum gate itself (`builtin_touches_int` in `types.rs`),
+/// so a reachable `Bits` call always has `$AverInt` active. The scalar-i64
+/// arm is therefore unreachable, and it FAILS rather than lowering through
+/// the wrapping path — the one outcome `Bits` must never produce.
+///
+/// - `and` / `or` / `xor` → `__aint_bitwise(a, b, op)`.
+/// - `not` → `__aint_sub(-1, a)`, since complement over ℤ is `-1 - a`.
+/// - `shiftLeft(x, n)` → `__aint_mul(x, __aint_pow2(n))`.
+/// - `shiftRight(x, n)` → `__aint_divmod(x, __aint_pow2(n), 0)` — Euclidean
+///   division by a positive divisor is floor division, i.e. the arithmetic
+///   shift the specification asks for.
+/// - `low(x, w)` → `__aint_divmod(x, __aint_pow2(w), 1)` — the Euclidean
+///   remainder is already in `[0, 2^w)`.
+///
+/// The three count-taking operations build the concrete `Result<Int,String>`
+/// struct, guarding a negative count into `Result.Err` with the VM's exact
+/// message bytes. The negativity test goes through `__aint_to_i64_sat`,
+/// which saturates a Big to `i64::MIN`/`MAX` — so its sign is the value's
+/// sign for every operand, Small or Big.
+pub(crate) fn emit_mir_bits(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let Some(op) = BitsOp::from_dotted(dotted) else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    if args.len() != op.arity() {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    if !ctx.registry.bignum {
+        return Err(WasmGcError::Validation(format!(
+            "{dotted} requires the $AverInt representation; \
+             a reachable Bits call must have flipped the bignum gate"
+        )));
+    }
+
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    let helper = |name: &str| -> Result<u32, WasmGcError> {
+        ctx.fn_map
+            .builtins
+            .get(name)
+            .copied()
+            .ok_or(WasmGcError::Validation(format!(
+                "{dotted} requires the {name} helper to be registered"
+            )))
+    };
+
+    // The total operations answer with a bare `$AverInt`.
+    match op {
+        BitsOp::And | BitsOp::Or | BitsOp::Xor => {
+            let bitwise = helper("__aint_bitwise")?;
+            e!(&args[0]);
+            e!(&args[1]);
+            func.instruction(&Instruction::I32Const(op.bitwise_selector()));
+            func.instruction(&Instruction::Call(bitwise));
+            return Ok(MirBuiltinEmit::Produced(true));
+        }
+        BitsOp::Not => {
+            // `-1 - a`, the arithmetic definition of complement over ℤ.
+            let from_i64 = helper("__aint_from_i64")?;
+            let sub = helper("__aint_sub")?;
+            func.instruction(&Instruction::I64Const(-1));
+            func.instruction(&Instruction::Call(from_i64));
+            e!(&args[0]);
+            func.instruction(&Instruction::Call(sub));
+            return Ok(MirBuiltinEmit::Produced(true));
+        }
+        BitsOp::ShiftLeft | BitsOp::ShiftRight | BitsOp::Low => {}
+    }
+
+    let res_idx =
+        ctx.registry
+            .result_type_idx("Result<Int,String>")
+            .ok_or(WasmGcError::Validation(format!(
+                "{dotted} requires the `Result<Int,String>` slot to be registered"
+            )))?;
+    let res_block = wasm_encoder::BlockType::Result(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(res_idx),
+    }));
+    let to_i64_sat = helper("__aint_to_i64_sat")?;
+    let [value_slot, count_slot, _] =
+        slots
+            .aint_operand_scratch
+            .ok_or(WasmGcError::Validation(format!(
+                "{dotted} needs the operand scratch slots but none were reserved"
+            )))?;
+
+    // Evaluate BOTH operands exactly once, in source order, BEFORE the
+    // branch. The VM evaluates arguments left to right and then calls the
+    // builtin, so both run whichever way the guard goes; emitting them
+    // inside the arms instead runs the count twice on the Ok path and skips
+    // the value entirely on the Err path, which eager effects make
+    // observable.
+    //
+    // Both onto the stack FIRST, then drained in reverse. Writing each slot
+    // right after its own operand would let a nested call
+    // (`Bits.shiftLeft(x, Bits.low(a, w))`) clobber the outer value with the
+    // inner one, since both share these slots.
+    e!(&args[0]);
+    e!(&args[1]);
+    func.instruction(&Instruction::LocalSet(count_slot));
+    func.instruction(&Instruction::LocalSet(value_slot));
+
+    // if count < 0 -> Result.Err(<message>)
+    func.instruction(&Instruction::LocalGet(count_slot));
+    func.instruction(&Instruction::Call(to_i64_sat));
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64LtS);
+    func.instruction(&Instruction::If(res_block));
+    func.instruction(&Instruction::I32Const(0));
+    emit_default_value(func, "Int", ctx.registry)?;
+    emit_string_literal_bytes(func, op.negative_message(), ctx)?;
+    func.instruction(&Instruction::StructNew(res_idx));
+    func.instruction(&Instruction::Else);
+    // else Result.Ok(<the operation>)
+    func.instruction(&Instruction::I32Const(1));
+    emit_bits_counted_from_slots(func, op, value_slot, count_slot, &helper)?;
+    emit_default_value(func, "String", ctx.registry)?;
+    func.instruction(&Instruction::StructNew(res_idx));
+    func.instruction(&Instruction::End);
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// The arithmetic of a count-taking `Bits` operation over two ALREADY
+/// evaluated operands sitting in locals. Split out from
+/// [`emit_bits_counted_value`] so the guarded surface call can hoist its
+/// operand evaluation above the branch while still sharing one definition of
+/// what the operation computes.
+fn emit_bits_counted_from_slots(
+    func: &mut Function,
+    op: BitsOp,
+    value_slot: u32,
+    count_slot: u32,
+    helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
+) -> Result<(), WasmGcError> {
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::LocalGet(count_slot));
+    emit_bits_counted_tail(func, op, helper)
+}
+
+/// `2^count` applied to the operand beneath it: the shared tail of both the
+/// guarded and the discharged form, so the two cannot compute different
+/// things. Expects `value` then `count` already on the stack.
+fn emit_bits_counted_tail(
+    func: &mut Function,
+    op: BitsOp,
+    helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
+) -> Result<(), WasmGcError> {
+    func.instruction(&Instruction::Call(helper("__aint_pow2")?));
+    match op {
+        BitsOp::ShiftLeft => {
+            func.instruction(&Instruction::Call(helper("__aint_mul")?));
+        }
+        BitsOp::ShiftRight | BitsOp::Low => {
+            // `want_mod` 0 = Euclidean quotient (floor, since 2^n > 0),
+            // 1 = Euclidean remainder (already in `[0, 2^n)`).
+            func.instruction(&Instruction::I32Const(if matches!(op, BitsOp::Low) {
+                1
+            } else {
+                0
+            }));
+            func.instruction(&Instruction::Call(helper("__aint_divmod")?));
+        }
+        _ => unreachable!("only the count-taking operations reach this tail"),
+    }
+    Ok(())
+}
+
+/// The bare `$AverInt` value of a count-taking `Bits` operation, with no
+/// `Result` wrap. Shared by the guarded surface call above and by the
+/// literal-count discharge's intrinsic, so the discharged and undischarged
+/// forms cannot compute different things.
+pub(crate) fn emit_bits_counted_value(
+    func: &mut Function,
+    op: BitsOp,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
+) -> Result<(), WasmGcError> {
+    // No scratch needed here: the discharged form has no guard, so emitting
+    // the operands inline already evaluates each exactly once, left to right.
+    if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
+        return Err(WasmGcError::Validation(
+            "Bits operand failed to lower".into(),
+        ));
+    }
+    if emit_mir_expr(func, &args[1], slots, ctx)?.is_none() {
+        return Err(WasmGcError::Validation("Bits count failed to lower".into()));
+    }
+    emit_bits_counted_tail(func, op, helper)
+}
+
+/// The `Bits` operations, as one enum so the surface-call and discharged
+/// paths agree on arity, selector and error text by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BitsOp {
+    And,
+    Or,
+    Xor,
+    Not,
+    ShiftLeft,
+    ShiftRight,
+    Low,
+}
+
+impl BitsOp {
+    pub(crate) fn from_dotted(dotted: &str) -> Option<Self> {
+        Some(match dotted {
+            "Bits.and" => Self::And,
+            "Bits.or" => Self::Or,
+            "Bits.xor" => Self::Xor,
+            "Bits.not" => Self::Not,
+            "Bits.shiftLeft" => Self::ShiftLeft,
+            "Bits.shiftRight" => Self::ShiftRight,
+            "Bits.low" => Self::Low,
+            _ => return None,
+        })
+    }
+
+    fn arity(self) -> usize {
+        match self {
+            Self::Not => 1,
+            _ => 2,
+        }
+    }
+
+    /// The `op` argument `__aint_bitwise` switches on.
+    fn bitwise_selector(self) -> i32 {
+        match self {
+            Self::And => 0,
+            Self::Or => 1,
+            Self::Xor => 2,
+            _ => unreachable!("only and/or/xor reach __aint_bitwise"),
+        }
+    }
+
+    /// Byte-identical to the VM's `Result.Err` payload (`types/bits.rs`).
+    fn negative_message(self) -> &'static [u8] {
+        match self {
+            Self::Low => b"negative bit width",
+            _ => b"negative shift count",
+        }
+    }
+}
+
 /// bignum slice 2 — the `$AverInt` analogue of `emit_mir_int_div_mod_boxed`.
 /// `a`/`b` are `(ref null $aint)` struct refs; the carrier
 /// `Result<Int,String>`'s ok field (field 1) is therefore an `$AverInt`
@@ -968,6 +1229,13 @@ fn emit_mir_aint_div_mod_boxed(
         };
     }
 
+    // Bound before the macros below: `macro_rules!` resolves a free local
+    // at its DEFINITION site, so `emit_ok!` cannot see a binding introduced
+    // after it.
+    let [a_slot, b_slot, _] = slots.aint_operand_scratch.ok_or(WasmGcError::Validation(
+        "bignum Int.div/mod needs the operand scratch slots but none were reserved".into(),
+    ))?;
+
     let res_block = wasm_encoder::BlockType::Result(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(res_idx),
@@ -987,8 +1255,8 @@ fn emit_mir_aint_div_mod_boxed(
     macro_rules! emit_ok {
         () => {{
             func.instruction(&Instruction::I32Const(1));
-            e!(a);
-            e!(b);
+            func.instruction(&Instruction::LocalGet(a_slot));
+            func.instruction(&Instruction::LocalGet(b_slot));
             func.instruction(&Instruction::I32Const(if is_div { 0 } else { 1 }));
             func.instruction(&Instruction::Call(divmod_idx));
             emit_default_value(func, "String", ctx.registry)?;
@@ -996,14 +1264,29 @@ fn emit_mir_aint_div_mod_boxed(
         }};
     }
 
-    // if b == 0 (canonical zero is Small(0): `$magf == null && $small == 0`)
+    // Evaluate BOTH operands exactly once, in source order, before the
+    // guard. The zero test reads `b` twice (its `$magf` then its `$small`)
+    // and the Ok arm needs both again, so re-emitting ran `b` three times
+    // and `a` once, in the order b, b, a, b. The VM runs each argument once,
+    // left to right, and Aver's effects are eager — `Int.div(value(),
+    // count())` printed its trace three times over on wasm-gc and once on
+    // the VM.
+    //
+    // Both onto the stack FIRST, then drained in reverse, so a nested call
+    // sharing these slots finishes before this one writes them.
+    e!(a);
     e!(b);
+    func.instruction(&Instruction::LocalSet(b_slot));
+    func.instruction(&Instruction::LocalSet(a_slot));
+
+    // if b == 0 (canonical zero is Small(0): `$magf == null && $small == 0`)
+    func.instruction(&Instruction::LocalGet(b_slot));
     func.instruction(&Instruction::StructGet {
         struct_type_index: aint_idx,
         field_index: 1,
     });
     func.instruction(&Instruction::RefIsNull);
-    e!(b);
+    func.instruction(&Instruction::LocalGet(b_slot));
     func.instruction(&Instruction::StructGet {
         struct_type_index: aint_idx,
         field_index: 0,
@@ -1079,15 +1362,38 @@ pub(crate) fn emit_mir_result_with_default(
                 let block_ty = wasm_encoder::BlockType::Result(
                     crate::codegen::wasm_gc::types::struct_ref(aint_idx),
                 );
+                // All THREE operands run exactly once, in source order,
+                // before the guard: `a` and `b` because the call evaluates
+                // them, and `default` because it is an argument of
+                // `Result.withDefault` itself. Re-emitting per arm ran `b`
+                // three times and dropped whichever of `a` / `default` the
+                // taken arm did not mention — with eager effects that is a
+                // visible difference, not an optimisation detail.
+                //
+                // Stack first, drained in reverse, so a nested call sharing
+                // these slots finishes before this one writes them.
+                let [a_slot, b_slot, default_slot] =
+                    slots.aint_operand_scratch.ok_or(WasmGcError::Validation(
+                        "bignum Result.withDefault(Int.div/mod) needs the operand scratch \
+                         slots but none were reserved"
+                            .into(),
+                    ))?;
+                e!(a);
+                e!(b);
+                e!(default);
+                func.instruction(&Instruction::LocalSet(default_slot));
+                func.instruction(&Instruction::LocalSet(b_slot));
+                func.instruction(&Instruction::LocalSet(a_slot));
+
                 // if b == 0 (`$magf == null && $small == 0`) -> default,
                 // else __aint_divmod(a, b, want_mod)
-                e!(b);
+                func.instruction(&Instruction::LocalGet(b_slot));
                 func.instruction(&Instruction::StructGet {
                     struct_type_index: aint_idx,
                     field_index: 1,
                 });
                 func.instruction(&Instruction::RefIsNull);
-                e!(b);
+                func.instruction(&Instruction::LocalGet(b_slot));
                 func.instruction(&Instruction::StructGet {
                     struct_type_index: aint_idx,
                     field_index: 0,
@@ -1095,10 +1401,10 @@ pub(crate) fn emit_mir_result_with_default(
                 func.instruction(&Instruction::I64Eqz);
                 func.instruction(&Instruction::I32And);
                 func.instruction(&Instruction::If(block_ty));
-                e!(default);
+                func.instruction(&Instruction::LocalGet(default_slot));
                 func.instruction(&Instruction::Else);
-                e!(a);
-                e!(b);
+                func.instruction(&Instruction::LocalGet(a_slot));
+                func.instruction(&Instruction::LocalGet(b_slot));
                 func.instruction(&Instruction::I32Const(if is_mod { 1 } else { 0 }));
                 func.instruction(&Instruction::Call(divmod_idx));
                 func.instruction(&Instruction::End);

@@ -1005,6 +1005,22 @@ impl TypeRegistry {
         if int_div_used {
             intern_synthetic(b"division overflow".to_vec());
         }
+        // Same for the count-taking `Bits` operations: their `Err` arm
+        // carries a fixed message verbatim from the VM (`src/types/bits.rs`).
+        // A negative count is the ONLY catchable failure, so these two
+        // strings are the whole error surface of the namespace.
+        if resolved_fn_defs.iter().any(|fd| {
+            fn_body_calls_builtin(fd, "Bits.shiftLeft")
+                || fn_body_calls_builtin(fd, "Bits.shiftRight")
+        }) {
+            intern_synthetic(b"negative shift count".to_vec());
+        }
+        if resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Bits.low"))
+        {
+            intern_synthetic(b"negative bit width".to_vec());
+        }
 
         // Phase 4.2.1 (0.20) — register the placeholder error
         // message the `__rt_tcp_connect` stub returns until the real
@@ -1704,6 +1720,11 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
+                            // Same reason: the three count-taking `Bits`
+                            // operations return `Result<Int, String>`.
+                            | "Bits.shiftLeft"
+                            | "Bits.shiftRight"
+                            | "Bits.low"
                             // Effects that produce or consume String at
                             // their boundary. The string slot has to be
                             // allocated whenever any of these is called
@@ -1767,37 +1788,99 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
 /// `InterpolatedStr` count — each unique byte sequence gets a passive
 /// data segment.
 fn fn_body_calls_builtin(fd: &crate::ir::hir::ResolvedFnDef, dotted: &str) -> bool {
-    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt};
-    fn walk(e: &ResolvedExpr, dotted: &str) -> bool {
+    use crate::ir::hir::ResolvedCallee;
+    fn_body_reaches(
+        fd,
+        &|callee| matches!(callee, ResolvedCallee::Builtin(name) if name == dotted),
+    )
+}
+
+/// Does any callee reachable from `fd`'s body satisfy `hits`?
+///
+/// ONE traversal, shared by every reachability question this module asks —
+/// which helper to register, which synthetic string literal to intern. Those
+/// used to be separate hand-written walks, and each was quietly incomplete in
+/// its own way: the builtin walk skipped `InterpolatedStr`, so
+/// `"{Result.withDefault(Bits.shiftLeft(1, n), 0)}"` never interned the
+/// error message and the module failed validation; the `Bits` walk skipped
+/// `MapLiteral`, so `{"v" => Bits.and(a, b)}` never registered the helper.
+/// Both are the same bug written twice, which is the argument for writing it
+/// once.
+///
+/// The match is EXHAUSTIVE on purpose — no wildcard arm. A new `ResolvedExpr`
+/// variant is then a compile error here rather than a silent hole that only
+/// shows up as a wasm validation failure on whichever program happens to nest
+/// a call inside the new shape.
+fn fn_body_reaches(
+    fd: &crate::ir::hir::ResolvedFnDef,
+    hits: &dyn Fn(&crate::ir::hir::ResolvedCallee) -> bool,
+) -> bool {
+    use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedStmt, ResolvedStrPart};
+    fn walk(e: &ResolvedExpr, hits: &dyn Fn(&crate::ir::hir::ResolvedCallee) -> bool) -> bool {
+        let any = |xs: &[crate::ast::Spanned<ResolvedExpr>]| xs.iter().any(|x| walk(&x.node, hits));
         match e {
-            ResolvedExpr::Call(callee, args) => {
-                let hit = matches!(callee, ResolvedCallee::Builtin(name) if name == dotted);
-                hit || args.iter().any(|a| walk(&a.node, dotted))
-            }
+            ResolvedExpr::Call(callee, args) => hits(callee) || any(args),
             ResolvedExpr::Match { subject, arms } => {
-                walk(&subject.node, dotted) || arms.iter().any(|a| walk(&a.body.node, dotted))
+                walk(&subject.node, hits) || arms.iter().any(|a| walk(&a.body.node, hits))
             }
-            ResolvedExpr::BinOp(_, l, r) => walk(&l.node, dotted) || walk(&r.node, dotted),
-            ResolvedExpr::Neg(inner) => walk(&inner.node, dotted),
-            ResolvedExpr::Attr(o, _) => walk(&o.node, dotted),
-            ResolvedExpr::ErrorProp(i) => walk(&i.node, dotted),
-            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node, dotted)),
+            ResolvedExpr::BinOp(_, l, r) => walk(&l.node, hits) || walk(&r.node, hits),
+            ResolvedExpr::Neg(inner) | ResolvedExpr::ErrorProp(inner) => walk(&inner.node, hits),
+            ResolvedExpr::Attr(obj, _) => walk(&obj.node, hits),
+            ResolvedExpr::TailCall { args, .. } => any(args),
+            ResolvedExpr::Ctor(_, args) => any(args),
             ResolvedExpr::List(xs)
             | ResolvedExpr::Tuple(xs)
-            | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().any(|x| walk(&x.node, dotted)),
+            | ResolvedExpr::IndependentProduct(xs, _) => any(xs),
+            // The two arms whose absence caused real miscompiles.
+            ResolvedExpr::MapLiteral(pairs) => pairs
+                .iter()
+                .any(|(k, v)| walk(&k.node, hits) || walk(&v.node, hits)),
+            ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+                ResolvedStrPart::Parsed(inner) => walk(&inner.node, hits),
+                ResolvedStrPart::Literal(_) => false,
+            }),
             ResolvedExpr::RecordCreate { fields, .. } => {
-                fields.iter().any(|(_, e)| walk(&e.node, dotted))
+                fields.iter().any(|(_, e)| walk(&e.node, hits))
             }
             ResolvedExpr::RecordUpdate { base, updates, .. } => {
-                walk(&base.node, dotted) || updates.iter().any(|(_, e)| walk(&e.node, dotted))
+                walk(&base.node, hits) || updates.iter().any(|(_, e)| walk(&e.node, hits))
             }
-            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node, dotted)),
-            _ => false,
+            // Leaves — nothing nested to reach a callee through.
+            ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
+                false
+            }
         }
     }
     let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|stmt| match stmt {
-        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node, dotted),
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node, hits),
+    })
+}
+
+/// Whether `fd` can reach a `Bits` operation — the gate for registering the
+/// two `Bits` WAT helpers.
+///
+/// Must see BOTH callee forms. A `Bits.shiftLeft(x, amount)` with a dynamic
+/// count stays a `Builtin`, but the literal-count discharge rewrites
+/// `Bits.shiftLeft(x, 5)` into `Intrinsic(BitsShiftLeft)` before this runs —
+/// so a builtin-only check would miss exactly the calls the discharge made
+/// total, and the helper lookup would then fail at emit time. `Bits.not` is
+/// absent on purpose: it lowers to `__aint_sub`, which the unconditional
+/// arithmetic prelude already registers.
+pub(super) fn fn_uses_bits(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee};
+    fn_body_reaches(fd, &|callee| match callee {
+        ResolvedCallee::Builtin(name) => matches!(
+            name.as_str(),
+            "Bits.and" | "Bits.or" | "Bits.xor" | "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low"
+        ),
+        ResolvedCallee::Intrinsic(intr) => matches!(
+            intr,
+            BuiltinIntrinsic::BitsShiftLeft
+                | BuiltinIntrinsic::BitsShiftRight
+                | BuiltinIntrinsic::BitsLow
+        ),
+        _ => false,
     })
 }
 
@@ -1835,6 +1918,18 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Int.div"
             | "Int.mod"
             | "Int.toFloat"
+            // `Bits` is a bit-level VIEW of `Int`: every parameter and every
+            // payload is an `Int`, so any call must flip the gate. Missing
+            // one here would lower a `ℤ` value through the wrapping-i64
+            // scalar path — precisely the silent truncation `Bits` must not
+            // have.
+            | "Bits.and"
+            | "Bits.or"
+            | "Bits.xor"
+            | "Bits.not"
+            | "Bits.shiftLeft"
+            | "Bits.shiftRight"
+            | "Bits.low"
             // Float/Int bridges.
             | "Float.fromInt"
             | "Float.floor"

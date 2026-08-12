@@ -283,14 +283,14 @@ Rules:
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"` — **primitives only** (`Int`, `Float`, `Bool`, `String`). Embedding a list, record, tuple, `Map`, `Option`/`Result`, `Vector` or any named type is a type error; write a function returning `String` and interpolate its result.
 
-**These operators do NOT exist** — do not use them:
+**These operators do NOT exist** — do not use them. Writing one is an error that names the function replacing it (slug `rejected-operator`):
 
 - no integer `/` — integer division is partial (it can divide by zero, and overflow on `i64::MIN / -1`), so use `Int.div(a, b)` which returns `Result<Int, String>`. Euclidean (flooring), the exact partner of `Int.mod`: `Int.div(-7, 2) = Result.Ok(-4)` and `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign. `b == 0` returns `Result.Err("division by zero")`. The `/` operator stays total and works on `Float`
 - no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`. Euclidean modulo: result is always in `[0, |b|)`. `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
 - no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
 - no `!` (boolean not) as prefix — use `Bool.not(x)`
 - no `+=`, `-=`, `++`, `--` (mutation operators)
-- no bitwise operators
+- no bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) — use the `Bits` namespace: `Bits.and(a, b)`, `Bits.or(a, b)`, `Bits.xor(a, b)`, `Bits.not(x)` are `Int -> Int`; `Bits.shiftLeft(x, n)`, `Bits.shiftRight(x, n)`, `Bits.low(x, width)` return `Result<Int, String>` (a negative count is `Result.Err`, and a syntactic non-negative literal count discharges to plain `Int` exactly as with `Int.div`). `Bits` is a NAMESPACE, not a type: arguments and results are ordinary mathematical `Int` values, read as an infinite two's-complement bit sequence for the duration of one call — so `Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`, `Bits.shiftRight(-3, 1) == -2` (arithmetic, not logical), and `Bits.shiftLeft(1, 100)` is exact, not truncated. Fixed width is requested explicitly with `Bits.low(x, 25)` rather than implied by a mask
 
 ### Recursion
 

@@ -157,6 +157,40 @@ pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
     }
 }
 
+/// Literal-count discharge predicate, the `Bits` sibling of
+/// [`is_literal_nonzero_int_divisor`]: `Bits.shiftLeft(x, N)`,
+/// `Bits.shiftRight(x, N)` and `Bits.low(x, N)` type and lower as TOTAL
+/// (plain `Int`, no `Result` to unwrap) exactly when the count `N` is a
+/// syntactic NON-NEGATIVE integer literal.
+///
+/// The two predicates differ in which literal they refuse, because the two
+/// families are partial for different reasons. Division is undefined only at
+/// `0`, so `-3` discharges it; a bit count is undefined only below zero, so
+/// `0` discharges (`Bits.low(x, 0)` is a well-defined `0`) and `-3` does not.
+/// A `BigInt` literal is a non-negative count only when it is not negated —
+/// its magnitude exceeds `i64`, which no machine can honour as a bit
+/// position, so it stays on the `Result` path and fails at runtime rather
+/// than typing as total.
+///
+/// Everything else — an identifier, a named constant, a constant expression
+/// like `4 + 1`, a double negation — keeps `Result<Int, String>`. The
+/// boundary is deliberately syntactic: this is a typing rule for three
+/// builtin callees, not constant propagation, refinement inference or
+/// dependent typing, and the typechecker stays solver-free.
+///
+/// Both consumers MUST share this one predicate, for the same reason the
+/// divisor rule does: real pipelines resolve without typechecking, so the
+/// HIR rewrite cannot key on type stamps.
+pub fn is_literal_nonneg_int_count(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Literal(Literal::Int(k)) => *k >= 0,
+        // A magnitude past `i64` can never be a usable bit position; decline
+        // so it keeps the catchable path instead of promising totality.
+        Expr::Literal(Literal::BigInt(_)) => false,
+        _ => false,
+    }
+}
+
 /// Syntactic value of an integer literal, allowing at most ONE unary minus:
 /// `7` → `Some(7)`, `-7` → `Some(-7)`, `--7` / `x` / `3 + 4` → `None`.
 /// A `BigInt` literal (magnitude beyond `i64`) declines by construction —

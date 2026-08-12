@@ -396,6 +396,20 @@ pub enum BuiltinIntrinsic {
     /// resolver (literal-divisor discharge of `Int.mod(a, K)`) and by the
     /// MIR `const_fold` pass for a non-zero literal divisor `k`.
     IntModEuclid,
+    /// `__bits_shl(<x>, <n>)` — unchecked `x * 2^n` for a non-negative `n`,
+    /// `(Int, Int) -> Int`. Produced by the HIR resolver's literal-count
+    /// discharge of `Bits.shiftLeft(x, N)`
+    /// (`crate::ast::is_literal_nonneg_int_count`, the same predicate the
+    /// typechecker's discharge rule uses). Like the Euclidean pair there is
+    /// no `from_name` mapping: the source spelling is `Bits.shiftLeft`.
+    BitsShiftLeft,
+    /// `__bits_shr(<x>, <n>)` — unchecked `floor(x / 2^n)` for a
+    /// non-negative `n`. ARITHMETIC shift: the sign tail is what shifts in,
+    /// so this is floor division and not a host logical shift.
+    BitsShiftRight,
+    /// `__bits_low(<x>, <w>)` — unchecked `x mod 2^w` for a non-negative
+    /// `w`; the non-negative value of the lowest `w` bits.
+    BitsLow,
 }
 
 impl BuiltinIntrinsic {
@@ -410,6 +424,9 @@ impl BuiltinIntrinsic {
             Self::ToStr => "__to_str",
             Self::IntDivEuclid => "__int_div_euclid",
             Self::IntModEuclid => "__int_mod_euclid",
+            Self::BitsShiftLeft => "__bits_shl",
+            Self::BitsShiftRight => "__bits_shr",
+            Self::BitsLow => "__bits_low",
         }
     }
 
@@ -417,11 +434,12 @@ impl BuiltinIntrinsic {
     /// Returns `None` for anything else — the resolver then falls
     /// through to its regular fn / Unresolved classification.
     ///
-    /// `IntDivEuclid` / `IntModEuclid` are deliberately absent: their
-    /// source spelling is `Int.div` / `Int.mod` (the resolver's
-    /// literal-divisor discharge produces them from the call shape, and
-    /// `const_fold` synthesises them at MIR level), never a `__…`
-    /// identifier.
+    /// `IntDivEuclid` / `IntModEuclid` and the three `Bits*` variants are
+    /// deliberately absent: their source spelling is `Int.div` / `Int.mod`
+    /// / `Bits.shiftLeft` etc. (the resolver's literal-divisor and
+    /// literal-count discharges produce them from the call shape, and
+    /// `const_fold` synthesises the Euclidean pair at MIR level), never a
+    /// `__…` identifier.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "__buf_new" => Some(Self::BufNew),

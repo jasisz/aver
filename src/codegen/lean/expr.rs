@@ -389,6 +389,19 @@ fn emit_fn_call(
                 BuiltinIntrinsic::IntModEuclid if arg_strs.len() == 2 => {
                     format!("({} % {})", arg_strs[0], arg_strs[1])
                 }
+                // Literal-count discharge: for a non-negative literal count
+                // the three `Bits` operations are total, so render the bare
+                // prelude definition with no `Except` wrap. The HIR resolver
+                // produces these intrinsics for every discharged source call.
+                BuiltinIntrinsic::BitsShiftLeft if arg_strs.len() == 2 => {
+                    format!("(AverBits.shiftLeft {} {})", arg_strs[0], arg_strs[1])
+                }
+                BuiltinIntrinsic::BitsShiftRight if arg_strs.len() == 2 => {
+                    format!("(AverBits.shiftRight {} {})", arg_strs[0], arg_strs[1])
+                }
+                BuiltinIntrinsic::BitsLow if arg_strs.len() == 2 => {
+                    format!("(AverBits.low {} {})", arg_strs[0], arg_strs[1])
+                }
                 // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
                 // don't reach the Lean backend in practice (Lean emit
                 // doesn't see post-interp-lower buffer shapes), but the

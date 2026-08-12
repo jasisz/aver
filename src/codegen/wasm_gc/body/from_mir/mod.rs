@@ -943,6 +943,15 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
+                    // The `Bits` namespace — a bit-level view of `Int` on the
+                    // `$AverInt` carrier. Like `Int.div` / `Int.mod`, these
+                    // are not `fn_map.builtins` entries, so they must be
+                    // recognised before the generic lookup below.
+                    match emit_mir_bits(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     // `Int = ℤ` size lever: route a `String.fromInt(x)` whose
                     // arg the rewrite proved raw-i64 (a bare/carrier value,
                     // shaped as `Box(raw_i64)`) to the LEAN i64 formatter — no
@@ -1016,6 +1025,37 @@ pub(crate) fn emit_mir_expr(
                         }
                         func.instruction(&Instruction::I32Const(if is_mod { 1 } else { 0 }));
                         func.instruction(&Instruction::Call(divmod));
+                        return Ok(Some(true));
+                    }
+                    // Literal-count discharge of `Bits.shiftLeft` /
+                    // `.shiftRight` / `.low`: the count is a syntactic
+                    // non-negative literal, so no `Result` is built. Shares
+                    // `emit_bits_counted_value` with the guarded surface
+                    // call, so the two forms compute the same thing by
+                    // construction.
+                    if let Some(op) = match intr {
+                        BuiltinIntrinsic::BitsShiftLeft => Some(BitsOp::ShiftLeft),
+                        BuiltinIntrinsic::BitsShiftRight => Some(BitsOp::ShiftRight),
+                        BuiltinIntrinsic::BitsLow => Some(BitsOp::Low),
+                        _ => None,
+                    } && call.args.len() == 2
+                    {
+                        if !ctx.registry.bignum {
+                            return Err(WasmGcError::Validation(
+                                "a discharged Bits operation requires the $AverInt \
+                                 representation; the bignum gate should have flipped"
+                                    .into(),
+                            ));
+                        }
+                        let helper =
+                            |name: &str| -> Result<u32, WasmGcError> {
+                                ctx.fn_map.builtins.get(name).copied().ok_or(
+                                    WasmGcError::Validation(format!(
+                                        "a discharged Bits operation requires the {name} helper"
+                                    )),
+                                )
+                            };
+                        emit_bits_counted_value(func, op, &call.args, slots, ctx, &helper)?;
                         return Ok(Some(true));
                     }
                     // Mirror of `emit_expr`'s `Intrinsic` arm: route the

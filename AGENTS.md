@@ -84,6 +84,9 @@ src/
     vector.rs         — Vector.new/get/set/len/fromList/toList (pure, indexed O(1) COW)
     map.rs            — Map.* (pure)
     char.rs           — Char.toCode/fromCode (pure, not a type)
+    bits.rs           — Bits.and/or/xor/not/shiftLeft/shiftRight/low (pure) —
+                        a bit-level VIEW of Int under infinite two's complement,
+                        NOT a type. See docs/services.md#bits-namespace.
     bool.rs           — Bool.or/and/not (pure)
     crypto.rs         — Crypto.sha256: Bytes -> Digest32 (pure)
     checker/          — Static type checker. Split into submodules:

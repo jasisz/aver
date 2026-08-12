@@ -1,0 +1,54 @@
+module BitsLaws
+    exposes [complement, doubled, windowed]
+    intent =
+        "`Bits` is a bit-level VIEW of `Int`, not a second numeric type. Its"
+        "arguments and results are ordinary mathematical integers; the namespace"
+        "only fixes how those integers are READ for the duration of one call —"
+        "as an INFINITE two's-complement bit sequence, where a non-negative"
+        "value has infinitely many leading zeroes and a negative one infinitely"
+        "many leading ones."
+        ""
+        "Three laws, proved UNIVERSALLY (every int, not just sampled rows),"
+        "each pinning one consequence of that reading:"
+        "  - complement is arithmetic — flipping every bit is exactly `-x - 1`,"
+        "    which is the only total reading of `not` without a width to"
+        "    complement against,"
+        "  - complement is an involution — flipping twice returns the original,"
+        "  - a left shift is multiplication — `Bits.shiftLeft(x, n)` is `x * 2^n`"
+        "    over the integers, with no truncation at any width."
+        ""
+        "Both provers DEFINE these rather than assuming them: Lean's `AverBits`"
+        "prelude builds the pointwise operations from `Nat` bitwise ops on the"
+        "two's-complement magnitude, and Dafny's recurses on the binary"
+        "expansion. Neither models them as opaque, and neither reaches for a"
+        "fixed-width bit-vector — an `Int` here is still ℤ."
+    effects []
+
+fn complement(x: Int) -> Int
+    ? "Every bit of x flipped, read as an integer."
+    Bits.not(x)
+
+fn doubled(x: Int) -> Int
+    ? "x shifted three places toward the more significant end."
+    Bits.shiftLeft(x, 3)
+
+fn windowed(x: Int) -> Int
+    ? "The non-negative value carried by the lowest eight bits of x."
+    Bits.low(x, 8)
+
+verify complement law arithmetic
+    given x: Int = [0, 1, -1, 42, -42]
+    Bits.not(x) => 0 - x - 1
+
+verify complement law involution
+    given x: Int = [0, 1, -1, 42, -42]
+    Bits.not(Bits.not(x)) => x
+
+verify doubled law multiplication
+    given x: Int = [0, 1, -1, 7, -7]
+    Bits.shiftLeft(x, 3) => x * 8
+
+verify windowed
+    windowed(257) => 1
+    windowed(-1) => 255
+    windowed(0) => 0

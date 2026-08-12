@@ -7,6 +7,17 @@ use crate::codegen::CodegenContext;
 use crate::codegen::builtins::{Builtin, recognize_builtin};
 use crate::ir::hir::ResolvedExpr;
 
+/// A count-taking `Bits` operation with its negative-count guard, so the
+/// `Except.error` arm stays reachable in the model exactly where the VM can
+/// return `Result.Err`.
+fn bits_counted(op: &str, a: &[String], message: &str) -> String {
+    format!(
+        "(if {n} < 0 then Except.error \"{message}\" else Except.ok (AverBits.{op} {x} {n}) : Except String Int)",
+        x = p(&a[0]),
+        n = p(&a[1])
+    )
+}
+
 /// Try to emit a builtin call as Lean 4 code.
 /// Returns `None` if the name is not a pure builtin.
 pub fn emit_builtin_call(
@@ -90,6 +101,24 @@ pub fn emit_builtin_call(
         FloatSin => format!("Float.sin {}", p(&a[0])),
         FloatCos => format!("Float.cos {}", p(&a[0])),
         FloatAtan2 => format!("Float.atan2 {} {}", p(&a[0]), p(&a[1])),
+
+        // ---- Bits ----
+        // A bit-level VIEW of `Int`, never a bit-vector: `AverBits.*` is
+        // defined in the prelude over `Int` and `Nat`, so nothing here is
+        // opaque or uninterpreted.
+        BitsAnd => format!("AverBits.and {} {}", p(&a[0]), p(&a[1])),
+        BitsOr => format!("AverBits.or {} {}", p(&a[0]), p(&a[1])),
+        BitsXor => format!("AverBits.xor {} {}", p(&a[0]), p(&a[1])),
+        BitsNot => format!("AverBits.not {}", p(&a[0])),
+        // The three count-taking operations are partial below zero. GUARD
+        // the count so the `.error` arm is reachable — the same shape
+        // `Int.div` / `Int.mod` use for a zero divisor, and for the same
+        // reason: an unconditional `Except.ok` makes a `match` on the error
+        // arm unreachable in the model while the VM can still take it. The
+        // error strings are verbatim from the runtime (`types/bits.rs`).
+        BitsShiftLeft => bits_counted("shiftLeft", &a, "negative shift count"),
+        BitsShiftRight => bits_counted("shiftRight", &a, "negative shift count"),
+        BitsLow => bits_counted("low", &a, "negative bit width"),
 
         // ---- Bool ----
         BoolOr => format!("({} || {})", a[0], a[1]),

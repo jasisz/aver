@@ -44,6 +44,25 @@ impl Parser {
         let mut left = self.parse_additive()?;
 
         loop {
+            // `<<` / `>>` in OPERATOR position is always an attempted shift.
+            // It cannot be lexed as a rejected operator the way `^` and `&`
+            // are, because `<` and `>` are real tokens and `>>` closes a
+            // nested generic (`Map<String, List<Int>>`). Here it is
+            // unambiguous: a type annotation is parsed by `parse_type`, never
+            // by this chain, so no generic argument list can reach this
+            // point. Adjacency (same line, next column) keeps a spaced
+            // `a < (b)` from being mistaken for one.
+            if let Some(shift) = self.attempted_shift_operator() {
+                let named = match shift {
+                    "<<" => "Bits.shiftLeft(x, n)",
+                    _ => "Bits.shiftRight(x, n)",
+                };
+                return Err(self.error(format!(
+                    "the '{shift}' operator does not exist in Aver — a bit-level shift is the \
+                     function {named} : Result<Int, String>, which returns plain Int when the \
+                     count is a non-negative literal"
+                )));
+            }
             let line = self.current().line;
             let op = match &self.current().kind {
                 TokenKind::Eq => BinOp::Eq,
