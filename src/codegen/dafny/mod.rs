@@ -592,6 +592,7 @@ fn build_common_dafny(union_body: &str) -> String {
             "StringHelpers" => sections.push(DAFNY_HELPER_STRING_HELPERS.to_string()),
             "NumericParse" => sections.push(DAFNY_HELPER_NUMERIC_PARSE.to_string()),
             "CharCode" => sections.push(DAFNY_HELPER_CHAR.to_string()),
+            "AverBits" => sections.push(DAFNY_HELPER_BITS.to_string()),
             "AverMap" => sections.push(DAFNY_HELPER_AVER_MAP.to_string()),
             "AverMeasure" | "ProofFuel" => {}
             "FloatInstances" | "ExceptInstances" | "StringHadd" => {}
@@ -792,6 +793,86 @@ function FloatDiv(a: real, b: real): real
 const DAFNY_HELPER_CHAR: &str = r#"
 function CharToCode(c: string): int
 function CharFromCode(n: int): Option<string>
+"#;
+
+/// The `Bits` namespace's proof model — the Dafny mirror of Lean's
+/// `AverBits` prelude, deliberately the same shape so the two provers can be
+/// read against each other.
+///
+/// Dafny has no bitwise operators on `int`; they exist only on fixed-width
+/// `bv` types. Translating an unbounded `Int` to a bit-vector would silently
+/// impose a width, so these are DEFINED instead: `NatBit*` recurse on the
+/// binary expansion of a natural (terminating because each step halves both
+/// operands), and the signed wrappers case-split on the two sign tails using
+/// the two's-complement magnitude `BitsMag x = if x < 0 then -x-1 else x`.
+/// Nothing here is opaque or uninterpreted.
+///
+/// The shifts are the specification written out. Dafny's `/` and `%` on
+/// `int` are Euclidean, and Euclidean division by a positive divisor is
+/// floor division — hence the `ensures BitsPow2(n) > 0`, which is both what
+/// makes `shiftRight` arithmetic and what discharges the division-by-zero
+/// obligation at every call site.
+const DAFNY_HELPER_BITS: &str = r#"
+function NatBitAnd(a: nat, b: nat): nat
+  decreases a + b
+{
+  if a == 0 || b == 0 then 0
+  else 2 * NatBitAnd(a / 2, b / 2) + (if a % 2 == 1 && b % 2 == 1 then 1 else 0)
+}
+
+function NatBitOr(a: nat, b: nat): nat
+  decreases a + b
+{
+  if a == 0 then b else if b == 0 then a
+  else 2 * NatBitOr(a / 2, b / 2) + (if a % 2 == 1 || b % 2 == 1 then 1 else 0)
+}
+
+function NatBitXor(a: nat, b: nat): nat
+  decreases a + b
+{
+  if a == 0 then b else if b == 0 then a
+  else 2 * NatBitXor(a / 2, b / 2) + (if a % 2 != b % 2 then 1 else 0)
+}
+
+function BitsMag(x: int): nat { if x < 0 then -x - 1 else x }
+
+function BitsAnd(a: int, b: int): int {
+  var x: int := BitsMag(a);
+  var y: int := BitsMag(b);
+  var both: int := NatBitAnd(BitsMag(a), BitsMag(b));
+  if a < 0 then
+    (if b < 0 then -(NatBitOr(BitsMag(a), BitsMag(b)) as int) - 1 else y - both)
+  else
+    (if b < 0 then x - both else both)
+}
+
+function BitsOr(a: int, b: int): int {
+  var x: int := BitsMag(a);
+  var y: int := BitsMag(b);
+  var both: int := NatBitAnd(BitsMag(a), BitsMag(b));
+  if a < 0 then
+    (if b < 0 then -both - 1 else -(x - both) - 1)
+  else
+    (if b < 0 then -(y - both) - 1 else NatBitOr(BitsMag(a), BitsMag(b)))
+}
+
+function BitsXor(a: int, b: int): int {
+  var d: int := NatBitXor(BitsMag(a), BitsMag(b));
+  if (a < 0) == (b < 0) then d else -d - 1
+}
+
+function BitsNot(a: int): int { -a - 1 }
+
+function BitsPow2(n: int): int
+  ensures BitsPow2(n) > 0
+  decreases if n < 0 then 0 else n
+{
+  if n <= 0 then 1 else 2 * BitsPow2(n - 1)
+}
+
+function BitsShiftLeft(x: int, n: int): int { x * BitsPow2(n) }
+function BitsShiftRight(x: int, n: int): int { x / BitsPow2(n) }
+function BitsLow(x: int, w: int): int { x % BitsPow2(w) }
 "#;
 
 #[cfg(test)]

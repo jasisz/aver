@@ -150,6 +150,24 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         doc: "Character-code helpers.",
     },
     BuiltinHelper {
+        key: "AverBits",
+        // Lean renders the namespace as `AverBits.*`; Dafny spells the same
+        // definitions `BitsAnd(` / `BitsShiftLeft(` / ... at call sites.
+        body_tokens: &[
+            "AverBits.",
+            "BitsAnd(",
+            "BitsOr(",
+            "BitsXor(",
+            "BitsNot(",
+            "BitsShiftLeft(",
+            "BitsShiftRight(",
+            "BitsLow(",
+        ],
+        depends_on: &[],
+        doc: "Bit-level view of `Int` under infinite two's complement, backing the `Bits` \
+              namespace. Both provers define it — never opaque, never a bit-vector.",
+    },
+    BuiltinHelper {
         key: "AverMeasure",
         body_tokens: &["AverMeasure."],
         depends_on: &[],
@@ -367,6 +385,7 @@ mod tests {
                 "AverList",
                 "StringHelpers",
                 "CharCode",
+                "AverBits",
                 "AverMeasure",
                 "AverMap",
                 "ProofFuel",

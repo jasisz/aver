@@ -385,6 +385,17 @@ fn emit_fn_call(
                 BuiltinIntrinsic::IntModEuclid if a.len() == 2 => {
                     format!("({} % {})", a[0], a[1])
                 }
+                // Literal-count discharge: total for a non-negative literal
+                // count, so render the bare prelude function unwrapped.
+                BuiltinIntrinsic::BitsShiftLeft if a.len() == 2 => {
+                    format!("BitsShiftLeft({}, {})", a[0], a[1])
+                }
+                BuiltinIntrinsic::BitsShiftRight if a.len() == 2 => {
+                    format!("BitsShiftRight({}, {})", a[0], a[1])
+                }
+                BuiltinIntrinsic::BitsLow if a.len() == 2 => {
+                    format!("BitsLow({}, {})", a[0], a[1])
+                }
                 // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
                 // don't reach the Dafny backend in practice (Dafny emit
                 // doesn't see post-interp-lower buffer shapes), but the
@@ -431,6 +442,15 @@ fn emit_fn_call(
             format!("{}({})", func, arg_strs.join(", "))
         }
     }
+}
+
+/// A count-taking `Bits` operation with its negative-count guard.
+fn dafny_bits_counted(op: &str, a: &[String], message: &str) -> String {
+    format!(
+        "(if {n} < 0 then Result<int, string>.Err(\"{message}\") else Result<int, string>.Ok({op}({x}, {n})))",
+        x = a[0],
+        n = a[1]
+    )
 }
 
 fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
@@ -509,6 +529,22 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         StringToLower => format!("StringToLower({})", a[0]),
         StringFromBool => format!("StringFromBool({})", a[0]),
         StringByteLength => format!("StringByteLength({})", a[0]),
+
+        // Bits — a bit-level VIEW of `int`. Dafny has no bitwise operators
+        // on `int` at all (only on fixed-width `bv` types), and translating
+        // an unbounded `Int` to a bit-vector would change the semantics, so
+        // the prelude DEFINES these recursively over the two's-complement
+        // magnitude. Same case split as the Lean model.
+        BitsAnd => format!("BitsAnd({}, {})", a[0], a[1]),
+        BitsOr => format!("BitsOr({}, {})", a[0], a[1]),
+        BitsXor => format!("BitsXor({}, {})", a[0], a[1]),
+        BitsNot => format!("BitsNot({})", a[0]),
+        // Guard the count so the `Err` arm is reachable, mirroring
+        // `Int.div` / `Int.mod`; error strings match the runtime
+        // (`types/bits.rs`).
+        BitsShiftLeft => dafny_bits_counted("BitsShiftLeft", a, "negative shift count"),
+        BitsShiftRight => dafny_bits_counted("BitsShiftRight", a, "negative shift count"),
+        BitsLow => dafny_bits_counted("BitsLow", a, "negative bit width"),
 
         // Bool
         BoolOr => format!("({} || {})", a[0], a[1]),

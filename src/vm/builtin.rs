@@ -7,7 +7,7 @@ use crate::services::http;
 use crate::services::terminal;
 use crate::services::{console, disk, env, random, tcp, time};
 use crate::types::{
-    bool, branch_path, char, crypto, float, int, list, map, option, result, string,
+    bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
 };
 use crate::value::RuntimeError;
 
@@ -107,6 +107,14 @@ vm_builtins! {
     IntMod => "Int.mod",
     IntDiv => "Int.div",
 
+    BitsAnd => "Bits.and",
+    BitsOr => "Bits.or",
+    BitsXor => "Bits.xor",
+    BitsNot => "Bits.not",
+    BitsShiftLeft => "Bits.shiftLeft",
+    BitsShiftRight => "Bits.shiftRight",
+    BitsLow => "Bits.low",
+
     FloatFromString => "Float.fromString",
     FloatFromInt => "Float.fromInt",
     FloatAbs => "Float.abs",
@@ -204,6 +212,10 @@ impl VmBuiltin {
             | Self::IntAbs
             | Self::IntMin
             | Self::IntMax
+            | Self::BitsAnd
+            | Self::BitsOr
+            | Self::BitsXor
+            | Self::BitsNot
             | Self::FloatFromInt
             | Self::FloatAbs
             | Self::FloatFloor
@@ -497,6 +509,13 @@ impl VmBuiltin {
             Self::ResultWithDefault => result::call_nv(self.name(), args, arena),
             Self::CharToCode | Self::CharFromCode => char::call_nv(self.name(), args, arena),
             Self::CryptoSha256 => crypto::call_nv(self.name(), args, arena),
+            Self::BitsAnd
+            | Self::BitsOr
+            | Self::BitsXor
+            | Self::BitsNot
+            | Self::BitsShiftLeft
+            | Self::BitsShiftRight
+            | Self::BitsLow => bits::call_nv(self.name(), args, arena),
             Self::BranchPathChild | Self::BranchPathParse => {
                 branch_path::call_nv(self.name(), args, arena)
             }

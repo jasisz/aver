@@ -4240,6 +4240,26 @@ fn emit_mir_builtin_call(
             )
         }
 
+        // ---- Bits ----
+        // A bit-level VIEW of `Int` under infinite two's complement, on the
+        // same `AverInt` routines the VM calls (`src/types/bits.rs`), so
+        // there is one implementation of the semantics and two callers.
+        // `and` / `or` / `xor` / `not` are total; the three count-taking
+        // operations are partial only below zero, and their error strings
+        // are verbatim from the VM so a `Result.Err` is byte-identical
+        // across backends.
+        "Bits.and" => format!("({}).bit_and(&({}))", arg!(0), arg!(1)),
+        "Bits.or" => format!("({}).bit_or(&({}))", arg!(0), arg!(1)),
+        "Bits.xor" => format!("({}).bit_xor(&({}))", arg!(0), arg!(1)),
+        "Bits.not" => format!("({}).bit_not()", arg!(0)),
+        "Bits.shiftLeft" => {
+            emit_bits_counted("shift_left", arg!(0), arg!(1), "negative shift count")
+        }
+        "Bits.shiftRight" => {
+            emit_bits_counted("shift_right", arg!(0), arg!(1), "negative shift count")
+        }
+        "Bits.low" => emit_bits_counted("low_bits", arg!(0), arg!(1), "negative bit width"),
+
         // ---- Bool ----
         "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
         "Bool.and" => format!("({} && {})", arg!(0), arg!(1)),
@@ -4496,7 +4516,33 @@ fn emit_mir_intrinsic_call(
             let b = emit_mir_expr(&args[1], ctx)?;
             Some(format!("({}).rem_euclid(&({})).unwrap()", a, b))
         }
+        // Const-count bit-level view. The literal-count discharge only
+        // emits these for a syntactic NON-NEGATIVE integer literal count,
+        // and that predicate declines a `BigInt` literal — so neither
+        // `ShiftCountError` arm is reachable and the `.unwrap()` is total.
+        BuiltinIntrinsic::BitsShiftLeft
+        | BuiltinIntrinsic::BitsShiftRight
+        | BuiltinIntrinsic::BitsLow => {
+            let method = match intrinsic {
+                BuiltinIntrinsic::BitsShiftLeft => "shift_left",
+                BuiltinIntrinsic::BitsShiftRight => "shift_right",
+                _ => "low_bits",
+            };
+            let x = emit_mir_expr(&args[0], ctx)?;
+            let n = emit_mir_expr(&args[1], ctx)?;
+            Some(format!("({}).{}(&({})).unwrap()", x, method, n))
+        }
     }
+}
+
+/// One shape for the three `Bits` operations that take a count. Only the
+/// NEGATIVE case is a `Result.Err`; an unrepresentable count is a runtime
+/// abort, matching the VM (`src/types/bits.rs`) rather than inventing a
+/// second catchable error the proof models would not have.
+fn emit_bits_counted(method: &str, x: String, n: String, negative_message: &str) -> String {
+    format!(
+        "match ({x}).{method}(&({n})) {{ Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err(\"{negative_message}\".to_string()), Err(aver_rt::ShiftCountError::Unrepresentable) => panic!(\"Bits.{method}: count is too large to name a bit position\") }}"
+    )
 }
 
 #[cfg(test)]

@@ -465,6 +465,35 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
+        // Bits namespace — a bit-level VIEW of `Int`, not a type. Every
+        // parameter and every payload here is an ordinary `Int`; the
+        // namespace only fixes how those integers are READ for one call
+        // (infinite two's complement).
+        //
+        // `and` / `or` / `xor` / `not` are total: that reading is defined
+        // for every integer, so there is nothing to fail on. The three
+        // count-taking operations register the DYNAMIC type; when the count
+        // is a syntactic non-negative integer literal they type as plain
+        // `Int` instead — the literal-count discharge rule in `infer/expr.rs`
+        // (`is_literal_nonneg_int_count`), the same shape as `Int.div`.
+        let bits_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("Bits.and", &[Type::Int, Type::Int], Type::Int, &[]),
+            ("Bits.or", &[Type::Int, Type::Int], Type::Int, &[]),
+            ("Bits.xor", &[Type::Int, Type::Int], Type::Int, &[]),
+            ("Bits.not", &[Type::Int], Type::Int, &[]),
+            ("Bits.shiftLeft", &[Type::Int, Type::Int], int_result(), &[]),
+            (
+                "Bits.shiftRight",
+                &[Type::Int, Type::Int],
+                int_result(),
+                &[],
+            ),
+            ("Bits.low", &[Type::Int, Type::Int], int_result(), &[]),
+        ];
+        for (name, params, ret, effects) in bits_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
         // Float namespace
         let float_result = || Type::Result(Box::new(Type::Float), Box::new(Type::Str));
         let float_sigs: &[(&str, &[Type], Type, &[&str])] = &[

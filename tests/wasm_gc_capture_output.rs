@@ -153,3 +153,84 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
         String::from_utf8_lossy(&stderr)
     );
 }
+
+/// The `Bits` namespace on wasm-gc, pinned against the VM byte-for-byte.
+///
+/// wasm-gc is the one backend carrying its OWN bignum (a sign + 32-bit-limb
+/// magnitude in hand-written WAT, not `aver-rt::AverInt`), so it is the one
+/// place where "same mathematical semantics" is a claim about two separate
+/// implementations rather than one shared routine. The cases chosen are the
+/// ones a truncating or sign-confused implementation would fail while still
+/// looking plausible:
+///
+///   * `Bits.shiftLeft(1, 100)` — past the 64-bit cliff, so a raw-i64 path
+///     answers `0` instead of erroring.
+///   * `Bits.not` / `and` / `or` / `xor` over a Big operand — exercises the
+///     limb-level two's-complement expansion and the conversion back to
+///     sign+magnitude, including a Big-operand result that lands back INSIDE
+///     i64 (`and(not(huge), huge) == 0`).
+///   * `Bits.shiftRight(-3, 1) == -2` — arithmetic, not logical.
+///   * A negative dynamic count — the `Result.Err` payload must be the same
+///     bytes the VM produces, which means the synthetic string literal has to
+///     be interned in the data segment table.
+const BITS_SRC: &str = r#"module M
+    intent =
+        "Bits across the Small/Big seam"
+    effects [Console]
+
+fn dynamic(count: Int) -> String
+    match Bits.shiftLeft(1, count)
+        Result.Ok(v)  -> "ok {v}"
+        Result.Err(e) -> e
+
+fn main() -> Unit
+    ! [Console.print]
+    huge = Bits.shiftLeft(1, 100)
+    Console.print("{Bits.and(6, 3)}|{Bits.or(6, 3)}|{Bits.xor(6, 3)}|{Bits.and(-1, 42)}|{Bits.not(-1)}")
+    Console.print("{huge}|{Bits.not(huge)}|{Bits.or(huge, 1)}|{Bits.xor(huge, huge)}|{Bits.and(Bits.not(huge), huge)}")
+    Console.print("{Bits.shiftRight(-3, 1)}|{Bits.low(-1, 8)}|{Bits.low(123, 0)}|{dynamic(4)}|{dynamic(-1)}")
+"#;
+
+#[test]
+fn wasm_gc_bits_namespace_matches_vm() {
+    let mut lexer = aver::lexer::Lexer::new(BITS_SRC);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = aver::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+
+    let (run_res, stdout, stderr) = aver::services::console::capture_output(|| {
+        aver::runtime::wasm_gc::run_in_process(
+            &items,
+            result.analysis.as_ref(),
+            aver::runtime::wasm_gc::RunConfig::default(),
+        )
+    });
+
+    if let Err(e) = &run_res {
+        panic!("wasm-gc run_in_process should succeed on the Bits program, got: {e}");
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "2|7|5|42|0\n\
+         1267650600228229401496703205376|-1267650600228229401496703205377|\
+         1267650600228229401496703205377|0|0\n\
+         -2|255|0|ok 16|negative shift count\n",
+        "wasm-gc Bits results must match the VM verbatim"
+    );
+    assert!(
+        stderr.is_empty(),
+        "stderr should be empty; got {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+}

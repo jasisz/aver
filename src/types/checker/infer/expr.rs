@@ -916,6 +916,26 @@ impl TypeChecker {
                             }
                             return Type::Int;
                         }
+                        // Literal-count discharge: the three `Bits`
+                        // operations that take a shift amount or a bit width
+                        // are partial ONLY below zero (infinite two's
+                        // complement defines the rest), so a SYNTACTIC
+                        // non-negative integer literal count cannot fail and
+                        // the call types as plain `Int`. Same narrow
+                        // mechanism as the divisor rule above, sharing its
+                        // shape down to the HIR resolver, which lowers this
+                        // exact shape to the total intrinsics. A negative
+                        // literal or any non-literal count falls through to
+                        // the registered `Result` signature.
+                        "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low"
+                            if args.len() == 2
+                                && crate::ast::is_literal_nonneg_int_count(&args[1]) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::Int;
+                        }
                         _ => {}
                     }
 

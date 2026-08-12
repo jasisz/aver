@@ -9,8 +9,8 @@ use crate::ir::hir::BuiltinIntrinsic;
 use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::{
-    BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR, BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID,
-    INT_MOD_EUCLID,
+    BITS_LOW, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR,
+    BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID, INT_MOD_EUCLID,
 };
 use std::str::FromStr;
 
@@ -33,6 +33,9 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::BufFinalize => Some((BUFFER_FINALIZE, 1)),
         BuiltinIntrinsic::IntDivEuclid => Some((INT_DIV_EUCLID, 2)),
         BuiltinIntrinsic::IntModEuclid => Some((INT_MOD_EUCLID, 2)),
+        BuiltinIntrinsic::BitsShiftLeft => Some((BITS_SHIFT_LEFT, 2)),
+        BuiltinIntrinsic::BitsShiftRight => Some((BITS_SHIFT_RIGHT, 2)),
+        BuiltinIntrinsic::BitsLow => Some((BITS_LOW, 2)),
         BuiltinIntrinsic::ToStr => None,
     }
 }

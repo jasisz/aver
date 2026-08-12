@@ -15,7 +15,7 @@ pub mod tcp;
 pub mod terminal;
 
 pub use display::{AverDisplay, aver_display};
-pub use int::AverInt;
+pub use int::{AverInt, ShiftCountError};
 pub use runtime::{
     append_text, cli_args, console_error, console_print, console_warn, delete_dir, delete_file,
     env_get, env_set, list_dir, make_dir, path_exists, read_line, read_text, string_slice,

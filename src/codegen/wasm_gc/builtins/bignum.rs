@@ -641,6 +641,69 @@ pub(super) fn emit_aint_hash(registry: &TypeRegistry) -> Result<Function, WasmGc
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_bitwise(a, b, op) -> $AverInt` — pointwise `and` (op 0), `or`
+/// (op 1) or `xor` (op 2) under INFINITE two's complement, backing the
+/// `Bits` namespace. Mirrors `AverInt::bit_and` / `bit_or` / `bit_xor`.
+///
+/// Both-Small is the native i64 op and is exact: an `i64` already IS the
+/// infinite two's-complement sequence of an i64-representable value (sign
+/// extension is the tail), and the three operations map representable
+/// operands to a representable result. That covers every realistic use —
+/// hash words, CRCs, Bech32 checksums, bit-packed fields all live well
+/// inside i64.
+///
+/// The Big path expands both operands to two's-complement 32-bit limbs one
+/// limb PAST the longer magnitude (so the top limb is pure sign extension),
+/// applies the operation limb-wise, and converts back to sign+magnitude.
+/// `Bits.not` needs no helper at all: it is `-1 - a`, which the emitter
+/// spells with the existing `__aint_sub`.
+pub(super) fn emit_aint_bitwise(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+    let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+    let strip_a = strip(registry, "am", "alen", "sa", "la");
+    let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+    let norm = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[
+        (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+        (registry.aint_strip_fn_idx, STRIP_SIG),
+        (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+        (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+    ]);
+    let wat = format!(
+        include_str!("wat/bitwise.wat"),
+        decls = decls,
+        func_pad = func_pad,
+        decomp_a = decomp_a,
+        decomp_b = decomp_b,
+        strip_a = strip_a,
+        strip_b = strip_b,
+        norm = norm,
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_pow2(n) -> $AverInt` — `2^n` for a non-negative `n`. This is the
+/// whole of the `Bits` shift family on wasm-gc: `shiftLeft(x, n)` is
+/// `__aint_mul(x, __aint_pow2(n))`, and `shiftRight` / `low` are
+/// `__aint_divmod(x, __aint_pow2(n), …)`. Euclidean division by a POSITIVE
+/// divisor is floor division with a remainder in `[0, 2^n)`, which is
+/// exactly the arithmetic-shift and low-bits semantics — so the shifts
+/// inherit the already-verified divmod rather than adding a second
+/// implementation of the same arithmetic.
+pub(super) fn emit_aint_pow2(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let norm = normalize(registry, "rm", "rs");
+    let func_pad = func_pad(&[(registry.aint_normalize_fn_idx, NORMALIZE_SIG)]);
+    let wat = format!(
+        include_str!("wat/pow2.wat"),
+        decls = decls,
+        func_pad = func_pad,
+        norm = norm,
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_cmp(a, b) -> i32` (-1/0/1). Sign first, then unsigned
 /// magnitude (flipped for two negatives). Mirrors `AverInt::cmp`.
 pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
@@ -1101,6 +1164,11 @@ mod validation_guard {
 
         let modules: Vec<(&str, String)> = vec![
             ("__aint_divmod", render_divmod(&registry)),
+            // The `Bits` primitives: a two-loop limb walk with a
+            // sign-dependent second pass, and a single-set-bit builder whose
+            // Small/Big branches both return `(ref null $aint)`.
+            ("__aint_bitwise", render_bitwise(&registry)),
+            ("__aint_pow2", render_pow2(&registry)),
             (
                 "__aint_abs",
                 render_simple(&registry, include_str!("wat/abs.wat")),
@@ -1183,6 +1251,8 @@ mod validation_guard {
             ("__aint_sub", render_addsub(&registry, true)),
             ("__aint_mul", render_mul(&registry)),
             ("__aint_divmod", render_divmod(&registry)),
+            ("__aint_bitwise", render_bitwise(&registry)),
+            ("__aint_pow2", render_pow2(&registry)),
             ("__aint_cmp", render_cmp(&registry)),
             ("__aint_from_string", render_from_string(&registry)),
             ("__aint_from_f64", render_from_f64(&registry)),
@@ -1349,6 +1419,43 @@ mod validation_guard {
             decls = decls,
             func_pad = func_pad,
             norm = norm
+        )
+    }
+
+    fn render_bitwise(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let decomp_a = decompose(registry, "a", "am", "as_", "umag");
+        let decomp_b = decompose(registry, "b", "bm", "bs", "umag");
+        let strip_a = strip(registry, "am", "alen", "sa", "la");
+        let strip_b = strip(registry, "bm", "blen", "sb", "lb");
+        let norm = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[
+            (registry.aint_decompose_fn_idx, DECOMPOSE_SIG),
+            (registry.aint_strip_fn_idx, STRIP_SIG),
+            (registry.aint_umag_cmp_fn_idx, UMAG_CMP_SIG),
+            (registry.aint_normalize_fn_idx, NORMALIZE_SIG),
+        ]);
+        format!(
+            include_str!("wat/bitwise.wat"),
+            decls = decls,
+            func_pad = func_pad,
+            decomp_a = decomp_a,
+            decomp_b = decomp_b,
+            strip_a = strip_a,
+            strip_b = strip_b,
+            norm = norm,
+        )
+    }
+
+    fn render_pow2(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let norm = normalize(registry, "rm", "rs");
+        let func_pad = func_pad(&[(registry.aint_normalize_fn_idx, NORMALIZE_SIG)]);
+        format!(
+            include_str!("wat/pow2.wat"),
+            decls = decls,
+            func_pad = func_pad,
+            norm = norm,
         )
     }
 

@@ -283,6 +283,100 @@ def BranchPath.parse (s : String) : BranchPath := { dewey := s }"#;
 const LEAN_PRELUDE_PROOF_FUEL: &str = r#"def averStringPosFuel (s : String) (pos : Int) (rankBudget : Nat) : Nat :=
   (((s.toList.length) - pos.toNat) + 1) * rankBudget"#;
 
+/// The `Bits` namespace's proof model: a bit-level VIEW of `Int` under
+/// infinite two's complement, defined rather than assumed.
+///
+/// Lean 4.32 gives `Int` arithmetic shifts (`Int.shiftLeft` / `Int.shiftRight`)
+/// but no `Int.land` / `Int.lor` / `Int.xor`, so the three pointwise
+/// operations are built from the `Nat` ones on the two's-complement
+/// MAGNITUDE. `mag x` is `x` itself when non-negative and the complement
+/// `-x-1` when negative, so bit `i` of `x` is bit `i` of `mag x` flipped
+/// exactly when `x < 0`; each sign combination then collapses to one `Nat`
+/// operation. `a AND NOT b` on naturals is `a - (a AND b)`, which is where
+/// the mixed-sign arms come from.
+///
+/// The shifts are the SPECIFICATION, written out: `x * 2^n`, `x / 2^n` and
+/// `x % 2^w`. Lean's `Int` `/` and `%` are Euclidean, and Euclidean division
+/// by a positive divisor is floor division, so `shiftRight` is arithmetic
+/// (`-3 >>> 1 = -2`) and `low` lands in `[0, 2^w)` — matching the runtime for
+/// every sign.
+///
+/// `toNat` sends a negative count to `0`. Nothing reaches these definitions
+/// with a negative count: the `Result`-returning lowering guards the count
+/// before calling, and the discharged intrinsic only exists where the count
+/// is a syntactic non-negative literal. That is what keeps the model from
+/// narrowing past the VM (see `kernel_decide::builtin_panic_capability`).
+///
+/// Every one of these reduces in Lean's kernel — `Nat.land` / `Nat.lor` /
+/// `Nat.xor` / `Nat.pow` all have GMP acceleration there — so a `verify` case
+/// over `Bits` closes by `decide`, not by trusting a native evaluator.
+const LEAN_PRELUDE_AVER_BITS: &str = r#"namespace AverBits
+
+/-- Magnitude of the infinite two's-complement reading of `x`. -/
+def mag (x : Int) : Nat :=
+  if x < 0 then (-x - 1).toNat else x.toNat
+
+/-- Pointwise conjunction. Both non-negative: plain `Nat` conjunction. One
+    negative: `other AND NOT negative`, i.e. `other - (other AND negative)`.
+    Both negative: every result bit is `NOT (a OR b)`, so the answer is
+    negative with complement magnitude `a OR b`. -/
+def and (a b : Int) : Int :=
+  let x := mag a
+  let y := mag b
+  if a < 0 then
+    if b < 0 then -((Nat.lor x y : Int)) - 1 else ((y - Nat.land x y : Nat) : Int)
+  else
+    if b < 0 then ((x - Nat.land x y : Nat) : Int) else ((Nat.land x y : Nat) : Int)
+
+/-- Pointwise disjunction, by the same case split. -/
+def or (a b : Int) : Int :=
+  let x := mag a
+  let y := mag b
+  if a < 0 then
+    if b < 0 then -((Nat.land x y : Int)) - 1 else -((x - Nat.land x y : Nat) : Int) - 1
+  else
+    if b < 0 then -((y - Nat.land x y : Nat) : Int) - 1 else ((Nat.lor x y : Nat) : Int)
+
+/-- Pointwise exclusive-or. The magnitudes always xor; only the SIGN of the
+    result depends on whether the two sign tails differ. -/
+def xor (a b : Int) : Int :=
+  let x := mag a
+  let y := mag b
+  if a < 0 then
+    if b < 0 then ((Nat.xor x y : Nat) : Int) else -((Nat.xor x y : Nat) : Int) - 1
+  else
+    if b < 0 then -((Nat.xor x y : Nat) : Int) - 1 else ((Nat.xor x y : Nat) : Int)
+
+/-- Pointwise complement, which over `Int` is exactly `-x - 1`. -/
+def not (a : Int) : Int := -a - 1
+
+def shiftLeft (x n : Int) : Int := x * 2 ^ n.toNat
+def shiftRight (x n : Int) : Int := x / 2 ^ n.toNat
+def low (x w : Int) : Int := x % 2 ^ w.toNat
+
+/-- The four definitional equations, as `simp` lemmas. Without them a law
+    like `Bits.not x = -x - 1` is true by `rfl` yet invisible to the tactic
+    portfolio, which unfolds the USER's function and then stalls on an
+    opaque-looking `AverBits.*` head. With them, an arithmetic law about the
+    bit-level view reduces to an ordinary `Int` goal that `simp` / `omega` /
+    `grind` already close. They fire only on `AverBits.*` terms, so no proof
+    that never mentions `Bits` is affected. -/
+@[simp] theorem not_eq (x : Int) : not x = -x - 1 := rfl
+@[simp] theorem shiftLeft_eq (x n : Int) : shiftLeft x n = x * 2 ^ n.toNat := rfl
+@[simp] theorem shiftRight_eq (x n : Int) : shiftRight x n = x / 2 ^ n.toNat := rfl
+@[simp] theorem low_eq (x w : Int) : low x w = x % 2 ^ w.toNat := rfl
+
+/-- Complementing twice is the identity — stated in the form `simp` actually
+    reaches. `not_eq` rewrites innermost-first, so a `not (not x)` goal has
+    already become `-(-x - 1) - 1 = x` by the time any lemma about `not`
+    could fire; matching THAT shape is what makes the involution close
+    without widening the tactic portfolio. The rewrite is terminating and
+    matches only this exact term. -/
+@[simp] theorem neg_complement_involution (x : Int) : -(-x - 1) - 1 = x := by
+  omega
+
+end AverBits"#;
+
 const LEAN_PRELUDE_AVER_MEASURE: &str = r#"namespace AverMeasure
 def list (elemMeasure : α → Nat) : List α → Nat
   | [] => 1
@@ -1041,6 +1135,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(body, include_all_helpers)),
             "CharCode" => parts.push(LEAN_PRELUDE_CHAR_CODE.to_string()),
+            "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
@@ -1270,6 +1365,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(union_body, false)),
             "CharCode" => parts.push(LEAN_PRELUDE_CHAR_CODE.to_string()),
+            "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),

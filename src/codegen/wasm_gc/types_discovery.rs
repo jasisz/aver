@@ -111,6 +111,9 @@ pub(super) fn collect_results_from_builtin_uses(
                     match dotted.as_str() {
                         "Float.fromString" => intern("Result<Float,String>"),
                         "Int.fromString" | "Int.mod" | "Int.div" => intern("Result<Int,String>"),
+                        "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low" => {
+                            intern("Result<Int,String>")
+                        }
                         "Console.readLine" | "Disk.readText" => intern("Result<String,String>"),
                         "Disk.writeText" | "Disk.appendText" | "Disk.delete" | "Disk.deleteDir"
                         | "Disk.makeDir" => intern("Result<Unit,String>"),

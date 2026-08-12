@@ -58,6 +58,9 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Tcp.close"
             | "Int.mod"
             | "Int.div"
+            | "Bits.shiftLeft"
+            | "Bits.shiftRight"
+            | "Bits.low"
     )
 }
 

@@ -1816,6 +1816,31 @@ impl VM {
                     self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
 
+                // Const-count bit-level view. The literal-count discharge
+                // only emits these for a syntactic non-negative literal
+                // count, so the `Negative` arm is unreachable; the
+                // `Unrepresentable` arm is not reachable either, because a
+                // literal that large is a `BigInt` literal, which the
+                // discharge predicate declines.
+                BITS_SHIFT_LEFT | BITS_SHIFT_RIGHT | BITS_LOW => {
+                    let n = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let x = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let (x, n) = (x.as_aver_int(&self.arena), n.as_aver_int(&self.arena));
+                    let computed = match op {
+                        BITS_SHIFT_LEFT => x.shift_left(&n),
+                        BITS_SHIFT_RIGHT => x.shift_right(&n),
+                        _ => x.low_bits(&n),
+                    };
+                    let r = computed.map_err(|_| {
+                        VmError::runtime(format!(
+                            "{}: count {} is not a usable bit position",
+                            opcode_name(op),
+                            n
+                        ))
+                    })?;
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;

@@ -24,6 +24,15 @@ pub(crate) enum Builtin {
     IntMod,
     IntDiv,
 
+    // --- Bits (a bit-level view of Int, not a type) ---
+    BitsAnd,
+    BitsOr,
+    BitsXor,
+    BitsNot,
+    BitsShiftLeft,
+    BitsShiftRight,
+    BitsLow,
+
     // --- Float ---
     FloatAbs,
     FloatSqrt,
@@ -131,6 +140,15 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Int.max" => Builtin::IntMax,
         "Int.mod" => Builtin::IntMod,
         "Int.div" => Builtin::IntDiv,
+
+        // Bits
+        "Bits.and" => Builtin::BitsAnd,
+        "Bits.or" => Builtin::BitsOr,
+        "Bits.xor" => Builtin::BitsXor,
+        "Bits.not" => Builtin::BitsNot,
+        "Bits.shiftLeft" => Builtin::BitsShiftLeft,
+        "Bits.shiftRight" => Builtin::BitsShiftRight,
+        "Bits.low" => Builtin::BitsLow,
 
         // Float
         "Float.abs" => Builtin::FloatAbs,

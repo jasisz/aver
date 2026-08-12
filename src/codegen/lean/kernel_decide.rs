@@ -329,7 +329,15 @@ impl Walk<'_> {
             // discharge. Lean's `Int` division reduces in the kernel.
             ResolvedCallee::Intrinsic(intrinsic) => matches!(
                 intrinsic,
-                BuiltinIntrinsic::IntDivEuclid | BuiltinIntrinsic::IntModEuclid
+                BuiltinIntrinsic::IntDivEuclid
+                    | BuiltinIntrinsic::IntModEuclid
+                    // Literal-count discharge. The count is a syntactic
+                    // non-negative literal, so the unguarded prelude
+                    // definition is evaluated only where the VM computes
+                    // the same value, and it reduces in the kernel.
+                    | BuiltinIntrinsic::BitsShiftLeft
+                    | BuiltinIntrinsic::BitsShiftRight
+                    | BuiltinIntrinsic::BitsLow
             ),
             // Higher-order fn value / resolver give-up.
             ResolvedCallee::LocalSlot { .. } | ResolvedCallee::Unresolved { .. } => false,
@@ -539,6 +547,21 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // the model calls `Array.set!` out of bounds and panics.
         VectorSet => NarrowsPastVm,
 
+        // The four total `Bits` operations are total in the model too:
+        // infinite two's complement is defined for every pair of integers,
+        // and `AverBits.and`/`or`/`xor`/`not` are closed-form over `Nat`
+        // bitwise ops with no partial step anywhere.
+        //
+        // The three count-taking ones are the interesting case. Their Lean
+        // definitions use `Int.toNat` on the count, which sends every
+        // negative count to `0` — on its own that would narrow past the VM,
+        // which returns `Result.Err` there. It does not, because the
+        // lowering GUARDS the count (`if n < 0 then Except.error … else …`,
+        // see `lean::builtins`), so the model never evaluates the
+        // definition at a count the VM rejected. The guard is load-bearing:
+        // remove it and this line becomes a lie.
+        BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow => Total,
+
         // `Int.toNat` again, but here the VM narrows IDENTICALLY —
         // `list::clamp_count` sends every count `<= 0` to `0` — so no input
         // steers the model off the VM's path.
@@ -661,6 +684,12 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         StringFromFloat | StringFromBool => false,
 
         BoolOr | BoolAnd | BoolNot => true,
+
+        // Bits — `Nat.land` / `Nat.lor` / `Nat.xor` / `Nat.pow` and `Int`
+        // arithmetic all have kernel GMP acceleration, so a concrete `Bits`
+        // goal reduces to `isTrue`/`isFalse` without `native_decide`.
+        // Probed on Lean 4.32 against every case in the specification.
+        BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow => true,
 
         // Both reduce; `Char.toCode` is nevertheless declined, by the
         // faithfulness table (its `panic!` arm).

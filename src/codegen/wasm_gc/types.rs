@@ -1005,6 +1005,22 @@ impl TypeRegistry {
         if int_div_used {
             intern_synthetic(b"division overflow".to_vec());
         }
+        // Same for the count-taking `Bits` operations: their `Err` arm
+        // carries a fixed message verbatim from the VM (`src/types/bits.rs`).
+        // A negative count is the ONLY catchable failure, so these two
+        // strings are the whole error surface of the namespace.
+        if resolved_fn_defs.iter().any(|fd| {
+            fn_body_calls_builtin(fd, "Bits.shiftLeft")
+                || fn_body_calls_builtin(fd, "Bits.shiftRight")
+        }) {
+            intern_synthetic(b"negative shift count".to_vec());
+        }
+        if resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Bits.low"))
+        {
+            intern_synthetic(b"negative bit width".to_vec());
+        }
 
         // Phase 4.2.1 (0.20) — register the placeholder error
         // message the `__rt_tcp_connect` stub returns until the real
@@ -1704,6 +1720,11 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
+                            // Same reason: the three count-taking `Bits`
+                            // operations return `Result<Int, String>`.
+                            | "Bits.shiftLeft"
+                            | "Bits.shiftRight"
+                            | "Bits.low"
                             // Effects that produce or consume String at
                             // their boundary. The string slot has to be
                             // allocated whenever any of these is called
@@ -1801,6 +1822,72 @@ fn fn_body_calls_builtin(fd: &crate::ir::hir::ResolvedFnDef, dotted: &str) -> bo
     })
 }
 
+/// Whether `fd` can reach a `Bits` operation — the gate for registering the
+/// two `Bits` WAT helpers.
+///
+/// Must see BOTH forms. A `Bits.shiftLeft(x, amount)` with a dynamic count
+/// stays a `Builtin`, but the literal-count discharge rewrites
+/// `Bits.shiftLeft(x, 5)` into `Intrinsic(BitsShiftLeft)` before this runs —
+/// so a `fn_body_calls_builtin` check alone would miss exactly the calls the
+/// discharge made total, and the helper lookup would then fail at emit time.
+/// `Bits.not` is absent on purpose: it lowers to `__aint_sub`, which the
+/// unconditional arithmetic prelude already registers.
+pub(super) fn fn_uses_bits(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{
+        BuiltinIntrinsic, ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt,
+    };
+    fn hits(callee: &ResolvedCallee) -> bool {
+        match callee {
+            ResolvedCallee::Builtin(name) => matches!(
+                name.as_str(),
+                "Bits.and"
+                    | "Bits.or"
+                    | "Bits.xor"
+                    | "Bits.shiftLeft"
+                    | "Bits.shiftRight"
+                    | "Bits.low"
+            ),
+            ResolvedCallee::Intrinsic(intr) => matches!(
+                intr,
+                BuiltinIntrinsic::BitsShiftLeft
+                    | BuiltinIntrinsic::BitsShiftRight
+                    | BuiltinIntrinsic::BitsLow
+            ),
+            _ => false,
+        }
+    }
+    fn walk(e: &ResolvedExpr) -> bool {
+        match e {
+            ResolvedExpr::Call(callee, args) => hits(callee) || args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::Match { subject, arms } => {
+                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+            }
+            ResolvedExpr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            ResolvedExpr::Neg(inner) => walk(&inner.node),
+            ResolvedExpr::Attr(o, _) => walk(&o.node),
+            ResolvedExpr::ErrorProp(i) => walk(&i.node),
+            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::List(xs)
+            | ResolvedExpr::Tuple(xs)
+            | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().any(|x| walk(&x.node)),
+            ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            ResolvedExpr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
+            }
+            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+                crate::ir::hir::ResolvedStrPart::Parsed(inner) => walk(&inner.node),
+                _ => false,
+            }),
+            _ => false,
+        }
+    }
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(|stmt| match stmt {
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node),
+    })
+}
+
 fn fn_body_calls_int_mod(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     fn_body_calls_builtin(fd, "Int.mod")
 }
@@ -1835,6 +1922,18 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Int.div"
             | "Int.mod"
             | "Int.toFloat"
+            // `Bits` is a bit-level VIEW of `Int`: every parameter and every
+            // payload is an `Int`, so any call must flip the gate. Missing
+            // one here would lower a `ℤ` value through the wrapping-i64
+            // scalar path — precisely the silent truncation `Bits` must not
+            // have.
+            | "Bits.and"
+            | "Bits.or"
+            | "Bits.xor"
+            | "Bits.not"
+            | "Bits.shiftLeft"
+            | "Bits.shiftRight"
+            | "Bits.low"
             // Float/Int bridges.
             | "Float.fromInt"
             | "Float.floor"

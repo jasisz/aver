@@ -127,6 +127,43 @@ Source: `src/types/int.rs`
 | `Int.min` | `(Int, Int) -> Int` |
 | `Int.max` | `(Int, Int) -> Int` |
 | `Int.mod` | `(Int, Int) -> Result<Int, String>` |
+| `Int.div` | `(Int, Int) -> Result<Int, String>` |
+
+### `Bits` namespace
+
+Source: `src/types/bits.rs`
+
+`Bits` is a **namespace, not a type**. Its arguments and its results are ordinary mathematical `Int` values; the namespace only fixes how those integers are *read* for the duration of one call. There is no bit-vector, no machine word, no `Word32`/`Word64`, and no persistent width — `Bits.and(6, 3)` takes two `Int`s and gives back an `Int`.
+
+The reading is **infinite two's complement**: a non-negative integer has infinitely many leading zeroes, a negative one infinitely many leading ones, and `and` / `or` / `xor` / `not` operate pointwise on those infinite sequences. That is what makes them total on ℤ without a width to complement against, and it gives `Bits.and(-1, x) == x`, `Bits.or(-1, x) == -1`, `Bits.xor(-1, x) == Bits.not(x)` and `Bits.not(x) == -x - 1`.
+
+Fixed-width behaviour is always **requested explicitly**, through `Bits.low`. Arithmetic on `Int` itself still never overflows and never wraps: `Bits.shiftLeft(1, 100)` is `1267650600228229401496703205376`, not `0`.
+
+| Function | Signature |
+|---|---|
+| `Bits.and` | `(Int, Int) -> Int` |
+| `Bits.or` | `(Int, Int) -> Int` |
+| `Bits.xor` | `(Int, Int) -> Int` |
+| `Bits.not` | `Int -> Int` |
+| `Bits.shiftLeft` | `(Int, Int) -> Result<Int, String>` |
+| `Bits.shiftRight` | `(Int, Int) -> Result<Int, String>` |
+| `Bits.low` | `(Int, Int) -> Result<Int, String>` |
+
+For a non-negative `n` and `width`:
+
+- `Bits.shiftLeft(x, n)` is `x * 2^n`
+- `Bits.shiftRight(x, n)` is `floor(x / 2^n)` — an **arithmetic** right shift, so `Bits.shiftRight(-3, 1) == -2`
+- `Bits.low(x, width)` is `x mod 2^width` — the non-negative value of the lowest `width` bits, so `Bits.low(257, 8) == 1`, `Bits.low(-1, 8) == 255`, and `Bits.low(x, 0) == 0`
+
+A negative shift count or width is `Result.Err` — never a panic, never a silent direction flip, never a clamp. Like `Int.div` / `Int.mod`, a **syntactic non-negative integer literal** count discharges that error at compile time, so `Bits.low(x, 32)` types as plain `Int` while `Bits.low(x, width)` keeps `Result<Int, String>`.
+
+Prefer `Bits.low` over a magic mask — it states the protocol invariant instead of implying it:
+
+```aver
+top = Bits.shiftRight(checksum, 25)
+shifted = Bits.low(Bits.shiftLeft(checksum, 5), 25)
+mixed = Bits.xor(shifted, value)
+```
 
 ### `Float` namespace
 

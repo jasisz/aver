@@ -177,6 +177,14 @@ pub(super) enum BuiltinName {
     /// (`want_mod == 0`) or modulo (`want_mod != 0`); remainder always in
     /// `[0, |b|)`. Caller guards `b == 0`. slice 2.
     AintDivmod,
+    /// `__aint_bitwise(a, b, op) -> $AverInt` — pointwise and/or/xor under
+    /// infinite two's complement (`op` 0/1/2), backing `Bits.and` / `.or` /
+    /// `.xor`. `Bits.not` reuses `__aint_sub` (`-1 - a`).
+    AintBitwise,
+    /// `__aint_pow2(n) -> $AverInt` — `2^n` for non-negative `n`, the shift
+    /// family's only new primitive: `Bits.shiftLeft` multiplies by it,
+    /// `Bits.shiftRight` / `Bits.low` Euclid-divide by it.
+    AintPow2,
     /// `__aint_cmp(a, b) -> i32` (-1/0/1) — total order over ℤ.
     AintCmp,
     /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
@@ -292,6 +300,8 @@ impl BuiltinName {
             Self::AintNeg => "__aint_neg",
             Self::AintAbs => "__aint_abs",
             Self::AintDivmod => "__aint_divmod",
+            Self::AintBitwise => "__aint_bitwise",
+            Self::AintPow2 => "__aint_pow2",
             Self::AintCmp => "__aint_cmp",
             Self::AintEq => "__aint_eq",
             Self::AintHash => "__aint_hash",
@@ -352,7 +362,15 @@ impl BuiltinName {
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
                 Ok(vec![aint_ref_ty(registry)?, aint_ref_ty(registry)?])
             }
-            Self::AintNeg | Self::AintAbs | Self::AintHash => Ok(vec![aint_ref_ty(registry)?]),
+            Self::AintNeg | Self::AintAbs | Self::AintHash | Self::AintPow2 => {
+                Ok(vec![aint_ref_ty(registry)?])
+            }
+            // `op` selects and (0) / or (1) / xor (2).
+            Self::AintBitwise => Ok(vec![
+                aint_ref_ty(registry)?,
+                aint_ref_ty(registry)?,
+                ValType::I32,
+            ]),
             // `want_mod` selects modulo (≠0) vs division (0).
             Self::AintDivmod => Ok(vec![
                 aint_ref_ty(registry)?,
@@ -408,6 +426,8 @@ impl BuiltinName {
             | Self::AintNeg
             | Self::AintAbs
             | Self::AintDivmod
+            | Self::AintBitwise
+            | Self::AintPow2
             | Self::AintFromF64 => Ok(vec![aint_ref_ty(registry)?]),
             Self::AintCmp | Self::AintEq | Self::AintHash | Self::AintToIndex => {
                 Ok(vec![ValType::I32])
@@ -465,6 +485,8 @@ impl BuiltinName {
             Self::AintNeg => bignum::emit_aint_neg(registry),
             Self::AintAbs => bignum::emit_aint_abs(registry),
             Self::AintDivmod => bignum::emit_aint_divmod(registry),
+            Self::AintBitwise => bignum::emit_aint_bitwise(registry),
+            Self::AintPow2 => bignum::emit_aint_pow2(registry),
             Self::AintCmp => bignum::emit_aint_cmp(registry),
             Self::AintEq => bignum::emit_aint_eq(registry),
             Self::AintHash => bignum::emit_aint_hash(registry),

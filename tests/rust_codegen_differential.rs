@@ -393,6 +393,54 @@ fn run_vm_inline(name: &str, source: &str) -> Result<String, String> {
 /// shapes sit in one program, so a backend that discharged too much or too
 /// little diverges from the VM here.
 #[test]
+fn rust_bits_namespace_matches_vm() {
+    // `Bits` is a bit-level VIEW of `Int`, so the Rust backend must answer on
+    // the SAME `AverInt` carrier the VM uses — never a raw i64. The cases that
+    // would catch a drift are the ones past the 64-bit boundary (a truncating
+    // backend gives a different number, not an error) and the negative-count
+    // arm (whose `Result.Err` bytes must match the VM verbatim).
+    let src = r#"module BitsDifferential
+    intent = "Every Bits shape in one program, for cross-backend agreement"
+    effects [Console.print]
+
+fn pointwise() -> String
+    ? "The four total operations, on operands of both signs."
+    "{Bits.and(6, 3)} {Bits.or(6, 3)} {Bits.xor(6, 3)} {Bits.and(-1, 42)} {Bits.or(-1, 42)} {Bits.xor(-6, 3)} {Bits.not(0)} {Bits.not(-1)}"
+
+fn counted() -> String
+    ? "Discharged literal counts, including one past the 64-bit cliff."
+    "{Bits.shiftLeft(1, 100)} {Bits.shiftRight(-3, 1)} {Bits.low(257, 8)} {Bits.low(-1, 8)} {Bits.low(123, 0)}"
+
+fn large() -> String
+    ? "Operands and results on the far side of the 64-bit boundary."
+    huge = Bits.shiftLeft(1, 100)
+    "{Bits.not(huge)} {Bits.or(huge, 1)} {Bits.xor(huge, huge)} {Bits.and(Bits.not(huge), huge)} {Bits.shiftRight(Bits.not(huge), 100)}"
+
+fn dynamic(count: Int) -> String
+    ? "An undischarged count, so the Result survives to runtime."
+    match Bits.shiftLeft(1, count)
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
+fn main() -> Unit
+    ? "Print every shape so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print(pointwise())
+    Console.print(counted())
+    Console.print(large())
+    Console.print(dynamic(4))
+    Console.print(dynamic(-1))
+"#;
+    let expected = "2 7 5 42 -1 -7 -1 0\n1267650600228229401496703205376 -2 1 255 0\n-1267650600228229401496703205377 1267650600228229401496703205377 0 0 -2\nok 16\nerr negative shift count";
+
+    let vm = run_vm_inline("bits_namespace", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("bits_namespace", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM Bits contract changed");
+    assert_eq!(rust, expected, "Rust Bits semantics diverged from the VM");
+}
+
+#[test]
 fn rust_literal_refinement_discharge_matches_vm() {
     let src = r#"module LiteralRefinement
     intent = "Discharged and fallible smart-constructor calls in one program"

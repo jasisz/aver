@@ -617,9 +617,89 @@ impl Lexer {
             ']' => TokenKind::RBracket,
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
+            // Every operator Aver rejects has a named function in its place,
+            // and the compiler is what makes that pattern discoverable. These
+            // characters used to fall through to `Unknown character: '^'`,
+            // which tells a reader nothing about `Bits.xor` — so the rule
+            // read as an omission rather than a redirection.
+            other if rejected_operator_hint(other, self.current()).is_some() => {
+                let (spelling, hint) = rejected_operator_hint(other, self.current()).unwrap();
+                // Consume the second character of a two-character operator so
+                // the caret spans what was actually written.
+                if spelling.chars().count() == 2 {
+                    self.advance();
+                }
+                return Err(self.error(hint));
+            }
             other => return Err(self.error(format!("Unknown character: {:?}", other))),
         };
 
         Ok(Token { kind, line, col })
     }
+}
+
+/// The rejected-operator table: for a character Aver does not lex, the
+/// operator a reader most likely meant and the named function that replaces
+/// it. Returns the spelling (so the lexer knows whether to consume a second
+/// character) and the full diagnostic.
+///
+/// Deliberately NOT covering `<<` / `>>`: `<` and `>` are real tokens, and
+/// `>>` closes a nested generic (`Map<String, List<Int>>`). Those two are
+/// caught in the expression parser instead, where a generic argument list
+/// cannot appear — see `parse_comparison`.
+///
+/// The phrasing is keyed on by `diagnostics::classify`, which attaches the
+/// slug and repair, so keep the leading `the '<op>' operator` shape.
+fn rejected_operator_hint(ch: char, next: Option<char>) -> Option<(&'static str, String)> {
+    let doubled = |c: char| next == Some(c);
+    let (spelling, replacement): (&'static str, String) = match ch {
+        '&' if doubled('&') => (
+            "&&",
+            "boolean conjunction is the function Bool.and(a, b) : Bool, or a nested match; \
+             for the bit-level conjunction of two integers use Bits.and(a, b) : Int"
+                .to_string(),
+        ),
+        '&' => (
+            "&",
+            "the bit-level conjunction of two integers is the function \
+             Bits.and(a, b) : Int; for booleans use Bool.and(a, b)"
+                .to_string(),
+        ),
+        '|' if doubled('|') => (
+            "||",
+            "boolean disjunction is the function Bool.or(a, b) : Bool, or a nested match; \
+             for the bit-level disjunction of two integers use Bits.or(a, b) : Int"
+                .to_string(),
+        ),
+        '|' => (
+            "|",
+            "the bit-level disjunction of two integers is the function \
+             Bits.or(a, b) : Int; for booleans use Bool.or(a, b)"
+                .to_string(),
+        ),
+        '^' => (
+            "^",
+            "the bit-level exclusive-or of two integers is the function \
+             Bits.xor(a, b) : Int"
+                .to_string(),
+        ),
+        '~' => (
+            "~",
+            "the bit-level complement of an integer is the function \
+             Bits.not(x) : Int (equivalently -x - 1); for booleans use Bool.not(x)"
+                .to_string(),
+        ),
+        '%' => (
+            "%",
+            "integer modulo is partial (divide-by-zero), so it is the function \
+             Int.mod(a, b) : Result<Int, String>, which returns plain Int when the \
+             divisor is a nonzero literal"
+                .to_string(),
+        ),
+        _ => return None,
+    };
+    Some((
+        spelling,
+        format!("the '{spelling}' operator does not exist in Aver — {replacement}"),
+    ))
 }

@@ -371,11 +371,32 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             if let ResolvedCallee::Builtin(name) = &resolved_callee
                 && resolved_args.len() == 2
                 && args.len() == 2
-                && crate::ast::is_literal_nonzero_int_divisor(&args[1])
             {
+                // Two sibling discharges, each with its OWN syntactic
+                // predicate because the two families are partial for
+                // different reasons: division fails only at a zero divisor,
+                // a bit count only below zero. Both key on syntax, not type
+                // stamps, because this resolver also runs in pipelines that
+                // never typecheck.
                 let intrinsic = match name.as_str() {
-                    "Int.div" => Some(BuiltinIntrinsic::IntDivEuclid),
-                    "Int.mod" => Some(BuiltinIntrinsic::IntModEuclid),
+                    "Int.div" if crate::ast::is_literal_nonzero_int_divisor(&args[1]) => {
+                        Some(BuiltinIntrinsic::IntDivEuclid)
+                    }
+                    "Int.mod" if crate::ast::is_literal_nonzero_int_divisor(&args[1]) => {
+                        Some(BuiltinIntrinsic::IntModEuclid)
+                    }
+                    // `Bits.shiftLeft(x, N)` with a syntactic non-negative
+                    // literal `N` lowers straight to `x * 2^N` — no
+                    // `Result` wrap, on every backend.
+                    "Bits.shiftLeft" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
+                        Some(BuiltinIntrinsic::BitsShiftLeft)
+                    }
+                    "Bits.shiftRight" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
+                        Some(BuiltinIntrinsic::BitsShiftRight)
+                    }
+                    "Bits.low" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
+                        Some(BuiltinIntrinsic::BitsLow)
+                    }
                     _ => None,
                 };
                 if let Some(intrinsic) = intrinsic {

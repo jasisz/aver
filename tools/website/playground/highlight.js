@@ -15,9 +15,10 @@ const KEYWORDS = new Set([
 const CONSTANTS = new Set(["true", "false", "Unit"]);
 
 const BUILTINS = new Set([
-    "Console", "Http", "HttpServer", "Disk", "Tcp", "Int", "Float",
-    "String", "Bool", "List", "Vector", "Map", "Char", "Byte",
-    "Result", "Option", "Args", "Time", "Env", "Random", "Terminal",
+    "Console", "Http", "HttpServer", "Disk", "Tcp", "Int", "Bits",
+    "Float", "String", "Bool", "List", "Vector", "Map", "Char",
+    "Byte", "Result", "Option", "Args", "Time", "Env", "Random",
+    "Terminal",
 ]);
 
 // Token types
