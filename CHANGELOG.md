@@ -18,6 +18,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - **Every rejected operator now names the function that replaces it.** Writing `a ^ b` reported `Unknown character: '^'`, which tells you nothing about `Bits.xor` — so a deliberate design choice read as a gap. `^`, `&`, `&&`, `|`, `||`, `~`, `%`, `<<` and `>>` now each report what they are and what to use instead, carrying the `rejected-operator` slug and a repair that spells out the call. `/` on `Int` already did this and is unchanged. Nested generics (`Map<String, List<Int>>`) and ordinary comparisons are unaffected — the shift diagnostic only fires on two adjacent `<` or `>` in operator position, which a type annotation never reaches.
 
+### Fixed
+
+- **A law over an effect call nested inside another effect call's arguments is provable again.** `Random.int(1, Random.int(2, 6))` ran one way and exported a proof about the other: the run charges the inner read the first oracle index and the outer read the second, but the export numbered them the other way round. Nothing said so. The law that matched the run passed `aver verify` and then `aver proof --check` refuted it in Lean, while the law that matched the export failed `verify` — so a correct program was simply unprovable and each tool pointed at the other. Oracle indices are now assigned in evaluation order on both sides. Laws that only read effects one at a time, or read them in separate statements, were never affected and their exported proofs are unchanged.
+
 ### Changed
 
 - **A module named `Bits` can no longer define a function named `and`, `or`, `xor`, `not`, `shiftLeft`, `shiftRight` or `low`.** This is the existing rule for every builtin namespace — a module named `Bool` has never been able to define `fn and` — now extended to seven more names. A project-local `Bits` module still shadows the namespace for any *other* function name; only a direct collision is rejected, with the same "already defined in this module" diagnostic.

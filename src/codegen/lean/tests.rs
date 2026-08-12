@@ -4250,3 +4250,57 @@ verify a law aAdvances
         "a clique reaching a sub-parser with no universal advance law must decline"
     );
 }
+
+#[test]
+fn generative_call_nested_in_args_gets_the_higher_oracle_index() {
+    // Regression — the lifted proof must charge oracle call indices in the
+    // order the VM charges them.
+    //
+    // The VM evaluates a call's arguments eagerly and only then takes its
+    // oracle coordinates (`dispatch_oracle_stub` receives already-evaluated
+    // args and calls `take_oracle_coordinates()` afterwards), so a generative
+    // call nested inside the arguments consumes the LOWER index. Pre-fix the
+    // lifter did the opposite: it claimed its own counter before lifting its
+    // arguments, so `Random.int(1, Random.int(2, 6))` exported as
+    // `rnd path 0 1 (rnd path 1 2 6)` while the run answered as
+    // `rnd path 1 1 (rnd path 0 2 6)`.
+    //
+    // The inversion was invisible at both ends and fail-closed in both
+    // directions: the law that held at runtime exported a theorem
+    // `native_decide` refutes, and the law matching the export failed
+    // `verify`. A correct program was simply unprovable. See the VM half of
+    // this invariant in tests/regression_oracle_counter_order.rs.
+    let mut ctx = ctx_from_source(
+        r#"module CounterOrder
+    intent = "Oracle indices must be charged in evaluation order."
+    effects [Random]
+
+fn indexStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Returns the call index so the oracle coordinate is observable."
+    n
+
+fn nested() -> Int
+    ? "Outer Random.int whose upper bound is itself a Random.int."
+    ! [Random.int]
+    Random.int(1, Random.int(2, 6))
+
+verify nested law indexOrder
+    given rnd: Random.int = [indexStub]
+    nested() => 1
+"#,
+        "counter_order",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    assert!(
+        lean.contains("rnd_Random_int path 1 1 (rnd_Random_int path 0 2 6)"),
+        "the nested generative call must take index 0 and the surrounding one index 1, \
+         matching the VM's eager argument evaluation; emitted body was:\n{lean}"
+    );
+    assert!(
+        !lean.contains("rnd_Random_int path 0 1 (rnd_Random_int path 1 2 6)"),
+        "inverted oracle indices are back — the lifter is claiming its counter before \
+         lifting its own arguments again"
+    );
+}
