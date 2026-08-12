@@ -234,3 +234,165 @@ fn wasm_gc_bits_namespace_matches_vm() {
         String::from_utf8_lossy(&stderr)
     );
 }
+
+/// Run `src` on both backends and return `(vm_stdout, wasm_gc_stdout)`.
+/// Both go through `capture_output`, so the comparison is on the same bytes
+/// the parity harness sees.
+fn vm_and_wasm_gc_stdout(src: &str) -> (String, String) {
+    let build = || {
+        let mut lexer = aver::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = aver::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        let result = aver::ir::pipeline::run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                alloc_policy: Some(&aver::ir::NeutralAllocPolicy),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                ..Default::default()
+            },
+        );
+        (items, result)
+    };
+
+    let (items, result) = build();
+    let (wasm_res, wasm_out, _) = aver::services::console::capture_output(|| {
+        aver::runtime::wasm_gc::run_in_process(
+            &items,
+            result.analysis.as_ref(),
+            aver::runtime::wasm_gc::RunConfig::default(),
+        )
+    });
+    if let Err(e) = &wasm_res {
+        panic!("wasm-gc run failed: {e}\n--- source ---\n{src}");
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join("main.av");
+    std::fs::write(&entry, src).expect("write entry");
+    let vm = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .output()
+        .expect("run aver");
+    assert!(
+        vm.status.success(),
+        "VM run failed:\n{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+
+    (
+        String::from_utf8_lossy(&vm.stdout).into_owned(),
+        String::from_utf8_lossy(&wasm_out).into_owned(),
+    )
+}
+
+/// A dynamic `Bits` call must evaluate each argument EXACTLY ONCE, in source
+/// order, on both the `Ok` and the `Err` path.
+///
+/// The guarded lowering reads the count to test its sign and then needs both
+/// operands inside each arm. Emitting them per-arm instead of hoisting them
+/// ran the count twice on the `Ok` path and skipped the value entirely on the
+/// `Err` path:
+///
+/// ```text
+/// VM       : value, count 1,  ok 6      wasm-gc: count 1, value, count 1, ok 6
+/// VM       : value, count -1, err …     wasm-gc: count -1,               err …
+/// ```
+///
+/// Aver's effects are eager, so that is a semantic difference and not a
+/// performance detail — the printed trace IS the observation.
+#[test]
+fn wasm_gc_dynamic_bits_evaluates_each_argument_once_in_source_order() {
+    let src = r#"module M
+    intent =
+        "argument evaluation order for a dynamic Bits call"
+    effects [Console]
+
+fn value() -> Int
+    ! [Console.print]
+    Console.print("value")
+    3
+
+fn count(n: Int) -> Int
+    ! [Console.print]
+    Console.print("count {n}")
+    n
+
+fn shifted(n: Int) -> String
+    ! [Console.print]
+    match Bits.shiftLeft(value(), count(n))
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(shifted(1))
+    Console.print("--")
+    Console.print(shifted(-1))
+"#;
+    let (vm, wasm) = vm_and_wasm_gc_stdout(src);
+    assert_eq!(
+        vm, "value\ncount 1\nok 6\n--\nvalue\ncount -1\nerr negative shift count\n",
+        "the VM's own evaluation contract changed"
+    );
+    assert_eq!(
+        wasm, vm,
+        "wasm-gc must evaluate a dynamic Bits call's arguments exactly once each, \
+         in source order, on both the Ok and the Err path"
+    );
+}
+
+/// A dynamic `Bits` call reachable ONLY through string interpolation must
+/// still intern its error message.
+///
+/// The synthetic-literal registration walked the body with a traversal that
+/// bottomed out at a wildcard and never descended into `InterpolatedStr`, so
+/// this program type-checked, ran on the VM, and then failed wasm-gc
+/// validation with `String literal "negative shift count" was not registered`.
+#[test]
+fn wasm_gc_registers_bits_error_message_reached_only_through_interpolation() {
+    let src = r#"module M
+    intent =
+        "dynamic Bits inside an interpolation"
+    effects [Console]
+
+fn show(n: Int) -> String
+    "{Result.withDefault(Bits.shiftLeft(1, n), 0)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(show(3))
+"#;
+    let (vm, wasm) = vm_and_wasm_gc_stdout(src);
+    assert_eq!(vm, "8\n");
+    assert_eq!(wasm, vm);
+}
+
+/// A `Bits` call reachable ONLY through a map literal must still register the
+/// WASM helper. Same root cause as the interpolation case, different missing
+/// arm: the helper-reachability walk skipped `MapLiteral`, so this failed with
+/// `Bits.and requires the __aint_bitwise helper to be registered`.
+#[test]
+fn wasm_gc_registers_bits_helper_reached_only_through_a_map_literal() {
+    let src = r#"module M
+    intent =
+        "Bits inside a map literal"
+    effects [Console]
+
+fn build(a: Int, b: Int) -> Map<String, Int>
+    {"v" => Bits.and(a, b)}
+
+fn probe(a: Int, b: Int) -> Int
+    Option.withDefault(Map.get(build(a, b), "v"), -1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{probe(6, 3)}")
+"#;
+    let (vm, wasm) = vm_and_wasm_gc_stdout(src);
+    assert_eq!(vm, "2\n");
+    assert_eq!(wasm, vm);
+}

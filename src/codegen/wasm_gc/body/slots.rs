@@ -105,6 +105,19 @@ pub(super) struct SlotTable {
     /// and break the differential-gate invariant that `build_for_fn`
     /// reads only the resolver tables, not the MIR body).
     pub(super) const_cmp_scratch: Option<u32>,
+    /// Scratch `(ref null $AverInt)` PAIR for a count-taking `Bits` call:
+    /// `[value, count]`. Both operands are stashed once, in source order,
+    /// before the negative-count branch — because that branch reads the
+    /// count and each arm needs both operands, so re-emitting them would
+    /// evaluate `count` twice on the `Ok` path and skip `value` entirely on
+    /// the `Err` path. The VM evaluates each argument exactly once, left to
+    /// right, whichever way the branch goes; eager effects make that
+    /// difference observable, not merely a performance detail.
+    ///
+    /// Reserved whenever `bignum` is active, for the same reason as
+    /// `const_cmp_scratch`: the slot index stays a pure function of the
+    /// registry flag rather than of the MIR body.
+    pub(super) bits_scratch: Option<[u32; 2]>,
 }
 
 impl SlotTable {
@@ -327,6 +340,18 @@ impl SlotTable {
         } else {
             None
         };
+        // Count-taking `Bits` operand pair — see the field docs. Same
+        // registry-keyed reservation as `const_cmp_scratch` above.
+        let bits_scratch = match (registry.bignum, registry.aint_struct_idx) {
+            (true, Some(aint_idx)) => {
+                let value = by_slot.len() as u32;
+                by_slot.push(struct_ref(aint_idx));
+                let count = by_slot.len() as u32;
+                by_slot.push(struct_ref(aint_idx));
+                Some([value, count])
+            }
+            _ => None,
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
@@ -337,6 +362,7 @@ impl SlotTable {
             env_get_wasip2_scratch,
             random_int_wasip2_min_scratch,
             const_cmp_scratch,
+            bits_scratch,
         })
     }
 

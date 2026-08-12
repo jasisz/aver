@@ -1027,9 +1027,23 @@ pub(crate) fn emit_mir_bits(
         heap_type: wasm_encoder::HeapType::Concrete(res_idx),
     }));
     let to_i64_sat = helper("__aint_to_i64_sat")?;
+    let [value_slot, count_slot] = slots.bits_scratch.ok_or(WasmGcError::Validation(format!(
+        "{dotted} needs the Bits operand scratch pair but none was reserved"
+    )))?;
+
+    // Evaluate BOTH operands exactly once, in source order, BEFORE the
+    // branch. The VM evaluates arguments left to right and then calls the
+    // builtin, so both run whichever way the guard goes. Emitting them
+    // inside the arms instead would run the count twice on the Ok path and
+    // skip the value entirely on the Err path -- and with eager effects that
+    // is observable, not just wasteful.
+    e!(&args[0]);
+    func.instruction(&Instruction::LocalSet(value_slot));
+    e!(&args[1]);
+    func.instruction(&Instruction::LocalSet(count_slot));
 
     // if count < 0 -> Result.Err(<message>)
-    e!(&args[1]);
+    func.instruction(&Instruction::LocalGet(count_slot));
     func.instruction(&Instruction::Call(to_i64_sat));
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64LtS);
@@ -1041,35 +1055,39 @@ pub(crate) fn emit_mir_bits(
     func.instruction(&Instruction::Else);
     // else Result.Ok(<the operation>)
     func.instruction(&Instruction::I32Const(1));
-    emit_bits_counted_value(func, op, args, slots, ctx, &helper)?;
+    emit_bits_counted_from_slots(func, op, value_slot, count_slot, &helper)?;
     emit_default_value(func, "String", ctx.registry)?;
     func.instruction(&Instruction::StructNew(res_idx));
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// The bare `$AverInt` value of a count-taking `Bits` operation, with no
-/// `Result` wrap. Shared by the guarded surface call above and by the
-/// literal-count discharge's intrinsic, so the discharged and undischarged
-/// forms cannot compute different things.
-pub(crate) fn emit_bits_counted_value(
+/// The arithmetic of a count-taking `Bits` operation over two ALREADY
+/// evaluated operands sitting in locals. Split out from
+/// [`emit_bits_counted_value`] so the guarded surface call can hoist its
+/// operand evaluation above the branch while still sharing one definition of
+/// what the operation computes.
+fn emit_bits_counted_from_slots(
     func: &mut Function,
     op: BitsOp,
-    args: &[Spanned<MirExpr>],
-    slots: &SlotTable,
-    ctx: &EmitCtx<'_>,
+    value_slot: u32,
+    count_slot: u32,
     helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
 ) -> Result<(), WasmGcError> {
-    let pow2 = helper("__aint_pow2")?;
-    if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
-        return Err(WasmGcError::Validation(
-            "Bits operand failed to lower".into(),
-        ));
-    }
-    if emit_mir_expr(func, &args[1], slots, ctx)?.is_none() {
-        return Err(WasmGcError::Validation("Bits count failed to lower".into()));
-    }
-    func.instruction(&Instruction::Call(pow2));
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::LocalGet(count_slot));
+    emit_bits_counted_tail(func, op, helper)
+}
+
+/// `2^count` applied to the operand beneath it: the shared tail of both the
+/// guarded and the discharged form, so the two cannot compute different
+/// things. Expects `value` then `count` already on the stack.
+fn emit_bits_counted_tail(
+    func: &mut Function,
+    op: BitsOp,
+    helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
+) -> Result<(), WasmGcError> {
+    func.instruction(&Instruction::Call(helper("__aint_pow2")?));
     match op {
         BitsOp::ShiftLeft => {
             func.instruction(&Instruction::Call(helper("__aint_mul")?));
@@ -1084,9 +1102,34 @@ pub(crate) fn emit_bits_counted_value(
             }));
             func.instruction(&Instruction::Call(helper("__aint_divmod")?));
         }
-        _ => unreachable!("emit_bits_counted_value is only for the count-taking operations"),
+        _ => unreachable!("only the count-taking operations reach this tail"),
     }
     Ok(())
+}
+
+/// The bare `$AverInt` value of a count-taking `Bits` operation, with no
+/// `Result` wrap. Shared by the guarded surface call above and by the
+/// literal-count discharge's intrinsic, so the discharged and undischarged
+/// forms cannot compute different things.
+pub(crate) fn emit_bits_counted_value(
+    func: &mut Function,
+    op: BitsOp,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
+) -> Result<(), WasmGcError> {
+    // No scratch needed here: the discharged form has no guard, so emitting
+    // the operands inline already evaluates each exactly once, left to right.
+    if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
+        return Err(WasmGcError::Validation(
+            "Bits operand failed to lower".into(),
+        ));
+    }
+    if emit_mir_expr(func, &args[1], slots, ctx)?.is_none() {
+        return Err(WasmGcError::Validation("Bits count failed to lower".into()));
+    }
+    emit_bits_counted_tail(func, op, helper)
 }
 
 /// The `Bits` operations, as one enum so the surface-call and discharged
