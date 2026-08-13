@@ -18,6 +18,18 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - **Every rejected operator now names the function that replaces it.** Writing `a ^ b` reported `Unknown character: '^'`, which tells you nothing about `Bits.xor` — so a deliberate design choice read as a gap. `^`, `&`, `&&`, `|`, `||`, `~`, `%`, `<<` and `>>` now each report what they are and what to use instead, carrying the `rejected-operator` slug and a repair that spells out the call. `/` on `Int` already did this and is unchanged. Nested generics (`Map<String, List<Int>>`) and ordinary comparisons are unaffected — the shift diagnostic only fires on two adjacent `<` or `>` in operator position, which a type annotation never reaches.
 
+- **Capability declarations parse, and are refused.** A module can now write `kind = capability` in its header, declare `operation` items with their signature and an indented block of `oracle` / `replay` / `hostile` / `unmodelled` fields, and declare a representation-less `opaque` type. Nothing consumes any of it yet: `check`, `verify`, `proof`, `run` and `compile` all refuse a file that declares a capability, and they refuse it whether it is the file you named, a module it depends on, or a module further down that chain.
+
+  That refusal is the point of shipping this now. Until it lands, `kind = capability` was not a parse error — the header stopped at the unknown field and the line was re-read as a top-level binding, so a capability declaration would have been silently ignored and the program compiled as if the boundary were not there. Being told "not supported yet" is the only honest answer while the rest is being built.
+
+  `capability Foo` as a standalone item is a hard error naming `kind = capability`. A capability is a kind of module, and there is exactly one way to declare one.
+
+### Changed
+
+- **An unrecognised field in a module header is now an error.** The header used to stop at the first line it did not recognise and hand that line back to the top level. A typo'd `expose [main]` therefore produced no diagnostic at all when its right-hand side happened to resolve, and a mistyped field silently did nothing. Header-shaped lines — `name = value` or `name [list]` — are now checked against the five allowed fields.
+
+  This is breaking for one shape: a top-level binding written *indented*, directly under the header, used to be accepted and now is not. The fix is to unindent it — bindings belong at column 0, outside the header — and the error says so.
+
 ### Fixed
 
 - **`aver format` accepts a tuple type.** Naming a tuple in a parameter or return type — `fn first(pair: Tuple<String, String>) -> String` — made `aver format` fail with `paren-tuple types removed — use Tuple<A, B> instead`, pointing at the `Tuple<A, B>` the source already used. The formatter re-printed the annotation with the paren spelling `(A, B)` that was removed from type position, then refused to parse its own output; `aver audit` failed with it, since it runs the format check. Anything naming a tuple was affected, including the `List<Tuple<K, V>>` that `Map.entries` returns. Formatting is unchanged everywhere else — a type annotation is still canonicalized, and effect lists inside an `Fn` type are still sorted.

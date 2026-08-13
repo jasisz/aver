@@ -43,6 +43,7 @@ pub struct Parser {
 pub(super) const MAX_PARSE_DEPTH: u32 = 64;
 
 mod blocks;
+mod capability;
 mod core;
 mod expr;
 mod functions;

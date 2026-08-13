@@ -6,7 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::Colorize;
 
-use aver::ast::{Expr, FnDef, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyKind};
+use aver::ast::{
+    CapabilityItem, Expr, FnDef, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyKind,
+};
 use aver::checker::{CheckFinding, VerifyResult, index_decisions};
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -728,6 +730,28 @@ fn collect_used_exposes_for_importer(
     for item in items {
         match item {
             TopLevel::Module(_) | TopLevel::Decision(_) => {}
+            // An operation's parameter and return annotations name real
+            // types, and those types can come from a dependency. An
+            // ignore arm here would report a genuinely used expose as
+            // unused.
+            TopLevel::Capability(cap) => {
+                if let CapabilityItem::Operation(op) = cap {
+                    for (_, type_name) in &op.params {
+                        mark_type_annotation(
+                            type_name,
+                            dep_targets,
+                            &unique_type_owner,
+                            &mut used_by_target,
+                        );
+                    }
+                    mark_type_annotation(
+                        &op.return_type,
+                        dep_targets,
+                        &unique_type_owner,
+                        &mut used_by_target,
+                    );
+                }
+            }
             TopLevel::FnDef(fd) => {
                 for (_, type_name) in &fd.params {
                     mark_type_annotation(

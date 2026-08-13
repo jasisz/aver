@@ -274,11 +274,69 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     }
 
     check_module_effect_boundary(items, &mut checker.errors);
+    reject_capability_items(items, &mut checker.errors);
 
     TypeCheckResult {
         errors: checker.errors,
         fn_sigs,
         unused_bindings: checker.unused_warnings,
+    }
+}
+
+/// The message every capability refusal carries. Kept as one constant
+/// so the three entry points cannot drift apart, and so the diagnostic
+/// classifier can key on it.
+pub(crate) const CAPABILITY_UNSUPPORTED: &str =
+    "capability declarations are parsed but not yet supported";
+
+/// Refuse any file that declares a capability.
+///
+/// The grammar landed before the semantics, and the gap between them is
+/// exactly where a false guarantee would live: a capability module that
+/// type-checks as an ordinary module would register no operations,
+/// classify no effects and enforce no boundary, while reading — to
+/// whoever wrote it — as if it did. Refusing is the only honest state
+/// until the registration phase lands.
+///
+/// Runs for the entry file from `finalize_check_result` and for every
+/// dependency from `check_loaded_module_bodies`, so a capability in a
+/// `depends`-only module is refused too. A refusal that only the entry
+/// file enforces is the entry-scoped checking gap all over again.
+pub(crate) fn reject_capability_items(items: &[TopLevel], errors: &mut Vec<TypeError>) {
+    for item in items {
+        match item {
+            TopLevel::Capability(cap) => {
+                errors.push(TypeError {
+                    message: format!(
+                        "{}: `{} {}` is recognised by the parser, but nothing registers it yet, \
+                         so the boundary it declares would not be enforced. Remove it until \
+                         capability support lands.",
+                        CAPABILITY_UNSUPPORTED,
+                        cap.keyword(),
+                        cap.name()
+                    ),
+                    line: cap.line(),
+                    col: 1,
+                    secondary: None,
+                });
+            }
+            TopLevel::Module(m) => {
+                if let Some(kind) = &m.kind {
+                    errors.push(TypeError {
+                        message: format!(
+                            "{}: module '{}' declares `kind = {}`, but nothing acts on it yet, \
+                             so the module is checked exactly like an ordinary one. Remove the \
+                             line until capability support lands.",
+                            CAPABILITY_UNSUPPORTED, m.name, kind
+                        ),
+                        line: m.kind_line.unwrap_or(m.line),
+                        col: 1,
+                        secondary: None,
+                    });
+                }
+            }
+            _ => {}
+        }
     }
 }
 
