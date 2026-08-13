@@ -604,6 +604,111 @@ fn evacuating_a_sliced_flat_list_keeps_the_shared_allocation_and_the_offset() {
     assert_eq!(arena.list_get_value(roots[0], 1).unwrap().as_int(&arena), 1);
 }
 
+/// A list of strings sliced by `list_uncons`, evacuated while every string it
+/// holds sits below the mark.
+///
+/// A body of immediates never reaches the element walk — it is skipped whole —
+/// so the two tests below are the only ones that run it, and they are the only
+/// ones that can see whether the walk carries `start` with it. Here nothing
+/// moves, so the body is returned as it stands and the slice offset must come
+/// back with it: dropping the offset re-attaches the elements the slice had
+/// already stepped past, and the list silently regrows its head.
+#[test]
+fn a_walked_body_that_did_not_move_keeps_the_slice_offset() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..8)
+        .map(|i| NanValue::new_string(arena.push_string(&format!("s{i}"))))
+        .collect();
+    let list = NanValue::new_list(arena.push_list(items));
+    let shared = flat_body!(arena, list);
+
+    // Every string is allocated below the mark, so it is not frame-local and
+    // relocates to itself. The body still holds heap indices, so it is walked
+    // rather than skipped, and the walk finds nothing to rewrite.
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+    let (_, tail) = arena.list_uncons(list).expect("uncons");
+    let copied_before = arena.list_elements_copied();
+
+    let mut roots = [tail];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+
+    let body = flat_body!(arena, roots[0]);
+    assert!(
+        std::sync::Arc::ptr_eq(&shared, &body),
+        "evacuation rebuilt a walked body in which nothing moved",
+    );
+    assert_eq!(
+        arena.list_elements_copied() - copied_before,
+        0,
+        "evacuation copied elements out of a body in which nothing moved",
+    );
+    assert_eq!(
+        arena.list_len_value(roots[0]),
+        7,
+        "evacuation dropped the slice offset and regrew the list head",
+    );
+    assert_eq!(
+        arena
+            .get_string_value(arena.list_get_value(roots[0], 0).unwrap())
+            .to_string(),
+        "s1",
+        "evacuation dropped the slice offset and regrew the list head",
+    );
+}
+
+/// The same slice, but with one element the collector really does relocate.
+///
+/// The body has to be rebuilt now, and the rebuild starts by copying the part
+/// of the slice already walked. That prefix runs from the slice offset, not
+/// from the start of the allocation — copying from the allocation instead
+/// re-attaches the stepped-past elements, which is the same silent head regrowth
+/// as above and just as invisible to a length-blind test. The element that moves
+/// is deliberately not the first one, so the prefix is non-empty.
+#[test]
+fn rebuilding_a_walked_body_copies_the_prefix_from_the_slice_offset() {
+    let mut arena = Arena::new();
+    let stays: Vec<NanValue> = (0..4)
+        .map(|i| NanValue::new_string(arena.push_string(&format!("stays{i}"))))
+        .collect();
+
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+
+    // Allocated above the mark, so this is the one element that is frame-local
+    // and comes back with a different heap index.
+    let moves = NanValue::new_string(arena.push_string("moves"));
+    let list =
+        NanValue::new_list(arena.push_list(vec![stays[0], stays[1], stays[2], moves, stays[3]]));
+    let (_, tail) = arena.list_uncons(list).expect("uncons");
+    let copied_before = arena.list_elements_copied();
+
+    let mut roots = [tail];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+
+    assert_eq!(
+        arena.list_len_value(roots[0]),
+        4,
+        "the rebuild copied from the allocation instead of the slice offset, \
+         regrowing the list head",
+    );
+    let elements: Vec<String> = (0..arena.list_len_value(roots[0]))
+        .map(|i| {
+            arena
+                .get_string_value(arena.list_get_value(roots[0], i).unwrap())
+                .to_string()
+        })
+        .collect();
+    assert_eq!(elements, ["stays1", "stays2", "moves", "stays3"]);
+    assert_eq!(
+        arena.list_elements_copied() - copied_before,
+        4,
+        "the rebuilt body is not exactly the four elements of the slice",
+    );
+}
+
 #[test]
 fn evacuating_a_segments_node_keeps_the_parts_allocation_when_nothing_moves() {
     let mut arena = Arena::new();

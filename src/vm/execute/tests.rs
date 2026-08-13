@@ -440,33 +440,125 @@ fn direct_child_vm_keeps_concat_chain_after_wave_valid() {
     );
 }
 
-/// Run the accumulator-recursion shape from issue #886 and report how many list
-/// elements the collector copied out of shared bodies while doing it.
-fn list_copy_body_elements_copied(n: i64) -> u64 {
+/// What one run of the accumulator-recursion shape from issue #886 cost the
+/// collector: elements written into fresh shared bodies, and elements read while
+/// deciding whether a body needed rewriting at all.
+///
+/// The two are not the same measurement and the difference is the point. A body
+/// that is copied was also read; a body can be read in full and copied not at
+/// all, which is exactly what happens when every element relocates to itself.
+struct ListCopyCost {
+    copied: u64,
+    scanned: u64,
+}
+
+/// Run the shape at size `n` over a list of `elem_ty`, where each element is
+/// built by `elem_expr` from the loop counter `n`.
+///
+/// The element type is the variable that matters: an `Int` element is an
+/// immediate, so the collector can prove a whole body irrelevant without reading
+/// it, while a `String` element carries a heap index and forces the walk.
+fn list_copy_cost(n: i64, elem_ty: &str, elem_expr: &str) -> ListCopyCost {
     let src = format!(
-        "fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n > 0\n        true -> build(n - 1, List.prepend(n, acc))\n        false -> acc\n\nfn copy(xs: List<Int>, acc: List<Int>) -> List<Int>\n    match xs\n        [] -> acc\n        [head, ..tail] -> copy(tail, List.prepend(head, acc))\n\nfn main() -> Int\n    List.len(copy(build({n}, []), []))\n"
+        "fn build(n: Int, acc: List<{elem_ty}>) -> List<{elem_ty}>\n    match n > 0\n        true -> build(n - 1, List.prepend({elem_expr}, acc))\n        false -> acc\n\nfn copy(xs: List<{elem_ty}>, acc: List<{elem_ty}>) -> List<{elem_ty}>\n    match xs\n        [] -> acc\n        [head, ..tail] -> copy(tail, List.prepend(head, acc))\n\nfn main() -> Int\n    List.len(copy(build({n}, []), []))\n"
     );
     let mut vm = compile_vm(&src);
     let result = vm.run().expect("list copy program should run");
     assert_eq!(result.as_int(&vm.arena), n);
-    vm.arena.list_elements_copied()
+    ListCopyCost {
+        copied: vm.arena.list_elements_copied(),
+        scanned: vm.arena.list_elements_scanned(),
+    }
 }
 
 #[test]
-fn copying_a_list_does_not_rebuild_shared_bodies_quadratically() {
+fn copying_a_list_of_integers_neither_rebuilds_nor_reads_shared_bodies() {
     // Destructuring one list while growing another is the shape that made the
     // collector rebuild the whole remaining input on every step. The cost is
     // pinned structurally: copies must stay proportional to the input, not to
     // its square. At these sizes the quadratic version reaches n^2/2 —
     // 80,000 and 320,000 — so the two curves are never within reach of the
     // same bound.
+    //
+    // Integers are immediates, so this is also the case that gets the whole fix:
+    // the body is skipped without being read, and the reads go to zero along
+    // with the copies. `copying_a_list_of_strings_still_reads_shared_bodies_quadratically`
+    // is the same program over the element type that does not get that, and it
+    // is the honest half of this pair — do not read this test as a statement
+    // about lists in general.
     const BUDGET_PER_ELEMENT: u64 = 4;
-    let small = list_copy_body_elements_copied(400);
-    let large = list_copy_body_elements_copied(800);
+    let small = list_copy_cost(400, "Int", "n");
+    let large = list_copy_cost(800, "Int", "n");
 
     assert!(
-        small <= 400 * BUDGET_PER_ELEMENT && large <= 800 * BUDGET_PER_ELEMENT,
+        small.copied <= 400 * BUDGET_PER_ELEMENT && large.copied <= 800 * BUDGET_PER_ELEMENT,
         "list body copies are not linear in the input: \
-         n=400 copied {small} elements, n=800 copied {large}",
+         n=400 copied {} elements, n=800 copied {}",
+        small.copied,
+        large.copied,
+    );
+    assert_eq!(
+        (small.scanned, large.scanned),
+        (0, 0),
+        "a list of immediates was read element by element; the whole point of \
+         the all-immediate flag is that this body never has to be looked at",
+    );
+}
+
+/// The control for the test above, and the limit of this fix.
+///
+/// Same program, same shape, one difference: the elements carry a heap index, so
+/// the all-immediate escape does not apply and the collector has to read the
+/// body on every step to find out that almost nothing in it moved. The copies
+/// stay linear — the memory half of #886 is fixed for every element type — but
+/// the reads are still n^2/2, and the wall clock still follows the reads: over
+/// `aver run --release` this program takes 464 ms at n = 16,000, 7.1 s at
+/// 64,000 and 28.3 s at 128,000, a measured exponent of 2.0, while the
+/// `List<Int>` version above goes 34 / 49 / 71 ms.
+///
+/// So `list_elements_copied` alone reports linear growth on a program that is
+/// still quadratic. This test exists so that nobody reads the pair as "lists
+/// were made linear": they were not. Lists of *immediates* were. If a later
+/// change does make this one linear, this test is supposed to fail — retire it
+/// deliberately, do not relax the bound.
+///
+/// Note that "String" is not the dividing line. A string of five UTF-8 bytes or
+/// fewer is NaN-boxed inline and behaves like the `Int` case; `item-1` is six,
+/// which is why the elements here are spelled the way they are. The line is
+/// whether the element carries a heap index at all, which also puts records,
+/// variants, tuples, nested lists and big integers on this side of it.
+#[test]
+fn copying_a_list_of_strings_still_reads_shared_bodies_quadratically() {
+    const BUDGET_PER_ELEMENT: u64 = 4;
+    let small = list_copy_cost(400, "String", "\"item-{n}\"");
+    let large = list_copy_cost(800, "String", "\"item-{n}\"");
+
+    assert!(
+        small.copied <= 400 * BUDGET_PER_ELEMENT && large.copied <= 800 * BUDGET_PER_ELEMENT,
+        "list body copies are not linear in the input, which is the half of \
+         #886 that is supposed to be fixed for every element type: \
+         n=400 copied {} elements, n=800 copied {}",
+        small.copied,
+        large.copied,
+    );
+    // Measured: 80,600 reads at n=400 and 321,200 at n=800, both n^2/2 to within
+    // the linear term. The bound is set at half of that so an ordinary shift in
+    // how often the collector runs cannot flip it, while still sitting some
+    // twenty-five times above anything a linear traversal could reach.
+    assert!(
+        small.scanned >= 400 * 400 / 4 && large.scanned >= 800 * 800 / 4,
+        "reads over a heap-backed list body came in far under n^2/2 — if that is \
+         a real improvement, this test has served its purpose and should be \
+         retired deliberately rather than loosened: n=400 read {}, n=800 read {}",
+        small.scanned,
+        large.scanned,
+    );
+    assert!(
+        large.scanned >= 3 * small.scanned,
+        "doubling the input less than tripled the reads, so this program is no \
+         longer the quadratic control this test is here to be: \
+         n=400 read {}, n=800 read {}",
+        small.scanned,
+        large.scanned,
     );
 }

@@ -14,6 +14,7 @@ impl<T: ArenaTypes> Arena<T> {
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
             list_elements_copied: 0,
+            list_elements_scanned: 0,
             type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -42,6 +43,7 @@ impl<T: ArenaTypes> Arena<T> {
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
             list_elements_copied: 0,
+            list_elements_scanned: 0,
             type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
@@ -303,9 +305,29 @@ impl<T: ArenaTypes> Arena<T> {
     /// list sharing intact grows this linearly in the elements that actually
     /// relocate, so a quadratic rebuild is visible as a number rather than as a
     /// flaky wall-clock reading.
+    ///
+    /// It measures memory traffic, not time. Read it together with
+    /// [`Arena::list_elements_scanned`] — a traversal can copy nothing and still
+    /// be quadratic, because deciding that nothing moved means reading every
+    /// element.
     #[inline]
     pub fn list_elements_copied(&self) -> u64 {
         self.list_elements_copied
+    }
+
+    /// List elements the collector has read while deciding whether a shared body
+    /// needs rebuilding.
+    ///
+    /// This is the counter that tracks *time*. A body built entirely out of
+    /// immediate values is skipped without being read and never reaches this
+    /// number; any body holding a heap index is walked in full on every
+    /// collection that sees it, whether or not anything turns out to move. So a
+    /// traversal over a list of integers leaves this at zero, while the same
+    /// traversal over a list of strings or records grows it quadratically —
+    /// which is a real, measurable difference in what the two cost.
+    #[inline]
+    pub fn list_elements_scanned(&self) -> u64 {
+        self.list_elements_scanned
     }
 
     #[inline]
