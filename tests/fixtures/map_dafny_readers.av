@@ -1,0 +1,35 @@
+module MapDafnyReaders
+    intent =
+        "Every map reader the Dafny emitter can produce has to resolve in the file it writes."
+        "`Map.keys` and `Map.values` emit `MapKeys(m)` and `MapValues(m)`; neither name was declared in the Dafny prelude and neither triggered the map helper block, so a program using only these two exported a file Dafny could not resolve."
+        "The laws here read both sequences on both sides, so they close against an uninterpreted declaration and fail loudly against a missing one."
+    effects [Console]
+
+fn keyList(m: Map<String, Int>) -> List<String>
+    ? "The map's keys, in iteration order."
+    Map.keys(m)
+
+fn valueList(m: Map<String, Int>) -> List<Int>
+    ? "The map's values, in iteration order."
+    Map.values(m)
+
+fn keyCount(m: Map<String, Int>) -> Int
+    ? "How many keys the map has, counted through the key sequence."
+    List.len(Map.keys(m))
+
+verify keyList law keysAreTheMapsKeys
+    given m: Map<String, Int> = [{"a" => 1}, {"b" => 2, "a" => 1}]
+    keyList(m) => Map.keys(m)
+
+verify valueList law valuesAreTheMapsValues
+    given m: Map<String, Int> = [{"a" => 1}, {"b" => 2, "a" => 1}]
+    valueList(m) => Map.values(m)
+
+verify keyCount law countIsTheKeySequenceLength
+    given m: Map<String, Int> = [{"a" => 1}, {"b" => 2, "a" => 1}]
+    keyCount(m) => List.len(Map.keys(m))
+
+fn main() -> Unit
+    ! [Console.print]
+    sample = {"b" => 2, "a" => 1}
+    Console.print("{List.len(keyList(sample))} {List.len(valueList(sample))}")

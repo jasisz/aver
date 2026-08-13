@@ -550,6 +550,12 @@ impl VmRuntime {
         let result = match &record {
             RecordedOutcome::Value(json) => {
                 let val = json_to_value(json).map_err(VmError::runtime)?;
+                let val = realign_replayed_records(val, arena).map_err(|why| {
+                    VmError::runtime(format!(
+                        "Replay of '{}' carries a record that does not match its type: {}",
+                        builtin_name, why
+                    ))
+                })?;
                 NanValue::from_value(&val, arena)
             }
             RecordedOutcome::RuntimeError(msg) => return Err(VmError::runtime(msg.clone())),
@@ -657,4 +663,120 @@ impl VmRuntime {
 
         Ok(())
     }
+}
+
+/// Put a replayed record's values into the slots the record's type declares.
+///
+/// A recording writes a record's fields into a JSON object keyed by field
+/// name, so they come out of the file in name order. Decoding walks that
+/// object back in the same order, and `NanValue::from_value` then fills the
+/// registered type's slots BY POSITION, discarding the names it was handed.
+/// `HttpResponse` is declared `status, body, headers` but sorts `body,
+/// headers, status`, so every replayed read of `.status` returned the body.
+///
+/// It is worse than a wrong value: the slot types move with the values, so
+/// the arena's type invariant breaks behind a typechecker that already proved
+/// otherwise. `resp.status + 1` over a replayed response fails on a type the
+/// program cannot have — `Arena: expected an integer at 2 but found
+/// String("teapot")` where the read reaches the arena first — while replay
+/// itself reports the run as matched. Where every field of a record shares a
+/// type, as in `Terminal.Size`, nothing fails at all and the program simply
+/// gets the other field's value.
+///
+/// The names survive as far as `Value::Record`, so this is where they get
+/// used. Every record in the decoded value is matched against the field list
+/// the arena holds for its type. A name the type does not declare, or a
+/// declared name the recording does not carry, is a replay failure: filling
+/// the slot with whatever happened to sort into it is the bug, not the
+/// fallback. A type the arena has never seen keeps the decoded order, since
+/// `from_value` registers it from those same names and the two then agree.
+fn realign_replayed_records(value: Value, arena: &Arena) -> Result<Value, String> {
+    Ok(match value {
+        Value::Record { type_name, fields } => {
+            let mut aligned: Vec<(String, Value)> = Vec::with_capacity(fields.len());
+            for (name, field) in fields.iter() {
+                aligned.push((
+                    name.clone(),
+                    realign_replayed_records(field.clone(), arena)?,
+                ));
+            }
+            if let Some(type_id) = arena.find_type_id(&type_name) {
+                let declared = arena.get_field_names(type_id);
+                for (name, _) in &aligned {
+                    if !declared.iter().any(|d| d == name) {
+                        return Err(format!(
+                            "'{}' has no field '{}' (it declares {})",
+                            type_name,
+                            name,
+                            declared.join(", ")
+                        ));
+                    }
+                }
+                let mut in_declared_order: Vec<(String, Value)> = Vec::with_capacity(aligned.len());
+                for want in declared {
+                    let Some(idx) = aligned.iter().position(|(name, _)| name == want) else {
+                        return Err(format!(
+                            "'{}' declares a field '{}' the recording does not carry",
+                            type_name, want
+                        ));
+                    };
+                    in_declared_order.push(aligned.remove(idx));
+                }
+                aligned = in_declared_order;
+            }
+            Value::Record {
+                type_name,
+                fields: aligned.into(),
+            }
+        }
+        Value::Variant {
+            type_name,
+            variant,
+            fields,
+        } => {
+            let mut out = Vec::with_capacity(fields.len());
+            for field in fields.iter() {
+                out.push(realign_replayed_records(field.clone(), arena)?);
+            }
+            Value::Variant {
+                type_name,
+                variant,
+                fields: out.into(),
+            }
+        }
+        Value::Ok(inner) => Value::Ok(Box::new(realign_replayed_records(*inner, arena)?)),
+        Value::Err(inner) => Value::Err(Box::new(realign_replayed_records(*inner, arena)?)),
+        Value::Some(inner) => Value::Some(Box::new(realign_replayed_records(*inner, arena)?)),
+        Value::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                out.push(realign_replayed_records(item.clone(), arena)?);
+            }
+            Value::List(aver_rt::AverList::from_vec(out))
+        }
+        Value::Vector(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                out.push(realign_replayed_records(item.clone(), arena)?);
+            }
+            Value::Vector(aver_rt::AverVector::from_vec(out))
+        }
+        Value::Tuple(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(realign_replayed_records(item, arena)?);
+            }
+            Value::Tuple(out)
+        }
+        Value::Map(entries) => {
+            let mut out = std::collections::HashMap::with_capacity(entries.len());
+            for (key, val) in entries {
+                // A map key is a scalar in every shape a recording can carry,
+                // so only the value side can hold a record.
+                out.insert(key, realign_replayed_records(val, arena)?);
+            }
+            Value::Map(out)
+        }
+        other => other,
+    })
 }

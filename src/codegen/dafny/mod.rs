@@ -711,6 +711,17 @@ function ListDrop<T>(xs: seq<T>, n: int): seq<T> {
 }
 "#;
 
+/// The three iteration readers — `MapEntries`, `MapKeys`, `MapValues` — are
+/// declared with a signature and no body on purpose. Dafny's `map` is
+/// unordered, so there is no expression here that reproduces the runtime's
+/// key-sorted sequence; leaving them uninterpreted commits the model to
+/// nothing about the order, which makes an order-dependent law simply not
+/// provable rather than provable-and-wrong. A law that only needs the name to
+/// stand for *something* (both sides read the same sequence) still closes.
+///
+/// All three must be listed in the `AverMap` helper's `body_tokens`
+/// (`codegen::builtin_helpers`), or a program that uses only `Map.keys` gets
+/// no map helper block at all and the emitted file does not resolve.
 const DAFNY_HELPER_AVER_MAP: &str = r#"
 function MapGet<K, V>(m: map<K, V>, k: K): Option<V> {
   if k in m then Some(m[k])
@@ -718,6 +729,8 @@ function MapGet<K, V>(m: map<K, V>, k: K): Option<V> {
 }
 
 function MapEntries<K, V>(m: map<K, V>): seq<(K, V)>
+function MapKeys<K, V>(m: map<K, V>): seq<K>
+function MapValues<K, V>(m: map<K, V>): seq<V>
 function MapFromList<K, V>(entries: seq<(K, V)>): map<K, V>
   decreases |entries|
 {
