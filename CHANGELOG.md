@@ -20,6 +20,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **`aver format` accepts a tuple type.** Naming a tuple in a parameter or return type — `fn first(pair: Tuple<String, String>) -> String` — made `aver format` fail with `paren-tuple types removed — use Tuple<A, B> instead`, pointing at the `Tuple<A, B>` the source already used. The formatter re-printed the annotation with the paren spelling `(A, B)` that was removed from type position, then refused to parse its own output; `aver audit` failed with it, since it runs the format check. Anything naming a tuple was affected, including the `List<Tuple<K, V>>` that `Map.entries` returns. Formatting is unchanged everywhere else — a type annotation is still canonicalized, and effect lists inside an `Fn` type are still sorted.
+
 - **Deciding whether two maps are the same map is now refused for the key types the proof model cannot order.** The model keeps a map's entries sorted by key, which is what makes two maps holding the same entries the same value — but the sort needs an ordering, and there is none for `Float` or for a non-scalar key. For those the model keeps the entries in the order they were written, so it can tell two maps apart that the runtime considers equal. `a != b` over two float-keyed maps holding the same pairs is `false` when you run it and provable in Lean.
 
   Comparing map iteration order was already refused; this is the other half, and it is not syntactically an order observation, so it was slipping through. It is now refused wherever the equality is actually decided — with `==` or `!=`, in a `when` premise, or through `List.contains`, which is the same structural equality without an operator in sight.

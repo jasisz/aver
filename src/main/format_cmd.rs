@@ -331,51 +331,44 @@ fn find_matching_paren(src: &str, open_idx: usize) -> Option<usize> {
     None
 }
 
+/// Print a type back out as source.
+///
+/// The spelling of every type belongs to [`Type::display`] and only
+/// there. The formatter used to carry its own copy of that match, and
+/// the two drifted: `Type::Tuple` kept printing the paren form
+/// `(A, B)` that was removed from type position, so the formatter
+/// rewrote a header the checker had just accepted into one the parser
+/// refuses and then failed on its own output (#891).
+///
+/// What is genuinely the formatter's own rule — sorting the effect
+/// list inside an `Fn` type — is applied to the type first, so it
+/// stays a normalization step rather than a second printer.
 fn format_type_for_source(ty: &Type) -> String {
+    normalize_type_effects(ty).display()
+}
+
+/// `ty` with the effect list of every `Fn` inside it sorted into the
+/// canonical order the formatter emits everywhere else.
+fn normalize_type_effects(ty: &Type) -> Type {
     match ty {
-        Type::Int => "Int".to_string(),
-        Type::Float => "Float".to_string(),
-        Type::Str => "String".to_string(),
-        Type::Bool => "Bool".to_string(),
-        Type::Unit => "Unit".to_string(),
-        Type::Result(ok, err) => format!(
-            "Result<{}, {}>",
-            format_type_for_source(ok),
-            format_type_for_source(err)
+        Type::Result(ok, err) => Type::Result(
+            Box::new(normalize_type_effects(ok)),
+            Box::new(normalize_type_effects(err)),
         ),
-        Type::Option(inner) => format!("Option<{}>", format_type_for_source(inner)),
-        Type::List(inner) => format!("List<{}>", format_type_for_source(inner)),
-        Type::Vector(inner) => format!("Vector<{}>", format_type_for_source(inner)),
-        Type::Tuple(items) => format!(
-            "({})",
-            items
-                .iter()
-                .map(format_type_for_source)
-                .collect::<Vec<_>>()
-                .join(", ")
+        Type::Option(inner) => Type::Option(Box::new(normalize_type_effects(inner))),
+        Type::List(inner) => Type::List(Box::new(normalize_type_effects(inner))),
+        Type::Vector(inner) => Type::Vector(Box::new(normalize_type_effects(inner))),
+        Type::Tuple(items) => Type::Tuple(items.iter().map(normalize_type_effects).collect()),
+        Type::Map(key, value) => Type::Map(
+            Box::new(normalize_type_effects(key)),
+            Box::new(normalize_type_effects(value)),
         ),
-        Type::Map(key, value) => format!(
-            "Map<{}, {}>",
-            format_type_for_source(key),
-            format_type_for_source(value)
+        Type::Fn(params, ret, effects) => Type::Fn(
+            params.iter().map(normalize_type_effects).collect(),
+            Box::new(normalize_type_effects(ret)),
+            sorted_effects(effects),
         ),
-        Type::Fn(params, ret, effects) => {
-            let params = params
-                .iter()
-                .map(format_type_for_source)
-                .collect::<Vec<_>>()
-                .join(", ");
-            let ret = format_type_for_source(ret);
-            let effects = sorted_effects(effects);
-            if effects.is_empty() {
-                format!("Fn({params}) -> {ret}")
-            } else {
-                format!("Fn({params}) -> {ret} ! [{}]", effects.join(", "))
-            }
-        }
-        Type::Var(name) => name.clone(),
-        Type::Invalid => "Invalid".to_string(),
-        Type::Named { name, .. } => name.clone(),
+        other => other.clone(),
     }
 }
 
@@ -1555,6 +1548,20 @@ decision D
     f(x)
 "#
         );
+    }
+
+    /// The formatter re-prints annotations through `Type::display`, so
+    /// a tuple keeps the only spelling the parser accepts. It used to
+    /// print the removed paren form and then choke on its own output
+    /// (#891).
+    #[test]
+    fn keeps_the_tuple_type_spelling() {
+        let src = r#"fn first(pair: Tuple<String, String>, rest: List<Tuple<String, Int>>) -> Tuple<Int, Int>
+    ? "Tuple types in both positions."
+    (1, 2)
+"#;
+        let got = format_source(src);
+        assert_eq!(got, src);
     }
 
     #[test]
