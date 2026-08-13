@@ -91,7 +91,8 @@ impl Parser {
                         ) =>
                     {
                         return Err(self.error(format!(
-                            "Unknown module header field, found {}. Allowed: intent, kind, depends, exposes, effects",
+                            "Unknown module header field, found {}. Allowed: intent, kind, depends, exposes, effects. \
+                             If you meant a top-level binding, unindent it — bindings live at column 0, outside the header.",
                             self.current().kind
                         )));
                     }
