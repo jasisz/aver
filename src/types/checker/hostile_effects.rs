@@ -721,16 +721,29 @@ mod tests {
         }
     }
 
+    fn render_signature(params: &[String], ret: &str) -> String {
+        format!("({}) -> {}", params.join(", "), ret)
+    }
+
     /// Every stub body must (a) type-check cleanly as an Aver fn, and
     /// (b) have a signature that matches what the runtime expects from
     /// an oracle for that classified effect — same parameter list as
     /// `effect_classification::oracle_signature`, same return type,
     /// same record-field shapes (Terminal.Size: width/height, not
-    /// rows/cols). Without this test, the kind of regression second-AI
-    /// caught (Terminal.Size with wrong fields, Tcp.close inheriting
-    /// Tcp.writeLine's `line` param) sneaks through the parse-only
-    /// sanity check and only surfaces when a real user runs `aver
-    /// verify --hostile` against a fn that uses that effect.
+    /// rows/cols).
+    ///
+    /// Both halves are checked here. The signature half was for a long
+    /// time a promise in this comment and nothing else: the body only
+    /// asserted each stub compiled standalone, which a `Tcp.close` stub
+    /// that inherited `Tcp.writeLine`'s `line` parameter does perfectly
+    /// well. Such a stub is rejected at the moment a user binds it in a
+    /// `given`, so the failure lands on the user running `aver verify
+    /// --hostile`, not on us.
+    ///
+    /// The roster is `classifications_for_proof_subset()`, not a list
+    /// next to the loop. The hand-written list was another copy of the
+    /// registry, and a method missing from it was not checked at all —
+    /// the guard reported success over an effect it never looked at.
     #[test]
     fn stub_bodies_typecheck_with_signature_matching_oracle_classification() {
         use crate::source::parse_source;
@@ -743,20 +756,33 @@ mod tests {
         // The method list is derived, not written down. Hand-listing it meant
         // an effect could gain profiles without ever being checked here, which
         // is the failure this test exists to prevent one level down.
-        for classification in classifications_for_proof_subset() {
-            let method = classification.method;
+        for c in classifications_for_proof_subset() {
+            let method = c.method;
             // Output effects have no oracle channel for a hostile world to
             // answer through; the injector skips them by design.
-            if matches!(classification.dimension, EffectDimension::Output) {
+            if matches!(c.dimension, EffectDimension::Output) {
                 continue;
             }
             let Some(Type::Fn(oracle_params, oracle_ret, _)) = oracle_signature(method) else {
-                panic!("{method} is not Output-dimension but has no oracle signature");
+                panic!(
+                    "{method}: classified as {:?} but has no oracle signature — \
+                     every non-Output effect binds an oracle",
+                    c.dimension
+                );
             };
+            // Compared by rendered type, because the classification table
+            // names nominals before the module graph assigns them ids while a
+            // typechecked signature carries them. Rendering is also the
+            // stricter comparison: `Type::compatible` lets `Type::Invalid`
+            // match anything and relates two id-less nominals by name suffix,
+            // so a stub declaring `Connection` would pass against an oracle
+            // taking `Tcp.Connection`.
             let want_params: Vec<String> = oracle_params.iter().map(|t| t.display()).collect();
             let want_ret = oracle_ret.display();
 
             for p in hostile_profiles_for(method) {
+                // `Bytes` is a stdlib module, so a stub that names it (as a
+                // type or to call `Bytes.fromList`) has to depend on it.
                 let depends = if p.stub_body.contains("Bytes") {
                     "    depends [Bytes]\n"
                 } else {
@@ -784,32 +810,42 @@ mod tests {
                     );
                 }
 
-                // The half the doc comment above has always promised and this
-                // test never performed: a stub that parses and typechecks can
-                // still have the wrong shape for the oracle slot it is injected
-                // into — a missing `(path, n)` prefix on a generative effect, a
-                // record with the wrong field names, a parameter inherited from
-                // a neighbouring method. Compared by rendered type, because the
-                // classification table names nominals before the module graph
-                // assigns them ids while a typechecked signature carries them.
-                let (params, ret, _) = result
-                    .fn_sigs
-                    .get(&p.stub_fn_name)
-                    .unwrap_or_else(|| panic!("{}/{}: stub fn not registered", method, p.name));
-                let got_params: Vec<String> = params.iter().map(|t| t.display()).collect();
-                assert_eq!(
-                    got_params, want_params,
-                    "{}/{}: stub takes different parameters than the oracle slot it is \
-                     injected into",
-                    method, p.name
-                );
-                assert_eq!(
-                    ret.display(),
-                    want_ret,
-                    "{}/{}: stub returns a different type than the oracle slot it is \
-                     injected into",
+                // The half the doc comment above has always promised: a stub
+                // that parses and typechecks can still have the wrong shape for
+                // the oracle slot it is injected into — a missing `(path, n)`
+                // prefix on a generative effect, a record with the wrong field
+                // names, a parameter inherited from a neighbouring method.
+                let (stub_params, stub_ret, _) =
+                    result.fn_sigs.get(&p.stub_fn_name).unwrap_or_else(|| {
+                        panic!(
+                            "{}/{}: the checker recorded no signature for stub fn '{}'",
+                            method, p.name, p.stub_fn_name
+                        )
+                    });
+                let got_params: Vec<String> = stub_params.iter().map(|t| t.display()).collect();
+                let got_ret = stub_ret.display();
+
+                assert!(
+                    got_params == want_params,
+                    "{}/{}: hostile stub takes a different parameter list than an oracle \
+                     for {} — a user binding this stub in a `given` gets a type error\n  \
+                     oracle: {}\n  stub:   {}\n\nbody:\n{}",
                     method,
-                    p.name
+                    p.name,
+                    method,
+                    render_signature(&want_params, &want_ret),
+                    render_signature(&got_params, &got_ret),
+                    p.stub_body
+                );
+                assert!(
+                    got_ret == want_ret,
+                    "{}/{}: hostile stub returns {} where an oracle for {} returns {}\n\nbody:\n{}",
+                    method,
+                    p.name,
+                    got_ret,
+                    method,
+                    want_ret,
+                    p.stub_body
                 );
             }
         }
@@ -822,20 +858,60 @@ mod tests {
     /// second skip unreachable: a method added to the classification
     /// table without profiles fails here, instead of hostile verification
     /// quietly running with that effect unmodelled.
+    ///
+    /// Non-emptiness is not enough on its own. One profile is one world,
+    /// and a sweep across one world varies nothing: the run passes, and
+    /// the pass says only that the law survived the single behaviour we
+    /// happened to write down. Two is the floor, and every effect but one
+    /// meets it.
     #[test]
-    fn every_classified_non_output_effect_ships_hostile_profiles() {
+    fn every_classified_non_output_effect_ships_enough_hostile_profiles() {
         use crate::types::checker::effect_classification::{
             EffectDimension, classifications_for_proof_subset,
         };
-        let missing: Vec<&str> = classifications_for_proof_subset()
-            .iter()
-            .filter(|c| !matches!(c.dimension, EffectDimension::Output))
-            .filter(|c| hostile_profiles_for(c.method).is_empty())
-            .map(|c| c.method)
-            .collect();
+
+        /// Fewest adversarial worlds an effect may ship.
+        const MIN_PROFILES: usize = 2;
+        /// `Tcp.connect` is the one effect that cannot reach the floor.
+        /// Its honest world would have to return `Result.Ok(<connection>)`,
+        /// and a connection handle is opaque: only a verify-trace body may
+        /// fabricate one (`effect_classification::is_verify_fabricable_handle`),
+        /// while a hostile stub is an ordinary top-level fn. So it ships the
+        /// failure world alone, and hostile verification of a fn that
+        /// connects never sees the connection succeed.
+        const SINGLE_PROFILE_EFFECTS: [&str; 1] = ["Tcp.connect"];
+
+        let mut short: Vec<String> = Vec::new();
+        for c in classifications_for_proof_subset() {
+            if matches!(c.dimension, EffectDimension::Output) {
+                continue;
+            }
+            let count = hostile_profiles_for(c.method).len();
+            let floor = if SINGLE_PROFILE_EFFECTS.contains(&c.method) {
+                1
+            } else {
+                MIN_PROFILES
+            };
+            if count < floor {
+                short.push(format!("{} ships {count}, needs {floor}", c.method));
+            }
+        }
         assert!(
-            missing.is_empty(),
-            "classified non-Output effects without hostile profiles — the injector would silently skip these during hostile verification: {missing:?}"
+            short.is_empty(),
+            "classified non-Output effects with too few hostile profiles — hostile \
+             verification would run these under fewer worlds than a sweep needs, or \
+             (at zero) skip the effect entirely: {short:?}"
         );
+
+        // A stale exemption is worse than none: it would hold an effect at
+        // one profile long after the reason expired.
+        for method in SINGLE_PROFILE_EFFECTS {
+            assert!(
+                hostile_profiles_for(method).len() < MIN_PROFILES,
+                "{method} now ships {} hostile profiles — drop it from \
+                 SINGLE_PROFILE_EFFECTS so the floor applies to it again",
+                hostile_profiles_for(method).len()
+            );
+        }
     }
 }
