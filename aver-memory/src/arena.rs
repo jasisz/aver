@@ -13,6 +13,7 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
+            list_elements_copied: 0,
             type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -40,6 +41,7 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
+            list_elements_copied: 0,
             type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
@@ -87,7 +89,7 @@ impl<T: ArenaTypes> Arena<T> {
                 if imported.is_empty() {
                     NanValue::EMPTY_LIST
                 } else {
-                    let rc_items = Rc::new(imported);
+                    let rc_items = Rc::new(ListBody::new(imported));
                     let idx = self.push(ArenaEntry::List(ArenaList::Flat {
                         items: rc_items,
                         start: 0,
@@ -295,6 +297,17 @@ impl<T: ArenaTypes> Arena<T> {
         self.stable_entries.len()
     }
 
+    /// List elements the collector has copied into fresh shared bodies so far.
+    ///
+    /// This is the structural stand-in for a stopwatch: a collector that keeps
+    /// list sharing intact grows this linearly in the elements that actually
+    /// relocate, so a quadratic rebuild is visible as a number rather than as a
+    /// flaky wall-clock reading.
+    #[inline]
+    pub fn list_elements_copied(&self) -> u64 {
+        self.list_elements_copied
+    }
+
     #[inline]
     pub fn usage(&self) -> ArenaUsage {
         ArenaUsage {
@@ -415,7 +428,7 @@ impl<T: ArenaTypes> Arena<T> {
     }
     pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::List(ArenaList::Flat {
-            items: Rc::new(items),
+            items: Rc::new(ListBody::new(items)),
             start: 0,
         }))
     }

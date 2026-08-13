@@ -439,3 +439,34 @@ fn direct_child_vm_keeps_concat_chain_after_wave_valid() {
         crate::value::Value::Str("[.==>..]  ~".to_string())
     );
 }
+
+/// Run the accumulator-recursion shape from issue #886 and report how many list
+/// elements the collector copied out of shared bodies while doing it.
+fn list_copy_body_elements_copied(n: i64) -> u64 {
+    let src = format!(
+        "fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n > 0\n        true -> build(n - 1, List.prepend(n, acc))\n        false -> acc\n\nfn copy(xs: List<Int>, acc: List<Int>) -> List<Int>\n    match xs\n        [] -> acc\n        [head, ..tail] -> copy(tail, List.prepend(head, acc))\n\nfn main() -> Int\n    List.len(copy(build({n}, []), []))\n"
+    );
+    let mut vm = compile_vm(&src);
+    let result = vm.run().expect("list copy program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.list_elements_copied()
+}
+
+#[test]
+fn copying_a_list_does_not_rebuild_shared_bodies_quadratically() {
+    // Destructuring one list while growing another is the shape that made the
+    // collector rebuild the whole remaining input on every step. The cost is
+    // pinned structurally: copies must stay proportional to the input, not to
+    // its square. At these sizes the quadratic version reaches n^2/2 —
+    // 80,000 and 320,000 — so the two curves are never within reach of the
+    // same bound.
+    const BUDGET_PER_ELEMENT: u64 = 4;
+    let small = list_copy_body_elements_copied(400);
+    let large = list_copy_body_elements_copied(800);
+
+    assert!(
+        small <= 400 * BUDGET_PER_ELEMENT && large <= 800 * BUDGET_PER_ELEMENT,
+        "list body copies are not linear in the input: \
+         n=400 copied {small} elements, n=800 copied {large}",
+    );
+}

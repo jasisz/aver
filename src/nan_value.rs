@@ -30,6 +30,7 @@ pub use aver_memory::{
     IMM_UNIT,
     INT_INLINE_MAX,
     INT_INLINE_MIN,
+    ListBody,
     MapLike,
     NanString,
     NanValue,

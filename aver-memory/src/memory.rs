@@ -281,15 +281,10 @@ impl<T: ArenaTypes> Arena<T> {
         F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
     {
         match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| rewrite(self, *value))
-                        .collect(),
-                ),
-                start: 0,
-            },
+            ArenaList::Flat { items, start } => {
+                let (items, start) = self.rewrite_list_body_with(items, start, rewrite);
+                ArenaList::Flat { items, start }
+            }
             ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
                 head: rewrite(self, head),
                 tail: rewrite(self, tail),
@@ -305,17 +300,74 @@ impl<T: ArenaTypes> Arena<T> {
                 rest,
                 start,
                 len,
-            } => ArenaList::Segments {
-                current: rewrite(self, current),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| rewrite(self, *value))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
+            } => {
+                let current = rewrite(self, current);
+                let (rest, start) = self.rewrite_list_body_with(rest, start, rewrite);
+                ArenaList::Segments {
+                    current,
+                    rest,
+                    start,
+                    len,
+                }
+            }
+        }
+    }
+
+    /// Rewrite the shared element storage behind a `Flat` or `Segments` view,
+    /// keeping the existing allocation whenever nothing actually moves.
+    ///
+    /// Two escapes, cheapest first. A body built entirely out of immediates
+    /// cannot hold anything the collector could relocate, so it is returned
+    /// without being read at all. Otherwise the elements are rewritten, and the
+    /// original body is still returned when every rewrite turned out to be the
+    /// identity — which preserves both the `Rc` sharing and the O(1) `start`
+    /// offset that `list_uncons` hands out. Only a body in which something
+    /// really moved is rebuilt, and only from that element onwards.
+    ///
+    /// Without this, walking a list while a frame keeps allocating rebuilt the
+    /// whole remaining input on every step: n^2/2 element copies for one
+    /// traversal (issue #886).
+    fn rewrite_list_body_with<F>(
+        &mut self,
+        body: Rc<ListBody>,
+        start: usize,
+        rewrite: &mut F,
+    ) -> (Rc<ListBody>, usize)
+    where
+        F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
+    {
+        debug_assert!(start <= body.len());
+        if body.all_immediate() {
+            debug_assert!(
+                body.iter().all(|value| value.heap_index().is_none()),
+                "list body marked all-immediate holds a heap-backed element; \
+                 skipping it would leave a stale arena index behind"
+            );
+            return (body, start);
+        }
+
+        let mut rewritten: Option<Vec<NanValue>> = None;
+        for offset in start..body.len() {
+            let value = body[offset];
+            let new_value = rewrite(self, value);
+            match &mut rewritten {
+                Some(out) => out.push(new_value),
+                None if new_value.bits() == value.bits() => {}
+                None => {
+                    let mut out = Vec::with_capacity(body.len() - start);
+                    out.extend_from_slice(&body[start..offset]);
+                    out.push(new_value);
+                    rewritten = Some(out);
+                }
+            }
+        }
+
+        match rewritten {
+            None => (body, start),
+            Some(out) => {
+                self.list_elements_copied += out.len() as u64;
+                (Rc::new(ListBody::new(out)), 0)
+            }
         }
     }
 
@@ -332,7 +384,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         let elements = self.list_to_vec_value(value);
         let flat = ArenaList::Flat {
-            items: Rc::new(elements),
+            items: Rc::new(ListBody::new(elements)),
             start: 0,
         };
         let index = self.push(ArenaEntry::List(flat));
