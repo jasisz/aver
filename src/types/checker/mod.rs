@@ -283,15 +283,6 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     }
 }
 
-/// Enforce module-level `effects [...]` declaration against per-fn effect
-/// usage. The rule:
-///
-/// - Module without `effects [...]` → legacy/mixed, no enforcement (0.13
-///   migration shim; 0.14+ may upgrade to soft warning).
-/// - Module with `effects [...]` (including `effects []` for explicit pure)
-///   → every function's `! [...]` must be covered by the module's declared
-///   surface. A namespace-level entry like `Disk` admits any `Disk.*`
-///   method; a method-level entry like `Time.now` admits only that one.
 /// The message every capability refusal carries. Kept as one constant
 /// so the three entry points cannot drift apart, and so the diagnostic
 /// classifier can key on it.
@@ -349,6 +340,15 @@ pub(crate) fn reject_capability_items(items: &[TopLevel], errors: &mut Vec<TypeE
     }
 }
 
+/// Enforce module-level `effects [...]` declaration against per-fn effect
+/// usage. The rule:
+///
+/// - Module without `effects [...]` → legacy/mixed, no enforcement (0.13
+///   migration shim; 0.14+ may upgrade to soft warning).
+/// - Module with `effects [...]` (including `effects []` for explicit pure)
+///   → every function's `! [...]` must be covered by the module's declared
+///   surface. A namespace-level entry like `Disk` admits any `Disk.*`
+///   method; a method-level entry like `Time.now` admits only that one.
 fn check_module_effect_boundary(items: &[TopLevel], errors: &mut Vec<TypeError>) {
     let Some(allowed) = items.iter().find_map(|i| match i {
         TopLevel::Module(m) => m.effects.as_ref().map(|e| (e, m)),
