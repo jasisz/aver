@@ -305,6 +305,14 @@ pub fn discharge_sites(
                     walk(&ctx, right, &mut out);
                 }
             }
+            // A capability item carries no expressions: an operation
+            // has a signature and no body, and its `hostile` /
+            // `unmodelled` entries are bare symbol names, not calls.
+            // There is no literal to discharge, so this is a genuine
+            // no-op — named explicitly rather than folded into the
+            // arm below, so a later phase that gives operations an
+            // expression has to come back here.
+            TopLevel::Capability(_) => {}
             TopLevel::Module(_) | TopLevel::Decision(_) | TopLevel::TypeDef(_) => {}
         }
     }

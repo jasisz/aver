@@ -205,9 +205,16 @@ pub fn resolve_top_level(ctx: &ResolveCtx<'_>, item: &TopLevel) -> ResolvedTopLe
         // through with their original AST representation. They're
         // not on the runtime hot path; future PRs may promote them
         // once the proof-export passes are ready.
-        TopLevel::Verify(_) | TopLevel::Decision(_) | TopLevel::Stmt(_) | TopLevel::TypeDef(_) => {
-            ResolvedTopLevel::Passthrough(item.clone())
-        }
+        // Capability items join them: nothing registers an operation
+        // yet, so there is no `FnId` to synthesise, and the refusal in
+        // `types::checker` means no program carrying one ever reaches
+        // codegen. This is the one place where ignoring the new variant
+        // is the correct answer rather than a hole.
+        TopLevel::Verify(_)
+        | TopLevel::Decision(_)
+        | TopLevel::Stmt(_)
+        | TopLevel::TypeDef(_)
+        | TopLevel::Capability(_) => ResolvedTopLevel::Passthrough(item.clone()),
     }
 }
 

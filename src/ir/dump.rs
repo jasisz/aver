@@ -70,6 +70,11 @@ fn dump_top_level(item: &TopLevel, out: &mut String, analysis: Option<&AnalysisR
         TopLevel::Decision(_) => {
             writeln!(out, "decision <block>").ok();
         }
+        // A silent arm here would make `--dump-ir` lie about what the
+        // file contains — the operation would simply not appear.
+        TopLevel::Capability(item) => {
+            writeln!(out, "{} {}", item.keyword(), item.name()).ok();
+        }
     }
 }
 

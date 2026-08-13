@@ -151,6 +151,10 @@ impl TypeChecker {
                 .collect();
             sub.integrate_loaded_modules(&visible_to_sub);
             sub.build_signatures(&module.items);
+            // Same refusal the entry file gets. `proof` has no `--deps`
+            // flag, so without this a capability declared in a dependency
+            // would slip through every entry point that loads it.
+            super::reject_capability_items(&module.items, &mut sub.errors);
             sub.check_top_level_stmts(&module.items);
             sub.check_verify_blocks(&module.items);
             for item in &module.items {

@@ -199,6 +199,49 @@ impl Parser {
                     kw
                 )))
             }
+            // Three contextual words, recognised only here in item
+            // position. Without these arms all three fall through to
+            // `parse_expr` below, and because Aver has no juxtaposition
+            // `operation open` and `opaque Token` become two adjacent
+            // expression statements — a SILENT MISPARSE, not a failure.
+            //
+            // The `peek(1)` guards keep every one of them an ordinary
+            // identifier in every other position: a file that binds
+            // `operation = 1` or writes `opaque` as a bare expression
+            // still parses exactly as it did before.
+            TokenKind::Ident(s)
+                if s == "operation" && matches!(&self.peek(1).kind, TokenKind::Ident(_)) =>
+            {
+                Ok(Some(TopLevel::Capability(CapabilityItem::Operation(
+                    self.parse_operation()?,
+                ))))
+            }
+            TokenKind::Ident(s)
+                if s == "opaque" && matches!(&self.peek(1).kind, TokenKind::Ident(_)) =>
+            {
+                Ok(Some(TopLevel::Capability(self.parse_opaque_decl()?)))
+            }
+            // There is exactly one way to declare a capability, and it
+            // is not this one. A `capability Foo` block would duplicate
+            // exposes / exposes opaque / depends / visibility / name
+            // resolution that a module already supplies. Refused
+            // explicitly, because falling through would misparse it in
+            // silence.
+            TokenKind::Ident(s)
+                if s == "capability" && matches!(&self.peek(1).kind, TokenKind::Ident(_)) =>
+            {
+                let name = match &self.peek(1).kind {
+                    TokenKind::Ident(n) => n.clone(),
+                    _ => unreachable!(),
+                };
+                Err(self.error(format!(
+                    "A capability is a kind of module, not a declaration inside one. \
+                     Write `kind = capability` in the module header of '{}' instead of \
+                     `capability {}` — the module already supplies exposes, exposes opaque, \
+                     depends and name resolution.",
+                    name, name
+                )))
+            }
             TokenKind::Ident(_)
                 if matches!(&self.peek(1).kind, TokenKind::Assign | TokenKind::Colon) =>
             {

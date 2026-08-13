@@ -515,6 +515,71 @@ pub struct Module {
     /// `Disk` admits any `Disk.*` method).
     pub effects: Option<Vec<String>>,
     pub effects_line: Option<usize>,
+    /// `kind = capability` in the module header. `None` is an
+    /// ordinary module. The value is stored verbatim and read only
+    /// by the refusal in `types::checker`; nothing downstream
+    /// branches on it yet.
+    pub kind: Option<String>,
+    pub kind_line: Option<usize>,
+}
+
+/// A declaration that only a capability module may carry. Both forms
+/// live under a single [`TopLevel`] variant on purpose: three variants
+/// would triple the match-site audit surface for no gain, and both
+/// forms are refused by the same rule today.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CapabilityItem {
+    /// `opaque ConnectionToken` — a type with no representation
+    /// anywhere. Distinct from `exposes opaque [T]`, which hides a
+    /// representation that exists inside the module.
+    Opaque { name: String, line: usize },
+    /// `operation open(host: String, port: Int) -> Result<T, E>` with
+    /// an indented block of `name = value` attributes.
+    Operation(Operation),
+}
+
+impl CapabilityItem {
+    pub fn name(&self) -> &str {
+        match self {
+            CapabilityItem::Opaque { name, .. } => name,
+            CapabilityItem::Operation(op) => &op.name,
+        }
+    }
+
+    pub fn line(&self) -> usize {
+        match self {
+            CapabilityItem::Opaque { line, .. } => *line,
+            CapabilityItem::Operation(op) => op.line,
+        }
+    }
+
+    /// The word that introduces the declaration, for diagnostics.
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            CapabilityItem::Opaque { .. } => "opaque",
+            CapabilityItem::Operation(_) => "operation",
+        }
+    }
+}
+
+/// A boundary operation: a signature with no body, plus the model
+/// attributes a proof binds to. Attribute values are stored as written
+/// — no admissibility rule is applied at this stage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Operation {
+    pub name: String,
+    pub line: usize,
+    pub params: Vec<(String, String)>,
+    pub return_type: String,
+    pub desc: Option<String>,
+    /// `oracle = <ident>`.
+    pub oracle: Option<String>,
+    /// `replay = <ident>`.
+    pub replay: Option<String>,
+    /// `hostile = [a, b]`.
+    pub hostile: Vec<String>,
+    /// `unmodelled = [a, b]`.
+    pub unmodelled: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -711,4 +776,7 @@ pub enum TopLevel {
     Decision(DecisionBlock),
     Stmt(Stmt),
     TypeDef(TypeDef),
+    /// `operation` / `opaque` — declarations that belong to a module
+    /// whose header says `kind = capability`.
+    Capability(CapabilityItem),
 }

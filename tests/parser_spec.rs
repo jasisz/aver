@@ -187,6 +187,21 @@ fn var_keyword_is_parse_error() {
     assert!(parse_fails("var x = 42"), "'var' should be rejected");
 }
 
+#[test]
+fn capability_block_is_parse_error() {
+    // A capability is a KIND OF MODULE, declared solely by
+    // `kind = capability` in the module header. There is exactly one
+    // way to declare one, and a `capability Foo` block is not it — it
+    // would duplicate exposes, depends, visibility and name resolution
+    // the module already supplies. Before the capability grammar this
+    // fell through to expression parsing and misparsed in silence.
+    // Full coverage lives in `capability_grammar_spec.rs`.
+    assert!(
+        parse_fails("capability Tcp\n"),
+        "'capability Foo' should be rejected"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Function definitions
 // ---------------------------------------------------------------------------

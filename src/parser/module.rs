@@ -19,6 +19,8 @@ impl Parser {
         let mut intent = String::new();
         let mut effects = None;
         let mut effects_line = None;
+        let mut kind = None;
+        let mut kind_line = None;
 
         if self.is_indent() {
             self.advance(); // consume INDENT
@@ -52,6 +54,51 @@ impl Parser {
                             .collect();
                         effects = Some(list);
                     }
+                    // `kind = capability` — the ONLY way to declare a
+                    // capability. Contextual: `kind` stays an ordinary
+                    // identifier everywhere else, and is only read here,
+                    // in module-header field position. Shape copied from
+                    // `intent =` above, the header's other `name = value`
+                    // field.
+                    TokenKind::Ident(s) if s == "kind" => {
+                        kind_line = Some(self.current().line);
+                        self.advance(); // consume 'kind'
+                        self.expect_exact(&TokenKind::Assign)?;
+                        let value_tok = self.expect_kind(
+                            &TokenKind::Ident(String::new()),
+                            "Expected a module kind after 'kind =' (the only kind today is `capability`)",
+                        )?;
+                        kind = match value_tok.kind {
+                            TokenKind::Ident(s) => Some(s),
+                            _ => unreachable!(),
+                        };
+                    }
+                    // An unrecognised line that still has HEADER-FIELD
+                    // SHAPE — an identifier followed by `=` or `[`, the
+                    // two forms every real field takes. Breaking here
+                    // would leave the DEDENT unconsumed and hand the
+                    // line back to `parse_top_level`, where `kimd =
+                    // capability` becomes an ordinary binding; with a
+                    // resolvable right-hand side that produces no
+                    // diagnostic at all, so a mistyped field would
+                    // silently stop being a field. Refuse it, the way
+                    // `parse_decision` refuses an unknown decision
+                    // field.
+                    TokenKind::Ident(_)
+                        if matches!(
+                            &self.peek(1).kind,
+                            TokenKind::Assign | TokenKind::LBracket
+                        ) =>
+                    {
+                        return Err(self.error(format!(
+                            "Unknown module header field, found {}. Allowed: intent, kind, depends, exposes, effects",
+                            self.current().kind
+                        )));
+                    }
+                    // Anything else ends the header and is re-read as a
+                    // top-level item. An indented `fn` / `type` / block
+                    // keyword cannot be confused with a header field, so
+                    // the pre-existing shape keeps working.
                     _ => break,
                 }
                 self.skip_newlines();
@@ -72,6 +119,8 @@ impl Parser {
             intent,
             effects,
             effects_line,
+            kind,
+            kind_line,
         })
     }
 

@@ -263,6 +263,10 @@ fn next_toplevel_line_after(items: &[TopLevel], after_line: usize) -> Option<usi
             TopLevel::FnDef(fd) => fd.line,
             TopLevel::Verify(v) => v.line,
             TopLevel::Decision(d) => d.line,
+            // A capability item starts a block, so it bounds the span
+            // of whatever precedes it. Skipping it would let a `--why`
+            // span run past the operation and swallow the next item.
+            TopLevel::Capability(item) => item.line(),
             TopLevel::TypeDef(_) | TopLevel::Module(_) | TopLevel::Stmt(_) => continue,
         };
         if line > after_line {

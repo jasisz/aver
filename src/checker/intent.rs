@@ -214,6 +214,13 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
             TopLevel::Decision(d) => {
                 out.insert(d.name.clone());
             }
+            // Operations and the opaque token are declared names: a
+            // `? "..."` justification anywhere in the file may point at
+            // them, and omitting them makes the justification
+            // bookkeeping report a real symbol as undeclared.
+            TopLevel::Capability(item) => {
+                out.insert(item.name().to_string());
+            }
             TopLevel::Verify(_) | TopLevel::Stmt(_) => {}
         }
     }

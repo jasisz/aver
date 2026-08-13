@@ -11,8 +11,9 @@
 use std::fmt::Write;
 
 use crate::ast::{
-    BinOp, DecisionBlock, DecisionImpact, Expr, FnDef, Literal, Module, Pattern, Spanned, Stmt,
-    StrPart, TopLevel, TypeDef, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind,
+    BinOp, CapabilityItem, DecisionBlock, DecisionImpact, Expr, FnDef, Literal, Module, Pattern,
+    Spanned, Stmt, StrPart, TopLevel, TypeDef, VerifyBlock, VerifyGiven, VerifyGivenDomain,
+    VerifyKind,
 };
 
 /// Errors the unparser can surface. Caller (Phase 1 mutator) maps
@@ -85,7 +86,46 @@ fn write_top_level(out: &mut String, item: &TopLevel) -> Result<()> {
         TopLevel::Verify(vb) => write_verify(out, vb),
         TopLevel::Decision(db) => write_decision(out, db),
         TopLevel::Stmt(stmt) => write_stmt(out, stmt, 0),
+        TopLevel::Capability(item) => write_capability(out, item),
     }
+}
+
+/// Round-trip for `opaque` / `operation`. An ignore arm here would
+/// silently DELETE a capability declaration from any unparse, which is
+/// the worst failure available in this file — the output would still
+/// be valid Aver, just missing the boundary.
+fn write_capability(out: &mut String, item: &CapabilityItem) -> Result<()> {
+    match item {
+        CapabilityItem::Opaque { name, .. } => {
+            writeln!(out, "opaque {name}")?;
+        }
+        CapabilityItem::Operation(op) => {
+            let params: Vec<String> = op.params.iter().map(|(n, t)| format!("{n}: {t}")).collect();
+            writeln!(
+                out,
+                "operation {}({}) -> {}",
+                op.name,
+                params.join(", "),
+                op.return_type
+            )?;
+            if let Some(desc) = &op.desc {
+                writeln!(out, "{INDENT}? {}", quote_string(desc))?;
+            }
+            if let Some(oracle) = &op.oracle {
+                writeln!(out, "{INDENT}oracle = {oracle}")?;
+            }
+            if let Some(replay) = &op.replay {
+                writeln!(out, "{INDENT}replay = {replay}")?;
+            }
+            if !op.hostile.is_empty() {
+                writeln!(out, "{INDENT}hostile = [{}]", op.hostile.join(", "))?;
+            }
+            if !op.unmodelled.is_empty() {
+                writeln!(out, "{INDENT}unmodelled = [{}]", op.unmodelled.join(", "))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_module(out: &mut String, m: &Module) -> Result<()> {
@@ -101,6 +141,9 @@ fn write_module(out: &mut String, m: &Module) -> Result<()> {
             }
             writeln!(out, "{INDENT}{INDENT}{}", quote_string(trimmed))?;
         }
+    }
+    if let Some(kind) = &m.kind {
+        writeln!(out, "{INDENT}kind = {kind}")?;
     }
     if !m.depends.is_empty() {
         writeln!(out, "{INDENT}depends [{}]", m.depends.join(", "))?;

@@ -342,6 +342,8 @@ mod tests {
             intent: "Test".to_string(),
             effects: None,
             effects_line: None,
+            kind: None,
+            kind_line: None,
         })];
         let modules = vec![mk_module("A", &["walker"]), mk_module("B", &["walker"])];
         let symbol_table = SymbolTable::build(&entry_items, &modules);
