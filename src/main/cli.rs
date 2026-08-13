@@ -618,6 +618,18 @@ pub(super) enum Commands {
         /// per-law. Defaults to 0 (strict).
         #[arg(long, requires = "check_mode")]
         sorry_budget: Option<usize>,
+        /// Check mode (`--check`/`--check-json`) only: tolerate up to N claims
+        /// the exporter DECLINED to state. A declined claim is not a claim
+        /// that failed — it is a claim no verifier ever saw, so no `sorry` and
+        /// no error stands in for it, and without its own budget it would pass
+        /// silently. Kept separate from `--sorry-budget` on purpose: "we tried
+        /// and failed" and "we refused to try" are different facts, and a
+        /// budget set for an open induction must not quietly license a
+        /// refusal. N is a WHOLE-FILE total. Defaults to 0 (strict), so
+        /// acknowledging a refusal is a visible flag in a CI file rather than
+        /// a green run that says nothing.
+        #[arg(long, requires = "check_mode")]
+        declined_budget: Option<usize>,
         /// Emit a structured JSON summary
         /// (`{backend, errors, sorries, budget, passed, ...}`) to stdout
         /// instead of streaming the verifier's raw output. Implies check

@@ -12,6 +12,7 @@ pub(crate) mod cite_instantiate;
 pub mod common;
 #[cfg(feature = "runtime")]
 pub mod dafny;
+pub mod expr_walk;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]
@@ -178,6 +179,41 @@ pub fn collect_verify_laws(items: &[TopLevel]) -> Vec<crate::ast::VerifyBlock> {
 /// category in a code comment: `diagnostic-only`,
 /// `syntax-discovery-only`, `backend-link-stage`, `display-only`,
 /// or `temporary-migration-bridge`.
+/// Whether a declined claim was a `verify … law` block or a plain
+/// `verify` block's sampled cases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeclineKind {
+    /// `verify <fn> law <name>` — identity is `fn.law`.
+    Law,
+    /// `verify <fn>` — identity is `fn`.
+    Cases,
+}
+
+impl DeclineKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeclineKind::Law => "law",
+            DeclineKind::Cases => "cases",
+        }
+    }
+}
+
+/// A claim the proof exporter would not state, and why.
+///
+/// "Would not state" is stronger than "failed to prove": nothing about the
+/// claim reaches the backend, so no verifier can fail on it and no sorry can
+/// stand in for it. That makes it invisible to every existing count, which is
+/// precisely why it gets its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclinedClaim {
+    pub kind: DeclineKind,
+    /// `fn.law` for a law block, `fn` for a plain block — the same identity
+    /// the proof manifest and `--gate` key on.
+    pub claim: String,
+    /// One sentence, user-facing: why the exporter would not state it.
+    pub reason: String,
+}
+
 pub struct CodegenContext {
     /// All top-level items (post-TCO transform, post-typecheck).
     ///
@@ -297,6 +333,26 @@ pub struct CodegenContext {
     /// bodies, verify cases and law statements all set it; positions that are
     /// not actions — a `when` premise, a trace projection — do not.
     pub lean_do_block: std::cell::Cell<bool>,
+    /// Claims the exporter refused to state, keyed by identity so the
+    /// same refusal seen twice counts once.
+    ///
+    /// A refused claim used to leave one trace: a comment in the generated
+    /// file. Nothing was printed, nothing was counted and the exit code did
+    /// not move, so a user could read "0 sorries" and believe a law had been
+    /// certified when it was never stated. Worse, widening a refusal could
+    /// turn a RED `--check` GREEN: the claim that previously failed to build
+    /// simply stops being emitted, and `build_errors` drops to zero. The
+    /// count has to leave codegen for the driver to report and charge it, and
+    /// a structured sink is the only honest channel — the refusal *text* is
+    /// UI and has been reworded before, so anything that greps the generated
+    /// file for it zeroes silently the next time someone edits a sentence.
+    ///
+    /// Written by [`common::law_map_order_refusal`] and
+    /// [`common::verify_case_map_order_refusal`]; read by `cmd_proof`. Keyed
+    /// rather than pushed because each gate is consulted several times per
+    /// claim (once to emit, once more to decide lemma-citability, and again
+    /// on each backend), and a `Vec` would multiply-count.
+    pub declined_claims: std::cell::RefCell<std::collections::BTreeMap<String, DeclinedClaim>>,
     /// Per-dep resolved fn defs, parallel to `modules`.
     ///
     /// **Compatibility projection of `resolved_program.modules[i].fn_defs`**
@@ -694,6 +750,7 @@ pub fn build_context(
         resolved_module_fn_defs,
         current_module_scope: std::cell::RefCell::new(None),
         lean_do_block: std::cell::Cell::new(false),
+        declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         program_shape,
         resolved_program,
         mir_program,

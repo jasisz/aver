@@ -2910,10 +2910,10 @@ pub fn emit_verify_law(
     // Mirror of the Lean gate in `emit_verify_law_block`. `MapEntries` has
     // no body here, so Dafny would neither confirm nor refute an iteration
     // order claim — it would pass by saying nothing.
-    if let Some(reason) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
+    if let Some(refusal) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
         return format!(
-            "// Law {}.{}{}: map iteration order is not exported — {}",
-            fn_name, law_name, suffix, reason,
+            "// Law {}.{}{}: {} is not exported — {}",
+            fn_name, law_name, suffix, refusal.subject, refusal.reason,
         );
     }
 

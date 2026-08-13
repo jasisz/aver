@@ -271,6 +271,7 @@ mod tests {
             resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
+            declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,

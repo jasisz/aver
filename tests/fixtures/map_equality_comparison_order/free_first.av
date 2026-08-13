@@ -1,0 +1,19 @@
+module MapEqualityComparisonOrderFreeFirst
+    intent =
+        "One claim comparing two map-free entries and two float-keyed ones, with the map-free comparison written first."
+        "Its sibling map_first.av is the same file with the two comparisons swapped inside a commutative and — same claim, same runtime answer, so the two must be declined or exported together."
+
+    depends [Holder]
+
+record Entry
+    label: String
+    scores: Map<Float, Int>
+
+fn sameScores(free: Holder.Entry, other: Holder.Entry, k: Float) -> Bool
+    ? "Whether the two float-keyed entries differ, and-ed with a comparison of two map-free ones."
+    a = Entry(label = "x", scores = {2.0 => 5, k => 3})
+    b = Entry(label = "x", scores = {k => 3, 2.0 => 5})
+    Bool.and(free == other, a != b)
+
+verify sameScores
+    sameScores(Holder.entryOf("q", 1), Holder.entryOf("q", 1), 1.0) => true

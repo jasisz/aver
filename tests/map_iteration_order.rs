@@ -20,7 +20,15 @@ const ORDER_FIXTURE: &str = "tests/fixtures/map_iteration_order.av";
 const UNMODELLED_FIXTURE: &str = "tests/fixtures/map_order_unmodelled_keys.av";
 const NAN_KEY_FIXTURE: &str = "tests/fixtures/map_float_nan_keys.av";
 const MODEL_SHAPE_FIXTURE: &str = "tests/fixtures/map_model_shape.av";
+const HIDDEN_OBSERVER_FIXTURE: &str = "tests/fixtures/map_order_hidden_observer.av";
+const EQUALITY_FIXTURE: &str = "tests/fixtures/map_equality_unmodelled_keys.av";
+const ADT_CONTROL_FIXTURE: &str = "tests/fixtures/map_equality_adt_control.av";
+const COLLIDING_TYPE_DIR: &str = "tests/fixtures/map_equality_colliding_type";
 const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
+const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order";
+const FIELD_COLLISION_DIR: &str = "tests/fixtures/map_equality_field_collision";
+const FN_PARAM_FIXTURE: &str = "tests/fixtures/map_order_fn_param.av";
+const SHADOWED_GIVEN_FIXTURE: &str = "tests/fixtures/map_order_shadowed_given.av";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -586,5 +594,698 @@ fn an_observer_in_another_module_is_still_refused() {
              not exported"
         ),
         "the refusal must follow the call into the other module:\n{lean}"
+    );
+}
+
+/// A claim the exporter refuses is COUNTED, NAMED and CHARGED.
+///
+/// The refusal used to leave exactly one trace: a comment inside the generated
+/// Lean. Nothing was printed, no count was reported and the exit code did not
+/// move — so `aver proof --check` on this fixture said "0 sorries, universal:
+/// yes", exit 0, while four claims had been dropped on the floor. Two things
+/// follow from that, and this test pins both.
+///
+/// A user reads a green check and believes four laws were certified. And —
+/// the reason this is load-bearing rather than cosmetic — WIDENING the gate
+/// could turn a red check green: a claim that previously failed to build stops
+/// being emitted at all, so `build_errors` falls to zero and the regression
+/// signal disappears exactly when it is needed. Charging the refusal is what
+/// makes the exit code monotone under a widening, and printing alone does not
+/// do it: CI reads the exit code, not stdout.
+#[test]
+fn a_declined_claim_is_counted_and_charged() {
+    // The count and the charge are reported by the `--check` harness, which
+    // has nothing to report until a verifier has actually run — so this needs
+    // a real `lake`. The refusal itself is covered without one by the tests
+    // above, and by `a_declined_claim_is_named_on_stdout_without_check`.
+    if !lake_available() {
+        eprintln!("skipping declined-claim accounting: `lake` not available");
+        return;
+    }
+    let out_dir = temp_output_dir("aver-map-order-declined");
+    let run = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+        "--check-json",
+    ]);
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let json: serde_json::Value = stdout
+        .lines()
+        .find_map(|l| serde_json::from_str(l).ok())
+        .unwrap_or_else(|| panic!("expected a JSON summary line:\n{}", format_output(&run)));
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    assert_eq!(
+        json["declined"].as_u64(),
+        Some(4),
+        "the four refused claims in the fixture must be counted:\n{stdout}"
+    );
+    assert_eq!(
+        json["passed"].as_bool(),
+        Some(false),
+        "a refused claim is not a proved claim — the check must not pass:\n{stdout}"
+    );
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "the charge has to reach the EXIT CODE; CI reads that, not stdout:\n{}",
+        format_output(&run)
+    );
+    let claims = json["declined_claims"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected declined_claims to be an array:\n{stdout}"));
+    assert!(
+        claims.iter().any(|c| {
+            c["claim"] == "floatKeyedValues.valuesFollowIterationOrder" && c["kind"] == "law"
+        }),
+        "each declined claim must be named by its `fn.law` identity:\n{stdout}"
+    );
+    assert!(
+        claims
+            .iter()
+            .any(|c| c["claim"] == "plainFloatKeys" && c["kind"] == "cases"),
+        "a declined plain `verify` block is named by its fn:\n{stdout}"
+    );
+    assert!(
+        claims
+            .iter()
+            .all(|c| c["reason"].as_str().is_some_and(|r| !r.is_empty())),
+        "every declined claim carries the reason it was declined:\n{stdout}"
+    );
+}
+
+/// The same refusal is reported on stdout WITHOUT `--check`, and the reason
+/// travels with it.
+///
+/// `aver proof` is an export command: it writes the artifact and exits 0. But
+/// the CHANGELOG advertises that a claim the gate refuses is refused "with a
+/// message saying why", and until now that message existed only inside a
+/// generated file the user does not open. Exporting silently and calling that
+/// a message is the advertised claim being false.
+#[test]
+fn a_declined_claim_is_named_on_stdout_without_check() {
+    let out_dir = temp_output_dir("aver-map-order-declined-plain");
+    let run = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        run.status.success(),
+        "plain `aver proof` exports the artifact and exits 0:\n{}",
+        format_output(&run)
+    );
+    assert!(
+        stdout.contains("4 claim(s) declined"),
+        "the count belongs on stdout, next to what was compiled:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("law floatKeyedValues.valuesFollowIterationOrder"),
+        "each declined claim is named:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("IEEE 754 total order"),
+        "the reason travels with the name — that is the advertised guarantee:\n{stdout}"
+    );
+}
+
+/// `--declined-budget` is the acknowledgement, and it is per-pot.
+///
+/// A refusal you have decided to live with is one flag in a CI file,
+/// reviewable in a diff — the same shape the Dafny omitted-universal path and
+/// `--write-baseline` already have. What it must NOT be is `--sorry-budget`:
+/// "we tried and failed" and "we refused to try" are different facts, and a
+/// budget granted for an open induction must not quietly license a refusal.
+#[test]
+fn declined_budget_is_a_separate_pot_from_sorry_budget() {
+    if !lake_available() {
+        eprintln!("skipping declined-budget accounting: `lake` not available");
+        return;
+    }
+    let out_dir = temp_output_dir("aver-map-order-declined-budget");
+    let dir = out_dir.to_str().expect("utf-8 temp path").to_string();
+
+    // A generous sorry budget does NOT pay for a refusal.
+    let sorry_only = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        &dir,
+        "--check-json",
+        "--sorry-budget",
+        "10",
+    ]);
+    let sorry_stdout = String::from_utf8_lossy(&sorry_only.stdout).to_string();
+    assert_eq!(
+        sorry_only.status.code(),
+        Some(1),
+        "--sorry-budget must not license a refusal:\n{}",
+        format_output(&sorry_only)
+    );
+    assert!(
+        sorry_stdout.contains("\"passed\":false"),
+        "--sorry-budget must not license a refusal:\n{sorry_stdout}"
+    );
+
+    // The matching declined budget does.
+    let acked = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        &dir,
+        "--check-json",
+        "--declined-budget",
+        "4",
+    ]);
+    let acked_stdout = String::from_utf8_lossy(&acked.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        acked_stdout.contains("\"passed\":true"),
+        "an acknowledged refusal passes:\n{acked_stdout}"
+    );
+    assert_eq!(
+        acked.status.code(),
+        Some(0),
+        "an acknowledged refusal exits 0:\n{}",
+        format_output(&acked)
+    );
+    assert!(
+        acked_stdout.contains("\"declined\":4"),
+        "acknowledging a refusal does not hide it — the count is still reported:\n{acked_stdout}"
+    );
+}
+
+/// The cone walk follows a TAIL CALL.
+///
+/// This is the leg nobody knew about, and it is the one that proves the walk
+/// has to be exhaustive rather than extended. The TCO transform runs BEFORE
+/// typechecking, so by the time any backend looks at a mutual-recursion group
+/// every in-group tail call is an `Expr::TailCall` — a variant the cone walk's
+/// `_ => {}` arm dropped on the floor. A law over `bounce`, whose entire body
+/// is `readValues(m, n)` in tail position, saw a cone containing nothing but
+/// itself, found no observer, and exported as a kernel-certified theorem that
+/// `aver verify` refutes 0/1.
+///
+/// The control that isolates it: move the same call out of tail position
+/// (`List.concat(readValues(m, n), [])`) and the identical cone WAS refused.
+/// Same functions, same law, same observer — only the AST variant differed.
+#[test]
+fn an_observer_behind_a_tail_call_is_still_refused() {
+    let lean = emit_lean(
+        HIDDEN_OBSERVER_FIXTURE,
+        "aver-map-order-tailcall",
+        "MapOrderHiddenObserver",
+    );
+    assert!(
+        !lean.contains("theorem bounce_law_bounceReadsIterationOrder"),
+        "a law reaching its observer through a tail call must NOT be exported \
+         as a theorem:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- verify law bounce.bounceReadsIterationOrder: map iteration order is not exported"
+        ),
+        "the refusal must follow the tail call into the mutual peer:\n{lean}"
+    );
+}
+
+/// The cone walk descends into a STRING INTERPOLATION.
+///
+/// Proof export deliberately runs without interpolation lowering — it wants
+/// source-level IR — so `"{firstValue(m)}"` still holds a real call when the
+/// gate looks at it. The same `_ => {}` arm skipped `Expr::InterpolatedStr`,
+/// so the call inside the braces was invisible: `aver verify` gave 0/1 while
+/// `aver proof --check` gave exit 0, 0 sorries, and a certified theorem.
+#[test]
+fn an_observer_inside_string_interpolation_is_still_refused() {
+    let lean = emit_lean(
+        HIDDEN_OBSERVER_FIXTURE,
+        "aver-map-order-interp",
+        "MapOrderHiddenObserver",
+    );
+    assert!(
+        !lean.contains("theorem describe_law_describeReadsIterationOrder"),
+        "a law reaching its observer through an interpolated string must NOT \
+         be exported as a theorem:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- verify law describe.describeReadsIterationOrder: map iteration order is not \
+             exported"
+        ),
+        "the refusal must descend into the interpolated segment:\n{lean}"
+    );
+}
+
+/// `aver verify` refutes both of the laws the exporter now refuses.
+///
+/// Without this the two tests above could be satisfied by a gate that refuses
+/// everything. The fixture's claims are FALSE at runtime — that is what makes
+/// exporting them a soundness hole rather than a lost opportunity.
+#[test]
+fn the_hidden_observer_laws_are_refuted_by_the_vm() {
+    let run = run_aver(&["verify", HIDDEN_OBSERVER_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("0/2 cases passed"),
+        "both hidden-observer laws must FAIL on the VM — otherwise refusing \
+         them proves nothing:\n{}",
+        format_output(&run)
+    );
+}
+
+/// Map equality decided through `List.contains` is refused.
+///
+/// This test comes FIRST of the equality set on purpose. Detecting only
+/// `BinOp::Eq` / `BinOp::Neq` is precisely what the rejected first attempt at
+/// this did, and passing only the `==` test is how it reached review looking
+/// finished. `List.contains(xs, v)` lowers to structural `BEq` over the list's
+/// element type and decides EXACTLY the same equality without ever being a
+/// `BinOp`, so an operator-shaped detector walks straight past it: `aver
+/// verify` gave 0/2 and `aver proof --check` exit 0 with two certified
+/// examples.
+#[test]
+fn map_equality_decided_by_list_contains_is_refused() {
+    let lean = emit_lean(
+        EQUALITY_FIXTURE,
+        "aver-map-equality-contains",
+        "MapEqualityUnmodelledKeys",
+    );
+    assert!(
+        !lean.contains("example : seenBefore"),
+        "membership decides the same equality an operator does — it must be \
+         refused too:\n{lean}"
+    );
+    assert!(
+        lean.contains("-- verify seenBefore: map equality is not exported"),
+        "the refusal must name map equality, and name the Float key:\n{lean}"
+    );
+    assert!(
+        lean.contains("no ordering for Float keys"),
+        "the refusal must say which key type it could not order:\n{lean}"
+    );
+}
+
+/// A map that appears in NO signature is still found.
+///
+/// The rejected attempt collected key types only from `fd.params`,
+/// `fd.return_type` and `law.givens`, and returned early when that set was
+/// empty. A map built entirely inside a local binding contributed nothing, so
+/// this file — params `Float`, return `Bool`, both maps local — exported two
+/// kernel-certified examples that `aver verify` refutes 0/2. Its fixture only
+/// passed because every map there went through a helper annotated
+/// `-> Map<Float, Int>`.
+///
+/// The key type is read off the compared operand's own inferred type instead,
+/// which does not care where the map was built.
+#[test]
+fn a_map_built_only_in_a_local_binding_is_still_refused() {
+    let lean = emit_lean(
+        EQUALITY_FIXTURE,
+        "aver-map-equality-local",
+        "MapEqualityUnmodelledKeys",
+    );
+    assert!(
+        !lean.contains("example : writtenOrderMatters"),
+        "a map never named in a signature is still a map:\n{lean}"
+    );
+    assert!(
+        lean.contains("-- verify writtenOrderMatters: map equality is not exported"),
+        "the refusal must fire on a map built in a local binding:\n{lean}"
+    );
+}
+
+/// A comparison written in the LAW STATEMENT itself is refused.
+///
+/// A law's `lhs`/`rhs` template is never type-checked — its given-bound names
+/// have no binding environment at that point — so an operand there carries no
+/// inferred type at all. The expanded per-sample cases DO carry one, which is
+/// why the gate reads them: without that, an operand-bound key type would have
+/// been unavailable for exactly the shape a law is most naturally written in,
+/// and the only fallback left would have been the cone-wide bag this design
+/// exists to avoid.
+#[test]
+fn a_map_comparison_in_the_law_statement_is_refused() {
+    let lean = emit_lean(
+        EQUALITY_FIXTURE,
+        "aver-map-equality-law",
+        "MapEqualityUnmodelledKeys",
+    );
+    assert!(
+        !lean.contains("theorem rewrite_law_rewriteChangesIdentity"),
+        "a comparison in the law statement must be refused like any other:\n{lean}"
+    );
+    assert!(
+        lean.contains("-- verify law rewrite.rewriteChangesIdentity: map equality is not exported"),
+        "the refusal must reach a comparison written in the law itself:\n{lean}"
+    );
+}
+
+/// `aver verify` refutes every claim in the equality fixture.
+///
+/// Same role as the hidden-observer control: without it, a gate that refuses
+/// everything would satisfy the three tests above. These claims are FALSE at
+/// runtime, which is what makes exporting them a hole.
+#[test]
+fn the_map_equality_laws_are_refuted_by_the_vm() {
+    let run = run_aver(&["verify", EQUALITY_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("0/5 cases passed"),
+        "every claim in the equality fixture must FAIL on the VM:\n{}",
+        format_output(&run)
+    );
+}
+
+/// A comparison over an ordinary record is NOT refused, even when the same
+/// call cone touches a float-keyed map.
+///
+/// This is the regression test for the finding that killed the first attempt.
+/// That version treated `Type::Named { .. }` as map-like and blamed a key type
+/// drawn from a bag gathered across the WHOLE cone, with nothing binding the
+/// operands actually compared to the key type named in the refusal — so an
+/// ordinary record comparison was declined with a message about a `Float` key,
+/// and the blast radius grew with the size of the cone.
+///
+/// Over-refusing is not the safe direction here. A silently dropped provable
+/// law and an exported unprovable one fail the same way: `--check` is green and
+/// the user believes something that is not true.
+///
+/// This test PASSES on unmodified code and must keep passing.
+#[test]
+fn a_comparison_over_a_user_adt_is_not_refused() {
+    let lean = emit_lean(
+        ADT_CONTROL_FIXTURE,
+        "aver-map-equality-adt",
+        "MapEqualityAdtControl",
+    );
+    assert!(
+        lean.contains("theorem samePoint_law_reflexive"),
+        "comparing two records is not comparing two maps — the law must still \
+         be exported:\n{lean}"
+    );
+    assert!(
+        !lean.contains("is not exported"),
+        "nothing in this file may be refused; the float-keyed map is only \
+         MEASURED, and the record comparison has no map in it:\n{lean}"
+    );
+
+    // And the law is true, so refusing it would be a real loss rather than a
+    // dodged bullet.
+    let run = run_aver(&["verify", ADT_CONTROL_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("0 failed"),
+        "the control law must hold on the VM:\n{}",
+        format_output(&run)
+    );
+}
+
+/// Two modules declaring the same bare type name are told apart.
+///
+/// The key type of a compared operand is read from that operand's own resolved
+/// type, and a named type is followed into its DECLARATION to see whether it
+/// holds a map. Which declaration is not a question a bare name can answer: the
+/// entry module's `Entry` carries a `Map<Float, Int>` and `Holder.Entry`
+/// carries none, and the name-keyed lookup strips the module prefix before
+/// matching, so it returns the entry module's for both.
+///
+/// It gets exactly one of the two wrong, and here that is the over-refusal
+/// direction: `sameHeldEntry`, a comparison of two map-free records, is
+/// declined with a message about a `Float` key it never touches. Both laws hold
+/// on the VM, so refusing either is a real loss. The stamp's resolved type
+/// identity is what separates them.
+#[test]
+fn two_modules_sharing_a_type_name_are_told_apart() {
+    let out_dir = temp_output_dir("aver-map-equality-collide");
+    let run = run_aver(&[
+        "proof",
+        &format!("{COLLIDING_TYPE_DIR}/main.av"),
+        "--module-root",
+        COLLIDING_TYPE_DIR,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    assert!(
+        run.status.success(),
+        "`aver proof` over the colliding-type fixture failed:\n{}",
+        format_output(&run)
+    );
+    let lean = std::fs::read_to_string(out_dir.join("MapEqualityCollidingType.lean"))
+        .expect("expected the generated Lean module to exist");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    assert!(
+        lean.contains("theorem sameHeldEntry_law_reflexive"),
+        "`Holder.Entry` holds no map — comparing two of them must still \
+         export:\n{lean}"
+    );
+    // The refusal MARKER, not the block header: `-- verify law <fn>.<law>` is
+    // written above every emitted law block, refused or not.
+    assert!(
+        !lean.contains("-- verify law sameHeldEntry.reflexive: map equality is not exported"),
+        "a map-free record must not be declined because a DIFFERENT type with \
+         the same bare name holds a map:\n{lean}"
+    );
+    assert!(
+        lean.contains("-- verify law sameScoredEntry.alsoReflexive: map equality is not exported"),
+        "the entry module's `Entry` does carry a float-keyed map — comparing \
+         two of them must be declined:\n{lean}"
+    );
+
+    // Both laws are true, so either verdict going the wrong way is a loss.
+    let verify = run_aver(&[
+        "verify",
+        &format!("{COLLIDING_TYPE_DIR}/main.av"),
+        "--module-root",
+        COLLIDING_TYPE_DIR,
+    ]);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("0 failed"),
+        "both laws must hold on the VM:\n{}",
+        format_output(&verify)
+    );
+}
+
+/// Generate a Lean project for a fixture that lives in a module directory and
+/// return the emitted module text.
+fn emit_lean_in_dir(dir: &str, file: &str, prefix: &str, module: &str) -> String {
+    let out_dir = temp_output_dir(prefix);
+    let run = run_aver(&[
+        "proof",
+        &format!("{dir}/{file}"),
+        "--module-root",
+        dir,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    assert!(
+        run.status.success(),
+        "`aver proof {dir}/{file}` failed:\n{}",
+        format_output(&run)
+    );
+    let text = std::fs::read_to_string(out_dir.join(format!("{module}.lean")))
+        .expect("expected the generated Lean module to exist");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    text
+}
+
+/// The claim's verdict does not depend on WHICH same-named type the walk
+/// reached first.
+///
+/// `free_first.av` and `map_first.av` are one file written twice, differing
+/// only in the order of the two comparisons inside a commutative
+/// `Bool.and` — same claim, same runtime answer, and `aver verify` refutes
+/// both. The gate followed each compared operand into its own declaration and
+/// then remembered "I have already looked at this type" under the DECLARED
+/// name, so whichever `Entry` the walk met first claimed the name and the
+/// other module's `Entry` was skipped as already-seen. Reaching the map-free
+/// `Holder.Entry` first therefore hid the `Map<Float, Int>` in the entry
+/// module's `Entry`, the comparison contributed no key type, and the claim
+/// exported as `example : sameScores … = true := by native_decide` against a
+/// runtime that answers `false`.
+///
+/// A test over one ordering would pass on that code. This one pins both.
+#[test]
+fn a_map_comparison_is_declined_whichever_order_it_is_written_in() {
+    let marker = "-- verify sameScores: map equality is not exported";
+    let free_first = emit_lean_in_dir(
+        COMPARISON_ORDER_DIR,
+        "free_first.av",
+        "aver-map-equality-free-first",
+        "MapEqualityComparisonOrderFreeFirst",
+    );
+    let map_first = emit_lean_in_dir(
+        COMPARISON_ORDER_DIR,
+        "map_first.av",
+        "aver-map-equality-map-first",
+        "MapEqualityComparisonOrderMapFirst",
+    );
+    assert!(
+        map_first.contains(marker),
+        "the claim decides equality over a float-keyed map, so it must be \
+         declined:\n{map_first}"
+    );
+    assert!(
+        free_first.contains(marker),
+        "the same claim with the two comparisons swapped is the same claim — \
+         reaching a map-free type of the same bare name first must not hide \
+         the float-keyed one:\n{free_first}"
+    );
+
+    // And it is worth declining: the VM refutes both, so an export is a
+    // certified theorem about an answer the runtime never gives.
+    for file in ["free_first.av", "map_first.av"] {
+        let verify = run_aver(&[
+            "verify",
+            &format!("{COMPARISON_ORDER_DIR}/{file}"),
+            "--module-root",
+            COMPARISON_ORDER_DIR,
+        ]);
+        let stdout = String::from_utf8_lossy(&verify.stdout);
+        assert!(
+            stdout.contains("0/1 cases passed"),
+            "{file} is meant to be refuted on the VM:\n{}",
+            format_output(&verify)
+        );
+    }
+}
+
+/// The claim's verdict does not depend on an unrelated declaration it never
+/// names.
+///
+/// `plain.av` and `shadowed.av` are one file written twice; `shadowed.av`
+/// adds a record called `Scored` that carries no map and that the claim never
+/// mentions. The claim compares two `Box`es, and `Box.held` is annotated
+/// `Holder.Scored` — a piece of TEXT, which the walk resolved by taking the
+/// last dotted segment and returning the first declaration of that bare name
+/// it could find, entry module first. So the unrelated `Scored` answered for
+/// `Holder.Scored`, the `Map<Float, Int>` inside the real one was never
+/// reached, and adding a record to an unrelated part of the file flipped the
+/// claim from declined to exported.
+#[test]
+fn a_field_annotation_resolves_to_the_type_it_names() {
+    let marker = "-- verify sameBox: map equality is not exported";
+    let plain = emit_lean_in_dir(
+        FIELD_COLLISION_DIR,
+        "plain.av",
+        "aver-map-equality-field-plain",
+        "MapEqualityFieldPlain",
+    );
+    let shadowed = emit_lean_in_dir(
+        FIELD_COLLISION_DIR,
+        "shadowed.av",
+        "aver-map-equality-field-shadowed",
+        "MapEqualityFieldShadowed",
+    );
+    assert!(
+        plain.contains(marker),
+        "the box holds a float-keyed map, so comparing two of them must be \
+         declined:\n{plain}"
+    );
+    assert!(
+        shadowed.contains(marker),
+        "declaring an unrelated type that happens to share a bare name with \
+         the field's type must not change the verdict:\n{shadowed}"
+    );
+
+    for file in ["plain.av", "shadowed.av"] {
+        let verify = run_aver(&[
+            "verify",
+            &format!("{FIELD_COLLISION_DIR}/{file}"),
+            "--module-root",
+            FIELD_COLLISION_DIR,
+        ]);
+        let stdout = String::from_utf8_lossy(&verify.stdout);
+        assert!(
+            stdout.contains("0/1 cases passed"),
+            "{file} is meant to be refuted on the VM:\n{}",
+            format_output(&verify)
+        );
+    }
+}
+
+/// A function handed to a higher-order parameter is part of the cone.
+///
+/// `viaHof(f, m)` applies whatever it is given, and the claim passes
+/// `floatKeys` — whose body is `Map.keys(m)` — by name. The cone was built
+/// from CALLS, and a name in argument position is a leaf: nothing called
+/// `floatKeys` syntactically, so the walk never entered it, saw no observer,
+/// and exported both the case and the law as certified claims about a
+/// key sequence the runtime never produces. `aver verify` refutes both.
+#[test]
+fn an_observer_passed_in_by_name_is_still_refused() {
+    let lean = emit_lean(
+        FN_PARAM_FIXTURE,
+        "aver-map-order-fn-param",
+        "MapOrderFnParam",
+    );
+    assert!(
+        lean.contains("-- verify viaHof: map iteration order is not exported"),
+        "the case reads the map's keys through the reader it was handed, so \
+         it must be declined:\n{lean}"
+    );
+    assert!(
+        lean.contains("-- verify law viaHof.keysAsWritten: map iteration order is not exported"),
+        "the law reads the map's keys through the reader it was handed, so it \
+         must be declined:\n{lean}"
+    );
+    assert!(
+        !lean.contains("native_decide"),
+        "nothing in this file may be stated as a theorem:\n{lean}"
+    );
+
+    let verify = run_aver(&["verify", FN_PARAM_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("0/2 cases passed"),
+        "the fixture is meant to be refuted on the VM:\n{}",
+        format_output(&verify)
+    );
+}
+
+/// A variable that shares a name with a map reader is not a map reader.
+///
+/// The control on the fix above, and it went red while that fix was being
+/// written. Following every argument that resolves to a function pulls an
+/// unrelated `fn keys(m: Map<Float, Int>)` into the cone of a law whose given
+/// is called `keys`, and the law — true, `2/2` on the VM, with no map anywhere
+/// near it — was declined for reading an iteration order it never reads.
+///
+/// Over-refusing is not the safe direction: a provable law dropped in silence
+/// and an unprovable one exported both end with a green `--check` and a user
+/// believing something untrue. Which arguments are functions is the
+/// typechecker's answer, and the variable's stamp says `List<Float>`.
+#[test]
+fn a_given_named_after_a_map_reader_is_not_refused() {
+    let lean = emit_lean(
+        SHADOWED_GIVEN_FIXTURE,
+        "aver-map-order-shadowed-given",
+        "MapOrderShadowedGiven",
+    );
+    assert!(
+        lean.contains("theorem howMany_law_countsThem"),
+        "counting a list is not reading a map — the law must still be \
+         exported:\n{lean}"
+    );
+    assert!(
+        !lean.contains("is not exported"),
+        "nothing in this file may be refused; the only map reader in it is \
+         never called:\n{lean}"
+    );
+
+    // And the law holds, so refusing it would be a real loss.
+    let verify = run_aver(&["verify", SHADOWED_GIVEN_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("0 failed"),
+        "the control law must hold on the VM:\n{}",
+        format_output(&verify)
     );
 }
