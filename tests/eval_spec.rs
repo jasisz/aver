@@ -3401,12 +3401,19 @@ fn check() -> Bool
     /// A recorded `Http.get` returning `Ok(HttpResponse(status = 418, body =
     /// "teapot", headers = {}))`, ready to hand to `start_replay`.
     fn recorded_teapot_response() -> EffectRecord {
+        // One header, not none: an empty map is indistinguishable from
+        // several wrong answers when a test reads `.headers` back.
+        let mut headers = std::collections::HashMap::new();
+        headers.insert(
+            Value::Str("content-type".to_string()),
+            Value::Str("text/plain".to_string()),
+        );
         let outcome = value_to_json(&Value::Ok(Box::new(Value::Record {
             type_name: "HttpResponse".to_string(),
             fields: vec![
                 ("status".to_string(), Value::int(418)),
                 ("body".to_string(), Value::Str("teapot".to_string())),
-                ("headers".to_string(), Value::Map(Default::default())),
+                ("headers".to_string(), Value::Map(headers)),
             ]
             .into(),
         })))
@@ -3455,20 +3462,20 @@ fn reachedServer() -> Bool
             .expect("the recorded Http.get should have been consumed");
     }
 
-    /// KNOWN FAILURE, pre-existing and not specific to Http: a replayed record
-    /// comes back with its fields in alphabetical order rather than declared
-    /// order, because `value_to_json` writes them into a sorted object and
-    /// `NanValue::from_value` then rebuilds the record by position, ignoring
-    /// the names it was handed. `HttpResponse` is declared `status, body,
-    /// headers`, so replay hands `body` to every reader of `.status`.
+    /// A replayed record's values sit in the slots its type declares.
     ///
-    /// The same permutation hits `Tcp.Connection` (`id, host, port`) and
-    /// `Terminal.Size` (`width, height`), where the swapped fields share a
-    /// type and the wrong value is returned with no error at all.
+    /// A recording writes a record's fields into a JSON object keyed by name,
+    /// so they come back name-sorted, and rebuilding filled the type's slots
+    /// by position. `HttpResponse` is declared `status, body, headers` and
+    /// sorts `body, headers, status`, so replay handed the body to every
+    /// reader of `.status`.
     ///
-    /// Un-ignore this once records are rebuilt by field name.
+    /// All three fields are read here on purpose. Sorted order is a ROTATION
+    /// of the declared order, not a reversal, so a fix that merely undid the
+    /// sort in the other direction would land `status` correctly and still
+    /// swap `body` with `headers`. Only a rebuild keyed on the names gets all
+    /// three.
     #[test]
-    #[ignore = "replayed records come back with fields in alphabetical order; see the doc comment"]
     fn replay_mode_preserves_record_field_identity() {
         let src = r#"
 fn status() -> Int
@@ -3477,17 +3484,165 @@ fn status() -> Int
     match result
         Result.Ok(resp) -> resp.status
         Result.Err(msg) -> 0
+
+fn body() -> String
+    ! [Http.get]
+    result = Http.get("https://example.com/thing")
+    match result
+        Result.Ok(resp) -> resp.body
+        Result.Err(msg) -> "unreached"
+
+fn headerCount() -> Int
+    ! [Http.get]
+    result = Http.get("https://example.com/thing")
+    match result
+        Result.Ok(resp) -> Map.len(resp.headers)
+        Result.Err(msg) -> -1
+"#;
+        for (fn_name, expected) in [
+            ("status", Value::int(418)),
+            ("body", Value::Str("teapot".to_string())),
+            ("headerCount", Value::int(1)),
+        ] {
+            let mut machine = vm_build_with_effects(src);
+            machine.start_replay(vec![recorded_teapot_response()], true);
+            let out = machine
+                .run_named_function(fn_name, &[])
+                .expect("replaying Http.get must not reach the network path")
+                .to_value(&machine.arena);
+            assert_eq!(
+                out, expected,
+                "`.{fn_name}` must read the field the recording named, not whichever \
+                 one sorted into its slot"
+            );
+        }
+    }
+
+    /// Reading a replayed record's field returns the declared TYPE, not just
+    /// the wrong value.
+    ///
+    /// This is the sharper half of the same defect. With the values rotated,
+    /// `.status` — which the typechecker proved is an `Int` — held the body
+    /// string, so arithmetic on it failed outright (`cannot add String and
+    /// Namespace` here; an `Arena: expected an integer at 2 but found
+    /// String("teapot")` abort in the shapes that reach the arena first) while
+    /// replay itself still reported `1 replayed (1 matched)`. A record whose
+    /// fields all share a type (`Terminal.Size`, `Tcp.Connection`) has no such
+    /// alarm at all, which is why this one is worth pinning separately.
+    #[test]
+    fn replay_mode_keeps_a_record_field_at_its_declared_type() {
+        let src = r#"
+fn statusPlusOne() -> Int
+    ! [Http.get]
+    result = Http.get("https://example.com/thing")
+    match result
+        Result.Ok(resp) -> resp.status + 1
+        Result.Err(msg) -> 0
 "#;
         let mut machine = vm_build_with_effects(src);
         machine.start_replay(vec![recorded_teapot_response()], true);
         let out = machine
-            .run_named_function("status", &[])
-            .expect("replaying Http.get must not reach the network path")
+            .run_named_function("statusPlusOne", &[])
+            .expect("arithmetic on a replayed Int field must not fail on its type")
             .to_value(&machine.arena);
         assert_eq!(
             out,
-            Value::int(418),
-            "`.status` must read the recorded status, not whichever field sorted first"
+            Value::int(419),
+            "`.status` must still be the Int the typechecker proved it is"
+        );
+    }
+
+    /// The silent case: a record whose fields all share a type.
+    ///
+    /// `Terminal.Size` is declared `width, height` and sorts `height, width`,
+    /// so replay swapped them and nothing anywhere complained — a program
+    /// asking for the width of an 80x24 terminal got 24, with the run
+    /// reporting success. Nothing about the two `Int`s can catch this except
+    /// carrying the names through, which is why it is pinned next to the
+    /// `HttpResponse` probes rather than trusted to them.
+    #[test]
+    fn replay_mode_preserves_same_typed_record_fields() {
+        let src = r#"
+fn width() -> Int
+    ! [Terminal.size]
+    size = Terminal.size()
+    size.width
+"#;
+        let outcome = value_to_json(&Value::Record {
+            type_name: "Terminal.Size".to_string(),
+            fields: vec![
+                ("width".to_string(), Value::int(80)),
+                ("height".to_string(), Value::int(24)),
+            ]
+            .into(),
+        })
+        .expect("a Terminal.Size must be representable as a recorded outcome");
+        let record = EffectRecord {
+            seq: 1,
+            effect_type: "Terminal.size".to_string(),
+            args: vec![],
+            outcome: RecordedOutcome::Value(outcome),
+            caller_fn: String::new(),
+            source_line: 0,
+            group_id: None,
+            branch_path: None,
+            effect_occurrence: None,
+        };
+
+        let mut machine = vm_build_with_effects(src);
+        machine.start_replay(vec![record], true);
+        let out = machine
+            .run_named_function("width", &[])
+            .expect("replaying Terminal.size must not read the real terminal")
+            .to_value(&machine.arena);
+        assert_eq!(
+            out,
+            Value::int(80),
+            "`.width` must be the recorded width, not the height it sorts behind"
+        );
+    }
+
+    /// A recording carrying a field the type does not declare is a replay
+    /// failure, not a slot filled with whatever was closest.
+    ///
+    /// This is what stops the rebuild from being a re-sort: matching on names
+    /// only means something if a name that matches nothing is refused. The
+    /// alternative — drop it, or slot it positionally — is the original bug
+    /// with an extra step.
+    #[test]
+    fn replay_mode_rejects_a_recorded_field_the_type_does_not_declare() {
+        let src = r#"
+fn status() -> Int
+    ! [Http.get]
+    result = Http.get("https://example.com/thing")
+    match result
+        Result.Ok(resp) -> resp.status
+        Result.Err(msg) -> 0
+"#;
+        let outcome = value_to_json(&Value::Ok(Box::new(Value::Record {
+            type_name: "HttpResponse".to_string(),
+            fields: vec![
+                ("status".to_string(), Value::int(418)),
+                ("body".to_string(), Value::Str("teapot".to_string())),
+                ("headers".to_string(), Value::Map(Default::default())),
+                ("trailers".to_string(), Value::Str("nope".to_string())),
+            ]
+            .into(),
+        })))
+        .expect("the malformed response must still be representable as JSON");
+        let mut record = recorded_teapot_response();
+        record.outcome = RecordedOutcome::Value(outcome);
+
+        let mut machine = vm_build_with_effects(src);
+        machine.start_replay(vec![record], true);
+        let err = machine
+            .run_named_function("status", &[])
+            .expect_err("a recording that does not match the type must fail the replay");
+        let text = format!("{:?}", err);
+        assert!(
+            text.contains("trailers") && text.contains("HttpResponse"),
+            "the failure must name the field and the type it does not belong to, \
+             got: {text}"
         );
     }
 
