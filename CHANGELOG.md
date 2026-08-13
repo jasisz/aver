@@ -20,6 +20,12 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Deciding whether two maps are the same map is now refused for the key types the proof model cannot order.** The model keeps a map's entries sorted by key, which is what makes two maps holding the same entries the same value — but the sort needs an ordering, and there is none for `Float` or for a non-scalar key. For those the model keeps the entries in the order they were written, so it can tell two maps apart that the runtime considers equal. `a != b` over two float-keyed maps holding the same pairs is `false` when you run it and provable in Lean.
+
+  Comparing map iteration order was already refused; this is the other half, and it is not syntactically an order observation, so it was slipping through. It is now refused wherever the equality is actually decided — with `==` or `!=`, in a `when` premise, or through `List.contains`, which is the same structural equality without an operator in sight.
+
+  Which map is being compared is read from the type of the thing being compared, so a map built entirely inside a local binding and named in no signature is still found, and comparing two ordinary records inside a function that happens to touch a float-keyed map elsewhere is not refused. Order-blind reads (`Map.len`, `Map.get`, `Map.has`) and comparisons over `Int`-, `String`- and `Bool`-keyed maps export exactly as before.
+
 - **The map iteration-order refusal now follows a call through an interpolated string and through a tail call.** The refusal was meant to follow calls rather than spelling, so an observation hidden a few functions below the law is still caught. Two shapes escaped it. A call inside `"{firstValue(m)}"` was invisible, because proof export deliberately keeps interpolation unlowered and the walk skipped the segment. And a call in tail position inside a recursion group was invisible, because the tail-call transform runs before typechecking, so every such call has already changed shape by the time the gate looks — a law over a function whose whole body is `readValues(m, n)` saw a cone containing nothing but itself.
 
   Both exported as kernel-certified theorems that `aver verify` refutes on the same source: `aver verify` gave 0/1, `aver proof --check` gave exit 0 and 0 sorries. The tail-call one had a clean control — moving the identical call out of tail position was enough to make the same law refuse.

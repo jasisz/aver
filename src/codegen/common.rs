@@ -2113,20 +2113,20 @@ pub fn law_map_order_refusal(
     vb: &VerifyBlock,
     law: &crate::ast::VerifyLaw,
     ctx: &CodegenContext,
-) -> Option<String> {
+) -> Option<MapRefusal> {
     let mut roots: Vec<&Spanned<Expr>> = vec![&law.lhs, &law.rhs];
     if let Some(when) = law.when.as_ref() {
         roots.push(when);
     }
     let given_types: Vec<&str> = law.givens.iter().map(|g| g.type_name.as_str()).collect();
-    let reason = map_order_refusal(&roots, &given_types, vb, ctx)?;
+    let refusal = map_order_refusal(&roots, &given_types, vb, ctx)?;
     record_declined_claim(
         ctx,
         crate::codegen::DeclineKind::Law,
         format!("{}.{}", vb.fn_name, law.name),
-        &reason,
+        &refusal,
     );
-    Some(reason)
+    Some(refusal)
 }
 
 /// [`law_map_order_refusal`] for a `verify` block's plain sampled cases.
@@ -2138,16 +2138,16 @@ pub fn law_map_order_refusal(
 /// passes, because the exported model kept the literal in written order. That
 /// is the divergence this whole gate exists to close, on the shape a program
 /// is most likely to be written in.
-pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<String> {
+pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<MapRefusal> {
     let roots: Vec<&Spanned<Expr>> = vb.cases.iter().flat_map(|(lhs, rhs)| [lhs, rhs]).collect();
-    let reason = map_order_refusal(&roots, &[], vb, ctx)?;
+    let refusal = map_order_refusal(&roots, &[], vb, ctx)?;
     record_declined_claim(
         ctx,
         crate::codegen::DeclineKind::Cases,
         vb.fn_name.clone(),
-        &reason,
+        &refusal,
     );
-    Some(reason)
+    Some(refusal)
 }
 
 /// Record a claim the exporter would not state, for the driver to report and
@@ -2161,7 +2161,7 @@ fn record_declined_claim(
     ctx: &CodegenContext,
     kind: crate::codegen::DeclineKind,
     claim: String,
-    reason: &str,
+    refusal: &MapRefusal,
 ) {
     ctx.declined_claims
         .borrow_mut()
@@ -2169,7 +2169,7 @@ fn record_declined_claim(
         .or_insert_with(|| crate::codegen::DeclinedClaim {
             kind,
             claim,
-            reason: reason.to_string(),
+            reason: format!("{}: {}", refusal.subject, refusal.reason),
         });
 }
 
@@ -2187,13 +2187,14 @@ fn map_order_refusal(
     given_types: &[&str],
     vb: &VerifyBlock,
     ctx: &CodegenContext,
-) -> Option<String> {
+) -> Option<MapRefusal> {
     let observers: HashSet<String> = MAP_ORDER_OBSERVERS.iter().map(|s| s.to_string()).collect();
     let scope = ctx.active_module_scope();
 
     // Walk the cone once, to a fixpoint: every fn the claim can reach
-    // contributes both its body (does anything in here read iteration order?)
-    // and its signature (over which key type?).
+    // contributes its body (does anything in here read iteration order? does
+    // anything in here compare two maps?) and its signature (over which key
+    // type?).
     let mut pending: Vec<String> = vec![vb.fn_name.clone()];
     for root in roots {
         collect_called_names(root, &mut pending);
@@ -2202,8 +2203,25 @@ fn map_order_refusal(
     let mut key_types: Vec<String> = Vec::new();
     let mut seen_types: HashSet<String> = HashSet::new();
     let mut observes = roots.iter().any(|r| expr_calls_named(r, &observers));
+    // Key types of the maps the claim actually COMPARES, kept in their own set:
+    // these are read off the compared operand's own type stamp, never off the
+    // cone-wide bag above. See `collect_compared_map_key_types`.
+    let mut compared_keys: Vec<String> = Vec::new();
+    let mut compared_seen: HashSet<String> = HashSet::new();
     for given in given_types {
         collect_map_key_types_deep(given, ctx, &mut key_types, &mut seen_types);
+    }
+    // The claim's own expressions. `vb.cases` is where the STAMPS are for a law:
+    // a law's `lhs`/`rhs` template is never typechecked (its given-bound names
+    // have no binding environment at that point), while the expanded per-sample
+    // cases are — so a comparison written directly in the law statement is only
+    // visible with a type on it here.
+    for root in roots.iter().copied().chain(
+        vb.cases
+            .iter()
+            .flat_map(|(lhs, rhs)| [lhs, rhs].into_iter()),
+    ) {
+        collect_compared_map_key_types(root, ctx, &mut compared_keys, &mut compared_seen);
     }
     while let Some(name) = pending.pop() {
         if !seen.insert(name.clone()) {
@@ -2222,35 +2240,230 @@ fn map_order_refusal(
             };
             observes = observes || expr_calls_named(expr, &observers);
             collect_called_names(expr, &mut pending);
+            collect_compared_map_key_types(expr, ctx, &mut compared_keys, &mut compared_seen);
         }
     }
-    if !observes {
-        return None;
-    }
 
+    if observes && let Some(refusal) = iteration_order_refusal(&key_types) {
+        return Some(refusal);
+    }
+    map_equality_refusal(&compared_keys)
+}
+
+/// What the exporter would not state, and why. See [`law_map_order_refusal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapRefusal {
+    /// The property that is not carried into the export, phrased as the
+    /// subject of the emitted comment: `map iteration order` / `map equality`.
+    pub subject: &'static str,
+    /// One sentence naming the key type and the divergence.
+    pub reason: String,
+}
+
+/// The ORDER half: a claim that reads `Map.keys` / `Map.values` /
+/// `Map.entries` over a key type the model cannot order.
+///
+/// FAIL-CLOSED on an empty key-type set. The claim is known to read iteration
+/// order; not knowing the key type means not knowing whether the model
+/// reproduces it, and that is the direction to refuse in.
+fn iteration_order_refusal(key_types: &[String]) -> Option<MapRefusal> {
+    const SUBJECT: &str = "map iteration order";
     if key_types.is_empty() {
-        return Some(
-            "the map's key type is not visible from the givens or from any signature it reaches, \
-             and the proof model only reproduces the runtime's iteration order for Int, String and \
-             Bool keys"
+        return Some(MapRefusal {
+            subject: SUBJECT,
+            reason: "the map's key type is not visible from the givens or from any signature it \
+                     reaches, and the proof model only reproduces the runtime's iteration order \
+                     for Int, String and Bool keys"
                 .to_string(),
-        );
+        });
     }
     let unmodelled = key_types
         .iter()
         .find(|k| !MODELLED_MAP_KEY_TYPES.contains(&k.as_str()))?;
-    if unmodelled == "Float" {
-        return Some(
+    Some(MapRefusal {
+        subject: SUBJECT,
+        reason: if unmodelled == "Float" {
             "the runtime orders Float keys by IEEE 754 total order, which puts a NaN outside the \
              finite range, and the proof model has no faithful counterpart for that"
-                .to_string(),
-        );
+                .to_string()
+        } else {
+            format!(
+                "the runtime orders {} keys by their printed representation, which the proof \
+                 model cannot reconstruct from the value",
+                unmodelled
+            )
+        },
+    })
+}
+
+/// The EQUALITY half: a claim that DECIDES whether two maps are the same.
+///
+/// The model stores a map as an association list kept sorted by key, and the
+/// sort needs an `AverKeyOrder` instance. A key type with no instance falls to
+/// the priority-50 fallback in the prelude, under which `AverMap.set` appends
+/// instead of inserting in order — so the model's map is FINER than the
+/// runtime's: two maps holding the same pairs in a different written order are
+/// distinct in the model and equal at runtime. Lean will happily prove them
+/// distinct, and `aver verify` refutes it.
+///
+/// That is not an iteration-order observation — `a != b` names no observer —
+/// so the order gate above never fired on it (#883).
+///
+/// FAIL-OPEN on an empty set, and the asymmetry with the order branch is
+/// deliberate. There, the claim is already known to read iteration order and
+/// only the key type is missing. Here, a comparison on its own says nothing:
+/// refusing every comparison whose operand type could not be read would refuse
+/// every `==` in every program. So an operand contributes only when its own
+/// type stamp says it holds a map — never the cone's bag of key types, which is
+/// how the first attempt at this declined a comparison over an ordinary record
+/// because something else in the same call cone happened to touch a float-keyed
+/// map.
+fn map_equality_refusal(compared_keys: &[String]) -> Option<MapRefusal> {
+    const SUBJECT: &str = "map equality";
+    let unmodelled = compared_keys
+        .iter()
+        .find(|k| !MODELLED_MAP_KEY_TYPES.contains(&k.as_str()))?;
+    Some(MapRefusal {
+        subject: SUBJECT,
+        reason: format!(
+            "the proof model orders a map's entries by key and has no ordering for {} keys, so it \
+             keeps two maps holding the same entries apart where the runtime considers them equal",
+            unmodelled
+        ),
+    })
+}
+
+/// Every map key type a claim DECIDES EQUALITY over, read off the compared
+/// operand's own type stamp.
+///
+/// Binding the key type to the operand — rather than to the set of key types
+/// gathered from the whole call cone — is what keeps this from over-refusing.
+/// An ordinary record compared with `==` inside a function that also touches a
+/// float-keyed map yields no `Type::Map` here, so it is never declined; a
+/// cone-wide bag declined it, and the blast radius grew with the size of the
+/// cone.
+///
+/// Two deciders, which is the complete set (enumerated against
+/// `codegen/builtins.rs` and `codegen/lean/builtins.rs`):
+///
+/// - `==` / `!=`, which lower to `BEq` over the association list;
+/// - `List.contains(xs, v)`, which is `BEq` over the list's ELEMENT type and
+///   decides exactly the same equality without ever being a `BinOp`. Detecting
+///   only the operator is how the first attempt at this missed it.
+///
+/// `Map.get` / `Map.has` / `Map.remove` / `Map.set` decide equality over a
+/// map's KEY, never over two maps, and keys are scalars that `set` dedups — so
+/// they are order-blind on both sides for every key type and stay ungated.
+///
+/// Deliberately NOT included: the `lhs => rhs` seam itself, which is also a
+/// non-`BinOp` equality. The model's map equality is strictly FINER than the
+/// runtime's, so that seam can only turn a TRUE claim red — never a false claim
+/// green. Gating it would refuse a large slice of legitimate export and, since
+/// a refusal is charged, cost exit codes for nothing.
+fn collect_compared_map_key_types(
+    expr: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    crate::codegen::expr_walk::walk(expr, &mut |node| match &node.node {
+        Expr::BinOp(crate::ast::BinOp::Eq | crate::ast::BinOp::Neq, l, r) => {
+            collect_map_key_types_of_stamp(l, ctx, out, seen);
+            collect_map_key_types_of_stamp(r, ctx, out, seen);
+        }
+        Expr::FnCall(callee, args)
+            if args.len() == 2
+                && expr_to_dotted_name(&callee.node).as_deref() == Some("List.contains") =>
+        {
+            // `xs` is a `List<T>` and `v` is a `T`; either stamp names the
+            // element type whose equality is being decided.
+            collect_map_key_types_of_stamp(&args[0], ctx, out, seen);
+            collect_map_key_types_of_stamp(&args[1], ctx, out, seen);
+        }
+        _ => {}
+    });
+}
+
+/// Map key types reachable inside one expression's INFERRED type.
+///
+/// An operand with no stamp contributes nothing. That is not evidence of
+/// absence — a synthesised node, or one the checker recovered on, carries no
+/// type — but it is not evidence of a map either, and the branch that consumes
+/// this is deliberately fail-open (see [`map_equality_refusal`]).
+fn collect_map_key_types_of_stamp(
+    expr: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(ty) = expr.ty() else {
+        return;
+    };
+    collect_map_key_types_of_type(ty, ctx, out, seen);
+}
+
+/// Every `Map<K, _>` key inside a resolved [`Type`], following containers and
+/// user type definitions.
+///
+/// Comparing two `Box` records compares the `Map<Float, Int>` one of them
+/// holds, so a named type is followed into its definition rather than assumed
+/// map-free — but it is followed, not assumed map-BEARING, which is the
+/// difference between this and the over-refusal it replaces.
+fn collect_map_key_types_of_type(
+    ty: &crate::ast::Type,
+    ctx: &CodegenContext,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    use crate::ast::Type;
+    match ty {
+        Type::Map(key, value) => {
+            let rendered = key.display();
+            if seen.insert(format!("map-key:{rendered}")) {
+                out.push(rendered);
+            }
+            collect_map_key_types_of_type(value, ctx, out, seen);
+        }
+        Type::List(inner) | Type::Option(inner) | Type::Vector(inner) => {
+            collect_map_key_types_of_type(inner, ctx, out, seen)
+        }
+        Type::Result(ok, err) => {
+            collect_map_key_types_of_type(ok, ctx, out, seen);
+            collect_map_key_types_of_type(err, ctx, out, seen);
+        }
+        Type::Tuple(items) => {
+            for item in items {
+                collect_map_key_types_of_type(item, ctx, out, seen);
+            }
+        }
+        // A user type is followed into its own definition, so a map inside a
+        // record field or a variant payload is found and a map-free record
+        // contributes nothing. Routed by `TypeId` when the checker stamped one
+        // — two modules may declare the same bare type name, and a bare-name
+        // lookup would scan the wrong declaration's fields and then either miss
+        // a map or invent one.
+        Type::Named { .. } => {
+            let Some(td) = type_def_for_named(ctx, ty) else {
+                return;
+            };
+            if !seen.insert(format!("type-def:{}", type_def_name(td))) {
+                return;
+            }
+            for field in type_def_field_annotations(td) {
+                collect_map_key_types_deep(field, ctx, out, seen);
+            }
+        }
+        // Scalars, type variables, checker-recovery sentinels and fn types:
+        // no map, and no equality decided over a fn in Aver.
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Fn(..)
+        | Type::Var(_)
+        | Type::Invalid => {}
     }
-    Some(format!(
-        "the runtime orders {} keys by their printed representation, which the proof model cannot \
-         reconstruct from the value",
-        unmodelled
-    ))
 }
 
 /// The `FnDef` a called name refers to, resolved in the caller's scope first
@@ -2310,7 +2523,50 @@ fn collect_map_key_types_deep(
     }
 }
 
+/// The `TypeDef` a `Type::Named` stamp refers to, by `TypeId` when the
+/// typechecker resolved one.
+///
+/// The stamp's `id` names the declaration exactly; its `name` does not, because
+/// two modules may declare the same bare type name and the name-keyed lookup
+/// below strips the module prefix before matching. Scanning the wrong
+/// declaration's fields would either miss a map that is there or find one that
+/// is not, and this feeds a refusal, so it goes both ways.
+///
+/// Falls back to the name only for an unresolved stamp — compiler-declared
+/// types and post-typecheck synthesised names carry no `TypeId`.
+fn type_def_for_named<'a>(ctx: &'a CodegenContext, ty: &crate::ast::Type) -> Option<&'a TypeDef> {
+    let crate::ast::Type::Named { id, name } = ty else {
+        return None;
+    };
+    let Some(type_id) = id else {
+        return type_def_by_name(ctx, name);
+    };
+    let key = &ctx.symbol_table.type_entry(*type_id).key;
+    let defs: &[TypeDef] = match &key.scope {
+        None => &ctx.type_defs,
+        Some(prefix) => &ctx.modules.iter().find(|m| &m.prefix == prefix)?.type_defs,
+    };
+    defs.iter().find(|td| type_def_name(td) == key.name)
+}
+
+/// Every type annotation written inside a `TypeDef` — record field types and
+/// variant payload types alike.
+fn type_def_field_annotations(td: &TypeDef) -> Vec<&str> {
+    match td {
+        TypeDef::Sum { variants, .. } => variants
+            .iter()
+            .flat_map(|v| v.fields.iter().map(String::as_str))
+            .collect(),
+        TypeDef::Product { fields, .. } => fields.iter().map(|(_, t)| t.as_str()).collect(),
+    }
+}
+
 /// The `TypeDef` a bare or module-qualified type name refers to.
+///
+/// syntax-discovery-only — the annotation-text walkers below have only a name
+/// to go on (`FnDef.params` is `Vec<(String, String)>`), so this is the best
+/// available routing for them. Callers holding a resolved `Type` stamp use
+/// [`type_def_for_named`] instead.
 fn type_def_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a TypeDef> {
     let bare = name.rsplit('.').next().unwrap_or(name);
     ctx.type_defs
@@ -3619,6 +3875,7 @@ mod tests {
             resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
+            declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,

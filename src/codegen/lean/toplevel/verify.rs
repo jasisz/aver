@@ -144,11 +144,12 @@ pub fn emit_verify_block(
     // it is the shape this is most often written in: `verify floatKeys:
     // floatKeys() => [2.0, 1.0]` failed `aver verify` and passed `aver proof
     // --check` on the same source until this ran here too.
-    if let Some(reason) = crate::codegen::common::verify_case_map_order_refusal(vb, ctx) {
+    if let Some(refusal) = crate::codegen::common::verify_case_map_order_refusal(vb, ctx) {
         let header = format!(
-            "-- verify {}: map iteration order is not exported — {}",
+            "-- verify {}: {} is not exported — {}",
             aver_name_to_lean(&vb.fn_name),
-            reason,
+            refusal.subject,
+            refusal.reason,
         );
         return (header, case_index_start + vb.cases.len());
     }
@@ -385,10 +386,10 @@ fn emit_verify_law_block(
     // sequence the runtime never produces, so refuse it here rather than
     // export it. Order-blind map laws (`Map.len`, `Map.get`, `Map.has`) are
     // untouched.
-    if let Some(reason) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
+    if let Some(refusal) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
         let header = format!(
-            "-- verify law {}.{}: map iteration order is not exported — {}",
-            fn_name, law_name, reason,
+            "-- verify law {}.{}: {} is not exported — {}",
+            fn_name, law_name, refusal.subject, refusal.reason,
         );
         return (header, case_index_start + vb.cases.len());
     }
