@@ -282,6 +282,14 @@ fn duplicate_operation_field_is_a_parse_error() {
         msg.contains("Duplicate operation field 'oracle'"),
         "a repeated attribute must not silently win last-write, got: {msg}"
     );
+
+    // An emptied list is still a value someone wrote, so the repeat is
+    // tracked by field name rather than by "did the value change".
+    let msg = parse_error("operation open() -> Int\n    hostile = []\n    hostile = [a]\n");
+    assert!(
+        msg.contains("Duplicate operation field 'hostile'"),
+        "a repeat after an empty list must be caught too, got: {msg}"
+    );
 }
 
 // ---------------------------------------------------------------------------

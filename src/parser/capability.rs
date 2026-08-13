@@ -63,6 +63,12 @@ impl Parser {
                 self.skip_newlines();
             }
 
+            // Repeats are tracked by name rather than by "did the value
+            // change", so `hostile = []` followed by `hostile = [a]` is
+            // caught too — an emptied list is still a value someone
+            // wrote, and last-write-wins would drop the first silently.
+            let mut seen: Vec<String> = Vec::new();
+
             while !self.is_dedent() && !self.is_eof() {
                 if self.is_newline() {
                     self.advance();
@@ -80,21 +86,26 @@ impl Parser {
                 };
 
                 self.expect_exact(&TokenKind::Assign)?;
+                if seen.contains(&field_name) {
+                    return Err(ParseError::Error {
+                        msg: format!("Duplicate operation field '{}'", field_name),
+                        line: field_line,
+                        col: 1,
+                    });
+                }
+                seen.push(field_name.clone());
+
                 match field_name.as_str() {
                     "oracle" => {
-                        Self::reject_repeat(&oracle.is_some(), "oracle", field_line)?;
                         oracle = Some(self.parse_attribute_ident("oracle")?);
                     }
                     "replay" => {
-                        Self::reject_repeat(&replay.is_some(), "replay", field_line)?;
                         replay = Some(self.parse_attribute_ident("replay")?);
                     }
                     "hostile" => {
-                        Self::reject_repeat(&!hostile.is_empty(), "hostile", field_line)?;
                         hostile = self.parse_bracket_ident_list()?;
                     }
                     "unmodelled" => {
-                        Self::reject_repeat(&!unmodelled.is_empty(), "unmodelled", field_line)?;
                         unmodelled = self.parse_bracket_ident_list()?;
                     }
                     // The arm that makes a typo'd attribute impossible
@@ -170,16 +181,5 @@ impl Parser {
         };
         self.skip_newlines();
         Ok(value)
-    }
-
-    fn reject_repeat(already_set: &bool, field: &str, line: usize) -> Result<(), ParseError> {
-        if *already_set {
-            return Err(ParseError::Error {
-                msg: format!("Duplicate operation field '{}'", field),
-                line,
-                col: 1,
-            });
-        }
-        Ok(())
     }
 }
