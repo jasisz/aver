@@ -248,11 +248,21 @@ fn sort_entries_nv(entries: &mut [(NanValue, NanValue)], arena: &Arena) {
 fn compare_scalar_keys(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
-        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or_else(|| {
-            let xb = x.to_bits();
-            let yb = y.to_bits();
-            xb.cmp(&yb)
-        }),
+        // `total_cmp` and not `partial_cmp` with a bit-pattern fallback: that
+        // combination is not a total order and the standard library detects it
+        // and aborts. A NaN compares greater than `1.0` by bit pattern and less
+        // than `-1.0` by bit pattern (the sign bit outranks the exponent), while
+        // `-1.0 < 1.0` — a three-element cycle, which `sort_by` reports as
+        // "user-provided comparison function does not correctly implement a
+        // total order". `total_cmp` is IEEE 754 `totalOrder`: every NaN sits
+        // outside the finite range on the side its sign bit names, so the
+        // comparison is decided by the values alone and never cycles.
+        //
+        // `-0.0` sorts just below `0.0` here rather than comparing equal, which
+        // costs nothing: the map folds the two into a single key long before
+        // the sort sees them (`NanValue::hash_in` hashes any zero as `+0.0`),
+        // so no map ever holds both.
+        (Value::Float(x), Value::Float(y)) => x.total_cmp(y),
         (Value::Str(x), Value::Str(y)) => x.cmp(y),
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         _ => aver_repr(a).cmp(&aver_repr(b)),
@@ -586,5 +596,139 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
     } else {
         let map_idx = arena.push_map(out);
         Ok(NanValue::new_map(map_idx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every float a program can put in a map key position, including the
+    /// three the ordering used to get wrong.
+    fn float_key_corpus() -> Vec<Value> {
+        [
+            f64::NAN,
+            -f64::NAN,
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MIN_POSITIVE,
+            -f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+        ]
+        .into_iter()
+        .map(Value::Float)
+        .collect()
+    }
+
+    /// `compare_scalar_keys` is what `sort_by` is handed, and `sort_by`
+    /// aborts the process when what it is handed is not a total order.
+    /// Check the three laws directly rather than hoping a sort of the right
+    /// length trips the standard library's own detector: it only samples.
+    #[test]
+    fn float_key_ordering_is_a_total_order() {
+        let corpus = float_key_corpus();
+        for a in &corpus {
+            assert_eq!(
+                compare_scalar_keys(a, a),
+                Ordering::Equal,
+                "a key must compare equal to itself, {:?} did not",
+                a
+            );
+            for b in &corpus {
+                assert_eq!(
+                    compare_scalar_keys(a, b),
+                    compare_scalar_keys(b, a).reverse(),
+                    "comparing {:?} against {:?} must reverse when the arguments swap",
+                    a,
+                    b
+                );
+                for c in &corpus {
+                    let ab = compare_scalar_keys(a, b);
+                    let bc = compare_scalar_keys(b, c);
+                    if ab == bc && ab != Ordering::Equal {
+                        assert_eq!(
+                            compare_scalar_keys(a, c),
+                            ab,
+                            "{:?} {:?} {:?} and {:?} {:?} {:?} must give {:?} {:?} {:?}",
+                            a,
+                            ab,
+                            b,
+                            b,
+                            bc,
+                            c,
+                            a,
+                            ab,
+                            c
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The tree-walk representation's sort completes on a float map holding a
+    /// NaN, and lands on one answer rather than one per input permutation.
+    ///
+    /// This is the shape that took the process down: a NaN sorts above `1.0`
+    /// and below `-1.0` under a raw bit-pattern fallback, so `sort_by` found
+    /// the cycle and panicked with "user-provided comparison function does not
+    /// correctly implement a total order". Sixty-one keys, because the
+    /// standard library only runs that check on inputs past its insertion-sort
+    /// threshold.
+    #[test]
+    fn a_float_map_holding_nan_sorts_to_one_stable_order() {
+        let mut keys: Vec<Value> = (0..58).map(|i| Value::Float(f64::from(i) - 29.0)).collect();
+        keys.push(Value::Float(f64::NAN));
+        keys.push(Value::Float(-0.0));
+        keys.push(Value::Float(0.0));
+        assert_eq!(keys.len(), 61);
+
+        let sort = |mut input: Vec<Value>| {
+            input.sort_by(compare_scalar_keys);
+            input
+        };
+        let expected = sort(keys.clone());
+
+        // Same keys, three different arrival orders, one answer.
+        let mut reversed = keys.clone();
+        reversed.reverse();
+        let mut rotated = keys.clone();
+        rotated.rotate_left(17);
+        for (label, permutation) in [
+            ("reversed", reversed),
+            ("rotated", rotated),
+            ("already sorted", expected.clone()),
+        ] {
+            let got = sort(permutation);
+            let render = |vs: &[Value]| -> Vec<String> {
+                vs.iter()
+                    .map(|v| match v {
+                        Value::Float(f) => format!("{:016x}", f.to_bits()),
+                        other => format!("{:?}", other),
+                    })
+                    .collect()
+            };
+            assert_eq!(
+                render(&got),
+                render(&expected),
+                "the {} arrival order must sort to the same sequence",
+                label
+            );
+        }
+
+        // A map folds `-0.0` and `0.0` into one key, so the sort is never
+        // asked to break that tie. Pin the answer anyway — whichever of the
+        // two survived insertion, the order it lands in is decided by the
+        // value and not by which one arrived first.
+        assert_eq!(
+            compare_scalar_keys(&Value::Float(-0.0), &Value::Float(0.0)),
+            Ordering::Less,
+            "-0.0 must order below 0.0 deterministically"
+        );
     }
 }

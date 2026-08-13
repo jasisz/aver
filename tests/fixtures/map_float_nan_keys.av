@@ -1,0 +1,57 @@
+module MapFloatNanKeys
+    intent =
+        "A float-keyed map wide enough to reach the real sort, holding a NaN and both zeroes."
+        "Ordering float keys by raw bit pattern once a NaN is involved is not a total order — NaN sits above 1.0 and below -1.0 while -1.0 sits below 1.0 — and sorting a map that wide aborts the process rather than returning a wrong answer."
+    effects [Console]
+
+fn nan() -> Float
+    ? "A NaN, the value that made the key ordering cyclic."
+    0.0 / 0.0
+
+fn negZero() -> Float
+    ? "Negative zero, which the map hashes to the same key as positive zero."
+    0.0 * -1.0
+
+fn spread(m: Map<Float, Int>, i: Int) -> Map<Float, Int>
+    ? "Write fifty-eight ordinary float keys, straddling zero."
+    match i > 57
+        true -> m
+        false -> spread(Map.set(m, Float.fromInt(i) - 29.0, i), i + 1)
+
+fn wideMap() -> Map<Float, Int>
+    ? "Fifty-nine float keys: fifty-eight ordinary ones plus a NaN, with both zeroes folded into one."
+    Map.set(Map.set(Map.set(spread({}, 0), negZero(), 901), 0.0, 902), nan(), 903)
+
+fn keyCount() -> Int
+    ? "How many keys the wide map iterates: 58 written keys plus the NaN, since -0.0 and 0.0 are one key."
+    List.len(Map.keys(wideMap()))
+
+fn valueCount() -> Int
+    ? "How many values the wide map iterates."
+    List.len(Map.values(wideMap()))
+
+fn entryCount() -> Int
+    ? "How many entries the wide map iterates."
+    List.len(Map.entries(wideMap()))
+
+fn firstKeyIsLowest() -> Bool
+    ? "The lowest ordinary key sorts to the front, ahead of every other key."
+    match Map.keys(wideMap())
+        [k, ..__rest] -> k == -29.0
+        _ -> false
+
+verify keyCount
+    keyCount() => 59
+
+verify valueCount
+    valueCount() => 59
+
+verify entryCount
+    entryCount() => 59
+
+verify firstKeyIsLowest
+    firstKeyIsLowest() => true
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{keyCount()} {valueCount()} {entryCount()}")

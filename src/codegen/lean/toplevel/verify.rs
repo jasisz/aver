@@ -138,6 +138,21 @@ pub fn emit_verify_block(
         return emit_verify_trace_block_proofs(vb, ctx, verify_mode, case_index_start);
     }
 
+    // Same gate the law form gets in `emit_verify_law_block`. A sampled case
+    // is `example : lhs = rhs`, a ground claim about the exact sequence a map
+    // iterates, so it is refusable for exactly the same reason a law is — and
+    // it is the shape this is most often written in: `verify floatKeys:
+    // floatKeys() => [2.0, 1.0]` failed `aver verify` and passed `aver proof
+    // --check` on the same source until this ran here too.
+    if let Some(reason) = crate::codegen::common::verify_case_map_order_refusal(vb, ctx) {
+        let header = format!(
+            "-- verify {}: map iteration order is not exported — {}",
+            aver_name_to_lean(&vb.fn_name),
+            reason,
+        );
+        return (header, case_index_start + vb.cases.len());
+    }
+
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
         let (left_str, propagates_error) = emit_statement_lhs(left, ctx);

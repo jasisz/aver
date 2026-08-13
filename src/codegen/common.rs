@@ -2111,20 +2111,20 @@ const MODELLED_MAP_KEY_TYPES: &[&str] = &["Int", "String", "Bool"];
 /// that — but only for the key types in [`MODELLED_MAP_KEY_TYPES`]. Two
 /// families fall outside:
 ///
-/// - `Float`, which `compare_scalar_keys` orders by raw bit pattern once a
-///   `NaN` is involved, and where `-0.0` and `0.0` compare equal while being
-///   two distinct keys. Neither has a faithful counterpart in the model.
+/// - `Float`, which `compare_scalar_keys` orders by IEEE 754 `totalOrder`, so
+///   a `NaN` sorts outside the finite range on the side its sign bit names.
+///   That is a position in the sequence with no counterpart in the model.
 /// - Anything reaching the comparator's catch-all — tuple, variant, list or
 ///   mixed keys — which the runtime orders by the *printed* form of the key.
 ///   Ordering by rendered syntax is not reconstructible from the value.
 ///
-/// A law that observes `Map.keys` / `Map.values` / `Map.entries` over such a
+/// A claim that observes `Map.keys` / `Map.values` / `Map.entries` over such a
 /// map would be exported as a theorem about a sequence the runtime never
 /// produces, so it is refused instead. This is deliberately narrower than
-/// "mentions a map": a law about `Map.len` or `Map.get` is order-blind and
+/// "mentions a map": a claim about `Map.len` or `Map.get` is order-blind and
 /// still exports, whatever the key type.
 ///
-/// The refusal belongs here, at the law subject, and not in the term
+/// The refusal belongs here, at the claim's subject, and not in the term
 /// emitter: measure and fuel generation emit `AverMap.entries` for their own
 /// reasons, and refusing at the emitter would take recursion measures down
 /// with it.
@@ -2133,44 +2133,88 @@ pub fn law_map_order_refusal(
     law: &crate::ast::VerifyLaw,
     ctx: &CodegenContext,
 ) -> Option<String> {
+    let mut roots: Vec<&Spanned<Expr>> = vec![&law.lhs, &law.rhs];
+    if let Some(when) = law.when.as_ref() {
+        roots.push(when);
+    }
+    let given_types: Vec<&str> = law.givens.iter().map(|g| g.type_name.as_str()).collect();
+    map_order_refusal(&roots, &given_types, vb, ctx)
+}
+
+/// [`law_map_order_refusal`] for a `verify` block's plain sampled cases.
+///
+/// A sampled case is exported as `example : lhs = rhs`, a ground claim about
+/// exactly the sequence the map iterates — so it needs the same gate the law
+/// form has. Without it, `verify floatKeys: floatKeys() => [2.0, 1.0]` fails
+/// `aver verify` (the map iterates `[1.0, 2.0]`) while `aver proof --check`
+/// passes, because the exported model kept the literal in written order. That
+/// is the divergence this whole gate exists to close, on the shape a program
+/// is most likely to be written in.
+pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<String> {
+    let roots: Vec<&Spanned<Expr>> = vb.cases.iter().flat_map(|(lhs, rhs)| [lhs, rhs]).collect();
+    map_order_refusal(&roots, &[], vb, ctx)
+}
+
+/// Shared body of the two refusals above: decide over `roots` plus the cone of
+/// functions they reach.
+///
+/// Both halves of the decision read the same cone. Testing only `roots` for the
+/// observation — as this did at first — lets a single helper hide it: a law over
+/// `firstValue(m)` whose body calls `floatValues(m)` whose body calls
+/// `Map.values(m)` mentions no observer syntactically, so the gate never ran and
+/// the law exported as a theorem. The key type was already collected across the
+/// cone, so the two halves disagreed about what the claim was allowed to see.
+fn map_order_refusal(
+    roots: &[&Spanned<Expr>],
+    given_types: &[&str],
+    vb: &VerifyBlock,
+    ctx: &CodegenContext,
+) -> Option<String> {
     let observers: HashSet<String> = MAP_ORDER_OBSERVERS.iter().map(|s| s.to_string()).collect();
-    let observes = expr_calls_named(&law.lhs, &observers)
-        || expr_calls_named(&law.rhs, &observers)
-        || law
-            .when
-            .as_ref()
-            .map(|w| expr_calls_named(w, &observers))
-            .unwrap_or(false);
+    let scope = ctx.active_module_scope();
+
+    // Walk the cone once, to a fixpoint: every fn the claim can reach
+    // contributes both its body (does anything in here read iteration order?)
+    // and its signature (over which key type?).
+    let mut pending: Vec<String> = vec![vb.fn_name.clone()];
+    for root in roots {
+        collect_called_names(root, &mut pending);
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut key_types: Vec<String> = Vec::new();
+    let mut seen_types: HashSet<String> = HashSet::new();
+    let mut observes = roots.iter().any(|r| expr_calls_named(r, &observers));
+    for given in given_types {
+        collect_map_key_types_deep(given, ctx, &mut key_types, &mut seen_types);
+    }
+    while let Some(name) = pending.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(fd) = reached_fn_def(ctx, &name, scope.as_deref()) else {
+            continue;
+        };
+        for (_, param_type) in &fd.params {
+            collect_map_key_types_deep(param_type, ctx, &mut key_types, &mut seen_types);
+        }
+        collect_map_key_types_deep(&fd.return_type, ctx, &mut key_types, &mut seen_types);
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+            };
+            observes = observes || expr_calls_named(expr, &observers);
+            collect_called_names(expr, &mut pending);
+        }
+    }
     if !observes {
         return None;
     }
 
-    let mut key_types: Vec<String> = Vec::new();
-    for given in &law.givens {
-        collect_map_key_types(&given.type_name, &mut key_types);
-    }
-    let scope = ctx.active_module_scope();
-    let mut subjects: Vec<String> = vec![vb.fn_name.clone()];
-    collect_called_names(&law.lhs, &mut subjects);
-    collect_called_names(&law.rhs, &mut subjects);
-    if let Some(when) = law.when.as_ref() {
-        collect_called_names(when, &mut subjects);
-    }
-    for name in &subjects {
-        let Some(fd) = ctx.fn_def_by_name(name, scope.as_deref()) else {
-            continue;
-        };
-        for (_, param_type) in &fd.params {
-            collect_map_key_types(param_type, &mut key_types);
-        }
-        collect_map_key_types(&fd.return_type, &mut key_types);
-    }
-
     if key_types.is_empty() {
         return Some(
-            "the map's key type is not visible from the law's givens or from any signature it \
-             reaches, and the proof model only reproduces the runtime's iteration order for Int, \
-             String and Bool keys"
+            "the map's key type is not visible from the givens or from any signature it reaches, \
+             and the proof model only reproduces the runtime's iteration order for Int, String and \
+             Bool keys"
                 .to_string(),
         );
     }
@@ -2179,8 +2223,8 @@ pub fn law_map_order_refusal(
         .find(|k| !MODELLED_MAP_KEY_TYPES.contains(&k.as_str()))?;
     if unmodelled == "Float" {
         return Some(
-            "the runtime orders Float keys by their raw bit pattern once a NaN is involved, and \
-             the proof model has no faithful counterpart for that"
+            "the runtime orders Float keys by IEEE 754 total order, which puts a NaN outside the \
+             finite range, and the proof model has no faithful counterpart for that"
                 .to_string(),
         );
     }
@@ -2189,6 +2233,72 @@ pub fn law_map_order_refusal(
          reconstruct from the value",
         unmodelled
     ))
+}
+
+/// The `FnDef` a called name refers to, resolved in the caller's scope first
+/// and then — for a dotted `Dep.helper` — under the named module's own scope,
+/// so a helper on the far side of a module boundary stays inside the cone.
+fn reached_fn_def<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> Option<&'a FnDef> {
+    if let Some(fd) = ctx.fn_def_by_name(name, scope) {
+        return Some(fd);
+    }
+    let (prefix, bare) = name.rsplit_once('.')?;
+    ctx.fn_def_by_name(bare, Some(prefix))
+}
+
+/// [`collect_map_key_types`], following user type definitions through.
+///
+/// A signature often names the map only indirectly: `toString'(j: Json)` where
+/// `type Json` has a variant `JsonObject(Map<String, Json>)`. Stopping at the
+/// annotation would leave the key type invisible and refuse a `String`-keyed
+/// claim as unmodelled — which is what happened to sixteen laws in
+/// `examples/data/json.av`. `seen` carries across calls so a recursive type
+/// (`Json` mentions itself) terminates.
+fn collect_map_key_types_deep(
+    type_name: &str,
+    ctx: &CodegenContext,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    collect_map_key_types(type_name, out);
+    // Every identifier the annotation mentions, generic arguments included:
+    // `List<Json>` has to reach `Json`, and `Map<String, Json>` reaches both
+    // its own key type (above) and `Json`.
+    for token in type_name.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')) {
+        if token.is_empty() || !seen.insert(token.to_string()) {
+            continue;
+        }
+        let Some(td) = type_def_by_name(ctx, token) else {
+            continue;
+        };
+        match td {
+            TypeDef::Sum { variants, .. } => {
+                for variant in variants {
+                    for field in &variant.fields {
+                        collect_map_key_types_deep(field, ctx, out, seen);
+                    }
+                }
+            }
+            TypeDef::Product { fields, .. } => {
+                for (_, field_type) in fields {
+                    collect_map_key_types_deep(field_type, ctx, out, seen);
+                }
+            }
+        }
+    }
+}
+
+/// The `TypeDef` a bare or module-qualified type name refers to.
+fn type_def_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a TypeDef> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    ctx.type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+        .find(|td| type_def_name(td) == bare)
 }
 
 /// Append the key type of every `Map<K, V>` written anywhere inside a type

@@ -1,0 +1,117 @@
+---
+source: tests/map_iteration_order.rs
+expression: "format!(\"== AverCommon.lean (map section) ==\\n{map_prelude}\\n== MapModelShape.lean ==\\n{module}\")"
+---
+== AverCommon.lean (map section) ==
+class AverKeyOrder (α : Type u) where
+  lt : α → α → Bool
+instance : AverKeyOrder Int := ⟨fun a b => decide (a < b)⟩
+instance : AverKeyOrder String := ⟨fun a b => decide (a < b)⟩
+instance : AverKeyOrder Bool := ⟨fun a b => !a && b⟩
+instance (priority := 50) : AverKeyOrder α := ⟨fun _ _ => false⟩
+
+namespace AverMap
+def empty : List (α × β) := []
+def get [DecidableEq α] (m : List (α × β)) (k : α) : Option β :=
+  match m with
+  | [] => none
+  | (k', v) :: rest => if k = k' then some v else AverMap.get rest k
+def set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+  let rec go : List (α × β) → List (α × β)
+    | [] => [(k, v)]
+    | (k', v') :: rest =>
+        if k = k' then (k, v) :: rest
+        else if AverKeyOrder.lt k k' then (k, v) :: (k', v') :: rest
+        else (k', v') :: go rest
+  go m
+def has [DecidableEq α] (m : List (α × β)) (k : α) : Bool :=
+  m.any (fun p => decide (k = p.1))
+def remove [DecidableEq α] (m : List (α × β)) (k : α) : List (α × β) :=
+  m.filter (fun p => !(decide (k = p.1)))
+def keys (m : List (α × β)) : List α := m.map Prod.fst
+def values (m : List (α × β)) : List β := m.map Prod.snd
+def entries (m : List (α × β)) : List (α × β) := m
+def len (m : List (α × β)) : Nat := m.length
+def fromList [DecidableEq α] [AverKeyOrder α] (entries : List (α × β)) : List (α × β) :=
+  entries.foldl (fun acc p => AverMap.set acc p.1 p.2) []
+
+private theorem get_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k = some v := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go, AverMap.get]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases h : k = k'
+          · simp [AverMap.set.go, AverMap.get, h]
+          · cases hlt : AverKeyOrder.lt k k' <;>
+              simp [AverMap.set.go, AverMap.get, h, hlt, ih]
+
+theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.get (AverMap.set m k v) k = some v := by
+  simpa [AverMap.set] using get_set_go_self k v m
+
+end AverMap
+== MapModelShape.lean ==
+import AverCommon
+
+set_option linter.unusedVariables false
+
+set_option maxRecDepth 1000000
+
+namespace MapModelShape
+
+/-- A Bool-keyed literal, which orders false before true. -/
+def boolKeyed  : List (Bool × Int) :=
+  [(false, 0), (true, 1)]
+
+/-- A map built by three Map.set calls, written out of key order. -/
+def built  : List (String × Int) :=
+  let m0 := AverMap.set [] "z" 1
+  let m1 := AverMap.set m0 "a" 2
+  AverMap.set m1 "m" 3
+
+/-- The same map through Map.fromList, with a duplicate key last-write-wins. -/
+def fromPairs  : List (String × Int) :=
+  AverMap.fromList ([("z", 9), ("a", 2), ("m", 3), ("z", 1)])
+
+/-- An Int-keyed literal, which orders numerically and not by printed digits. -/
+def intKeyed  : List (Int × String) :=
+  [(2, "two"), (10, "ten")]
+
+/-- The same map as a literal, also written out of key order. -/
+def literal  : List (String × Int) :=
+  [("a", 2), ("m", 3), ("z", 1)]
+
+example : AverMap.keys built = ["a", "m", "z"] := by decide +kernel
+example : AverMap.values built = [2, 3, 1] := by decide +kernel
+
+example : literal = built := by native_decide
+example : AverMap.entries literal = [("a", 2), ("m", 3), ("z", 1)] := by decide +kernel
+
+example : fromPairs = built := by native_decide
+example : AverMap.values fromPairs = [2, 3, 1] := by decide +kernel
+
+example : AverMap.keys intKeyed = [2, 10] := by decide +kernel
+
+example : AverMap.values boolKeyed = [0, 1] := by decide +kernel
+
+-- verify law built.setKeepsWhatItWrote (6 cases)
+-- given k: String = ["a", "q", "z"]
+-- given v: Int = [0, 7]
+-- aver:law-class built_law_setKeepsWhatItWrote universal built.setKeepsWhatItWrote
+theorem built_law_setKeepsWhatItWrote : ∀ (k : String) (v : Int), AverMap.get (AverMap.set built k v) k = some v := by
+  intro k v
+  simpa using AverMap.get_set_self built k v
+set_option synthInstance.maxSize 4096 in
+theorem built_law_setKeepsWhatItWrote_checked_domain : (AverMap.get (AverMap.set built "a" 0) "a" = some 0) ∧ (AverMap.get (AverMap.set built "a" 7) "a" = some 7) ∧ (AverMap.get (AverMap.set built "q" 0) "q" = some 0) ∧ (AverMap.get (AverMap.set built "q" 7) "q" = some 7) ∧ (AverMap.get (AverMap.set built "z" 0) "z" = some 0) ∧ (AverMap.get (AverMap.set built "z" 7) "z" = some 7) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_1 : AverMap.get (AverMap.set built "a" 0) "a" = some 0 := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_2 : AverMap.get (AverMap.set built "a" 7) "a" = some 7 := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_3 : AverMap.get (AverMap.set built "q" 0) "q" = some 0 := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_4 : AverMap.get (AverMap.set built "q" 7) "q" = some 7 := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_5 : AverMap.get (AverMap.set built "z" 0) "z" = some 0 := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_6 : AverMap.get (AverMap.set built "z" 7) "z" = some 7 := by native_decide
+
+end MapModelShape

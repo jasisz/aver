@@ -50,10 +50,10 @@ fn canonical_literal_key_order(
         // Ordering across two different literal kinds would be an ordering
         // between two different key types, which the runtime resolves by
         // printed form — not reproducible here, so decline.
-        if let Some((first, _)) = keyed.first() {
-            if std::mem::discriminant(first) != std::mem::discriminant(&key) {
-                return None;
-            }
+        if let Some((first, _)) = keyed.first()
+            && std::mem::discriminant(first) != std::mem::discriminant(&key)
+        {
+            return None;
         }
         // Last write wins, exactly as the runtime fold does.
         match keyed.iter().position(|(seen, _)| *seen == key) {

@@ -2143,9 +2143,18 @@ fn emit_eq_record(
 }
 
 /// `keys(m) -> List<K>`. Walks `m.keys` right-to-left, prepending
-/// each non-null key onto a cons-list accumulator. Returns hash-
-/// bucket order (not insertion order) — same constraint Aver's
-/// stdlib documents for `Map.keys`.
+/// each non-null key onto a cons-list accumulator. Returns hash-bucket
+/// order.
+///
+/// That is a DIVERGENCE, not the documented behaviour: `Map.keys` is
+/// specified to iterate sorted by key, which is what the VM, the compiled
+/// Rust backend and the exported proof model all do. On a ten-key String
+/// map the VM reads `alpha,beta,delta,...` here and wasm-gc reads
+/// `beta,iota,epsilon,...`. It is internally consistent — `values` and
+/// `entries` walk the same buckets, so `keys[i]` still pairs with
+/// `values[i]` — but it disagrees with every other backend, and
+/// `proof_trust_header` carries a carve-out saying so. Fixing it is a
+/// wasm-gc change of its own.
 fn emit_map_keys(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, _) = super::types::parse_map_kv(canonical).unwrap();

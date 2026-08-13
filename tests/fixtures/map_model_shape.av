@@ -1,0 +1,49 @@
+module MapModelShape
+    intent =
+        "Exercises every shape of the exported map model in one file."
+        "Emitting a map is four separate decisions — the key ordering class, sorted insertion for set, fromList as a fold over set, and key-sorted map literals — and a regression in any of them changes what is proved without changing what is claimed, so the emitted text is pinned against this file."
+
+fn built() -> Map<String, Int>
+    ? "A map built by three Map.set calls, written out of key order."
+    m0 = Map.set({}, "z", 1)
+    m1 = Map.set(m0, "a", 2)
+    Map.set(m1, "m", 3)
+
+fn literal() -> Map<String, Int>
+    ? "The same map as a literal, also written out of key order."
+    {"z" => 1, "a" => 2, "m" => 3}
+
+fn fromPairs() -> Map<String, Int>
+    ? "The same map through Map.fromList, with a duplicate key last-write-wins."
+    Map.fromList([("z", 9), ("a", 2), ("m", 3), ("z", 1)])
+
+fn intKeyed() -> Map<Int, String>
+    ? "An Int-keyed literal, which orders numerically and not by printed digits."
+    {10 => "ten", 2 => "two"}
+
+fn boolKeyed() -> Map<Bool, Int>
+    ? "A Bool-keyed literal, which orders false before true."
+    {true => 1, false => 0}
+
+verify built
+    Map.keys(built()) => ["a", "m", "z"]
+    Map.values(built()) => [2, 3, 1]
+
+verify literal
+    literal() => built()
+    Map.entries(literal()) => [("a", 2), ("m", 3), ("z", 1)]
+
+verify fromPairs
+    fromPairs() => built()
+    Map.values(fromPairs()) => [2, 3, 1]
+
+verify intKeyed
+    Map.keys(intKeyed()) => [2, 10]
+
+verify boolKeyed
+    Map.values(boolKeyed()) => [0, 1]
+
+verify built law setKeepsWhatItWrote
+    given k: String = ["a", "q", "z"]
+    given v: Int = [0, 7]
+    Map.get(Map.set(built(), k, v), k) => Option.Some(v)

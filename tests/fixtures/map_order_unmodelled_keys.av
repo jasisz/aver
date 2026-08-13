@@ -31,3 +31,24 @@ verify tupleKeyedKeys law keysFollowIterationOrder
 fn main() -> Unit
     ! [Console.print]
     Console.print("{Map.len(Map.set({}, 1.0, 9))}")
+
+fn plainFloatKeys() -> List<Float>
+    ? "Keys of a float map written straight into a literal, out of key order."
+    Map.keys({2.0 => 1, 1.0 => 2})
+
+verify plainFloatKeys
+    plainFloatKeys() => [1.0, 2.0]
+
+fn hiddenFloatValues(m: Map<Float, Int>) -> List<Int>
+    ? "A helper that reads iteration order, called by a law that never names it."
+    Map.values(m)
+
+fn firstFloatValue(m: Map<Float, Int>) -> Int
+    ? "The value paired with the lowest key, read through the helper."
+    match hiddenFloatValues(m)
+        [x, ..__rest] -> x
+        _ -> 0
+
+verify firstFloatValue law firstIsLowestKeysValue
+    given m: Map<Float, Int> = [{1.0 => 3, 2.0 => 5}]
+    firstFloatValue(m) => 3
