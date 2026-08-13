@@ -725,6 +725,14 @@ mod tests {
         format!("({}) -> {}", params.join(", "), ret)
     }
 
+    fn render_errors(errors: &[crate::types::checker::TypeError]) -> String {
+        errors
+            .iter()
+            .map(|e| format!("  {}: {}", e.line, e.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Every stub body must (a) type-check cleanly as an Aver fn, and
     /// (b) have a signature that matches what the runtime expects from
     /// an oracle for that classified effect — same parameter list as
@@ -783,6 +791,18 @@ mod tests {
             for p in hostile_profiles_for(method) {
                 // `Bytes` is a stdlib module, so a stub that names it (as a
                 // type or to call `Bytes.fromList`) has to depend on it.
+                //
+                // This prelude is NOT what the injector provides. The real
+                // injector, `vm_verify::inject_hostile_effect_stubs_for_blocks`,
+                // appends the stub straight into the user's own module and adds
+                // no dependency at all — so a user module that calls
+                // `Tcp.readBytes` without naming `Bytes` itself type-checks here
+                // and still fails under `aver verify --hostile` with `Unknown
+                // identifier Bytes`, skipping the whole file. Synthesizing the
+                // dependency keeps this test about stub signatures rather than
+                // about that separate injector defect; the defect itself is
+                // pinned by `stub_injection_typechecks_the_module_the_injector_builds`
+                // below, which is ignored until the injector is fixed.
                 let depends = if p.stub_body.contains("Bytes") {
                     "    depends [Bytes]\n"
                 } else {
@@ -800,12 +820,7 @@ mod tests {
                         "{}/{}: typecheck errors:\n{}\n\nbody:\n{}",
                         method,
                         p.name,
-                        result
-                            .errors
-                            .iter()
-                            .map(|e| format!("  {}: {}", e.line, e.message))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
+                        render_errors(&result.errors),
                         p.stub_body
                     );
                 }
@@ -849,6 +864,72 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The same stubs, type-checked in the module the injector really
+    /// builds instead of the one the guard above synthesizes.
+    ///
+    /// The guard wraps each stub in a module carrying `depends [Bytes]`
+    /// whenever the body mentions `Bytes`. The injector supplies no such
+    /// thing: `vm_verify::inject_hostile_effect_stubs_for_blocks` appends
+    /// the stub bodies into the user's own module as plain
+    /// `TopLevel::FnDef` and adds no dependency at all. So the guard is
+    /// green over stubs that cannot in fact be injected, and a user module
+    /// that reads exact bytes off a connection without ever naming `Bytes`
+    /// itself passes `aver verify` and is refused by `aver verify
+    /// --hostile` with `error[1:0]: Unknown identifier 'Bytes'` — the whole
+    /// file skipped, no cases run. Writing `depends [Bytes]` into that same
+    /// file by hand makes the hostile run work.
+    ///
+    /// Ignored until the injector supplies what the stubs it injects need:
+    /// https://github.com/jasisz/aver/issues/877. Delete the `ignore` when
+    /// that lands.
+    #[test]
+    #[ignore = "the injector adds no dependency for the stubs it injects — issue #877"]
+    fn stub_injection_typechecks_the_module_the_injector_builds() {
+        use crate::checker::merge_verify_blocks;
+        use crate::diagnostics::vm_verify::inject_hostile_effect_stubs_for_blocks;
+        use crate::source::parse_source;
+        use crate::types::checker::run_type_check_full;
+
+        // An ordinary user module. It calls `Tcp.readBytes`, which the
+        // hostile profiles model, and it never spells `Bytes` anywhere.
+        let src = "module Main\n    \
+                   intent = \"Read one exact frame and classify the outcome.\"\n    \
+                   effects [Tcp]\n\n\
+                   fn frameVerdict(conn: Tcp.Connection) -> String\n    \
+                   ? \"Classify one exact-frame read.\"\n    \
+                   ! [Tcp.readBytes]\n    \
+                   match Tcp.readBytes(conn, 4)\n        \
+                   Result.Ok(_) -> \"ok\"\n        \
+                   Result.Err(_) -> \"err\"\n\n\
+                   verify frameVerdict law neverReads\n    \
+                   given conn: Tcp.Connection = \
+                   [Tcp.Connection(id = \"fake\", host = \"127.0.0.1\", port = 1)]\n    \
+                   frameVerdict(conn) => \"err\"\n";
+
+        let mut items = parse_source(src).unwrap_or_else(|e| panic!("parse: {e:?}"));
+
+        // The module is clean before injection, so anything below is the
+        // injector's doing and not a flaw in this fixture.
+        let before = run_type_check_full(&items, Some(env!("CARGO_MANIFEST_DIR")));
+        assert!(
+            before.errors.is_empty(),
+            "the fixture module must type-check on its own:\n{}",
+            render_errors(&before.errors)
+        );
+
+        let blocks = merge_verify_blocks(&items);
+        inject_hostile_effect_stubs_for_blocks(&mut items, &blocks);
+
+        let after = run_type_check_full(&items, Some(env!("CARGO_MANIFEST_DIR")));
+        assert!(
+            after.errors.is_empty(),
+            "hostile stub injection left the user's module untypecheckable — this is \
+             what a user running `aver verify --hostile` gets, and the file is skipped \
+             whole:\n{}",
+            render_errors(&after.errors)
+        );
     }
 
     /// The injector (`vm_verify::collect_effect_profile_combinations`)
