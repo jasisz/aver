@@ -230,3 +230,85 @@ fn proof_dafny_nat_accumulator_omits_when_algebra_helpers_not_citable() {
         "a Nat accumulator law whose algebra helpers are declared after it must OMIT, not error\n{summary}"
     );
 }
+
+/// A law the Dafny backend DOES export over the map readers has to reach the
+/// verifier, which means every name the emitter writes has to resolve.
+///
+/// `Map.keys` and `Map.values` emit `MapKeys(m)` / `MapValues(m)`, and neither
+/// was declared in the Dafny prelude — nor did either name trigger the map
+/// helper block, so a program using only these two got no helper block at all
+/// and the emitted file failed to resolve before a single obligation was
+/// checked. The laws in the fixture read the same sequence on both sides, so
+/// they close against a declaration with no body; what they cannot survive is
+/// a missing declaration.
+///
+/// This runs through `--check`, which shells out to `dafny verify`: a
+/// resolution failure never prints the verifier summary line, so `--check`
+/// exits before emitting JSON and this test fails on the missing JSON line.
+#[test]
+fn proof_export_of_the_dafny_map_readers_resolves_and_verifies() {
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping: `dafny` not available");
+        return;
+    }
+    let out_dir = temp_output_dir("aver-map-dafny-readers");
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .args([
+            "proof",
+            "tests/fixtures/map_dafny_readers.av",
+            "--backend",
+            "dafny",
+            "-o",
+            out_dir.to_str().expect("utf-8 temp path"),
+            "--check",
+            "--check-json",
+        ])
+        .output()
+        .expect("expected the `aver` binary to run");
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    let dfy = std::fs::read_to_string(out_dir.join("MapDafnyReaders.dfy")).unwrap_or_default();
+    let common = std::fs::read_to_string(out_dir.join("common.dfy")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    // The fixture is only a test of the declarations while it actually emits
+    // the two calls; if the emitter stopped producing them this would pass
+    // saying nothing.
+    assert!(
+        dfy.contains("MapKeys(m)") && dfy.contains("MapValues(m)"),
+        "the fixture must still emit both map readers, or this test is \
+         vacuous:\n{dfy}"
+    );
+    assert!(
+        common.contains("function MapKeys<") && common.contains("function MapValues<"),
+        "both map readers the emitter writes must be declared in the helper \
+         block the file includes:\n{common}"
+    );
+
+    let json_line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .unwrap_or_else(|| {
+            panic!(
+                "`aver proof --backend dafny --check --check-json` printed no JSON \
+                 summary — Dafny did not get far enough to report one, which is what \
+                 an unresolved name looks like:\n{}",
+                format_output(&run)
+            )
+        });
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).expect("expected a JSON summary line");
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "the map reader laws must verify with no errors:\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "the map reader laws must verify:\n{}",
+        format_output(&run)
+    );
+}

@@ -176,11 +176,18 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     },
     BuiltinHelper {
         key: "AverMap",
-        body_tokens: &["AverMap.", "MapGet(", "MapEntries(", "MapFromList("],
+        body_tokens: &[
+            "AverMap.",
+            "MapGet(",
+            "MapEntries(",
+            "MapKeys(",
+            "MapValues(",
+            "MapFromList(",
+        ],
         // Dafny's `MapGet` returns `Option<V>`.
         depends_on: &["OptionDatatype"],
         doc: "Map helper namespace. Lean: `AverMap.has_set_self` / `.get_set_self` / etc. \
-              Dafny: `MapGet` / `MapEntries` / `MapFromList`.",
+              Dafny: `MapGet` / `MapEntries` / `MapKeys` / `MapValues` / `MapFromList`.",
     },
     BuiltinHelper {
         key: "ProofFuel",
