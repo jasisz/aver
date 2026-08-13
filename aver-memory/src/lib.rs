@@ -1218,6 +1218,18 @@ pub struct Arena<T: ArenaTypes> {
     scratch_stable: Vec<u32>,
     peak_usage: ArenaUsage,
     alloc_space: AllocSpace,
+    /// Total list elements the collector has written into a fresh shared body.
+    /// A collector that keeps sharing intact leaves this proportional to the
+    /// number of elements that actually moved, so a quadratic copy shows up
+    /// here without any wall-clock measurement.
+    list_elements_copied: u64,
+    /// Total list elements the collector has *read* while deciding whether a
+    /// shared body needs rebuilding. This is the other half of the cost, and it
+    /// is not implied by the one above: a body whose elements all relocate to
+    /// themselves is scanned in full and copied not at all. Only a body of
+    /// immediates escapes the read, so this is the counter that says which
+    /// element types the traversal cost is actually linear in.
+    list_elements_scanned: u64,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in
     /// lockstep with `type_names`.
@@ -1287,10 +1299,50 @@ pub enum ArenaSymbol<T: ArenaTypes> {
     },
 }
 
+/// Element storage shared by every list view that points at it.
+///
+/// A body is immutable once built — nothing in the arena hands out a mutable
+/// reference to one — so `all_immediate` can be decided at construction and
+/// trusted forever after. It is `true` only when no element carries a heap
+/// index, which makes relocating the elements provably the identity and lets
+/// the collector skip the body without reading it. `false` is always safe: it
+/// only costs the scan.
+#[derive(Debug)]
+pub struct ListBody {
+    items: Vec<NanValue>,
+    all_immediate: bool,
+}
+
+impl ListBody {
+    pub fn new(items: Vec<NanValue>) -> Self {
+        let all_immediate = items.iter().all(|value| value.heap_index().is_none());
+        Self {
+            items,
+            all_immediate,
+        }
+    }
+
+    /// Whether no element carries a heap index, so no element can ever be
+    /// relocated by a collection.
+    #[inline]
+    pub fn all_immediate(&self) -> bool {
+        self.all_immediate
+    }
+}
+
+impl Deref for ListBody {
+    type Target = [NanValue];
+
+    #[inline]
+    fn deref(&self) -> &[NanValue] {
+        &self.items
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ArenaList {
     Flat {
-        items: Rc<Vec<NanValue>>,
+        items: Rc<ListBody>,
         start: usize,
     },
     Prepend {
@@ -1305,7 +1357,7 @@ pub enum ArenaList {
     },
     Segments {
         current: NanValue,
-        rest: Rc<Vec<NanValue>>,
+        rest: Rc<ListBody>,
         start: usize,
         len: usize,
     },

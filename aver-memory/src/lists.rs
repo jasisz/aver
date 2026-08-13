@@ -274,13 +274,13 @@ impl<T: ArenaTypes> Arena<T> {
             .into_iter()
             .filter(|part| !self.list_is_empty_value(*part))
             .collect();
-        self.push_list_segments_rc(current, Rc::new(filtered), 0)
+        self.push_list_segments_rc(current, Rc::new(ListBody::new(filtered)), 0)
     }
 
     fn push_list_segments_rc(
         &mut self,
         mut current: NanValue,
-        rest: Rc<Vec<NanValue>>,
+        rest: Rc<ListBody>,
         mut start: usize,
     ) -> NanValue {
         while self.list_is_empty_value(current) {

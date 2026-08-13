@@ -281,15 +281,10 @@ impl<T: ArenaTypes> Arena<T> {
         F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
     {
         match list {
-            ArenaList::Flat { items, start } => ArenaList::Flat {
-                items: Rc::new(
-                    items[start..]
-                        .iter()
-                        .map(|value| rewrite(self, *value))
-                        .collect(),
-                ),
-                start: 0,
-            },
+            ArenaList::Flat { items, start } => {
+                let (items, start) = self.rewrite_list_body_with(items, start, rewrite);
+                ArenaList::Flat { items, start }
+            }
             ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
                 head: rewrite(self, head),
                 tail: rewrite(self, tail),
@@ -305,17 +300,99 @@ impl<T: ArenaTypes> Arena<T> {
                 rest,
                 start,
                 len,
-            } => ArenaList::Segments {
-                current: rewrite(self, current),
-                rest: Rc::new(
-                    rest[start..]
-                        .iter()
-                        .map(|value| rewrite(self, *value))
-                        .collect(),
-                ),
-                start: 0,
-                len,
-            },
+            } => {
+                let current = rewrite(self, current);
+                let (rest, start) = self.rewrite_list_body_with(rest, start, rewrite);
+                ArenaList::Segments {
+                    current,
+                    rest,
+                    start,
+                    len,
+                }
+            }
+        }
+    }
+
+    /// Rewrite the shared element storage behind a `Flat` or `Segments` view,
+    /// keeping the existing allocation whenever nothing actually moves.
+    ///
+    /// Two escapes, cheapest first. A body built entirely out of immediates
+    /// cannot hold anything the collector could relocate, so it is returned
+    /// without being read at all. Otherwise the elements are rewritten, and the
+    /// original body is still returned when every rewrite turned out to be the
+    /// identity — which preserves both the `Rc` sharing and the O(1) `start`
+    /// offset that `list_uncons` hands out. Only a body in which something
+    /// really moved is rebuilt, and only from that element onwards.
+    ///
+    /// Without this, walking a list while a frame keeps allocating rebuilt the
+    /// whole remaining input on every step: n^2/2 element copies for one
+    /// traversal (issue #886).
+    ///
+    /// The two escapes do not buy the same thing, and the difference is the
+    /// standing limit here. The first removes the *read* as well as the copy, so
+    /// a list whose elements are all immediates costs nothing per collection.
+    /// The second removes only the copy: deciding that nothing moved still means
+    /// touching every remaining element, so a list of strings or records is
+    /// still walked n^2/2 times over one traversal and its runtime is still
+    /// quadratic — n = 128,000 takes 28 s where the same program over `List<Int>`
+    /// takes 71 ms. `list_elements_copied` therefore reports linear on a program
+    /// that is not; `list_elements_scanned` is the counter that shows it, and
+    /// `copying_a_list_of_strings_still_reads_shared_bodies_quadratically` pins
+    /// it. Closing that gap needs the collector to skip a live body it has
+    /// already proved stable, which is a different change from this one.
+    ///
+    /// Carrying `start` through the second escape is the delicate part, because
+    /// losing it does not fail loudly: the elements the slice had already
+    /// stepped past come back, and the list silently regrows its head. Both
+    /// places that can lose it — the untouched-body return and the prefix the
+    /// rebuild starts from — are covered by
+    /// `a_walked_body_that_did_not_move_keeps_the_slice_offset` and
+    /// `rebuilding_a_walked_body_copies_the_prefix_from_the_slice_offset`. Both
+    /// use heap-backed elements on purpose: a body of immediates leaves above
+    /// without ever reaching this code, which is why every test that drives this
+    /// through a `List<Int>` program reaches neither line.
+    fn rewrite_list_body_with<F>(
+        &mut self,
+        body: Rc<ListBody>,
+        start: usize,
+        rewrite: &mut F,
+    ) -> (Rc<ListBody>, usize)
+    where
+        F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
+    {
+        debug_assert!(start <= body.len());
+        if body.all_immediate() {
+            debug_assert!(
+                body.iter().all(|value| value.heap_index().is_none()),
+                "list body marked all-immediate holds a heap-backed element; \
+                 skipping it would leave a stale arena index behind"
+            );
+            return (body, start);
+        }
+
+        self.list_elements_scanned += (body.len() - start) as u64;
+        let mut rewritten: Option<Vec<NanValue>> = None;
+        for offset in start..body.len() {
+            let value = body[offset];
+            let new_value = rewrite(self, value);
+            match &mut rewritten {
+                Some(out) => out.push(new_value),
+                None if new_value.bits() == value.bits() => {}
+                None => {
+                    let mut out = Vec::with_capacity(body.len() - start);
+                    out.extend_from_slice(&body[start..offset]);
+                    out.push(new_value);
+                    rewritten = Some(out);
+                }
+            }
+        }
+
+        match rewritten {
+            None => (body, start),
+            Some(out) => {
+                self.list_elements_copied += out.len() as u64;
+                (Rc::new(ListBody::new(out)), 0)
+            }
         }
     }
 
@@ -332,7 +409,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         let elements = self.list_to_vec_value(value);
         let flat = ArenaList::Flat {
-            items: Rc::new(elements),
+            items: Rc::new(ListBody::new(elements)),
             start: 0,
         };
         let index = self.push(ArenaEntry::List(flat));
