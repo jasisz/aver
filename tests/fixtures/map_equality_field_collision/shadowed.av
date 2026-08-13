@@ -1,0 +1,21 @@
+module MapEqualityFieldShadowed
+    intent =
+        "A claim comparing two boxes, each holding a Holder.Scored with a float-keyed map written in a different order."
+        "Identical to plain.av except for the unrelated record named Scored below, which the claim never names and which must not change its verdict."
+
+    depends [Holder]
+
+record Scored
+    tag: String
+
+record Box
+    held: Holder.Scored
+
+fn sameBox(k: Float) -> Bool
+    ? "Whether two boxes holding the same pairs in a different written order differ."
+    a = Box(held = Holder.scoredOf({2.0 => 5, k => 3}))
+    b = Box(held = Holder.scoredOf({k => 3, 2.0 => 5}))
+    a != b
+
+verify sameBox
+    sameBox(1.0) => true

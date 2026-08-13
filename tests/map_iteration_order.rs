@@ -26,6 +26,7 @@ const ADT_CONTROL_FIXTURE: &str = "tests/fixtures/map_equality_adt_control.av";
 const COLLIDING_TYPE_DIR: &str = "tests/fixtures/map_equality_colliding_type";
 const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
 const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order";
+const FIELD_COLLISION_DIR: &str = "tests/fixtures/map_equality_field_collision";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1144,6 +1145,60 @@ fn a_map_comparison_is_declined_whichever_order_it_is_written_in() {
             &format!("{COMPARISON_ORDER_DIR}/{file}"),
             "--module-root",
             COMPARISON_ORDER_DIR,
+        ]);
+        let stdout = String::from_utf8_lossy(&verify.stdout);
+        assert!(
+            stdout.contains("0/1 cases passed"),
+            "{file} is meant to be refuted on the VM:\n{}",
+            format_output(&verify)
+        );
+    }
+}
+
+/// The claim's verdict does not depend on an unrelated declaration it never
+/// names.
+///
+/// `plain.av` and `shadowed.av` are one file written twice; `shadowed.av`
+/// adds a record called `Scored` that carries no map and that the claim never
+/// mentions. The claim compares two `Box`es, and `Box.held` is annotated
+/// `Holder.Scored` — a piece of TEXT, which the walk resolved by taking the
+/// last dotted segment and returning the first declaration of that bare name
+/// it could find, entry module first. So the unrelated `Scored` answered for
+/// `Holder.Scored`, the `Map<Float, Int>` inside the real one was never
+/// reached, and adding a record to an unrelated part of the file flipped the
+/// claim from declined to exported.
+#[test]
+fn a_field_annotation_resolves_to_the_type_it_names() {
+    let marker = "-- verify sameBox: map equality is not exported";
+    let plain = emit_lean_in_dir(
+        FIELD_COLLISION_DIR,
+        "plain.av",
+        "aver-map-equality-field-plain",
+        "MapEqualityFieldPlain",
+    );
+    let shadowed = emit_lean_in_dir(
+        FIELD_COLLISION_DIR,
+        "shadowed.av",
+        "aver-map-equality-field-shadowed",
+        "MapEqualityFieldShadowed",
+    );
+    assert!(
+        plain.contains(marker),
+        "the box holds a float-keyed map, so comparing two of them must be \
+         declined:\n{plain}"
+    );
+    assert!(
+        shadowed.contains(marker),
+        "declaring an unrelated type that happens to share a bare name with \
+         the field's type must not change the verdict:\n{shadowed}"
+    );
+
+    for file in ["plain.av", "shadowed.av"] {
+        let verify = run_aver(&[
+            "verify",
+            &format!("{FIELD_COLLISION_DIR}/{file}"),
+            "--module-root",
+            FIELD_COLLISION_DIR,
         ]);
         let stdout = String::from_utf8_lossy(&verify.stdout);
         assert!(

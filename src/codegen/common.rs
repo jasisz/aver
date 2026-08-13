@@ -2209,7 +2209,14 @@ fn map_order_refusal(
     let mut compared_keys: Vec<String> = Vec::new();
     let mut compared_seen: HashSet<String> = HashSet::new();
     for given in given_types {
-        collect_map_key_types_deep(given, ctx, &mut key_types, &mut seen_types);
+        // A given's type annotation is written in the claim's own module.
+        collect_map_key_types_deep(
+            given,
+            ctx,
+            scope.as_deref(),
+            &mut key_types,
+            &mut seen_types,
+        );
     }
     // The claim's own expressions. `vb.cases` is where the STAMPS are for a law:
     // a law's `lhs`/`rhs` template is never typechecked (its given-bound names
@@ -2227,13 +2234,15 @@ fn map_order_refusal(
         if !seen.insert(name.clone()) {
             continue;
         }
-        let Some(fd) = reached_fn_def(ctx, &name, scope.as_deref()) else {
+        let Some((owner, fd)) = reached_fn_def(ctx, &name, scope.as_deref()) else {
             continue;
         };
+        // A signature's annotations are written in the module that declares the
+        // function, which is not always the module the claim lives in.
         for (_, param_type) in &fd.params {
-            collect_map_key_types_deep(param_type, ctx, &mut key_types, &mut seen_types);
+            collect_map_key_types_deep(param_type, ctx, owner, &mut key_types, &mut seen_types);
         }
-        collect_map_key_types_deep(&fd.return_type, ctx, &mut key_types, &mut seen_types);
+        collect_map_key_types_deep(&fd.return_type, ctx, owner, &mut key_types, &mut seen_types);
         for stmt in fd.body.stmts() {
             let expr = match stmt {
                 Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
@@ -2458,7 +2467,7 @@ fn collect_map_key_types_of_type(
                 return;
             }
             for field in type_def_field_annotations(located.1) {
-                collect_map_key_types_deep(field, ctx, out, seen);
+                collect_map_key_types_deep(field, ctx, located.0, out, seen);
             }
         }
         // Scalars, type variables, checker-recovery sentinels and fn types:
@@ -2477,16 +2486,23 @@ fn collect_map_key_types_of_type(
 /// The `FnDef` a called name refers to, resolved in the caller's scope first
 /// and then — for a dotted `Dep.helper` — under the named module's own scope,
 /// so a helper on the far side of a module boundary stays inside the cone.
+///
+/// The module that declares the function comes back with it: its signature's
+/// annotations are written in that module's source, and that is the scope their
+/// names are read in.
 fn reached_fn_def<'a>(
     ctx: &'a CodegenContext,
     name: &str,
     scope: Option<&str>,
-) -> Option<&'a FnDef> {
+) -> Option<(Option<&'a str>, &'a FnDef)> {
     if let Some(fd) = ctx.fn_def_by_name(name, scope) {
-        return Some(fd);
+        let owner = scope.and_then(|s| ctx.modules.iter().find(|m| m.prefix == s));
+        return Some((owner.map(|m| m.prefix.as_str()), fd));
     }
     let (prefix, bare) = name.rsplit_once('.')?;
-    ctx.fn_def_by_name(bare, Some(prefix))
+    let fd = ctx.fn_def_by_name(bare, Some(prefix))?;
+    let owner = ctx.modules.iter().find(|m| m.prefix == prefix)?;
+    Some((Some(owner.prefix.as_str()), fd))
 }
 
 /// [`collect_map_key_types`], following user type definitions through.
@@ -2497,9 +2513,15 @@ fn reached_fn_def<'a>(
 /// claim as unmodelled — which is what happened to sixteen laws in
 /// `examples/data/json.av`. `seen` carries across calls so a recursive type
 /// (`Json` mentions itself) terminates.
+///
+/// `written_in` is the module whose source the annotation text comes from —
+/// the scope its names are read in. Following a declaration into its fields
+/// hands its own module down, because that is where those field annotations
+/// were written.
 fn collect_map_key_types_deep(
     type_name: &str,
     ctx: &CodegenContext,
+    written_in: Option<&str>,
     out: &mut Vec<String>,
     seen: &mut HashSet<String>,
 ) {
@@ -2508,25 +2530,21 @@ fn collect_map_key_types_deep(
     // `List<Json>` has to reach `Json`, and `Map<String, Json>` reaches both
     // its own key type (above) and `Json`.
     for token in type_name.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')) {
-        if token.is_empty() || !seen.insert(token.to_string()) {
+        if token.is_empty() {
             continue;
         }
-        let Some((_, td)) = type_def_by_name(ctx, token) else {
+        let Some(located) = type_def_by_name(ctx, token, written_in) else {
             continue;
         };
-        match td {
-            TypeDef::Sum { variants, .. } => {
-                for variant in variants {
-                    for field in &variant.fields {
-                        collect_map_key_types_deep(field, ctx, out, seen);
-                    }
-                }
-            }
-            TypeDef::Product { fields, .. } => {
-                for (_, field_type) in fields {
-                    collect_map_key_types_deep(field_type, ctx, out, seen);
-                }
-            }
+        // Keyed on the declaration this token RESOLVED to, not on the token:
+        // the same word in two modules names two declarations, and one of them
+        // may hold a map the other does not. Recursion still terminates —
+        // `Json` mentioning itself resolves to the same declaration twice.
+        if !seen.insert(format!("type-def:{}", type_def_identity(located))) {
+            continue;
+        }
+        for field in type_def_field_annotations(located.1) {
+            collect_map_key_types_deep(field, ctx, located.0, out, seen);
         }
     }
 }
@@ -2550,7 +2568,7 @@ fn type_def_for_named<'a>(
         return None;
     };
     let Some(type_id) = id else {
-        return type_def_by_name(ctx, name);
+        return type_def_by_name(ctx, name, ctx.active_module_scope().as_deref());
     };
     let key = &ctx.symbol_table.type_entry(*type_id).key;
     let defs: &[TypeDef] = match &key.scope {
@@ -2589,22 +2607,64 @@ fn type_def_field_annotations(td: &TypeDef) -> Vec<&str> {
     }
 }
 
-/// The `TypeDef` a bare or module-qualified type name refers to.
+/// The `TypeDef` a bare or module-qualified type name refers to, read as it
+/// would be read from `written_in` — the module the annotation was written in.
 ///
-/// syntax-discovery-only — the annotation-text walkers below have only a name
-/// to go on (`FnDef.params` is `Vec<(String, String)>`), so this is the best
-/// available routing for them. Callers holding a resolved `Type` stamp use
-/// [`type_def_for_named`] instead.
-fn type_def_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<LocatedTypeDef<'a>> {
+/// The callers below have only a name to go on (`FnDef.params` is
+/// `Vec<(String, String)>`, a record field is a `String`), so a name is all
+/// there is to route by — but a name is not read in a vacuum. `Holder.Scored`
+/// means the `Scored` declared in `Holder`, and a bare `Scored` inside `Holder`
+/// means the same one, while a bare `Scored` in the entry file means the entry
+/// file's. Dropping the module prefix and taking the first declaration of that
+/// bare name anywhere in the program answered all three with whichever
+/// declaration came first, so a record named `Scored` in an unrelated part of
+/// the entry file answered for `Holder.Scored` and the `Map<Float, Int>` inside
+/// the real one was never reached. Adding an unrelated type flipped a claim
+/// from declined to exported.
+///
+/// The order below is the order the name resolves in: a qualified name goes to
+/// the module it names; a bare name is looked for in the module it was written
+/// in, then in the entry file. The whole-program scan stays as the last resort,
+/// for a name that resolves in neither — with the same first-match-wins
+/// arbitrariness it always had, which is now reached only when the program
+/// genuinely offers nothing better.
+fn type_def_by_name<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+    written_in: Option<&str>,
+) -> Option<LocatedTypeDef<'a>> {
     let bare = name.rsplit('.').next().unwrap_or(name);
-    ctx.type_defs
+    // The owner in the answer is read off the module that holds the
+    // declaration, never off the caller's text, so it outlives the name.
+    let in_module = |prefix: &str| -> Option<LocatedTypeDef<'a>> {
+        let module = ctx.modules.iter().find(|m| m.prefix == prefix)?;
+        let td = module
+            .type_defs
+            .iter()
+            .find(|td| type_def_name(td) == bare)?;
+        Some((Some(module.prefix.as_str()), td))
+    };
+
+    // Qualified: `Holder.Scored` names the module it is to be read in, whoever
+    // wrote it. Only a prefix that IS a loaded module counts — a dotted name
+    // that merely looks like one falls through to the bare handling below.
+    if let Some((prefix, _)) = name.rsplit_once('.')
+        && let Some(found) = in_module(prefix)
+    {
+        return Some(found);
+    }
+    // Bare: the writing module first, then the entry file.
+    if let Some(prefix) = written_in
+        && let Some(found) = in_module(prefix)
+    {
+        return Some(found);
+    }
+    if let Some(td) = ctx.type_defs.iter().find(|td| type_def_name(td) == bare) {
+        return Some((None, td));
+    }
+    ctx.modules
         .iter()
-        .map(|td| (None, td))
-        .chain(
-            ctx.modules
-                .iter()
-                .flat_map(|m| m.type_defs.iter().map(|td| (Some(m.prefix.as_str()), td))),
-        )
+        .flat_map(|m| m.type_defs.iter().map(|td| (Some(m.prefix.as_str()), td)))
         .find(|(_, td)| type_def_name(td) == bare)
 }
 
