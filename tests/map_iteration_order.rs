@@ -20,6 +20,7 @@ const ORDER_FIXTURE: &str = "tests/fixtures/map_iteration_order.av";
 const UNMODELLED_FIXTURE: &str = "tests/fixtures/map_order_unmodelled_keys.av";
 const NAN_KEY_FIXTURE: &str = "tests/fixtures/map_float_nan_keys.av";
 const MODEL_SHAPE_FIXTURE: &str = "tests/fixtures/map_model_shape.av";
+const HIDDEN_OBSERVER_FIXTURE: &str = "tests/fixtures/map_order_hidden_observer.av";
 const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
 
 fn repo_root() -> PathBuf {
@@ -769,5 +770,84 @@ fn declined_budget_is_a_separate_pot_from_sorry_budget() {
     assert!(
         acked_stdout.contains("\"declined\":4"),
         "acknowledging a refusal does not hide it — the count is still reported:\n{acked_stdout}"
+    );
+}
+
+/// The cone walk follows a TAIL CALL.
+///
+/// This is the leg nobody knew about, and it is the one that proves the walk
+/// has to be exhaustive rather than extended. The TCO transform runs BEFORE
+/// typechecking, so by the time any backend looks at a mutual-recursion group
+/// every in-group tail call is an `Expr::TailCall` — a variant the cone walk's
+/// `_ => {}` arm dropped on the floor. A law over `bounce`, whose entire body
+/// is `readValues(m, n)` in tail position, saw a cone containing nothing but
+/// itself, found no observer, and exported as a kernel-certified theorem that
+/// `aver verify` refutes 0/1.
+///
+/// The control that isolates it: move the same call out of tail position
+/// (`List.concat(readValues(m, n), [])`) and the identical cone WAS refused.
+/// Same functions, same law, same observer — only the AST variant differed.
+#[test]
+fn an_observer_behind_a_tail_call_is_still_refused() {
+    let lean = emit_lean(
+        HIDDEN_OBSERVER_FIXTURE,
+        "aver-map-order-tailcall",
+        "MapOrderHiddenObserver",
+    );
+    assert!(
+        !lean.contains("theorem bounce_law_bounceReadsIterationOrder"),
+        "a law reaching its observer through a tail call must NOT be exported \
+         as a theorem:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- verify law bounce.bounceReadsIterationOrder: map iteration order is not exported"
+        ),
+        "the refusal must follow the tail call into the mutual peer:\n{lean}"
+    );
+}
+
+/// The cone walk descends into a STRING INTERPOLATION.
+///
+/// Proof export deliberately runs without interpolation lowering — it wants
+/// source-level IR — so `"{firstValue(m)}"` still holds a real call when the
+/// gate looks at it. The same `_ => {}` arm skipped `Expr::InterpolatedStr`,
+/// so the call inside the braces was invisible: `aver verify` gave 0/1 while
+/// `aver proof --check` gave exit 0, 0 sorries, and a certified theorem.
+#[test]
+fn an_observer_inside_string_interpolation_is_still_refused() {
+    let lean = emit_lean(
+        HIDDEN_OBSERVER_FIXTURE,
+        "aver-map-order-interp",
+        "MapOrderHiddenObserver",
+    );
+    assert!(
+        !lean.contains("theorem describe_law_describeReadsIterationOrder"),
+        "a law reaching its observer through an interpolated string must NOT \
+         be exported as a theorem:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- verify law describe.describeReadsIterationOrder: map iteration order is not \
+             exported"
+        ),
+        "the refusal must descend into the interpolated segment:\n{lean}"
+    );
+}
+
+/// `aver verify` refutes both of the laws the exporter now refuses.
+///
+/// Without this the two tests above could be satisfied by a gate that refuses
+/// everything. The fixture's claims are FALSE at runtime — that is what makes
+/// exporting them a soundness hole rather than a lost opportunity.
+#[test]
+fn the_hidden_observer_laws_are_refuted_by_the_vm() {
+    let run = run_aver(&["verify", HIDDEN_OBSERVER_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("0/2 cases passed"),
+        "both hidden-observer laws must FAIL on the VM — otherwise refusing \
+         them proves nothing:\n{}",
+        format_output(&run)
     );
 }

@@ -155,28 +155,15 @@ pub(super) fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
     ident_name(expr) == Some(name)
 }
 
-/// Immediate sub-expressions used by law-auto source-AST scans. This mirrors
-/// the pre-existing pure recognizer walkers while making tail-call args visible.
+/// Immediate sub-expressions used by law-auto source-AST scans.
+///
+/// One line, because the knowledge of what an `Expr`'s children are lives in
+/// `codegen::expr_walk` and nowhere else. The local copy this replaces had the
+/// same `_ => Vec::new()` arm that hid two variants from the map-order gate
+/// (#887), and it was missing four more: interpolated segments, independent
+/// products, map-literal entries and record fields.
 pub(super) fn child_exprs(e: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
-    match &e.node {
-        Expr::FnCall(callee, args) => {
-            let mut v = vec![callee.as_ref()];
-            v.extend(args.iter());
-            v
-        }
-        Expr::BinOp(_, l, r) => vec![l.as_ref(), r.as_ref()],
-        Expr::Neg(inner) | Expr::ErrorProp(inner) => vec![inner.as_ref()],
-        Expr::Attr(base, _) => vec![base.as_ref()],
-        Expr::Constructor(_, Some(inner)) => vec![inner.as_ref()],
-        Expr::Match { subject, arms } => {
-            let mut v = vec![subject.as_ref()];
-            v.extend(arms.iter().map(|a| a.body.as_ref()));
-            v
-        }
-        Expr::List(items) | Expr::Tuple(items) => items.iter().collect(),
-        Expr::TailCall(tc) => tc.args.iter().collect(),
-        _ => Vec::new(),
-    }
+    crate::codegen::expr_walk::child_exprs(e)
 }
 
 /// Collect dotted/source names of call sites using the legacy law-auto call-scan

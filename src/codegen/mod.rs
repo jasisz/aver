@@ -12,6 +12,7 @@ pub(crate) mod cite_instantiate;
 pub mod common;
 #[cfg(feature = "runtime")]
 pub mod dafny;
+pub mod expr_walk;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]

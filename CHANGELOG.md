@@ -20,6 +20,12 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **The map iteration-order refusal now follows a call through an interpolated string and through a tail call.** The refusal was meant to follow calls rather than spelling, so an observation hidden a few functions below the law is still caught. Two shapes escaped it. A call inside `"{firstValue(m)}"` was invisible, because proof export deliberately keeps interpolation unlowered and the walk skipped the segment. And a call in tail position inside a recursion group was invisible, because the tail-call transform runs before typechecking, so every such call has already changed shape by the time the gate looks — a law over a function whose whole body is `readValues(m, n)` saw a cone containing nothing but itself.
+
+  Both exported as kernel-certified theorems that `aver verify` refutes on the same source: `aver verify` gave 0/1, `aver proof --check` gave exit 0 and 0 sorries. The tail-call one had a clean control — moving the identical call out of tail position was enough to make the same law refuse.
+
+  Order-blind claims are unaffected, and no claim anywhere in the shipped examples changes status.
+
 - **A claim `aver proof` refuses to export is now counted, named and charged.** The refusal above — a law or a plain `verify` case that reads map iteration order over a key type the proof model cannot reproduce — left exactly one trace: a comment inside the generated Lean. Nothing was printed, no count was reported, and the exit code did not move. `aver proof tests/fixtures/map_order_unmodelled_keys.av --check` dropped four claims on the floor and then said `0 sorries, universal: yes` and exited 0. A green check meant "four laws certified" to anyone reading it.
 
   `aver proof` now prints each refused claim by name with the reason, alongside what it compiled, whether or not you asked for `--check`. `--check-json` carries a `declined` count and a `declined_claims` array (identity, kind, reason), and `proof_manifest.json` records the same list next to `laws`, so a claim that moves from proved to refused shows up in a baseline diff rather than vanishing.

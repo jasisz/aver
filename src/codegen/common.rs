@@ -1621,9 +1621,17 @@ pub fn law_calls_unclassified_fn(
     expr_calls_named(&law.lhs, unclassified) || expr_calls_named(&law.rhs, unclassified)
 }
 
+/// True when anything in `expr` calls one of `names`.
+///
+/// The node test below is the whole analysis; the descent belongs to
+/// [`expr_walk::any`], which has no wildcard arm and therefore cannot skip a
+/// variant. This walker and [`collect_called_names`] are the two halves of the
+/// map-order gate — one asks "does the cone observe iteration order?", the
+/// other builds the cone — and when they disagreed about the shape of an
+/// expression the gate simply did not run (#887).
 fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
-    match &expr.node {
-        Expr::FnCall(callee, args) => {
+    crate::codegen::expr_walk::any(expr, &mut |node| match &node.node {
+        Expr::FnCall(callee, _) => {
             // Resolve the callee through the same path other emitters use —
             // covers bare (`size`), dotted (`Dep.toSorted`), and resolved
             // module-qualified shapes. The unclassified set is populated
@@ -1634,45 +1642,18 @@ fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
             // so `Dep.toSorted(xs)` lands on the gate when the set holds
             // just `toSorted` — and so a future migration to qualified
             // diagnostic names keeps working.
-            let direct = expr_to_dotted_name(&callee.node)
+            expr_to_dotted_name(&callee.node)
                 .map(|n| {
                     let bare = n.rsplit('.').next().unwrap_or(n.as_str());
                     names.contains(n.as_str()) || names.contains(bare)
                 })
-                .unwrap_or(false);
-            direct
-                || expr_calls_named(callee, names)
-                || args.iter().any(|a| expr_calls_named(a, names))
+                .unwrap_or(false)
         }
-        Expr::Attr(inner, _) | Expr::ErrorProp(inner) | Expr::Neg(inner) => {
-            expr_calls_named(inner, names)
-        }
-        Expr::BinOp(_, l, r) => expr_calls_named(l, names) || expr_calls_named(r, names),
-        Expr::Match { subject, arms } => {
-            expr_calls_named(subject, names)
-                || arms.iter().any(|a| expr_calls_named(&a.body, names))
-        }
-        Expr::Constructor(_, Some(arg)) => expr_calls_named(arg, names),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(|i| expr_calls_named(i, names))
-        }
-        Expr::MapLiteral(entries) => entries
-            .iter()
-            .any(|(k, v)| expr_calls_named(k, names) || expr_calls_named(v, names)),
-        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, v)| expr_calls_named(v, names)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_calls_named(base, names) || updates.iter().any(|(_, v)| expr_calls_named(v, names))
-        }
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
-            crate::ast::StrPart::Parsed(inner) => expr_calls_named(inner, names),
-            crate::ast::StrPart::Literal(_) => false,
-        }),
-        Expr::TailCall(boxed) => {
-            let crate::ast::TailCallData { target, args, .. } = boxed.as_ref();
-            names.contains(target) || args.iter().any(|a| expr_calls_named(a, names))
-        }
+        // A tail call names its target directly rather than through a callee
+        // expression, so the `FnCall` arm above never sees it.
+        Expr::TailCall(boxed) => names.contains(&boxed.target),
         _ => false,
-    }
+    })
 }
 
 /// The pure recursive fns that THREAD an accumulator over a USER-ADT driver —
@@ -2380,55 +2361,25 @@ fn collect_map_key_types(type_name: &str, out: &mut Vec<String>) {
 }
 
 /// Every dotted or bare callee name appearing in an expression.
+///
+/// The cone-building half of the map-order gate. Descent is delegated to
+/// [`expr_walk::walk`] so it cannot silently skip a variant — a call hidden
+/// inside `"{helper(m)}"` or behind a tail call used to be invisible here while
+/// [`expr_calls_named`] could see it, and the gate's two halves disagreeing
+/// about the cone is what let an observed map iteration order out (#887).
 fn collect_called_names(expr: &Spanned<Expr>, out: &mut Vec<String>) {
-    match &expr.node {
-        Expr::FnCall(callee, args) => {
+    crate::codegen::expr_walk::walk(expr, &mut |node| match &node.node {
+        Expr::FnCall(callee, _) => {
             if let Some(name) = expr_to_dotted_name(&callee.node) {
                 out.push(name);
             }
-            collect_called_names(callee, out);
-            for a in args {
-                collect_called_names(a, out);
-            }
         }
-        Expr::Attr(inner, _) | Expr::ErrorProp(inner) | Expr::Neg(inner) => {
-            collect_called_names(inner, out)
-        }
-        Expr::BinOp(_, l, r) => {
-            collect_called_names(l, out);
-            collect_called_names(r, out);
-        }
-        Expr::Match { subject, arms } => {
-            collect_called_names(subject, out);
-            for a in arms {
-                collect_called_names(&a.body, out);
-            }
-        }
-        Expr::Constructor(_, Some(arg)) => collect_called_names(arg, out),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for i in items {
-                collect_called_names(i, out);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                collect_called_names(k, out);
-                collect_called_names(v, out);
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                collect_called_names(v, out);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_called_names(base, out);
-            for (_, v) in updates {
-                collect_called_names(v, out);
-            }
-        }
+        // Post-TCO, a call to a peer in the same recursion group is a
+        // `TailCall` carrying its target as a plain name, with no callee
+        // expression for the arm above to read.
+        Expr::TailCall(tc) => out.push(tc.target.clone()),
         _ => {}
-    }
+    });
 }
 
 /// True when the type definition mentions its own name somewhere in a
