@@ -2709,7 +2709,8 @@ fn collect_map_key_types(type_name: &str, out: &mut Vec<String>) {
     }
 }
 
-/// Every dotted or bare callee name appearing in an expression.
+/// Every function an expression reaches by name — called here, or handed to
+/// someone else to call.
 ///
 /// The cone-building half of the map-order gate. Descent is delegated to
 /// [`expr_walk::walk`] so it cannot silently skip a variant — a call hidden
@@ -2718,17 +2719,57 @@ fn collect_map_key_types(type_name: &str, out: &mut Vec<String>) {
 /// about the cone is what let an observed map iteration order out (#887).
 fn collect_called_names(expr: &Spanned<Expr>, out: &mut Vec<String>) {
     crate::codegen::expr_walk::walk(expr, &mut |node| match &node.node {
-        Expr::FnCall(callee, _) => {
+        Expr::FnCall(callee, args) => {
             if let Some(name) = expr_to_dotted_name(&callee.node) {
                 out.push(name);
+            }
+            for arg in args {
+                collect_fn_reference(arg, out);
             }
         }
         // Post-TCO, a call to a peer in the same recursion group is a
         // `TailCall` carrying its target as a plain name, with no callee
         // expression for the arm above to read.
-        Expr::TailCall(tc) => out.push(tc.target.clone()),
+        Expr::TailCall(tc) => {
+            out.push(tc.target.clone());
+            for arg in &tc.args {
+                collect_fn_reference(arg, out);
+            }
+        }
         _ => {}
     });
+}
+
+/// The function an ARGUMENT names, when it names one.
+///
+/// A function-typed parameter is writable — `f: Fn(Map<Float, Int>) ->
+/// List<Float>` type-checks, runs, and is applied as `f(m)` — and the function
+/// that ends up being applied arrives by name at the call site. That name is a
+/// leaf: nothing calls it here, so a cone built from CALLS alone stopped at the
+/// caller and never looked inside the function whose body does the observing.
+/// A law over `viaHof(floatKeys, m)` saw a cone of two functions, neither of
+/// which mentions `Map.keys`, and exported as a certified theorem about a key
+/// sequence the runtime does not produce.
+///
+/// Whoever ends up applying it, the function's body is part of what the claim's
+/// value depends on, so it belongs in the cone. Whether the name IS a function
+/// is decided where every other reached name is decided — by resolving it — so
+/// an ordinary argument that happens to be an identifier costs one failed
+/// lookup. A stamped argument that is not of function type is dropped here
+/// instead: it cannot be a function reference, and a variable sharing a name
+/// with some function should not drag that function in. An argument with no
+/// stamp is kept, because a law's template is never typechecked and its
+/// arguments carry no types at all.
+fn collect_fn_reference(arg: &Spanned<Expr>, out: &mut Vec<String>) {
+    let Some(name) = expr_to_dotted_name(&arg.node) else {
+        return;
+    };
+    if let Some(ty) = arg.ty()
+        && !matches!(ty, crate::ast::Type::Fn(..))
+    {
+        return;
+    }
+    out.push(name);
 }
 
 /// True when the type definition mentions its own name somewhere in a

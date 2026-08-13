@@ -27,6 +27,7 @@ const COLLIDING_TYPE_DIR: &str = "tests/fixtures/map_equality_colliding_type";
 const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
 const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order";
 const FIELD_COLLISION_DIR: &str = "tests/fixtures/map_equality_field_collision";
+const FN_PARAM_FIXTURE: &str = "tests/fixtures/map_order_fn_param.av";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1207,4 +1208,43 @@ fn a_field_annotation_resolves_to_the_type_it_names() {
             format_output(&verify)
         );
     }
+}
+
+/// A function handed to a higher-order parameter is part of the cone.
+///
+/// `viaHof(f, m)` applies whatever it is given, and the claim passes
+/// `floatKeys` — whose body is `Map.keys(m)` — by name. The cone was built
+/// from CALLS, and a name in argument position is a leaf: nothing called
+/// `floatKeys` syntactically, so the walk never entered it, saw no observer,
+/// and exported both the case and the law as certified claims about a
+/// key sequence the runtime never produces. `aver verify` refutes both.
+#[test]
+fn an_observer_passed_in_by_name_is_still_refused() {
+    let lean = emit_lean(
+        FN_PARAM_FIXTURE,
+        "aver-map-order-fn-param",
+        "MapOrderFnParam",
+    );
+    assert!(
+        lean.contains("-- verify viaHof: map iteration order is not exported"),
+        "the case reads the map's keys through the reader it was handed, so \
+         it must be declined:\n{lean}"
+    );
+    assert!(
+        lean.contains("-- verify law viaHof.keysAsWritten: map iteration order is not exported"),
+        "the law reads the map's keys through the reader it was handed, so it \
+         must be declined:\n{lean}"
+    );
+    assert!(
+        !lean.contains("native_decide"),
+        "nothing in this file may be stated as a theorem:\n{lean}"
+    );
+
+    let verify = run_aver(&["verify", FN_PARAM_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("0/2 cases passed"),
+        "the fixture is meant to be refuted on the VM:\n{}",
+        format_output(&verify)
+    );
 }
