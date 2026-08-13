@@ -1,0 +1,77 @@
+module MapIterationOrder
+    intent =
+        "Pins the order a Map iterates in to one thing across the toolchain."
+        "A map is inserted out of key order on purpose: the runtime iterates it sorted by key, and the exported proof has to agree."
+    effects [Console]
+
+fn threeKeys() -> Map<String, Int>
+    ? "Builds a three-key map by inserting z, a, m in that order."
+    m0 = Map.set({}, "z", 1)
+    m1 = Map.set(m0, "a", 2)
+    Map.set(m1, "m", 3)
+
+verify threeKeys
+    Map.keys(threeKeys()) => ["a", "m", "z"]
+    Map.values(threeKeys()) => [2, 3, 1]
+    Map.entries(threeKeys()) => [("a", 2), ("m", 3), ("z", 1)]
+
+fn literalOutOfOrder() -> Map<String, Int>
+    ? "A map literal written out of key order."
+    {"z" => 1, "a" => 2, "m" => 3}
+
+verify literalOutOfOrder
+    Map.values(literalOutOfOrder()) => [2, 3, 1]
+    literalOutOfOrder() => threeKeys()
+
+fn numericKeys() -> Map<Int, String>
+    ? "A map whose keys sort numerically, not by printed digits."
+    m0 = Map.set({}, 10, "ten")
+    Map.set(m0, 2, "two")
+
+verify numericKeys
+    Map.keys(numericKeys()) => [2, 10]
+    Map.values(numericKeys()) => ["two", "ten"]
+
+fn valuesText(m: Map<String, Int>) -> String
+    ? "Renders a map's values in iteration order."
+    joinInts(Map.values(m))
+
+fn joinInts(xs: List<Int>) -> String
+    ? "Joins integers with a comma separator."
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> "{x}"
+            _ -> "{x},{joinInts(rest)}"
+
+verify joinInts
+    joinInts([]) => ""
+    joinInts([7]) => "7"
+    joinInts([2, 3, 1]) => "2,3,1"
+
+verify valuesText
+    valuesText(threeKeys()) => "2,3,1"
+
+fn setThenLen(m: Map<String, Int>, k: String, v: Int) -> Int
+    ? "Size of a map after writing one key."
+    Map.len(Map.set(m, k, v))
+
+verify setThenLen law neverEmptyAfterSet
+    given m: Map<String, Int> = [{}, {"a" => 1}, {"a" => 5, "x" => 2}]
+    given k: String = ["a", "new"]
+    given v: Int = [1, 7]
+    Map.len(Map.set(m, k, v)) >= 1 => true
+
+fn setThenGet(m: Map<String, Int>, k: String, v: Int) -> Option<Int>
+    ? "Reads back the key that was just written."
+    Map.get(Map.set(m, k, v), k)
+
+verify setThenGet law readsBackWhatWasWritten
+    given m: Map<String, Int> = [{}, {"a" => 1}, {"a" => 5, "x" => 2}]
+    given k: String = ["a", "new"]
+    given v: Int = [1, 7]
+    Map.get(Map.set(m, k, v), k) => Option.Some(v)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(valuesText(threeKeys()))

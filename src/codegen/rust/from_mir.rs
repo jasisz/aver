@@ -4219,8 +4219,12 @@ fn emit_mir_builtin_call(
             "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); aver_rt::AverList::from_vec(ks) }}",
             arg!(0)
         ),
+        // Sorted by key, like `Map.keys` and `Map.entries` above and like
+        // the VM. Walking `HashMap::values()` directly gave a per-process
+        // order, so two runs of the same binary could disagree and
+        // `keys[i]` did not pair with `values[i]`.
         "Map.values" => format!(
-            "aver_rt::AverList::from_vec({}.values().cloned().collect::<Vec<_>>())",
+            "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); aver_rt::AverList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>()) }}",
             arg!(0)
         ),
         "Map.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),

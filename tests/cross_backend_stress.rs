@@ -1016,6 +1016,73 @@ fn main()
 "#;
 const TOP_LEVEL_SHADOWS_FN_OUT: &str = "7";
 
+/// Map iteration order, read three ways on the same map.
+///
+/// Keys go in out of order (`z`, `a`, `m`) and every backend must read them
+/// back sorted by key, with `keys[i]` paired to `values[i]`. `Map.values`
+/// used to walk the compiled backend's hash map directly while `Map.keys`
+/// and `Map.entries` beside it sorted, so the pairing broke and the order
+/// changed from process to process — invisible here because nothing in this
+/// suite read `Map.values` at all.
+///
+/// String keys only: the self-host interpreter models every guest map as
+/// `Map<String, Val>`, so an integer-keyed guest map cannot round-trip
+/// through it. Integer key order is pinned in
+/// `tests/fixtures/map_iteration_order.av` instead.
+const MAP_ITERATION_ORDER_SRC: &str = r#"module Tmp
+
+fn stringKeyed() -> Map<String, Int>
+    m0 = Map.set({}, "z", 1)
+    m1 = Map.set(m0, "a", 2)
+    Map.set(m1, "m", 3)
+
+fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> String.fromInt(x)
+            _ -> String.fromInt(x) + "," + joinInts(rest)
+
+fn joinStrings(xs: List<String>) -> String
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> x
+            _ -> x + "," + joinStrings(rest)
+
+fn pairUp(ks: List<String>, vs: List<Int>) -> String
+    match ks
+        [] -> ""
+        [k, ..krest] -> match vs
+            [] -> ""
+            [v, ..vrest] -> k + "=" + String.fromInt(v) + ";" + pairUp(krest, vrest)
+
+fn main()
+    ! [Console.print]
+    Console.print(joinStrings(Map.keys(stringKeyed())))
+    Console.print(joinInts(Map.values(stringKeyed())))
+    Console.print(pairUp(Map.keys(stringKeyed()), Map.values(stringKeyed())))
+"#;
+const MAP_ITERATION_ORDER_OUT: &str = "a,m,z\n2,3,1\na=2;m=3;z=1;";
+
+#[test]
+fn cross_map_iteration_order_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-maporder-vm", MAP_ITERATION_ORDER_SRC),
+        MAP_ITERATION_ORDER_OUT,
+    );
+}
+
+#[test]
+fn cross_map_iteration_order_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-maporder-sh", MAP_ITERATION_ORDER_SRC),
+        MAP_ITERATION_ORDER_OUT,
+    );
+}
+
 #[test]
 fn cross_top_level_binding_shadows_fn_name_vm() {
     assert_eq_with_label(

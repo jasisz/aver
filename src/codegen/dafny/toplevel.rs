@@ -1471,6 +1471,14 @@ pub fn emit_law_samples(
         return None;
     }
 
+    // Mirror of the Lean gate. Dafny's `MapEntries` is declared with no
+    // body, so it commits to no iteration order at all and would let a
+    // sorted-order claim through unexamined — the same law has to be
+    // refused on both backends or the two disagree on the same source.
+    if crate::codegen::common::law_map_order_refusal(vb, law, ctx).is_some() {
+        return None;
+    }
+
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
 
@@ -2896,6 +2904,16 @@ pub fn emit_verify_law(
         return format!(
             "// Law {}.{}{}: trace-projection LHS is runtime-only (see docs/oracle.md)",
             fn_name, law_name, suffix,
+        );
+    }
+
+    // Mirror of the Lean gate in `emit_verify_law_block`. `MapEntries` has
+    // no body here, so Dafny would neither confirm nor refute an iteration
+    // order claim — it would pass by saying nothing.
+    if let Some(reason) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
+        return format!(
+            "// Law {}.{}{}: map iteration order is not exported — {}",
+            fn_name, law_name, suffix, reason,
         );
     }
 

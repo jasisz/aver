@@ -635,9 +635,11 @@ pub fn builtinMapValues(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
         crate::aver_generated::domain::value::Val::ValMap(m) => {
-            Ok(crate::aver_generated::domain::value::Val::ValList(
-                aver_rt::AverList::from_vec(m.values().cloned().collect::<Vec<_>>()),
-            ))
+            Ok(crate::aver_generated::domain::value::Val::ValList({
+                let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                es.sort_by(|a, b| a.0.cmp(&b.0));
+                aver_rt::AverList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
+            }))
         }
         _ => Err(AverStr::from("Map.values requires a Map")),
     }
