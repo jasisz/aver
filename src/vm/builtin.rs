@@ -254,20 +254,18 @@ impl VmBuiltin {
                 console::effects(self.name())
             }
 
-            #[cfg(feature = "runtime-net")]
-            Self::HttpGet
-            | Self::HttpHead
-            | Self::HttpDelete
-            | Self::HttpPost
-            | Self::HttpPut
-            | Self::HttpPatch => http::effects(self.name()),
-            #[cfg(not(feature = "runtime-net"))]
-            Self::HttpGet
-            | Self::HttpHead
-            | Self::HttpDelete
-            | Self::HttpPost
-            | Self::HttpPut
-            | Self::HttpPatch => &[],
+            // Same reasoning as the Terminal arms below: the effect list is
+            // structural metadata, identical whether or not the networking
+            // implementation ships in this build. `Http.get` is registered
+            // with the typechecker unconditionally, so gating it here made
+            // the VM treat a network call as pure — no effect check, no
+            // verify-trace entry, and Record/Replay silently bypassed.
+            Self::HttpGet => &["Http.get"],
+            Self::HttpHead => &["Http.head"],
+            Self::HttpDelete => &["Http.delete"],
+            Self::HttpPost => &["Http.post"],
+            Self::HttpPut => &["Http.put"],
+            Self::HttpPatch => &["Http.patch"],
 
             Self::HttpServerListen
             | Self::HttpServerListenWith
@@ -563,6 +561,58 @@ mod tests {
                  it, so calls to it never reach the verify trace"
             );
         }
+    }
+
+    /// Source text of `effects()`, from its signature to the closing brace of
+    /// its body. Panics if the signature moved, so the guard below can never
+    /// pass by silently matching nothing.
+    fn effects_fn_source() -> &'static str {
+        const SOURCE: &str = include_str!("builtin.rs");
+        const SIGNATURE: &str = "pub(crate) fn effects(self) -> &'static [&'static str] {";
+
+        let start = SOURCE
+            .find(SIGNATURE)
+            .expect("`effects()` signature not found — update this guard to match the new one");
+        let body = &SOURCE[start + SIGNATURE.len()..];
+        let mut depth = 1usize;
+        for (idx, ch) in body.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &SOURCE[start..start + SIGNATURE.len() + idx + 1];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("`effects()` body has unbalanced braces");
+    }
+
+    #[test]
+    fn effects_metadata_is_the_same_in_every_build() {
+        // `effects()` answers "what does this builtin do", not "is the
+        // implementation compiled into this binary". Those two questions have
+        // different answers: `Http.get` is registered with the typechecker in
+        // every build, but its networking implementation only ships behind a
+        // feature. When the effect list was gated on that feature, a build
+        // without it reported `Http.get` as pure — the runtime effect check
+        // passed unconditionally, no verify-trace event was recorded, and
+        // Record/Replay was bypassed, so a `trace` law over `Http.get`
+        // counted zero events and passed while proving nothing.
+        //
+        // Build-dependent behaviour belongs in `invoke_nv`, which is where the
+        // implementation actually lives. This is a source-shape check on
+        // purpose: it holds for every feature combination at once, including
+        // the ones no CI lane builds test code for.
+        let source = effects_fn_source();
+        assert!(
+            !source.contains("#[cfg"),
+            "`VmBuiltin::effects()` contains a `#[cfg` attribute. Effect metadata must be \
+             identical in every build — gate the implementation in `invoke_nv` instead. \
+             Offending body:\n{source}"
+        );
     }
 
     #[test]

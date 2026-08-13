@@ -3398,6 +3398,99 @@ fn check() -> Bool
             .expect("all effects should be consumed");
     }
 
+    /// A recorded `Http.get` returning `Ok(HttpResponse(status = 418, body =
+    /// "teapot", headers = {}))`, ready to hand to `start_replay`.
+    fn recorded_teapot_response() -> EffectRecord {
+        let outcome = value_to_json(&Value::Ok(Box::new(Value::Record {
+            type_name: "HttpResponse".to_string(),
+            fields: vec![
+                ("status".to_string(), Value::int(418)),
+                ("body".to_string(), Value::Str("teapot".to_string())),
+                ("headers".to_string(), Value::Map(Default::default())),
+            ]
+            .into(),
+        })))
+        .expect("an HttpResponse must be representable as a recorded outcome");
+
+        EffectRecord {
+            seq: 1,
+            effect_type: "Http.get".to_string(),
+            args: vec![JsonValue::String("https://example.com/thing".to_string())],
+            outcome: RecordedOutcome::Value(outcome),
+            caller_fn: String::new(),
+            source_line: 0,
+            group_id: None,
+            branch_path: None,
+            effect_occurrence: None,
+        }
+    }
+
+    /// `Http.get` used to be reported as effect-free in builds without the
+    /// networking implementation, which routed it straight to the plain call
+    /// path and skipped Record/Replay entirely. Now that it is effectful in
+    /// every build, Replay has to be able to serve it.
+    #[test]
+    fn replay_mode_serves_a_recorded_http_call_without_the_network() {
+        let src = r#"
+fn reachedServer() -> Bool
+    ! [Http.get]
+    result = Http.get("https://example.com/thing")
+    match result
+        Result.Ok(resp) -> true
+        Result.Err(msg) -> false
+"#;
+        let mut machine = vm_build_with_effects(src);
+        machine.start_replay(vec![recorded_teapot_response()], true);
+        let out = machine
+            .run_named_function("reachedServer", &[])
+            .expect("replaying Http.get must not reach the network path")
+            .to_value(&machine.arena);
+        assert_eq!(
+            out,
+            Value::Bool(true),
+            "Replay must substitute the recorded Ok(HttpResponse) instead of calling out"
+        );
+        machine
+            .ensure_replay_consumed()
+            .expect("the recorded Http.get should have been consumed");
+    }
+
+    /// KNOWN FAILURE, pre-existing and not specific to Http: a replayed record
+    /// comes back with its fields in alphabetical order rather than declared
+    /// order, because `value_to_json` writes them into a sorted object and
+    /// `NanValue::from_value` then rebuilds the record by position, ignoring
+    /// the names it was handed. `HttpResponse` is declared `status, body,
+    /// headers`, so replay hands `body` to every reader of `.status`.
+    ///
+    /// The same permutation hits `Tcp.Connection` (`id, host, port`) and
+    /// `Terminal.Size` (`width, height`), where the swapped fields share a
+    /// type and the wrong value is returned with no error at all.
+    ///
+    /// Un-ignore this once records are rebuilt by field name.
+    #[test]
+    #[ignore = "replayed records come back with fields in alphabetical order; see the doc comment"]
+    fn replay_mode_preserves_record_field_identity() {
+        let src = r#"
+fn status() -> Int
+    ! [Http.get]
+    result = Http.get("https://example.com/thing")
+    match result
+        Result.Ok(resp) -> resp.status
+        Result.Err(msg) -> 0
+"#;
+        let mut machine = vm_build_with_effects(src);
+        machine.start_replay(vec![recorded_teapot_response()], true);
+        let out = machine
+            .run_named_function("status", &[])
+            .expect("replaying Http.get must not reach the network path")
+            .to_value(&machine.arena);
+        assert_eq!(
+            out,
+            Value::int(418),
+            "`.status` must read the recorded status, not whichever field sorted first"
+        );
+    }
+
     #[test]
     fn replay_mode_detects_effect_order_mismatch() {
         let src = r#"
