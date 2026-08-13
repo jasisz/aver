@@ -28,6 +28,7 @@ const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
 const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order";
 const FIELD_COLLISION_DIR: &str = "tests/fixtures/map_equality_field_collision";
 const FN_PARAM_FIXTURE: &str = "tests/fixtures/map_order_fn_param.av";
+const SHADOWED_GIVEN_FIXTURE: &str = "tests/fixtures/map_order_shadowed_given.av";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1245,6 +1246,46 @@ fn an_observer_passed_in_by_name_is_still_refused() {
     assert!(
         stdout.contains("0/2 cases passed"),
         "the fixture is meant to be refuted on the VM:\n{}",
+        format_output(&verify)
+    );
+}
+
+/// A variable that shares a name with a map reader is not a map reader.
+///
+/// The control on the fix above, and it went red while that fix was being
+/// written. Following every argument that resolves to a function pulls an
+/// unrelated `fn keys(m: Map<Float, Int>)` into the cone of a law whose given
+/// is called `keys`, and the law — true, `2/2` on the VM, with no map anywhere
+/// near it — was declined for reading an iteration order it never reads.
+///
+/// Over-refusing is not the safe direction: a provable law dropped in silence
+/// and an unprovable one exported both end with a green `--check` and a user
+/// believing something untrue. Which arguments are functions is the
+/// typechecker's answer, and the variable's stamp says `List<Float>`.
+#[test]
+fn a_given_named_after_a_map_reader_is_not_refused() {
+    let lean = emit_lean(
+        SHADOWED_GIVEN_FIXTURE,
+        "aver-map-order-shadowed-given",
+        "MapOrderShadowedGiven",
+    );
+    assert!(
+        lean.contains("theorem howMany_law_countsThem"),
+        "counting a list is not reading a map — the law must still be \
+         exported:\n{lean}"
+    );
+    assert!(
+        !lean.contains("is not exported"),
+        "nothing in this file may be refused; the only map reader in it is \
+         never called:\n{lean}"
+    );
+
+    // And the law holds, so refusing it would be a real loss.
+    let verify = run_aver(&["verify", SHADOWED_GIVEN_FIXTURE]);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("0 failed"),
+        "the control law must hold on the VM:\n{}",
         format_output(&verify)
     );
 }

@@ -2196,7 +2196,16 @@ fn map_order_refusal(
     // anything in here compare two maps?) and its signature (over which key
     // type?).
     let mut pending: Vec<String> = vec![vb.fn_name.clone()];
-    for root in roots {
+    // `vb.cases` alongside the roots, for the same reason the comparison scan
+    // reads them below: a law's `lhs`/`rhs` template is never typechecked, and a
+    // function handed over by name is only recognisable as one from its type.
+    // The cases are that same claim with its givens substituted, so they add no
+    // call the template does not make — only the types on it.
+    for root in roots.iter().copied().chain(
+        vb.cases
+            .iter()
+            .flat_map(|(lhs, rhs)| [lhs, rhs].into_iter()),
+    ) {
         collect_called_names(root, &mut pending);
     }
     let mut seen: HashSet<String> = HashSet::new();
@@ -2752,24 +2761,27 @@ fn collect_called_names(expr: &Spanned<Expr>, out: &mut Vec<String>) {
 /// sequence the runtime does not produce.
 ///
 /// Whoever ends up applying it, the function's body is part of what the claim's
-/// value depends on, so it belongs in the cone. Whether the name IS a function
-/// is decided where every other reached name is decided — by resolving it — so
-/// an ordinary argument that happens to be an identifier costs one failed
-/// lookup. A stamped argument that is not of function type is dropped here
-/// instead: it cannot be a function reference, and a variable sharing a name
-/// with some function should not drag that function in. An argument with no
-/// stamp is kept, because a law's template is never typechecked and its
-/// arguments carry no types at all.
+/// value depends on, so it belongs in the cone.
+///
+/// Which argument is a function is the typechecker's answer, not a guess from
+/// the shape of the name: only an argument stamped `Fn(..)` is one. Taking
+/// every identifier instead — on the grounds that a name that resolves to a
+/// function probably is one — refuses a true law whose `given` happens to be
+/// called `keys` in a file that also declares `fn keys(m: Map<Float, Int>)`,
+/// because the variable drags the unrelated function into the cone. The
+/// variable has a type and it is not a function type, so the stamp separates
+/// them and nothing else has to.
+///
+/// This is why the caller feeds a claim's expanded sample cases into the cone
+/// as well as its `lhs`/`rhs`: the template is never typechecked, so nothing in
+/// it carries a stamp to read.
 fn collect_fn_reference(arg: &Spanned<Expr>, out: &mut Vec<String>) {
-    let Some(name) = expr_to_dotted_name(&arg.node) else {
-        return;
-    };
-    if let Some(ty) = arg.ty()
-        && !matches!(ty, crate::ast::Type::Fn(..))
-    {
+    if !matches!(arg.ty(), Some(crate::ast::Type::Fn(..))) {
         return;
     }
-    out.push(name);
+    if let Some(name) = expr_to_dotted_name(&arg.node) {
+        out.push(name);
+    }
 }
 
 /// True when the type definition mentions its own name somewhere in a
