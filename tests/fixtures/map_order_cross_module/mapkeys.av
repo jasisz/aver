@@ -1,0 +1,8 @@
+module MapKeys
+    intent =
+        "Reads a float-keyed map in iteration order, for a caller in another module."
+    effects []
+
+fn floatValues(m: Map<Float, Int>) -> List<Int>
+    ? "Values of a float-keyed map, in iteration order."
+    Map.values(m)

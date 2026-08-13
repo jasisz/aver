@@ -20,6 +20,7 @@ const ORDER_FIXTURE: &str = "tests/fixtures/map_iteration_order.av";
 const UNMODELLED_FIXTURE: &str = "tests/fixtures/map_order_unmodelled_keys.av";
 const NAN_KEY_FIXTURE: &str = "tests/fixtures/map_float_nan_keys.av";
 const MODEL_SHAPE_FIXTURE: &str = "tests/fixtures/map_model_shape.av";
+const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -544,5 +545,46 @@ fn the_trust_header_carves_out_map_order_on_wasm_gc() {
     assert!(
         lean.contains("map iteration order on wasm-gc"),
         "the backend-independence claim must point at the carve-out:\n{lean}"
+    );
+}
+
+/// A module boundary does not stop the cone walk.
+///
+/// The callee cone is resolved in the caller's scope, and `Dep.helper` is not
+/// in it — so a law over `firstFloatValue(m)` whose body calls
+/// `MapKeys.floatValues(m)` one module over would find no `FnDef`, see no
+/// observer, and export as a theorem. Dotted names are resolved under the
+/// module that defines them for that reason.
+#[test]
+fn an_observer_in_another_module_is_still_refused() {
+    let root = repo_root().join(CROSS_MODULE_DIR);
+    let out_dir = temp_output_dir("aver-map-order-cross-module");
+    let run = run_aver(&[
+        "proof",
+        &format!("{CROSS_MODULE_DIR}/main.av"),
+        "--module-root",
+        CROSS_MODULE_DIR,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    assert!(
+        run.status.success() && root.is_dir(),
+        "`aver proof` over the cross-module fixture failed:\n{}",
+        format_output(&run)
+    );
+    let lean = std::fs::read_to_string(out_dir.join("MapOrderCrossModule.lean"))
+        .expect("expected the generated Lean module to exist");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !lean.contains("theorem firstFloatValue_law_firstIsLowestKeysValue"),
+        "a law reaching its observer across a module boundary must NOT be \
+         exported as a theorem:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- verify law firstFloatValue.firstIsLowestKeysValue: map iteration order is \
+             not exported"
+        ),
+        "the refusal must follow the call into the other module:\n{lean}"
     );
 }

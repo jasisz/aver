@@ -683,10 +683,17 @@ mod tests {
     #[test]
     fn a_float_map_holding_nan_sorts_to_one_stable_order() {
         let mut keys: Vec<Value> = (0..58).map(|i| Value::Float(f64::from(i) - 29.0)).collect();
+        // Both NaN signs. IEEE 754 does not fix the sign of a NaN produced by
+        // an invalid operation, so `0.0 / 0.0` comes out negative on some
+        // machines and positive on others — and under a total order that sign
+        // decides whether the NaN sorts below every finite key or above every
+        // one. Carry both, so what is tested here does not depend on which one
+        // the hardware happened to produce.
         keys.push(Value::Float(f64::NAN));
+        keys.push(Value::Float(-f64::NAN));
         keys.push(Value::Float(-0.0));
         keys.push(Value::Float(0.0));
-        assert_eq!(keys.len(), 61);
+        assert_eq!(keys.len(), 62);
 
         let sort = |mut input: Vec<Value>| {
             input.sort_by(compare_scalar_keys);

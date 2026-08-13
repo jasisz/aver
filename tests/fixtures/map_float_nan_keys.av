@@ -2,6 +2,7 @@ module MapFloatNanKeys
     intent =
         "A float-keyed map wide enough to reach the real sort, holding a NaN and both zeroes."
         "Ordering float keys by raw bit pattern once a NaN is involved is not a total order — NaN sits above 1.0 and below -1.0 while -1.0 sits below 1.0 — and sorting a map that wide aborts the process rather than returning a wrong answer."
+        "Where the NaN itself lands is deliberately not asserted: IEEE 754 does not fix the sign of a NaN produced by an invalid operation, and total order reads that sign, so the position differs between machines. That is a reason a law reading Float iteration order is refused, not a reason to order Float keys any other way."
     effects [Console]
 
 fn nan() -> Float
@@ -34,11 +35,19 @@ fn entryCount() -> Int
     ? "How many entries the wide map iterates."
     List.len(Map.entries(wideMap()))
 
-fn firstKeyIsLowest() -> Bool
-    ? "The lowest ordinary key sorts to the front, ahead of every other key."
-    match Map.keys(wideMap())
-        [k, ..__rest] -> k == -29.0
-        _ -> false
+fn ascendingFrom(xs: List<Float>, prev: Float) -> Bool
+    ? "Every key that is not a NaN is strictly above the last one that was not."
+    match xs
+        [] -> true
+        [x, ..rest] -> match x == x
+            false -> ascendingFrom(rest, prev)
+            true -> match x > prev
+                true -> ascendingFrom(rest, x)
+                false -> false
+
+fn ordinaryKeysAscend() -> Bool
+    ? "The ordinary keys come back in ascending order around the NaN."
+    ascendingFrom(Map.keys(wideMap()), -30.0)
 
 verify keyCount
     keyCount() => 59
@@ -49,8 +58,8 @@ verify valueCount
 verify entryCount
     entryCount() => 59
 
-verify firstKeyIsLowest
-    firstKeyIsLowest() => true
+verify ordinaryKeysAscend
+    ordinaryKeysAscend() => true
 
 fn main() -> Unit
     ! [Console.print]
