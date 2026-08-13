@@ -20,20 +20,19 @@ fn bits_counted(op: &str, a: &[String], message: &str) -> String {
 
 /// Try to emit a builtin call as Lean 4 code.
 /// Returns `None` if the name is not a pure builtin.
+///
+/// A set-shaped map (`Map<T, Unit>`) gets no special treatment here. It used
+/// to: `Map.set(s, k, Unit)` was intercepted and emitted as `AverSet.add s k`,
+/// with the type rendered `Finset T` and a literal as `AverSet.ofList [...]`.
+/// Nothing defined `AverSet`, and `Finset` is Mathlib, which the generated
+/// project does not depend on — so every such program exported Lean that did
+/// not build. It goes through the ordinary `AverMap` path now, which is
+/// defined, key-sorted and has the `len` the same program reaches for.
 pub fn emit_builtin_call(
     name: &str,
     args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
 ) -> Option<String> {
-    use crate::codegen::common::is_unit_expr_resolved;
-
-    // Map<T, Unit> set operations: intercept before generic builtin path
-    if name == "Map.set" && args.len() == 3 && is_unit_expr_resolved(&args[2].node) {
-        let m = p(&super::expr::emit_expr(&args[0], ctx));
-        let k = p(&super::expr::emit_expr(&args[1], ctx));
-        return Some(format!("AverSet.add {} {}", m, k));
-    }
-
     let builtin = recognize_builtin(name)?;
     let a: Vec<String> = args
         .iter()

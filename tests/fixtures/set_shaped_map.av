@@ -1,0 +1,40 @@
+module SetShapedMap
+    intent =
+        "A set-shaped map is `Map<T, Unit>`, and its Lean export has to build."
+        "It used to render as `Finset T` with `AverSet.add` and `AverSet.ofList`, none of which the generated project can see — `Finset` is Mathlib and `AverSet` is defined nowhere at all — so every program holding a set exported Lean that failed to build."
+        "The literal below is written out of key order on purpose: the set branch ran before the key ordering, so even a defined carrier would have emitted it unsorted and made it a different value from the same set built with `Map.set`."
+    effects [Console]
+
+fn addKey(s: Map<String, Unit>, k: String) -> Map<String, Unit>
+    ? "Add a key to a set-shaped map."
+    Map.set(s, k, Unit)
+
+fn seed() -> Map<String, Unit>
+    ? "A two-element set, written out of key order."
+    {"b" => Unit, "a" => Unit}
+
+fn size(s: Map<String, Unit>) -> Int
+    ? "How many elements the set holds."
+    Map.len(s)
+
+fn seedKeys() -> List<String>
+    ? "The seed's elements, in iteration order."
+    Map.keys(seed())
+
+verify addKey
+    size(addKey(seed(), "c")) => 3
+    Map.has(addKey(seed(), "c"), "c") => true
+    size(addKey(seed(), "a")) => 2
+
+verify seedKeys
+    seedKeys() => ["a", "b"]
+
+verify addKey law addingAKeyLeavesANonEmptySet
+    given s: Map<String, Unit> = [{"a" => Unit}, {"b" => Unit, "a" => Unit}]
+    given k: String = ["a", "c"]
+    Map.len(Map.set(s, k, Unit)) >= 1 => true
+
+fn main() -> Unit
+    ! [Console.print]
+    grown = addKey(seed(), "c")
+    Console.print("{size(grown)}")

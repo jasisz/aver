@@ -312,12 +312,12 @@ seen3 = Map.remove(seen2, "alice")
 
 `Map.set(s, k, Unit)` adds an element, `Map.has(s, k)` checks membership, `Map.remove(s, k)` removes an element, and `Map.len(s)` returns cardinality. Map literals with `Unit` values work as set literals: `{"alice" => Unit, "bob" => Unit}`.
 
-When targeting formal verification backends, the codegen automatically lowers `Map<T, Unit>` to the native set type:
+When targeting Dafny, the codegen lowers `Map<T, Unit>` to the native set type. Lean has no set type the generated project can reach, so there it stays an ordinary map:
 
 | Backend | Aver type | Target type | `Map.set(s, k, Unit)` |
 |---------|-----------|-------------|----------------------|
 | Dafny | `Map<T, Unit>` | `set<T>` | `s + {k}` |
-| Lean | `Map<T, Unit>` | `Finset T` | `AverSet.add s k` |
+| Lean | `Map<T, Unit>` | `List (T × Unit)` | `AverMap.set s k ()` |
 
 ## Common patterns
 

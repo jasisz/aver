@@ -205,15 +205,13 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             format!("({})", parts.join(", "))
         }
         ResolvedExpr::MapLiteral(entries) => {
+            // A set-shaped map (`Map<T, Unit>`) used to branch off here into
+            // `AverSet.ofList [...]`, which nothing defines — and it branched
+            // off BEFORE the key ordering below, so even a defined `AverSet`
+            // would have emitted a set literal in written order rather than
+            // key order. Both go away by letting it fall through.
             if entries.is_empty() {
                 "[]".to_string()
-            } else if entries
-                .iter()
-                .all(|(_, v)| crate::codegen::common::is_unit_expr_resolved(&v.node))
-            {
-                // Map<T, Unit> literal → set literal
-                let parts: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
-                format!("AverSet.ofList [{}]", parts.join(", "))
             } else {
                 // The map model is a key-sorted association list, so a
                 // literal written out of order (`{"z" => 1, "a" => 2}`)

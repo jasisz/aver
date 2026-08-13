@@ -1330,3 +1330,104 @@ fn proof_export_dafny_routes_nested_error_prop_to_an_axiom() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn proof_export_of_a_set_shaped_map_builds() {
+    // Issue #884: a `Map<T, Unit>` — the set-shaped map — exported Lean that
+    // did not build. Three special cases fired on it: the type rendered as
+    // `Finset T` (Mathlib, which the generated project does not depend on),
+    // `Map.set(s, k, Unit)` emitted `AverSet.add s k`, and a literal emitted
+    // `AverSet.ofList [...]`. Nothing anywhere defined `AverSet`, so `lake
+    // build` reported `Unknown identifier 'AverSet.add'` and friends while
+    // plain `aver proof` still reported success.
+    //
+    // A fourth thing was queued behind those: the literal branch ran BEFORE
+    // the key-ordering branch added for #874, so a set literal written out of
+    // key order would have emitted unsorted even with a carrier that existed —
+    // a different value from the same set built with `Map.set`. The fixture's
+    // literal is written `{"b" => Unit, "a" => Unit}` to hold that down.
+    //
+    // All three special cases are gone; the set-shaped map goes through the
+    // ordinary `AverMap` path, which is defined, key-sorted, and has the `len`
+    // the same program reaches for.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = temp_output_dir("aver-proof-set-shaped-map");
+
+    let mut command = Command::new(aver_bin);
+    command
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/set_shaped_map.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&root);
+    let lake = Command::new("lake").arg("--version").output().is_ok();
+    if lake {
+        command
+            .arg("--check")
+            .arg("--check-json")
+            .arg("--sorry-budget")
+            .arg("0");
+    } else {
+        eprintln!("skipping the lake build: `lake` not available");
+    }
+    let output = command.output().expect("aver proof for a set-shaped map");
+    let lean =
+        std::fs::read_to_string(root.join("SetShapedMap.lean")).expect("read SetShapedMap.lean");
+
+    // The names that did not exist. `Finset` is Mathlib; `AverSet` was never
+    // written down at all.
+    for absent in ["AverSet", "Finset"] {
+        assert!(
+            !lean.contains(absent),
+            "the export must not mention `{absent}` — nothing in the generated \
+             project defines it:\n{lean}"
+        );
+    }
+    // The fixture only tests the set shape while it still holds one, and the
+    // literal only tests the ordering while it is still written out of order.
+    assert!(
+        lean.contains("def addKey (s : List (String × Unit)) (k : String)"),
+        "a set-shaped map must render as an ordinary map:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            r#"def seed  : List (String × Unit) :=
+  [("a", ()), ("b", ())]"#
+        ),
+        "a set literal written out of key order must be emitted in key order, \
+         or it is a different value from the same set built with `Map.set`:\n{lean}"
+    );
+
+    if lake {
+        let json_line = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                panic!(
+                    "`aver proof --check --check-json` produced no JSON line:\n{}",
+                    format_output(&output)
+                )
+            });
+        let summary: serde_json::Value =
+            serde_json::from_str(&json_line).expect("summary line parses as JSON");
+        assert_eq!(
+            summary["build_errors"].as_u64(),
+            Some(0),
+            "the exported set-shaped map must build:\n{}",
+            format_output(&output)
+        );
+        assert_eq!(
+            summary["passed"].as_bool(),
+            Some(true),
+            "the exported set-shaped map must build within a zero sorry budget:\n{}",
+            format_output(&output)
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
