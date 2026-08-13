@@ -588,3 +588,186 @@ fn an_observer_in_another_module_is_still_refused() {
         "the refusal must follow the call into the other module:\n{lean}"
     );
 }
+
+/// A claim the exporter refuses is COUNTED, NAMED and CHARGED.
+///
+/// The refusal used to leave exactly one trace: a comment inside the generated
+/// Lean. Nothing was printed, no count was reported and the exit code did not
+/// move — so `aver proof --check` on this fixture said "0 sorries, universal:
+/// yes", exit 0, while four claims had been dropped on the floor. Two things
+/// follow from that, and this test pins both.
+///
+/// A user reads a green check and believes four laws were certified. And —
+/// the reason this is load-bearing rather than cosmetic — WIDENING the gate
+/// could turn a red check green: a claim that previously failed to build stops
+/// being emitted at all, so `build_errors` falls to zero and the regression
+/// signal disappears exactly when it is needed. Charging the refusal is what
+/// makes the exit code monotone under a widening, and printing alone does not
+/// do it: CI reads the exit code, not stdout.
+#[test]
+fn a_declined_claim_is_counted_and_charged() {
+    // The count and the charge are reported by the `--check` harness, which
+    // has nothing to report until a verifier has actually run — so this needs
+    // a real `lake`. The refusal itself is covered without one by the tests
+    // above, and by `a_declined_claim_is_named_on_stdout_without_check`.
+    if !lake_available() {
+        eprintln!("skipping declined-claim accounting: `lake` not available");
+        return;
+    }
+    let out_dir = temp_output_dir("aver-map-order-declined");
+    let run = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+        "--check-json",
+    ]);
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let json: serde_json::Value = stdout
+        .lines()
+        .find_map(|l| serde_json::from_str(l).ok())
+        .unwrap_or_else(|| panic!("expected a JSON summary line:\n{}", format_output(&run)));
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    assert_eq!(
+        json["declined"].as_u64(),
+        Some(4),
+        "the four refused claims in the fixture must be counted:\n{stdout}"
+    );
+    assert_eq!(
+        json["passed"].as_bool(),
+        Some(false),
+        "a refused claim is not a proved claim — the check must not pass:\n{stdout}"
+    );
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "the charge has to reach the EXIT CODE; CI reads that, not stdout:\n{}",
+        format_output(&run)
+    );
+    let claims = json["declined_claims"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected declined_claims to be an array:\n{stdout}"));
+    assert!(
+        claims.iter().any(|c| {
+            c["claim"] == "floatKeyedValues.valuesFollowIterationOrder" && c["kind"] == "law"
+        }),
+        "each declined claim must be named by its `fn.law` identity:\n{stdout}"
+    );
+    assert!(
+        claims
+            .iter()
+            .any(|c| c["claim"] == "plainFloatKeys" && c["kind"] == "cases"),
+        "a declined plain `verify` block is named by its fn:\n{stdout}"
+    );
+    assert!(
+        claims
+            .iter()
+            .all(|c| c["reason"].as_str().is_some_and(|r| !r.is_empty())),
+        "every declined claim carries the reason it was declined:\n{stdout}"
+    );
+}
+
+/// The same refusal is reported on stdout WITHOUT `--check`, and the reason
+/// travels with it.
+///
+/// `aver proof` is an export command: it writes the artifact and exits 0. But
+/// the CHANGELOG advertises that a claim the gate refuses is refused "with a
+/// message saying why", and until now that message existed only inside a
+/// generated file the user does not open. Exporting silently and calling that
+/// a message is the advertised claim being false.
+#[test]
+fn a_declined_claim_is_named_on_stdout_without_check() {
+    let out_dir = temp_output_dir("aver-map-order-declined-plain");
+    let run = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        run.status.success(),
+        "plain `aver proof` exports the artifact and exits 0:\n{}",
+        format_output(&run)
+    );
+    assert!(
+        stdout.contains("4 claim(s) declined"),
+        "the count belongs on stdout, next to what was compiled:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("law floatKeyedValues.valuesFollowIterationOrder"),
+        "each declined claim is named:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("IEEE 754 total order"),
+        "the reason travels with the name — that is the advertised guarantee:\n{stdout}"
+    );
+}
+
+/// `--declined-budget` is the acknowledgement, and it is per-pot.
+///
+/// A refusal you have decided to live with is one flag in a CI file,
+/// reviewable in a diff — the same shape the Dafny omitted-universal path and
+/// `--write-baseline` already have. What it must NOT be is `--sorry-budget`:
+/// "we tried and failed" and "we refused to try" are different facts, and a
+/// budget granted for an open induction must not quietly license a refusal.
+#[test]
+fn declined_budget_is_a_separate_pot_from_sorry_budget() {
+    if !lake_available() {
+        eprintln!("skipping declined-budget accounting: `lake` not available");
+        return;
+    }
+    let out_dir = temp_output_dir("aver-map-order-declined-budget");
+    let dir = out_dir.to_str().expect("utf-8 temp path").to_string();
+
+    // A generous sorry budget does NOT pay for a refusal.
+    let sorry_only = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        &dir,
+        "--check-json",
+        "--sorry-budget",
+        "10",
+    ]);
+    let sorry_stdout = String::from_utf8_lossy(&sorry_only.stdout).to_string();
+    assert_eq!(
+        sorry_only.status.code(),
+        Some(1),
+        "--sorry-budget must not license a refusal:\n{}",
+        format_output(&sorry_only)
+    );
+    assert!(
+        sorry_stdout.contains("\"passed\":false"),
+        "--sorry-budget must not license a refusal:\n{sorry_stdout}"
+    );
+
+    // The matching declined budget does.
+    let acked = run_aver(&[
+        "proof",
+        UNMODELLED_FIXTURE,
+        "-o",
+        &dir,
+        "--check-json",
+        "--declined-budget",
+        "4",
+    ]);
+    let acked_stdout = String::from_utf8_lossy(&acked.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        acked_stdout.contains("\"passed\":true"),
+        "an acknowledged refusal passes:\n{acked_stdout}"
+    );
+    assert_eq!(
+        acked.status.code(),
+        Some(0),
+        "an acknowledged refusal exits 0:\n{}",
+        format_output(&acked)
+    );
+    assert!(
+        acked_stdout.contains("\"declined\":4"),
+        "acknowledging a refusal does not hide it — the count is still reported:\n{acked_stdout}"
+    );
+}

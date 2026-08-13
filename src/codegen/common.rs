@@ -2138,7 +2138,14 @@ pub fn law_map_order_refusal(
         roots.push(when);
     }
     let given_types: Vec<&str> = law.givens.iter().map(|g| g.type_name.as_str()).collect();
-    map_order_refusal(&roots, &given_types, vb, ctx)
+    let reason = map_order_refusal(&roots, &given_types, vb, ctx)?;
+    record_declined_claim(
+        ctx,
+        crate::codegen::DeclineKind::Law,
+        format!("{}.{}", vb.fn_name, law.name),
+        &reason,
+    );
+    Some(reason)
 }
 
 /// [`law_map_order_refusal`] for a `verify` block's plain sampled cases.
@@ -2152,7 +2159,37 @@ pub fn law_map_order_refusal(
 /// is most likely to be written in.
 pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<String> {
     let roots: Vec<&Spanned<Expr>> = vb.cases.iter().flat_map(|(lhs, rhs)| [lhs, rhs]).collect();
-    map_order_refusal(&roots, &[], vb, ctx)
+    let reason = map_order_refusal(&roots, &[], vb, ctx)?;
+    record_declined_claim(
+        ctx,
+        crate::codegen::DeclineKind::Cases,
+        vb.fn_name.clone(),
+        &reason,
+    );
+    Some(reason)
+}
+
+/// Record a claim the exporter would not state, for the driver to report and
+/// charge (`CodegenContext::declined_claims`).
+///
+/// Keyed on `kind:claim`, so the several consultations one claim earns — emit,
+/// lemma-citability, and the same pair again on the other backend — collapse to
+/// one record instead of inflating the count. The first reason wins; every
+/// consultation of one claim computes the same one.
+fn record_declined_claim(
+    ctx: &CodegenContext,
+    kind: crate::codegen::DeclineKind,
+    claim: String,
+    reason: &str,
+) {
+    ctx.declined_claims
+        .borrow_mut()
+        .entry(format!("{}:{}", kind.as_str(), claim))
+        .or_insert_with(|| crate::codegen::DeclinedClaim {
+            kind,
+            claim,
+            reason: reason.to_string(),
+        });
 }
 
 /// Shared body of the two refusals above: decide over `roots` plus the cone of

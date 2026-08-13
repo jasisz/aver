@@ -5437,6 +5437,7 @@ pub(super) fn cmd_proof(
     check: bool,
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
+    declined_budget: Option<usize>,
     check_json: bool,
     explain: bool,
     // Reserved for the `--minimize` proof-output pass (collapse each `first |
@@ -5665,6 +5666,35 @@ pub(super) fn cmd_proof(
         }
     }
 
+    // Claims the exporter would not state, collected during emission. Read out
+    // of the context BEFORE the check harness runs, so both the console report
+    // and the charge below see the same list.
+    let declined: Vec<aver::codegen::DeclinedClaim> =
+        ctx.declined_claims.borrow().values().cloned().collect();
+    // Report on stdout whether or not `--check` was asked for. `aver proof`
+    // already tells the user what it compiled; a claim it silently dropped on
+    // the floor belongs in the same breath — that is the guarantee the
+    // CHANGELOG advertises ("refused … with a message saying why"), and until
+    // now the message existed only inside a generated file nobody opens.
+    // Suppressed under `--check-json`, whose contract is that stdout is one
+    // JSON object; the same list travels in the `declined_claims` key there.
+    if !declined.is_empty() && !check_json {
+        println!(
+            "{}",
+            format!(
+                "  {} claim(s) declined — not exported, so nothing was proved about them:",
+                declined.len()
+            )
+            .yellow()
+        );
+        for d in &declined {
+            println!(
+                "{}",
+                format!("    {} {} — {}", d.kind.as_str(), d.claim, d.reason).yellow()
+            );
+        }
+    }
+
     // `--check-json` is the machine-readable form of `--check` and IMPLIES it;
     // `--gate` / `--write-baseline` also imply a verifier run (they recompute
     // the current manifest). So run the check harness when ANY of these is set
@@ -5699,6 +5729,7 @@ pub(super) fn cmd_proof(
             backend,
             error_budget,
             sorry_budget,
+            declined_budget,
             check_json,
             explain,
             allow_mathlib,
@@ -5707,6 +5738,7 @@ pub(super) fn cmd_proof(
             write_baseline,
             &duplicate_laws,
             &hand_laws,
+            &declined,
             &ctx.items,
             file,
             &module_root,
@@ -5888,6 +5920,11 @@ fn run_proof_check(
     backend: &super::cli::ProofBackend,
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
+    // `--declined-budget`: how many claims the exporter may refuse to state
+    // before the check fails. Its own pot, never folded into `sorry_budget` —
+    // a budget granted for an open induction must not silently license a
+    // refusal. Defaults to 0.
+    declined_budget: Option<usize>,
     check_json: bool,
     // `--explain` (Lean-only): after the counted build + audit succeed, run an
     // ISOLATED, fail-soft residual probe per OPEN law and populate each
@@ -5924,6 +5961,11 @@ fn run_proof_check(
     // `credit: open` if not (a wrong/stale sidecar failed the build — fail-
     // closed, never `hand`). Empty => no `credit` key written => byte-identical.
     hand_laws: &std::collections::HashSet<String>,
+    // Claims codegen REFUSED to state (see `CodegenContext::declined_claims`).
+    // Charged against `declined_budget` below and recorded in the manifest, so
+    // a claim that moves from proved to declined is a demotion the ratchet
+    // sees rather than a law that quietly ceases to exist.
+    declined: &[aver::codegen::DeclinedClaim],
     // `--explain` candidate-law renderer inputs (Lean-only, console): the parsed
     // source items + file + module root, used to un-translate each open law's
     // residual back into an Aver candidate and gate it through the VM sample-
@@ -6041,6 +6083,22 @@ fn run_proof_check(
     // law, and neither backend charges that fn-level trust to the budget.)
     let error_budget_v = error_budget.unwrap_or(0);
     let sorry_budget_v = sorry_budget.unwrap_or(0);
+    // A DECLINED claim is a third failure mode, and the one no other counter
+    // can see: the claim never reached the backend, so there is no error to
+    // count and no `sorry` to catch. Charge it on BOTH backends.
+    //
+    // Charging is what makes it safe to widen a refusal. Widening moves a
+    // claim out of `build_errors` / `sorries` and into `declined`; if
+    // `declined` is free, the same widening turns a RED check GREEN and the
+    // regression signal vanishes exactly when it is needed. Charged, the exit
+    // code cannot improve. Printing alone does not close this — CI reads the
+    // exit code, not stdout.
+    //
+    // Dafny already had this discipline for its own refusal ("universal lemma
+    // omitted", counted and charged below); Lean simply had no slot for it.
+    let declined_budget_v = declined_budget.unwrap_or(0);
+    let declined_count = declined.len();
+    let declined_within_budget = declined_count <= declined_budget_v;
     // Lean only: model panic lines in the captured build output. The emitted
     // exports panic only at compiler-generated sites (fuel-wrapper
     // exhaustion, partial prelude builtins like `Char.toCode` on an empty
@@ -6080,8 +6138,10 @@ fn run_proof_check(
             let axioms = count_dafny_axioms(output_dir);
             let omitted = count_dafny_omitted_universals(output_dir);
             let unproven = axioms + omitted;
-            let passed =
-                output.status.success() && errors <= error_budget_v && unproven <= sorry_budget_v;
+            let passed = output.status.success()
+                && errors <= error_budget_v
+                && unproven <= sorry_budget_v
+                && declined_within_budget;
             (
                 Some(errors),
                 None,
@@ -6095,11 +6155,27 @@ fn run_proof_check(
             let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
             model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
                 + lean_codegen::count_model_panic_lines(&stderr);
-            let passed =
-                output.status.success() && sorries <= sorry_budget_v && model_panic_hits == 0;
+            let passed = output.status.success()
+                && sorries <= sorry_budget_v
+                && model_panic_hits == 0
+                && declined_within_budget;
             (None, Some(sorries), None, None, sorry_budget_v, passed)
         }
     };
+    if !declined_within_budget {
+        // Headline only: the per-claim list already went to stdout above (and
+        // under `--check-json` it travels in `declined_claims`), so repeating
+        // it here would print the same four sentences twice.
+        eprintln!(
+            "{}",
+            format!(
+                "--check: {} claim(s) were declined, not exported and therefore never proved \
+                 (budget {}). Fix the claim, or acknowledge the refusal with --declined-budget {}.",
+                declined_count, declined_budget_v, declined_count,
+            )
+            .red()
+        );
+    }
 
     // Additive check-json telemetry, per backend — informational only, NEVER
     // folded into `passed` or the exit code (the floor still degrades to a
@@ -6184,7 +6260,7 @@ fn run_proof_check(
     // its own outcome can never touch `passed` / `universal` / the exit code.
     let mut manifest: Option<ProofManifest> = lean_law_audit
         .as_ref()
-        .map(|audit| build_proof_manifest(&audit.laws));
+        .map(|audit| build_proof_manifest(&audit.laws, declined));
     let mut open_goals: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     // `--explain` residuals borrowed from HEALTHY (proven) laws — see the
@@ -6373,6 +6449,30 @@ fn run_proof_check(
         if let Some(o) = omitted {
             obj.insert("omitted".into(), o.into());
         }
+        // Claims the exporter refused to state. Emitted only when there ARE
+        // any, so a clean run's bytes are unchanged and every existing
+        // substring consumer is untouched. `declined_claims` carries the
+        // identity and the reason, so a consumer never has to grep the
+        // generated file for a sentence that gets reworded.
+        if declined_count > 0 {
+            obj.insert("declined".into(), declined_count.into());
+            obj.insert("declined_budget".into(), declined_budget_v.into());
+            obj.insert(
+                "declined_claims".into(),
+                serde_json::Value::Array(
+                    declined
+                        .iter()
+                        .map(|d| {
+                            let mut e = serde_json::Map::new();
+                            e.insert("claim".into(), d.claim.clone().into());
+                            e.insert("kind".into(), d.kind.as_str().into());
+                            e.insert("reason".into(), d.reason.clone().into());
+                            serde_json::Value::Object(e)
+                        })
+                        .collect(),
+                ),
+            );
+        }
         if let Some(u) = universal {
             obj.insert("universal".into(), u.into());
         }
@@ -6468,8 +6568,21 @@ fn run_proof_check(
                 format!("sorries ≤ {sorry_budget_v}"),
             ),
         };
+        // A declined claim is invisible in `metric` — it produced no sorry and
+        // no error — so name it explicitly, or the last line a user reads on a
+        // failed run is "0 sorries" sitting next to a non-zero exit code.
+        let metric = if declined_count > 0 {
+            format!("{metric}, {declined_count} declined")
+        } else {
+            metric
+        };
+        let budget_desc = if declined_count > 0 {
+            format!("{budget_desc}, declined ≤ {declined_budget_v}")
+        } else {
+            budget_desc
+        };
         if passed {
-            let suffix = if error_budget_v > 0 || sorry_budget_v > 0 {
+            let suffix = if error_budget_v > 0 || sorry_budget_v > 0 || declined_budget_v > 0 {
                 format!(" (within budget: {budget_desc})")
             } else {
                 String::new()
@@ -6697,11 +6810,21 @@ fn duplicate_law_identities(items: &[TopLevel]) -> Vec<String> {
 struct ProofManifest {
     backend: String,
     laws: Vec<ManifestLaw>,
+    /// Claims the exporter REFUSED to state, so no law record exists for
+    /// them. Recorded here because the ratchet's baseline is the artifact a
+    /// reviewer reads: without this, a refused claim leaves the manifest with
+    /// no trace at all and a freshly written baseline ratchets against a world
+    /// in which it never existed. Serialized only when non-empty, so an
+    /// unaffected corpus's manifest stays byte-for-byte identical.
+    declined: Vec<aver::codegen::DeclinedClaim>,
 }
 
 /// The file-level audit records as one per-law manifest, keyed on the `fn.law`
 /// identity and sorted by it for byte-reproducibility.
-fn build_proof_manifest(file_laws: &[ManifestLaw]) -> ProofManifest {
+fn build_proof_manifest(
+    file_laws: &[ManifestLaw],
+    declined: &[aver::codegen::DeclinedClaim],
+) -> ProofManifest {
     let mut by_label: std::collections::BTreeMap<String, ManifestLaw> =
         std::collections::BTreeMap::new();
     for record in file_laws.iter() {
@@ -6710,6 +6833,7 @@ fn build_proof_manifest(file_laws: &[ManifestLaw]) -> ProofManifest {
     ProofManifest {
         backend: "lean".to_string(),
         laws: by_label.into_values().collect(),
+        declined: declined.to_vec(),
     }
 }
 
@@ -6752,12 +6876,34 @@ fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
             serde_json::Value::Object(obj)
         })
         .collect();
-    serde_json::to_string_pretty(&serde_json::json!({
-        "version": 1,
-        "backend": manifest.backend,
-        "laws": laws,
-    }))
-    .unwrap_or_else(|_| "{}".to_string())
+    let mut root = serde_json::Map::new();
+    root.insert("version".into(), 1.into());
+    root.insert("backend".into(), manifest.backend.clone().into());
+    root.insert("laws".into(), serde_json::Value::Array(laws));
+    // Declined claims, sorted by identity for byte-reproducibility. Written
+    // ONLY when there are any, so a corpus with no refusal keeps the exact
+    // bytes it had before this field existed.
+    if !manifest.declined.is_empty() {
+        let mut sorted: Vec<&aver::codegen::DeclinedClaim> = manifest.declined.iter().collect();
+        sorted.sort_by(|a, b| (a.kind, &a.claim).cmp(&(b.kind, &b.claim)));
+        root.insert(
+            "declined".into(),
+            serde_json::Value::Array(
+                sorted
+                    .iter()
+                    .map(|d| {
+                        let mut o = serde_json::Map::new();
+                        o.insert("claim".into(), d.claim.clone().into());
+                        o.insert("kind".into(), d.kind.as_str().into());
+                        o.insert("reason".into(), d.reason.clone().into());
+                        serde_json::Value::Object(o)
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    serde_json::to_string_pretty(&serde_json::Value::Object(root))
+        .unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Write the manifest to `<dir>/proof_manifest.json`.
@@ -6819,6 +6965,11 @@ fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
     Ok(ProofManifest {
         backend: value["backend"].as_str().unwrap_or("lean").to_string(),
         laws,
+        // Informational in a BASELINE: the ratchet compares law records, and a
+        // law that moved from proved to declined is already caught as MISSING
+        // (the comparator iterates the baseline law set). Read as empty rather
+        // than parsed, so an older baseline stays loadable.
+        declined: Vec::new(),
     })
 }
 
@@ -9759,6 +9910,7 @@ mod tests {
         super::ProofManifest {
             backend: "lean".to_string(),
             laws,
+            declined: Vec::new(),
         }
     }
 

@@ -143,8 +143,15 @@ jobs:
         run: dafny --version
 
       - name: Run proof-export tests
-        # Restricting to the proof_spec target keeps this job short
-        # (no overlap with the lib / wasm / bench jobs). Lean and
-        # Dafny arms are interleaved inside individual #[test] fns;
-        # the test harness picks whichever toolchains are on PATH.
-        run: cargo test -p aver-lang --test proof_spec
+        # Restricting to these targets keeps this job short (no overlap
+        # with the lib / wasm / bench jobs). Lean and Dafny arms are
+        # interleaved inside individual #[test] fns; the test harness
+        # picks whichever toolchains are on PATH.
+        #
+        # `map_iteration_order` is here for the tests that need a real
+        # verifier run: the export-refusal accounting (does a declined
+        # claim reach the exit code?) only exists once `--check` has a
+        # verifier to invoke, so those tests skip themselves on the main
+        # test lane, where `lake` is not installed. This is the lane
+        # where their guard opens.
+        run: cargo test -p aver-lang --test proof_spec --test map_iteration_order
