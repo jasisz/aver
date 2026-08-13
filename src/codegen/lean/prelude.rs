@@ -389,16 +389,50 @@ def except (errMeasure : ε → Nat) (okMeasure : α → Nat) : Except ε α →
   | .ok v => okMeasure v + 1
 end AverMeasure"#;
 
-const AVER_MAP_PRELUDE_BASE: &str = r#"namespace AverMap
+/// The map model is a **key-sorted** association list, which is what makes
+/// `AverMap.keys` / `values` / `entries` agree with the runtime: the VM sorts
+/// every iteration result by key (`src/types/map.rs::compare_scalar_keys`),
+/// so the model has to iterate the same way or a law about iteration order is
+/// proved against the wrong sequence.
+///
+/// Sorting *at the observation point* would fix iteration alone and leave a
+/// second hole open: a `List (α × β)` compares element-wise, so under an
+/// insertion-ordered representation two maps that the runtime considers equal
+/// (`HashMap` equality ignores insertion order) stay Lean-distinct, and a law
+/// with a `!=` or a `when` premise over maps could be *proved* while being
+/// false at runtime. Keeping the association list itself canonical — sorted,
+/// no duplicate keys — makes list equality coincide with the runtime's
+/// extensional equality, so both holes close at once.
+///
+/// `AverKeyOrder` is the ordering the canonical form is keyed on. `Int`,
+/// `String` and `Bool` reproduce the runtime comparator exactly (numeric,
+/// codepoint-lexicographic — which is what UTF-8 byte order is — and
+/// `false < true`). Every other key type falls back to "never orders before",
+/// i.e. append order, because the runtime orders `Float` NaN by bit pattern
+/// and non-scalar keys by their printed representation and neither is
+/// reconstructible here. Laws that OBSERVE iteration order over those key
+/// types are refused before they reach this model
+/// (`codegen::common::law_map_order_refusal`).
+const AVER_MAP_PRELUDE_BASE: &str = r#"class AverKeyOrder (α : Type u) where
+  lt : α → α → Bool
+instance : AverKeyOrder Int := ⟨fun a b => decide (a < b)⟩
+instance : AverKeyOrder String := ⟨fun a b => decide (a < b)⟩
+instance : AverKeyOrder Bool := ⟨fun a b => !a && b⟩
+instance (priority := 50) : AverKeyOrder α := ⟨fun _ _ => false⟩
+
+namespace AverMap
 def empty : List (α × β) := []
 def get [DecidableEq α] (m : List (α × β)) (k : α) : Option β :=
   match m with
   | [] => none
   | (k', v) :: rest => if k = k' then some v else AverMap.get rest k
-def set [DecidableEq α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+def set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
   let rec go : List (α × β) → List (α × β)
     | [] => [(k, v)]
-    | (k', v') :: rest => if k = k' then (k, v) :: rest else (k', v') :: go rest
+    | (k', v') :: rest =>
+        if k = k' then (k, v) :: rest
+        else if AverKeyOrder.lt k k' then (k, v) :: (k', v') :: rest
+        else (k', v') :: go rest
   go m
 def has [DecidableEq α] (m : List (α × β)) (k : α) : Bool :=
   m.any (fun p => decide (k = p.1))
@@ -408,9 +442,10 @@ def keys (m : List (α × β)) : List α := m.map Prod.fst
 def values (m : List (α × β)) : List β := m.map Prod.snd
 def entries (m : List (α × β)) : List (α × β) := m
 def len (m : List (α × β)) : Nat := m.length
-def fromList (entries : List (α × β)) : List (α × β) := entries"#;
+def fromList [DecidableEq α] [AverKeyOrder α] (entries : List (α × β)) : List (α × β) :=
+  entries.foldl (fun acc p => AverMap.set acc p.1 p.2) []"#;
 
-const AVER_MAP_PRELUDE_HAS_SET_SELF: &str = r#"private theorem any_set_go_self [DecidableEq α] (k : α) (v : β) :
+const AVER_MAP_PRELUDE_HAS_SET_SELF: &str = r#"private theorem any_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
     ∀ (m : List (α × β)), List.any (AverMap.set.go k v m) (fun p => decide (k = p.1)) = true := by
   intro m
   induction m with
@@ -420,10 +455,11 @@ const AVER_MAP_PRELUDE_HAS_SET_SELF: &str = r#"private theorem any_set_go_self [
       cases p with
       | mk k' v' =>
           by_cases h : k = k'
-          · simp [AverMap.set.go, List.any, h]
-          · simp [AverMap.set.go, List.any, h, ih]
+          · simp [AverMap.set.go, h]
+          · cases hlt : AverKeyOrder.lt k k' <;>
+              simp [AverMap.set.go, List.any, h, hlt, ih]
 
-theorem has_set_self [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
+theorem has_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
     AverMap.has (AverMap.set m k v) k = true := by
   simpa [AverMap.has, AverMap.set] using any_set_go_self k v m"#;
 
@@ -435,7 +471,7 @@ theorem has_set_self [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
 /// so the emitter can discharge it with a bare `exact AverMap.len_set_ge_one
 /// _ _ _`. This is the one empty-vs-non-empty Map fact that needs real
 /// induction rather than a definitional unfold.
-const AVER_MAP_PRELUDE_LEN_SET_GE_ONE: &str = r#"private theorem set_go_len_pos [DecidableEq α] (k : α) (v : β) :
+const AVER_MAP_PRELUDE_LEN_SET_GE_ONE: &str = r#"private theorem set_go_len_pos [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
     ∀ (m : List (α × β)), 1 ≤ (AverMap.set.go k v m).length := by
   intro m
   induction m with
@@ -443,16 +479,18 @@ const AVER_MAP_PRELUDE_LEN_SET_GE_ONE: &str = r#"private theorem set_go_len_pos 
       simp [AverMap.set.go]
   | cons p tl ih =>
       simp only [AverMap.set.go]
-      split <;> simp
+      split
+      · simp
+      · split <;> simp
 
-theorem len_set_ge_one [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
+theorem len_set_ge_one [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
     (((AverMap.len (AverMap.set m k v)) : Int) >= 1) = true := by
   have h : 1 ≤ (AverMap.set m k v).length := by
     simpa [AverMap.set] using set_go_len_pos k v m
   simp only [AverMap.len]
   exact eq_true (by omega)"#;
 
-const AVER_MAP_PRELUDE_GET_SET_SELF: &str = r#"private theorem get_set_go_self [DecidableEq α] (k : α) (v : β) :
+const AVER_MAP_PRELUDE_GET_SET_SELF: &str = r#"private theorem get_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
     ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k = some v := by
   intro m
   induction m with
@@ -463,13 +501,14 @@ const AVER_MAP_PRELUDE_GET_SET_SELF: &str = r#"private theorem get_set_go_self [
       | mk k' v' =>
           by_cases h : k = k'
           · simp [AverMap.set.go, AverMap.get, h]
-          · simp [AverMap.set.go, AverMap.get, h, ih]
+          · cases hlt : AverKeyOrder.lt k k' <;>
+              simp [AverMap.set.go, AverMap.get, h, hlt, ih]
 
-theorem get_set_self [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
+theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
     AverMap.get (AverMap.set m k v) k = some v := by
   simpa [AverMap.set] using get_set_go_self k v m"#;
 
-const AVER_MAP_PRELUDE_GET_SET_OTHER: &str = r#"private theorem get_set_go_other [DecidableEq α] (k key : α) (v : β) (h : key ≠ k) :
+const AVER_MAP_PRELUDE_GET_SET_OTHER: &str = r#"private theorem get_set_go_other [DecidableEq α] [AverKeyOrder α] (k key : α) (v : β) (h : key ≠ k) :
     ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) key = AverMap.get m key := by
   intro m
   induction m with
@@ -482,10 +521,13 @@ const AVER_MAP_PRELUDE_GET_SET_OTHER: &str = r#"private theorem get_set_go_other
           · have hkey : key ≠ k' := by simpa [hk] using h
             simp [AverMap.set.go, AverMap.get, hk, hkey]
           · by_cases hkey : key = k'
-            · simp [AverMap.set.go, AverMap.get, hk, hkey]
-            · simp [AverMap.set.go, AverMap.get, hk, hkey, ih]
+            · subst hkey
+              cases hlt : AverKeyOrder.lt k key <;>
+                simp [AverMap.set.go, AverMap.get, hk, hlt, h]
+            · cases hlt : AverKeyOrder.lt k k' <;>
+                simp [AverMap.set.go, AverMap.get, hk, hkey, hlt, h, ih]
 
-theorem get_set_other [DecidableEq α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+theorem get_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
     AverMap.get (AverMap.set m k v) key = AverMap.get m key := by
   simpa [AverMap.set] using get_set_go_other k key v h m"#;
 
@@ -501,7 +543,7 @@ const AVER_MAP_PRELUDE_HAS_SET_OTHER: &str = r#"theorem has_eq_isSome_get [Decid
           · simp [AverMap.has, AverMap.get, List.any, h]
           · simpa [AverMap.has, AverMap.get, List.any, h] using ih
 
-theorem has_set_other [DecidableEq α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+theorem has_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
     AverMap.has (AverMap.set m k v) key = AverMap.has m key := by
   rw [AverMap.has_eq_isSome_get, AverMap.has_eq_isSome_get]
   simp [AverMap.get_set_other, h]"#;
@@ -516,7 +558,7 @@ theorem has_set_other [DecidableEq α] (m : List (α × β)) (k key : α) (v : �
 // algebra). Both are kernel-clean from the AverMap defs (`#print axioms ⊆
 // {propext, Quot.sound}`). `get_set_ne` is conditional — it only rewrites when
 // `simp` can discharge the `k ≠ k'` side-goal from a fact in context.
-const AVER_MAP_PRELUDE_GET_SET_NE: &str = r#"private theorem get_set_go_ne [DecidableEq α] (k k' : α) (v : β) (h : k ≠ k') :
+const AVER_MAP_PRELUDE_GET_SET_NE: &str = r#"private theorem get_set_go_ne [DecidableEq α] [AverKeyOrder α] (k k' : α) (v : β) (h : k ≠ k') :
     ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k' = AverMap.get m k' := by
   have hne : k' ≠ k := fun he => h he.symm
   intro m
@@ -528,16 +570,19 @@ const AVER_MAP_PRELUDE_GET_SET_NE: &str = r#"private theorem get_set_go_ne [Deci
       | mk a b =>
           by_cases hk : k = a
           · have hk' : k' ≠ a := by simpa [hk] using hne
-            simp [AverMap.set.go, AverMap.get, hk, hk', hne]
+            simp [AverMap.set.go, AverMap.get, hk, hk']
           · by_cases hk' : k' = a
-            · simp [AverMap.set.go, AverMap.get, hk, hk']
-            · simp [AverMap.set.go, AverMap.get, hk, hk', ih]
+            · subst hk'
+              cases hlt : AverKeyOrder.lt k k' <;>
+                simp [AverMap.set.go, AverMap.get, hk, hlt, hne]
+            · cases hlt : AverKeyOrder.lt k a <;>
+                simp [AverMap.set.go, AverMap.get, hk, hk', hlt, hne, ih]
 
-theorem get_set_ne [DecidableEq α] (m : List (α × β)) (k k' : α) (v : β) (h : k ≠ k') :
+theorem get_set_ne [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k k' : α) (v : β) (h : k ≠ k') :
     AverMap.get (AverMap.set m k v) k' = AverMap.get m k' := by
   simpa [AverMap.set] using get_set_go_ne k k' v h m"#;
 
-const AVER_MAP_PRELUDE_HAS_SET: &str = r#"private theorem any_set_go [DecidableEq α] (w k : α) (v : β) :
+const AVER_MAP_PRELUDE_HAS_SET: &str = r#"private theorem any_set_go [DecidableEq α] [AverKeyOrder α] (w k : α) (v : β) :
     ∀ (m : List (α × β)),
       List.any (AverMap.set.go w v m) (fun p => decide (k = p.1))
         = (decide (k = w) || List.any m (fun p => decide (k = p.1))) := by
@@ -551,10 +596,12 @@ const AVER_MAP_PRELUDE_HAS_SET: &str = r#"private theorem any_set_go [DecidableE
           by_cases hw : w = a
           · subst hw
             simp [AverMap.set.go, List.any]
-          · simp [AverMap.set.go, List.any, hw, ih]
-            by_cases hk : k = a <;> simp [hk] <;> ac_rfl
+          · cases hlt : AverKeyOrder.lt w a
+            · simp [AverMap.set.go, List.any, hw, hlt, ih]
+              by_cases hk : k = a <;> simp [hk] <;> ac_rfl
+            · simp [AverMap.set.go, List.any, hw, hlt]
 
-theorem has_set [DecidableEq α] (m : List (α × β)) (w k : α) (v : β) :
+theorem has_set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (w k : α) (v : β) :
     AverMap.has (AverMap.set m w v) k = (decide (k = w) || AverMap.has m k) := by
   simpa [AverMap.has, AverMap.set] using any_set_go w k v m"#;
 

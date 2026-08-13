@@ -10,6 +10,61 @@ use crate::ir::hir::{
     ResolvedStmt, ResolvedStrPart,
 };
 
+/// Put a map literal's entries into the order the map model iterates, or
+/// report that it cannot be done positionally.
+///
+/// The model's canonical form is sorted by key with no duplicates, so a
+/// literal has to be reordered before it is emitted as a plain list. This
+/// mirrors `AverKeyOrder` in the Lean prelude, which in turn mirrors the
+/// runtime's `compare_scalar_keys`: integers numerically, strings by
+/// codepoint (Rust's `str` ordering is UTF-8 byte order, which is the same
+/// ordering), `false` before `true`. A later entry wins over an earlier one
+/// with the same key, matching the runtime's insert-into-a-`HashMap` fold.
+///
+/// Returns `None` when at least one key is not a scalar literal — a computed
+/// key cannot be ordered at emit time, and a `Float` key cannot be ordered
+/// faithfully at all (the runtime falls back to NaN bit patterns). Those go
+/// through `AverMap.fromList` instead, which canonicalises inside the model.
+#[allow(clippy::type_complexity)]
+fn canonical_literal_key_order(
+    entries: &[(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)],
+) -> Option<Vec<&(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)>> {
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    enum LiteralKey<'a> {
+        Bool(bool),
+        Int(i64),
+        Str(&'a str),
+    }
+    fn key_of(expr: &ResolvedExpr) -> Option<LiteralKey<'_>> {
+        match expr {
+            ResolvedExpr::Literal(Literal::Int(i)) => Some(LiteralKey::Int(*i)),
+            ResolvedExpr::Literal(Literal::Str(s)) => Some(LiteralKey::Str(s.as_str())),
+            ResolvedExpr::Literal(Literal::Bool(b)) => Some(LiteralKey::Bool(*b)),
+            _ => None,
+        }
+    }
+    let mut keyed: Vec<(LiteralKey, &(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>))> =
+        Vec::with_capacity(entries.len());
+    for entry in entries {
+        let key = key_of(&entry.0.node)?;
+        // Ordering across two different literal kinds would be an ordering
+        // between two different key types, which the runtime resolves by
+        // printed form — not reproducible here, so decline.
+        if let Some((first, _)) = keyed.first() {
+            if std::mem::discriminant(first) != std::mem::discriminant(&key) {
+                return None;
+            }
+        }
+        // Last write wins, exactly as the runtime fold does.
+        match keyed.iter().position(|(seen, _)| *seen == key) {
+            Some(idx) => keyed[idx] = (key, entry),
+            None => keyed.push((key, entry)),
+        }
+    }
+    keyed.sort_by(|(a, _), (b, _)| a.cmp(b));
+    Some(keyed.into_iter().map(|(_, entry)| entry).collect())
+}
+
 /// Emit a Lean 4 expression from an Aver Expr.
 pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     match &expr.node {
@@ -160,11 +215,28 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 let parts: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
                 format!("AverSet.ofList [{}]", parts.join(", "))
             } else {
-                let parts: Vec<String> = entries
+                // The map model is a key-sorted association list, so a
+                // literal written out of order (`{"z" => 1, "a" => 2}`)
+                // cannot be emitted positionally — it would be a
+                // non-canonical value that iterates differently from the
+                // runtime and compares unequal to the same map built by
+                // `Map.set`. Literal keys are ordered here so the emitted
+                // Lean stays a plain list; anything else (a computed key)
+                // goes through `AverMap.fromList`, which canonicalises
+                // inside the model.
+                let ordered = canonical_literal_key_order(entries);
+                let pairs: Vec<&(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)> = match &ordered {
+                    Some(ordered) => ordered.clone(),
+                    None => entries.iter().collect(),
+                };
+                let parts: Vec<String> = pairs
                     .iter()
                     .map(|(k, v)| format!("({}, {})", emit_expr(k, ctx), emit_expr(v, ctx)))
                     .collect();
-                format!("[{}]", parts.join(", "))
+                match ordered {
+                    Some(_) => format!("[{}]", parts.join(", ")),
+                    None => format!("AverMap.fromList [{}]", parts.join(", ")),
+                }
             }
         }
         ResolvedExpr::RecordCreate {

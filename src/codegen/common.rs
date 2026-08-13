@@ -2093,6 +2093,197 @@ fn expr_has_trace_api_call(expr: &Spanned<Expr>) -> bool {
     }
 }
 
+/// The `Map` calls whose result depends on the order a map iterates in.
+/// `Map.get` / `Map.has` / `Map.len` are not here: they read a map as a
+/// finite function and are order-blind.
+const MAP_ORDER_OBSERVERS: &[&str] = &["Map.keys", "Map.values", "Map.entries"];
+
+/// Key types whose ordering the proof model reproduces exactly. `Int` is
+/// numeric on both sides, `String` is codepoint order on both sides (Rust
+/// compares UTF-8 bytes, which is the same order), `Bool` is `false` before
+/// `true`. See `src/types/map.rs::compare_scalar_keys`.
+const MODELLED_MAP_KEY_TYPES: &[&str] = &["Int", "String", "Bool"];
+
+/// Why a law that observes map iteration order cannot be exported, or
+/// `None` when it can.
+///
+/// The runtime iterates a map sorted by key, and the proof model matches
+/// that — but only for the key types in [`MODELLED_MAP_KEY_TYPES`]. Two
+/// families fall outside:
+///
+/// - `Float`, which `compare_scalar_keys` orders by raw bit pattern once a
+///   `NaN` is involved, and where `-0.0` and `0.0` compare equal while being
+///   two distinct keys. Neither has a faithful counterpart in the model.
+/// - Anything reaching the comparator's catch-all — tuple, variant, list or
+///   mixed keys — which the runtime orders by the *printed* form of the key.
+///   Ordering by rendered syntax is not reconstructible from the value.
+///
+/// A law that observes `Map.keys` / `Map.values` / `Map.entries` over such a
+/// map would be exported as a theorem about a sequence the runtime never
+/// produces, so it is refused instead. This is deliberately narrower than
+/// "mentions a map": a law about `Map.len` or `Map.get` is order-blind and
+/// still exports, whatever the key type.
+///
+/// The refusal belongs here, at the law subject, and not in the term
+/// emitter: measure and fuel generation emit `AverMap.entries` for their own
+/// reasons, and refusing at the emitter would take recursion measures down
+/// with it.
+pub fn law_map_order_refusal(
+    vb: &VerifyBlock,
+    law: &crate::ast::VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let observers: HashSet<String> = MAP_ORDER_OBSERVERS.iter().map(|s| s.to_string()).collect();
+    let observes = expr_calls_named(&law.lhs, &observers)
+        || expr_calls_named(&law.rhs, &observers)
+        || law
+            .when
+            .as_ref()
+            .map(|w| expr_calls_named(w, &observers))
+            .unwrap_or(false);
+    if !observes {
+        return None;
+    }
+
+    let mut key_types: Vec<String> = Vec::new();
+    for given in &law.givens {
+        collect_map_key_types(&given.type_name, &mut key_types);
+    }
+    let scope = ctx.active_module_scope();
+    let mut subjects: Vec<String> = vec![vb.fn_name.clone()];
+    collect_called_names(&law.lhs, &mut subjects);
+    collect_called_names(&law.rhs, &mut subjects);
+    if let Some(when) = law.when.as_ref() {
+        collect_called_names(when, &mut subjects);
+    }
+    for name in &subjects {
+        let Some(fd) = ctx.fn_def_by_name(name, scope.as_deref()) else {
+            continue;
+        };
+        for (_, param_type) in &fd.params {
+            collect_map_key_types(param_type, &mut key_types);
+        }
+        collect_map_key_types(&fd.return_type, &mut key_types);
+    }
+
+    if key_types.is_empty() {
+        return Some(
+            "the map's key type is not visible from the law's givens or from any signature it \
+             reaches, and the proof model only reproduces the runtime's iteration order for Int, \
+             String and Bool keys"
+                .to_string(),
+        );
+    }
+    let unmodelled = key_types
+        .iter()
+        .find(|k| !MODELLED_MAP_KEY_TYPES.contains(&k.as_str()))?;
+    if unmodelled == "Float" {
+        return Some(
+            "the runtime orders Float keys by their raw bit pattern once a NaN is involved, and \
+             the proof model has no faithful counterpart for that"
+                .to_string(),
+        );
+    }
+    Some(format!(
+        "the runtime orders {} keys by their printed representation, which the proof model cannot \
+         reconstruct from the value",
+        unmodelled
+    ))
+}
+
+/// Append the key type of every `Map<K, V>` written anywhere inside a type
+/// annotation — including nested ones, so `List<Map<Int, String>>` yields
+/// `Int` and `Map<String, Map<Bool, Int>>` yields both `String` and `Bool`.
+fn collect_map_key_types(type_name: &str, out: &mut Vec<String>) {
+    let bytes = type_name.as_bytes();
+    let mut idx = 0usize;
+    while let Some(found) = type_name[idx..].find("Map<") {
+        let start = idx + found;
+        idx = start + 4;
+        // `MyMap<..>` is a different type; only a standalone `Map` counts.
+        if start > 0 {
+            let prev = bytes[start - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'.' {
+                continue;
+            }
+        }
+        let mut depth = 1usize;
+        let mut split = None;
+        let mut cursor = idx;
+        for (offset, ch) in type_name[idx..].char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        cursor = idx + offset;
+                        break;
+                    }
+                }
+                ',' if depth == 1 && split.is_none() => split = Some(idx + offset),
+                _ => {}
+            }
+        }
+        let key_end = split.unwrap_or(cursor);
+        let key = type_name[idx..key_end].trim();
+        if !key.is_empty() {
+            out.push(key.to_string());
+        }
+    }
+}
+
+/// Every dotted or bare callee name appearing in an expression.
+fn collect_called_names(expr: &Spanned<Expr>, out: &mut Vec<String>) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = expr_to_dotted_name(&callee.node) {
+                out.push(name);
+            }
+            collect_called_names(callee, out);
+            for a in args {
+                collect_called_names(a, out);
+            }
+        }
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) | Expr::Neg(inner) => {
+            collect_called_names(inner, out)
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_called_names(l, out);
+            collect_called_names(r, out);
+        }
+        Expr::Match { subject, arms } => {
+            collect_called_names(subject, out);
+            for a in arms {
+                collect_called_names(&a.body, out);
+            }
+        }
+        Expr::Constructor(_, Some(arg)) => collect_called_names(arg, out),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for i in items {
+                collect_called_names(i, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_called_names(k, out);
+                collect_called_names(v, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_called_names(v, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_called_names(base, out);
+            for (_, v) in updates {
+                collect_called_names(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// True when the type definition mentions its own name somewhere in a
 /// field or variant payload (recursive ADT).
 pub fn is_recursive_type_def(td: &TypeDef) -> bool {
@@ -3086,6 +3277,42 @@ mod tests {
         let mut unrelated = HashSet::new();
         unrelated.insert("somethingElse".to_string());
         assert!(!law_calls_unclassified_fn(&law, &unrelated));
+    }
+
+    #[test]
+    fn map_key_types_are_read_out_of_nested_type_annotations() {
+        // The refusal decides on the map's KEY type, so it has to find
+        // every `Map<K, V>` written in a signature, including the ones
+        // nested inside another container, and it has to stop at the
+        // key's own comma rather than the outer one.
+        let mut keys = Vec::new();
+        collect_map_key_types("Map<String, Int>", &mut keys);
+        assert_eq!(keys, vec!["String".to_string()]);
+
+        let mut nested = Vec::new();
+        collect_map_key_types("List<Map<Int, List<String>>>", &mut nested);
+        assert_eq!(nested, vec!["Int".to_string()]);
+
+        let mut both = Vec::new();
+        collect_map_key_types("Map<String, Map<Bool, Int>>", &mut both);
+        assert_eq!(both, vec!["String".to_string(), "Bool".to_string()]);
+
+        // A generic key is a whole type argument, commas and all.
+        let mut generic = Vec::new();
+        collect_map_key_types("Map<Tuple<Int, Int>, Int>", &mut generic);
+        assert_eq!(generic, vec!["Tuple<Int, Int>".to_string()]);
+
+        // Negative controls: a type that merely ends in `Map` is a
+        // different type, and a map-free annotation yields nothing.
+        let mut unrelated = Vec::new();
+        collect_map_key_types("List<Int>", &mut unrelated);
+        collect_map_key_types("MyMap<Float, Int>", &mut unrelated);
+        collect_map_key_types("Dep.Map<Float, Int>", &mut unrelated);
+        assert!(
+            unrelated.is_empty(),
+            "only a standalone `Map<..>` names a key type, got {:?}",
+            unrelated
+        );
     }
 
     #[test]

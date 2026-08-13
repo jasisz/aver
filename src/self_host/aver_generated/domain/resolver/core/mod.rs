@@ -1596,7 +1596,11 @@ pub fn addPatternSlots(
 #[inline(always)]
 pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let vals = aver_rt::AverList::from_vec(m.values().cloned().collect::<Vec<_>>());
+    let vals = {
+        let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        es.sort_by(|a, b| a.0.cmp(&b.0));
+        aver_rt::AverList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
+    };
     crate::aver_generated::domain::resolver::core::maxInList(vals, aver_rt::AverInt::from_i64(-1))
 }
 

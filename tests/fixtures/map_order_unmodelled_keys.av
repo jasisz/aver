@@ -1,0 +1,33 @@
+module MapOrderUnmodelledKeys
+    intent =
+        "Key types whose iteration order the proof model cannot reproduce."
+        "The runtime orders Float keys by bit pattern once a NaN is involved and non-scalar keys by their printed form, so a law that reads iteration order over them is refused instead of exported."
+    effects [Console]
+
+fn floatKeyedValues(m: Map<Float, Int>) -> List<Int>
+    ? "Values of a float-keyed map, in iteration order."
+    Map.values(m)
+
+verify floatKeyedValues law valuesFollowIterationOrder
+    given m: Map<Float, Int> = [{}, {1.0 => 1}, {2.0 => 5, 1.0 => 3}]
+    floatKeyedValues(m) => Map.values(m)
+
+fn floatKeyedSize(m: Map<Float, Int>) -> Int
+    ? "Size of a float-keyed map after writing one key."
+    Map.len(Map.set(m, 1.0, 9))
+
+verify floatKeyedSize law neverEmptyAfterSet
+    given m: Map<Float, Int> = [{}, {1.0 => 1}, {2.0 => 5, 1.0 => 3}]
+    Map.len(Map.set(m, 1.0, 9)) >= 1 => true
+
+fn tupleKeyedKeys(m: Map<Tuple<Int, Int>, Int>) -> List<Tuple<Int, Int>>
+    ? "Keys of a tuple-keyed map, in iteration order."
+    Map.keys(m)
+
+verify tupleKeyedKeys law keysFollowIterationOrder
+    given m: Map<Tuple<Int, Int>, Int> = [{}, {(1, 2) => 7}]
+    tupleKeyedKeys(m) => Map.keys(m)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{Map.len(Map.set({}, 1.0, 9))}")

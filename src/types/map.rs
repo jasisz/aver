@@ -214,6 +214,37 @@ fn ensure_hashable_key(name: &str, value: &Value) -> Result<(), RuntimeError> {
     }
 }
 
+/// Order the NaN-boxed representation's keys the way [`compare_scalar_keys`]
+/// orders the tree-walk representation's.
+///
+/// Both VM representations have to iterate a map identically, and the sort
+/// used to be by *printed* key here — so `{2, 10}` came out `[10, 2]` on the
+/// NaN-boxed path and `[2, 10]` on the tree-walk path, and a string key
+/// containing an escape sorted by its escape sequence rather than by its
+/// characters. Converting the key back to a `Value` keeps one comparator for
+/// both paths rather than a second copy that can drift.
+fn sort_keys_nv(keys: &mut [NanValue], arena: &Arena) {
+    use crate::nan_value::NanValueConvert;
+    let mut keyed: Vec<(Value, NanValue)> = keys.iter().map(|k| (k.to_value(arena), *k)).collect();
+    keyed.sort_by(|(a, _), (b, _)| compare_scalar_keys(a, b));
+    for (slot, (_, key)) in keys.iter_mut().zip(keyed) {
+        *slot = key;
+    }
+}
+
+/// [`sort_keys_nv`] for `(key, value)` pairs — ordered by key alone.
+fn sort_entries_nv(entries: &mut [(NanValue, NanValue)], arena: &Arena) {
+    use crate::nan_value::NanValueConvert;
+    let mut keyed: Vec<(Value, (NanValue, NanValue))> = entries
+        .iter()
+        .map(|pair| (pair.0.to_value(arena), *pair))
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| compare_scalar_keys(a, b));
+    for (slot, (_, pair)) in entries.iter_mut().zip(keyed) {
+        *slot = pair;
+    }
+}
+
 fn compare_scalar_keys(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
@@ -440,7 +471,7 @@ fn keys_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
     }
     let map = arena.clone_map_value(args[0]);
     let mut keys: Vec<NanValue> = map.values().map(|(k, _)| *k).collect();
-    keys.sort_by_key(|a| a.repr(arena));
+    sort_keys_nv(&mut keys, arena);
     if keys.is_empty() {
         return Ok(NanValue::EMPTY_LIST);
     }
@@ -462,7 +493,7 @@ fn values_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     }
     let map = arena.clone_map_value(args[0]);
     let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
-    entries.sort_by_key(|(a, _)| a.repr(arena));
+    sort_entries_nv(&mut entries, arena);
     let vals: Vec<NanValue> = entries.into_iter().map(|(_, v)| v).collect();
     if vals.is_empty() {
         return Ok(NanValue::EMPTY_LIST);
@@ -485,7 +516,7 @@ fn entries_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
     }
     let map = arena.clone_map_value(args[0]);
     let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
-    entries.sort_by_key(|(a, _)| a.repr(arena));
+    sort_entries_nv(&mut entries, arena);
     let pairs: Vec<NanValue> = entries
         .into_iter()
         .map(|(k, v)| {

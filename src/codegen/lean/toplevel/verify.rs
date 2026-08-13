@@ -364,6 +364,19 @@ fn emit_verify_law_block(
         };
         return (header, case_index_start + vb.cases.len());
     }
+    // The map model iterates sorted by key, which reproduces the runtime for
+    // Int, String and Bool keys and nothing else. A law that reads iteration
+    // order over any other key type would be exported as a theorem about a
+    // sequence the runtime never produces, so refuse it here rather than
+    // export it. Order-blind map laws (`Map.len`, `Map.get`, `Map.has`) are
+    // untouched.
+    if let Some(reason) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
+        let header = format!(
+            "-- verify law {}.{}: map iteration order is not exported — {}",
+            fn_name, law_name, reason,
+        );
+        return (header, case_index_start + vb.cases.len());
+    }
     let spec_ref = canonical_spec_ref(&vb.fn_name, law, ctx);
     let theorem_base = match &spec_ref {
         Some(spec_ref) => format!(
@@ -1315,6 +1328,12 @@ pub(crate) fn law_as_lemma_statement(
         return None;
     }
     if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
+        return None;
+    }
+    // A law refused for observing unmodelled map iteration order emits no
+    // theorem, so it must not be offered as a citable lemma either — a
+    // `simp [<name>]` on it would reference a name that was never emitted.
+    if crate::codegen::common::law_map_order_refusal(vb, law, ctx).is_some() {
         return None;
     }
     // A referenceable lemma must actually be EMITTED as a `∀`-theorem with the
