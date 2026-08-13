@@ -2442,14 +2442,22 @@ fn collect_map_key_types_of_type(
         // — two modules may declare the same bare type name, and a bare-name
         // lookup would scan the wrong declaration's fields and then either miss
         // a map or invent one.
+        //
+        // "Already looked at this one" is keyed on the same resolved identity
+        // the lookup is routed by, and for the same reason. Keyed on the
+        // DECLARED name, the first `Entry` a claim reached claimed the name and
+        // every other module's `Entry` was skipped as already-seen — so a claim
+        // comparing a map-free `Holder.Entry` before a float-keyed `Entry`
+        // collected no key type at all and exported, while the same claim with
+        // the two comparisons written the other way round was declined.
         Type::Named { .. } => {
-            let Some(td) = type_def_for_named(ctx, ty) else {
+            let Some(located) = type_def_for_named(ctx, ty) else {
                 return;
             };
-            if !seen.insert(format!("type-def:{}", type_def_name(td))) {
+            if !seen.insert(format!("type-def:{}", type_def_identity(located))) {
                 return;
             }
-            for field in type_def_field_annotations(td) {
+            for field in type_def_field_annotations(located.1) {
                 collect_map_key_types_deep(field, ctx, out, seen);
             }
         }
@@ -2503,7 +2511,7 @@ fn collect_map_key_types_deep(
         if token.is_empty() || !seen.insert(token.to_string()) {
             continue;
         }
-        let Some(td) = type_def_by_name(ctx, token) else {
+        let Some((_, td)) = type_def_by_name(ctx, token) else {
             continue;
         };
         match td {
@@ -2534,7 +2542,10 @@ fn collect_map_key_types_deep(
 ///
 /// Falls back to the name only for an unresolved stamp — compiler-declared
 /// types and post-typecheck synthesised names carry no `TypeId`.
-fn type_def_for_named<'a>(ctx: &'a CodegenContext, ty: &crate::ast::Type) -> Option<&'a TypeDef> {
+fn type_def_for_named<'a>(
+    ctx: &'a CodegenContext,
+    ty: &crate::ast::Type,
+) -> Option<LocatedTypeDef<'a>> {
     let crate::ast::Type::Named { id, name } = ty else {
         return None;
     };
@@ -2546,7 +2557,24 @@ fn type_def_for_named<'a>(ctx: &'a CodegenContext, ty: &crate::ast::Type) -> Opt
         None => &ctx.type_defs,
         Some(prefix) => &ctx.modules.iter().find(|m| &m.prefix == prefix)?.type_defs,
     };
-    defs.iter().find(|td| type_def_name(td) == key.name)
+    let td = defs.iter().find(|td| type_def_name(td) == key.name)?;
+    Some((key.scope.as_deref(), td))
+}
+
+/// A type declaration and the module that owns it — `None` for the entry file.
+///
+/// The owner travels with the declaration because neither the `TypeDef` nor
+/// its declared name carries it, and the declared name alone is not an
+/// identity: two modules may declare the same one.
+type LocatedTypeDef<'a> = (Option<&'a str>, &'a TypeDef);
+
+/// The identity of a located declaration: `Module.Name`, or `Name` for a type
+/// declared in the entry file.
+fn type_def_identity(located: LocatedTypeDef<'_>) -> String {
+    match located.0 {
+        Some(prefix) => format!("{prefix}.{}", type_def_name(located.1)),
+        None => type_def_name(located.1).to_string(),
+    }
 }
 
 /// Every type annotation written inside a `TypeDef` — record field types and
@@ -2567,12 +2595,17 @@ fn type_def_field_annotations(td: &TypeDef) -> Vec<&str> {
 /// to go on (`FnDef.params` is `Vec<(String, String)>`), so this is the best
 /// available routing for them. Callers holding a resolved `Type` stamp use
 /// [`type_def_for_named`] instead.
-fn type_def_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a TypeDef> {
+fn type_def_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<LocatedTypeDef<'a>> {
     let bare = name.rsplit('.').next().unwrap_or(name);
     ctx.type_defs
         .iter()
-        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
-        .find(|td| type_def_name(td) == bare)
+        .map(|td| (None, td))
+        .chain(
+            ctx.modules
+                .iter()
+                .flat_map(|m| m.type_defs.iter().map(|td| (Some(m.prefix.as_str()), td))),
+        )
+        .find(|(_, td)| type_def_name(td) == bare)
 }
 
 /// Append the key type of every `Map<K, V>` written anywhere inside a type

@@ -25,6 +25,7 @@ const EQUALITY_FIXTURE: &str = "tests/fixtures/map_equality_unmodelled_keys.av";
 const ADT_CONTROL_FIXTURE: &str = "tests/fixtures/map_equality_adt_control.av";
 const COLLIDING_TYPE_DIR: &str = "tests/fixtures/map_equality_colliding_type";
 const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
+const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1067,4 +1068,88 @@ fn two_modules_sharing_a_type_name_are_told_apart() {
         "both laws must hold on the VM:\n{}",
         format_output(&verify)
     );
+}
+
+/// Generate a Lean project for a fixture that lives in a module directory and
+/// return the emitted module text.
+fn emit_lean_in_dir(dir: &str, file: &str, prefix: &str, module: &str) -> String {
+    let out_dir = temp_output_dir(prefix);
+    let run = run_aver(&[
+        "proof",
+        &format!("{dir}/{file}"),
+        "--module-root",
+        dir,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    assert!(
+        run.status.success(),
+        "`aver proof {dir}/{file}` failed:\n{}",
+        format_output(&run)
+    );
+    let text = std::fs::read_to_string(out_dir.join(format!("{module}.lean")))
+        .expect("expected the generated Lean module to exist");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    text
+}
+
+/// The claim's verdict does not depend on WHICH same-named type the walk
+/// reached first.
+///
+/// `free_first.av` and `map_first.av` are one file written twice, differing
+/// only in the order of the two comparisons inside a commutative
+/// `Bool.and` — same claim, same runtime answer, and `aver verify` refutes
+/// both. The gate followed each compared operand into its own declaration and
+/// then remembered "I have already looked at this type" under the DECLARED
+/// name, so whichever `Entry` the walk met first claimed the name and the
+/// other module's `Entry` was skipped as already-seen. Reaching the map-free
+/// `Holder.Entry` first therefore hid the `Map<Float, Int>` in the entry
+/// module's `Entry`, the comparison contributed no key type, and the claim
+/// exported as `example : sameScores … = true := by native_decide` against a
+/// runtime that answers `false`.
+///
+/// A test over one ordering would pass on that code. This one pins both.
+#[test]
+fn a_map_comparison_is_declined_whichever_order_it_is_written_in() {
+    let marker = "-- verify sameScores: map equality is not exported";
+    let free_first = emit_lean_in_dir(
+        COMPARISON_ORDER_DIR,
+        "free_first.av",
+        "aver-map-equality-free-first",
+        "MapEqualityComparisonOrderFreeFirst",
+    );
+    let map_first = emit_lean_in_dir(
+        COMPARISON_ORDER_DIR,
+        "map_first.av",
+        "aver-map-equality-map-first",
+        "MapEqualityComparisonOrderMapFirst",
+    );
+    assert!(
+        map_first.contains(marker),
+        "the claim decides equality over a float-keyed map, so it must be \
+         declined:\n{map_first}"
+    );
+    assert!(
+        free_first.contains(marker),
+        "the same claim with the two comparisons swapped is the same claim — \
+         reaching a map-free type of the same bare name first must not hide \
+         the float-keyed one:\n{free_first}"
+    );
+
+    // And it is worth declining: the VM refutes both, so an export is a
+    // certified theorem about an answer the runtime never gives.
+    for file in ["free_first.av", "map_first.av"] {
+        let verify = run_aver(&[
+            "verify",
+            &format!("{COMPARISON_ORDER_DIR}/{file}"),
+            "--module-root",
+            COMPARISON_ORDER_DIR,
+        ]);
+        let stdout = String::from_utf8_lossy(&verify.stdout);
+        assert!(
+            stdout.contains("0/1 cases passed"),
+            "{file} is meant to be refuted on the VM:\n{}",
+            format_output(&verify)
+        );
+    }
 }
