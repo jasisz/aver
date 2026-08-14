@@ -226,14 +226,14 @@ Rules:
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"` — **primitives only** (`Int`, `Float`, `Bool`, `String`). Embedding a list, record, tuple, `Map`, `Option`/`Result`, `Vector` or any named type is a type error; write a function returning `String` and interpolate its result.
 
-**These operators do NOT exist** — do not use them:
+**These operators do NOT exist** — do not use them. Writing one is an error that names the function replacing it (slug `rejected-operator`):
 
 - no integer `/` — integer division is partial (it can divide by zero, and overflow on `i64::MIN / -1`), so use `Int.div(a, b)` which returns `Result<Int, String>`. Euclidean (flooring), the exact partner of `Int.mod`: `Int.div(-7, 2) = Result.Ok(-4)` and `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign. `b == 0` returns `Result.Err("division by zero")`. The `/` operator stays total and works on `Float`
 - no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`. Euclidean modulo: result is always in `[0, |b|)`. `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
 - no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
 - no `!` (boolean not) as prefix — use `Bool.not(x)`
 - no `+=`, `-=`, `++`, `--` (mutation operators)
-- no bitwise operators
+- no bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) — use the `Bits` namespace: `Bits.and(a, b)`, `Bits.or(a, b)`, `Bits.xor(a, b)`, `Bits.not(x)` are `Int -> Int`; `Bits.shiftLeft(x, n)`, `Bits.shiftRight(x, n)`, `Bits.low(x, width)` return `Result<Int, String>` (a negative count is `Result.Err`, and a syntactic non-negative literal count discharges to plain `Int` exactly as with `Int.div`). `Bits` is a NAMESPACE, not a type: arguments and results are ordinary mathematical `Int` values, read as an infinite two's-complement bit sequence for the duration of one call — so `Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`, `Bits.shiftRight(-3, 1) == -2` (arithmetic, not logical), and `Bits.shiftLeft(1, 100)` is exact, not truncated. Fixed width is requested explicitly with `Bits.low(x, 25)` rather than implied by a mask
 
 ### Recursion
 
@@ -251,20 +251,47 @@ fn sum(xs: List<Int>) -> Int
 Use namespaced builtins only.
 
 Common pure namespaces:
-- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Crypto`, `Result`, `Option`
+- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Bits`, `Char`, `Crypto`, `Result`, `Option`
 
 `Bytes` and `Crypto.Digest32` are embedded Aver modules. With
 `depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total
 and pure: the input already guarantees octets and the result guarantees exactly
 32 bytes.
 
+- `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.toList : Bytes -> List<Int>`
+- `Bytes.fromHex : String -> Result<Bytes, String>` (even length, case-insensitive, no `0x` prefix), `Bytes.toHex : Bytes -> String`
+- `Crypto.Digest32.fromBytes : Bytes -> Result<Digest32, String>`, `Crypto.Digest32.toBytes : Digest32 -> Bytes`
+- `Crypto.Digest32.fromHex : String -> Result<Digest32, String>`, `Crypto.Digest32.toHex : Digest32 -> String`
+
 Key `String` API:
 - `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
-- `String.toUpper`, `String.toLower`, `String.trim`
+- `String.byteLength : String -> Int` — UTF-8 byte count; `String.len` counts characters (Unicode scalar values), on every backend
+- `String.charAt : (String, Int) -> Option<String>`, `String.slice : (String, Int, Int) -> String` — character indices; a slice with an out-of-range end clamps
+- `String.toUpper`, `String.toLower`, `String.trim`, `String.replace : (String, String, String) -> String`
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
 - `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
 - string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
+
+Key `Char` API — a namespace, not a type; it works on `String` and `Int`:
+- `Char.toCode : String -> Int` — Unicode scalar value of the first character
+- `Char.fromCode : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
+
+Key `Int` API:
+- `Int.abs : Int -> Int`, `Int.min`, `Int.max` — `(Int, Int) -> Int`
+- `Int.div`, `Int.mod` — `(Int, Int) -> Result<Int, String>`, Euclidean, see the operators section above
+- `Int.fromString : String -> Result<Int, String>`, `Int.fromFloat : Float -> Int`
+
+Key `Float` API:
+- `Float.abs`, `Float.sqrt`, `Float.sin`, `Float.cos` — `Float -> Float`; the trig functions take radians
+- `Float.pow`, `Float.atan2`, `Float.min`, `Float.max` — `(Float, Float) -> Float`
+- `Float.floor`, `Float.ceil`, `Float.round` — `Float -> Int`, so they convert as well as round
+- `Float.pi : () -> Float` — a nullary function, written `Float.pi()`
+- `Float.fromInt : Int -> Float`, `Float.fromString : String -> Result<Float, String>`
+
+Key `Result` / `Option` API:
+- `Result.withDefault : (Result<T, E>, T) -> T`, `Option.withDefault : (Option<T>, T) -> T`
+- `Option.toResult : (Option<T>, E) -> Result<T, E>` — the bridge that lets an `Option` join a `?` chain
 
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`
@@ -273,6 +300,7 @@ Key `List` API (small, recursion-first):
 
 Key `Vector` API (O(1) indexed access):
 - `Vector.new(n, default)`, `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
+- `Vector.len(v) -> Int`
 - `Vector.fromList(l)` — conversion in the other direction lives on `List`
 
 Key `Map` API:
@@ -284,8 +312,9 @@ Effectful namespaces:
 - `Http`: get, post, put, patch, delete, head
 - `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
 - `Tcp`: connect, writeLine, writeBytes, readLine, readBytes, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`
-- `Terminal`: enableRawMode, readKey, setCursor, print, clear, size — `Terminal.print` and `Terminal.setColor` also take `String`.
+- `Terminal`: enableRawMode, disableRawMode, readKey, moveTo, print, setColor, resetColor, clear, size, hideCursor, showCursor, flush — the cursor move is `Terminal.moveTo(x, y)`, and `Terminal.print` / `Terminal.setColor` also take `String`.
 - `Time`: now, unixMs, sleep
+- `Random`: int, float — `Random.int(lo, hi)` is inclusive on both ends, `Random.float()` is in `[0.0, 1.0)`
 - `Env`: get, set
 - `Args`: get
 - `HttpServer`: listen, listenWith

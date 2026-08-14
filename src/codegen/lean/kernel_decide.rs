@@ -614,9 +614,9 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         StringLen | StringChars | StringContains | StringStartsWith | StringEndsWith
         | StringTrim | StringSplit | StringJoin | StringReplace | StringToUpper | StringToLower
         | StringFromInt | StringFromFloat | StringByteLength => Total,
-        // No prelude definition exists for these three, so nothing can panic;
-        // the kernel table below declines them for that same reason.
-        StringRepeat | StringIndexOf | StringFromBool => Total,
+        // No prelude definition exists for this one, so nothing can panic;
+        // the kernel table below declines it for that same reason.
+        StringFromBool => Total,
 
         BoolOr | BoolAnd | BoolNot => Total,
 
@@ -676,9 +676,6 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // `String.Slice` iteration, `trim`/`replace` through `String.Pos`
         // arithmetic — the kernel does not get these to `isTrue`/`isFalse`.
         StringContains | StringTrim | StringReplace => false,
-        // Unreachable from source today (the checker registers no signature),
-        // so they have never been probed.
-        StringRepeat | StringIndexOf => false,
         // Carries a Float; and `String.fromBool` has no prelude definition at
         // all (its native emission is already broken).
         StringFromFloat | StringFromBool => false,
