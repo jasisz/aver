@@ -36,10 +36,11 @@
 //!   module's top-level setup chunk, which `run_top_level` discards — the error
 //!   vanishes and every binding after the failing one goes unassigned.
 //!
-//! The old code also left `leaf_return` set on the way out, so the NEXT
-//! `RETURN` executed anywhere took the frameless fast path and jumped to the
-//! already-spent `(fn_id, ip, bp)`: an unrelated function's return resumed in
-//! the middle of the leaf's caller, on the caller's base pointer.
+//! The old code also left `leaf_return` set on the way out. In the second case
+//! — the only one that keeps running in the same `execute_until` — the NEXT
+//! `RETURN` took the frameless fast path and jumped to the already-spent
+//! `(fn_id, ip, bp)`: an unrelated function's return resumed in the middle of
+//! the leaf's caller, on the caller's base pointer.
 //!
 //! Every program below prints a final `reached the end` marker, and the ones
 //! that stay on their feet pin what each intermediate step printed.
@@ -321,8 +322,8 @@ fn main() -> Unit
 }
 
 /// The frameless return address has to be consumed, not just honoured. The old
-/// error exits left `leaf_return` set, so the next `RETURN` anywhere in the
-/// program spent it a second time.
+/// error exits left `leaf_return` set, so the next `RETURN` to run in the same
+/// `execute_until` spent it a second time.
 ///
 /// `label` is an ordinary framed call — it binds a local, which pushes
 /// `local_count` past `arity` and blocks the `CALL_LEAF` upgrade, and its body
