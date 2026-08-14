@@ -26,13 +26,25 @@
 //!
 //! ## Tiers
 //!
-//! - **fast**: a 3-example plain-parity subset + the two critical
-//!   behavioral probes (deny-policy, record/replay). Runs on every
-//!   `cargo test` invocation. ~one cargo dep-build then seconds each.
-//! - **full**: every single-file example + the multi-module (`depends`)
-//!   examples, plain-parity only. Gated behind the `AVER_RUST_DIFF_FULL`
-//!   env var (the dep-build + per-example build is minutes of wall
-//!   time — too heavy for PR smoke). Run it with
+//! (No test counts are quoted here on purpose: they have gone stale
+//! twice, and a grep that counts them also matches this paragraph. The
+//! attribute is the tier marker — read it off the source.)
+//!
+//! - **default**: every test NOT marked `#[ignore]`, run by every `cargo
+//!   test` invocation. It started as a 3-example plain-parity subset plus
+//!   the two critical behavioral probes (deny-policy, record/replay) and
+//!   has since grown a tail of single-shape regressions — each one a
+//!   lowering or ownership bug that only a real build-and-run catches.
+//!   ~one cargo dep-build, then seconds each. This tier competes for a
+//!   shared CI budget, so a new case earns its place here only when no
+//!   cheaper harness can hold the same ground, and only one shape per
+//!   class.
+//! - **full**: every `#[ignore]`d test, each one additionally guarded by
+//!   an `AVER_RUST_DIFF_FULL` env-var check in its own body — every
+//!   single-file example, the multi-module (`depends`) examples, and the
+//!   second shape of a class whose first shape already runs in the
+//!   default tier. The dep-build + per-example build is minutes of wall
+//!   time, too heavy for PR smoke. Run it with
 //!   `AVER_RUST_DIFF_FULL=1 cargo test --test rust_codegen_differential -- --ignored --nocapture`.
 //!
 //! ## Why this is the porting safety net, not theater
@@ -844,6 +856,150 @@ fn main() -> Unit
     assert!(
         !emitted.contains("let __vec = v.clone();"),
         "fillVector still clones the owned vector param (O(n²) COW regressed):\n{emitted}"
+    );
+}
+
+// ─── fn-result arguments never carry ownership ──────────────────────────
+//
+// `own_param`'s `uniquely_owned` answers `false` for the result of a user
+// fn call (the `MirCallee::Fn` arm): a callee may hand back one of its own
+// arguments, so the result can share a collection the caller still holds.
+// Both shapes below feed a call result STRAIGHT into another call's
+// argument — never through a `let`, which is what keeps the decision on
+// that arm instead of on the binding rules — while the caller keeps its own
+// handle on the same collection and reads it back AFTER the call. Granting
+// ownership there lets the callee mutate the caller's collection in place,
+// so the original changes under it.
+//
+// The VM-vs-`expected` assert is the only one that can go red for this
+// class, and it is checked FIRST: the VM is where a wrong grant corrupts
+// the caller's collection, so under the bug that assert panics and the
+// parity assert below it is never reached. The compiled Rust keeps the
+// collection's copy-on-write protection and still prints the right answer,
+// so the parity assert carries no independent signal here — it is the
+// harness's standing shape, not this class's net. What these tests add
+// over the in-process pins is the end-to-end path: the same program
+// actually compiled to a Rust project, built, and run.
+//
+// Cheap pins for the same class, no `cargo build` involved:
+//   - `own_param_graduation::named_fn_call_result_argument_keeps_the_param_flagged`
+//   - `own_param_graduation::fn_value_call_result_argument_keeps_the_param_flagged`
+//   - `own_param_soundness::named_fn_result_argument_is_not_mutated_in_place`
+//   - `own_param_soundness::fn_value_result_argument_is_not_mutated_in_place`
+// Both halves of the arm therefore have a structural pin AND a VM-only
+// behavioural witness; the `MirCallee::LocalSlot` half (a first-class fn
+// value) has no build test on top of those, deliberately.
+
+/// The `Map` half, and the one shape of this class that stays in the
+/// default tier. `keepFirst` hands back one of its two argument maps, and
+/// that result is `growth`'s argument with no binding in between; `run`
+/// keeps `base` live and prints it afterwards, so an ownership grant on the
+/// call result shows up as `base` losing its entries.
+#[test]
+fn rust_fn_result_argument_keeps_the_callers_map_intact() {
+    let src = r#"module OwnedFnResultMap
+    intent = "A helper's Map result flows straight into another call while the caller keeps its own map"
+    depends []
+    effects [Console.print]
+
+fn keepFirst(a: Map<String, Int>, b: Map<String, Int>) -> Map<String, Int>
+    ? "Returns one of its arguments, so the result shares a caller value."
+    match Map.len(a) > 0
+        true -> a
+        false -> b
+
+fn growth(m: Map<String, Int>, n: Int) -> Int
+    ? "Threads the map linearly, then reports its size."
+    match n == 0
+        true -> Map.len(m)
+        false -> growth(Map.set(m, "g{n}", n), n - 1)
+
+fn render(m: Map<String, Int>) -> String
+    ? "Size plus the value under a."
+    "{Map.len(m)}/{Option.withDefault(Map.get(m, "a"), 0 - 1)}"
+
+fn run() -> String
+    ? "Pass a call result straight into another call, then read the original."
+    base = Map.set(Map.set({}, "a", 7), "b", 8)
+    grown = growth(keepFirst(base, {}), 4)
+    "{grown} {render(base)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // 4 keys added to a 2-key map, and `base` still holds its own 2 entries.
+    let expected = "6 2/7";
+    let vm = run_vm_inline("own_fn_result_map", src).expect("vm run");
+    let rust = build_run_rust_inline("own_fn_result_map", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the map the caller kept was mutated through a call result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a call result was treated as a uniquely-owned map"
+    );
+}
+
+/// The `Vector` half of the same class — the other collection `own_param`
+/// can graduate. `keepLonger` hands back one of its argument vectors
+/// straight into `overwrite`, which writes over every position, and `run`
+/// reads position 0 of its own vector afterwards.
+///
+/// Full tier: the `Map` sibling above already carries the class through the
+/// emitted-project path, and the cheap in-process pins cover the arm, so a
+/// second `cargo build` does not belong in the default tier.
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
+fn rust_fn_result_argument_keeps_the_callers_vector_intact() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!(
+            "skipping the Vector half of the call-result ownership class — \
+             set AVER_RUST_DIFF_FULL=1 (the Map half runs in the default tier, \
+             and the in-process pins in own_param_graduation cover the arm)"
+        );
+        return;
+    }
+
+    let src = r#"module OwnedFnResultVector
+    intent = "A helper's Vector result flows straight into another call while the caller keeps its own vector"
+    depends []
+    effects [Console.print]
+
+fn keepLonger(a: Vector<Int>, b: Vector<Int>) -> Vector<Int>
+    ? "Returns one of its arguments, so the result shares a caller value."
+    match Vector.len(a) >= Vector.len(b)
+        true -> a
+        false -> b
+
+fn overwrite(v: Vector<Int>, i: Int, n: Int) -> Int
+    ? "Threads the vector linearly, writing i*i at every position."
+    match i == n
+        true -> Vector.len(v)
+        false -> overwrite(Option.withDefault(Vector.set(v, i, i * i), v), i + 1, n)
+
+fn run() -> String
+    ? "Pass a call result straight into another call, then read the original."
+    base = Option.withDefault(Vector.set(Vector.new(4, 0), 0, 7), Vector.new(4, 0))
+    touched = overwrite(keepLonger(base, Vector.new(2, 0)), 0, 4)
+    "{touched} {Option.withDefault(Vector.get(base, 0), 0 - 1)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // 4 positions overwritten, and `base` still reads 7 at position 0.
+    let expected = "4 7";
+    let vm = run_vm_inline("own_fn_result_vector", src).expect("vm run");
+    let rust = build_run_rust_inline("own_fn_result_vector", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the vector the caller kept was mutated through a call result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a call result was treated as a uniquely-owned vector"
     );
 }
 
