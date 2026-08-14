@@ -26,13 +26,25 @@
 //!
 //! ## Tiers
 //!
-//! - **fast**: a 3-example plain-parity subset + the two critical
-//!   behavioral probes (deny-policy, record/replay). Runs on every
-//!   `cargo test` invocation. ~one cargo dep-build then seconds each.
-//! - **full**: every single-file example + the multi-module (`depends`)
-//!   examples, plain-parity only. Gated behind the `AVER_RUST_DIFF_FULL`
-//!   env var (the dep-build + per-example build is minutes of wall
-//!   time — too heavy for PR smoke). Run it with
+//! (No test counts are quoted here on purpose: they have gone stale
+//! twice, and a grep that counts them also matches this paragraph. The
+//! attribute is the tier marker — read it off the source.)
+//!
+//! - **default**: every test NOT marked `#[ignore]`, run by every `cargo
+//!   test` invocation. It started as a 3-example plain-parity subset plus
+//!   the two critical behavioral probes (deny-policy, record/replay) and
+//!   has since grown a tail of single-shape regressions — each one a
+//!   lowering or ownership bug that only a real build-and-run catches.
+//!   ~one cargo dep-build, then seconds each. This tier competes for a
+//!   shared CI budget, so a new case earns its place here only when no
+//!   cheaper harness can hold the same ground, and only one shape per
+//!   class.
+//! - **full**: every `#[ignore]`d test, each one additionally guarded by
+//!   an `AVER_RUST_DIFF_FULL` env-var check in its own body — every
+//!   single-file example, the multi-module (`depends`) examples, and the
+//!   second shape of a class whose first shape already runs in the
+//!   default tier. The dep-build + per-example build is minutes of wall
+//!   time, too heavy for PR smoke. Run it with
 //!   `AVER_RUST_DIFF_FULL=1 cargo test --test rust_codegen_differential -- --ignored --nocapture`.
 //!
 //! ## Why this is the porting safety net, not theater
@@ -847,6 +859,150 @@ fn main() -> Unit
     );
 }
 
+// ─── fn-result arguments never carry ownership ──────────────────────────
+//
+// `own_param`'s `uniquely_owned` answers `false` for the result of a user
+// fn call (the `MirCallee::Fn` arm): a callee may hand back one of its own
+// arguments, so the result can share a collection the caller still holds.
+// Both shapes below feed a call result STRAIGHT into another call's
+// argument — never through a `let`, which is what keeps the decision on
+// that arm instead of on the binding rules — while the caller keeps its own
+// handle on the same collection and reads it back AFTER the call. Granting
+// ownership there lets the callee mutate the caller's collection in place,
+// so the original changes under it.
+//
+// The VM-vs-`expected` assert is the only one that can go red for this
+// class, and it is checked FIRST: the VM is where a wrong grant corrupts
+// the caller's collection, so under the bug that assert panics and the
+// parity assert below it is never reached. The compiled Rust keeps the
+// collection's copy-on-write protection and still prints the right answer,
+// so the parity assert carries no independent signal here — it is the
+// harness's standing shape, not this class's net. What these tests add
+// over the in-process pins is the end-to-end path: the same program
+// actually compiled to a Rust project, built, and run.
+//
+// Cheap pins for the same class, no `cargo build` involved:
+//   - `own_param_graduation::named_fn_call_result_argument_keeps_the_param_flagged`
+//   - `own_param_graduation::fn_value_call_result_argument_keeps_the_param_flagged`
+//   - `own_param_soundness::named_fn_result_argument_is_not_mutated_in_place`
+//   - `own_param_soundness::fn_value_result_argument_is_not_mutated_in_place`
+// Both halves of the arm therefore have a structural pin AND a VM-only
+// behavioural witness; the `MirCallee::LocalSlot` half (a first-class fn
+// value) has no build test on top of those, deliberately.
+
+/// The `Map` half, and the one shape of this class that stays in the
+/// default tier. `keepFirst` hands back one of its two argument maps, and
+/// that result is `growth`'s argument with no binding in between; `run`
+/// keeps `base` live and prints it afterwards, so an ownership grant on the
+/// call result shows up as `base` losing its entries.
+#[test]
+fn rust_fn_result_argument_keeps_the_callers_map_intact() {
+    let src = r#"module OwnedFnResultMap
+    intent = "A helper's Map result flows straight into another call while the caller keeps its own map"
+    depends []
+    effects [Console.print]
+
+fn keepFirst(a: Map<String, Int>, b: Map<String, Int>) -> Map<String, Int>
+    ? "Returns one of its arguments, so the result shares a caller value."
+    match Map.len(a) > 0
+        true -> a
+        false -> b
+
+fn growth(m: Map<String, Int>, n: Int) -> Int
+    ? "Threads the map linearly, then reports its size."
+    match n == 0
+        true -> Map.len(m)
+        false -> growth(Map.set(m, "g{n}", n), n - 1)
+
+fn render(m: Map<String, Int>) -> String
+    ? "Size plus the value under a."
+    "{Map.len(m)}/{Option.withDefault(Map.get(m, "a"), 0 - 1)}"
+
+fn run() -> String
+    ? "Pass a call result straight into another call, then read the original."
+    base = Map.set(Map.set({}, "a", 7), "b", 8)
+    grown = growth(keepFirst(base, {}), 4)
+    "{grown} {render(base)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // 4 keys added to a 2-key map, and `base` still holds its own 2 entries.
+    let expected = "6 2/7";
+    let vm = run_vm_inline("own_fn_result_map", src).expect("vm run");
+    let rust = build_run_rust_inline("own_fn_result_map", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the map the caller kept was mutated through a call result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a call result was treated as a uniquely-owned map"
+    );
+}
+
+/// The `Vector` half of the same class — the other collection `own_param`
+/// can graduate. `keepLonger` hands back one of its argument vectors
+/// straight into `overwrite`, which writes over every position, and `run`
+/// reads position 0 of its own vector afterwards.
+///
+/// Full tier: the `Map` sibling above already carries the class through the
+/// emitted-project path, and the cheap in-process pins cover the arm, so a
+/// second `cargo build` does not belong in the default tier.
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
+fn rust_fn_result_argument_keeps_the_callers_vector_intact() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!(
+            "skipping the Vector half of the call-result ownership class — \
+             set AVER_RUST_DIFF_FULL=1 (the Map half runs in the default tier, \
+             and the in-process pins in own_param_graduation cover the arm)"
+        );
+        return;
+    }
+
+    let src = r#"module OwnedFnResultVector
+    intent = "A helper's Vector result flows straight into another call while the caller keeps its own vector"
+    depends []
+    effects [Console.print]
+
+fn keepLonger(a: Vector<Int>, b: Vector<Int>) -> Vector<Int>
+    ? "Returns one of its arguments, so the result shares a caller value."
+    match Vector.len(a) >= Vector.len(b)
+        true -> a
+        false -> b
+
+fn overwrite(v: Vector<Int>, i: Int, n: Int) -> Int
+    ? "Threads the vector linearly, writing i*i at every position."
+    match i == n
+        true -> Vector.len(v)
+        false -> overwrite(Option.withDefault(Vector.set(v, i, i * i), v), i + 1, n)
+
+fn run() -> String
+    ? "Pass a call result straight into another call, then read the original."
+    base = Option.withDefault(Vector.set(Vector.new(4, 0), 0, 7), Vector.new(4, 0))
+    touched = overwrite(keepLonger(base, Vector.new(2, 0)), 0, 4)
+    "{touched} {Option.withDefault(Vector.get(base, 0), 0 - 1)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // 4 positions overwritten, and `base` still reads 7 at position 0.
+    let expected = "4 7";
+    let vm = run_vm_inline("own_fn_result_vector", src).expect("vm run");
+    let rust = build_run_rust_inline("own_fn_result_vector", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the vector the caller kept was mutated through a call result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a call result was treated as a uniquely-owned vector"
+    );
+}
+
 /// Nested-tuple Int-literal match on the RUST backend. After the
 /// `Int -> AverInt` migration an `AverInt` can't be a Rust `match` pattern,
 /// so Int-literal arms lower to an if/else-if equality-guard chain. That
@@ -885,6 +1041,308 @@ fn main() -> Unit
     assert_eq!(
         rust, vm,
         "Rust nested-tuple Int-literal match diverged from VM (or emitted a compile_error! stub)"
+    );
+}
+
+/// A parameter handed straight back, once per parameter type. Params of a
+/// collection / sum / product / tuple type are emitted as `&T` while the
+/// return type stays by value, so the fn's tail has to materialise an owned
+/// value — the same `.clone()` a match arm or a call argument already gets.
+/// The tail was the one owning position that never asked for it, so
+/// `passthrough(x) = x` emitted `&T` where `T` was expected and the generated
+/// project would not build at all (`Result`, `Option`, a sum type, a record, a
+/// tuple and a `List` all failed; `String`, `Int`, `Float`, `Bool` and the
+/// `own_param`-graduated `Vector` / `Map` built because they are already
+/// owned). Every shape sits in one program, so a backend that materialises too
+/// little fails the build and one that materialises the wrong value diverges
+/// from the VM.
+#[test]
+fn rust_passthrough_param_of_every_type_builds_and_matches_vm() {
+    let src = r#"module Passthrough
+    intent = "One passthrough fn per parameter type, so every borrow shape is exercised"
+    depends []
+    effects [Console.print]
+
+type Colour
+    Red
+    Green(Int)
+
+record Point
+    x: Int
+    y: Int
+
+fn passResult(v: Result<Int, String>) -> Result<Int, String>
+    ? "Hand back exactly what was given."
+    v
+
+fn passOption(v: Option<Int>) -> Option<Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passColour(v: Colour) -> Colour
+    ? "Hand back exactly what was given."
+    v
+
+fn passPoint(v: Point) -> Point
+    ? "Hand back exactly what was given."
+    v
+
+fn passTuple(v: Tuple<Int, String>) -> Tuple<Int, String>
+    ? "Hand back exactly what was given."
+    v
+
+fn passList(v: List<Int>) -> List<Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passVector(v: Vector<Int>) -> Vector<Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passMap(v: Map<String, Int>) -> Map<String, Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passString(v: String) -> String
+    ? "Hand back exactly what was given."
+    v
+
+fn passInt(v: Int) -> Int
+    ? "Hand back exactly what was given."
+    v
+
+fn passFloat(v: Float) -> Float
+    ? "Hand back exactly what was given."
+    v
+
+fn passBool(v: Bool) -> Bool
+    ? "Hand back exactly what was given."
+    v
+
+fn showResult(v: Result<Int, String>) -> String
+    ? "Render it."
+    match v
+        Result.Ok(n) -> String.fromInt(n)
+        Result.Err(e) -> e
+
+verify showResult
+    showResult(Result.Ok(1)) => "1"
+    showResult(Result.Err("e")) => "e"
+
+fn showOption(v: Option<Int>) -> String
+    ? "Render it."
+    match v
+        Option.Some(n) -> String.fromInt(n)
+        Option.None -> "none"
+
+verify showOption
+    showOption(Option.Some(2)) => "2"
+    showOption(Option.None) => "none"
+
+fn showColour(v: Colour) -> String
+    ? "Render it."
+    match v
+        Colour.Red -> "red"
+        Colour.Green(n) -> "green {n}"
+
+verify showColour
+    showColour(Colour.Red) => "red"
+    showColour(Colour.Green(3)) => "green 3"
+
+fn showTuple(v: Tuple<Int, String>) -> String
+    ? "Render it."
+    match v
+        (n, s) -> "{n}{s}"
+
+verify showTuple
+    showTuple((6, "t")) => "6t"
+
+fn main() -> Unit
+    ? "Print every passthrough so a divergence shows as a diff, not a pass."
+    ! [Console.print]
+    Console.print(showResult(passResult(Result.Ok(1))))
+    Console.print(showOption(passOption(Option.Some(2))))
+    Console.print(showColour(passColour(Colour.Green(3))))
+    Console.print(String.fromInt(passPoint(Point(x = 4, y = 5)).y))
+    Console.print(showTuple(passTuple((6, "t"))))
+    Console.print(String.fromInt(List.len(passList([7, 8]))))
+    Console.print(String.fromInt(Vector.len(passVector(Vector.new(3, 0)))))
+    Console.print(String.fromInt(Map.len(passMap({"a" => 9}))))
+    Console.print(passString("s"))
+    Console.print(String.fromInt(passInt(10)))
+    Console.print("{passFloat(1.5)}")
+    Console.print("{passBool(true)}")
+"#;
+    let expected = "1\n2\ngreen 3\n5\n6t\n2\n3\n1\ns\n10\n1.5\ntrue";
+    let vm = run_vm_inline("passthrough_param", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("passthrough_param", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM passthrough contract changed");
+    assert_eq!(
+        rust, vm,
+        "Rust passthrough of a borrowed param diverged from the VM"
+    );
+}
+
+/// A parameter that reaches the return slot through something other than
+/// being the whole body. Three positions in one program, because the fix for
+/// one of them does not cover the other two:
+///
+/// - the last line of a statement chain (`closeAfter`, the cleanup-wrapper
+///   shape from the issue, and `yAfter`, the field read through a borrowed
+///   param on that same line);
+/// - a NAME the parameter was bound to (`kept = outcome` then `kept`, and
+///   `y = p.y` then `y`) — giving the value a name does not change what the
+///   function may do with it, but the binding used to be rendered raw, so
+///   `kept` was a `&Result<…>` and `y` was a move out of a shared reference;
+/// - a field read more than one level deep (`s.piece.kind`), in the tail and
+///   bound to a name and as the last line after an effect — `s.piece` is
+///   behind the same shared reference `s` is, so a rule that only looks one
+///   level down leaves every nested read raw.
+///
+/// The build is the primary detector for this class — the issue is a project
+/// that does not compile — and the stdout comparison against the VM is what
+/// catches materialising the WRONG value once it does compile.
+///
+/// `tagged` is a different guard and exercises none of the tail/binding code:
+/// the caller keeps using a map it passed to a callee that adds a key, and the
+/// two stay separate because `Map.set` emits `m.clone().insert_owned(…)` — the
+/// argument itself is passed as a plain `&original` borrow. It is kept because
+/// that separation IS invisible to the build (a callee writing into the
+/// caller's map compiles fine) and only shows up as a divergence from the VM,
+/// so it is the one shape here that the stdout comparison, not rustc, decides.
+///
+/// `shifted` is a PARITY WITNESS, not a guard, and the caption says so
+/// because the honest accounting matters more than the extra shape: it
+/// NAMES the borrowed param and then reads fields through the name, but it
+/// cannot go red either way. Pre-fix the emitter wrote `let kept = p;`,
+/// which binds `&Point`, and `kept.x` / `kept.y` autoderef through the
+/// shared reference — measured: that project builds and prints `10 11`
+/// unchanged. And no emission can make `origin` differ, because
+/// `Point(x = …, y = …)` allocates a fresh record and Aver never writes
+/// through the `&T`. It is here to show the new binding path carries a
+/// record read through a name end-to-end without disturbing the caller.
+///
+/// The shapes that actually go red are the other seven. Against the base
+/// commit this program fails to build with seven rustc errors: `closeAfter`
+/// and `keptOutcome` E0308 (`&Result<…>` where `Result<…>` is expected),
+/// `yAfter` and `keptY` E0507 (move out of `p.y`), `nestedTail`,
+/// `nestedNamed` and `nestedAfter` E0507 (move out of `s.piece.kind`).
+/// Three of those seven — `keptOutcome`, `keptY`, `nestedNamed` — are the
+/// binding position specifically: reverting only the binding call sites,
+/// with the tail rule left in place, still fails with exactly those three.
+#[test]
+fn rust_param_returned_via_a_name_or_a_nested_field_builds_and_matches_vm() {
+    let src = r#"module CloseAfter
+    intent = "A parameter handed back through a name, a nested field or a statement chain"
+    depends []
+    effects [Console.print]
+
+record Kind
+    label: String
+
+record Piece
+    kind: Kind
+    size: Int
+
+record Slot
+    piece: Piece
+    tag: Int
+
+record Point
+    x: Int
+    y: Int
+
+fn closeAfter(label: String, outcome: Result<Int, String>) -> Result<Int, String>
+    ? "Always print the label, whatever the session did."
+    ! [Console.print]
+    _printed = Console.print(label)
+    outcome
+
+fn yAfter(label: String, p: Point) -> Int
+    ? "Print the label, then hand back a field of the point."
+    ! [Console.print]
+    _printed = Console.print(label)
+    p.y
+
+fn keptOutcome(outcome: Result<Int, String>) -> Result<Int, String>
+    ? "Bind the parameter to a name, then hand the name back."
+    kept = outcome
+    kept
+
+fn keptY(p: Point) -> Int
+    ? "Bind a field read to a name, then hand the name back."
+    y = p.y
+    y
+
+fn nestedTail(s: Slot) -> Kind
+    ? "Hand back a field two levels down."
+    s.piece.kind
+
+fn nestedNamed(s: Slot) -> Kind
+    ? "Bind a field two levels down to a name, then hand the name back."
+    k = s.piece.kind
+    k
+
+fn nestedAfter(label: String, s: Slot) -> Kind
+    ? "Print the label, then hand back a field two levels down."
+    ! [Console.print]
+    _printed = Console.print(label)
+    s.piece.kind
+
+fn shifted(p: Point) -> Point
+    ? "Name the point, then build a changed copy from the name."
+    kept = p
+    Point(x = kept.x + 1, y = kept.y)
+
+fn tagged(m: Map<String, Int>) -> Map<String, Int>
+    ? "Add a key and hand the map back."
+    Map.set(m, "b", 2)
+
+fn shown(v: Result<Int, String>) -> String
+    ? "Render it."
+    match v
+        Result.Ok(n) -> String.fromInt(n)
+        Result.Err(e) -> e
+
+verify shown
+    shown(Result.Ok(1)) => "1"
+    shown(Result.Err("e")) => "e"
+
+fn slot() -> Slot
+    ? "One nested record to read through."
+    Slot(piece = Piece(kind = Kind(label = "axe"), size = 3), tag = 7)
+
+verify slot
+    slot().tag => 7
+
+fn main() -> Unit
+    ? "Print each shape so a divergence shows as a diff, not a pass."
+    ! [Console.print]
+    Console.print(shown(closeAfter("closing", Result.Ok(1))))
+    Console.print(String.fromInt(yAfter("point", Point(x = 4, y = 5))))
+    Console.print(shown(keptOutcome(Result.Ok(2))))
+    Console.print(String.fromInt(keptY(Point(x = 4, y = 6))))
+    Console.print(nestedTail(slot()).label)
+    Console.print(nestedNamed(slot()).label)
+    Console.print(nestedAfter("nested", slot()).label)
+    origin = Point(x = 10, y = 20)
+    moved = shifted(origin)
+    Console.print("{origin.x} {moved.x}")
+    original = {"a" => 1}
+    grown = tagged(original)
+    Console.print(String.fromInt(Map.len(original)))
+    Console.print(String.fromInt(Map.len(grown)))
+"#;
+    // `origin` is unchanged by `shifted`, and `original` still has one key
+    // after `tagged` added one to its own copy.
+    let expected = "closing\n1\npoint\n5\n2\n6\naxe\naxe\nnested\naxe\n10 11\n1\n2";
+    let vm = run_vm_inline("close_after", src).expect("vm run");
+    let rust = build_run_rust_inline("close_after", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM contract for these shapes changed");
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from the VM on a parameter returned through a name or a nested field"
     );
 }
 

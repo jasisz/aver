@@ -66,6 +66,13 @@ impl NanValueConvert for NanValue {
                     return NanValue::EMPTY_MAP;
                 }
                 let mut nv_map = PersistentMap::new();
+                // Same shape, and the same trap, as `Map.fromList`: the map
+                // under construction is unreachable from anywhere else, so it
+                // goes in through the owned insert. The preserving `insert`
+                // rebuilds the whole table per entry, which made converting a
+                // map of n entries cost n^2/2 duplications on a path every
+                // replayed and every interop value crosses.
+                let mut table = nv_map.table_id();
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
                     let nv = NanValue::from_value(v, arena);
@@ -73,7 +80,13 @@ impl NanValueConvert for NanValue {
                     // hashing scheme every `Map.*` builtin queries with
                     // (`map.rs::nv_key_bits`). The shallow hash would return
                     // the arena index for ℤ-overflow int keys (mis-keying).
-                    nv_map = nv_map.insert(nk.map_key_hash_deep(arena), (nk, nv));
+                    let entries_before = nv_map.len();
+                    nv_map = nv_map.insert_owned(nk.map_key_hash_deep(arena), (nk, nv));
+                    let table_after = nv_map.table_id();
+                    if table_after != table {
+                        arena.note_map_entries_copied(entries_before);
+                        table = table_after;
+                    }
                 }
                 let idx = arena.push(ArenaEntry::Map(nv_map));
                 NanValue::new_map(idx)

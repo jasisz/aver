@@ -90,7 +90,7 @@ fn build_response(resp: ureq::Response) -> Result<HttpResponse, String> {
             Some(existing) => AverList::prepend(value, existing).reverse(),
             None => AverList::from_vec(vec![value]),
         };
-        headers = headers.insert(key, entry);
+        headers = headers.insert_owned(key, entry);
     }
 
     let mut buf = Vec::new();

@@ -80,6 +80,14 @@ pub trait MapLike: Sized {
     /// Rewrite NanValue pairs in place — avoids rebuilding the hash table.
     /// Uses copy-on-write: O(1) when sole owner, O(n) clone when shared.
     fn rewrite_values_mut(&mut self, f: impl FnMut(&mut (NanValue, NanValue)));
+    /// Identity of the backing table, for callers that need to tell an in-place
+    /// update from a copy-on-write duplication: a value that changes across an
+    /// update means the whole table was rebuilt. The default answers "cannot
+    /// tell", which is what an implementation without a shared table has to
+    /// say; such a build has no VM to count duplication for.
+    fn table_id(&self) -> usize {
+        0
+    }
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1230,6 +1238,28 @@ pub struct Arena<T: ArenaTypes> {
     /// immediates escapes the read, so this is the counter that says which
     /// element types the traversal cost is actually linear in.
     list_elements_scanned: u64,
+    /// Total map entries duplicated because a table was rebuilt instead of
+    /// written into — `Map.set` and `Map.remove` on a target the ownership
+    /// analysis could not prove unshared, any map builder that rebuilds its
+    /// table per entry, and [`Arena::deep_import`] carrying a map into another
+    /// arena. A map threaded linearly through a fold leaves this proportional
+    /// to the number of inserts; one the analysis gave up on makes it
+    /// quadratic, which is visible here without any wall-clock measurement.
+    ///
+    /// One copy is deliberately outside it: the collector duplicates map
+    /// storage of its own accord on the stable-promotion path, and that is not
+    /// in this number — see [`Arena::map_entries_scanned`].
+    ///
+    /// The count is per-arena. [`Arena::clone_static`] starts a child at zero,
+    /// and [`Arena::absorb_copy_counters`] folds a child's total back into its
+    /// parent when the branch rejoins.
+    map_entries_copied: u64,
+    /// Total map entries the collector has *read* while deciding whether a live
+    /// map needs rewriting. Unlike a list body, a map carries no
+    /// all-immediate flag, so this grows on every collection that sees a live
+    /// map whatever the map holds. It is the counter the residual time of a
+    /// map-building program follows.
+    map_entries_scanned: u64,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in
     /// lockstep with `type_names`.
@@ -1431,6 +1461,10 @@ impl MapLike for aver_rt::AverMap<u64, (NanValue, NanValue)> {
 
     fn rewrite_values_mut(&mut self, f: impl FnMut(&mut (NanValue, NanValue))) {
         self.rewrite_values_in_place(f)
+    }
+
+    fn table_id(&self) -> usize {
+        aver_rt::AverMap::table_id(self)
     }
 
     fn len(&self) -> usize {

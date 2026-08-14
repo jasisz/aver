@@ -423,6 +423,21 @@ fn uniquely_owned(
                         .get(1)
                         .is_some_and(|d| matches!(&d.node, MirExpr::Literal(_))),
                     "Map.new" => true,
+                    // `Map.fromList(pairs)` and `Vector.fromList(xs)` build
+                    // their collection from scratch and hand back either the
+                    // immediate empty value or a slot nothing else has an
+                    // index to (`from_list_nv` in `src/types/map.rs`,
+                    // `vec_from_list_nv` in `src/types/vector.rs`: both return
+                    // `EMPTY_*` or a freshly pushed index), so the result is
+                    // as fresh as a literal. Missing that fact was what made
+                    // `fold(n, Map.fromList([]))` — the only way to spell an
+                    // empty accumulator where no literal is in reach — copy
+                    // the whole map on every insert (issue #900); the vector
+                    // spelling sat in the same gap. This says nothing about
+                    // the argument: a collection passed *into* `fromList` is
+                    // retained by the result, which is why neither builtin is
+                    // in `is_target_consuming_builtin`.
+                    "Map.fromList" | "Vector.fromList" => true,
                     // set returns its (mutated) vector/map — owned iff the
                     // target is owned.
                     "Vector.set" | "Map.set" => c.node.args.first().is_some_and(|v| {
@@ -498,7 +513,42 @@ fn uniquely_owned(
             }
             // User-fn / fn-value / intrinsic results may alias an arg
             // (the RULE-2 gap) — never provably owned without a
-            // returns-fresh analysis (deferred).
+            // returns-fresh analysis (deferred). Answering `true` here
+            // lets a callee mutate a collection its caller still holds.
+            //
+            // Two of the three constructors reach this arm from real
+            // source with a collection result, and each is pinned
+            // SEPARATELY in `tests/own_param_graduation.rs` — relaxing
+            // one alone leaves the other test green:
+            //
+            // - `Fn`: a named user function.
+            //   `named_fn_call_result_argument_keeps_the_param_flagged`,
+            //   plus the behavioural
+            //   `own_param_soundness::named_fn_result_argument_is_not_mutated_in_place`
+            //   and the end-to-end
+            //   `rust_fn_result_argument_keeps_the_callers_map_intact`
+            //   in `tests/rust_codegen_differential.rs`.
+            // - `LocalSlot`: a first-class fn value read out of a slot,
+            //   which this pass cannot see through at all.
+            //   `fn_value_call_result_argument_keeps_the_param_flagged`,
+            //   plus the behavioural
+            //   `fn_value_result_argument_is_not_mutated_in_place` in
+            //   `tests/own_param_soundness.rs`.
+            //
+            // `Intrinsic` has no pin because it cannot be reached with a
+            // collection: no member of `BuiltinIntrinsic` returns one.
+            // The full set today is `BufNew` / `BufAppend` /
+            // `BufAppendSepUnlessFirst` / `BufFinalize` (a buffer handle),
+            // `ToStr` (a String), and `IntDivEuclid` / `IntModEuclid` /
+            // `BitsShiftLeft` / `BitsShiftRight` / `BitsLow` (all
+            // `(Int, Int) -> Int`) — never a Vector or Map, so such a call
+            // is never the argument of an alias-prone param.
+            //
+            // The pinned shapes all feed a call result STRAIGHT into
+            // another call's argument and read the caller's own
+            // collection back afterwards. Going through a `let` first
+            // would settle the question on the binding rules instead —
+            // the argument would be a `MirExpr::Local`, not a `Call`.
             MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => false,
         },
         // A live (last-use), owned slot read.

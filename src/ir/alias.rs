@@ -17,7 +17,8 @@
 //! - **Fresh source (destination half, `rhs_is_fresh_collection`).** Its
 //!   binding RHS is a *provably fresh* collection — a `MapLiteral`, an
 //!   allocating builtin (`Vector.new` of a non-compound element, `Vector.set`,
-//!   `Vector.fromList`, `Map.set`, `Map.remove`), or a self-keep rebuild
+//!   `Vector.fromList`, `Map.set`, `Map.remove`, `Map.fromList`), or a
+//!   self-keep rebuild
 //!   `withDefault(set(L,..), L)`. Any other collection RHS — field / element
 //!   extraction (`rec.held`, a tuple item), a `Vector.get` / `Map.get` result,
 //!   a rename `b = a`, a user-fn result — may alias an existing arena entry,
@@ -130,7 +131,7 @@ fn param_type_is_alias_prone(ty: &str) -> bool {
 
 /// A binding RHS that yields a PROVABLY-FRESH `Vector` / `Map` — a `MapLiteral`,
 /// an allocating builtin (`Vector.new` of a non-compound element, `Vector.set`,
-/// `Vector.fromList`, `Map.set`, `Map.remove`), a self-keep rebuild
+/// `Vector.fromList`, `Map.set`, `Map.remove`, `Map.fromList`), a self-keep rebuild
 /// `withDefault(set(L,..), L)`, or a `withDefault` whose branches are each
 /// fresh — produces a uniquely-owned arena entry, so the destination local is
 /// safe for the owned in-place fast path. Every other collection-typed RHS may
@@ -157,6 +158,16 @@ fn rhs_is_fresh_collection(expr: &Spanned<Expr>) -> bool {
 /// is fresh only when its element is non-compound — a compound element is
 /// shared by every cell (the old rule 3 aliasing). `get` is excluded: it
 /// returns an element that aliases the source.
+///
+/// `Map.fromList` is here on the same proof as `Vector.fromList`, which has
+/// been in this list from the start. `from_list_nv` (`src/types/map.rs`) builds
+/// its table from scratch and returns either the immediate `EMPTY_MAP` or an
+/// index it has just pushed into the arena, so nothing else can hold the
+/// result — exactly what `vec_from_list_nv` (`src/types/vector.rs`) does for
+/// the vector spelling. Both say nothing whatever about the ARGUMENT: the list
+/// handed in is retained by the result, and a bare collection local passed
+/// there is still flagged by the escape half, which is the separate condition
+/// that keeps this entry from widening what the pass promises.
 fn is_fresh_collection_builtin(callee: &Expr, args: &[Spanned<Expr>]) -> bool {
     let Expr::Attr(parent, member) = callee else {
         return false;
@@ -165,7 +176,11 @@ fn is_fresh_collection_builtin(callee: &Expr, args: &[Spanned<Expr>]) -> bool {
         return false;
     };
     match (ns.as_str(), member.as_str()) {
-        ("Vector", "set") | ("Vector", "fromList") | ("Map", "set") | ("Map", "remove") => true,
+        ("Vector", "set")
+        | ("Vector", "fromList")
+        | ("Map", "set")
+        | ("Map", "remove")
+        | ("Map", "fromList") => true,
         ("Vector", "new") => args
             .get(1)
             .and_then(|a| a.ty())
@@ -326,4 +341,118 @@ fn type_is_compound(ty: &str) -> bool {
             .next()
             .is_some_and(|c| c.is_ascii_uppercase())
             && !matches!(trimmed, "Int" | "Float" | "Bool" | "String" | "Unit"))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::TopLevel;
+    use crate::ir::pipeline::{self, PipelineConfig, TypecheckMode};
+    use crate::source::parse_source;
+
+    /// Read the alias bit of the local named `local` in fn `f`, after the whole
+    /// pipeline.
+    ///
+    /// The full pipeline is what the assertion needs, not a hand-picked subset:
+    /// the destination half of this pass is guarded by `slot_is_collection`,
+    /// which reads `FnResolution.local_slot_types`, and those are filled from
+    /// typecheck stamps. Without a typecheck every binding slot is
+    /// `Type::Invalid`, the destination half never fires at all, and a test
+    /// built on a subset pipeline cannot see this list one way or the other.
+    fn local_is_flagged(source: &str, f: &str, local: &str) -> bool {
+        let mut items = parse_source(source).unwrap_or_else(|e| panic!("parse: {e}"));
+        let result = pipeline::run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        let tc = result.typecheck.as_ref().expect("typecheck requested");
+        assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
+        let fd = items
+            .iter()
+            .find_map(|i| match i {
+                TopLevel::FnDef(fd) if fd.name == f => Some(fd),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("fn {f} not found"));
+        let res = fd.resolution.as_ref().expect("resolution stamped");
+        let slot = *res
+            .local_slots
+            .get(local)
+            .unwrap_or_else(|| panic!("local {local} not found in {f}"));
+        res.aliased_slots
+            .get(slot as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    const FROM_LIST_BINDING: &str = r#"
+fn pairs(n: Int, acc: List<Tuple<String, String>>) -> List<Tuple<String, String>>
+    match n > 0
+        true -> pairs(n - 1, List.prepend(("k", "v"), acc))
+        false -> acc
+
+fn main() -> Int
+    m = Map.fromList(pairs(3, []))
+    v = Vector.fromList([1, 2, 3])
+    Map.len(Map.set(m, "z", "9")) + Vector.len(v)
+"#;
+
+    /// `Map.fromList` builds its result from scratch, so a binding of it is a
+    /// handle nothing else holds and the next `Map.set` may consume it.
+    ///
+    /// Freshness is decided in two places that have to agree.
+    /// `own_param::uniquely_owned` reads a call ARGUMENT, so it sees
+    /// `Map.fromList(..)` written inline at a call site. This pass decides a
+    /// BINDING, which is what a *named* result goes through, and the two lists
+    /// were one name apart: `Vector.fromList` was here and `Map.fromList` was
+    /// not, so `m = Map.fromList(..)` stayed flagged and the following
+    /// `Map.set` duplicated the whole map to preserve something unreachable.
+    ///
+    /// The proof is the builtin's own: `from_list_nv` (`src/types/map.rs`)
+    /// returns either the immediate `EMPTY_MAP` or an index it just pushed into
+    /// the arena, exactly as `vec_from_list_nv` (`src/types/vector.rs`) does for
+    /// the vector spelling already in the list. Neither says anything about the
+    /// ARGUMENT: the list handed to `fromList` is retained by the result, which
+    /// is why the escape half still flags a bare collection local passed there.
+    #[test]
+    fn a_named_from_list_result_is_a_fresh_binding_for_both_collections() {
+        assert!(
+            !local_is_flagged(FROM_LIST_BINDING, "main", "m"),
+            "a binding of `Map.fromList(..)` was flagged as possibly-shared, so \
+             the `Map.set` after it has to copy the whole map"
+        );
+        assert!(
+            !local_is_flagged(FROM_LIST_BINDING, "main", "v"),
+            "the `Vector.fromList` precedent moved — this pair is here to keep \
+             the two spellings deciding the same way"
+        );
+    }
+
+    /// The other half of the same pass, unchanged by the entry above: a
+    /// `fromList` result that ESCAPES is still flagged. `held` is stored into a
+    /// tuple that outlives it, so consuming it in place would rewrite what the
+    /// tuple holds. Freshness of the source and non-escape of the handle are
+    /// separate conditions and both still have to hold.
+    #[test]
+    fn a_from_list_result_that_escapes_is_still_flagged() {
+        let src = r#"
+fn pairs(n: Int, acc: List<Tuple<String, String>>) -> List<Tuple<String, String>>
+    match n > 0
+        true -> pairs(n - 1, List.prepend(("k", "v"), acc))
+        false -> acc
+
+fn main() -> Int
+    held = Map.fromList(pairs(3, []))
+    kept = (held, 1)
+    match kept
+        (stored, one) -> Map.len(Map.set(held, "z", "9")) + Map.len(stored) + one
+"#;
+        assert!(
+            local_is_flagged(src, "main", "held"),
+            "a fresh map whose handle was stored into a live tuple must stay \
+             flagged — freshness does not survive an escape"
+        );
+    }
 }

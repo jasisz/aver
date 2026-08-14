@@ -225,6 +225,19 @@ where
         self.clone().insert_owned(key, value)
     }
 
+    /// Identity of the backing table.
+    ///
+    /// Two maps that report the same value share one table; a value that
+    /// changes across an update means `Rc::make_mut` found a second owner and
+    /// rebuilt the table, duplicating every entry it held. That is what lets a
+    /// caller count copy-on-write duplication exactly, instead of inferring it
+    /// from which method it believes it called. The address cannot be reused
+    /// while the old table is still alive, and `insert` keeps it alive across
+    /// the clone, so a duplication can never be missed.
+    pub fn table_id(&self) -> usize {
+        Rc::as_ptr(&self.inner) as usize
+    }
+
     /// O(1) amortized if unique owner, O(n) clone if shared.
     pub fn insert_owned(mut self, key: K, value: V) -> Self {
         Rc::make_mut(&mut self.inner).insert(key, value);
