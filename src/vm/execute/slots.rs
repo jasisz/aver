@@ -188,7 +188,9 @@ impl OperandStack {
     ///
     /// This is the definition checked against its maintenance. It is `O(cells +
     /// slots)`, so the interpreter runs it only under
-    /// `VM::set_slot_ref_audit`, which the bookkeeping tests turn on.
+    /// `VM::set_slot_ref_audit`, which the bookkeeping tests turn on — and it
+    /// exists only where the assertions do, alongside its one caller.
+    #[cfg(debug_assertions)]
     pub(crate) fn audit(&self) -> Result<(), String> {
         let mut expected: [Vec<u32>; HEAP_SPACE_COUNT] = std::array::from_fn(|_| Vec::new());
         for cell in &self.cells {
