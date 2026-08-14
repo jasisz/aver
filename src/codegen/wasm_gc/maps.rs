@@ -28,6 +28,14 @@
 //! today — large enough for the bench scenarios (5000 keys), small
 //! enough to keep the `array.new_default` allocation under wasmtime's
 //! GC heap pressure threshold.
+//!
+//! Every probe loop is bounded, because a full table is reachable:
+//! the 16384th key fills the last slot. The two insert helpers trap
+//! once a probe walks the whole table without finding a free slot —
+//! the entry has nowhere to go and the table cannot grow — and the
+//! lookup helpers report the miss, which is what `remove` already did.
+//! `capacity_helper_names` feeds the wasm `name` section so that trap
+//! names the capacity it hit instead of an anonymous fn index.
 
 use std::collections::HashMap;
 
@@ -497,6 +505,33 @@ impl MapHelperRegistry {
 
     pub(super) fn kv_helpers(&self, canonical: &str) -> Option<MapKVHelpers> {
         self.kv.get(canonical).copied()
+    }
+
+    /// `(wasm fn idx, name)` for the two insert helpers of every
+    /// registered `Map<K, V>`, ascending by index — the shape the
+    /// `name` section's function subsection wants.
+    ///
+    /// These are the only helpers that can trap: their probe loop
+    /// gives up when the fixed bucket count is full. wasm traps carry
+    /// no message of their own, so the capacity rides in the fn name
+    /// and comes back out in the engine's backtrace.
+    pub(super) fn capacity_helper_names(&self) -> Vec<(u32, String)> {
+        let mut named = Vec::with_capacity(self.kv_order.len() * 2);
+        for canonical in &self.kv_order {
+            let Some(h) = self.kv.get(canonical) else {
+                continue;
+            };
+            named.push((
+                h.set,
+                format!("Map.set {canonical} (fixed capacity {INITIAL_CAP}, no resize)"),
+            ));
+            named.push((
+                h.set_in_place,
+                format!("Map.set {canonical} in place (fixed capacity {INITIAL_CAP}, no resize)"),
+            ));
+        }
+        named.sort_by_key(|(idx, _)| *idx);
+        named
     }
 
     /// Emit fn-type entries (in slot order) for every registered
@@ -1269,6 +1304,7 @@ fn emit_map_set(
             }),
         ), // 7: values (the freshly-allocated clone)
         (1, key_storage_val_type(k_aver, registry)?), // 8: cur_key (boxed for primitive)
+        (1, ValType::I32), // 9: home (probe start bucket)
     ]);
     let _ = (v_val, k_val);
 
@@ -1320,14 +1356,16 @@ fn emit_map_set(
         array_type_index_src: slots.values_array,
     });
 
-    // idx = hash(k) & mask
+    // idx = hash(k) & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalSet(9));
 
-    // loop forever (cap is large enough that probe always finds slot)
+    // Probe from `home`, bounded by the wrap guard at the bottom.
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
     // cur_key = keys[idx]
@@ -1396,12 +1434,34 @@ fn emit_map_set(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    emit_full_table_trap(&mut f, 5, 9);
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End); // loop
     f.instruction(&Instruction::End); // block
     f.instruction(&Instruction::Unreachable);
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+/// Bottom-of-probe-loop guard for the two insert helpers: `idx` back at
+/// `home` means all `cap` slots were visited, every one occupied and
+/// none matching the key. The table does not resize, so the entry has
+/// nowhere to go — trap rather than probe forever.
+///
+/// Placed after the `idx = (idx + 1) & mask` step, so the loop has
+/// already examined `home … home + cap - 1`: a table with a single free
+/// slot still inserts, and only a genuinely full one traps.
+///
+/// The `name` section (see `MapHelperRegistry::capacity_helper_names`)
+/// carries the capacity into the helper's name, so wasmtime's backtrace
+/// says which limit was hit instead of `<wasm function N>`.
+fn emit_full_table_trap(f: &mut Function, idx_local: u32, home_local: u32) {
+    f.instruction(&Instruction::LocalGet(idx_local));
+    f.instruction(&Instruction::LocalGet(home_local));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Unreachable);
+    f.instruction(&Instruction::End);
 }
 
 /// `set_in_place(map, k, v) -> map`. Same probe-and-write loop as
@@ -1424,7 +1484,7 @@ fn emit_map_set_in_place(
     // params: 0=map, 1=k, 2=v
     // locals: 3=cap, 4=mask, 5=idx,
     //         6=keys (alias of map.keys), 7=values (alias of map.values),
-    //         8=cur_key
+    //         8=cur_key, 9=home
     let mut f = Function::new([
         (1, ValType::I32),
         (1, ValType::I32),
@@ -1444,6 +1504,7 @@ fn emit_map_set_in_place(
             }),
         ),
         (1, key_storage_val_type(k_aver, registry)?),
+        (1, ValType::I32), // 9: home (probe start bucket)
     ]);
 
     // cap = map.cap; mask = cap - 1
@@ -1472,12 +1533,14 @@ fn emit_map_set_in_place(
     });
     f.instruction(&Instruction::LocalSet(7));
 
-    // idx = hash(k) & mask
+    // idx = hash(k) & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalSet(9));
 
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
@@ -1544,6 +1607,7 @@ fn emit_map_set_in_place(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    emit_full_table_trap(&mut f, 5, 9);
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End); // loop
     f.instruction(&Instruction::End); // block
@@ -1589,6 +1653,7 @@ fn emit_map_get(
             }),
         ), // 6: values
         (1, key_storage_val_type(k_aver, registry)?), // 7: cur_key (boxed for prim)
+        (1, ValType::I32), // 8: home (probe start bucket)
     ]);
     let _ = k_val;
     // cap, mask, keys, values
@@ -1614,12 +1679,14 @@ fn emit_map_get(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(6));
-    // idx = hash(k) & mask
+    // idx = hash(k) & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalSet(8));
 
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
@@ -1656,6 +1723,17 @@ fn emit_map_get(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
+    // wrapped back to home → every slot occupied, none matched:
+    // a full-table miss, the same answer `remove` gives.
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    emit_default_value_for(&mut f, v_val);
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End); // loop
     f.instruction(&Instruction::End); // block
@@ -1700,6 +1778,7 @@ fn emit_map_get_or_default(
             }),
         ),
         (1, key_storage_val_type(k_aver, registry)?), // 8: cur_key
+        (1, ValType::I32),                            // 9: home (probe start bucket)
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
@@ -1726,12 +1805,14 @@ fn emit_map_get_or_default(
     });
     f.instruction(&Instruction::LocalSet(7));
 
-    // idx = hash(k) & mask
+    // idx = hash(k) & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalSet(9));
 
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
@@ -1765,6 +1846,14 @@ fn emit_map_get_or_default(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    // wrapped back to home → full-table miss, return the default.
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -1811,6 +1900,7 @@ fn emit_map_get_pair(
             }),
         ),
         (1, key_storage_val_type(k_aver, registry)?), // 7: cur_key
+        (1, ValType::I32),                            // 8: home (probe start bucket)
     ]);
 
     f.instruction(&Instruction::LocalGet(0));
@@ -1841,6 +1931,8 @@ fn emit_map_get_pair(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalSet(8));
 
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
@@ -1878,6 +1970,15 @@ fn emit_map_get_pair(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
+    // wrapped back to home → full-table miss, return (0, default<V>).
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    emit_default_value_for(&mut f, v_val);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);

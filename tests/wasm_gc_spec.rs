@@ -48,6 +48,12 @@ fn compile_bytes(source: &str) -> Vec<u8> {
 }
 
 fn run_int(source: &str) -> i64 {
+    run_int_result(source).unwrap_or_else(|e| panic!("main trapped: {e}"))
+}
+
+/// Same drive as [`run_int`], but hands back the wasmtime trap instead
+/// of panicking on it — for the tests that assert on a trap's message.
+fn run_int_result(source: &str) -> Result<i64, String> {
     let bytes = compile_bytes(source);
     let mut config = wasmtime::Config::new();
     config.wasm_gc(true);
@@ -71,7 +77,13 @@ fn run_int(source: &str) -> i64 {
     let instance = linker
         .instantiate(&mut store, &module)
         .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
-    call_main_aint(&mut store, &instance)
+    let main = instance
+        .get_func(&mut store, "main")
+        .unwrap_or_else(|| panic!("main export missing"));
+    let mut results = [wasmtime::Val::I32(0)];
+    main.call(&mut store, &[], &mut results)
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(extract_aint_small(&mut store, &results[0]))
 }
 
 /// Call the `main` export and extract its `Int` return. `Int = ℤ`:
@@ -1168,6 +1180,91 @@ fn main() -> Int
 "#
         ),
         3
+    );
+}
+
+/// A map filled to exactly the fixed bucket count still answers
+/// `len`. The slot the last key takes is the final free one, so this
+/// is the boundary case one insert below the trap.
+#[test]
+fn map_filled_to_capacity_still_works() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map filled to the fixed wasm-gc capacity"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn main() -> Int
+    m = fill(16384, {})
+    Map.len(m)
+"#
+        ),
+        16384
+    );
+}
+
+/// One key past the fixed bucket count has nowhere to go: the map has
+/// no resize, so the insert probe walks a table with no free slot. It
+/// must trap, and the trap has to name the capacity it hit rather than
+/// spin forever.
+#[test]
+fn map_past_capacity_traps_naming_the_limit() {
+    let err = run_int_result(
+        r#"module Tmp
+    intent = "map one key past the fixed wasm-gc capacity"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn main() -> Int
+    m = fill(16385, {})
+    Map.len(m)
+"#,
+    )
+    .expect_err("inserting past the fixed capacity must trap");
+    assert!(
+        err.contains("16384"),
+        "trap should name the 16384 capacity limit, got: {err}"
+    );
+    assert!(
+        err.contains("Map.set"),
+        "trap should name the map helper that ran out of slots, got: {err}"
+    );
+}
+
+/// Looking a key up in a table with no free slot is a plain miss, not
+/// an error — the answer `remove` has always given. The lookup probe
+/// has to notice it walked the whole table and say so; a present key
+/// must still be found.
+#[test]
+fn map_lookup_in_a_full_table_finds_hits_and_reports_misses() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "lookup in a map filled to the fixed wasm-gc capacity"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn main() -> Int
+    m = fill(16384, {})
+    hit = Option.withDefault(Map.get(m, 7), -1)
+    miss = Option.withDefault(Map.get(m, 99999), -1)
+    hit + miss
+"#
+        ),
+        6
     );
 }
 
