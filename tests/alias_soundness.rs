@@ -222,13 +222,16 @@ fn map_value_extraction_is_not_mutated_in_place() {
 
 /// A list view must not become a window onto a later write.
 ///
-/// `List.fromVector` hands the vector's backing allocation to the list without
-/// copying it, and since #913 `List.drop` hands that same allocation on again
-/// with the offset advanced. Two sharers deep is exactly where an in-place
-/// `Vector.set` would show through, so the write has to copy first. Nothing
-/// here is a claim about the pass this file covers — it is the control that
-/// says the extra sharing did not buy a program a look at a value that was
-/// never in the list it took the view from.
+/// This harness runs the VM variants only (see `assert_immutable`), so what it
+/// pins is the ARENA side of #913: `Arena::list_drop` hands back a shared body
+/// at an advanced offset, and an in-place `Vector.set` after the view is taken
+/// must copy rather than show through. The aver-rt side of the same mechanism
+/// (`AverList::drop_first` over the allocation `Vector::to_list` handed over)
+/// is pinned by `writing_to_a_vector_does_not_reach_a_view_sharing_its_allocation`
+/// in aver-rt, which this test does not reach. Nothing here is a claim about
+/// the pass this file covers — it is the control that says the extra sharing
+/// did not buy a program a look at a value that was never in the list it took
+/// the view from.
 #[test]
 fn a_dropped_view_does_not_see_a_write_to_the_vector_it_came_from() {
     assert_immutable(

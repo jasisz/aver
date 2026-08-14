@@ -498,6 +498,7 @@ impl VM {
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
+                        inplace_write_escaped: false,
                         thin: target.thin,
                         parent_thin: target.parent_thin,
                     });
@@ -680,6 +681,7 @@ impl VM {
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
+                        inplace_write_escaped: false,
                         thin: target.thin,
                         parent_thin: target.parent_thin,
                     });
@@ -789,6 +791,8 @@ impl VM {
                         let handoff_mark = self.frames.last().unwrap().handoff_mark;
                         let globals_dirty = self.frames.last().unwrap().globals_dirty;
                         let yard_dirty = self.frames.last().unwrap().yard_dirty;
+                        let inplace_write_escaped =
+                            self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
                         self.finalize_frame_locals_for_tail_call(
                             frame_mark,
@@ -796,6 +800,7 @@ impl VM {
                             handoff_mark,
                             globals_dirty,
                             yard_dirty,
+                            inplace_write_escaped,
                             &mut promoted_args,
                         );
                         self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
@@ -812,6 +817,13 @@ impl VM {
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
                     frame.yard_mark = self.arena.yard_len() as u32;
+                    // `inplace_write_escaped` deliberately does NOT join the
+                    // three bits above: those are re-derived from the region
+                    // lengths at the next boundary, while it remembers an event
+                    // this compaction has not undone — see the field's own doc
+                    // on `CallFrame`. Clearing it here loses the element a few
+                    // iterations later, as an out-of-bounds arena index in
+                    // `tail_call_evacuation_keeps_the_element_written_in_place`.
                     if let Some(profile) = self.profile.as_mut() {
                         let chunk = &self.code.functions[fn_id as usize];
                         profile.record_function_entry(chunk, fn_id);
@@ -861,6 +873,8 @@ impl VM {
                         let handoff_mark = self.frames.last().unwrap().handoff_mark;
                         let globals_dirty = self.frames.last().unwrap().globals_dirty;
                         let yard_dirty = self.frames.last().unwrap().yard_dirty;
+                        let inplace_write_escaped =
+                            self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
                         self.finalize_frame_locals_for_tail_call(
                             frame_mark,
@@ -868,6 +882,7 @@ impl VM {
                             handoff_mark,
                             globals_dirty,
                             yard_dirty,
+                            inplace_write_escaped,
                             &mut promoted_args,
                         );
                         self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
@@ -897,6 +912,13 @@ impl VM {
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
                     frame.yard_mark = self.arena.yard_len() as u32;
+                    // `inplace_write_escaped` deliberately does NOT join the
+                    // three bits above: those are re-derived from the region
+                    // lengths at the next boundary, while it remembers an event
+                    // this compaction has not undone — see the field's own doc
+                    // on `CallFrame`. Clearing it here loses the element a few
+                    // iterations later, as an out-of-bounds arena index in
+                    // `tail_call_evacuation_keeps_the_element_written_in_place`.
                     if let Some(profile) = self.profile.as_mut() {
                         let target = self.code.get(target_fn_id);
                         profile.record_function_entry(target, target_fn_id);
@@ -1691,9 +1713,51 @@ impl VM {
                     if vec_owned && !vec.is_empty_vector_immediate() {
                         // Owned path: modify vector in-place at the same arena slot.
                         // No new allocation, no promotion needed.
+                        //
+                        // This is the VM's only true in-place arena write, and
+                        // therefore the only way an arena slot the return
+                        // boundary keeps can come to hold an index into a
+                        // region the boundary drops: the vector may live below
+                        // this frame's marks while `value` was allocated above
+                        // them. Record that so the boundary does not take the
+                        // return path that truncates young with no rewrite.
+                        //
+                        // The region test is the boundary's own predicate
+                        // (`yard_mark`, matching `result_uses_frame_local_heap`)
+                        // rather than the `yard_base` one `STORE_GLOBAL` uses.
+                        // That is the conservative half of the pair — `yard_base
+                        // <= yard_mark`, so `yard_mark` counts fewer slots as
+                        // this frame's own and flags strictly more writes — and
+                        // it is the line the guarded boundary actually draws.
+                        //
+                        // Two things the flag deliberately does NOT ask about.
+                        // It is armed on the TARGET alone, never on where the
+                        // value came from: the frame that wrote and the frame
+                        // whose region holds the value need not be the same one
+                        // (`an_inherited_in_place_write_survives_the_callers_boundary`
+                        // is exactly that shape), so a value-side test would
+                        // stay silent in the frame that must hear about it. And
+                        // it is armed only for a write that actually happened —
+                        // an index past the end stores nothing, and an
+                        // immediate leaves no arena reference behind, so
+                        // neither can leave a slot pointing anywhere.
+                        let target_outside_frame = value.heap_index().is_some()
+                            && self.frames.last().is_some_and(|frame| {
+                                !vec.heap_index().is_some_and(|index| {
+                                    self.arena.is_frame_local_index(
+                                        index,
+                                        frame.arena_mark,
+                                        frame.yard_mark,
+                                        frame.handoff_mark,
+                                    )
+                                })
+                            });
                         let items = self.arena.get_vector_mut(vec.arena_index());
                         if i < items.len() {
                             items[i] = value;
+                            if target_outside_frame && let Some(frame) = self.frames.last_mut() {
+                                frame.inplace_write_escaped = true;
+                            }
                         }
                         // Return the same NanValue — same slot, same space.
                         self.stack.push(vec);

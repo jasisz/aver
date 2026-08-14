@@ -130,7 +130,7 @@ impl VM {
         }
 
         let mut roots: Vec<NanValue> = patches.iter().map(|patch| patch.value).collect();
-        arena.promote_roots_to_stable(&mut roots);
+        arena.promote_roots_to_stable(&mut roots, false);
 
         for (patch, value) in patches.into_iter().zip(roots) {
             code.functions[patch.fn_idx].code[patch.bits_pos..patch.bits_pos + 8]
@@ -272,7 +272,7 @@ impl VM {
         for global in &self.globals {
             roots.push(base_arena.deep_import(*global, &self.arena));
         }
-        base_arena.promote_roots_to_stable(&mut roots);
+        base_arena.promote_roots_to_stable(&mut roots, false);
 
         // Freeze the parallel context into a fresh static-only arena so child
         // branches never depend on any transient young suffix left behind by
@@ -282,7 +282,7 @@ impl VM {
         for root in roots {
             frozen_roots.push(frozen_arena.deep_import(root, &base_arena));
         }
-        frozen_arena.promote_roots_to_stable(&mut frozen_roots);
+        frozen_arena.promote_roots_to_stable(&mut frozen_roots, false);
         frozen_arena.truncate_to(0);
         frozen_arena.truncate_yard_to(0);
         frozen_arena.truncate_handoff_to(0);

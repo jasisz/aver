@@ -567,12 +567,220 @@ fn evacuating_a_flat_list_of_heap_backed_elements_relocates_every_element() {
     let list = NanValue::new_list(arena.push_list(items));
 
     let mut roots = [list];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
     assert_eq!(
         arena
             .get_string_value(arena.list_get_value(roots[0], 3).unwrap())
             .to_string(),
         "s3"
+    );
+}
+
+/// A slot BELOW the marks normally cannot hold an index above them, so the
+/// evacuation leaves out-of-region roots alone. The runtime's owned in-place
+/// vector write is the one thing that breaks the rule — it stores an arbitrary
+/// value into an existing slot — and `rewrite_out_of_region_roots` is how the
+/// caller says it happened. With it set, the below-mark vector keeps the
+/// element it was just given instead of losing it to the truncate.
+#[test]
+fn evacuation_rewrites_an_out_of_region_slot_written_in_place() {
+    let mut arena = Arena::new();
+
+    // The vector is allocated below the marks, where a caller's would be.
+    let vector = NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)]));
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+
+    // The value is allocated above them, where a returning frame's would be.
+    let payload = NanValue::new_string(arena.push_string("written-in-place"));
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [vector];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+
+    let element = arena.vector_ref_value(roots[0])[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the evacuation dropped the element written into a below-mark slot",
+    );
+}
+
+/// The other side of that flag, and the reason it exists rather than the
+/// descent simply always running: without an in-place write to account for,
+/// an out-of-region root is not read at all. Reading one is not free — a frame
+/// that carries a long list of strings across every boundary pays for the walk
+/// each time, which is quadratic in the length of the list.
+#[test]
+fn evacuation_reads_an_out_of_region_root_only_when_told_to() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..64)
+        .map(|i| NanValue::new_string(arena.push_string(&format!("s{i}"))))
+        .collect();
+    let list = NanValue::new_list(arena.push_list(items));
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+
+    let scanned = arena.list_elements_scanned();
+    let mut roots = [list];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    assert_eq!(
+        arena.list_elements_scanned() - scanned,
+        0,
+        "the evacuation walked an out-of-region list with no in-place write to repair",
+    );
+
+    let scanned = arena.list_elements_scanned();
+    let mut roots = [list];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+    assert_eq!(
+        arena.list_elements_scanned() - scanned,
+        64,
+        "the evacuation skipped an out-of-region list it had been asked to repair",
+    );
+}
+
+/// The handoff caller of the same descent. `evacuate_frame_to_handoff` is the
+/// ordinary mixed-region return, `evacuate_frame_to_yard` the tail call; they
+/// differ only in where the survivors land, so the descent has to work through
+/// both doors.
+#[test]
+fn the_handoff_evacuation_rewrites_an_out_of_region_slot_written_in_place() {
+    let mut arena = Arena::new();
+
+    let vector = NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)]));
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+
+    let payload = NanValue::new_string(arena.push_string("written-in-place"));
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [vector];
+    arena.evacuate_frame_to_handoff(young_mark, yard_mark, handoff_mark, &mut roots, true);
+
+    let element = arena.vector_ref_value(roots[0])[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the handoff evacuation dropped the element written into a below-mark slot",
+    );
+}
+
+/// Reaching the same out-of-region slot twice must not descend into it twice.
+///
+/// The first descent rewrites the slot's reference to the index the survivor
+/// will occupy AFTER the compaction — an index inside the target region, which
+/// during the walk still holds a live, unrelated entry. A second descent reads
+/// that already-rewritten index as if it were an original one and relocates it
+/// again, and the slot comes back holding whatever happened to sit there.
+///
+/// Two roots holding the same vector is the shortest way to write it down; a
+/// record or tuple mentioning it twice reaches it the same way.
+#[test]
+fn evacuation_descends_into_a_twice_reached_out_of_region_slot_once() {
+    let mut arena = Arena::new();
+
+    // The vector is allocated below the marks, where a caller's would be.
+    let vector = NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)]));
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+
+    // A frame-local yard entry, so the region the survivors compact into is
+    // occupied while the walk is running. Without one the re-relocated index
+    // lands past the end of yard and the second descent is a silent no-op.
+    let bystander = arena.with_alloc_space(AllocSpace::Yard, |arena| {
+        NanValue::new_string(arena.push_string("bystander-in-yard"))
+    });
+    let payload = NanValue::new_string(arena.push_string("written-in-place"));
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [vector, vector, bystander];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+
+    let element = arena.vector_ref_value(roots[0])[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the second descent into the same out-of-region slot relocated an \
+         index the first one had already rewritten",
+    );
+}
+
+/// The written vector reached through an out-of-region CONS CHAIN.
+///
+/// A `Prepend` node's head goes through `evacuate_local_root`, which descends;
+/// its tail goes through `take_local_tail_value`, which used to stop at the
+/// first out-of-region cell. Everything past that cell was therefore never
+/// looked at, so a vector held two cells down kept its stale index. The
+/// promotion sibling `take_promote_tail_value` walks straight into an
+/// out-of-region cell, so this was never the parity the two sides claimed.
+#[test]
+fn evacuation_rewrites_a_slot_written_in_place_behind_an_out_of_region_list_tail() {
+    let mut arena = Arena::new();
+
+    let vector = NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)]));
+    let head_marker = NanValue::new_string(arena.push_string("head-marker"));
+    let tail_cell = NanValue::new_list(arena.push_list_prepend(vector, NanValue::EMPTY_LIST));
+    let list = NanValue::new_list(arena.push_list_prepend(head_marker, tail_cell));
+
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+
+    // Both frame-local, and both in yard so the stale index stays in bounds
+    // after the compaction — the element then reads back as the wrong string
+    // rather than as an out-of-bounds panic.
+    let (payload, survivor) = arena.with_alloc_space(AllocSpace::Yard, |arena| {
+        (
+            NanValue::new_string(arena.push_string("written-in-place")),
+            NanValue::new_string(arena.push_string("survivor-in-yard")),
+        )
+    });
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [list, survivor];
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+
+    // The vector itself lives below the marks, so its handle is unchanged.
+    let element = arena.vector_ref_value(vector)[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the evacuation stopped at an out-of-region list tail and dropped the \
+         element written into a vector the chain still holds",
+    );
+}
+
+/// The promotion sibling, on the same twice-reached shape, for contrast.
+///
+/// `promote_young_roots_to_yard` appends every survivor to the END of yard
+/// (`take_promote_tail_value` / `promote_value_to_target` both push), so a
+/// promoted index can never collide with a live slot and a repeated descent
+/// rewrites nothing. That is why the memo the evacuation needs has no sibling
+/// on this path — not because the promotion walk remembers where it has been.
+#[test]
+fn promotion_survives_a_twice_reached_out_of_region_slot() {
+    let mut arena = Arena::new();
+
+    let vector = NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)]));
+    let mark = arena.young_len() as u32;
+
+    let bystander = NanValue::new_string(arena.push_string("bystander-in-young"));
+    let payload = NanValue::new_string(arena.push_string("written-in-place"));
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [vector, vector, bystander];
+    arena.promote_young_roots_to_yard(mark, &mut roots);
+
+    let element = arena.vector_ref_value(roots[0])[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the promotion walk lost an element to a repeated descent",
     );
 }
 
@@ -589,7 +797,7 @@ fn evacuating_a_flat_list_of_immediates_keeps_its_backing_allocation() {
     let copied_before = arena.list_elements_copied();
 
     let mut roots = [list];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
 
     let after = flat_body!(arena, roots[0]);
     assert!(
@@ -625,7 +833,7 @@ fn evacuating_a_sliced_flat_list_keeps_the_shared_allocation_and_the_offset() {
     let tail = NanValue::new_list(arena.push_list_prepend(NanValue::new_int_inline(-1), tail));
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
 
     let body = match arena.get_list(roots[0].arena_index()) {
         ArenaList::Prepend { tail, .. } => flat_body!(arena, *tail),
@@ -667,7 +875,7 @@ fn a_walked_body_that_did_not_move_keeps_the_slice_offset() {
     let copied_before = arena.list_elements_copied();
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
 
     let body = flat_body!(arena, roots[0]);
     assert!(
@@ -721,7 +929,7 @@ fn rebuilding_a_walked_body_copies_the_prefix_from_the_slice_offset() {
     let copied_before = arena.list_elements_copied();
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
 
     assert_eq!(
         arena.list_len_value(roots[0]),
@@ -770,7 +978,7 @@ fn evacuating_a_segments_node_keeps_the_parts_allocation_when_nothing_moves() {
     };
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
 
     let after = match arena.get_list(roots[0].arena_index()) {
         ArenaList::Segments { rest, .. } => std::sync::Arc::clone(rest),
@@ -782,6 +990,80 @@ fn evacuating_a_segments_node_keeps_the_parts_allocation_when_nothing_moves() {
     );
     assert_eq!(arena.list_len_value(roots[0]), 3);
     assert_eq!(arena.list_get_value(roots[0], 2).unwrap().as_int(&arena), 4);
+}
+
+/// The third boundary, and the third way to reach the same slot.
+///
+/// `finalize_frame_return` promotes its roots to stable and then truncates all
+/// three younger spaces. Promotion covers a root in young, yard or handoff
+/// whatever it holds, because it takes those spaces wholesale rather than by
+/// region — but a root that is ALREADY stable moves nowhere, and
+/// `promote_value_to_stable` used to hand it straight back without reading it.
+/// An owned in-place write into such a vector therefore survived the promotion
+/// and died in the truncate right after it.
+///
+/// The sequence below is what the boundary does, in its order: promote a
+/// vector to stable the way an earlier return of the same kind would, mark the
+/// frame, write into it from above the mark, promote, truncate.
+#[test]
+fn the_stable_promotion_rewrites_a_stable_slot_written_in_place() {
+    let mut arena = Arena::new();
+
+    let mut resident = [NanValue::new_vector(
+        arena.push_vector(vec![NanValue::new_int_inline(0)]),
+    )];
+    arena.promote_roots_to_stable(&mut resident, false);
+    let vector = resident[0];
+
+    let young_mark = arena.young_len() as u32;
+    let payload = NanValue::new_string(arena.push_string("written-in-place"));
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [vector];
+    arena.promote_roots_to_stable(&mut roots, true);
+    arena.truncate_to(young_mark);
+    // Whatever the program allocates next takes the slot the payload had, which
+    // is how the loss reads back as a wrong value rather than as a panic.
+    let _filler = NanValue::new_string(arena.push_string("JUNK-FILLER-ONE"));
+
+    let element = arena.vector_ref_value(roots[0])[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the stable promotion dropped the element written into a stable slot",
+    );
+}
+
+/// The other side of the same flag, on the same boundary.
+///
+/// Without an in-place write to account for, a stable root is not read at all —
+/// and reading one is not free, because everything stable the roots reach is
+/// walked. A callback that returns a long list of strings crosses this boundary
+/// on every call.
+#[test]
+fn the_stable_promotion_reads_a_stable_root_only_when_told_to() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..64)
+        .map(|i| NanValue::new_string(arena.push_string(&format!("s{i}"))))
+        .collect();
+    let mut resident = [NanValue::new_list(arena.push_list(items))];
+    arena.promote_roots_to_stable(&mut resident, false);
+
+    let scanned = arena.list_elements_scanned();
+    arena.promote_roots_to_stable(&mut resident, false);
+    assert_eq!(
+        arena.list_elements_scanned() - scanned,
+        0,
+        "the promotion walked a stable list with no in-place write to repair",
+    );
+
+    let scanned = arena.list_elements_scanned();
+    arena.promote_roots_to_stable(&mut resident, true);
+    assert_eq!(
+        arena.list_elements_scanned() - scanned,
+        64,
+        "the promotion skipped a stable list it had been asked to repair",
+    );
 }
 
 // ─── `List.drop` shares what destructuring shares (issue #913) ───────────────
