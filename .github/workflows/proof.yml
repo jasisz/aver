@@ -142,6 +142,15 @@ jobs:
       - name: Verify `dafny` reachable
         run: dafny --version
 
+      - name: Check the Dafny prelude against the installed Dafny
+        # Same shape as the Lean reserved-token step above: a guard test in
+        # src/codegen/dafny/mod.rs feeds every helper block to `dafny
+        # verify` at once and skips silently when `dafny` is not on PATH.
+        # No other lane runs the lib tests with Dafny installed, and no
+        # export fixture reaches the blocks nothing in the corpus triggers,
+        # so this job is the only place the tripwire can fire.
+        run: cargo test -p aver-lang --lib -- every_dafny_helper_block_verifies_together
+
       - name: Run proof-export tests
         # Restricting to these targets keeps this job short (no overlap
         # with the lib / wasm / bench jobs). Lean and Dafny arms are

@@ -70,12 +70,14 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "ListTake(",
             "ListDrop(",
             "ListZip(",
+            "ListFind(",
+            "ListAny(",
         ],
         // Dafny's `ListHead` returns `Option<T>`. Lean has native Option.
         depends_on: &["OptionDatatype"],
         doc: "Recursion helpers and structural list utilities (Lean's `AverList.` namespace; \
               Dafny's `ListReverse` / `ListHead` / `ListTail` / `ListTake` / `ListDrop` / \
-              `ListZip`).",
+              `ListZip` / `ListFind` / `ListAny`).",
     },
     BuiltinHelper {
         key: "StringHelpers",
