@@ -1028,25 +1028,54 @@ fn main() -> Unit
     );
 }
 
-/// The cleanup-wrapper shape from the field: do the thing that must happen
-/// either way, then hand back the outcome you were given. The parameter is no
-/// longer the whole body — it is the last line of a statement chain — and that
-/// chain's final expression is a second owning position that never materialised
-/// an owned value, so `closeAfter` emitted `&Result<…>` against a by-value
-/// return type. A field read through a borrowed param on the same line is the
-/// move-out-of-a-reference sibling of the same gap.
+/// A parameter that reaches the return slot through something other than
+/// being the whole body. Three positions in one program, because the fix for
+/// one of them does not cover the other two:
 ///
-/// The third shape is the ownership guard: `tagged` writes a key into a map it
-/// was given while the caller keeps using the original. Materialising the owned
-/// value with a `.clone()` keeps the two maps separate; handing the callee the
-/// caller's value instead would let the write land in `original` — invisible to
-/// the build, visible only as a divergence from the VM here.
+/// - the last line of a statement chain (`closeAfter`, the cleanup-wrapper
+///   shape from the issue, and `yAfter`, the field read through a borrowed
+///   param on that same line);
+/// - a NAME the parameter was bound to (`kept = outcome` then `kept`, and
+///   `y = p.y` then `y`) — giving the value a name does not change what the
+///   function may do with it, but the binding used to be rendered raw, so
+///   `kept` was a `&Result<…>` and `y` was a move out of a shared reference;
+/// - a field read more than one level deep (`s.piece.kind`), in the tail and
+///   bound to a name and as the last line after an effect — `s.piece` is
+///   behind the same shared reference `s` is, so a rule that only looks one
+///   level down leaves every nested read raw.
+///
+/// The build is the primary detector for this class — the issue is a project
+/// that does not compile — and the stdout comparison against the VM is what
+/// catches materialising the WRONG value once it does compile.
+///
+/// `tagged` is a different guard and exercises none of the tail/binding code:
+/// the caller keeps using a map it passed to a callee that adds a key, and the
+/// two stay separate because `Map.set` emits `m.clone().insert_owned(…)` — the
+/// argument itself is passed as a plain `&original` borrow. It is kept because
+/// that separation IS invisible to the build (a callee writing into the
+/// caller's map compiles fine) and only shows up as a divergence from the VM,
+/// so it is the one shape here that the stdout comparison, not rustc, decides.
+///
+/// `shifted` is the mirror of that on the new path: it NAMES the borrowed
+/// param before building a changed copy from the name, so the caller's
+/// `origin` and the returned `moved` must differ by exactly one.
 #[test]
-fn rust_param_returned_after_an_effect_builds_and_matches_vm() {
+fn rust_param_returned_via_a_name_or_a_nested_field_builds_and_matches_vm() {
     let src = r#"module CloseAfter
-    intent = "A parameter handed back after an effect, and a map the caller keeps using"
+    intent = "A parameter handed back through a name, a nested field or a statement chain"
     depends []
     effects [Console.print]
+
+record Kind
+    label: String
+
+record Piece
+    kind: Kind
+    size: Int
+
+record Slot
+    piece: Piece
+    tag: Int
 
 record Point
     x: Int
@@ -1064,6 +1093,36 @@ fn yAfter(label: String, p: Point) -> Int
     _printed = Console.print(label)
     p.y
 
+fn keptOutcome(outcome: Result<Int, String>) -> Result<Int, String>
+    ? "Bind the parameter to a name, then hand the name back."
+    kept = outcome
+    kept
+
+fn keptY(p: Point) -> Int
+    ? "Bind a field read to a name, then hand the name back."
+    y = p.y
+    y
+
+fn nestedTail(s: Slot) -> Kind
+    ? "Hand back a field two levels down."
+    s.piece.kind
+
+fn nestedNamed(s: Slot) -> Kind
+    ? "Bind a field two levels down to a name, then hand the name back."
+    k = s.piece.kind
+    k
+
+fn nestedAfter(label: String, s: Slot) -> Kind
+    ? "Print the label, then hand back a field two levels down."
+    ! [Console.print]
+    _printed = Console.print(label)
+    s.piece.kind
+
+fn shifted(p: Point) -> Point
+    ? "Name the point, then build a changed copy from the name."
+    kept = p
+    Point(x = kept.x + 1, y = kept.y)
+
 fn tagged(m: Map<String, Int>) -> Map<String, Int>
     ? "Add a key and hand the map back."
     Map.set(m, "b", 2)
@@ -1078,24 +1137,40 @@ verify shown
     shown(Result.Ok(1)) => "1"
     shown(Result.Err("e")) => "e"
 
+fn slot() -> Slot
+    ? "One nested record to read through."
+    Slot(piece = Piece(kind = Kind(label = "axe"), size = 3), tag = 7)
+
+verify slot
+    slot().tag => 7
+
 fn main() -> Unit
     ? "Print each shape so a divergence shows as a diff, not a pass."
     ! [Console.print]
     Console.print(shown(closeAfter("closing", Result.Ok(1))))
     Console.print(String.fromInt(yAfter("point", Point(x = 4, y = 5))))
+    Console.print(shown(keptOutcome(Result.Ok(2))))
+    Console.print(String.fromInt(keptY(Point(x = 4, y = 6))))
+    Console.print(nestedTail(slot()).label)
+    Console.print(nestedNamed(slot()).label)
+    Console.print(nestedAfter("nested", slot()).label)
+    origin = Point(x = 10, y = 20)
+    moved = shifted(origin)
+    Console.print("{origin.x} {moved.x}")
     original = {"a" => 1}
     grown = tagged(original)
     Console.print(String.fromInt(Map.len(original)))
     Console.print(String.fromInt(Map.len(grown)))
 "#;
-    // `original` still has one key after `tagged` added one to its own copy.
-    let expected = "closing\n1\npoint\n5\n1\n2";
+    // `origin` is unchanged by `shifted`, and `original` still has one key
+    // after `tagged` added one to its own copy.
+    let expected = "closing\n1\npoint\n5\n2\n6\naxe\naxe\nnested\naxe\n10 11\n1\n2";
     let vm = run_vm_inline("close_after", src).expect("vm run");
     let rust = build_run_rust_inline("close_after", src).expect("rust compile + cargo build + run");
-    assert_eq!(vm, expected, "VM cleanup-wrapper contract changed");
+    assert_eq!(vm, expected, "VM contract for these shapes changed");
     assert_eq!(
         rust, vm,
-        "Rust diverged from the VM on a parameter handed back after an effect"
+        "Rust diverged from the VM on a parameter returned through a name or a nested field"
     );
 }
 
