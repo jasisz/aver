@@ -180,6 +180,56 @@ fn main() -> String
     let sinks = data["sinks"].as_array().unwrap();
     assert!(sinks.iter().any(|s| s == "build"));
     assert_eq!(data["rewrites_by_sink"]["build"], 1);
+    // The pass runs for the rust and VM pipelines only; `--explain-passes`
+    // runs one pipeline whatever `--target` says, so the report has to
+    // name the targets its count is about.
+    let targets: Vec<&str> = data["targets"]
+        .as_array()
+        .expect("targets field present")
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(targets, vec!["rust", "vm"]);
+}
+
+/// The pass is off for `--target wasm-gc` / `--target wasip2`, so a
+/// report of rewritten sites would be describing an artifact the reader
+/// did not ask to build. The human report says which pipelines the
+/// count belongs to; the reader should not have to know the toggle.
+#[test]
+fn buffer_build_report_names_the_targets_its_count_belongs_to() {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = tempfile("explain-passes-targets", ".av");
+    fs::write(
+        &path,
+        r#"
+module Demo
+    intent = "fusion site"
+    depends []
+
+fn build(xs: List<Int>, acc: List<String>) -> List<String>
+    match xs
+        [] -> acc
+        [h, ..t] -> build(t, List.prepend(String.fromInt(h), acc))
+
+fn main() -> String
+    String.join(List.reverse(build([1, 2, 3], [])), ",")
+"#,
+    )
+    .expect("write tempfile");
+    let output = Command::new(aver_bin)
+        .arg("compile")
+        .arg(&path)
+        .arg("--explain-passes")
+        .output()
+        .expect("invoke aver");
+    fs::remove_file(&path).ok();
+    assert!(output.status.success());
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        report.contains("--target wasm-gc and --target wasip2 build without this pass"),
+        "the buffer_build section must scope its count to the deforesting targets:\n{report}"
+    );
 }
 
 /// The pipeline `--explain-passes` runs sees the entry file only, so a

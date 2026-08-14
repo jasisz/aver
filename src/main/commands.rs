@@ -3871,6 +3871,21 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     }
 }
 
+/// Which compile targets actually carry the fusion the `buffer_build`
+/// report counts.
+///
+/// The pass is half of the traversal-lowering toggle: `aver run` and the
+/// default Rust codegen run it over the entry module and every
+/// dependency, while `--target wasm-gc` and `--target wasip2` build with
+/// it off (their lowering has no representation for the buffer it
+/// introduces) — as do the proof exporters. `--explain-passes` runs one
+/// pipeline regardless of `--target`, so a report of N rewritten sites
+/// is a statement about the rust / VM artifact and about no other. Say
+/// so rather than let the reader assume it describes the wasm they
+/// asked for.
+const DEFORESTING_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
+const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
+
 /// Per-dependency `buffer_build` reports, for `--explain-passes`.
 ///
 /// The pipeline this command runs sees the ENTRY file only, so a program
@@ -4301,6 +4316,7 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     for fn_name in &r.synthesized {
                         out.push_str(&format!("  • synthesized {fn_name}\n"));
                     }
+                    out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
                 }
             }
             PassReport::Resolve {
@@ -4530,11 +4546,12 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                 }
                 by_sink.push('}');
                 out.push_str(&format!(
-                    "{{\"rewrites\":{},\"synthesized\":{},\"sinks\":{},\"rewrites_by_sink\":{}}}",
+                    "{{\"rewrites\":{},\"synthesized\":{},\"sinks\":{},\"rewrites_by_sink\":{},\"targets\":{}}}",
                     r.rewrites,
                     json_str_array(&r.synthesized),
                     json_str_array(&r.sink_fns),
-                    by_sink
+                    by_sink,
+                    DEFORESTING_TARGETS_JSON
                 ));
             }
             PassReport::Resolve {

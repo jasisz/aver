@@ -37,7 +37,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TailCallData};
+use crate::ast::{
+    Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart, TailCallData,
+};
 
 /// Which builder idiom the sink follows — the cross product of two
 /// independent axes: what drives the loop (a `Bool` condition or the
@@ -70,6 +72,11 @@ use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt,
 /// `List.reverse(...)` wrapper is REQUIRED there or FORBIDDEN, and a
 /// mismatch means the program reverses a different number of times
 /// than the rewrite would.
+// The shared `Reverse` suffix is the point: where the single reverse
+// lives is what the enum is about, and it is what the call site has to
+// agree with. Dropping it would leave names that no longer say which
+// half of the pipeline reverses.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BufferBuildKind {
     InternalReverse,
@@ -299,18 +306,26 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
         _ => return None,
     };
 
+    // The subject rides through the rewrite unchanged onto the buffered
+    // variant's own match, which has no accumulator parameter — so a
+    // loop that decides when to stop by looking at what it has collected
+    // (`match List.len(acc) >= 3`) would leave the name dangling there.
+    // Same occurs-check as the recursive arm, only here the budget is
+    // zero: nothing in the subject position is ever replaced.
+    if count_ident_reads(&subject_expr.node, &acc_name) > 0 {
+        return None;
+    }
+
     // Try the InternalReverse shape first: `match <bool> { true -> List.reverse(acc); false -> recurse(... prepend(_, acc)) }`.
-    if let Some((true_body, false_body)) = pair_bool_arms(arms) {
-        let _ = subject_expr;
-        if is_list_reverse_of(true_body, &acc_name)
-            && is_self_tail_with_prepend_acc(false_body, &fd.name, acc_idx, &acc_name)
-        {
-            return Some(BufferBuildShape {
-                acc_param_idx: acc_idx,
-                acc_param_name: acc_name,
-                kind: BufferBuildKind::InternalReverse,
-            });
-        }
+    if let Some((true_body, false_body)) = pair_bool_arms(arms)
+        && is_list_reverse_of(true_body, &acc_name)
+        && is_self_tail_with_prepend_acc(false_body, &fd.name, acc_idx, &acc_name)
+    {
+        return Some(BufferBuildShape {
+            acc_param_idx: acc_idx,
+            acc_param_name: acc_name,
+            kind: BufferBuildKind::InternalReverse,
+        });
     }
 
     // Otherwise the loop is list-driven: `match <list> { [] -> <base>;
@@ -511,11 +526,26 @@ fn is_list_reverse_of(expr: &Expr, acc_name: &str) -> bool {
     matches!(&args[0].node, Expr::Ident(name) if name == acc_name)
 }
 
-/// True if `expr` is a tail-call to `self_name` whose argument list
-/// contains `List.prepend(<anything>, <Ident(acc_name)>)` in any
-/// position. The position should match the `acc_param_idx` but the
-/// caller may have other params before it; we only require the
-/// `prepend` to terminate in the expected accumulator binding.
+/// True if `expr` is a tail-call to `self_name` whose `acc_idx`
+/// argument is `List.prepend(<elem>, <Ident(acc_name)>)` AND whose
+/// arguments mention `acc_name` nowhere else.
+///
+/// The second half is what makes the rewrite safe. `build_buffered_variant`
+/// drops the accumulator from the parameter list and copies `<elem>` and
+/// every other argument through verbatim, so a second mention of the
+/// accumulator survives into a fn that no longer has one. It becomes a
+/// free identifier: either a compile error, or — when the module happens
+/// to carry a top-level binding of the same name — a silent read of that
+/// binding instead. Both are wrong answers from a pass whose whole claim
+/// is that the shape it matched cannot change the answer.
+///
+/// So the accumulator gets an occurs-check: in the recursive arm it may
+/// be read EXACTLY ONCE, as the tail of the recognised prepend. A loop
+/// that also inspects what it has collected so far (`List.contains(acc, x)`,
+/// `List.len(acc)`) is a different function from the one this pass knows
+/// how to buffer, and is declined. Conservative by construction — the
+/// check counts identifiers, it does not normalise or reason about what
+/// the second read would have meant.
 fn is_self_tail_with_prepend_acc(
     expr: &Expr,
     self_name: &str,
@@ -541,7 +571,80 @@ fn is_self_tail_with_prepend_acc(
         Some(a) => a,
         None => return false,
     };
-    is_list_prepend_to_acc(&acc_arg.node, acc_name)
+    if !is_list_prepend_to_acc(&acc_arg.node, acc_name) {
+        return false;
+    }
+    // The prepend's own tail is the one permitted read; anything else
+    // anywhere in the argument list — inside `<elem>` or in a sibling
+    // argument — is a second one.
+    let reads: usize = data
+        .args
+        .iter()
+        .map(|a| count_ident_reads(&a.node, acc_name))
+        .sum();
+    reads == 1
+}
+
+/// How many times `name` is read as a plain identifier anywhere in
+/// `expr`, including nested nodes.
+///
+/// The match is exhaustive on purpose: a missed `Expr` variant would be
+/// a missed read, and a missed read is a fuse this pass should have
+/// declined. A new variant has to be classified here before it compiles.
+///
+/// A nested binder that shadows `name` is counted too. That is the safe
+/// direction — an unrelated binding that happens to reuse the name costs
+/// a fusion we could in principle have kept, never a wrong answer.
+fn count_ident_reads(expr: &Expr, name: &str) -> usize {
+    let in_each = |exprs: &[Spanned<Expr>]| -> usize {
+        exprs.iter().map(|e| count_ident_reads(&e.node, name)).sum()
+    };
+    match expr {
+        Expr::Literal(_) => 0,
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => usize::from(n == name),
+        Expr::Attr(base, _) => count_ident_reads(&base.node, name),
+        Expr::FnCall(callee, args) => count_ident_reads(&callee.node, name) + in_each(args),
+        Expr::BinOp(_, lhs, rhs) => {
+            count_ident_reads(&lhs.node, name) + count_ident_reads(&rhs.node, name)
+        }
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => count_ident_reads(&inner.node, name),
+        Expr::Match { subject, arms } => {
+            count_ident_reads(&subject.node, name)
+                + arms
+                    .iter()
+                    .map(|a| count_ident_reads(&a.body.node, name))
+                    .sum::<usize>()
+        }
+        Expr::Constructor(_, payload) => payload
+            .as_ref()
+            .map_or(0, |p| count_ident_reads(&p.node, name)),
+        Expr::InterpolatedStr(parts) => parts
+            .iter()
+            .map(|part| match part {
+                StrPart::Literal(_) => 0,
+                StrPart::Parsed(e) => count_ident_reads(&e.node, name),
+            })
+            .sum(),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            in_each(items)
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .map(|(k, v)| count_ident_reads(&k.node, name) + count_ident_reads(&v.node, name))
+            .sum(),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .map(|(_, e)| count_ident_reads(&e.node, name))
+            .sum(),
+        Expr::RecordUpdate { base, updates, .. } => {
+            count_ident_reads(&base.node, name)
+                + updates
+                    .iter()
+                    .map(|(_, e)| count_ident_reads(&e.node, name))
+                    .sum::<usize>()
+        }
+        Expr::TailCall(data) => in_each(&data.args),
+    }
 }
 
 /// True if `expr` is `List.prepend(<anything>, <Ident(acc_name)>)`.
@@ -1819,6 +1922,17 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         items
     }
 
+    fn sinks_of(items: &[crate::ast::TopLevel]) -> HashMap<String, BufferBuildShape> {
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        compute_buffer_build_sinks(&fns)
+    }
+
     fn fn_named<'a>(items: &'a [crate::ast::TopLevel], name: &str) -> &'a FnDef {
         items
             .iter()
@@ -1988,5 +2102,136 @@ fn build(values: List<Int>, acc: List<String>) -> List<String>
 
     fn ident_expr(name: &str) -> Spanned<Expr> {
         sp(Expr::Ident(name.to_string()))
+    }
+
+    /// The buffered variant has no accumulator parameter, so every
+    /// mention of the accumulator the rewrite keeps would be a free
+    /// name. A loop that asks what it has collected so far — here
+    /// `List.contains(acc, head)`, marking repeated values — is exactly
+    /// that: the element expression is copied verbatim into the buffer
+    /// append. The recogniser has to decline before the rewrite gets a
+    /// chance to drop the parameter out from under it.
+    #[test]
+    fn list_driven_internal_reverse_declines_when_the_element_reads_the_accumulator() {
+        let items = parse_and_tco(
+            r#"
+fn tag(value: String, seen: Bool) -> String
+    match seen
+        true -> "dup"
+        false -> value
+
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(tag(head, List.contains(acc, head)), acc))
+"#,
+        );
+        assert!(
+            sinks_of(&items).is_empty(),
+            "an element expression that reads the accumulator must not be fused"
+        );
+    }
+
+    /// Same hole, external-reverse quadrant: the base arm hands back a
+    /// bare `acc` and the caller reverses. Shipped before this pass
+    /// learned the fourth quadrant, so the guard has to cover it too.
+    #[test]
+    fn external_reverse_declines_when_the_element_reads_the_accumulator() {
+        let items = parse_and_tco(
+            r#"
+fn tag(value: String, seen: Bool) -> String
+    match seen
+        true -> "dup"
+        false -> value
+
+fn markInto(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> acc
+        [head, ..tail] -> markInto(tail, List.prepend(tag(head, List.contains(acc, head)), acc))
+"#,
+        );
+        assert!(
+            sinks_of(&items).is_empty(),
+            "the external-reverse quadrant must decline the same escape"
+        );
+    }
+
+    /// Same hole, Bool-driven quadrant: the loop numbers each element by
+    /// asking how many the accumulator already holds.
+    #[test]
+    fn bool_driven_internal_reverse_declines_when_the_element_reads_the_accumulator() {
+        let items = parse_and_tco(
+            r#"
+fn countdown(n: Int, acc: List<String>) -> List<String>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> countdown(n - 1, List.prepend(String.fromInt(List.len(acc)), acc))
+"#,
+        );
+        assert!(
+            sinks_of(&items).is_empty(),
+            "the Bool-driven quadrant must decline the same escape"
+        );
+    }
+
+    /// The accumulator can also escape through a tail-call argument that
+    /// is not the accumulator's own: those arguments are copied into the
+    /// buffered variant's call verbatim.
+    #[test]
+    fn declines_when_a_sibling_tail_call_argument_reads_the_accumulator() {
+        let items = parse_and_tco(
+            r#"
+fn build(seen: Int, values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> build(List.len(acc), tail, List.prepend(head, acc))
+"#,
+        );
+        assert!(
+            sinks_of(&items).is_empty(),
+            "a sibling tail-call argument reading the accumulator must not be fused"
+        );
+    }
+
+    /// And through the match subject, which the rewrite clones as-is
+    /// onto the buffered variant's own match.
+    #[test]
+    fn declines_when_the_match_subject_reads_the_accumulator() {
+        let items = parse_and_tco(
+            r#"
+fn build(word: String, acc: List<String>) -> List<String>
+    match List.len(acc) >= 3
+        true -> List.reverse(acc)
+        false -> build(word, List.prepend(word, acc))
+"#,
+        );
+        assert!(
+            sinks_of(&items).is_empty(),
+            "a match subject reading the accumulator must not be fused"
+        );
+    }
+
+    /// The guard counts references, so a loop that mentions the
+    /// accumulator only where the rewrite replaces it keeps fusing —
+    /// including one whose element expression is itself a call taking
+    /// several arguments.
+    #[test]
+    fn a_single_prepend_tail_reference_still_fuses() {
+        let items = parse_and_tco(
+            r#"
+fn label(value: Int, width: Int) -> String
+    String.fromInt(value + width)
+
+fn rows(values: List<Int>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> rows(tail, List.prepend(label(head, 2), acc))
+"#,
+        );
+        let sinks = sinks_of(&items);
+        let shape = sinks
+            .get("rows")
+            .expect("the accumulator is only read as the prepend tail, so this still fuses");
+        assert_eq!(shape.kind, BufferBuildKind::ListInternalReverse);
     }
 }
