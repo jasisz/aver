@@ -15,6 +15,7 @@ impl<T: ArenaTypes> Arena<T> {
             alloc_space: AllocSpace::Young,
             list_elements_copied: 0,
             list_elements_scanned: 0,
+            map_entries_copied: 0,
             type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -44,6 +45,7 @@ impl<T: ArenaTypes> Arena<T> {
             alloc_space: AllocSpace::Young,
             list_elements_copied: 0,
             list_elements_scanned: 0,
+            map_entries_copied: 0,
             type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
@@ -328,6 +330,26 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub fn list_elements_scanned(&self) -> u64 {
         self.list_elements_scanned
+    }
+
+    /// Map entries duplicated by a key/value update that could not consume its
+    /// target, the map counterpart of [`Arena::list_elements_copied`].
+    ///
+    /// A `Map.set` whose target is still reachable has to preserve it, so it
+    /// duplicates the whole storage. Threading one map through a fold makes that
+    /// n^2/2 entries; consuming the target instead leaves this at zero. Reading
+    /// it is how a copy-per-insert regression is caught structurally rather than
+    /// with a stopwatch.
+    #[inline]
+    pub fn map_entries_copied(&self) -> u64 {
+        self.map_entries_copied
+    }
+
+    /// Record that `entries` map entries were duplicated to preserve a target
+    /// the caller was not allowed to consume.
+    #[inline]
+    pub fn note_map_entries_copied(&mut self, entries: usize) {
+        self.map_entries_copied += entries as u64;
     }
 
     #[inline]

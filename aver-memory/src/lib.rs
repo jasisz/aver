@@ -1230,6 +1230,12 @@ pub struct Arena<T: ArenaTypes> {
     /// immediates escapes the read, so this is the counter that says which
     /// element types the traversal cost is actually linear in.
     list_elements_scanned: u64,
+    /// Total map entries duplicated because `Map.set` (or `Map.remove`) had to
+    /// preserve a target that something else still holds. A map threaded
+    /// linearly through a fold leaves this proportional to the number of
+    /// inserts; a map the ownership analysis failed to prove unshared makes it
+    /// quadratic, which is visible here without any wall-clock measurement.
+    map_entries_copied: u64,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in
     /// lockstep with `type_names`.

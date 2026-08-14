@@ -562,3 +562,86 @@ fn copying_a_list_of_strings_still_reads_shared_bodies_quadratically() {
         large.scanned,
     );
 }
+
+/// Like [`compile_vm`], plus the two annotation passes the ownership decision
+/// is made from: `last_use` marks the reads a slot never survives, and the
+/// alias pass flags the collection params a caller might still hold. Without
+/// them every slot looks dead-on-arrival and un-flagged, so the VM never emits
+/// its owned-builtin call at all and a test could not tell a consumed
+/// accumulator from a copied one.
+fn compile_vm_with_ownership(src: &str) -> VM {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens);
+    let mut items = parser.parse().expect("parse failed");
+    crate::ir::pipeline::tco(&mut items);
+    crate::ir::pipeline::resolve(&mut items);
+    crate::ir::pipeline::last_use(&mut items);
+    crate::ir::alias::annotate_program_alias_slots(&mut items);
+
+    let mut arena = Arena::new();
+    let symbols = crate::ir::SymbolTable::build(&items, &[]);
+    let resolved = crate::ir::hir::resolve_program(&symbols, &items);
+    let (code, globals) =
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
+    VM::new(code, globals, arena)
+}
+
+/// Map entries duplicated by `n` inserts into one accumulator threaded through
+/// a tail call — the shape from issue #900.
+///
+/// `seed` is the expression the accumulator starts from, and it is the only
+/// thing that varies between the two tests below: what the fold does with the
+/// map is identical, so a difference in the count is a statement about the
+/// seed alone.
+///
+/// This counts duplication, not the whole cost, and the same warning applies as
+/// to the list pair above: a map the collector keeps looking at is still read
+/// entry by entry on every collection that sees it, so zero here does not mean
+/// the fold got cheap. It means it stopped rebuilding the map — which is the
+/// memory half, and the half that put 8 GB behind 20,000 short string pairs.
+fn map_build_copies(n: i64, seed: &str) -> u64 {
+    let src = format!(
+        "fn build(n: Int, acc: Map<String, String>) -> Map<String, String>\n    match n > 0\n        true -> build(n - 1, Map.set(acc, \"k{{n}}\", \"v{{n}}\"))\n        false -> acc\n\nfn main() -> Int\n    Map.len(build({n}, {seed}))\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("map build program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.map_entries_copied()
+}
+
+#[test]
+fn growing_a_map_seeded_from_from_list_consumes_it_instead_of_copying_it() {
+    // `Map.fromList([])` is how a program with no map literal in reach spells an
+    // empty accumulator, and it used to be the difference between a linear fold
+    // and a quadratic one: the ownership analysis knew a map literal is a fresh
+    // handle but not that `Map.fromList` is one too, so the accumulator stayed
+    // flagged as possibly-shared and every insert preserved the whole map it was
+    // handed. That is n^2/2 entries — 79,800 here and 319,600 at n=800 — against
+    // a fold that needs to copy nothing at all.
+    let small = map_build_copies(400, "Map.fromList([])");
+    let large = map_build_copies(800, "Map.fromList([])");
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "an accumulator nothing else can reach was preserved rather than \
+         consumed: n=400 copied {small} entries, n=800 copied {large}",
+    );
+}
+
+#[test]
+fn growing_a_map_seeded_from_a_literal_consumes_it_instead_of_copying_it() {
+    // The control the test above is measured against: same fold, same inserts,
+    // seeded from `{}`. This one was already free, and it stays that way.
+    let small = map_build_copies(400, "{}");
+    let large = map_build_copies(800, "{}");
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "a literal-seeded accumulator was preserved rather than consumed: \
+         n=400 copied {small} entries, n=800 copied {large}",
+    );
+}

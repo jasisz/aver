@@ -423,6 +423,17 @@ fn uniquely_owned(
                         .get(1)
                         .is_some_and(|d| matches!(&d.node, MirExpr::Literal(_))),
                     "Map.new" => true,
+                    // Map.fromList(pairs) builds its map from scratch and
+                    // hands back either the immediate empty map or a slot
+                    // nothing else has an index to, so its result is as fresh
+                    // as a map literal. Missing that fact was what made
+                    // `fold(n, Map.fromList([]))` — the only way to spell an
+                    // empty accumulator where no literal is in reach — copy
+                    // the whole map on every insert (issue #900). This says
+                    // nothing about the argument: a collection passed *into*
+                    // `fromList` is retained by the result, which is why the
+                    // builtin stays out of `is_target_consuming_builtin`.
+                    "Map.fromList" => true,
                     // set returns its (mutated) vector/map — owned iff the
                     // target is owned.
                     "Vector.set" | "Map.set" => c.node.args.first().is_some_and(|v| {

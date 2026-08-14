@@ -398,6 +398,9 @@ fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     ensure_hashable_nv("Map.set", args[1])?;
     let old_map = arena.clone_map_value(args[0]);
+    // The target stays reachable through its arena slot, so `insert` duplicates
+    // the whole storage. `set_nv_owned` is the path that avoids this.
+    arena.note_map_entries_copied(old_map.len());
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.insert(key_hash, (args[1], args[2]));
     let map_idx = arena.push_map(new_map);
@@ -439,6 +442,7 @@ fn remove_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     }
     ensure_hashable_nv("Map.remove", args[1])?;
     let old_map = arena.clone_map_value(args[0]);
+    arena.note_map_entries_copied(old_map.len());
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.remove(&key_hash);
     if new_map.is_empty() {
