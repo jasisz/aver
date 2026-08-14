@@ -363,6 +363,20 @@ fn fast_plain_stdout_parity_with_vm() {
     );
 }
 
+/// `Bytes.toHex` builds its string with the list-driven loop that the
+/// deforestation pass now recognises, and BOTH backends now fuse it —
+/// but by different routes. The Rust build reads the dependency out of
+/// the `ModuleInfo` the compile driver deforested; the VM re-parses the
+/// dependency off disk and re-runs the pass against the entry's symbol
+/// table. Two independent producers of the same rewrite is exactly the
+/// shape where a cheaper harness cannot hold the ground: only a real
+/// build-and-run proves they agree on the bytes.
+#[test]
+fn fused_stdlib_hex_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/stdlib_bytes_hex_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── own_param ownership: build+run rust vs VM + emitted-shape guard ─────
 
 /// Build+run an inline Aver program through the Rust backend and return

@@ -1,0 +1,21 @@
+module StdlibBytesHexApp
+    intent =
+        "Prints hexadecimal built by the standard library's own list-driven builder."
+    depends [Bytes]
+    exposes [encode]
+    effects [Console.print]
+
+fn encode(values: List<Int>) -> String
+    ? "Encode octets as lowercase hexadecimal, or report the offending value."
+    match Bytes.fromList(values)
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(message) -> message
+
+verify encode
+    encode([]) => ""
+    encode([0, 10, 255]) => "000aff"
+    encode([256]) => "byte 256 at index 0 is outside 0..=255"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(encode([0, 10, 16, 127, 255]))

@@ -180,6 +180,134 @@ fn main() -> String
     let sinks = data["sinks"].as_array().unwrap();
     assert!(sinks.iter().any(|s| s == "build"));
     assert_eq!(data["rewrites_by_sink"]["build"], 1);
+    // The pass runs for the rust and VM pipelines only; `--explain-passes`
+    // runs one pipeline whatever `--target` says, so the report has to
+    // name the targets its count is about.
+    let targets: Vec<&str> = data["targets"]
+        .as_array()
+        .expect("targets field present")
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(targets, vec!["rust", "vm"]);
+}
+
+/// The pass is off for `--target wasm-gc` / `--target wasip2`, so a
+/// report of rewritten sites would be describing an artifact the reader
+/// did not ask to build. The human report says which pipelines the
+/// count belongs to; the reader should not have to know the toggle.
+#[test]
+fn buffer_build_report_names_the_targets_its_count_belongs_to() {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = tempfile("explain-passes-targets", ".av");
+    fs::write(
+        &path,
+        r#"
+module Demo
+    intent = "fusion site"
+    depends []
+
+fn build(xs: List<Int>, acc: List<String>) -> List<String>
+    match xs
+        [] -> acc
+        [h, ..t] -> build(t, List.prepend(String.fromInt(h), acc))
+
+fn main() -> String
+    String.join(List.reverse(build([1, 2, 3], [])), ",")
+"#,
+    )
+    .expect("write tempfile");
+    let output = Command::new(aver_bin)
+        .arg("compile")
+        .arg(&path)
+        .arg("--explain-passes")
+        .output()
+        .expect("invoke aver");
+    fs::remove_file(&path).ok();
+    assert!(output.status.success());
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        report.contains("--target wasm-gc and --target wasip2 build without this pass"),
+        "the buffer_build section must scope its count to the deforesting targets:\n{report}"
+    );
+}
+
+/// The pipeline `--explain-passes` runs sees the entry file only, so a
+/// program whose DEPENDENCY carries the fusable shape was reported as
+/// having no fusion sites at all — while the compile path was quietly
+/// deforesting that dependency. The report has to cover every module
+/// the artifact is built from, with dep-side names module-qualified.
+#[test]
+fn buffer_build_pass_reports_a_fusion_site_living_in_a_dependency() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("rows.av"),
+        r#"module Rows
+    intent = "a dependency that owns the builder"
+    exposes [render]
+    effects []
+
+fn collect(xs: List<Int>, acc: List<String>) -> List<String>
+    ? "Render each value into the accumulator."
+    match xs
+        [] -> acc
+        [h, ..t] -> collect(t, List.prepend(String.fromInt(h), acc))
+
+fn render(xs: List<Int>) -> String
+    ? "Join the rendered values with commas."
+    String.join(List.reverse(collect(xs, [])), ",")
+"#,
+    )
+    .expect("write rows.av");
+    let entry = dir.path().join("main.av");
+    std::fs::write(
+        &entry,
+        r#"module Main
+    intent = "entry with no fusable shape of its own"
+    depends [Rows]
+    effects []
+
+fn main() -> String
+    Rows.render([1, 2, 3])
+"#,
+    )
+    .expect("write main.av");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
+        .arg(&entry)
+        .arg("--explain-passes")
+        .arg("--json")
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .expect("invoke aver");
+    assert!(
+        output.status.success(),
+        "aver compile failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse JSON output");
+
+    let bb = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "buffer_build")
+        .expect("buffer_build pass present");
+    let data = &bb["data"];
+    assert_eq!(
+        data["rewrites"], 1,
+        "the dependency's fusion site must be counted: {data}"
+    );
+    let synthesized = data["synthesized"].as_array().unwrap();
+    assert!(
+        synthesized.iter().any(|s| s == "Rows.collect__buffered"),
+        "expected the module-qualified synthesized name: {synthesized:?}"
+    );
+    assert_eq!(data["rewrites_by_sink"]["Rows.collect"], 1);
 }
 
 #[test]

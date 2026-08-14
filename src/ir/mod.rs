@@ -50,8 +50,8 @@ pub use body::{
     thin_body_plan_is_parent_thin_candidate, thin_kind_is_parent_thin_candidate,
 };
 pub use buffer_build::{
-    BufferBuildShape, ConsumerKind, FusionSite, compute_buffer_build_sinks, find_fusion_sites,
-    rewrite_fusion_sites, run_buffer_build_pass, synthesize_buffered_variants,
+    BufferBuildPassReport, BufferBuildShape, ConsumerKind, FusionSite, compute_buffer_build_sinks,
+    find_fusion_sites, rewrite_fusion_sites, run_buffer_build_pass, synthesize_buffered_variants,
 };
 pub use calls::{
     CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,
