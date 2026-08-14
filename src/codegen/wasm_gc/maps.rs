@@ -835,7 +835,11 @@ impl MapHelperRegistry {
             codes.function(&emit_map_remove(canonical, registry, key_h)?);
             let helpers = self.kv[canonical];
             codes.function(&emit_map_entries(canonical, registry)?);
-            codes.function(&emit_map_from_list(canonical, registry, helpers.set)?);
+            codes.function(&emit_map_from_list(
+                canonical,
+                registry,
+                helpers.set_in_place,
+            )?);
             // Structural eq + commutative hash for `Map<K, V>`. V's
             // hash + eq fn idxs come from `all_key_helpers` (same
             // table that drives K dispatch — V is just another
@@ -3288,9 +3292,17 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
 
 /// `from_list(l) -> Map<K, V>`. Walks `l` from head to tail,
 /// struct.get's the (K, V) from each tuple, calls the per-(K, V)
-/// `set` helper to insert. Allocates a fresh empty map (via the
-/// per-(K, V) `empty` shape inlined: cap = INITIAL_CAP, fresh keys
+/// `set_in_place` helper to insert. Allocates a fresh empty map (via
+/// the per-(K, V) `empty` shape inlined: cap = INITIAL_CAP, fresh keys
 /// and values arrays) and returns it.
+///
+/// In place rather than clone-on-write because the map is allocated
+/// here, is held only by this frame's local, and is not handed to
+/// anyone until the walk finishes — the uniqueness the alias pass
+/// proves at a `Map.set` call site is a fact of this body's shape.
+/// Copying instead would make `Map.fromList` quadratic: one full array
+/// copy per pair. With growth in the insert helper that would be the
+/// only remaining size cliff a map has.
 fn emit_map_from_list(
     canonical: &str,
     registry: &TypeRegistry,

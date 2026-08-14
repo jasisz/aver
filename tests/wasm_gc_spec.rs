@@ -1733,6 +1733,43 @@ fn main() -> Int
     );
 }
 
+/// `Map.fromList` builds its map by calling the insert helper once per
+/// pair, so it grows the same way — and it is where the cost of NOT
+/// growing used to land hardest. It walked the list through the
+/// clone-on-write insert, which copied every bucket for every pair:
+/// one thousand pairs took over two minutes, and there was no size at
+/// which it became reasonable. It builds its map in place now, because
+/// the map is allocated in that helper's own body and nobody else can
+/// see it until the walk is done.
+///
+/// Five thousand pairs is the statement. Under the copying insert this
+/// test would take minutes; the answer it asserts is the correctness
+/// half, and finishing at all is the other.
+#[test]
+fn map_from_list_builds_a_map_far_larger_than_the_old_capacity() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "Map.fromList over a long list of pairs"
+    depends []
+
+fn pairs(i: Int, n: Int, acc: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match i >= n
+        true  -> acc
+        false -> pairs(i + 1, n, List.prepend((i, i), acc))
+
+fn main() -> Int
+    m = Map.fromList(pairs(0, 5000, []))
+    first = Option.withDefault(Map.get(m, 0), -1)
+    last = Option.withDefault(Map.get(m, 4999), -1)
+    absent = Option.withDefault(Map.get(m, 5000), -1)
+    Map.len(m) + first + last + absent
+"#
+        ),
+        5000 + 0 + 4999 + -1
+    );
+}
+
 /// The insert helpers are named in the module so a stop inside one is
 /// attributable, and the `--optimize` path reads that back to warn it
 /// is about to strip it (`finalize_wasm_artifact`). Both halves of the

@@ -36,6 +36,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
   An empty map got cheaper on the way: it starts at 16 buckets rather than 16384, which is about 128 KB of zeroes it no longer allocates. That matters most where a map is created and barely filled — a `{}` literal, and on `--target wasip2` a fresh header map for every `Http.get` call and every inbound request.
 
+  **`Map.fromList` on this target was unusable and now is not.** It copied every bucket for every pair it was handed, so a thousand pairs took over two and a half minutes and nothing larger finished at all — a table too big to copy, copied once per entry. It fills its map directly now, since that map is its own until it hands it back: the same thousand pairs take well under a second, and twenty thousand take about as long.
+
   This was reachable from outside the program on `--target wasip2`: a request's headers become a `Map` one header at a time, so a peer sending more than 16384 distinct header names stopped the guest. The header maps are built by the same code, so they grow with it and that surface is gone.
 
   The insert helpers are still named in the module — `Map.set Map<Int,Int> in place (table grows; a stop here is a resize bug)` — so that if one ever does stop, the backtrace says which map it was instead of `<wasm function 12>`. **`--optimize` costs you that name**: the optimizer drops the name section and folds the helper into its caller. Compiling a program that uses a `Map` with `--optimize` prints a note saying so.
