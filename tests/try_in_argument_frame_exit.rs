@@ -22,12 +22,27 @@
 //! write "read the name, then read the file".
 //!
 //! The self-hosted interpreter and the Rust backend both return from the
-//! enclosing function. The VM ends the whole program with `main returned
-//! error` and exit 1 — an error the caller was written to handle is reported as
-//! an uncaught failure of `main`, and the lines after the call never run.
+//! enclosing function. What the VM did instead depended on where the leaf was
+//! called from, and only the first of the three is a loud failure:
 //!
-//! Every program below prints a final `reached the end` marker: that line is
-//! the one the buggy VM never reaches.
+//! - the leaf's caller IS the entry frame: the popped frame is the entry's, so
+//!   the run ends with `main returned error` and exit 1 — an error the caller
+//!   was written to handle reported as an uncaught failure of `main`;
+//! - the leaf's caller is an ordinary function: the popped frame is that
+//!   caller's, and the `Err` is handed to the CALLER'S CALLER as the caller's
+//!   return value. No error, no exit code, just a value of the wrong type where
+//!   a `String` was expected and the rest of the caller's body skipped;
+//! - the leaf's caller is `__top_level__`: the `Err` becomes the value of the
+//!   module's top-level setup chunk, which `run_top_level` discards — the error
+//!   vanishes and every binding after the failing one goes unassigned.
+//!
+//! The old code also left `leaf_return` set on the way out, so the NEXT
+//! `RETURN` executed anywhere took the frameless fast path and jumped to the
+//! already-spent `(fn_id, ip, bp)`: an unrelated function's return resumed in
+//! the middle of the leaf's caller, on the caller's base pointer.
+//!
+//! Every program below prints a final `reached the end` marker, and the ones
+//! that stay on their feet pin what each intermediate step printed.
 
 use std::fs;
 use std::path::PathBuf;
@@ -261,6 +276,136 @@ fn main() -> Unit
     Console.print("reached the end")
 "#;
     assert_backends_agree("effectful", src, "err\nreached the end");
+}
+
+/// The leaf's caller is an ordinary function, not the entry frame. This is the
+/// silent half of the class: popping the caller's frame does not end the run, it
+/// hands the `Err` to the CALLER'S CALLER as the caller's return value.
+///
+/// `wrapper` is written to handle the error and to keep working afterwards.
+/// Before the fix it never got the chance — `main` printed
+/// `Result.Err("Cannot parse 'bad' as Int")` where a `String` belongs, the
+/// `wrapper is still running` line for that call never appeared, and the run
+/// exited 0. Nothing anywhere reported a problem.
+#[test]
+fn a_leaf_error_returns_to_its_caller_not_past_it() {
+    let src = r#"module TryLeafInsideCaller
+    intent = "`?` in a frameless leaf returns to the function that called it"
+    depends []
+    effects [Console]
+
+fn leafTry(s: String) -> Result<Int, String>
+    ? "Frameless leaf: no user call and no binding."
+    Int.div(100, Int.fromString(s)?)
+
+fn wrapper(s: String) -> String
+    ? "Handles the leaf's error and keeps working afterwards."
+    ! [Console.print]
+    r = leafTry(s)
+    Console.print("wrapper is still running")
+    match r
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(_) -> "handled"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(wrapper("bad"))
+    Console.print(wrapper("4"))
+    Console.print("reached the end")
+"#;
+    assert_backends_agree(
+        "inside_caller",
+        src,
+        "wrapper is still running\nhandled\nwrapper is still running\nok 25\nreached the end",
+    );
+}
+
+/// The frameless return address has to be consumed, not just honoured. The old
+/// error exits left `leaf_return` set, so the next `RETURN` anywhere in the
+/// program spent it a second time.
+///
+/// `label` is an ordinary framed call — it binds a local, which pushes
+/// `local_count` past `arity` and blocks the `CALL_LEAF` upgrade, and its body
+/// contains no call of its own, so nothing overwrites the stale return address
+/// first. Before the fix its `RETURN` jumped to `wrapper`'s parked
+/// `(fn_id, ip, bp)` instead of popping its own frame: execution resumed inside
+/// `wrapper` just after the leaf call, with `<after>` standing in for the leaf's
+/// result, so `wrapper`'s `match` ran a second time and printed `handled` where
+/// `<after>` belongs — and `label`'s frame was consumed by `wrapper`'s return.
+#[test]
+fn a_spent_frameless_return_is_not_reused_by_the_next_return() {
+    let src = r#"module TryLeafStaleReturn
+    intent = "a frameless leaf's error exit must not leave a return address behind"
+    depends []
+    effects [Console]
+
+fn leafTry(s: String) -> Result<Int, String>
+    ? "Frameless leaf: no user call and no binding."
+    Int.div(100, Int.fromString(s)?)
+
+fn wrapper(s: String) -> String
+    ? "Calls the leaf and has a frame of its own."
+    match leafTry(s)
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(_) -> "handled"
+
+fn label(s: String) -> String
+    ? "Binds a local, so this call keeps a real frame and a real return."
+    t = "<{s}>"
+    t
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(wrapper("bad"))
+    Console.print(label("after"))
+    Console.print("reached the end")
+"#;
+    assert_backends_agree("stale_return", src, "handled\n<after>\nreached the end");
+}
+
+/// The leaf's caller is `__top_level__`, the chunk that computes a module's
+/// top-level bindings. `run_top_level` discards that chunk's value
+/// (`let _ = self.call_function(top_id, &[])?`), so an `Err` delivered as its
+/// return value is not reported anywhere at all.
+///
+/// Before the fix the run printed `setup started`, skipped `setup finished`
+/// entirely — the binding after the failing one was never assigned — and exited
+/// 0. `parsed` was left unassigned too, which `describe` happened to render as
+/// `err`, the same text the correct run produces: the swallow is invisible in
+/// the value that was actually asked about.
+#[test]
+fn a_leaf_error_in_a_top_level_binding_is_not_swallowed() {
+    let src = r#"module TryLeafTopLevel
+    intent = "a `?` failing in a top-level binding must not silence the rest of the setup"
+    depends []
+    effects [Console]
+
+fn leafTry(s: String) -> Result<Int, String>
+    ? "Frameless leaf: no user call and no binding."
+    Int.div(100, Int.fromString(s)?)
+
+fn describe(r: Result<Int, String>) -> String
+    ? "Renders a result without pinning the error text."
+    match r
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(_) -> "err"
+
+before = "setup started"
+parsed = leafTry("bad")
+after = "setup finished"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(before)
+    Console.print(describe(parsed))
+    Console.print(after)
+    Console.print("reached the end")
+"#;
+    assert_backends_agree(
+        "top_level",
+        src,
+        "setup started\nerr\nsetup finished\nreached the end",
+    );
 }
 
 /// Controls. Neither shape is on the frameless-leaf path, and both were already

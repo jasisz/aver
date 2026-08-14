@@ -119,6 +119,16 @@ impl VM {
         // `RETURN` already consults `leaf_return`; every frame exit owes the
         // same check, and owes the same `take()`, or a later `RETURN` would
         // spend a frameless return that has already been used.
+        //
+        // The wider rule this belongs to: nothing may treat `self.frames.last()`
+        // as its own frame without first ruling out `leaf_return`. Five places
+        // read it that way. Three ask `leaf_return` directly — `RETURN`, and the
+        // two exits this macro serves. `CALL_BUILTIN`'s `is_http_server` branch
+        // is the fourth and asks the same question. The fifth, the same branch
+        // under `CALL_VALUE`, is covered by classification instead: a chunk
+        // containing `CALL_VALUE` is never a leaf. Every other reader
+        // (`CALL_KNOWN`, `CALL_VALUE`, the three tail calls) sits behind an
+        // opcode `classify_leaf_chunk` refuses leaf status for.
         macro_rules! leaf_error_return {
             ($result:expr) => {{
                 if let Some((saved_fn_id, saved_ip, saved_bp)) = leaf_return.take() {
@@ -581,6 +591,13 @@ impl VM {
                                     builtin,
                                     symbol_id,
                                 )?;
+                                // Unlike the `CALL_BUILTIN` twin below, this
+                                // one may park its position in
+                                // `self.frames.last()` unconditionally: reaching
+                                // it means the chunk contains `CALL_VALUE`, and
+                                // `classify_leaf_chunk` refuses leaf status to
+                                // any chunk that does — so this chunk always
+                                // owns the frame it is writing to.
                                 self.frames.last_mut().unwrap().ip = ip as u32;
                                 let result = self.dispatch_http_server(builtin, &args)?;
                                 self.stack.push(result);
@@ -764,14 +781,34 @@ impl VM {
                             builtin,
                             symbol_id,
                         )?;
-                        self.frames.last_mut().unwrap().ip = ip as u32;
+                        // The server call runs request handlers through a
+                        // nested `call_function`, so this chunk's position is
+                        // parked in its `CallFrame` across it and read back
+                        // afterwards. A chunk entered through `CALL_LEAF` owns
+                        // no `CallFrame`: `self.frames.last()` is its CALLER's.
+                        // Parking there would overwrite the caller's saved `ip`
+                        // with this chunk's, and reading it back would resume
+                        // the CALLER's function at THIS chunk's offset. The
+                        // interpreter-local `fn_id`/`ip`/`bp` come back from
+                        // the nested call untouched, so a frameless chunk just
+                        // keeps them — the same rule `RETURN` and the two error
+                        // exits follow. `HttpServer.listen` alone in a body is
+                        // exactly that shape: `CALL_BUILTIN` does not disqualify
+                        // a leaf, so `fn serve(port: Int) -> Unit
+                        // HttpServer.listen(port, handleRequest)` is one.
+                        let framed = leaf_return.is_none();
+                        if framed {
+                            self.frames.last_mut().unwrap().ip = ip as u32;
+                        }
                         let result = self.dispatch_http_server(builtin, &args)?;
                         self.stack.push(result);
-                        let f = self.frames.last().unwrap();
-                        fn_id = f.fn_id;
-                        ip = f.ip as usize;
-                        bp = f.bp as usize;
-                        refresh_code!();
+                        if framed {
+                            let f = self.frames.last().unwrap();
+                            fn_id = f.fn_id;
+                            ip = f.ip as usize;
+                            bp = f.bp as usize;
+                            refresh_code!();
+                        }
                         continue;
                     }
 
