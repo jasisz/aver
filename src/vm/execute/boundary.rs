@@ -16,10 +16,20 @@ impl VM {
         })
     }
 
+    /// Drop the frame's young region without rewriting anything.
+    ///
+    /// The result handle test alone is not enough. It says the handle we hand
+    /// back does not point into the region about to go, but says nothing about
+    /// what that value CONTAINS — and an owned in-place vector write can leave
+    /// a vector below the marks holding a value allocated above them. The
+    /// frame's `inplace_write_escaped` flag is what reports that; while it is
+    /// set the frame must go the long way round, where the references are
+    /// rewritten before anything is dropped.
     fn can_fast_return_with_young_truncate(&self, frame: &CallFrame, result: NanValue) -> bool {
         !frame.globals_dirty
             && !frame.yard_dirty
             && !frame.handoff_dirty
+            && !frame.inplace_write_escaped
             && self.arena.yard_len() == frame.yard_mark as usize
             && self.arena.handoff_len() == frame.handoff_mark as usize
             && self.arena.young_len() > frame.arena_mark as usize
@@ -61,6 +71,10 @@ impl VM {
         }
     }
 
+    /// Finish the frame's regions before the tail call reuses it.
+    // One over the limit, and the one over is `inplace_write_escaped`, which
+    // the evacuation below needs.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_frame_locals_for_tail_call(
         &mut self,
         arena_mark: u32,
@@ -68,11 +82,12 @@ impl VM {
         handoff_mark: u32,
         globals_dirty: bool,
         yard_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) {
         let _ = yard_dirty;
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
 
         let has_local_young = self.arena.young_len() > arena_mark as usize;
@@ -80,8 +95,13 @@ impl VM {
         let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
 
         if has_local_yard || has_local_handoff {
-            self.arena
-                .evacuate_frame_to_yard(arena_mark, yard_mark, handoff_mark, frame_roots);
+            self.arena.evacuate_frame_to_yard(
+                arena_mark,
+                yard_mark,
+                handoff_mark,
+                frame_roots,
+                inplace_write_escaped,
+            );
             return;
         }
 
@@ -104,10 +124,11 @@ impl VM {
         yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) -> (bool, bool) {
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
         let has_local_young = self.arena.young_len() > arena_mark as usize;
         let has_local_yard = self.arena.yard_len() > yard_base as usize;
@@ -155,6 +176,7 @@ impl VM {
                 yard_base,
                 handoff_mark,
                 frame_roots,
+                inplace_write_escaped,
             );
         }
 
@@ -164,18 +186,31 @@ impl VM {
         (false, false)
     }
 
+    /// Finish the frame whose caller is not another frame — the callee of a
+    /// `call_function`, and the top-level entry point.
+    ///
+    /// Promotion answers most of what the truncations below could break:
+    /// a root in young, yard or handoff is taken to stable wholesale, contents
+    /// and all, with no region test to skip past. A root already IN stable is
+    /// the exception — it moves nowhere, and `inplace_write_escaped` is the
+    /// only thing that says it may nevertheless be holding a value the
+    /// truncations are about to drop. A vector promoted to stable by an earlier
+    /// return of this same kind, handed to a callee and written into by
+    /// `VECTOR_SET_OR_KEEP`'s owned branch, is exactly that shape.
     pub(super) fn finalize_frame_return(
         &mut self,
         arena_mark: u32,
         yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) {
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
-        self.arena.promote_roots_to_stable(frame_roots);
+        self.arena
+            .promote_roots_to_stable(frame_roots, inplace_write_escaped);
         self.arena.truncate_to(arena_mark);
         self.arena.truncate_yard_to(yard_base);
         self.arena.truncate_handoff_to(handoff_mark);
@@ -187,10 +222,11 @@ impl VM {
         yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) -> (bool, bool) {
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
 
         let has_local_young = self.arena.young_len() > arena_mark as usize;
@@ -203,6 +239,7 @@ impl VM {
                 yard_base,
                 handoff_mark,
                 globals_dirty,
+                inplace_write_escaped,
                 frame_roots,
             );
         }
@@ -230,6 +267,14 @@ impl VM {
         }
     }
 
+    /// Return without touching the arena at all.
+    ///
+    /// `inplace_write_escaped` deliberately does not appear here. This path
+    /// drops nothing — no truncate, no compaction — so a reference into this
+    /// frame's regions cannot go stale at this boundary whatever the frame
+    /// wrote. What it also does not do is REPAIR one, so the obligation simply
+    /// outlives the frame; `complete_frame_return` hands the flag to the caller
+    /// so the boundary that does drop something still knows about it.
     pub(super) fn can_fast_return(&self, frame: &CallFrame) -> bool {
         if frame.parent_thin {
             // Parent-thin frames are allowed to grow the borrowed young lane;
@@ -256,6 +301,20 @@ impl VM {
         mut result: NanValue,
         caller_depth: usize,
     ) -> ReturnControl {
+        // An escaping in-place write is an obligation on whichever boundary
+        // eventually drops the region the written value lives in, and this
+        // frame's boundary is not always that one. Hand it up unconditionally
+        // rather than trying to work out which paths discharge it: where a
+        // boundary really did rewrite the references, it already reports
+        // `yard_dirty` / `handoff_dirty` to the caller, which withholds the
+        // same fast return — so the inherited flag costs nothing there and is
+        // load-bearing exactly where nothing else was reported.
+        if frame.inplace_write_escaped
+            && let Some(caller) = self.frames.last_mut()
+        {
+            caller.inplace_write_escaped = true;
+        }
+
         if self.can_fast_return(&frame) {
             if let Some(profile) = self.profile.as_mut() {
                 profile.record_return_path(&frame, ReturnPathProfileKind::Fast);
@@ -301,6 +360,7 @@ impl VM {
                 frame.yard_base,
                 frame.handoff_mark,
                 frame.globals_dirty,
+                frame.inplace_write_escaped,
                 std::slice::from_mut(&mut result),
             );
             if caller_depth == 0 {
@@ -315,6 +375,7 @@ impl VM {
                 frame.yard_base,
                 frame.handoff_mark,
                 frame.globals_dirty,
+                frame.inplace_write_escaped,
                 std::slice::from_mut(&mut result),
             );
             let caller = self.frames.last_mut().unwrap();
@@ -333,6 +394,7 @@ impl VM {
             frame.yard_base,
             frame.handoff_mark,
             frame.globals_dirty,
+            frame.inplace_write_escaped,
             std::slice::from_mut(&mut result),
         );
         let caller = self.frames.last_mut().unwrap();
