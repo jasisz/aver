@@ -81,8 +81,10 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
     // pattern matching (e.g. escape inlines a record into the
     // caller, dropping the recursive call's structural shape).
     // Analyze stays on — `recursive_fns` is what `proof_lower`
-    // reads to decide which fns to classify.
-    let pipeline_result = crate::ir::pipeline::run(
+    // reads to decide which fns to classify. The flags shape the
+    // runtime-facing half of this run only: the proof view below
+    // is snapshotted before those passes either way.
+    let mut pipeline_result = crate::ir::pipeline::run(
         &mut items,
         crate::ir::PipelineConfig {
             run_tco: true,
@@ -109,21 +111,28 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             on_after_pass: None,
         },
     );
-    let tc = pipeline_result.typecheck.expect("typecheck requested");
+    let tc = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck requested");
     assert!(
         tc.errors.is_empty(),
         "source should typecheck without errors: {:?}",
         tc.errors
     );
-    let proof_ir = pipeline_result.proof_ir;
+    let proof_ir = pipeline_result.proof_ir.take();
+    // Assemble through `codegen_view`, the way every proof-facing
+    // caller does: with the proof stages on it hands back the AST as
+    // of the snapshot point, never the post-pass `items`.
+    let view = pipeline_result.codegen_view(items);
     let mut ctx = build_context(
-        items,
+        view.items,
         &tc,
-        pipeline_result.analysis.as_ref(),
+        view.analysis.as_ref(),
         project_name.to_string(),
         vec![],
-        pipeline_result.symbol_table,
-        pipeline_result.resolved_items,
+        view.symbol_table,
+        view.resolved_items,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;

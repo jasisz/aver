@@ -1,0 +1,32 @@
+module ProofSeamEscapable
+    intent =
+        "A fresh record built at the call site and immediately consumed by a callee that"
+        "only reads its fields — the exact shape `escape` scalar-replaces. Fixture for the"
+        "proof view: `escape` sits ABOVE the proof line, so the proof exporters and the"
+        "certificate model both describe the scalar-replaced program, and both describe"
+        "the SAME program the certified artifact was compiled from."
+    effects [Console]
+
+record Point
+    x: Int
+    y: Int
+
+fn manhattan(p: Point) -> Int
+    ? "Distance from the origin, reading only the two coordinates."
+    p.x + p.y
+
+fn reach(n: Int) -> Int
+    ? "Distance to the point that rides two steps up for every step across."
+    manhattan(Point(x = n, y = n * 2))
+
+verify manhattan
+    manhattan(Point(x = 0, y = 0)) => 0
+    manhattan(Point(x = 3, y = 6)) => 9
+
+verify reach
+    reach(0) => 0
+    reach(3) => 9
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(reach(3)))

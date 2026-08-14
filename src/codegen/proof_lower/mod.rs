@@ -95,7 +95,11 @@ use crate::ir::proof_ir::{
 /// checkers) reads its inputs through this view. No more
 /// `&CodegenContext` reach-through — the struct stands on its own.
 pub struct ProofLowerInputs<'a> {
-    /// Entry-file top-level items, post-pipeline (TCO etc. applied).
+    /// Entry-file top-level items as the proof exporters must see
+    /// them: TCO and typecheck applied, no optimising pass. Callers
+    /// going through `pipeline::run` get this by construction — the
+    /// pipeline hands the stages its `AstView` snapshot, never the
+    /// items a runtime backend ends up with.
     pub entry_items: &'a [TopLevel],
     /// Dependent modules already split into type/fn defs.
     pub dep_modules: &'a [ModuleInfo],

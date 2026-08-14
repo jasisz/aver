@@ -961,7 +961,7 @@ mod tests {
         // off (resolve / escape / interp_lower / buffer_build / last_use
         // would alter source-level recursion shapes the classifier
         // matches against).
-        let pipeline_result = crate::ir::pipeline::run(
+        let mut pipeline_result = crate::ir::pipeline::run(
             &mut items,
             crate::ir::PipelineConfig {
                 run_tco: true,
@@ -986,21 +986,27 @@ mod tests {
                 on_after_pass: None,
             },
         );
-        let tc = pipeline_result.typecheck.expect("typecheck requested");
+        let tc = pipeline_result
+            .typecheck
+            .take()
+            .expect("typecheck requested");
         assert!(
             tc.errors.is_empty(),
             "source should typecheck: {:?}",
             tc.errors
         );
-        let proof_ir = pipeline_result.proof_ir;
+        let proof_ir = pipeline_result.proof_ir.take();
+        // Assemble through `codegen_view`, the way every proof-facing
+        // caller does — see `crate::ir::AstView`.
+        let view = pipeline_result.codegen_view(items);
         let mut ctx = build_context(
-            items,
+            view.items,
             &tc,
-            pipeline_result.analysis.as_ref(),
+            view.analysis.as_ref(),
             project_name.to_string(),
             vec![],
-            pipeline_result.symbol_table,
-            pipeline_result.resolved_items,
+            view.symbol_table,
+            view.resolved_items,
         );
         if let Some(ir) = proof_ir {
             ctx.proof_ir = ir;

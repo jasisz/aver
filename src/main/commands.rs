@@ -2847,6 +2847,20 @@ fn build_codegen_context(
             base_dir: Some(&module_root),
         }
     };
+    // A context that carries ProofIR is one the proof exporters read,
+    // so its dep modules keep the fabricating passes off whatever the
+    // caller asked for at `apply_traversal_lowering`. The entry
+    // module's own line is structural (`pipeline::run` snapshots the
+    // AST for the proof stages and completes the copy without those
+    // passes); this is the same line one level down, where the dep
+    // module's post-pass items are what `ModuleInfo.fn_defs` carries
+    // into the export. Everything above the line — `escape`, the
+    // ownership annotations — runs on a dep exactly as it does on the
+    // entry module and on the certified artifact's own dep load
+    // (`cmd_compile_wasm_gc` passes the same two `false`s), so the two
+    // sides of a certificate agree on dep bodies as well.
+    let proof_facing = run_refinement_lower || run_contract_lower || run_law_lower;
+    let dep_lowering = apply_traversal_lowering && !proof_facing;
     // Load dep modules BEFORE the entry pipeline runs — needed because
     // the proof-lower pipeline stage walks both entry items and dep
     // module type/fn defs in one sweep (cross-module refinement records,
@@ -2856,12 +2870,12 @@ fn build_codegen_context(
     let modules = load_compile_deps(
         &items,
         &module_root,
-        apply_traversal_lowering, // run_interp_lower
-        apply_traversal_lowering, // run_buffer_build
-        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
+        dep_lowering,           // run_interp_lower
+        dep_lowering,           // run_buffer_build
+        with_self_host_support, // self_host_mode → bypass opaque in dep modules
     );
 
-    let pipeline_result = aver::ir::pipeline::run(
+    let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(typecheck_mode),
@@ -2881,7 +2895,10 @@ fn build_codegen_context(
             ..Default::default()
         },
     );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
+    let tc_result = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         print_type_errors(&tc_result.errors);
         process::exit(1);
@@ -2919,15 +2936,22 @@ fn build_codegen_context(
     // ProofIR (when proof stages ran) comes pre-computed from the
     // pipeline; pull it across before assembly so build_context doesn't
     // redundantly recompute it.
-    let prebuilt_proof_ir = pipeline_result.proof_ir;
+    let prebuilt_proof_ir = pipeline_result.proof_ir.take();
+    // A proof-facing context is assembled from the pipeline's proof
+    // view — the AST as it stood before the first optimising pass, plus
+    // the facts derived from THAT AST — so the exporters describe the
+    // program the user wrote no matter which passes this build ran.
+    // Runtime backends keep the post-pipeline items, deforestation and
+    // all. `codegen_view` is where that choice is made.
+    let view = pipeline_result.codegen_view(items);
     let mut ctx = codegen::build_context(
-        items,
+        view.items,
         &tc_result,
-        pipeline_result.analysis.as_ref(),
+        view.analysis.as_ref(),
         name,
         modules,
-        pipeline_result.symbol_table,
-        pipeline_result.resolved_items,
+        view.symbol_table,
+        view.resolved_items,
     );
     #[cfg(feature = "runtime")]
     if let Some(ir) = prebuilt_proof_ir {
@@ -3561,12 +3585,17 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // Proof stages don't transform items — they produce a side
     // artifact. Render the lowered ProofIR (whichever fields the
     // selected stage populated) instead of the (unchanged) items list.
+    // Its `FnId`s are keyed through the symbol table of the AST the
+    // stages read, which is the proof view's, not the runtime one's —
+    // these defaults leave fusion on, and a fused run's table carries
+    // a `__buffered` entry the proof view has no name for.
     if proof_target {
-        match pipeline_result.proof_ir {
-            Some(ir) => print!(
-                "{}",
-                render_proof_ir_dump(&ir, &pipeline_result.symbol_table)
-            ),
+        let symbols = match pipeline_result.proof_view.as_ref() {
+            Some(view) => &view.symbol_table,
+            None => &pipeline_result.symbol_table,
+        };
+        match pipeline_result.proof_ir.as_ref() {
+            Some(ir) => print!("{}", render_proof_ir_dump(ir, symbols)),
             None => {
                 eprintln!(
                     "{}",

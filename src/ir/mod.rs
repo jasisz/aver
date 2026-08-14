@@ -30,8 +30,8 @@ pub use interval::{
     analyze as interval_analyze,
 };
 pub use pipeline::{
-    FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
-    PipelineStage, TypecheckMode,
+    AstView, FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig,
+    PipelineResult, PipelineStage, TypecheckMode,
 };
 pub use proof_ir::{
     DecreaseProof, EscapePairSpec, FloorDivShrink, FloorWindowFigure, FnContract, FuelMetric,
