@@ -116,13 +116,10 @@ fn take(args: &[Value]) -> Result<Value, RuntimeError> {
 
 /// Clamp an `Int` count to a `usize` for `take`/`drop`: negatives become 0,
 /// values past `usize` become `usize::MAX` (take/drop all). Total by design —
-/// `take`/`drop` are defined for every ℤ count.
+/// `take`/`drop` are defined for every ℤ count. Shared with the compiled Rust
+/// backend so both spell the clamp the same way.
 fn clamp_count(n: &aver_rt::AverInt) -> usize {
-    if *n <= aver_rt::AverInt::zero() {
-        0
-    } else {
-        n.to_usize().unwrap_or(usize::MAX)
-    }
+    aver_rt::clamp_list_count(n)
 }
 
 fn drop(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -143,9 +140,9 @@ fn drop(args: &[Value]) -> Result<Value, RuntimeError> {
             ));
         }
     };
-    Ok(crate::value::list_from_vec(
-        list.iter().skip(count).cloned().collect(),
-    ))
+    // A view over the body it was given, not a copy of the remainder: the
+    // same sharing a destructured tail gets (issue #913).
+    Ok(Value::List(list.drop_first(count)))
 }
 
 fn concat(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -338,16 +335,9 @@ fn drop_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
             "List.drop() second argument must be an Int".to_string(),
         ));
     };
-    let items: Vec<NanValue> = arena
-        .list_to_vec_value(args[0])
-        .into_iter()
-        .skip(count)
-        .collect();
-    if items.is_empty() {
-        return Ok(NanValue::EMPTY_LIST);
-    }
-    let list_idx = arena.push_list(items);
-    Ok(NanValue::new_list(list_idx))
+    // A view over the body it was given, not a copy of the remainder: the
+    // same sharing a destructured tail gets (issue #913).
+    Ok(arena.list_drop(args[0], count))
 }
 
 fn concat_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -448,4 +438,63 @@ fn zip_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     let list_idx = arena.push_list(pairs);
     Ok(NanValue::new_list(list_idx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Value;
+
+    fn ints(count: i64) -> Value {
+        crate::value::list_from_vec((0..count).map(Value::int).collect())
+    }
+
+    fn drop_builtin(list: &Value, count: i64) -> Value {
+        call("List.drop", &[list.clone(), Value::int(count)])
+            .expect("List.drop is owned by the list namespace")
+            .expect("List.drop over a list and an int")
+    }
+
+    /// The runtime shared by the interpreter and the compiled Rust backend.
+    /// `List.drop` must hand back a view over the body it was given — the same
+    /// allocation, at an advanced offset — the way a destructured tail does,
+    /// so stepping through a list costs what it steps over (issue #913).
+    #[test]
+    fn dropping_a_prefix_returns_a_view_over_the_same_allocation() {
+        let list = ints(64);
+        let dropped = drop_builtin(&list, 16);
+
+        let source = list_view(&list).unwrap().as_slice().unwrap();
+        let view = list_view(&dropped).unwrap().as_slice().unwrap();
+        assert!(
+            std::ptr::eq(&source[16], &view[0]),
+            "List.drop copied the remainder instead of viewing the body it \
+             was given",
+        );
+        assert_eq!(view.len(), 48);
+        assert_eq!(view[0], Value::int(16));
+        assert_eq!(view[47], Value::int(63));
+    }
+
+    #[test]
+    fn dropping_nothing_returns_the_whole_list() {
+        let list = ints(8);
+        for count in [0, -1, -1000] {
+            assert_eq!(drop_builtin(&list, count), list, "List.drop({count})");
+        }
+    }
+
+    /// Past the end is the empty list, and it is the same empty list a walk
+    /// that destructures to the end arrives at.
+    #[test]
+    fn dropping_past_the_end_yields_the_empty_list() {
+        let list = ints(3);
+        for count in [3, 4, 4_000] {
+            assert_eq!(
+                drop_builtin(&list, count),
+                crate::value::list_from_vec(Vec::new()),
+                "List.drop({count})",
+            );
+        }
+    }
 }

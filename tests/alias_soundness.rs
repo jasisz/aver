@@ -220,6 +220,40 @@ fn map_value_extraction_is_not_mutated_in_place() {
     );
 }
 
+/// A list view must not become a window onto a later write.
+///
+/// This harness runs the VM variants only (see `assert_immutable`), so what it
+/// pins is the ARENA side of #913: `Arena::list_drop` hands back a shared body
+/// at an advanced offset, and an in-place `Vector.set` after the view is taken
+/// must copy rather than show through. The aver-rt side of the same mechanism
+/// (`AverList::drop_first` over the allocation `Vector::to_list` handed over)
+/// is pinned by `writing_to_a_vector_does_not_reach_a_view_sharing_its_allocation`
+/// in aver-rt, which this test does not reach. Nothing here is a claim about
+/// the pass this file covers — it is the control that says the extra sharing
+/// did not buy a program a look at a value that was never in the list it took
+/// the view from.
+#[test]
+fn a_dropped_view_does_not_see_a_write_to_the_vector_it_came_from() {
+    assert_immutable(
+        "dropview",
+        r#"fn total(xs: List<Int>, acc: Int) -> Int
+  ? "add the elements"
+  match xs
+    [] -> acc
+    [h, ..t] -> total(t, acc + h)
+
+fn main() -> Unit
+  ! [Console.print]
+  base = Vector.new(4, 7)
+  xs = List.fromVector(base)
+  ys = List.drop(xs, 2)
+  arg = Option.withDefault(Vector.set(base, 3, 500), base)
+  Console.print("{total(ys, 0)}")
+"#,
+        "14",
+    );
+}
+
 /// Non-vacuity: the receiver / self-keep rebuild idiom must stay correct
 /// (and eligible for the owned path) — the fix must not flag everything.
 #[test]

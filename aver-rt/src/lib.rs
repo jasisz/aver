@@ -655,7 +655,113 @@ impl<T> AverList<T> {
                     ..
                 } => {
                     let (head, tail) = head_segment.uncons()?;
-                    return Some((head, Self::segments_rc(tail, Rc::clone(rest), *start)));
+                    if rights.is_empty() {
+                        return Some((head, Self::segments_rc(tail, Rc::clone(rest), *start)));
+                    }
+                    // This Segments node was reached down the left spine of a
+                    // Concat, so right-siblings were accumulated in `rights`
+                    // (in reverse order). They must follow this node's own
+                    // remaining segments — the Flat / Prepend arms fold
+                    // `rights` in the same way; omitting it here silently
+                    // drops every element to the right of the Segments node.
+                    let mut parts: Vec<Self> = rest[*start..].to_vec();
+                    rights.reverse();
+                    parts.extend(rights);
+                    return Some((head, Self::segments_rc(tail, Rc::new(parts), 0)));
+                }
+            }
+        }
+    }
+
+    /// Skip the first `n` elements.
+    ///
+    /// Costs what it steps over rather than what is left: a flat body is
+    /// handed back as a view over the same allocation with the offset
+    /// advanced — the slice `uncons` already hands out — and the other shapes
+    /// are walked exactly the way repeated `uncons` walks them. Nothing is
+    /// copied, so stepping through a list is linear rather than quadratic
+    /// (issue #913).
+    ///
+    /// Sharing the body keeps the stepped-over elements alive for as long as
+    /// the view is, which is the same trade `uncons` already makes.
+    pub fn drop_first(&self, n: usize) -> Self {
+        let mut rights: Vec<Self> = Vec::new();
+        let mut current = self.clone();
+        let mut remaining = n;
+
+        loop {
+            if remaining == 0 {
+                return Self::rebuild_from_rights(current, rights);
+            }
+            if remaining >= current.len() {
+                // The whole node is stepped over; continue into whatever the
+                // concat spine left waiting to its right.
+                remaining -= current.len();
+                match rights.pop() {
+                    Some(next) => {
+                        current = next;
+                        continue;
+                    }
+                    None => return Self::empty(),
+                }
+            }
+
+            // The step lands strictly inside `current`.
+            let node = Rc::clone(&current.inner);
+            match node.as_ref() {
+                AverListInner::Flat { items, start } => {
+                    let view = Self {
+                        inner: Rc::new(AverListInner::Flat {
+                            items: Rc::clone(items),
+                            start: start + remaining,
+                        }),
+                    };
+                    return Self::rebuild_from_rights(view, rights);
+                }
+                AverListInner::Prepend { tail, .. } => {
+                    remaining -= 1;
+                    current = tail.clone();
+                }
+                AverListInner::Concat { left, right, .. } => {
+                    rights.push(right.clone());
+                    current = left.clone();
+                }
+                AverListInner::Segments {
+                    current: head_segment,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    let mut segment = head_segment.clone();
+                    let mut index = *start;
+                    while remaining >= segment.len() {
+                        remaining -= segment.len();
+                        match rest.get(index) {
+                            Some(next) => {
+                                segment = next.clone();
+                                index += 1;
+                            }
+                            // Only reachable if a `len` field disagreed with
+                            // the parts it counts; step over what is there.
+                            None => {
+                                segment = Self::empty();
+                                break;
+                            }
+                        }
+                    }
+                    let stepped = segment.drop_first(remaining);
+                    let tail = if rights.is_empty() {
+                        Self::segments_rc(stepped, Rc::clone(rest), index)
+                    } else {
+                        // Same fold as `uncons`: the right-siblings collected
+                        // down the concat spine follow this node's remaining
+                        // segments.
+                        let mut parts: Vec<Self> = rest[index..].to_vec();
+                        rights.reverse();
+                        parts.extend(rights);
+                        Self::segments_rc(stepped, Rc::new(parts), 0)
+                    };
+                    return tail;
                 }
             }
         }
@@ -981,6 +1087,19 @@ impl<T: Hash> Hash for AverList<T> {
     }
 }
 
+/// Clamp an `Int` count for `List.take` / `List.drop` to a `usize`.
+///
+/// Negative counts step over nothing; counts past what a machine word can
+/// address step over everything. Total by design — both builtins are defined
+/// for every ℤ count, and every backend has to answer the same way.
+pub fn clamp_list_count(n: &AverInt) -> usize {
+    if *n <= AverInt::zero() {
+        0
+    } else {
+        n.to_usize().unwrap_or(usize::MAX)
+    }
+}
+
 pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
     list.uncons()
 }
@@ -1031,6 +1150,171 @@ mod tests {
         let full = AverList::prepend(1, &base);
         assert_eq!(full.first(), Some(&1));
         assert_eq!(full.tail().unwrap(), base);
+    }
+
+    /// `drop_first` is `prepend_and_tail_share_structure` one step further
+    /// along: the list handed back is a view over the body it was given, at an
+    /// advanced offset, so stepping over a prefix copies nothing (issue #913).
+    #[test]
+    fn drop_first_shares_the_flat_body_and_advances_the_offset() {
+        let list = AverList::from_vec((0..64).collect::<Vec<i32>>());
+        let stepped = list.drop_first(16);
+
+        let source = list.as_slice().expect("a flat list has a slice");
+        let view = stepped.as_slice().expect("a flat view has a slice");
+        assert!(
+            std::ptr::eq(&source[16], &view[0]),
+            "drop_first copied the remainder instead of viewing the body",
+        );
+        assert_eq!(view.len(), 48);
+        assert_eq!(view[0], 16);
+    }
+
+    #[test]
+    fn drop_first_of_nothing_returns_the_same_list() {
+        let list = AverList::from_vec(vec![1, 2, 3]);
+        let stepped = list.drop_first(0);
+
+        let source = list.as_slice().expect("a flat list has a slice");
+        let view = stepped.as_slice().expect("a flat list has a slice");
+        assert!(std::ptr::eq(&source[0], &view[0]));
+        assert_eq!(stepped.len(), 3);
+    }
+
+    /// Past the end is the empty list, and it is the same empty list that
+    /// unconsing to the end arrives at — the two walks must stay
+    /// interchangeable at their last step.
+    #[test]
+    fn drop_first_past_the_end_matches_unconsing_to_the_end() {
+        let list = AverList::from_vec(vec![1, 2, 3]);
+        let mut rest = list.clone();
+        while let Some((_, tail)) = super::list_uncons(&rest) {
+            rest = tail;
+        }
+
+        for count in [3, 4, 4_000] {
+            let stepped = list.drop_first(count);
+            assert!(stepped.is_empty(), "drop_first({count}) is not empty");
+            assert_eq!(stepped, rest, "drop_first({count}) != unconsed to the end");
+        }
+    }
+
+    #[test]
+    fn drop_first_walks_a_prepend_chain_onto_the_shared_body() {
+        let base = AverList::from_vec(vec![2, 3, 4, 5]);
+        let list = AverList::prepend(0, &AverList::prepend(1, &base));
+
+        let stepped = list.drop_first(2);
+
+        let source = base.as_slice().expect("a flat list has a slice");
+        let view = stepped.as_slice().expect("the walk lands on a flat body");
+        assert!(
+            std::ptr::eq(&source[0], &view[0]),
+            "stepping over a prepend chain rebuilt the body it arrived at",
+        );
+        assert_eq!(stepped.to_vec(), vec![2, 3, 4, 5]);
+    }
+
+    /// Stepping into the left half of a concat must keep the right half. The
+    /// trap `uncons` carries a comment about: a node reached down the left
+    /// spine has right-siblings waiting, and forgetting them silently deletes
+    /// everything after the step.
+    #[test]
+    fn drop_first_into_a_segmented_left_half_keeps_the_right_half() {
+        let mut appended = AverList::empty();
+        for value in 0..200 {
+            appended = AverList::append(&appended, value);
+        }
+        let joined = AverList::concat(&appended, &AverList::from_vec(vec![999]));
+
+        let stepped = joined.drop_first(150);
+
+        assert_eq!(stepped.len(), 51, "the step lost the right half");
+        assert_eq!(stepped.first(), Some(&150));
+        assert_eq!(stepped.to_vec().last().copied(), Some(999));
+    }
+
+    /// The same trap in `uncons` itself: destructuring a concat whose left
+    /// half is a segmented append chain used to drop the right half whole.
+    #[test]
+    fn uncons_of_a_concat_over_a_segmented_left_keeps_the_right_half() {
+        let mut appended = AverList::empty();
+        for value in 0..200 {
+            appended = AverList::append(&appended, value);
+        }
+        let joined = AverList::concat(&appended, &AverList::from_vec(vec![999]));
+
+        let (head, tail) = super::list_uncons(&joined).expect("non-empty list unconses");
+
+        assert_eq!(*head, 0);
+        assert_eq!(
+            tail.len(),
+            200,
+            "uncons dropped the right half of the concat"
+        );
+        assert_eq!(tail.to_vec().last().copied(), Some(999));
+    }
+
+    /// The reporter's walk, on every shape a list can be built into: stepping
+    /// with `drop_first` must see exactly what stepping by destructuring sees.
+    #[test]
+    fn walking_by_drop_first_agrees_with_walking_by_uncons() {
+        let flat = AverList::from_vec((0..40).collect::<Vec<i32>>());
+        let mut prepended = flat.clone();
+        for value in (100..110).rev() {
+            prepended = AverList::prepend(value, &prepended);
+        }
+        let mut appended = AverList::empty();
+        for value in 0..300 {
+            appended = AverList::append(&appended, value);
+        }
+        let joined = AverList::concat(&prepended, &appended);
+
+        for list in [flat, prepended, appended, joined] {
+            for step in [1, 3, 7, 64] {
+                let mut by_drop = list.clone();
+                let mut by_uncons = list.clone();
+                loop {
+                    assert_eq!(
+                        by_drop.to_vec(),
+                        by_uncons.to_vec(),
+                        "a walk in steps of {step} diverged from destructuring",
+                    );
+                    if by_uncons.is_empty() {
+                        break;
+                    }
+                    by_drop = by_drop.drop_first(step);
+                    for _ in 0..step {
+                        by_uncons = match super::list_uncons(&by_uncons) {
+                            Some((_, tail)) => tail,
+                            None => break,
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sharing must stay invisible to programs. A `Vector` hands its backing
+    /// allocation to `List.fromVector` without copying, and `drop_first` hands
+    /// on the very same allocation — so a write to the vector has to
+    /// copy-on-write, or the view would see a value that was never in the list
+    /// it was taken from.
+    #[test]
+    fn writing_to_a_vector_does_not_reach_a_view_sharing_its_allocation() {
+        let vector = super::AverVector::from_vec(vec![1, 2, 3, 4]);
+        let list = vector.to_list();
+        let view = list.drop_first(2);
+
+        let written = vector
+            .clone()
+            .set_owned(3, 99)
+            .expect("index 3 is in bounds");
+
+        assert_eq!(view.to_vec(), vec![3, 4], "a write reached a shared view");
+        assert_eq!(list.to_vec(), vec![1, 2, 3, 4]);
+        assert_eq!(written.get(3), Some(&99));
+        assert_eq!(vector.get(3), Some(&4));
     }
 
     #[test]

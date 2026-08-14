@@ -1100,3 +1100,110 @@ fn cross_top_level_binding_shadows_fn_name_self_host() {
         TOP_LEVEL_SHADOWS_FN_OUT,
     );
 }
+
+/// Walking a list with `List.drop` must see exactly what walking it by
+/// destructuring sees — the two answers are printed side by side, so a step
+/// that skips or duplicates an element shows up inside the line as well as
+/// against the pinned output.
+///
+/// Issue #913 made `List.drop` share the body it steps into instead of
+/// copying the remainder. That is a cost change, not a meaning change, and
+/// this is where the meaning is held still: three list shapes (a prepend
+/// chain, a concat spine, and the two joined), two step sizes each, plus the
+/// counts at the edges — nothing, past the end, and negative, where the
+/// compiled Rust backend used to answer the opposite of everyone else.
+const DROP_WALK_SRC: &str = r#"module Tmp
+
+fn built(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> acc
+        false -> built(n - 1, List.prepend(n, acc))
+
+fn grown(i: Int, n: Int, acc: List<Int>) -> List<Int>
+    match i >= n
+        true  -> acc
+        false -> grown(i + 1, n, List.concat(acc, [i]))
+
+fn walkByDrop(xs: List<Int>, step: Int, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [head, ..tail] -> walkByDrop(List.drop(xs, step), step, acc + head)
+
+fn skip(xs: List<Int>, n: Int) -> List<Int>
+    match n <= 0
+        true  -> xs
+        false -> skipOne(xs, n)
+
+fn skipOne(xs: List<Int>, n: Int) -> List<Int>
+    match xs
+        [] -> []
+        [head, ..tail] -> skip(tail, n - 1)
+
+fn walkByUncons(xs: List<Int>, step: Int, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [head, ..tail] -> walkByUncons(skip(xs, step), step, acc + head)
+
+fn joinInts(xs: List<Int>) -> String
+    match xs
+        [] -> "."
+        [x, ..rest] -> String.fromInt(x) + "," + joinInts(rest)
+
+fn walks(xs: List<Int>) -> String
+    String.fromInt(walkByDrop(xs, 7, 0)) + "/" + String.fromInt(walkByUncons(xs, 7, 0)) + "/" + String.fromInt(walkByDrop(xs, 400, 0)) + "/" + String.fromInt(walkByUncons(xs, 400, 0))
+
+fn main()
+    ! [Console.print]
+    prepended = built(1200, [])
+    grownList = grown(0, 300, [])
+    joined = List.concat(prepended, grownList)
+    Console.print(walks(prepended))
+    Console.print(walks(grownList))
+    Console.print(walks(joined))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 2)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 0)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 5)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 99)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], -3)))
+    Console.print(joinInts(List.drop(List.drop([1, 2], 9), 2)))
+    Console.print(joinInts(List.take([1, 2, 3, 4, 5], -3)))
+    Console.print(joinInts(List.drop(joined, 1495)))
+"#;
+const DROP_WALK_OUT: &str = "103114/103114/1203/1203\n\
+6321/6321/0/0\n\
+109607/109607/1203/1203\n\
+3,4,5,.\n\
+1,2,3,4,5,.\n\
+.\n\
+.\n\
+1,2,3,4,5,.\n\
+.\n\
+.\n\
+295,296,297,298,299,.";
+
+#[test]
+fn cross_drop_walk_matches_destructuring_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-dropwalk-vm", DROP_WALK_SRC),
+        DROP_WALK_OUT,
+    );
+}
+
+#[test]
+fn cross_drop_walk_matches_destructuring_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-dropwalk-sh", DROP_WALK_SRC),
+        DROP_WALK_OUT,
+    );
+}
+
+#[test]
+fn cross_drop_walk_matches_destructuring_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-dropwalk-wasmgc", DROP_WALK_SRC),
+        DROP_WALK_OUT,
+    );
+}
