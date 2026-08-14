@@ -2074,6 +2074,215 @@ fn aver_path_literal(path: &Path) -> String {
         .replace('"', "\\\"")
 }
 
+// ─── Mode (b'): the policy-checked argument is evaluated once ───────────
+//
+// The policy check and the effect call are two use sites of the SAME
+// argument. Emitting the argument expression at both of them evaluated
+// it twice: any non-`Copy` binding it named was moved by the check and
+// then used again by the call (the generated project failed to build
+// with E0382), and any effect it carried ran twice (the built binary
+// diverged from the VM). Both halves ride one program here: `pathOf`
+// takes two non-`Copy` parameters AND announces itself, and it feeds a
+// one-argument `Disk.readText` and a two-argument `Disk.writeText`.
+
+/// `__DIR__` is substituted with a real directory at test time.
+const POLICY_ARG_PROBE: &str = r#"module PolicyArgProbe
+    intent =
+        "Writes then reads a file whose path is built from parameters,"
+        "announcing the path once per call. Probes the policy-checked"
+        "argument: it must be evaluated exactly once."
+    effects [Console, Disk]
+
+fn pathOf(dir: String, n: Int) -> String
+    ? "Says which file it means, then names it."
+    ! [Console.print]
+    said = Console.print("naming")
+    "{dir}/f{n}.txt"
+
+fn writeAt(dir: String, n: Int, body: String) -> Result<Unit, String>
+    ? "Writes to a path built from two parameters."
+    ! [Console.print, Disk.writeText]
+    Disk.writeText(pathOf(dir, n), body)
+
+fn readAt(dir: String, n: Int) -> Result<String, String>
+    ? "Reads a path built from two parameters."
+    ! [Console.print, Disk.readText]
+    Disk.readText(pathOf(dir, n))
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.readText, Disk.writeText]
+    written = writeAt("__DIR__", 1, "payload")?
+    text = readAt("__DIR__", 1)?
+    shown = Console.print(text)
+    Result.Ok(Unit)
+"#;
+
+/// How many times the emitted module mentions `pathOf` — one definition
+/// plus one mention per call site. A policy check that re-emits the
+/// argument expression pushes this up by one per guarded call.
+fn path_of_mentions(emitted: &str) -> usize {
+    emitted.matches("pathOf(").count()
+}
+
+fn write_policy_arg_probe(dir: &Path, target_dir: &Path) -> PathBuf {
+    fs::create_dir_all(dir).expect("create source dir");
+    let src = dir.join("policy_arg_probe.av");
+    fs::write(
+        &src,
+        POLICY_ARG_PROBE.replace("__DIR__", &aver_path_literal(target_dir)),
+    )
+    .expect("write probe source");
+    src
+}
+
+fn generated_entry(project: &Path) -> Result<String, String> {
+    fs::read_to_string(
+        project
+            .join("src")
+            .join("aver_generated")
+            .join("entry")
+            .join("mod.rs"),
+    )
+    .map_err(|e| format!("read emitted module: {e}"))
+}
+
+#[test]
+fn policy_checked_disk_argument_builds_and_matches_vm() {
+    let ws = temp_dir("policy-arg");
+    // The embedded aver.toml is read from the module root at compile
+    // time, so the source + the policy share a dir.
+    let proj_root = ws.join("src-root");
+    let files = ws.join("files");
+    fs::create_dir_all(&files).expect("create target dir");
+    let src = write_policy_arg_probe(&proj_root, &files);
+    // A real allow-list naming the write/read directory: the check has
+    // to see the same path the call uses, or the run is denied.
+    write_embedded_disk_policy(&proj_root, &files.to_string_lossy());
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "policy_arg_probe";
+
+    let result = (|| -> Result<(), String> {
+        // No `--policy` flag: the default (embed) is what a plain
+        // `aver compile` does, and the presence of aver.toml alone is
+        // what turns the check on.
+        compile_rust(&src, &project, name, Some(&proj_root), &[])?;
+        let emitted = generated_entry(&project)?;
+        if !emitted.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_policy::check_disk` wrapper — \
+                 the probe would be testing nothing:\n{emitted}"
+            ));
+        }
+        let mentions = path_of_mentions(&emitted);
+        if mentions != 3 {
+            return Err(format!(
+                "`pathOf` is mentioned {mentions} times (expected 3: one \
+                 definition + one per call site) — the policy check is \
+                 re-emitting the argument expression:\n{emitted}"
+            ));
+        }
+
+        // The real gate: rustc rejects the second evaluation (E0382 on
+        // the moved parameters), and the run shows how often the
+        // argument's own effect fired.
+        let bin = cargo_build(&project, name)?;
+        let run = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run policy-arg binary: {e}"))?;
+        if !run.status.success() {
+            return Err(format!("policy-arg run failed:\n{}", format_output(&run)));
+        }
+        let rust_stdout = String::from_utf8_lossy(&run.stdout).trim().to_string();
+        let vm_stdout = run_vm(&src, Some(&proj_root))?;
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "Rust diverged from the VM: the argument expression's effect \
+                 ran a different number of times\nvm:\n{vm_stdout}\nrust:\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn policy_check_rides_any_aver_toml_and_leaves_the_unguarded_shape_alone() {
+    let ws = temp_dir("policy-arg-shape");
+    let files = ws.join("files");
+    fs::create_dir_all(&files).expect("create target dir");
+
+    let result = (|| -> Result<(), String> {
+        // (1) An aver.toml that says nothing about Disk. The check is
+        // emitted anyway — the trigger is the file's existence — so the
+        // argument still has two use sites and must still be rendered
+        // once.
+        let quiet_root = ws.join("quiet-root");
+        let quiet_src = write_policy_arg_probe(&quiet_root, &files);
+        fs::write(
+            quiet_root.join("aver.toml"),
+            "[[check.suppress]]\nslug = \"verify-coverage\"\nfiles = [\"nothing.av\"]\nreason = \"placeholder\"\n",
+        )
+        .expect("write aver.toml");
+        let quiet_project = ws.join("quiet-project");
+        compile_rust(
+            &quiet_src,
+            &quiet_project,
+            "policy_arg_quiet",
+            Some(&quiet_root),
+            &[],
+        )?;
+        let quiet = generated_entry(&quiet_project)?;
+        if !quiet.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "an aver.toml with no Disk section emitted no check — the \
+                 trigger for this emission changed:\n{quiet}"
+            ));
+        }
+        let mentions = path_of_mentions(&quiet);
+        if mentions != 3 {
+            return Err(format!(
+                "`pathOf` is mentioned {mentions} times under a policy-free \
+                 aver.toml (expected 3) — the check is re-emitting the \
+                 argument expression:\n{quiet}"
+            ));
+        }
+
+        // (2) Control: no aver.toml, no check, and the call keeps the
+        // shape it always had.
+        let bare_root = ws.join("bare-root");
+        let bare_src = write_policy_arg_probe(&bare_root, &files);
+        let bare_project = ws.join("bare-project");
+        compile_rust(
+            &bare_src,
+            &bare_project,
+            "policy_arg_bare",
+            Some(&bare_root),
+            &[],
+        )?;
+        let bare = generated_entry(&bare_project)?;
+        if bare.contains("aver_policy") {
+            return Err(format!(
+                "no aver.toml, but a policy check was emitted:\n{bare}"
+            ));
+        }
+        let bare_mentions = path_of_mentions(&bare);
+        if bare_mentions != 3 {
+            return Err(format!(
+                "`pathOf` is mentioned {bare_mentions} times with no policy \
+                 at all (expected 3) — the unguarded emission changed:\n{bare}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (c): record / replay ──────────────────────────────────────────
 
 /// Reads a file, then echoes its contents via Console.print. The read

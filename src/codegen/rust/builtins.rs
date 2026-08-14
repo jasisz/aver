@@ -317,59 +317,87 @@ fn policy_check_helper(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Shared policy-wrap / bare-frame composer (security-sensitive: a
-/// dropped `check_*` here silently disables aver.toml DENY enforcement
-/// for an effect). Applies, in HIR's exact order:
+/// The local the policy check and the guarded call share. The checked
+/// argument is evaluated into it exactly once: emitting the argument
+/// expression at both use sites moved every non-`Copy` binding it named
+/// (the generated project then failed to build) and ran any effect it
+/// carried twice.
+const POLICY_ARG_TEMP: &str = "__policy_arg";
+
+/// Shared effectful-builtin composer (security-sensitive: a dropped
+/// `check_*` here silently disables aver.toml DENY enforcement for an
+/// effect). Takes the args already rendered ONCE by the caller's
+/// `emit_expr` mirror and applies, in order:
 ///
-/// 1. **policy wrap** — when `policy_active` and `name` is an
-///    `Http.`/`Disk.`/`Env.` call with a first arg
-///    (`first_arg = Some(emitted)`): prepend `cancel_checkpoint()` +
-///    the matching `check_*(<method>, &<arg0>).expect(...)`.
-/// 2. **bare framing** — every other effectful builtin gets the bare
+/// 1. **raw body** — [`compose_effectful_builtin_raw`] plus the
+///    `.into_aver()` post-step for String-returning builtins.
+/// 2. **policy wrap** — when `policy_active` and `name` is an
+///    `Http.`/`Disk.`/`Env.` call with a first arg: `cancel_checkpoint()`,
+///    then arg 0 bound to [`POLICY_ARG_TEMP`], then the matching
+///    `check_*(<method>, &<temp>).expect(...)`. The raw body reads the
+///    same temp, so the check and the call see one value from one
+///    evaluation.
+/// 3. **bare framing** — every other effectful builtin gets the bare
 ///    `{ cancel_checkpoint(); <result> }`.
-/// 3. **pure passthrough** — a non-effectful builtin returns `result`
-///    unwrapped.
+/// 4. **pure passthrough** — a non-effectful builtin returns the raw
+///    body unwrapped.
 ///
-/// Both backends call this with `result` already `.into_aver()`-
-/// converted and `first_arg` rendered by their own `emit_expr` mirror,
-/// so the emitted framing is byte-identical by construction.
-pub(super) fn compose_effect_wrap(
+/// Returns `None` when the raw body is not one this composer covers.
+pub(super) fn compose_effectful_builtin(
     name: &str,
-    result: String,
+    args: &[String],
     policy_active: bool,
-    first_arg: Option<String>,
-) -> String {
-    if policy_active
-        && let Some(arg) = first_arg
-        && let Some(helper) = policy_check_helper(name)
-    {
-        return format!(
-            "{{ crate::cancel_checkpoint(); {helper}(\"{name}\", &{arg}).expect(\"aver.toml policy violation\"); {result} }}"
-        );
+) -> Option<String> {
+    let helper = if policy_active {
+        policy_check_helper(name)
+    } else {
+        None
+    };
+    // The guarded arg becomes the temp everywhere the call mentions it,
+    // and the expression it displaced is what the temp gets bound to.
+    let mut call_args = args.to_vec();
+    let checked_arg = helper.and_then(|_| {
+        call_args
+            .first_mut()
+            .map(|arg| std::mem::replace(arg, POLICY_ARG_TEMP.to_string()))
+    });
+
+    let raw = compose_effectful_builtin_raw(name, &call_args)?;
+    let result = if builtin_needs_str_conversion(name) {
+        format!("({}).into_aver()", raw)
+    } else {
+        raw
+    };
+
+    if let (Some(helper), Some(arg)) = (helper, checked_arg) {
+        return Some(format!(
+            "{{ crate::cancel_checkpoint(); let {POLICY_ARG_TEMP} = {arg}; {helper}(\"{name}\", &{POLICY_ARG_TEMP}).expect(\"aver.toml policy violation\"); {result} }}"
+        ));
     }
 
-    if builtin_is_effectful(name) {
+    Some(if builtin_is_effectful(name) {
         format!("{{ crate::cancel_checkpoint(); {} }}", result)
     } else {
         result
-    }
+    })
 }
 
-/// Shared raw-body composer for the effectful builtins' NON-replay
-/// path: the `aver_rt::*` / `crate::*` call before any
-/// `cancel_checkpoint` / policy / `.into_aver()` wrapping. Every arm
-/// renders its args by-value (the caller's `emit_arg` mirror), so this
-/// keys off the pre-emitted arg strings only and is byte-identical
-/// across the HIR oracle (`emit_builtin_call_inner`) and the MIR walker
-/// (`from_mir::emit_mir_effectful_builtin_call`). Returns `None` for a
-/// non-effectful / unknown name.
+/// Raw-body composer for the effectful builtins' NON-replay path: the
+/// `aver_rt::*` / `crate::*` call before any `cancel_checkpoint` /
+/// policy / `.into_aver()` wrapping. Every arm renders its args
+/// by-value (the caller's `emit_arg` mirror), so this keys off the
+/// pre-emitted arg strings only and is byte-identical across the HIR
+/// oracle (`emit_builtin_call_inner`) and the MIR walker
+/// (`from_mir::emit_mir_effectful_builtin_call`). Reached only through
+/// [`compose_effectful_builtin`], which owns the framing. Returns
+/// `None` for a non-effectful / unknown name.
 ///
 /// NOTE: this is the NON-replay raw body. The replay path uses
 /// [`emit_effectful_builtin_call_with_temps`], which differs for a few
 /// arms (`Args.get` → `aver_replay::current_cli_args()`, `Terminal.print`
 /// → `format!` instead of `aver_display`); both are reachable from both
 /// backends so the divergence is preserved identically on each.
-pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> {
+fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> {
     let a = |i: usize| args[i].as_str();
     match name {
         // ---- Console ----
