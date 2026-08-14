@@ -1372,11 +1372,14 @@ fn main() -> Int
     );
 }
 
-/// Removing from a full table is the deepest the backward-shift loop
-/// ever runs: every slot it walks is occupied, so only an entry already
-/// at its home bucket stops it. The removed key must be gone and every
-/// other key must still be findable — a shift that dropped or
-/// resurrected an entry shows up as a wrong count or a wrong lookup.
+/// Removing from a full table of Int keys exercises the SHALLOWEST
+/// backward-shift run, not the deepest: small Int keys hash to
+/// themselves, so every entry sits at its home bucket and the loop
+/// breaks on its first read with zero shifts. The wrap guard on that
+/// loop is therefore validated-not-executed here, like the
+/// clone-on-write trap above. What this pins: the removed key must be
+/// gone and every other key must still be findable in a table with no
+/// null slot to stop a probe early.
 #[test]
 fn map_remove_from_a_full_table_keeps_every_other_key() {
     assert_eq!(
