@@ -25,7 +25,6 @@ pub use aver_memory::{
     ArenaTypes,
     ArenaUsage,
     FnValueName,
-    HEAP_SPACE_COUNT,
     IMM_FALSE,
     IMM_TRUE,
     IMM_UNIT,
@@ -58,7 +57,6 @@ pub use aver_memory::{
     WRAP_ERR,
     WRAP_OK,
     WRAP_SOME,
-    split_heap_index,
 };
 
 // ---------------------------------------------------------------------------

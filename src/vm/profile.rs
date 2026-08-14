@@ -47,11 +47,11 @@ pub struct VmProfileReport {
     pub functions: Vec<VmFunctionProfile>,
     pub builtins: Vec<VmBuiltinProfile>,
     pub returns: VmReturnStats,
-    /// How the compiler's static owned mask and the interpreter's per-slot
-    /// reference count compared over the run.
+    /// How the compiler's static owned mask and the operand stack's own view of
+    /// who holds a slot compared over the run.
     ///
     /// Unlike everything else here, these are counted whether or not profiling
-    /// is on — the run maintains them regardless, and the report is just where
+    /// is on — the run maintains them regardless, and the report is only where
     /// they are surfaced.
     pub slot_uniqueness: super::VmSlotUniquenessStats,
 }

@@ -343,11 +343,7 @@ impl VM {
         }
         self.arena.collect_stable_from_roots(&mut roots);
 
-        // Every cell comes back naming a stable slot that did not exist when it
-        // went in, so the per-slot count is rebuilt from the rewritten cells
-        // rather than adjusted. This is the one collection the interpreter runs
-        // with the operand stack as a root set.
-        self.stack.overwrite_all(&roots[..stack_count]);
+        self.stack.copy_from_slice(&roots[..stack_count]);
         for (dst, src) in self.globals.iter_mut().zip(
             roots[stack_count..stack_count + global_count]
                 .iter()

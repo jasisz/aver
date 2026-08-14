@@ -810,11 +810,11 @@ impl NanValue {
     /// Cheap necessary condition for [`NanValue::heap_index`] answering `Some`.
     ///
     /// One mask and one compare, with no tag dispatch behind it: `false` settles
-    /// the question — the value carries no arena index, so a caller that only
-    /// cares about heap references is done. `true` does not settle it, because a
-    /// symbol handle passes this test and still has no heap index. It is a
-    /// filter to put in FRONT of `heap_index` on a path hot enough to feel the
-    /// tag match, never a replacement for it.
+    /// the question — the value carries no arena index, so a caller looking for
+    /// references to a slot is done with this one. `true` does not settle it,
+    /// because a symbol handle passes this test and still has no heap index. It
+    /// is a filter to put in FRONT of `heap_index` where the tag match would be
+    /// the bulk of the work, never a replacement for it.
     #[inline]
     pub fn may_hold_heap_index(self) -> bool {
         (self.0 & (QNAN_MASK | ARENA_REF_BIT)) == (QNAN | ARENA_REF_BIT)
@@ -1518,27 +1518,6 @@ impl ArenaUsage {
 pub(crate) const HEAP_SPACE_SHIFT: u32 = 30;
 pub(crate) const HEAP_SPACE_MASK_U32: u32 = 0b11 << HEAP_SPACE_SHIFT;
 pub(crate) const HEAP_INDEX_MASK_U32: u32 = (1 << HEAP_SPACE_SHIFT) - 1;
-
-/// How many heap spaces a [`NanValue::heap_index`] can name.
-///
-/// A caller keeping one side table per space — the collector's visit stamps do,
-/// and so does the interpreter's per-slot reference count — sizes it by this
-/// rather than by repeating the two-bit width of the space field.
-pub const HEAP_SPACE_COUNT: usize = 4;
-
-/// Split a [`NanValue::heap_index`] into the space it names and the index
-/// inside that space.
-///
-/// The two halves are what a per-slot side table needs: the spaces have
-/// separate entry vectors and separate lengths, so one flat table over the
-/// encoded index would be four times as sparse as the arena it shadows.
-#[inline]
-pub fn split_heap_index(index: u32) -> (usize, usize) {
-    (
-        ((index & HEAP_SPACE_MASK_U32) >> HEAP_SPACE_SHIFT) as usize,
-        (index & HEAP_INDEX_MASK_U32) as usize,
-    )
-}
 
 mod arena;
 mod compare;

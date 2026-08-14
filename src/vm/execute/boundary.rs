@@ -36,13 +36,6 @@ impl VM {
             && !self.result_uses_frame_local_heap(frame, result)
     }
 
-    /// Compact the stable space around the roots of the outermost return.
-    ///
-    /// The roots are the returning value, the globals and the chunk constants —
-    /// not the operand stack, which this boundary has already truncated to the
-    /// bottom. Stable entries nevertheless move here, so any cell that did
-    /// survive would name a slot that has shifted; the count is rebuilt from
-    /// whatever cells remain rather than left keyed on the old addresses.
     pub(super) fn collect_stable_roots(&mut self, frame_roots: &mut [NanValue]) {
         let root_count = frame_roots.len();
         let global_count = self.globals.len();
@@ -76,7 +69,6 @@ impl VM {
                 .copy_from_slice(&all_roots[constant_offset..constant_offset + len]);
             constant_offset += len;
         }
-        self.stack.rebuild_counts();
     }
 
     /// Finish the frame's regions before the tail call reuses it.

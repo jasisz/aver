@@ -1,15 +1,14 @@
-//! Per-slot live-reference bookkeeping in the VM interpreter, and the
-//! directional cross-check against the compiler's static owned mask.
+//! Live references to an arena slot, and the directional cross-check against
+//! the compiler's static owned mask.
 //!
 //! Locals are a window on the operand stack, so "how many live references does
-//! this arena slot have?" is answered here by counting the operand-stack cells
-//! that hold its index. The tests below pin the two things that makes it worth
-//! having:
+//! this arena slot have?" is answered by counting the operand-stack cells that
+//! hold its index. The tests below pin the two things that make it worth having:
 //!
-//! - the count is maintained on every path a cell can leave the stack by —
-//!   ordinary return, error propagation, the frameless-leaf return, tail-call
-//!   window reuse, independent-product branches — so it is back to zero once a
-//!   run is over, and the per-instruction audit never sees it drift;
+//! - every path a cell can leave the stack by really does give it back —
+//!   ordinary return, error propagation, the frameless-leaf return of #917,
+//!   tail-call window reuse, independent-product branches — so nothing is still
+//!   spoken for once a run is over;
 //! - the directional comparison against the owned mask holds in the soundness
 //!   direction (`granted ⊆ runtime-unique`) while the OTHER direction is
 //!   non-empty, which is the point of the exercise: the runtime sees slots as
@@ -21,15 +20,14 @@ use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
 use aver::nan_value::Arena;
 use aver::vm::{self, VM};
 
-/// Compile through the real pipeline, typecheck included, and hand back a VM
-/// with the per-instruction bookkeeping audit armed.
+/// Compile through the real pipeline, typecheck included.
 ///
 /// The typecheck is load-bearing rather than incidental: `ir::alias`'s
 /// destination half is guarded by `slot_is_collection`, so without types every
 /// binding slot stays `Type::Invalid` and the collection rules never fire —
 /// which would quietly change what the owned mask says and therefore what this
 /// file is comparing against.
-fn audited_vm(src: &str) -> VM {
+fn compiled_vm(src: &str) -> VM {
     let mut items = aver::source::parse_source(src).expect("parse failed");
     let result = aver::ir::pipeline::run(
         &mut items,
@@ -49,19 +47,17 @@ fn audited_vm(src: &str) -> VM {
         None,
     )
     .expect("compile failed");
-    let mut machine = VM::new(code, globals, arena);
-    machine.set_slot_ref_audit(true);
-    machine
+    VM::new(code, globals, arena)
 }
 
-/// Run to completion under the audit and report what the stack still holds.
+/// Run to completion and report what the operand stack still holds.
 ///
-/// A finished run has an empty operand stack, so a non-zero total is a
-/// reference the bookkeeping added and never took back — the whole-program form
-/// of "the count returns to zero at frame exit", checked once for every exit
-/// path the program went through rather than once per path.
+/// A finished run has an empty operand stack, so a non-zero total is a cell an
+/// exit path left standing — the whole-program form of "the count returns to
+/// zero at frame exit", asked once for every exit path the program went through
+/// rather than once per path.
 fn run_and_report_live_refs(src: &str) -> u64 {
-    let mut machine = audited_vm(src);
+    let mut machine = compiled_vm(src);
     machine.run().expect("program should run");
     machine.live_slot_refs()
 }
@@ -138,10 +134,11 @@ fn main() -> Int
 #[test]
 fn tail_call_window_reuse_gives_back_every_reference() {
     // The tail call reuses the frame's window: the boundary finalizer compacts
-    // what the frame owns and hands the arguments back at their new indices, so
-    // the cells naming the old ones have to be released BEFORE the compaction,
-    // not after. Getting the order wrong leaves the count keyed on slots that
-    // have moved, which the per-instruction audit reports on the next opcode.
+    // what the frame owns and hands the arguments back at their new indices,
+    // then the window is rewritten from those. Nothing of the old iteration may
+    // still be standing on the stack afterwards, or the loop would accumulate
+    // holders across iterations and every collection write inside one would read
+    // as shared.
     let live = run_and_report_live_refs(
         r#"module SlotTailCall
     intent = "a reused tail-call window hands back every slot reference"
@@ -233,7 +230,7 @@ fn every_static_owned_grant_is_a_slot_the_runtime_sees_as_uniquely_held() {
     // it exercises the grant hundreds of times in one run; under debug
     // assertions each one is checked at the call itself, and the tally is the
     // same statement in a form a release build can also make.
-    let mut machine = audited_vm(&map_fold("{}"));
+    let mut machine = compiled_vm(&map_fold("{}"));
     machine.run().expect("map fold should run");
     let stats = machine.slot_uniqueness_stats();
 
@@ -258,7 +255,7 @@ fn literal_seed_tallies(entries: &[(&str, &str)]) -> (u64, u64) {
         .map(|(key, value)| format!("\"{key}\" => \"{value}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let mut machine = audited_vm(&map_fold(&format!("{{{spelled}}}")));
+    let mut machine = compiled_vm(&map_fold(&format!("{{{spelled}}}")));
     machine.run().expect("map fold should run");
     let stats = machine.slot_uniqueness_stats();
     assert_eq!(
@@ -310,7 +307,7 @@ fn a_seed_the_static_mask_understands_leaves_the_other_direction_empty() {
     // left for a runtime decision to find and the tally is zero. Without this,
     // the number above would be evidence that the counter counts *something*,
     // not that it counts what the static analysis missed.
-    let mut machine = audited_vm(&map_fold("{}"));
+    let mut machine = compiled_vm(&map_fold("{}"));
     machine.run().expect("map fold should run");
     let stats = machine.slot_uniqueness_stats();
 

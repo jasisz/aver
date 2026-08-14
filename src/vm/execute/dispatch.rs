@@ -197,24 +197,6 @@ impl VM {
             self.error_ip = ip as u32;
 
             let op = code[ip];
-
-            // Per-slot bookkeeping audit: recompute the count from the operand
-            // stack and stop at the first disagreement, so a missed hook point
-            // is reported at the instruction that follows the one which missed
-            // it rather than wherever a wrong number is eventually read. Opt-in
-            // (`VM::set_slot_ref_audit`) because it is O(stack) per opcode, and
-            // compiled out with the assertions.
-            #[cfg(debug_assertions)]
-            if self.audit_slot_refs
-                && let Err(message) = self.stack.audit()
-            {
-                panic!(
-                    "{message} (about to run {} in fn {} at ip {ip})",
-                    crate::vm::opcode::opcode_name(op),
-                    self.code.get(fn_id).name,
-                );
-            }
-
             ip += 1;
             if profile_active && let Some(profile) = self.profile.as_mut() {
                 profile.record_opcode(op);
@@ -231,7 +213,7 @@ impl VM {
                 MOVE_LOCAL => {
                     let slot = read_u8!(code, ip) as usize;
                     let val = self.stack[bp + slot];
-                    self.stack.store(bp + slot, NanValue::UNIT);
+                    self.stack[bp + slot] = NanValue::UNIT;
                     self.stack.push(val);
                 }
 
@@ -254,7 +236,7 @@ impl VM {
                 STORE_LOCAL => {
                     let slot = read_u8!(code, ip) as usize;
                     let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    self.stack.store(bp + slot, val);
+                    self.stack[bp + slot] = val;
                 }
 
                 LOAD_CONST => {
@@ -811,10 +793,11 @@ impl VM {
                     let args_start = self.stack.len() - argc;
                     let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                     self.stack.truncate(args_start);
-                    // The arguments are off the stack, so "nothing holds this
-                    // slot" and "the argument cell was the only holder" are the
-                    // same statement, and the cross-check needs no correction
-                    // for the argument's own reference.
+                    // AFTER the truncate, deliberately: with the argument list
+                    // off the stack, "no cell holds this slot" and "the argument
+                    // cell was the only holder" are the same statement, so the
+                    // cross-check needs no correction for the argument's own
+                    // reference.
                     self.cross_check_owned_mask(builtin, &args, owned_mask);
 
                     if builtin.is_http_server() {
@@ -897,7 +880,6 @@ impl VM {
                     // unrelated reasons (e.g. local_count > MAX) but
                     // `compute_alloc_info` still proves alloc-free.
                     let self_no_alloc = self.code.functions[fn_id as usize].no_alloc;
-                    let lc = self.frames.last().unwrap().local_count as usize;
                     if !self_no_alloc {
                         let frame_mark = self.frames.last().unwrap().arena_mark;
                         let yard_mark = self.frames.last().unwrap().yard_mark;
@@ -907,15 +889,6 @@ impl VM {
                         let inplace_write_escaped =
                             self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
-                        // Drop the window BEFORE the boundary compacts, not
-                        // after. The finalizer relocates what the frame owns,
-                        // so every cell from `bp` up is about to name a slot
-                        // that has moved or gone; letting those cells outlive
-                        // the compaction would leave the per-slot count keyed
-                        // on addresses nothing holds. The roots the finalizer
-                        // rewrites are `promoted_args`, a copy taken above, so
-                        // it reads nothing from the stack.
-                        self.stack.truncate(bp);
                         self.finalize_frame_locals_for_tail_call(
                             frame_mark,
                             yard_mark,
@@ -925,19 +898,15 @@ impl VM {
                             inplace_write_escaped,
                             &mut promoted_args,
                         );
-                        for value in promoted_args.iter().copied().take(argc) {
-                            self.stack.push(value);
-                        }
-                        for _ in argc..lc {
-                            self.stack.push(NanValue::UNIT);
-                        }
+                        self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     } else {
                         self.stack.copy_within(args_start..args_start + argc, bp);
-                        for i in argc..lc {
-                            self.stack.store(bp + i, NanValue::UNIT);
-                        }
-                        self.stack.truncate(bp + lc);
                     }
+                    let lc = self.frames.last().unwrap().local_count as usize;
+                    for i in argc..lc {
+                        self.stack[bp + i] = NanValue::UNIT;
+                    }
+                    self.stack.truncate(bp + lc);
                     let frame = self.frames.last_mut().unwrap();
                     frame.globals_dirty = false;
                     frame.yard_dirty = false;
@@ -964,11 +933,11 @@ impl VM {
                     // Thin frame: no heap alloc, no arena work.
                     // Just copy args in-place and reset ip.
                     for i in 0..argc {
-                        self.stack.store(bp + i, self.stack[args_start + i]);
+                        self.stack[bp + i] = self.stack[args_start + i];
                     }
                     let lc = self.frames.last().unwrap().local_count as usize;
                     for i in argc..lc {
-                        self.stack.store(bp + i, NanValue::UNIT);
+                        self.stack[bp + i] = NanValue::UNIT;
                     }
                     self.stack.truncate(bp + lc);
                     if let Some(profile) = self.profile.as_mut() {
@@ -1002,11 +971,6 @@ impl VM {
                         let inplace_write_escaped =
                             self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
-                        // Drop the window BEFORE the boundary compacts — see
-                        // the same reordering under `TAIL_CALL_SELF`. The
-                        // finalizer rewrites `promoted_args`, a copy taken
-                        // above, and reads nothing from the stack.
-                        self.stack.truncate(bp);
                         self.finalize_frame_locals_for_tail_call(
                             frame_mark,
                             yard_mark,
@@ -1016,9 +980,7 @@ impl VM {
                             inplace_write_escaped,
                             &mut promoted_args,
                         );
-                        for value in promoted_args.iter().copied().take(argc) {
-                            self.stack.push(value);
-                        }
+                        self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     } else {
                         // Args already on the stack at the right position
                         // (no relocation needed when the finalizer is a
@@ -1032,7 +994,7 @@ impl VM {
                         self.stack.resize(new_end, NanValue::UNIT);
                     }
                     for i in argc..new_lc {
-                        self.stack.store(bp + i, NanValue::UNIT);
+                        self.stack[bp + i] = NanValue::UNIT;
                     }
                     if new_end <= self.stack.len() {
                         self.stack.truncate(new_end);
@@ -1523,9 +1485,7 @@ impl VM {
                     let value = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if value.is_ok() {
                         let inner = value.wrapper_inner(&self.arena);
-                        if !self.stack.store_last(inner) {
-                            return Err(VmError::StackUnderflow);
-                        }
+                        *self.stack.last_mut().ok_or(VmError::StackUnderflow)? = inner;
                         continue;
                     }
                     if value.is_err() {
@@ -1774,7 +1734,7 @@ impl VM {
                     };
                     if matches {
                         let inner = top.wrapper_inner(&self.arena);
-                        self.stack.store_last(inner);
+                        *self.stack.last_mut().unwrap() = inner;
                     } else {
                         ip = (ip as isize + offset as isize) as usize;
                     }

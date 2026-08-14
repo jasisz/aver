@@ -13,13 +13,10 @@ use super::runtime::VmRuntime;
 use super::types::{CallFrame, CodeStore, VmError};
 use super::{VmProfileReport, profile::VmProfileState};
 use crate::nan_value::{Arena, NanValue};
-use slots::OperandStack;
 
 /// The Aver bytecode virtual machine.
 pub struct VM {
-    /// Operand stack, and the per-arena-slot live-reference count derived from
-    /// it. Locals are a window on this stack, so one structure carries both.
-    stack: OperandStack,
+    stack: Vec<NanValue>,
     frames: Vec<CallFrame>,
     globals: Vec<NanValue>,
     code: CodeStore,
@@ -46,15 +43,11 @@ pub struct VM {
     /// slots before extending. The pool lives on the host heap, opaque to
     /// the arena GC — buffer handles travel as `Int(idx)` NanValues.
     buffer_pool: Vec<Option<String>>,
-    /// Recompute the per-slot reference count from the operand stack on every
-    /// dispatched opcode and panic on the first disagreement.
-    ///
-    /// Off by default, and compiled out entirely without debug assertions: the
-    /// audit is `O(stack)` per opcode, which is the price of catching a missed
-    /// hook point at the instruction that missed it rather than at whatever
-    /// later reader happens to notice a wrong number.
-    #[cfg(debug_assertions)]
-    audit_slot_refs: bool,
+    /// How the compiler's static owned mask and the operand stack's own view of
+    /// who holds a slot compared, over this VM's lifetime. Maintained whether or
+    /// not profiling is on: the events are rare and the soundness direction is
+    /// worth counting in a release build, where its assertion is compiled out.
+    slot_uniqueness: VmSlotUniquenessStats,
 }
 
 enum ReturnControl {
@@ -70,7 +63,7 @@ enum ReturnControl {
 impl VM {
     pub fn new(code: CodeStore, globals: Vec<NanValue>, arena: Arena) -> Self {
         VM {
-            stack: OperandStack::with_capacity(1024),
+            stack: Vec::with_capacity(1024),
             frames: Vec::with_capacity(64),
             globals,
             code,
@@ -82,44 +75,8 @@ impl VM {
             cancelled: None,
             buffer_pool: Vec::new(),
             step_limit: None,
-            #[cfg(debug_assertions)]
-            audit_slot_refs: false,
+            slot_uniqueness: VmSlotUniquenessStats::default(),
         }
-    }
-
-    /// Per-slot live-reference tallies from the cross-check against the
-    /// compiler's static owned mask.
-    pub fn slot_uniqueness_stats(&self) -> VmSlotUniquenessStats {
-        self.stack.stats()
-    }
-
-    /// Total live references the operand stack holds across every arena slot.
-    ///
-    /// Zero once a run has finished is the whole-program form of "the count
-    /// returns to zero at frame exit": the stack is empty, so no slot may still
-    /// be spoken for.
-    pub fn live_slot_refs(&self) -> u64 {
-        self.stack.total_live_refs()
-    }
-
-    /// Live references to one arena slot.
-    pub fn live_refs_to_slot(&self, index: u32) -> u32 {
-        self.stack.live_refs(index)
-    }
-
-    /// Recompute the per-slot count from the operand stack after every
-    /// dispatched opcode, and panic on the first disagreement.
-    ///
-    /// Costs `O(stack)` per instruction, so it is for tests that want a missed
-    /// hook point reported at the instruction that missed it. A release build
-    /// ignores the request — the audit is compiled out with the assertions.
-    pub fn set_slot_ref_audit(&mut self, enabled: bool) {
-        #[cfg(debug_assertions)]
-        {
-            self.audit_slot_refs = enabled;
-        }
-        #[cfg(not(debug_assertions))]
-        let _ = enabled;
     }
 
     /// Cap the number of dispatched opcodes per `run_named_function` /
@@ -140,7 +97,7 @@ impl VM {
     }
 
     pub fn profile_report(&self) -> Option<VmProfileReport> {
-        let slot_uniqueness = self.stack.stats();
+        let slot_uniqueness = self.slot_uniqueness;
         self.profile
             .as_ref()
             .map(|profile| profile.report(&self.code, slot_uniqueness))
