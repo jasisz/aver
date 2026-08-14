@@ -377,10 +377,24 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
     }
     ensure_hashable_nv("Map.set", args[1])?;
     let source = args[0];
+    // The one map builder that is O(1) per insert, so it is also the one that
+    // must not re-decide `all_immediate` by reading the table — that would put
+    // the per-step walk back under a different name. The new map holds exactly
+    // what the old one held plus this key and value, and an insert can only
+    // drop an entry, never add one this pair did not bring, so the old flag and
+    // the two arguments decide the new flag between them.
+    let all_immediate =
+        arena.map_all_immediate_value(source) && args[1].is_immediate() && args[2].is_immediate();
     let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
-    let map_idx = arena.push_inheriting_source_space(aver_memory::ArenaEntry::Map(new_map), source);
+    let map_idx = arena.push_inheriting_source_space(
+        aver_memory::ArenaEntry::Map {
+            map: new_map,
+            all_immediate,
+        },
+        source,
+    );
     Ok(NanValue::new_map(map_idx))
 }
 

@@ -108,7 +108,7 @@ fn arena_holding_map(n: usize) -> (Arena<TallyTypes>, NanValue) {
         let value = NanValue::new_string_value(&format!("v{i}"), &mut arena);
         map = map.insert_owned(i as u64, (key, value));
     }
-    let idx = arena.push(ArenaEntry::Map(map));
+    let idx = arena.push_map(map);
     (arena, NanValue::new_map(idx))
 }
 
@@ -118,7 +118,8 @@ fn import_copies(n: usize) -> u64 {
     let mut dest: Arena<TallyTypes> = Arena::new();
     let imported = dest.deep_import(value, &source);
 
-    let ArenaEntry::Map(map) = dest.get(imported.heap_index().expect("map is heap-backed")) else {
+    let ArenaEntry::Map { map, .. } = dest.get(imported.heap_index().expect("map is heap-backed"))
+    else {
         panic!("import did not produce a map");
     };
     assert_eq!(map.len(), n, "import lost entries");
@@ -158,7 +159,8 @@ fn an_imported_map_is_a_faithful_copy_in_the_destination_arena() {
     let mut dest: Arena<TallyTypes> = Arena::new();
     let imported = dest.deep_import(value, &source);
 
-    let ArenaEntry::Map(map) = dest.get(imported.heap_index().expect("map is heap-backed")) else {
+    let ArenaEntry::Map { map, .. } = dest.get(imported.heap_index().expect("map is heap-backed"))
+    else {
         panic!("import did not produce a map");
     };
     let mut seen: Vec<(String, String)> = map

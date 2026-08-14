@@ -236,25 +236,8 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Vector(items)
             }
-            ArenaEntry::Map(mut map) => {
-                // Every entry is read to find out whether anything in it has to
-                // move, and a map has no equivalent of `ListBody::all_immediate`
-                // to escape that: a `Map<Int, Int>`, in which nothing can ever
-                // relocate, is walked in full here just the same.
-                //
-                // On the stable-promotion path this also *duplicates* the table.
-                // `promote_value_to_stable` clones the entry out of a slot that
-                // still holds the map, so the `Rc::make_mut` inside
-                // `rewrite_values_mut` sees a second owner and rebuilds the whole
-                // thing. That copy is real and is not in `map_entries_copied`,
-                // which counts what the builtins do; the entry count it costs is
-                // the number recorded here.
-                self.note_map_entries_scanned(map.len());
-                map.rewrite_values_mut(|pair| {
-                    pair.0 = rewrite(self, pair.0);
-                    pair.1 = rewrite(self, pair.1);
-                });
-                ArenaEntry::Map(map)
+            ArenaEntry::Map { map, all_immediate } => {
+                self.rewrite_map_with(map, all_immediate, rewrite)
             }
             ArenaEntry::Record {
                 type_id,
@@ -285,6 +268,70 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Namespace { name, members }
             }
+        }
+    }
+
+    /// Rewrite a map entry, keeping the table untouched when nothing in it can
+    /// move.
+    ///
+    /// A table in which no key and no value carries an arena index has nothing
+    /// for the rewrite to change, so it is returned without being read at all —
+    /// the same escape [`Arena::rewrite_list_body_with`] takes for a body of
+    /// immediates, and the reason a fold over a `Map<Int, Int>` no longer
+    /// re-reads the whole map on every frame boundary.
+    ///
+    /// Without it every entry is read to find out whether anything has to move,
+    /// and on the stable-promotion path the read also *duplicates* the table:
+    /// `promote_value_to_stable` clones the entry out of a slot that still holds
+    /// the map, so the `Rc::make_mut` inside `rewrite_values_mut` sees a second
+    /// owner and rebuilds the whole thing. That copy is real and is not in
+    /// `map_entries_copied`, which counts what the builtins do; the entry count
+    /// it costs is the number recorded here.
+    ///
+    /// It is a separate function rather than a block inside
+    /// [`Arena::rewrite_entry_with`] for the same reason `rewrite_list_with` is:
+    /// that one is `inline(always)` at eight call sites and should not carry a
+    /// per-type body.
+    ///
+    /// A map that does *not* get the escape pays for it. The same
+    /// `Map<Int, String>` fold of 16,000 heap-backed values runs in 0.98 s
+    /// without this flag and 1.10 s with it, and the 12% is not the flag test —
+    /// it survives moving this body out of the always-inlined caller, and it
+    /// survives removing the matching arm in `promote_entry_to_target`, while an
+    /// equivalent list program is unchanged to the millisecond. It looks like
+    /// code layout in the collector's hot loop, which is the cost of admission
+    /// for taking a `Map<Int, Int>` fold from 12.2 s to 0.03 s at 64,000 keys.
+    fn rewrite_map_with<F>(
+        &mut self,
+        mut map: T::Map,
+        all_immediate: bool,
+        rewrite: &mut F,
+    ) -> ArenaEntry<T>
+    where
+        F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
+    {
+        if all_immediate {
+            debug_assert!(
+                crate::map_all_immediate(&map),
+                "map marked all-immediate holds a heap-backed key or value; \
+                 skipping it would leave a stale arena index behind"
+            );
+            return ArenaEntry::Map {
+                map,
+                all_immediate: true,
+            };
+        }
+        self.note_map_entries_scanned(map.len());
+        map.rewrite_values_mut(|pair| {
+            pair.0 = rewrite(self, pair.0);
+            pair.1 = rewrite(self, pair.1);
+        });
+        // A rewrite maps arena indices to arena indices, so nothing in the table
+        // can have become immediate; keeping the flag off is both correct and
+        // the safe direction anyway.
+        ArenaEntry::Map {
+            map,
+            all_immediate: false,
         }
     }
 
@@ -1603,7 +1650,24 @@ impl<T: ArenaTypes> Arena<T> {
             {
                 return entry;
             }
-            ArenaEntry::Map(map)
+            // Nothing in an all-immediate table can point at young space, so the
+            // guard below would reach the same answer — after reading every
+            // entry to get there. This arm gets it for free, and it is not
+            // redundant with the escape in `rewrite_map_with`: a map promoted to
+            // the long-lived heap comes through here instead, and without this
+            // arm a `Map<Int, Int>` is still read once in full on the way.
+            ArenaEntry::Map {
+                map,
+                all_immediate: true,
+            } => {
+                debug_assert!(
+                    crate::map_all_immediate(map),
+                    "map marked all-immediate holds a heap-backed key or value; \
+                     skipping it would leave a stale arena index behind"
+                );
+                return entry;
+            }
+            ArenaEntry::Map { map, .. }
                 if !map.is_empty()
                     && !map.values().any(|(k, v)| {
                         Self::value_needs_young_promotion(*k, mark)

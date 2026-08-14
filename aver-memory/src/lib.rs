@@ -96,6 +96,18 @@ pub trait MapLike: Sized {
     fn values(&self) -> impl Iterator<Item = &(NanValue, NanValue)>;
 }
 
+/// Whether every key and every value in `map` is [`NanValue::is_immediate`] —
+/// the proof behind the `all_immediate` flag on [`ArenaEntry::Map`].
+///
+/// This reads the whole table, so it belongs to builders that have no
+/// predecessor flag to derive from. A builder that grows a map it already has
+/// the flag for must not call this: doing that once per insert would put back
+/// the per-step walk the flag exists to remove.
+pub fn map_all_immediate<M: MapLike>(map: &M) -> bool {
+    map.values()
+        .all(|(key, value)| key.is_immediate() && value.is_immediate())
+}
+
 // ---------------------------------------------------------------------------
 // Bit layout constants
 // ---------------------------------------------------------------------------
@@ -780,6 +792,21 @@ impl NanValue {
         (self.payload() & !ARENA_REF_BIT) as u32
     }
 
+    /// Whether the value carries no arena index at all, so no collection can
+    /// ever relocate it and rewriting it is provably the identity.
+    ///
+    /// This is the single definition of "immediate" behind every escape the
+    /// collector takes without reading what it is skipping —
+    /// [`ListBody::all_immediate`] and the `all_immediate` flag on
+    /// [`ArenaEntry::Map`] are both decided by it. A second definition that
+    /// drifted from this one would let the collector skip something that does
+    /// move, which is silent: the skipped value keeps pointing at where its
+    /// contents used to be.
+    #[inline]
+    pub fn is_immediate(self) -> bool {
+        self.heap_index().is_none()
+    }
+
     #[inline]
     pub fn heap_index(self) -> Option<u32> {
         if !self.is_nan_boxed() {
@@ -1255,10 +1282,10 @@ pub struct Arena<T: ArenaTypes> {
     /// parent when the branch rejoins.
     map_entries_copied: u64,
     /// Total map entries the collector has *read* while deciding whether a live
-    /// map needs rewriting. Unlike a list body, a map carries no
-    /// all-immediate flag, so this grows on every collection that sees a live
-    /// map whatever the map holds. It is the counter the residual time of a
-    /// map-building program follows.
+    /// map needs rewriting. A map whose `all_immediate` flag is set is
+    /// returned unread and adds nothing here; a map holding anything
+    /// heap-backed grows this on every collection that sees it. It is the
+    /// counter the residual time of a map-building program follows.
     map_entries_scanned: u64,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in
@@ -1287,7 +1314,26 @@ pub enum ArenaEntry<T: ArenaTypes> {
     String(Rc<str>),
     List(ArenaList),
     Tuple(Vec<NanValue>),
-    Map(T::Map),
+    /// A map, plus the same claim [`ListBody::all_immediate`] makes about a
+    /// list body: `all_immediate` is `true` only when every key and every value
+    /// in `map` is [`NanValue::is_immediate`], which makes relocating the table
+    /// provably the identity and lets the collector skip it without reading it.
+    ///
+    /// The flag describes the shared content, so it is right to clone with the
+    /// entry — a second entry over the same table makes the same claim about
+    /// the same values.
+    ///
+    /// `false` is always safe: it only costs the scan. `true` when something in
+    /// the table does carry an arena index is not safe and does not fail
+    /// loudly — the collector would move that value and leave the map pointing
+    /// at where it used to be. Every site that builds one of these therefore
+    /// either proves the flag by [`map_all_immediate`] or derives it from the
+    /// flag of the map it was built from; [`Arena::push_map`] is the choke
+    /// point that proves it for the builders with nothing to inherit.
+    Map {
+        map: T::Map,
+        all_immediate: bool,
+    },
     Vector(Vec<NanValue>),
     Record {
         type_id: u32,
@@ -1345,7 +1391,7 @@ pub struct ListBody {
 
 impl ListBody {
     pub fn new(items: Vec<NanValue>) -> Self {
-        let all_immediate = items.iter().all(|value| value.heap_index().is_none());
+        let all_immediate = items.iter().all(|value| value.is_immediate());
         Self {
             items,
             all_immediate,

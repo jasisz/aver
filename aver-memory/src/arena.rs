@@ -112,7 +112,7 @@ impl<T: ArenaTypes> Arena<T> {
                     NanValue::new_list(idx)
                 }
             }
-            ArenaEntry::Map(map) => {
+            ArenaEntry::Map { map, .. } => {
                 let mut new_map = T::Map::new();
                 let mut table = new_map.table_id();
                 for (hash, (k, v)) in map.iter() {
@@ -135,7 +135,10 @@ impl<T: ArenaTypes> Arena<T> {
                         table = table_after;
                     }
                 }
-                let idx = self.push(ArenaEntry::Map(new_map));
+                // The imported keys and values are freshly pushed into this
+                // arena, so the source map's flag says nothing about them:
+                // `push_map` decides the new one from what actually went in.
+                let idx = self.push_map(new_map);
                 NanValue::new_map(idx)
             }
             ArenaEntry::Vector(items) => {
@@ -408,17 +411,20 @@ impl<T: ArenaTypes> Arena<T> {
     /// needs rewriting, the map counterpart of
     /// [`Arena::list_elements_scanned`].
     ///
-    /// This is the counter that tracks *time*, and for maps there is no escape
-    /// from it. A list body built entirely out of immediates is skipped without
-    /// being read; a map has no such flag, so a live `Map<Int, Int>` — in which
-    /// nothing can ever relocate — is still read entry by entry on every
-    /// collection that sees it. Threading one map through a fold therefore
-    /// grows this quadratically whatever the map holds, which is the residual
-    /// cost left over once the duplication above is gone.
+    /// This is the counter that tracks *time*. Maps now carry the same
+    /// all-immediate escape lists have: a table whose keys and values are all
+    /// immediate is returned unread by the collector and adds nothing here, so
+    /// a live `Map<Int, Int>` threaded through a fold reads as 0. A map
+    /// holding anything heap-backed is still read entry by entry on every
+    /// collection that sees it, and threading one through a fold grows this
+    /// quadratically — the residual cost left over once the duplication above
+    /// is gone.
     ///
-    /// One read is missed on purpose: the pre-scan in the promotion fast path
-    /// stops at the first entry that has to move, and only the runs that scan a
-    /// map in full are counted. That undercounts, never the reverse.
+    /// Reads are missed on purpose in two places: the pre-scan in the
+    /// promotion fast path stops at the first entry that has to move (only
+    /// runs that scan a map in full are counted), and the all-immediate arms
+    /// in `rewrite_map_with` / `promote_entry_to_target` return without
+    /// reading anything at all. Both undercount, never the reverse.
     #[inline]
     pub fn map_entries_scanned(&self) -> u64 {
         self.map_entries_scanned
@@ -554,8 +560,17 @@ impl<T: ArenaTypes> Arena<T> {
             start: 0,
         }))
     }
+    /// Store a map, proving its `all_immediate` flag from the table itself.
+    ///
+    /// This reads every entry, which is why it is the entry point for builders
+    /// that already pay for the whole table anyway — `Map.set` on a target it
+    /// has to preserve, `Map.remove`, `Map.fromList`, `deep_import`, value
+    /// conversion. The one caller that must not come through here is the owned
+    /// `Map.set`, which is O(1) per insert and derives the flag from the map it
+    /// consumed instead; see `set_nv_owned`.
     pub fn push_map(&mut self, map: T::Map) -> u32 {
-        self.push(ArenaEntry::Map(map))
+        let all_immediate = crate::map_all_immediate(&map);
+        self.push(ArenaEntry::Map { map, all_immediate })
     }
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::Tuple(items))
@@ -684,13 +699,7 @@ impl<T: ArenaTypes> Arena<T> {
     }
     pub fn get_map(&self, index: u32) -> &T::Map {
         match self.get(index) {
-            ArenaEntry::Map(map) => map,
-            _ => panic!("Arena: expected Map at {}", index),
-        }
-    }
-    pub fn get_map_mut(&mut self, index: u32) -> &mut T::Map {
-        match self.get_mut(index) {
-            ArenaEntry::Map(map) => map,
+            ArenaEntry::Map { map, .. } => map,
             _ => panic!("Arena: expected Map at {}", index),
         }
     }
@@ -723,15 +732,39 @@ impl<T: ArenaTypes> Arena<T> {
             self.get_map(map.arena_index()).clone()
         }
     }
+    /// Whether the map behind `map` is known to hold only immediate keys and
+    /// values — the `all_immediate` flag of its entry, read without touching
+    /// the table.
+    ///
+    /// The empty map has no entry to read and nothing in it that could move.
+    pub fn map_all_immediate_value(&self, map: NanValue) -> bool {
+        if map.is_empty_map_immediate() {
+            return true;
+        }
+        match self.get(map.arena_index()) {
+            ArenaEntry::Map { all_immediate, .. } => *all_immediate,
+            _ => panic!("Arena: expected Map at {}", map.arena_index()),
+        }
+    }
     /// Take ownership of a map value, replacing it with an empty map in the arena.
     /// Use when the caller is the sole owner (reuse analysis says `owned = true`).
     /// Avoids the O(n) clone — the original slot becomes empty.
+    ///
+    /// Read [`Arena::map_all_immediate_value`] before this if the caller needs
+    /// the taken map's flag: the emptied slot is left claiming immediacy, which
+    /// is the truth about an empty table and not about what came out of it.
     pub fn take_map_value(&mut self, map: NanValue) -> T::Map {
         if map.is_empty_map_immediate() {
             T::Map::new()
         } else {
             let index = map.arena_index();
-            std::mem::replace(self.get_map_mut(index), T::Map::new())
+            match self.get_mut(index) {
+                ArenaEntry::Map { map, all_immediate } => {
+                    *all_immediate = true;
+                    core::mem::replace(map, T::Map::new())
+                }
+                _ => panic!("Arena: expected Map at {}", index),
+            }
         }
     }
     pub fn get_fn(&self, index: u32) -> &T::Fn {
