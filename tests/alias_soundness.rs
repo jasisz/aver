@@ -220,6 +220,37 @@ fn map_value_extraction_is_not_mutated_in_place() {
     );
 }
 
+/// A list view must not become a window onto a later write.
+///
+/// `List.fromVector` hands the vector's backing allocation to the list without
+/// copying it, and since #913 `List.drop` hands that same allocation on again
+/// with the offset advanced. Two sharers deep is exactly where an in-place
+/// `Vector.set` would show through, so the write has to copy first. Nothing
+/// here is a claim about the pass this file covers — it is the control that
+/// says the extra sharing did not buy a program a look at a value that was
+/// never in the list it took the view from.
+#[test]
+fn a_dropped_view_does_not_see_a_write_to_the_vector_it_came_from() {
+    assert_immutable(
+        "dropview",
+        r#"fn total(xs: List<Int>, acc: Int) -> Int
+  ? "add the elements"
+  match xs
+    [] -> acc
+    [h, ..t] -> total(t, acc + h)
+
+fn main() -> Unit
+  ! [Console.print]
+  base = Vector.new(4, 7)
+  xs = List.fromVector(base)
+  ys = List.drop(xs, 2)
+  arg = Option.withDefault(Vector.set(base, 3, 500), base)
+  Console.print("{total(ys, 0)}")
+"#,
+        "14",
+    );
+}
+
 /// Non-vacuity: the receiver / self-keep rebuild idiom must stay correct
 /// (and eligible for the owned path) — the fix must not flag everything.
 #[test]

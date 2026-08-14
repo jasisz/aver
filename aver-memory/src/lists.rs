@@ -265,6 +265,104 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
+    /// Step over the first `count` elements, sharing what `list_uncons`
+    /// shares.
+    ///
+    /// The cost is what is stepped over, not what is left: a flat body is
+    /// handed back as a view over the same allocation with `start` advanced —
+    /// the slice `list_uncons` already hands out — and every other shape is
+    /// walked the way repeated `list_uncons` walks it. Rebuilding the
+    /// remainder instead makes a walk over a list quadratic, which is what
+    /// `List.drop` used to do (issue #913).
+    ///
+    /// Sharing the body keeps the stepped-over elements alive for as long as
+    /// the view is, the same trade `list_uncons` already makes.
+    pub fn list_drop(&mut self, list: NanValue, count: usize) -> NanValue {
+        debug_assert!(list.is_list());
+        let mut rights = Vec::new();
+        let mut current = list;
+        let mut remaining = count;
+
+        loop {
+            if remaining == 0 {
+                rights.reverse();
+                return self.push_list_segments(current, rights);
+            }
+            let len = self.list_len_value(current);
+            if remaining >= len {
+                // The whole node is stepped over; continue into whatever the
+                // concat spine left waiting to its right.
+                remaining -= len;
+                match rights.pop() {
+                    Some(next) => {
+                        current = next;
+                        continue;
+                    }
+                    None => return NanValue::EMPTY_LIST,
+                }
+            }
+
+            // The step lands strictly inside `current`.
+            match self.get_list(current.arena_index()).clone() {
+                ArenaList::Flat { items, start } => {
+                    let view_idx = self.push(ArenaEntry::List(ArenaList::Flat {
+                        items: Rc::clone(&items),
+                        start: start + remaining,
+                    }));
+                    rights.reverse();
+                    return self.push_list_segments(NanValue::new_list(view_idx), rights);
+                }
+                ArenaList::Prepend { tail, .. } => {
+                    remaining -= 1;
+                    current = tail;
+                }
+                ArenaList::Concat { left, right, .. } => {
+                    rights.push(right);
+                    current = left;
+                }
+                ArenaList::Segments {
+                    current: head_segment,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    let mut segment = head_segment;
+                    let mut index = start;
+                    loop {
+                        let segment_len = self.list_len_value(segment);
+                        if remaining < segment_len {
+                            break;
+                        }
+                        remaining -= segment_len;
+                        match rest.get(index).copied() {
+                            Some(next) => {
+                                segment = next;
+                                index += 1;
+                            }
+                            // Only reachable if a `len` field disagreed with
+                            // the parts it counts; step over what is there.
+                            None => {
+                                segment = NanValue::EMPTY_LIST;
+                                break;
+                            }
+                        }
+                    }
+                    let stepped = self.list_drop(segment, remaining);
+                    if rights.is_empty() {
+                        return self.push_list_segments_rc(stepped, Rc::clone(&rest), index);
+                    }
+                    // Same fold as `list_uncons`: the right-siblings collected
+                    // down the concat spine follow this node's own remaining
+                    // segments.
+                    let mut parts: Vec<NanValue> = rest[index..].to_vec();
+                    rights.reverse();
+                    parts.extend(rights);
+                    return self.push_list_segments(stepped, parts);
+                }
+            }
+        }
+    }
+
     fn empty_list_value(&mut self) -> NanValue {
         NanValue::EMPTY_LIST
     }

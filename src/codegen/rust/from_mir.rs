@@ -4252,18 +4252,22 @@ fn emit_mir_builtin_call(
         "List.take" => {
             let list = arg!(0);
             let count = arg!(1);
-            // A negative count → 0; a huge (Big) count → take all
-            // (`to_usize()` is `None`, so `usize::MAX`). Semantics preserved
-            // from the old `usize::try_from`-based clamp.
+            // `clamp_list_count` is the same clamp the VM and the interpreter
+            // apply: a negative count takes nothing, a count past `usize`
+            // takes everything. Reading `to_usize().unwrap_or(usize::MAX)`
+            // straight had those two backwards, so a negative count took the
+            // whole list here and nothing everywhere else.
             format!(
-                "{{ let __n = ({count}).to_usize().unwrap_or(usize::MAX); aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
+                "{{ let __n = aver_rt::clamp_list_count(&({count})); aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
             )
         }
         "List.drop" => {
             let list = arg!(0);
             let count = arg!(1);
+            // `drop_first` shares the body and advances the offset, so the
+            // step costs what it steps over rather than what is left behind.
             format!(
-                "{{ let __n = ({count}).to_usize().unwrap_or(usize::MAX); aver_rt::AverList::from_vec(({list}).iter().skip(__n).cloned().collect::<Vec<_>>()) }}"
+                "{{ let __n = aver_rt::clamp_list_count(&({count})); ({list}).drop_first(__n) }}"
             )
         }
         "List.concat" => format!("aver_rt::AverList::concat(&{}, &{})", clone!(0), clone!(1)),
