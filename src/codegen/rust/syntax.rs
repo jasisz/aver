@@ -39,7 +39,7 @@ const RUST_RESERVED: &[&str] = &[
     "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
 ];
 
-/// The four Rust words that cannot be spelled as identifiers *at all* —
+/// The four Rust *words* that cannot be spelled as identifiers at all —
 /// `r#` does not rescue them, because a raw identifier may not be `crate`,
 /// `self`, `super` or `Self`.
 ///
@@ -48,11 +48,35 @@ const RUST_RESERVED: &[&str] = &[
 /// four there is no spelling, so the only honest options are to rename the
 /// user's function behind their back or to refuse. Codegen refuses; see
 /// `unspellable_rust_names` in the backend's `mod.rs`.
+///
+/// Rust has a fifth unspellable name, `_`, which is deliberately NOT
+/// listed here — see [`is_never_an_identifier_in_rust`] for why it needs a
+/// different test.
 pub(crate) const RUST_NEVER_RAW: &[&str] = &["Self", "crate", "self", "super"];
 
-/// True when `name` cannot be spelled in Rust even as a raw identifier.
+/// True when `name` cannot be spelled in Rust even as a raw identifier, in
+/// a position where Rust would otherwise accept a wildcard.
+///
+/// This is the test for a parameter, a `let` binding and a match binder:
+/// all three lower to Rust pattern positions, where `_` is legal and means
+/// "discard", so `_` must pass here. Use
+/// [`is_never_an_identifier_in_rust`] where Rust demands a real name.
 pub(crate) fn is_never_raw_in_rust(name: &str) -> bool {
     RUST_NEVER_RAW.contains(&name)
+}
+
+/// True when `name` cannot stand where Rust demands a real identifier — a
+/// `fn` name or a struct field.
+///
+/// That is the four [`RUST_NEVER_RAW`] words plus `_`. `_` is not a
+/// keyword, it is the wildcard, so it is not in the table and never needs
+/// the escape in a pattern; but `pub fn _()` is `expected identifier,
+/// found reserved identifier` and `r#_` is `` `_` cannot be a raw
+/// identifier ``, so in these two positions it has no spelling either way.
+/// Aver's lexer takes `_` as an ordinary identifier (`src/lexer.rs`), so a
+/// program can carry it.
+pub(crate) fn is_never_an_identifier_in_rust(name: &str) -> bool {
+    name == "_" || is_never_raw_in_rust(name)
 }
 
 /// True when `name` needs the `r#` escape to stand as a Rust identifier.
@@ -82,11 +106,21 @@ pub(crate) fn capitalise_first(name: &str) -> String {
     }
 }
 
-/// Convert an Aver identifier to a valid Rust identifier.
+/// Convert an Aver identifier to a valid Rust identifier that stands
+/// ALONE.
 ///
-/// Valid for every reserved word except the four in [`RUST_NEVER_RAW`],
-/// which have no spelling at all; those are refused before codegen runs, so
-/// this function never has to answer for them.
+/// Valid for every reserved word except the four in [`RUST_NEVER_RAW`] and
+/// the wildcard `_`, which have no spelling at all; those are refused
+/// before codegen runs, so this function never has to answer for them.
+///
+/// Do not call this on a name that will then be embedded inside a longer
+/// identifier. `r#` is a prefix on a whole identifier, so
+/// `format!("test_{}", aver_name_to_rust("await"))` is `test_r#await` — a
+/// `#` in the middle of a word, which ends the identifier and fails to
+/// parse. A name in that position never needs the escape anyway: the
+/// surrounding text makes the result a new word, and a new word that is
+/// not a keyword. Compose from the raw name; `emit_verify_blocks` in
+/// `toplevel.rs` is the one site that does this.
 pub fn aver_name_to_rust(name: &str) -> String {
     crate::codegen::common::escape_reserved_word_prefix(name, RUST_RESERVED, "r#")
 }

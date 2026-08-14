@@ -1446,7 +1446,16 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             if has_given || verify_case_is_oracle_only(&left.node, &right.node) {
                 continue;
             }
-            let fn_key = aver_name_to_rust(&vb.fn_name);
+            // Compose the test name from the RAW Aver name. The escape
+            // exists for a name that has to stand ALONE as an identifier;
+            // here the name goes in the middle of a longer one, and
+            // `test_r#await_case_1` is not an identifier at all — the `#`
+            // ends it, so `cargo test` fails with ``error: prefix `test_r`
+            // is unknown``. Nothing needs escaping in the composed result
+            // either: every Rust keyword is a whole word, and `test_…`
+            // cannot be one, so a `test_` prefix is a complete guarantee on
+            // its own.
+            let fn_key = vb.fn_name.clone();
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);

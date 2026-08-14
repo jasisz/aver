@@ -75,10 +75,16 @@ fn synthesize_rust_module_cascade(
 /// `aver_name_to_rust` answers every Rust keyword with the `r#` escape, and
 /// that is a complete answer for all of them but four: a raw identifier may
 /// not be `crate`, `self`, `super` or `Self`, so `r#crate` is not "escaped
-/// `crate`", it is a hard parse error. Those four are ordinary Aver
-/// identifiers — none is an Aver keyword — so a program can name a
-/// function, a parameter, a binding or a record field with any of them, and
-/// today every one of those produces a project that does not build.
+/// `crate`", it is a hard parse error. A fifth name, `_`, has no spelling
+/// either — it is Rust's wildcard, and `r#_` is rejected the same way —
+/// but only where Rust demands a real identifier; as a parameter, a `let`
+/// binding or a match binder it lowers to a legal discarding pattern, so
+/// it is refused in the `fn`-name and record-field positions only.
+///
+/// None of the five is an Aver keyword, so a program can name a function, a
+/// parameter, a binding, a match binder, a record field or a module-level
+/// binding with any of them, and every one of those used to produce a
+/// project that does not build.
 ///
 /// This refuses instead of renaming. A silent rename would have to invent a
 /// name that is not already taken, in a namespace the user cannot see, and
@@ -93,27 +99,65 @@ fn synthesize_rust_module_cascade(
 /// that capitalise to `Self` are `self` and `Self` — both refused here, as
 /// function names, before any enum is emitted.
 ///
-/// Two adjacent gaps this does NOT close, because neither is about the
-/// escape helper: user *type* and *variant* names bypass
-/// `aver_name_to_rust` altogether and are emitted verbatim, so `record impl`
-/// is broken for every keyword rather than for these four; and a module
-/// named `Crate` lowers to the path segment `crate` in
-/// `module_segment_to_rust`. Both want their own fix.
+/// # What is walked
+///
+/// Every position where the emitter spells a user-chosen name through
+/// `aver_name_to_rust`: function names, parameters, `let` bindings and
+/// match binders inside function bodies, record fields, and the same
+/// bindings and match binders in module-level statements (`ctx.items`,
+/// which the emitter renders into `fn main`). Entry module and dependency
+/// modules alike.
+///
+/// # What is not
+///
+/// - **User type and variant names.** They bypass `aver_name_to_rust`
+///   altogether and are emitted verbatim, so `record impl` emits `pub
+///   struct impl` and is broken for *every* keyword, not just these five.
+///   A different defect in a different code path.
+/// - **Module path segments.** `module_segment_to_rust` lowercases them, so
+///   a module named `Crate` becomes the segment `crate`. Also a different
+///   code path.
+/// - **Anything at `aver check` time.** This runs when the Rust backend
+///   does, so a program is only told when it reaches for that backend.
 pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
-    use crate::ast::{Pattern, Stmt};
-    use syntax::is_never_raw_in_rust;
+    use crate::ast::{Pattern, Stmt, TopLevel};
+    use syntax::{is_never_an_identifier_in_rust, is_never_raw_in_rust};
 
     // `at` names the offending position in the user's own words, e.g.
     // "parameter `self` of function `takes`".
-    let refuse = |name: &str, at: &str| -> Result<(), String> {
-        if is_never_raw_in_rust(name) {
-            Err(format!(
+    let explain = |name: &str, at: &str| -> String {
+        if name == "_" {
+            format!(
+                "cannot compile to Rust: {at} cannot be spelled in Rust. `_` is \
+                 Rust's wildcard, not an identifier, and the raw form `r#_` is \
+                 rejected too, so there is no escape to fall back on. Rename it."
+            )
+        } else {
+            format!(
                 "cannot compile to Rust: {at} cannot be spelled in Rust. \
                  `{name}` is not a valid identifier there, and neither is the \
                  raw form `r#{name}` — Rust rejects raw identifiers for \
-                 `crate`, `self`, `super` and `Self` specifically, so there is \
-                 no escape to fall back on. Rename it."
-            ))
+                 `crate`, `self`, `super`, `Self` and `_` specifically, so there \
+                 is no escape to fall back on. Rename it."
+            )
+        }
+    };
+
+    // Positions that lower to a Rust *pattern*, where `_` is legal and
+    // means "discard": a parameter, a `let` binding, a match binder.
+    let refuse = |name: &str, at: &str| -> Result<(), String> {
+        if is_never_raw_in_rust(name) {
+            Err(explain(name, at))
+        } else {
+            Ok(())
+        }
+    };
+
+    // Positions that demand a real Rust identifier: a `fn` name, a struct
+    // field. `_` has no spelling in either.
+    let refuse_identifier = |name: &str, at: &str| -> Result<(), String> {
+        if is_never_an_identifier_in_rust(name) {
+            Err(explain(name, at))
         } else {
             Ok(())
         }
@@ -136,8 +180,35 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
         }
     }
 
+    // One statement's spellable surface: the name it binds, and every match
+    // binder inside its expression (those are spelled straight into the
+    // generated `match`). `label` puts the position in the user's own
+    // words — the same walk serves a function body and a module-level
+    // statement, which sit in different places and read differently.
+    let check_stmt = |stmt: &Stmt, label: &dyn Fn(&str, &str) -> String| -> Result<(), String> {
+        match stmt {
+            Stmt::Binding(name, _, _) => refuse(name, &label("binding", name))?,
+            Stmt::Expr(_) => {}
+        }
+        let expr = match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+        };
+        let mut names = Vec::new();
+        crate::codegen::expr_walk::walk(expr, &mut |node| {
+            if let crate::ast::Expr::Match { arms, .. } = &node.node {
+                for arm in arms {
+                    pattern_binders(&arm.pattern, &mut names);
+                }
+            }
+        });
+        for name in names {
+            refuse(&name, &label("match binding", &name))?;
+        }
+        Ok(())
+    };
+
     let check_fn = |fd: &crate::ast::FnDef, scope: &str| -> Result<(), String> {
-        refuse(&fd.name, &format!("{scope}function `{}`", fd.name))?;
+        refuse_identifier(&fd.name, &format!("{scope}function `{}`", fd.name))?;
         for (param, _) in &fd.params {
             refuse(
                 param,
@@ -145,32 +216,9 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
             )?;
         }
         for stmt in fd.body.stmts() {
-            match stmt {
-                Stmt::Binding(name, _, _) => refuse(
-                    name,
-                    &format!("binding `{name}` in {scope}function `{}`", fd.name),
-                )?,
-                Stmt::Expr(_) => {}
-            }
-            // Match arms bind names too, and those binders are spelled
-            // straight into the generated `match`.
-            let expr = match stmt {
-                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
-            };
-            let mut names = Vec::new();
-            crate::codegen::expr_walk::walk(expr, &mut |node| {
-                if let crate::ast::Expr::Match { arms, .. } = &node.node {
-                    for arm in arms {
-                        pattern_binders(&arm.pattern, &mut names);
-                    }
-                }
-            });
-            for name in names {
-                refuse(
-                    &name,
-                    &format!("match binding `{name}` in {scope}function `{}`", fd.name),
-                )?;
-            }
+            check_stmt(stmt, &|kind, name| {
+                format!("{kind} `{name}` in {scope}function `{}`", fd.name)
+            })?;
         }
         Ok(())
     };
@@ -179,7 +227,10 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
         for td in type_defs {
             if let TypeDef::Product { name, fields, .. } = td {
                 for (field, _) in fields {
-                    refuse(field, &format!("field `{field}` of {scope}record `{name}`"))?;
+                    refuse_identifier(
+                        field,
+                        &format!("field `{field}` of {scope}record `{name}`"),
+                    )?;
                 }
             }
         }
@@ -220,6 +271,18 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
         check_fn(fd, "")?;
     }
     check_types(&ctx.type_defs, "")?;
+    // Module-level statements live in `ctx.items` and nowhere else — they
+    // are not part of any `FnDef`, so the loop above never sees them. The
+    // emitter renders each one into `fn main` as `let {name} = …;`
+    // (`toplevel.rs`), which is exactly as unspellable as a binding inside
+    // a function. Only the entry module carries them: `ModuleInfo` has no
+    // `items` field, so a dependency module's top-level statements never
+    // reach the Rust emitter at all.
+    for item in &ctx.items {
+        if let TopLevel::Stmt(stmt) = item {
+            check_stmt(stmt, &|kind, name| format!("module-level {kind} `{name}`"))?;
+        }
+    }
     // `main` is excluded exactly as the entry-path emitter excludes it before
     // computing groups, so this asks about the same set of groups the
     // trampoline is actually built from. Dep modules have no `main`, and
@@ -1531,11 +1594,13 @@ fn await(n: Int) -> Int
         }
     }
 
-    /// `crate`, `self`, `super` and `Self` are the four words Rust refuses
+    /// `crate`, `self`, `super` and `Self` are the four *words* Rust refuses
     /// even behind `r#`, and none of them is an Aver keyword, so a program
-    /// can use all four. Every position the escape helper spells is covered:
-    /// what would otherwise reach `cargo build` as `error: `crate` cannot be
-    /// a raw identifier` is refused here, naming the function.
+    /// can use all four. What would otherwise reach `cargo build` as
+    /// ``error: `crate` cannot be a raw identifier`` is refused here, naming
+    /// the position. The fifth unspellable name, `_`, is not a word and is
+    /// fatal in fewer positions — see
+    /// `underscore_is_refused_only_where_rust_demands_an_identifier`.
     #[test]
     fn never_raw_rust_names_are_refused_before_emitting() {
         let cases: &[(&str, &str, &str)] = &[
@@ -1573,6 +1638,145 @@ fn await(n: Int) -> Int
             assert!(
                 err.contains(&format!("r#{name}")),
                 "refusal does not explain that the raw escape is unavailable:\n{err}"
+            );
+        }
+    }
+
+    /// A binding written at module level, outside any function, is a
+    /// `TopLevel::Stmt` — it lives in `ctx.items` and in nothing else. The
+    /// refusal used to walk `fn_defs` and `type_defs` only, so a
+    /// module-level `self = 41` sailed past it and the emitter rendered
+    /// `let r#self = 41i64;` into `fn main`, which `cargo build` rejects
+    /// with ``error: `self` cannot be a raw identifier``. Match binders
+    /// inside a module-level statement's expression reach the generated
+    /// `match` the same way.
+    #[test]
+    fn module_level_statements_are_checked_for_unspellable_names() {
+        let cases: &[(&str, &str, &str)] = &[
+            ("self = 41\n", "self", "module-level binding `self`"),
+            (
+                "crate = 1\n\nfn read() -> Int\n    crate\n",
+                "crate",
+                "module-level binding `crate`",
+            ),
+        ];
+
+        for (body, name, expected) in cases {
+            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let err = super::unspellable_rust_names(&ctx).expect_err(&format!(
+                "module-level `{name}` should be refused, but codegen accepted it"
+            ));
+            assert!(
+                err.contains(expected),
+                "refusal does not say which name is at fault; wanted `{expected}` in:\n{err}"
+            );
+            assert!(
+                err.contains(&format!("r#{name}")),
+                "refusal does not explain that the raw escape is unavailable:\n{err}"
+            );
+        }
+    }
+
+    /// `_` is the fifth name Rust cannot spell, and the odd one out: it is
+    /// not a keyword but the wildcard, so `r#_` is rejected for the same
+    /// reason `r#self` is. Aver's lexer takes `_` as an ordinary
+    /// identifier, so `fn _(n: Int)` parses and runs, and the Rust backend
+    /// emitted `pub fn _(…)` — ``expected identifier, found reserved
+    /// identifier``.
+    ///
+    /// It is fatal only where Rust demands a real identifier: a `fn` name
+    /// and a record field. A parameter, a `let` binding and a match binder
+    /// all lower to positions where `_` is a legal (discarding) Rust
+    /// pattern, and those programs build and run, so the refusal must not
+    /// reach them.
+    #[test]
+    fn underscore_is_refused_only_where_rust_demands_an_identifier() {
+        let refused: &[(&str, &str)] = &[
+            ("fn _(n: Int) -> Int\n    n + 1\n", "function `_`"),
+            (
+                "record Holder\n  _: Int\n\nfn read(h: Holder) -> Int\n    h._\n",
+                "field `_` of record `Holder`",
+            ),
+        ];
+
+        for (body, expected) in refused {
+            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let err = super::unspellable_rust_names(&ctx)
+                .expect_err(&format!("`_` should be refused at: {expected}"));
+            assert!(
+                err.contains(expected),
+                "refusal does not say which name is at fault; wanted `{expected}` in:\n{err}"
+            );
+            assert!(
+                err.contains("wildcard"),
+                "refusal should explain that `_` is Rust's wildcard, not an \
+                 identifier:\n{err}"
+            );
+        }
+
+        // The other side of the line: these build and run today, so the
+        // refusal must leave them alone.
+        for body in [
+            "fn takes(_: Int) -> Int\n    7\n",
+            "fn binds(n: Int) -> Int\n    _ = n + 1\n    9\n",
+        ] {
+            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            assert!(
+                super::unspellable_rust_names(&ctx).is_ok(),
+                "`_` lowers to a legal Rust wildcard here, so it must not be \
+                 refused:\n{body}"
+            );
+        }
+    }
+
+    /// A verify block's generated test is named `test_<fn>_case_<n>`, and
+    /// the function name goes in the MIDDLE of that identifier. Escaping it
+    /// first produced `fn test_r#await_case_1()`, where the `#` ends the
+    /// identifier — ``error: prefix `test_r` is unknown`` under `cargo
+    /// test`. A name embedded inside a longer identifier never needs the
+    /// escape, so the test name is composed from the raw Aver name.
+    #[test]
+    fn verify_test_names_are_composed_from_the_raw_fn_name() {
+        let out = transpile(&mut ctx_from_source(
+            r#"
+module Demo
+
+fn await(n: Int) -> Int
+    n + 1
+
+fn become(n: Int) -> Int
+    n + 2
+
+verify await
+    await(1) => 2
+
+verify become
+    become(1) => 3
+"#,
+            "demo",
+        ));
+        let verify = generated_file(&out, "src/verify.rs");
+
+        let test_fns: Vec<&str> = verify
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("fn "))
+            .collect();
+        assert!(
+            !test_fns.is_empty(),
+            "expected the verify module to declare test fns:\n{verify}"
+        );
+        for line in &test_fns {
+            assert!(
+                !line.contains('#'),
+                "a generated test fn name carries a `#`, so the identifier ends \
+                 there and the module does not parse: {line}"
+            );
+        }
+        for wanted in ["fn test_await_case_1()", "fn test_become_case_1()"] {
+            assert!(
+                verify.contains(wanted),
+                "expected `{wanted}` in the generated verify module:\n{verify}"
             );
         }
     }

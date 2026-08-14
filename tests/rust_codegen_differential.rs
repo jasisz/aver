@@ -683,16 +683,35 @@ fn main() -> Unit
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// `crate`, `self`, `super` and `Self` have no Rust spelling at all — `r#`
-/// is a parse error for exactly these four — so the backend refuses them
-/// instead of emitting a project that cannot build. This drives the real
-/// `aver compile` binary, because the refusal is only useful if it reaches
-/// the command line: before it, this program compiled "successfully" and
-/// then failed `cargo build` with ``error: `crate` cannot be a raw
-/// identifier``, naming a generated file the user never wrote.
+/// `crate`, `self`, `super`, `Self` and `_` have no Rust spelling at all —
+/// `r#` is a parse error for exactly these five — so the backend refuses
+/// them instead of emitting a project that cannot build. This drives the
+/// real `aver compile` binary, because the refusal is only useful if it
+/// reaches the command line: before it, each of these programs compiled
+/// "successfully" and then failed `cargo build` naming a generated file the
+/// user never wrote.
+///
+/// Three shapes, because each reached the emitter down a different path:
+///
+/// - `fn crate` — a function name, the shape reported on the issue.
+/// - `self = 41` at module level — a `TopLevel::Stmt`, which lives in
+///   `ctx.items` and in no `FnDef`, so the refusal's `fn_defs` walk never
+///   saw it. It emitted `let r#self = 41i64;` into `fn main` and the build
+///   stopped at ``error: `self` cannot be a raw identifier``.
+/// - `fn _` — `_` is not a keyword, it is Rust's wildcard, so it is not in
+///   the escape table and needs no escape; it simply has no identifier
+///   form. It emitted `pub fn _(…)` and the build stopped at ``expected
+///   identifier, found reserved identifier``.
+///
+/// Each program runs correctly on the VM first, so what is being pinned is
+/// a Rust-backend limit rather than a broken program.
 #[test]
 fn never_raw_rust_name_is_refused_by_compile_with_a_named_error() {
-    let src = r#"module NeverRaw
+    // (label, source, expected VM output, expected fragment of the refusal)
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "fn_name",
+            r#"module NeverRaw
     intent = "A function named with a word Rust cannot spell"
     effects [Console.print]
 
@@ -704,39 +723,135 @@ fn main() -> Unit
     ? "Print it."
     ! [Console.print]
     Console.print("{crate(1)}")
+"#,
+            "2",
+            "function `crate`",
+        ),
+        (
+            "module_level_binding",
+            r#"module NeverRawTop
+    intent = "A module-level binding named with a word Rust cannot spell"
+    effects [Console.print]
+
+self = 41
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print(String.fromInt(self))
+"#,
+            "41",
+            "module-level binding `self`",
+        ),
+        (
+            "underscore_fn_name",
+            r#"module NeverRawUnderscore
+    intent = "A function named with a single underscore"
+    effects [Console.print]
+
+fn _(n: Int) -> Int
+    ? "Legal Aver, no Rust identifier form."
+    n + 1
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print(String.fromInt(_(1)))
+"#,
+            "2",
+            "function `_`",
+        ),
+    ];
+
+    for (label, src, expected_vm, expected_refusal) in cases {
+        let dir = temp_dir(&format!("never_raw_rust_name_{label}"));
+        let src_path = dir.join("main.av");
+        fs::write(&src_path, src).expect("write source");
+
+        // The VM has no such limitation, so the program itself is fine.
+        let vm = run_vm_inline(&format!("never_raw_rust_name_{label}"), src).expect("vm run");
+        assert_eq!(
+            vm, *expected_vm,
+            "the {label} program is valid Aver and the VM runs it"
+        );
+
+        let out = Command::new(aver_bin())
+            .arg("compile")
+            .arg("-o")
+            .arg(dir.join("out"))
+            .arg(&src_path)
+            .output()
+            .expect("run aver compile");
+
+        assert!(
+            !out.status.success(),
+            "compile should refuse the {label} unspellable name, but it succeeded"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(expected_refusal),
+            "refusal must name the position at fault; wanted `{expected_refusal}` in:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("no escape to fall back on"),
+            "refusal must explain that the raw escape is not available:\n{stderr}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// A verify block on a keyword-named function, driven through the real
+/// `cargo test` of the emitted project.
+///
+/// The generated test is named `test_<fn>_case_<n>`, so the function name
+/// lands in the MIDDLE of an identifier. Escaping it first produced `fn
+/// test_r#await_case_1()`, where the `#` ends the identifier: the project
+/// still passed `cargo build` (the verify module is `#[cfg(test)]`) and
+/// only fell over under `cargo test` with ``error: prefix `test_r` is
+/// unknown``. `become` is here as well as `await` because `become` was not
+/// in the escape table before this change — `verify become` used to emit a
+/// perfectly good `test_become_case_1`, so completing the table turned a
+/// working program into a broken one until the composition was fixed too.
+#[test]
+fn rust_verify_block_on_a_keyword_named_fn_passes_cargo_test() {
+    let src = r#"module KeywordVerify
+    intent = "Verify blocks on keyword-named functions must survive cargo test"
+    effects [Console.print]
+
+fn await(n: Int) -> Int
+    ? "A keyword name that was already escaped before this change."
+    n + 1
+
+fn become(n: Int) -> Int
+    ? "A keyword name the escape table only learned in this change."
+    n + 2
+
+verify await
+    await(1) => 2
+    await(2) => 3
+
+verify become
+    become(1) => 3
+
+fn main() -> Unit
+    ? "Print both, so the binary exercises them too."
+    ! [Console.print]
+    Console.print("{await(1)} {become(1)}")
 "#;
 
-    let dir = temp_dir("never_raw_rust_name");
-    let src_path = dir.join("main.av");
-    fs::write(&src_path, src).expect("write source");
-
-    // The VM has no such limitation, so the program itself is fine.
-    let vm = run_vm_inline("never_raw_rust_name", src).expect("vm run");
-    assert_eq!(vm, "2", "the program is valid Aver and the VM runs it");
-
-    let out = Command::new(aver_bin())
-        .arg("compile")
-        .arg("-o")
-        .arg(dir.join("out"))
-        .arg(&src_path)
-        .output()
-        .expect("run aver compile");
-
-    assert!(
-        !out.status.success(),
-        "compile should refuse an unspellable name, but it succeeded"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("function `crate`"),
-        "refusal must name the function at fault:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("r#crate"),
-        "refusal must explain that the raw escape is not available:\n{stderr}"
-    );
-
-    let _ = fs::remove_dir_all(&dir);
+    let name = "keyword_verify";
+    let ws = temp_dir(name);
+    let src_file = ws.join(format!("{name}.av"));
+    fs::write(&src_file, src).expect("write source");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&src_file, &project, name, None, &[])?;
+        cargo_test_in(&project, &shared_target_dir())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.expect("rust compile + cargo test of the generated verify module");
 }
 
 /// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in
