@@ -493,11 +493,22 @@ fn main() -> Unit
 /// no trampoline — they were emitted as `pub fn become(…)` and the project
 /// did not parse. They are here rather than in a second test because the
 /// expensive part is the `cargo build`, and one build can carry both.
+///
+/// The third half, for the same reason, is one keyword name in each of the
+/// OTHER positions the escape helper touches — a parameter, a `let`
+/// binding, a match binder, a record field and a module-level binding — so
+/// the claim that every such position is escaped is backed by a build and a
+/// run rather than by reading the emitter.
 #[test]
 fn rust_keyword_named_mutual_recursion_builds_and_matches_vm() {
     let src = r#"module KeywordMutualTco
     intent = "Rust keywords as function names, in mutual tail recursion"
     effects [Console.print]
+
+record Holder
+    move: Int
+
+static = 41
 
 fn await(budget: Int) -> String
     ? "Hand off to the other one."
@@ -589,6 +600,25 @@ fn gen(n: Int) -> Int
     ? "Strict since edition 2024, which is what the generated crate asks for."
     n + 12
 
+fn takesKeyword(box: Int) -> Int
+    ? "A keyword name in the parameter position."
+    box + 1
+
+fn bindsKeyword(n: Int) -> Int
+    ? "A keyword name in the let-binding position."
+    loop = n + 1
+    loop + 1
+
+fn matchesKeyword(xs: List<Int>) -> Int
+    ? "Keyword names in both match-binder positions."
+    match xs
+        [] -> 0
+        [ref, ..mut] -> ref + 1
+
+fn readsKeywordField(h: Holder) -> Int
+    ? "A keyword name in the record-field position."
+    h.move
+
 fn main() -> Unit
     ? "Print every shape, so a backend that drifts shows a diff, not a pass."
     ! [Console.print]
@@ -597,8 +627,9 @@ fn main() -> Unit
     Console.print("{impl(4)} {move(4)} {unsafe(3)} {ping(4)} {pong(4)}")
     Console.print("{become(0)} {try(0)} {macro(0)} {final(0)} {virtual(0)} {do(0)}")
     Console.print("{priv(0)} {abstract(0)} {override(0)} {typeof(0)} {unsized(0)} {gen(0)}")
+    Console.print("{takesKeyword(1)} {bindsKeyword(1)} {matchesKeyword([5, 6])} {readsKeywordField(Holder(move = 3))} {static}")
 "#;
-    let expected = "done\nhanded back\n0 1 7 11 13\n1 2 3 4 5 6\n7 8 9 10 11 12";
+    let expected = "done\nhanded back\n0 1 7 11 13\n1 2 3 4 5 6\n7 8 9 10 11 12\n2 3 6 3 41";
 
     let vm = run_vm_inline("keyword_mutual_tco", src).expect("vm run");
     let rust =
