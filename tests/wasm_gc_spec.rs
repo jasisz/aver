@@ -1234,15 +1234,15 @@ fn main() -> Int
 }
 
 /// Sixteen thousand keys into a table that starts at sixteen buckets:
-/// ten doublings, each one rehashing everything inserted so far. `len`
+/// eleven doublings, each one rehashing everything inserted so far. `len`
 /// counting them all is the cheapest statement that nothing was
 /// dropped or duplicated on the way through.
 #[test]
-fn map_filled_across_ten_doublings_counts_every_key() {
+fn map_filled_across_eleven_doublings_counts_every_key() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "map filled across ten wasm-gc table doublings"
+    intent = "map filled across eleven wasm-gc table doublings"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1285,7 +1285,7 @@ fn main() -> Int
     );
 }
 
-/// Reads on a table that has been through ten doublings. The rehash
+/// Reads on a table that has been through eleven doublings. The rehash
 /// rebuilds every probe run under a wider mask, so a hit has to be
 /// found wherever it landed last and a miss has to stop.
 ///
@@ -1298,7 +1298,7 @@ fn map_lookup_after_many_doublings_finds_hits_and_reports_misses() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "lookup in a map that has doubled ten times"
+    intent = "lookup in a map that has doubled eleven times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1328,7 +1328,7 @@ fn map_grown_table_miss_through_an_option_returning_call_is_none() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "unfused Option lookup in a map that has doubled ten times"
+    intent = "unfused Option lookup in a map that has doubled eleven times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1364,7 +1364,7 @@ fn map_grown_table_membership_answers_both_ways() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "membership in a map that has doubled ten times"
+    intent = "membership in a map that has doubled eleven times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1393,7 +1393,7 @@ fn map_update_of_a_present_key_in_a_grown_table_writes_the_value() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "update an existing key in a map that has doubled ten times"
+    intent = "update an existing key in a map that has doubled eleven times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1411,7 +1411,7 @@ fn main() -> Int
     );
 }
 
-/// Removal from a table that has been through ten doublings. The
+/// Removal from a table that has been through eleven doublings. The
 /// removed key must be gone and every other key still findable,
 /// including the one inserted last and the one next to the hole.
 ///
@@ -1426,7 +1426,7 @@ fn map_remove_from_a_grown_table_keeps_every_other_key() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "remove from a map that has doubled ten times"
+    intent = "remove from a map that has doubled eleven times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1651,9 +1651,10 @@ fn map_remove_after_a_resize_keeps_a_key_that_wrapped_past_the_end() {
 /// where a probe under the new one looks.
 ///
 /// These thirty keys are all multiples of sixteen, so at the starting
-/// capacity every one of them hashes to bucket 0 — a single probe run
-/// thirty slots long, rebuilt twice on the way to 64 buckets. Summing
-/// what comes back out reads every entry, and the sum only comes to
+/// capacity every one of them hashes to bucket 0 — one probe run that
+/// fills the whole table before it can grow, then two more masks that
+/// each split it in half again on the way to 64 buckets. Summing what
+/// comes back out reads every entry, and the sum only comes to
 /// `1 + … + 30` if each key kept its own value across both rebuilds.
 const REHASH_COLLIDING_RUN_SRC: &str = r#"module Tmp
     intent = "grow a table whose keys all start in one bucket"
@@ -1698,12 +1699,13 @@ fn map_remove_witnesses_answer_the_vm() {
     }
 }
 
-/// The shape #896 was reported on: an index of tens of thousands of
+/// The shape the report was about: an index of tens of thousands of
 /// String keys, which is what a map is for and what the fixed 16384
-/// buckets made impossible. A hundred thousand distinct keys is twelve
-/// doublings from sixteen, and every one of them rehashes every entry
-/// inserted so far — so this also states that the amortised cost stays
-/// affordable, since a quadratic rebuild at this size would not finish.
+/// buckets made impossible. A hundred thousand distinct keys is
+/// fourteen doublings from sixteen, and every one of them rehashes
+/// every entry inserted so far — so this also states that the
+/// amortised cost stays affordable, since a rebuild that was not
+/// amortised at this size would not finish.
 ///
 /// The spot checks are the first key in, the last, one from the middle
 /// and one that was never there.
