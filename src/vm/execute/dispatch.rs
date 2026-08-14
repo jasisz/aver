@@ -106,6 +106,39 @@ impl VM {
             }};
         }
 
+        // Local macro: leave the current function carrying an error value,
+        // for the two exits that are not `RETURN` (`PROPAGATE_ERR` and the
+        // failing branch of `CALL_PAR`). Expands to nothing when the current
+        // function does own a `CallFrame`, leaving the caller's ordinary
+        // frame-popping path to run.
+        //
+        // The frame being left may not exist. A callee entered through
+        // `CALL_LEAF` pushes no `CallFrame` — its caller's context is parked
+        // in `leaf_return` instead — so popping `self.frames` there pops the
+        // CALLER's frame and returns the error out of the wrong function.
+        // `RETURN` already consults `leaf_return`; every frame exit owes the
+        // same check, and owes the same `take()`, or a later `RETURN` would
+        // spend a frameless return that has already been used.
+        macro_rules! leaf_error_return {
+            ($result:expr) => {{
+                if let Some((saved_fn_id, saved_ip, saved_bp)) = leaf_return.take() {
+                    let result = $result;
+                    // Drop the leaf's arguments and whatever the enclosing
+                    // call had already pushed of its own argument list, the
+                    // same way `RETURN`'s frameless path does. `CALL_LEAF`
+                    // records no arena marks, so there is nothing else to
+                    // unwind: the error value itself stays reachable.
+                    self.stack.truncate(bp);
+                    self.stack.push(result);
+                    fn_id = saved_fn_id;
+                    ip = saved_ip;
+                    bp = saved_bp;
+                    refresh_code!();
+                    continue;
+                }
+            }};
+        }
+
         // Per-call dispatched-opcode counter. Bumped every iteration;
         // checked against `step_limit` in the same 256-op cadence as
         // cancellation so the hot path stays branch-light. Reset by
@@ -1341,6 +1374,7 @@ impl VM {
 
                         // Propagate: real Err takes priority, then cancellation VmError
                         if let Some(err_val) = first_real_err {
+                            leaf_error_return!(err_val);
                             let frame = self.frames.pop().unwrap();
                             self.stack.truncate(frame.bp as usize);
                             match self.complete_frame_return(frame, err_val, caller_depth) {
@@ -1382,6 +1416,7 @@ impl VM {
                     }
                     if value.is_err() {
                         let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        leaf_error_return!(result);
                         let frame = self.frames.pop().unwrap();
                         self.stack.truncate(frame.bp as usize);
                         match self.complete_frame_return(frame, result, caller_depth) {

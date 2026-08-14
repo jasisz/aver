@@ -453,6 +453,74 @@ fn main() -> Unit
 }
 
 #[test]
+fn rust_try_in_argument_position_matches_vm() {
+    // `?` inside an argument returns from the function whose body contains it,
+    // and the Rust backend gets this from `?` on a real `Result`. The VM reaches
+    // the same answer only if its error exit knows the enclosing frame may be a
+    // frameless leaf — which is what `leafTry` and `leafPar` here are: bodies
+    // with no user call and no local binding, so their callers' `CALL_KNOWN` is
+    // upgraded to `CALL_LEAF`. A VM that unwinds one frame too far ends the
+    // program on the first failure, so the divergence shows up as a missing
+    // trailing line rather than a changed one.
+    let src = r#"module TryArgumentDifferential
+    intent = "Every `?`-in-argument shape in one program, for cross-backend agreement"
+    effects [Console.print]
+
+fn leafTry(s: String) -> Result<Int, String>
+    ? "Frameless leaf: `?` in the second argument of a builtin call."
+    Int.div(100, Int.fromString(s)?)
+
+fn twoTries(a: String, b: String) -> Result<Int, String>
+    ? "Both arguments propagate, so the second fires on a partial stack."
+    Int.div(Int.fromString(a)?, Int.fromString(b)?)
+
+fn twoLevels(s: String) -> Result<Int, String>
+    ? "`?` in the argument of a call that is itself an argument."
+    Int.div(1000, Int.max(Int.fromString(s)?, 1))
+
+fn leafPar(a: Int, b: Int) -> Result<Tuple<Int, Int>, String>
+    ? "The `?!` error exit out of a frameless leaf."
+    Result.Ok((Int.div(100, a), Int.div(100, b))?!)
+
+fn letBound(s: String) -> Result<Int, String>
+    ? "Control: binding the propagated value keeps the body off the leaf path."
+    n = Int.fromString(s)?
+    Int.div(100, n)
+
+fn describe(r: Result<Int, String>) -> String
+    ? "Render a result without pinning the error text."
+    match r
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(_) -> "err"
+
+fn describePair(r: Result<Tuple<Int, Int>, String>) -> String
+    ? "Render a product result without pinning the error text."
+    match r
+        Result.Ok(_) -> "ok"
+        Result.Err(_) -> "err"
+
+fn main() -> Unit
+    ? "Print every shape so a backend that unwinds differently shows a diff."
+    ! [Console.print]
+    Console.print("{describe(leafTry("bad"))} {describe(leafTry("4"))}")
+    Console.print("{describe(twoTries("bad", "2"))} {describe(twoTries("100", "bad"))} {describe(twoTries("100", "4"))}")
+    Console.print("{describe(twoLevels("bad"))} {describe(twoLevels("9"))}")
+    Console.print("{describePair(leafPar(0, 5))} {describePair(leafPar(4, 5))}")
+    Console.print("{describe(letBound("bad"))} {describe(letBound("4"))}")
+"#;
+    let expected = "err ok 25\nerr err ok 25\nerr ok 111\nerr ok\nerr ok 25";
+
+    let vm = run_vm_inline("try_in_argument", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("try_in_argument", src).expect("rust compile + cargo build + run");
+    assert_eq!(rust, expected, "Rust `?`-in-argument semantics changed");
+    assert_eq!(
+        vm, expected,
+        "the VM propagated a `?` out of the wrong frame"
+    );
+}
+
+#[test]
 fn rust_literal_refinement_discharge_matches_vm() {
     let src = r#"module LiteralRefinement
     intent = "Discharged and fallible smart-constructor calls in one program"
