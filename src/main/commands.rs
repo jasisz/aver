@@ -1423,6 +1423,16 @@ pub(super) fn cmd_run_vm(
             r.young_truncate_fast_returns,
             r.thin_slow_returns + r.parent_thin_slow_returns + r.regular_slow_returns
         );
+        let slots = &report.slot_uniqueness;
+        eprintln!("\nCollection targets:");
+        eprintln!(
+            "  owned by the compiler:{} of which not uniquely held at run time:{}",
+            slots.owned_grants, slots.owned_grants_without_unique_slot
+        );
+        eprintln!(
+            "  uniquely held at run time but not owned by the compiler:{}",
+            slots.unique_slot_without_owned_grant
+        );
         eprintln!("────────────────────────────────────────────────\n");
     }
 
