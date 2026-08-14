@@ -1199,9 +1199,11 @@ fn emit_http_simple_method_wasip2(
     // Empty body
     func.instruction(&Instruction::I32Const(0));
     func.instruction(&Instruction::ArrayNewDefault(string_idx));
-    // Empty headers map (size=0, cap=INITIAL_CAP, default arrays).
-    // INITIAL_CAP must match emit_map_empty in maps.rs (16384).
-    const INITIAL_CAP: i32 = 16384;
+    // Empty headers map (size=0, cap=INITIAL_CAP, default arrays) —
+    // the same shape `emit_map_empty` builds, sharing its constant so
+    // the two cannot drift. The map grows on its own once the header
+    // accumulation starts filling it.
+    use crate::codegen::wasm_gc::maps::INITIAL_CAP;
     func.instruction(&Instruction::I32Const(0));
     func.instruction(&Instruction::I32Const(INITIAL_CAP));
     func.instruction(&Instruction::I32Const(INITIAL_CAP));

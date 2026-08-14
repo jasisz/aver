@@ -287,8 +287,8 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
 
 /// True when `bytes` names its map insert helpers — the `name` section
 /// the emitter writes for a program that instantiates a `Map`, so that
-/// filling the fixed bucket count traps with the capacity in the
-/// backtrace instead of `<wasm function N>` (see `maps.rs`).
+/// a stop inside one is attributable in the backtrace instead of
+/// reading `<wasm function N>` (see `maps.rs`).
 ///
 /// Read by the `--optimize` path, which is about to destroy exactly
 /// that: `wasm-opt` drops the section, and inlines the helper besides.
