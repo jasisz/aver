@@ -10,13 +10,14 @@
 //! The obvious carrier is a per-slot counter maintained on every stack move,
 //! and it was built and measured first. Maintaining it means one test in front
 //! of every `push` and every `pop`, and the interpreter's opcodes are small
-//! enough that this is not cheap: against `origin/main`, naive `fib` cost 13%
-//! more, a JSON parse-and-render loop 13%, and a vector fill-and-sum 27%, at
-//! per-round spreads under 0.06. Splitting the table update out behind a
-//! non-inlined call — a `push` whose tail can reach `Vec::resize` stops being
-//! inlined into the dispatch loop at all — took `fib` from 27% down to 13%, and
-//! there was nothing left to win after that: the remainder is the test itself,
-//! on a path a program that never touches a collection still pays for.
+//! enough that this is not cheap. Against `origin/main`, serially, with the two
+//! binaries interleaved and per-round spreads under 0.06: naive `fib` cost 27%
+//! more, a JSON parse-and-render loop 14%, a vector fill-and-sum 32%. Splitting
+//! the table update out behind a non-inlined call took those to 13%, 13% and
+//! 27% — a `push` whose tail can reach `Vec::resize` stops being inlined into
+//! the dispatch loop at all, which was half the bill. There was nothing left to
+//! win after that: what remains is the test itself, on a path a program that
+//! never touches a collection still pays for.
 //!
 //! Computing the count where it is READ inverts that distribution. The question
 //! is asked at one instruction — a collection builtin about to write — and the
