@@ -26,13 +26,20 @@
 //!
 //! ## Tiers
 //!
-//! - **fast**: a 3-example plain-parity subset + the two critical
-//!   behavioral probes (deny-policy, record/replay). Runs on every
-//!   `cargo test` invocation. ~one cargo dep-build then seconds each.
-//! - **full**: every single-file example + the multi-module (`depends`)
-//!   examples, plain-parity only. Gated behind the `AVER_RUST_DIFF_FULL`
-//!   env var (the dep-build + per-example build is minutes of wall
-//!   time — too heavy for PR smoke). Run it with
+//! - **default**: 19 tests, run by every `cargo test` invocation. It
+//!   started as a 3-example plain-parity subset plus the two critical
+//!   behavioral probes (deny-policy, record/replay) and has since grown a
+//!   tail of single-shape regressions — each one a lowering or ownership
+//!   bug that only a real build-and-run catches. ~one cargo dep-build,
+//!   then seconds each. This tier competes for a shared CI budget, so a
+//!   new case earns its place here only when no cheaper harness can hold
+//!   the same ground, and only one shape per class.
+//! - **full**: 11 tests behind `#[ignore]`, 10 of them additionally
+//!   behind the `AVER_RUST_DIFF_FULL` env var — every single-file
+//!   example, the multi-module (`depends`) examples, and the second shape
+//!   of a class whose first shape already runs in the default tier. The
+//!   dep-build + per-example build is minutes of wall time, too heavy for
+//!   PR smoke. Run it with
 //!   `AVER_RUST_DIFF_FULL=1 cargo test --test rust_codegen_differential -- --ignored --nocapture`.
 //!
 //! ## Why this is the porting safety net, not theater
@@ -852,16 +859,31 @@ fn main() -> Unit
 // `own_param`'s `uniquely_owned` answers `false` for the result of a user
 // fn call (the `MirCallee::Fn` arm): a callee may hand back one of its own
 // arguments, so the result can share a collection the caller still holds.
-// Every shape below feeds a call result STRAIGHT into another call's
+// Both shapes below feed a call result STRAIGHT into another call's
 // argument — never through a `let`, which is what keeps the decision on
 // that arm instead of on the binding rules — while the caller keeps its own
 // handle on the same collection and reads it back AFTER the call. Granting
 // ownership there lets the callee mutate the caller's collection in place,
-// so the original changes under it. The parity assert is what catches this:
-// the compiled Rust keeps the collection's copy-on-write protection, so the
-// two backends print different answers the moment the grant is wrong.
+// so the original changes under it.
+//
+// The VM-vs-`expected` assert is the load-bearing one: the VM is where the
+// wrong grant corrupts the caller's collection, and it is checked first.
+// The compiled Rust keeps the collection's copy-on-write protection and
+// still prints the right answer, so the parity assert fires too — as a
+// consequence of the VM's answer having moved, not as an independent
+// signal. What these two tests add over the in-process pins is the
+// end-to-end path: the same program actually compiled to a Rust project,
+// built, and run.
+//
+// Cheap pins for the same class, no `cargo build` involved:
+//   - `own_param_graduation::named_fn_call_result_argument_keeps_the_param_flagged`
+//   - `own_param_graduation::fn_value_call_result_argument_keeps_the_param_flagged`
+//   - `own_param_soundness::fn_value_result_argument_is_not_mutated_in_place`
+// The `MirCallee::LocalSlot` half of the arm (a first-class fn value) is
+// covered only there — it has no build test, deliberately.
 
-/// The `Map` half. `keepFirst` hands back one of its two argument maps, and
+/// The `Map` half, and the one shape of this class that stays in the
+/// default tier. `keepFirst` hands back one of its two argument maps, and
 /// that result is `growth`'s argument with no binding in between; `run`
 /// keeps `base` live and prints it afterwards, so an ownership grant on the
 /// call result shows up as `base` losing its entries.
@@ -912,64 +934,26 @@ fn main() -> Unit
     );
 }
 
-/// The reported `viaHelper` shape: a one-line helper that returns
-/// `Map.set` of its own parameter, its result handed straight to the fold
-/// that grows the map. `run` reads its original map after the fold, so a
-/// fold that mutates the helper's result in place is visible as the
-/// original losing its entries.
-#[test]
-fn rust_via_helper_map_result_keeps_the_callers_map_intact() {
-    let src = r#"module ViaHelperMap
-    intent = "A helper returns Map.set of its own parameter and the result goes straight into a fold"
-    depends []
-    effects [Console.print]
-
-fn setOne(into: Map<String, String>, key: String, skip: Bool) -> Map<String, String>
-    ? "Returns a Map built from its own parameter, or the parameter itself."
-    match skip
-        true -> into
-        false -> Map.set(into, key, "v")
-
-fn fill(keys: List<String>, into: Map<String, String>) -> Map<String, String>
-    ? "Folds the keys into the map it was handed."
-    match keys
-        [] -> into
-        [head, ..tail] -> fill(tail, Map.set(into, head, "v"))
-
-fn render(m: Map<String, String>) -> String
-    ? "Size plus the value under a."
-    "{Map.len(m)}/{Option.withDefault(Map.get(m, "a"), "gone")}"
-
-fn run() -> String
-    ? "The helper result is the fold's argument; the original map is read afterwards."
-    base = Map.set(Map.set({}, "a", "0"), "b", "1")
-    grown = render(fill(["x", "y", "z"], setOne(base, "c", Map.has(base, "a"))))
-    "{grown} {render(base)}"
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print(run())
-"#;
-    // The fold sees 5 keys; `base` still holds its own 2, "a" among them.
-    let expected = "5/0 2/0";
-    let vm = run_vm_inline("via_helper_map", src).expect("vm run");
-    let rust = build_run_rust_inline("via_helper_map", src).expect("rust build+run");
-    assert_eq!(
-        vm, expected,
-        "the map the caller kept was mutated through the helper's result"
-    );
-    assert_eq!(
-        rust, vm,
-        "Rust diverged from VM — the helper's returned map was treated as uniquely owned"
-    );
-}
-
 /// The `Vector` half of the same class — the other collection `own_param`
 /// can graduate. `keepLonger` hands back one of its argument vectors
 /// straight into `overwrite`, which writes over every position, and `run`
 /// reads position 0 of its own vector afterwards.
+///
+/// Full tier: the `Map` sibling above already carries the class through the
+/// emitted-project path, and the cheap in-process pins cover the arm, so a
+/// second `cargo build` does not belong in the default tier.
 #[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
 fn rust_fn_result_argument_keeps_the_callers_vector_intact() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!(
+            "skipping the Vector half of the call-result ownership class — \
+             set AVER_RUST_DIFF_FULL=1 (the Map half runs in the default tier, \
+             and the in-process pins in own_param_graduation cover the arm)"
+        );
+        return;
+    }
+
     let src = r#"module OwnedFnResultVector
     intent = "A helper's Vector result flows straight into another call while the caller keeps its own vector"
     depends []

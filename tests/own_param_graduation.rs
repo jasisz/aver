@@ -238,3 +238,94 @@ fn main() -> Int
         "param stored as a collection element/value arg must stay flagged"
     );
 }
+
+// ─── call results never grant ownership ─────────────────────────────────
+//
+// `uniquely_owned` answers `false` for every call whose callee is not a
+// builtin: a callee may hand back one of its own arguments, so the result
+// can share a collection the caller still holds. Two constructors reach
+// that arm from real source — `MirCallee::Fn` (a named user function) and
+// `MirCallee::LocalSlot` (a first-class fn value held in a slot) — and each
+// one needs its own pin, because a change that only relaxes one of them
+// leaves the other test green.
+//
+// Both shapes below hand a call result STRAIGHT into another call's
+// argument, never through a `let`. That is what keeps the decision on this
+// arm: a `let`-bound result is a `MirExpr::Local` at the call site, which
+// the binding rules settle long before `uniquely_owned` sees a `Call`.
+
+/// The `MirCallee::Fn` edge. `keepFirst` returns one of its two argument
+/// maps and that result is `growth`'s argument with no binding in between,
+/// while `main` reads `base` back afterwards. `growth`'s map param must
+/// stay flagged — granting it ownership lets `growth` mutate `base` in
+/// place. Behavioural twin: the
+/// `rust_fn_result_argument_keeps_the_callers_map_intact` differential.
+#[test]
+fn named_fn_call_result_argument_keeps_the_param_flagged() {
+    let src = r#"module OwnedFnResultMap
+    intent = "a helper's Map result flows straight into another call"
+    depends []
+    effects []
+
+fn keepFirst(a: Map<String, Int>, b: Map<String, Int>) -> Map<String, Int>
+    ? "returns one of its arguments, so the result shares a caller value"
+    match Map.len(a) > 0
+        true -> a
+        false -> b
+
+fn growth(m: Map<String, Int>, n: Int) -> Int
+    ? "threads the map linearly, then reports its size"
+    match n == 0
+        true -> Map.len(m)
+        false -> growth(Map.set(m, "g{n}", n), n - 1)
+
+fn main() -> Int
+    base = Map.set(Map.set({}, "a", 7), "b", 8)
+    grown = growth(keepFirst(base, {}), 4)
+    grown + Map.len(base)
+"#;
+    let program = refine(src);
+    assert!(
+        param_flagged(&program, "growth", 0),
+        "a named-fn call result must not grant ownership of the caller's map"
+    );
+}
+
+/// The `MirCallee::LocalSlot` edge — the same class through a first-class
+/// fn value. `viaValue` calls its `Fn(..)` parameter and hands the result
+/// straight to `growth` while keeping `base` live, so `growth`'s map param
+/// must stay flagged. `aliasIt` returning its own parameter is what makes a
+/// grant here observable, but the pin does not depend on which function is
+/// passed: the pass cannot see through the slot at all.
+#[test]
+fn fn_value_call_result_argument_keeps_the_param_flagged() {
+    let src = r#"module OwnedSlotResultMap
+    intent = "a fn value's Map result flows straight into another call"
+    depends []
+    effects []
+
+fn aliasIt(m: Map<String, Int>) -> Map<String, Int>
+    ? "returns its own parameter, so the result shares a caller value"
+    m
+
+fn growth(m: Map<String, Int>, n: Int) -> Int
+    ? "threads the map linearly, then reports its size"
+    match n == 0
+        true -> Map.len(m)
+        false -> growth(Map.set(m, "g{n}", n), n - 1)
+
+fn viaValue(f: Fn(Map<String, Int>) -> Map<String, Int>, base: Map<String, Int>) -> Int
+    ? "calls the fn value and hands its result straight to another call"
+    grown = growth(f(base), 4)
+    grown + Map.len(base)
+
+fn main() -> Int
+    base = Map.set(Map.set({}, "a", 7), "b", 8)
+    viaValue(aliasIt, base)
+"#;
+    let program = refine(src);
+    assert!(
+        param_flagged(&program, "growth", 0),
+        "a fn-value call result must not grant ownership of the caller's map"
+    );
+}
