@@ -15,6 +15,8 @@ impl<T: ArenaTypes> Arena<T> {
             alloc_space: AllocSpace::Young,
             list_elements_copied: 0,
             list_elements_scanned: 0,
+            map_entries_copied: 0,
+            map_entries_scanned: 0,
             type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -30,6 +32,15 @@ impl<T: ArenaTypes> Arena<T> {
     /// stable constants) from this Arena. Dynamic runtime entries are empty.
     /// Used for independent product threads: each gets a clean Arena with just the
     /// compile-time context needed to execute functions and builtins.
+    ///
+    /// The four copy / scan counters start at zero in the child, so a child
+    /// counts its own work and nothing of its parent's. Nothing is lost by that:
+    /// a child arena that runs an independent-product branch is handed back to
+    /// the parent at the join, and [`Arena::absorb_copy_counters`] folds its
+    /// totals in there. A child that never reaches a join — the base context
+    /// built once and cloned per branch, or a branch that failed — takes its
+    /// counts with it, which is the one gap in reading these numbers as a
+    /// whole-program total.
     pub fn clone_static(&self) -> Self {
         Arena {
             young_entries: Vec::with_capacity(64),
@@ -44,6 +55,8 @@ impl<T: ArenaTypes> Arena<T> {
             alloc_space: AllocSpace::Young,
             list_elements_copied: 0,
             list_elements_scanned: 0,
+            map_entries_copied: 0,
+            map_entries_scanned: 0,
             type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
@@ -101,10 +114,26 @@ impl<T: ArenaTypes> Arena<T> {
             }
             ArenaEntry::Map(map) => {
                 let mut new_map = T::Map::new();
+                let mut table = new_map.table_id();
                 for (hash, (k, v)) in map.iter() {
                     let ik = self.deep_import(*k, source);
                     let iv = self.deep_import(*v, source);
-                    new_map = new_map.insert(*hash, (ik, iv));
+                    let entries_before = new_map.len();
+                    // The map under construction is a local of this call, so it
+                    // goes in through the owned path. `insert` — which is what
+                    // this line used to be — takes `&self` and therefore has to
+                    // preserve the table it is handed, rebuilding the whole
+                    // thing once per entry for nobody's benefit: n^2/2 entry
+                    // duplications to carry a map across an arena boundary.
+                    // The bump is driven by `table_id`, so it counts a rebuild
+                    // that happened rather than inferring one from the method
+                    // name.
+                    new_map = new_map.insert_owned(*hash, (ik, iv));
+                    let table_after = new_map.table_id();
+                    if table_after != table {
+                        self.note_map_entries_copied(entries_before);
+                        table = table_after;
+                    }
                 }
                 let idx = self.push(ArenaEntry::Map(new_map));
                 NanValue::new_map(idx)
@@ -328,6 +357,77 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub fn list_elements_scanned(&self) -> u64 {
         self.list_elements_scanned
+    }
+
+    /// Map entries duplicated while a map table was rebuilt rather than written
+    /// into, the map counterpart of [`Arena::list_elements_copied`].
+    ///
+    /// A `Map.set` whose target is still reachable has to preserve it, so it
+    /// duplicates the whole storage; so does a builder that rebuilds its table
+    /// once per entry, and so does [`Arena::deep_import`] carrying a map into
+    /// another arena. Any of those makes n^2/2 entries out of one pass, and
+    /// consuming the table instead leaves this at zero.
+    ///
+    /// Read it as "no map table was rebuilt entry by entry", and nothing wider.
+    /// It says nothing about time — see [`Arena::map_entries_scanned`] — and it
+    /// does not cover the collector, which duplicates a live map's table of its
+    /// own accord when it promotes it to the stable space. Zero here is
+    /// therefore not a claim that no map storage was copied anywhere.
+    ///
+    /// It is per-arena, and a child arena starts at zero
+    /// ([`Arena::clone_static`]); [`Arena::absorb_copy_counters`] is what brings
+    /// a child's total back to its parent at the join.
+    #[inline]
+    pub fn map_entries_copied(&self) -> u64 {
+        self.map_entries_copied
+    }
+
+    /// Record that `entries` map entries were duplicated to preserve a target
+    /// the caller was not allowed to consume.
+    #[inline]
+    pub fn note_map_entries_copied(&mut self, entries: usize) {
+        self.map_entries_copied += entries as u64;
+    }
+
+    /// Add `child`'s copy / scan totals to this arena's.
+    ///
+    /// A child arena counts from zero ([`Arena::clone_static`]), so work an
+    /// independent-product branch did would otherwise disappear when its arena
+    /// is dropped — and the deep import that fills a child with its arguments
+    /// is exactly the kind of work these counters exist to see. Called at the
+    /// join, where the branch hands its arena back.
+    #[inline]
+    pub fn absorb_copy_counters(&mut self, child: &Arena<T>) {
+        self.list_elements_copied += child.list_elements_copied;
+        self.list_elements_scanned += child.list_elements_scanned;
+        self.map_entries_copied += child.map_entries_copied;
+        self.map_entries_scanned += child.map_entries_scanned;
+    }
+
+    /// Map entries the collector has read while deciding whether a live map
+    /// needs rewriting, the map counterpart of
+    /// [`Arena::list_elements_scanned`].
+    ///
+    /// This is the counter that tracks *time*, and for maps there is no escape
+    /// from it. A list body built entirely out of immediates is skipped without
+    /// being read; a map has no such flag, so a live `Map<Int, Int>` — in which
+    /// nothing can ever relocate — is still read entry by entry on every
+    /// collection that sees it. Threading one map through a fold therefore
+    /// grows this quadratically whatever the map holds, which is the residual
+    /// cost left over once the duplication above is gone.
+    ///
+    /// One read is missed on purpose: the pre-scan in the promotion fast path
+    /// stops at the first entry that has to move, and only the runs that scan a
+    /// map in full are counted. That undercounts, never the reverse.
+    #[inline]
+    pub fn map_entries_scanned(&self) -> u64 {
+        self.map_entries_scanned
+    }
+
+    /// Record that `entries` map entries were read by a collection.
+    #[inline]
+    pub fn note_map_entries_scanned(&mut self, entries: usize) {
+        self.map_entries_scanned += entries as u64;
     }
 
     #[inline]

@@ -5,6 +5,41 @@ fn size_is_8_bytes() {
     assert_eq!(std::mem::size_of::<NanValue>(), 8);
 }
 
+/// Converting a tree-shaped `Value::Map` into the arena representation is the
+/// third place that built a map by rebuilding it — the same one-screen loop as
+/// `Map.fromList`, on the path every replayed value and every interop value
+/// crosses. With the preserving insert, a 400-entry map cost 79,800 entry
+/// duplications and an 800-entry one 319,600. The map under construction is
+/// unreachable from anywhere else, so the right answer is zero.
+#[test]
+fn converting_a_map_value_does_not_rebuild_its_table_per_entry() {
+    fn conversion_copies(n: i64) -> u64 {
+        let mut arena = Arena::new();
+        let entries: std::collections::HashMap<crate::value::Value, crate::value::Value> = (0..n)
+            .map(|i| {
+                (
+                    crate::value::Value::Str(format!("k{i}")),
+                    crate::value::Value::Int(aver_rt::AverInt::Small(i)),
+                )
+            })
+            .collect();
+        let value = crate::value::Value::Map(entries);
+        let converted = NanValue::from_value(&value, &mut arena);
+        assert_eq!(arena.map_ref_value(converted).len(), n as usize);
+        arena.map_entries_copied()
+    }
+
+    let small = conversion_copies(400);
+    let large = conversion_copies(800);
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "converting a map value rebuilt the table it was filling: n=400 copied \
+         {small} entries, n=800 copied {large}",
+    );
+}
+
 #[test]
 fn float_roundtrip() {
     for &f in &[0.0, -0.0, 1.0, -1.0, 3.14, f64::INFINITY, f64::NEG_INFINITY] {

@@ -158,7 +158,7 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
             }
             None => AverList::from_vec(vec![value]),
         };
-        headers = headers.insert(key, entry);
+        headers = headers.insert_owned(key, entry);
     }
 
     let mut body_bytes = vec![0_u8; content_length];

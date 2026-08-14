@@ -1212,6 +1212,10 @@ impl VM {
                                 match r {
                                     Ok((value, child_arena)) => {
                                         let imported = self.arena.deep_import(value, &child_arena);
+                                        // The branch counted its own copies from
+                                        // zero (`clone_static`); fold them in
+                                        // before its arena is dropped.
+                                        self.arena.absorb_copy_counters(&child_arena);
                                         results.push(imported);
                                     }
                                     Err(e) => {
@@ -1277,6 +1281,10 @@ impl VM {
                             for r in par_results {
                                 let (value, child_arena) = r?;
                                 let imported = self.arena.deep_import(value, &child_arena);
+                                // The branch counted its own copies from zero
+                                // (`clone_static`); fold them in before its
+                                // arena is dropped.
+                                self.arena.absorb_copy_counters(&child_arena);
                                 results.push(imported);
                             }
                             results

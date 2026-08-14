@@ -132,7 +132,7 @@ fn headers_to_val(headers: crate::aver_rt::HttpHeaders) -> Val {
     for (name, values) in headers.iter() {
         let value_list =
             crate::aver_rt::AverList::from_vec(values.iter().cloned().map(Val::ValStr).collect());
-        out = out.insert(name.clone(), Val::ValList(value_list));
+        out = out.insert_owned(name.clone(), Val::ValList(value_list));
     }
     Val::ValMap(out)
 }
@@ -205,7 +205,7 @@ fn val_to_headers(value: Val) -> Result<crate::aver_rt::HttpHeaders, AverStr> {
                 }
             }
         }
-        out = out.insert(key.clone(), crate::aver_rt::AverList::from_vec(value_strs));
+        out = out.insert_owned(key.clone(), crate::aver_rt::AverList::from_vec(value_strs));
     }
 
     Ok(out)
