@@ -991,3 +991,77 @@ fn evacuating_a_segments_node_keeps_the_parts_allocation_when_nothing_moves() {
     assert_eq!(arena.list_len_value(roots[0]), 3);
     assert_eq!(arena.list_get_value(roots[0], 2).unwrap().as_int(&arena), 4);
 }
+
+/// The third boundary, and the third way to reach the same slot.
+///
+/// `finalize_frame_return` promotes its roots to stable and then truncates all
+/// three younger spaces. Promotion covers a root in young, yard or handoff
+/// whatever it holds, because it takes those spaces wholesale rather than by
+/// region — but a root that is ALREADY stable moves nowhere, and
+/// `promote_value_to_stable` used to hand it straight back without reading it.
+/// An owned in-place write into such a vector therefore survived the promotion
+/// and died in the truncate right after it.
+///
+/// The sequence below is what the boundary does, in its order: promote a
+/// vector to stable the way an earlier return of the same kind would, mark the
+/// frame, write into it from above the mark, promote, truncate.
+#[test]
+fn the_stable_promotion_rewrites_a_stable_slot_written_in_place() {
+    let mut arena = Arena::new();
+
+    let mut resident = [NanValue::new_vector(
+        arena.push_vector(vec![NanValue::new_int_inline(0)]),
+    )];
+    arena.promote_roots_to_stable(&mut resident, false);
+    let vector = resident[0];
+
+    let young_mark = arena.young_len() as u32;
+    let payload = NanValue::new_string(arena.push_string("written-in-place"));
+    arena.get_vector_mut(vector.arena_index())[0] = payload;
+
+    let mut roots = [vector];
+    arena.promote_roots_to_stable(&mut roots, true);
+    arena.truncate_to(young_mark);
+    // Whatever the program allocates next takes the slot the payload had, which
+    // is how the loss reads back as a wrong value rather than as a panic.
+    let _filler = NanValue::new_string(arena.push_string("JUNK-FILLER-ONE"));
+
+    let element = arena.vector_ref_value(roots[0])[0];
+    assert_eq!(
+        arena.get_string_value(element).to_string(),
+        "written-in-place",
+        "the stable promotion dropped the element written into a stable slot",
+    );
+}
+
+/// The other side of the same flag, on the same boundary.
+///
+/// Without an in-place write to account for, a stable root is not read at all —
+/// and reading one is not free, because everything stable the roots reach is
+/// walked. A callback that returns a long list of strings crosses this boundary
+/// on every call.
+#[test]
+fn the_stable_promotion_reads_a_stable_root_only_when_told_to() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..64)
+        .map(|i| NanValue::new_string(arena.push_string(&format!("s{i}"))))
+        .collect();
+    let mut resident = [NanValue::new_list(arena.push_list(items))];
+    arena.promote_roots_to_stable(&mut resident, false);
+
+    let scanned = arena.list_elements_scanned();
+    arena.promote_roots_to_stable(&mut resident, false);
+    assert_eq!(
+        arena.list_elements_scanned() - scanned,
+        0,
+        "the promotion walked a stable list with no in-place write to repair",
+    );
+
+    let scanned = arena.list_elements_scanned();
+    arena.promote_roots_to_stable(&mut resident, true);
+    assert_eq!(
+        arena.list_elements_scanned() - scanned,
+        64,
+        "the promotion skipped a stable list it had been asked to repair",
+    );
+}

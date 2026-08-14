@@ -87,7 +87,7 @@ impl VM {
     ) {
         let _ = yard_dirty;
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
 
         let has_local_young = self.arena.young_len() > arena_mark as usize;
@@ -128,7 +128,7 @@ impl VM {
         frame_roots: &mut [NanValue],
     ) -> (bool, bool) {
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
         let has_local_young = self.arena.young_len() > arena_mark as usize;
         let has_local_yard = self.arena.yard_len() > yard_base as usize;
@@ -186,18 +186,31 @@ impl VM {
         (false, false)
     }
 
+    /// Finish the frame whose caller is not another frame — the callee of a
+    /// `call_function`, and the top-level entry point.
+    ///
+    /// Promotion answers most of what the truncations below could break:
+    /// a root in young, yard or handoff is taken to stable wholesale, contents
+    /// and all, with no region test to skip past. A root already IN stable is
+    /// the exception — it moves nowhere, and `inplace_write_escaped` is the
+    /// only thing that says it may nevertheless be holding a value the
+    /// truncations are about to drop. A vector promoted to stable by an earlier
+    /// return of this same kind, handed to a callee and written into by
+    /// `VECTOR_SET_OR_KEEP`'s owned branch, is exactly that shape.
     pub(super) fn finalize_frame_return(
         &mut self,
         arena_mark: u32,
         yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) {
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
-        self.arena.promote_roots_to_stable(frame_roots);
+        self.arena
+            .promote_roots_to_stable(frame_roots, inplace_write_escaped);
         self.arena.truncate_to(arena_mark);
         self.arena.truncate_yard_to(yard_base);
         self.arena.truncate_handoff_to(handoff_mark);
@@ -213,7 +226,7 @@ impl VM {
         frame_roots: &mut [NanValue],
     ) -> (bool, bool) {
         if globals_dirty {
-            self.arena.promote_roots_to_stable(&mut self.globals);
+            self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
 
         let has_local_young = self.arena.young_len() > arena_mark as usize;
@@ -342,14 +355,12 @@ impl VM {
         }
 
         if self.frames.len() == caller_depth {
-            // No flag to pass: this path promotes the roots to stable, which
-            // takes every space wholesale rather than by region, so an
-            // in-place write into an older slot is carried along with the rest.
             self.finalize_frame_return(
                 frame.arena_mark,
                 frame.yard_base,
                 frame.handoff_mark,
                 frame.globals_dirty,
+                frame.inplace_write_escaped,
                 std::slice::from_mut(&mut result),
             );
             if caller_depth == 0 {

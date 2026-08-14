@@ -1411,7 +1411,28 @@ impl<T: ArenaTypes> Arena<T> {
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
     }
 
-    pub fn promote_roots_to_stable(&mut self, roots: &mut [NanValue]) {
+    /// Move every root, and everything it reaches, into stable.
+    ///
+    /// `rewrite_out_of_region_roots` means the same here as in
+    /// [`Arena::evacuate_frame_to_yard`]: the caller is reporting an owned
+    /// in-place write that landed outside the returning frame's regions. It
+    /// only ever changes what happens to a root that is ALREADY stable.
+    /// Promotion takes young, yard and handoff wholesale — no region test, no
+    /// marks — so a root in any of those three carries whatever it holds along
+    /// with it whether the flag is set or not. A stable root moves nowhere, and
+    /// without the flag it is not read either, so a stable vector the frame
+    /// wrote into keeps pointing at a value the caller is about to truncate
+    /// away. That is the one case the flag buys, and it costs a walk of
+    /// everything stable the roots reach, which is why it is not free.
+    pub fn promote_roots_to_stable(
+        &mut self,
+        roots: &mut [NanValue],
+        rewrite_out_of_region_roots: bool,
+    ) {
+        self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
+        if rewrite_out_of_region_roots {
+            self.begin_inplace_visit_epoch();
+        }
         let mut relocated_young =
             Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
         let mut relocated_yard =
@@ -1427,6 +1448,7 @@ impl<T: ArenaTypes> Arena<T> {
                 &mut relocated_handoff,
             );
         }
+        self.rewrite_out_of_region_roots = false;
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated_young);
         Self::recycle_u32_scratch(&mut self.scratch_yard, relocated_yard);
         Self::recycle_u32_scratch(&mut self.scratch_handoff, relocated_handoff);
@@ -1920,6 +1942,37 @@ impl<T: ArenaTypes> Arena<T> {
                 );
                 self.stable_entries[(new_index & HEAP_INDEX_MASK_U32) as usize] = new_entry;
                 value.with_heap_index(new_index)
+            }
+            // A stable root does not move, so its handle is returned as it
+            // stands either way. What it may still hold is a reference into a
+            // region this boundary is about to drop, put there by an owned
+            // in-place write, and the descent has to happen INSIDE the
+            // promotion rather than before or after it: the entry's own
+            // references are promoted through the same `relocated_*` tables as
+            // everything else, so a value reached both from here and from the
+            // rest of the roots lands in one stable slot instead of two, and
+            // the two references to it stay the same reference.
+            //
+            // The memo is doing two jobs. It keeps a slot reached twice from
+            // being descended into twice, and it terminates a stable value that
+            // reaches itself — which nothing but an in-place write can build,
+            // and which would otherwise recur forever here.
+            HeapSpace::Stable if self.rewrite_out_of_region_roots => {
+                let raw_index = raw_index as usize;
+                if raw_index < self.stable_entries.len()
+                    && self.claim_inplace_visit(HeapSpace::Stable, raw_index)
+                {
+                    let entry =
+                        core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0));
+                    let new_entry = self.promote_entry_to_stable(
+                        entry,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                    );
+                    self.stable_entries[raw_index] = new_entry;
+                }
+                value
             }
             HeapSpace::Stable => value,
         }

@@ -1,6 +1,6 @@
 use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
-use crate::vm::opcode::{LOAD_CONST, RETURN};
+use crate::vm::opcode::{CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, VECTOR_SET_OR_KEEP};
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 use crate::{lexer::Lexer, parser::Parser, vm};
 
@@ -1035,5 +1035,116 @@ fn writing_at_every_boundary_reads_the_carried_map_at_every_boundary() {
         extra >= 50 * 32,
         "fifty more armed boundaries did not read the 32-entry map they carry \
          fifty more times: 50 iterations read {fifty}, 100 read {hundred}",
+    );
+}
+
+/// The depth-0 return boundary, driven through the real dispatch loop.
+///
+/// `call_function` records `caller_depth = frames.len()`, so the callee of a
+/// host callback, an oracle stub or an HTTP handler returns through
+/// `finalize_frame_return` rather than through either caller path — and a
+/// vector handed to it can already be in stable, because that is where this
+/// same boundary puts every result it returns.
+///
+/// The arming is correct here: stable is not frame-local, so the write sets
+/// `inplace_write_escaped` and the barrier keeps the frame off the
+/// young-truncate fast return. What it lands on instead is the path that
+/// promotes to stable — which used to hand a stable root back unread and then
+/// truncate the payload away underneath it.
+#[test]
+fn a_stable_vector_written_in_place_survives_the_depth_zero_return() {
+    let mut code = CodeStore::new();
+    let writer_id = code.add_function(FnChunk {
+        name: "writer".to_string(),
+        arity: 1,
+        local_count: 1,
+        // vec, 0, ("PAYLOAD-" ++ "MARKER") -> owned in-place set -> return vec.
+        // The concatenation is what makes the payload a FRESH allocation above
+        // the frame's mark; a string constant is already in the arena and would
+        // never have been dropped.
+        code: vec![
+            LOAD_LOCAL,
+            0,
+            LOAD_CONST,
+            0,
+            0,
+            LOAD_CONST,
+            0,
+            1,
+            LOAD_CONST,
+            0,
+            2,
+            CONCAT,
+            VECTOR_SET_OR_KEEP,
+            1,
+            RETURN,
+        ],
+        constants: Vec::new(),
+        effects: Vec::new(),
+        thin: true,
+        parent_thin: false,
+        leaf: false,
+        no_alloc: false,
+        source_file: String::new(),
+        line_table: Vec::new(),
+    });
+
+    // The vector and the two string constants all start in stable, which is
+    // where this boundary leaves everything it returns.
+    let mut arena = Arena::new();
+    let mut promoted = [
+        NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)])),
+        NanValue::new_string(arena.push_string("PAYLOAD-")),
+        NanValue::new_string(arena.push_string("MARKER")),
+    ];
+    arena.promote_roots_to_stable(&mut promoted, false);
+    let vector = promoted[0];
+    code.functions[writer_id as usize].constants =
+        vec![NanValue::new_int_inline(0), promoted[1], promoted[2]];
+
+    // A suspended caller frame, so `call_function` records a caller depth of 1
+    // and the writer's own return is the depth boundary.
+    let mut vm = VM::new(code, Vec::new(), arena);
+    vm.frames.push(CallFrame {
+        fn_id: writer_id,
+        ip: 0,
+        bp: 0,
+        local_count: 0,
+        arena_mark: 0,
+        yard_base: 0,
+        yard_mark: 0,
+        handoff_mark: 0,
+        globals_dirty: false,
+        yard_dirty: false,
+        handoff_dirty: false,
+        inplace_write_escaped: false,
+        thin: true,
+        parent_thin: false,
+    });
+    vm.start_profiling();
+
+    let result = vm
+        .call_function(writer_id, &[vector])
+        .expect("writer should return");
+
+    let report = vm.profile_report().expect("profiling should be enabled");
+    assert_eq!(
+        (
+            report.returns.thin_fast_returns,
+            report.returns.young_truncate_fast_returns,
+            report.returns.thin_slow_returns,
+        ),
+        (0, 0, 1),
+        "the write did not reroute the return onto the promoting boundary, so \
+         this is no longer a test of that boundary",
+    );
+
+    // Whatever runs next takes the slot the payload had.
+    let _filler = NanValue::new_string(vm.arena.push_string("JUNK-FILLER-ONE"));
+    let element = vm.arena.vector_ref_value(result)[0];
+    assert_eq!(
+        vm.arena.get_string_value(element).to_string(),
+        "PAYLOAD-MARKER",
+        "the depth-0 return dropped the element written into a stable vector",
     );
 }
