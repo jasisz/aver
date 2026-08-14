@@ -4216,23 +4216,6 @@ fn emit_mir_builtin_call(
             "aver_rt::AverList::from_vec({}.chars().map(|c| c.to_string()).collect::<Vec<_>>())",
             arg!(0)
         ),
-        "String.repeat" => {
-            let s = arg!(0);
-            let n = arg!(1);
-            // A negative or out-of-`usize` count yields the empty string
-            // (matching a 0-repeat); `to_usize()` is `None` for both.
-            format!("{}.repeat(({}).to_usize().unwrap_or(0))", s, n)
-        }
-        "String.indexOf" => {
-            let s = arg!(0);
-            let sub = arg!(1);
-            // Producer: the found byte index wraps in `AverInt`; not-found
-            // is `-1`.
-            format!(
-                "{}.find(&*{}).map(|i| aver_rt::AverInt::from_i64(i as i64)).unwrap_or(aver_rt::AverInt::from_i64(-1))",
-                s, sub
-            )
-        }
         "String.byteLength" => {
             format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
         }

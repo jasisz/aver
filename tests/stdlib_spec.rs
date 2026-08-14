@@ -148,6 +148,48 @@ fn embedded_bytes_module_works_outside_the_project_module_root() {
     assert!(rendered.contains("### record Digest32"), "{rendered}");
 }
 
+/// `Bytes.toHex` is the standard library's own `String.join`-over-a-
+/// list-loop, and for a long time it missed the deforestation pass Aver
+/// ships: the recogniser knew the Bool-driven loop and the list-driven
+/// loop that reverses at the CALL site, but not the list-driven loop
+/// that reverses in its own base case — which is what `hexParts` writes.
+/// Pin both halves of the fix: the shape is recognised, and it is
+/// recognised on the `aver run` path too (dependency modules used to be
+/// loaded with the pass switched off there, so the very same source was
+/// deforested for `aver compile` and left alone for the VM).
+#[test]
+fn stdlib_to_hex_is_deforested_and_the_vm_runs_the_fused_shape() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/stdlib_bytes_hex_app.av")
+        .to_string_lossy()
+        .into_owned();
+
+    let explained = run_aver(&["compile", &fixture, "--explain-passes", "--json"]);
+    assert_success("aver compile --explain-passes", &explained);
+    let report = String::from_utf8_lossy(&explained.stdout);
+    assert!(
+        report.contains("Bytes.hexParts__buffered"),
+        "the pass must report the standard library's own fusion site: {report}"
+    );
+
+    let run = run_aver(&["run", &fixture, "--profile"]);
+    assert_success("aver run --profile", &run);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.starts_with("000a107fff"),
+        "hex output changed: {stdout}"
+    );
+    let profile = format!("{stdout}{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        profile.contains("Bytes.hexParts__buffered"),
+        "the VM must execute the buffered variant, not the list builder: {profile}"
+    );
+    assert!(
+        !profile.contains("String.join"),
+        "the intermediate list and its join must be gone: {profile}"
+    );
+}
+
 #[cfg(feature = "wasm")]
 #[test]
 fn embedded_crypto_sha256_matches_fips_vectors_on_wasm_gc() {

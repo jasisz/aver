@@ -131,6 +131,57 @@ fn build_optimized_mir(
     crate::ir::mir::optimize(lowered)
 }
 
+/// Run the buffer-build deforestation pass over a freshly-parsed
+/// dependency module, and keep the result only when the entry's symbol
+/// table already knows the `<fn>__buffered` variants it synthesized.
+///
+/// The VM re-parses every dep off disk (`load_module_tree`), so the pass
+/// the caller ran over ITS copy of the module — the copy `SymbolTable`
+/// was built from — has to run again here or the VM executes the
+/// unfused spelling of code the Rust compile path fuses.
+///
+/// The symbol-table check is what makes running it here safe for every
+/// caller at once. A caller that loaded its deps pristine
+/// (`run_buffer_build: false` — the proof exporters and the wasm-gc
+/// paths, which have no `Buffer` lowering) never registered a
+/// `<dep>.<fn>__buffered` name, and compiling a call to a fn the symbol
+/// table has never heard of would resolve to nothing. So: fuse when the
+/// caller fused, stay pristine when it didn't. Both shapes compute the
+/// same result; only the allocation count differs.
+fn adopt_buffer_build_if_symbols_agree(
+    dep_name: &str,
+    pristine: Vec<TopLevel>,
+    entry_symbols: &SymbolTable,
+) -> Vec<TopLevel> {
+    // Detection is read-only, so ask it first: most dep modules hold no
+    // builder at all, and this keeps the common case from copying a
+    // module's verify blocks just to throw the copy away.
+    let candidates: Vec<&crate::ast::FnDef> = pristine
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    let has_sink = !crate::ir::compute_buffer_build_sinks(&candidates).is_empty();
+    drop(candidates);
+    if !has_sink {
+        return pristine;
+    }
+
+    let mut fused = pristine.clone();
+    let report = crate::ir::pipeline::buffer_build(&mut fused);
+    if report.synthesized.is_empty() {
+        return pristine;
+    }
+    let every_variant_known = report.synthesized.iter().all(|name| {
+        entry_symbols
+            .fn_id_of(&crate::ir::FnKey::in_module(dep_name, name.clone()))
+            .is_some()
+    });
+    if every_variant_known { fused } else { pristine }
+}
+
 fn compile_program_inner(
     items: &[ResolvedTopLevel],
     symbols: &SymbolTable,
@@ -425,6 +476,7 @@ impl ProgramCompiler {
         // saw (TCO rewrites tail calls; the slot resolver allocates
         // local slots both passes rely on).
         crate::ir::pipeline::tco(&mut mod_items);
+        mod_items = adopt_buffer_build_if_symbols_agree(dep_name, mod_items, entry_symbols);
         crate::ir::pipeline::resolve(&mut mod_items);
 
         // Dependency types use qualified canonical keys. Their bare display

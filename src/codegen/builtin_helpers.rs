@@ -95,8 +95,6 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "StringEndsWith(",
             "StringTrim(",
             "StringReplace(",
-            "StringRepeat(",
-            "StringIndexOf(",
             "StringToUpper(",
             "StringToLower(",
             "StringFromBool(",

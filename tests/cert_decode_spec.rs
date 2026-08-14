@@ -32,6 +32,10 @@
 //! `python3` is unavailable, mirroring `cert_verify_spec.rs`.
 #![cfg(feature = "wasm")]
 
+#[path = "support/scratch_dir.rs"]
+mod scratch_dir;
+
+use scratch_dir::{ScratchDir, temp_dir};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -188,16 +192,6 @@ fn python_available() -> bool {
     Command::new("python3").arg("--version").output().is_ok()
 }
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    d.push(format!("aver-{prefix}-{nanos}"));
-    d
-}
-
 fn aver_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
     command.env(
@@ -213,7 +207,7 @@ fn aver_command() -> Command {
 
 /// Copy the decoder prelude sources into a fresh temp dir and `lake build` them
 /// (the witnesses import the resulting `.olean`s).
-fn build_prelude() -> PathBuf {
+fn build_prelude() -> ScratchDir {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = repo.join("aver-cert/assets/wall/current");
     let dst = temp_dir("cdec-prelude");
@@ -656,9 +650,6 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
         "S3 role-table differential PASS: {checked} modules \
          (all certkit fixtures + json.av + hello.av), {carrierless_seen} carrierless"
     );
-
-    let _ = std::fs::remove_dir_all(&out);
-    let _ = std::fs::remove_dir_all(&prelude);
 }
 
 /// F5 transition differential: one decode-once equality per module pins the
@@ -727,9 +718,6 @@ fn f5_kernel_string_roles_match_rust_classifier_on_full_corpus() {
     eprintln!(
         "F5 string-role differential PASS: {checked} modules (all certkit fixtures, including stringeq.av, + json.av)"
     );
-
-    let _ = std::fs::remove_dir_all(out);
-    let _ = std::fs::remove_dir_all(prelude);
 }
 
 fn first_i64_arith_offsets(bytes: &[u8], targets: &[u32]) -> Vec<(u32, usize, u8)> {
@@ -871,9 +859,6 @@ fn f5_mutated_string_eq_loop_opcode_changes_kernel_classification() {
     );
     let (ok, report) = run_lean(&prelude, &src);
     assert!(ok, "F5 kernel mutation control failed:\n{report}");
-
-    let _ = std::fs::remove_dir_all(out);
-    let _ = std::fs::remove_dir_all(prelude);
 }
 
 const TWO_EQ_WAT: &str = r#"
@@ -939,7 +924,6 @@ fn f5_two_eq_helpers_are_both_classified_without_uniqueness_decline() {
     );
     let (ok, report) = run_lean(&prelude, &src);
     assert!(ok, "F5 kernel two-eq control failed:\n{report}");
-    let _ = std::fs::remove_dir_all(prelude);
 }
 
 // ---- S1 differential transition -----------------------------------------
@@ -1088,9 +1072,6 @@ fn s1_rust_splices_equal_kernel_decodes_on_full_corpus() {
     eprintln!(
         "S1 differential PASS: {checked_obligations} obligations, {checked_code_arms} CodeTbl arms, {checked_struct_facts} struct facts"
     );
-
-    let _ = std::fs::remove_dir_all(&out);
-    let _ = std::fs::remove_dir_all(&prelude);
 }
 
 // ---- main differential + coverage ---------------------------------------
@@ -1320,9 +1301,6 @@ fn cert_decode_three_way_differential_and_coverage() {
             .count(),
         missing
     );
-
-    let _ = std::fs::remove_dir_all(&out);
-    let _ = std::fs::remove_dir_all(&prelude);
 }
 
 // ---- mutation suite M1–M7 ------------------------------------------------
@@ -1626,7 +1604,4 @@ fn cert_decode_mutations_fail_closed() {
             "M7: a declared-size/content mismatch must decline at the bounded section wall:\n{report}"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&out);
-    let _ = std::fs::remove_dir_all(&prelude);
 }

@@ -28,7 +28,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "String.replace"
             | "String.replaceFirst"
             | "String.join"
-            | "String.repeat"
             | "String.reverse"
             | "String.fromInt"
             | "String.fromFloat"

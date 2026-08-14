@@ -810,8 +810,6 @@ function StringStartsWith(s: string, prefix: string): bool
 function StringEndsWith(s: string, suffix: string): bool
 function StringTrim(s: string): string
 function StringReplace(s: string, from_: string, to_: string): string
-function StringRepeat(s: string, n: int): string
-function StringIndexOf(s: string, sub: string): int
 function StringToUpper(s: string): string
 function StringToLower(s: string): string
 function StringFromBool(b: bool): string

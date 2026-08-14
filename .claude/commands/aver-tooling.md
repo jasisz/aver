@@ -191,10 +191,13 @@ aver compile file.av --explain-passes
 - Default: Rust codegen, emits a modular Cargo project
 - `--target wasm-gc`: native WebAssembly GC + tail-call output. Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+, Cloudflare Workers).
 - `--target wasip2`: WASI 0.2 / Component Model output for wasmtime and other component hosts. It wraps the wasm-gc core with `wit-component`; see `docs/wasip2.md` for the supported effect surface.
-- `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed).
+- `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed). It drops the name section, so a wasm trap reports `<wasm function N>` instead of the name of the function that trapped — `aver compile` says so on stderr for a program whose named helpers it is about to strip.
+
 - `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> HttpResponse`.
 - `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze`, `escape`, `build_symbols`, `name_resolve`, `refinement_lower`, `contract_lower`, `law_lower` }. `diff -u` between two stages shows exactly what each pass rewrote.
 - `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
+
+**`Map` size on wasm-gc.** A `Map<K, V>` compiled to `wasm-gc` (and therefore to `wasip2`, which wraps it) is an open-addressing table that starts at 16 buckets and doubles whenever an insert would take it past three quarters full, rehashing its entries into the wider table. `Map.set` therefore takes keys until memory runs out, the same as on the VM and the Rust target, and no size is a cliff. The table used to be fixed at 16384 buckets, and the 16385th distinct key had nowhere to go; that ceiling is gone.
 
 ### Artifact certificates
 

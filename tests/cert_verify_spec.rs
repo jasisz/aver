@@ -79,26 +79,13 @@
 
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
+#[path = "support/scratch_dir.rs"]
+mod scratch_dir;
 
 use cert_wall::materialize as materialize_wall;
+use scratch_dir::{ScratchDir, temp_dir};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-fn temp_dir(prefix: &str) -> PathBuf {
-    // Nanos alone collide when parallel tests request dirs in the same tick
-    // (observed as spurious NotFound failures under RUST_TEST_THREADS=6);
-    // the process id and a per-process counter make the name unique.
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let mut d = std::env::temp_dir();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id();
-    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    d.push(format!("aver-{prefix}-{nanos}-{pid}-{seq}"));
-    d
-}
 
 fn copy_dir(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).unwrap();
@@ -267,9 +254,6 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
         corrupted,
         "corrupted Artifact.olean survived integrity validation"
     );
-
-    let _ = std::fs::remove_dir_all(out_dir);
-    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 fn set_named_code_nlocals_to_zero(
@@ -302,7 +286,7 @@ fn set_named_code_nlocals_to_zero(
     std::fs::write(module, tampered).unwrap();
 }
 
-fn compile_cert_goals(prefix: &str) -> (PathBuf, PathBuf, PathBuf) {
+fn compile_cert_goals(prefix: &str) -> (ScratchDir, PathBuf, PathBuf) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir(prefix);
     let compile = aver_command()
@@ -424,7 +408,7 @@ fn tripwire_lake_available() -> bool {
 /// per gate is nearly free — unlike the verification each gate then performs.
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
-fn tripwire_baseline(prefix: &str) -> Option<PathBuf> {
+fn tripwire_baseline(prefix: &str) -> Option<ScratchDir> {
     if !tripwire_lake_available() {
         return None;
     }
@@ -485,8 +469,6 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
         report.contains("artifact-check:") && report.contains("checker-owned Lean predicate"),
         "missing artifact-check line on the happy path:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Emits the nested-module fixture baseline: a project whose dotted module
@@ -494,7 +476,7 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
 /// file (`Nested/Deep/Util.lean`) that `Manifest.lean` and `Certificate.lean`
 /// import by its dotted module name. Returns `None` when `lake` is
 /// unavailable, mirroring `tripwire_baseline`.
-fn nested_module_baseline(prefix: &str) -> Option<PathBuf> {
+fn nested_module_baseline(prefix: &str) -> Option<ScratchDir> {
     if !tripwire_lake_available() {
         return None;
     }
@@ -552,8 +534,6 @@ fn cert_verify_accepts_nested_module_certificate() {
         report.contains("Nested_Deep_Util_bump") && report.contains("Nested_Deep_Util_tally"),
         "the exports whose models live in the nested module must certify:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A nested `.lean` file that no staged `Manifest.lean`/`Certificate.lean`
@@ -588,8 +568,6 @@ fn cert_verify_ignores_unimported_nested_lean_file() {
         report.contains("CHECKED") && !report.contains("DECLINED"),
         "verdict must be unchanged by the unimported decoy:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A nested path with a bad segment declines with the filename-gate message
@@ -613,8 +591,6 @@ fn cert_verify_declines_bad_nested_path_segment() {
             && report.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
         "wrong reason for bad nested segment:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A nested file whose dotted module name has a checker-owned or toolchain
@@ -640,8 +616,6 @@ fn cert_verify_declines_nested_shadow_of_checker_root() {
         report.contains("shadows a checker/toolchain import"),
         "wrong reason for nested shadow:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Two staged paths that differ only by ASCII case are rejected at staging:
@@ -670,7 +644,6 @@ fn cert_verify_declines_case_colliding_nested_paths() {
         != std::fs::read_to_string(lower.join("Store.lean")).unwrap();
     if !coexist {
         eprintln!("skipping case-collision test: staging filesystem is case-insensitive");
-        let _ = std::fs::remove_dir_all(&out_dir);
         return;
     }
 
@@ -690,8 +663,6 @@ fn cert_verify_declines_case_colliding_nested_paths() {
         report.contains("collide case-insensitively"),
         "wrong reason for case collision:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A cert-data shape this checker does not know is rejected, never
@@ -718,9 +689,6 @@ fn cert_tripwire_declines_unsupported_schema_version() {
         out.contains("unsupported certificate schema_version 99"),
         "wrong reason for schema v99 rejection:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (y) Package-format drift: the package format is versioned independently
@@ -746,9 +714,6 @@ fn cert_tripwire_declines_unsupported_format_version() {
         out.contains("unsupported certificate format version 2"),
         "wrong reason for format version drift:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (z) Wall drift: an unknown aggregate `wall_id` is rejected before any Lean
@@ -775,9 +740,6 @@ fn cert_tripwire_declines_unknown_wall_id() {
         out.contains("unsupported certificate wall `sha256:deadbeef`"),
         "wrong reason for unknown wall rejection:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The JSON must pin the artifact-level certificate root the checker expects.
@@ -806,9 +768,6 @@ fn cert_tripwire_declines_json_artifact_root_drift() {
         out.contains("artifact certificate root mismatch"),
         "wrong reason for artifact root drift:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The LEAN manifest must name the artifact-level certificate root too: JSON
@@ -839,9 +798,6 @@ fn cert_tripwire_declines_lean_artifact_root_drift() {
         out.contains("manifest.subject.artifactRoot"),
         "wrong reason for Lean artifact root drift:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (ab) Artifact-data decoy: a cert-supplied `Artifact.data` that points at
@@ -881,9 +837,6 @@ fn cert_tripwire_declines_tampered_artifact_data() {
         !out.contains("CERTIFIED"),
         "tampered artifact data credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (a) One flipped wasm byte is an artifact hash mismatch, caught before any
@@ -919,9 +872,6 @@ fn cert_tripwire_declines_flipped_wasm_byte() {
     let (ok, out) = aver_check(&w, &dir.join("cert"));
     assert!(!ok, "flipped wasm byte must fail:\n{out}");
     assert!(out.contains("hash mismatch"), "wrong reason (a):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (a2) A byte flipped inside the certified `countDown` body is the same hard
@@ -955,9 +905,6 @@ fn cert_tripwire_declines_flipped_countdown_body_byte() {
         out.contains("hash mismatch"),
         "wrong reason for countDown body-byte flip:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (b) A corrupted `Module.lean` instruction fails the certificate's own lake
@@ -979,9 +926,6 @@ fn cert_tripwire_declines_corrupted_module_body() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "corrupted Module.lean must fail:\n{out}");
     assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (c) A trivialized final theorem — same name, `: True := trivial` — fails
@@ -1006,9 +950,6 @@ fn cert_tripwire_declines_trivialized_final_theorem() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "trivialized final theorem must fail:\n{out}");
     assert!(out.contains("did not build"), "wrong reason (c):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (d) A cert-supplied `Schema.lean` is IGNORED — the checker builds against
@@ -1031,9 +972,6 @@ fn cert_tripwire_ignores_cert_supplied_schema() {
         out.contains("CHECKED") && !out.contains("CERTIFIED"),
         "genuine cert should pass trusted-olean preflight (d):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (e) A1 hash rebind: a different but genuine module, with `wasm_sha256`
@@ -1076,7 +1014,6 @@ fn cert_tripwire_declines_hash_rebind_to_foreign_module() {
     m["wasm_sha256"] = serde_json::Value::String(sha);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-    let _ = std::fs::remove_dir_all(&foreign_out);
     assert!(!ok, "A1 hash rebind must fail:\n{out}");
     assert!(
         out.contains("did not build") || out.contains("does not bind"),
@@ -1086,9 +1023,6 @@ fn cert_tripwire_declines_hash_rebind_to_foreign_module() {
         !out.contains("CERTIFIED"),
         "hash rebind credited (e):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (e2) A1 hash rebind against a CLAIM-FREE certificate, whose Lean data
@@ -1137,7 +1071,6 @@ fn cert_tripwire_declines_hash_rebind_on_claim_free_cert() {
     m["wasm_sha256"] = serde_json::Value::String(sha);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&w, &empty_out.join("cert"));
-    let _ = std::fs::remove_dir_all(&empty_out);
     assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
     assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
     // The witness names the exact face the kernel rejected.
@@ -1170,9 +1103,6 @@ fn cert_tripwire_declines_comment_smuggled_final_theorem() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "A2 comment smuggle must fail:\n{out}");
     assert!(out.contains("did not build"), "wrong reason (f):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (g) A3 build-tree subversion: a decoy tree behind a redirected `srcDir`
@@ -1205,9 +1135,6 @@ fn cert_tripwire_declines_srcdir_build_tree_subversion() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
     assert!(!ok, "A3 srcDir subversion must fail:\n{out}");
     assert!(out.contains("did not build"), "wrong reason (g):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (h) A3 olean cache: a poisoned `.lake` cache shipped in the certificate is
@@ -1234,9 +1161,6 @@ fn cert_tripwire_ignores_shipped_olean_cache() {
         out.contains("CHECKED") && !out.contains("CERTIFIED"),
         "genuine cert should pass trusted-olean preflight (h):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (i) A4 report forgery: a fabricated certified export and contract appended
@@ -1285,9 +1209,6 @@ fn cert_tripwire_declines_forged_report_json() {
         !out.contains("CERTIFIED"),
         "forged export credited (i):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Class labels are paired with exports by Lean, not compared as two bags, so
@@ -1325,9 +1246,6 @@ fn cert_tripwire_declines_swapped_report_class_pairs() {
         !out.contains("CERTIFIED"),
         "swapped classes were credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (j) Drift, JSON claims MORE than the manifest: a charset-clean certified
@@ -1365,9 +1283,6 @@ fn cert_tripwire_declines_json_claiming_an_extra_export() {
         !out.contains("CERTIFIED"),
         "phantom export credited (j):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (k) Drift, JSON claims FEWER than the manifest: an empty `certified` while
@@ -1390,9 +1305,6 @@ fn cert_tripwire_declines_json_dropping_a_real_export() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "JSON dropping a real export must fail (k):\n{out}");
     assert!(out.contains("does not bind"), "wrong reason (k):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (l) Charset gate: a certified name carrying a control character is rejected
@@ -1416,9 +1328,6 @@ fn cert_tripwire_declines_control_char_in_candidate_name() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "control char in a candidate must fail (l):\n{out}");
     assert!(out.contains("printable ASCII"), "wrong reason (l):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (m) Evil axiom: `Final.cert` proved from a smuggled `axiom`. The build
@@ -1446,9 +1355,6 @@ fn cert_tripwire_declines_axiom_backed_final_theorem() {
         out.contains("non-whitelisted axiom"),
         "witness axiom collector not exercised (m):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (n) A7 filename gate: a cert data file whose name is not a plain Lean
@@ -1476,9 +1382,6 @@ fn cert_tripwire_declines_hostile_cert_file_name() {
         out.contains("bad name.lean") && out.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
         "wrong reason (n):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (o) A8 token scan: a cert data file carrying an elaboration-executes-code
@@ -1506,9 +1409,6 @@ fn cert_tripwire_declines_code_executing_token_in_cert_data() {
         out.contains("elaboration-executing") && out.contains("#eval"),
         "wrong reason (o):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (p) Bytes-vs-data divergence: a `Module.lean` body that still builds green
@@ -1556,9 +1456,6 @@ fn cert_tripwire_declines_diverging_module_body() {
         !out.contains("CERTIFIED"),
         "a diverging body must never be credited (p):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (q) Shadow decoy — the reproduced bypass: the ACTIVE body mutated plus a
@@ -1599,9 +1496,6 @@ fn cert_tripwire_declines_shadow_namespace_decoy() {
         !out.contains("CERTIFIED"),
         "shadow decoy credited (q):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (r) Comment decoy: the active body mutated plus a byte-honest copy inside a
@@ -1636,9 +1530,6 @@ fn cert_tripwire_declines_block_comment_decoy() {
         !out.contains("CERTIFIED"),
         "comment decoy credited (r):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (s) Migrated-recursion code decouple: `sumTo`'s obligation points at a decoy
@@ -1686,9 +1577,6 @@ fn cert_tripwire_declines_recursion_code_decouple() {
         !out.contains("CERTIFIED"),
         "code decouple credited (s):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (t) Migrated-recursion self decouple: `sumTo`'s obligation uses a wrong
@@ -1721,9 +1609,6 @@ fn cert_tripwire_declines_recursion_self_decouple() {
         !out.contains("CERTIFIED"),
         "self decouple credited (t):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (u) Export-name relabel: an honest body relabelled to a duplicate export
@@ -1764,9 +1649,6 @@ fn cert_tripwire_declines_export_name_relabel() {
         "wrong reason (u):\n{out}"
     );
     assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// (v) Migrated accumulator-recursion code decouple: `countDown` pointed at an
@@ -1815,9 +1697,6 @@ fn cert_tripwire_declines_accumulator_code_decouple() {
         !out.contains("CERTIFIED"),
         "countDown code decouple credited (v):\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A valid custom section pads a real module to the 130,460-byte scale where
@@ -2023,8 +1902,6 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
         !bad_pin.status.success() && bad_output.contains("rfl"),
         "one-byte-flipped expected code entry must fail rfl:\n{bad_output}"
     );
-
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// The byte-honest `sumToCode` body for certprobe2, used verbatim as a decoy in
@@ -2160,8 +2037,6 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
     let (ok, out) = aver_check(&w, &dir.join("cert"));
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(
         !ok,
         "tampered array.new_data operands must be DECLINED:\n{out}"
@@ -2213,7 +2088,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 /// reason surfaces as a wrong-reason failure rather than as a vacuous pass.
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
-fn plans_authority_baseline(prefix: &str) -> Option<PathBuf> {
+fn plans_authority_baseline(prefix: &str) -> Option<ScratchDir> {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping Plans.lean authority test: `lake` not available");
         return None;
@@ -2276,8 +2151,6 @@ fn cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data() {
         assert!(entry.get("source_fragment").is_none());
         assert!(entry.get("plan_sha256").is_none());
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A cert-supplied `ArtifactBytes.lean` is a checker-owned filename, so a
@@ -2308,9 +2181,6 @@ fn cert_plans_authority_ignores_cert_supplied_artifact_bytes_decoy() {
         ok,
         "cert-supplied ArtifactBytes.lean must be ignored and regenerated:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&artifact_bytes_decoy_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The expr-fragment acceptance path pins the carrier scratch local declared by
@@ -2343,10 +2213,7 @@ fn cert_plans_authority_declines_zero_locals_expr_fragment_code() {
             !report.contains("CERTIFIED"),
             "zero-locals tamper must not report any certified export:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// An expr-fragment claim whose obligation is not carried by the manifest must
@@ -2421,9 +2288,6 @@ fn cert_plans_authority_declines_claim_without_manifest_obligation() {
         !out.contains("CERTIFIED"),
         "expr-fragment claim without manifest obligation credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&claim_without_manifest_ob_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A claim obligation that is no longer structurally the manifest's obligation
@@ -2483,9 +2347,6 @@ fn cert_plans_authority_declines_artifact_claim_obligation_tamper() {
         !out.contains("CERTIFIED"),
         "artifact claim obligation tamper credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&artifact_obligation_tamper_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A package that bridges its acceptance with a carried `axiom` must be
@@ -2536,9 +2397,6 @@ fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
         !out.contains("CERTIFIED"),
         "artifact-carried axiom bridge credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&artifact_axiom_tamper_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// `Plans.lean` is the authoritative plan DATA, so reordering a raw plan's
@@ -2576,9 +2434,6 @@ fn cert_plans_authority_declines_tampered_lean_raw_plan() {
         !out.contains("CERTIFIED"),
         "tampered Lean RawPlan data credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&lean_plan_tamper_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The code-entry byte pin in `Plans.lean` is checked against the module, so a
@@ -2622,9 +2477,6 @@ fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
         !out.contains("CERTIFIED"),
         "tampered Lean code-entry byte pin credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&lean_bytes_tamper_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The `WasmSlice` byte-origin pin ties the plan's bytes to their position in
@@ -2671,9 +2523,6 @@ fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
         !out.contains("CERTIFIED"),
         "tampered Lean WasmSlice byte-origin pin credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&lean_slice_tamper_dir);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Byte-derived host-role indices for the goals module, read from the emitted
@@ -2702,7 +2551,7 @@ fn cert_verify_declines_host_role_relabel_in_plans_lean() {
         return;
     }
 
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-host-role-swap");
+    let (_out_dir, wasm, cert) = compile_cert_goals("cert-expr-host-role-swap");
     let (box_idx, add_idx) = add_two_host_indices(&cert);
     assert_ne!(
         box_idx, add_idx,
@@ -2716,7 +2565,6 @@ fn cert_verify_declines_host_role_relabel_in_plans_lean() {
     std::fs::write(&plans, text.replacen(&honest, &relabeled, 1)).unwrap();
 
     let (ok, out) = aver_check(&wasm, &cert);
-    let _ = std::fs::remove_dir_all(&out_dir);
     assert!(
         !ok,
         "host-role-relabeled Plans.lean must be DECLINED:\n{out}"
@@ -2738,7 +2586,7 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
         return;
     }
 
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-expr-bad-bool01");
+    let (_out_dir, wasm, cert) = compile_cert_goals("cert-expr-bad-bool01");
     let plans = cert.join("Plans.lean");
     let plans_text = std::fs::read_to_string(&plans).unwrap();
     let def_start = plans_text
@@ -2767,7 +2615,6 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
     std::fs::write(&plans, tampered).unwrap();
 
     let (ok, out) = aver_check(&wasm, &cert);
-    let _ = std::fs::remove_dir_all(&out_dir);
     assert!(
         !ok,
         "bad Bool01 raw plan must be DECLINED:
@@ -2889,7 +2736,6 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
         let (ok, out) = aver_check(&dir.join("stringeq.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(!ok, "deleted String.eq contract must be DECLINED:\n{out}");
         assert!(
             out.contains("does not bind") || out.contains("did not build"),
@@ -2945,8 +2791,6 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
     let (ok, out) = aver_check(&w, &dir.join("cert"));
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(
         !ok,
         "tampered String.eq helper shape must be DECLINED:\n{out}"
@@ -3011,7 +2855,6 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
             !ok,
             "String.concat zero-locals code must be DECLINED:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
     assert!(
         report.contains("2 checked exports"),
@@ -3060,7 +2903,6 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         std::fs::write(&plans, &tampered_plan).unwrap();
 
         let (ok, out) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
             "tampered String.concat SymPlan DATA must be DECLINED:\n{out}"
@@ -3088,7 +2930,6 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         std::fs::write(&plans, &tampered_plan).unwrap();
 
         let (ok, out) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
             "tampered String.concat target plan DATA must be DECLINED:\n{out}"
@@ -3129,7 +2970,6 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
         let (ok, out) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
             "deleted String.concat contract must be DECLINED:\n{out}"
@@ -3188,8 +3028,6 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
     let (ok, out) = aver_check(&w, &dir.join("cert"));
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(
         !ok,
         "tampered String.concat helper shape must be DECLINED:\n{out}"
@@ -3317,7 +3155,6 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
         assert_ne!(src, tampered, "carrierless claim shape changed");
         std::fs::write(&path, &tampered).unwrap();
         let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
             "a carrierless module claiming a carrier index must be DECLINED:\n{out}"
@@ -3340,7 +3177,6 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
         assert_ne!(src, tampered, "carrierless obligation shape changed");
         std::fs::write(&path, &tampered).unwrap();
         let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !ok,
             "a free obligation carrier index must be DECLINED:\n{out}"
@@ -3350,8 +3186,6 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
             "free obligation carrier index credited:\n{out}"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A cert with zero certified exports is an admission, not a certification: it
@@ -3496,8 +3330,6 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         out.contains("does not bind") && !out.contains("CERTIFIED"),
         "padded JSON must be DECLINED, not credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The manifest `dom`/`cod` strings are declared display metadata: no
@@ -3592,8 +3424,6 @@ fn unpinned_manifest_dom_cod_never_reach_the_trusted_report() {
             );
         }
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// An ADT class carries its witness body in `Module.lean` exactly like the
@@ -3653,8 +3483,6 @@ fn adt_witness_body_mutation_is_declined() {
         !out.contains("CERTIFIED"),
         "mutated ADT witness credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -3721,8 +3549,6 @@ fn variant_dispatch_body_mutation_is_declined() {
         !out.contains("CERTIFIED"),
         "mutated dispatch witness credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -3841,7 +3667,6 @@ fn composition_orphan_member_is_declined() {
         !out.contains("CERTIFIED"),
         "orphan-member composition cert must not verify:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Module layout indices of the `cert_goals.av` artifact, read back out of the
@@ -4106,7 +3931,6 @@ fn run_manifest_obligation_guard_iso(prefix: &str, lean: impl FnOnce(&Path) -> S
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// The old acceptance surface did not constrain the whole host builder. An
@@ -4570,7 +4394,6 @@ example : weakCoverage AverCert.Artifact.compositionMembers orphanClaims = true 
         check.status.success(),
         "composition GuardIso failed:\n{combined}"
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// `field-projection-v1` guard isolation with executed weaken confirmations.
@@ -4833,7 +4656,6 @@ example : weakManifest (AverCert.AcceptedArtifact.fieldProjectionClaimExportName
         check.status.success(),
         "field-projection GuardIso failed:\n{combined}"
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The projection index is authoritative Lean plan DATA. Flipping it while
@@ -4845,7 +4667,7 @@ fn cert_verify_declines_flipped_field_projection_plan() {
         return;
     }
 
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-proj-plan-flip");
+    let (_out_dir, wasm, cert) = compile_cert_goals("cert-proj-plan-flip");
     let plans = cert.join("Plans.lean");
     let text = std::fs::read_to_string(&plans).unwrap();
     let tampered = text.replacen(".structGetUser 20 0 0", ".structGetUser 20 1 0", 1);
@@ -4865,8 +4687,6 @@ fn cert_verify_declines_flipped_field_projection_plan() {
         !out.contains("CERTIFIED"),
         "flipped field-projection plan credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A partial source-type relabel inside authoritative `Plans.lean` must not
@@ -4878,7 +4698,7 @@ fn cert_verify_declines_relabeled_projection_source_types() {
         return;
     }
 
-    let (out_dir, wasm, cert) = compile_cert_goals("cert-proj-relabel");
+    let (_out_dir, wasm, cert) = compile_cert_goals("cert-proj-relabel");
     let plans = cert.join("Plans.lean");
     let text = std::fs::read_to_string(&plans).unwrap();
     let tampered = text
@@ -4900,8 +4720,6 @@ fn cert_verify_declines_relabeled_projection_source_types() {
         !out.contains("CERTIFIED"),
         "partially relabeled projection source types credited:\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A tampered byte-first `recursion-plan-v1` plan is declined. The vectors
@@ -4953,7 +4771,6 @@ fn cert_verify_declines_tampered_recursion_plan() {
             !ok,
             "recursion zero-locals code must be DECLINED:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
@@ -5014,10 +4831,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
             !ok,
             "{label}: tampered recursion plan must be declined:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// GuardIso for the L3 witness: hostile measure/descent claims keep the honest
@@ -5079,7 +4893,6 @@ fn recursion_termination_witness_guard_is_isolating() {
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Mutual L3 GuardIso: changing the witness on only one SCC obligation reaches
@@ -5138,7 +4951,6 @@ fn mutual_termination_witness_guard_is_isolating() {
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The JSON policy/witness is transport data. Unsupported shapes fail strict
@@ -5209,7 +5021,6 @@ fn cert_verify_declines_tampered_termination_manifest() {
                 "witness decline must identify the Lean binding:\n{report}"
             );
         }
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     // Coordinate the JSON envelope with the Lean manifest so the witness's
@@ -5242,7 +5053,6 @@ fn cert_verify_declines_tampered_termination_manifest() {
             report.contains("did not build") || report.contains("does not bind"),
             "wrong ClaimAxes descent decline:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     {
@@ -5277,9 +5087,7 @@ fn cert_verify_declines_tampered_termination_manifest() {
             report.contains("did not build") || report.contains("does not bind"),
             "wrong ClaimAxes policy decline:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// A tampered byte-first `mutual-plan-v1` plan is declined. Each vector mutates
@@ -5340,7 +5148,6 @@ fn cert_verify_declines_tampered_mutual_plan() {
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "isEven", 1, 1);
         let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
         assert!(!ok, "mutual zero-locals code must be DECLINED:\n{report}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // The migrated family has no bespoke simulation theorem to replace with a
@@ -5375,7 +5182,6 @@ fn cert_verify_declines_tampered_mutual_plan() {
             !ok && !report.contains("CERTIFIED"),
             "mutual code decouple must be DECLINED by generic acceptance:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Likewise the obligation's selected member is part of the generic claim;
@@ -5396,7 +5202,6 @@ fn cert_verify_declines_tampered_mutual_plan() {
             !ok && !report.contains("CERTIFIED"),
             "mutual self decouple must be DECLINED by generic acceptance:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
@@ -5457,10 +5262,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
             !ok,
             "{label}: tampered mutual plan must be declined:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A mutual-recursion artifact whose per-member byte-origin claims are each
@@ -5581,7 +5383,6 @@ fn cert_verify_declines_broken_mutual_scc_membership() {
                 "{fixture} {label}: broken mutual-SCC membership must be declined in-kernel"
             );
         }
-        let _ = std::fs::remove_dir_all(&out_dir);
     }
 }
 
@@ -5811,7 +5612,6 @@ fn mutual_scc_kernel_guards_are_isolating() {
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A tampered byte-first `verbatim-plan-v1` plan is declined, and the four spike
@@ -5865,7 +5665,6 @@ fn cert_verify_declines_tampered_verbatim_plan() {
         set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "wrapItems", 1, 3);
         let (ok, report) = aver_check(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
         assert!(!ok, "verbatim zero-locals code must be DECLINED:\n{report}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
@@ -5921,7 +5720,6 @@ fn cert_verify_declines_tampered_verbatim_plan() {
             !ok,
             "{label}: tampered verbatim plan must be declined:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Guard-isolation: prove in-kernel that each vector diverges the lowered
@@ -5966,7 +5764,6 @@ fn cert_verify_declines_tampered_verbatim_plan() {
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A compiler-produced, wasmparser-valid scalar-f64 widened match must travel
@@ -6109,7 +5906,6 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
             !report.contains("CERTIFIED"),
             "tampered f64.const immediate must never be credited:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // (b) Change the target signature's f64 result byte to the nullable-ref
@@ -6139,10 +5935,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
             !report.contains("CERTIFIED"),
             "ref-typed artifact with an F64Scalar plan must never be credited:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// ACCEPTANCE-LEVEL guard-isolation for the two verbatim binds that the
@@ -6542,7 +6335,6 @@ example : PlanCheck.checkConstructRawPlan
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A tampered byte-first `int-dispatch-v1` plan is declined, and the tamper
@@ -6664,7 +6456,6 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
             !ok,
             "{label}: tampered int-dispatch plan must be declined:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // (h) ZERO-LOCALS vacuity vector: honest bytes, honest plan, honest wiring,
@@ -6685,7 +6476,6 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         std::fs::write(&module, src.replacen("some ⟨1, 3,", "some ⟨1, 0,", 1)).unwrap();
         let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "zero-locals code table must be DECLINED:\n{report}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // (i) ROLE/TABLE PERMUTATION vector: swap the two arm roles in the plan AND
@@ -6730,7 +6520,6 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         std::fs::write(&artifact, src).unwrap();
         let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "role/table permutation must be DECLINED:\n{report}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // (j) SAMPLED-PROBE ESCAPE vector (attack (b)): replace the box slot of
@@ -6754,7 +6543,6 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         std::fs::write(&module, src.replacen(from, to, 1)).unwrap();
         let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "sampled-probe-escape host must be DECLINED:\n{report}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Guard-isolation: prove in-kernel that each byte-reaching vector diverges
@@ -6817,7 +6605,6 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// ACCEPTANCE-LEVEL guard-isolation for the List-constructor binds, elaborated
@@ -7176,7 +6963,6 @@ example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nod
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// The permuted-table probes below attribute their rejection to the
@@ -7379,7 +7165,6 @@ fn int_dispatch_kernel_guards_are_isolating() {
         String::from_utf8_lossy(&elab.stdout),
         String::from_utf8_lossy(&elab.stderr)
     );
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// End-to-end acceptance and fail-closed tamper coverage for the fused
@@ -7458,7 +7243,6 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
             !out.contains("CERTIFIED"),
             "tamper `{name}` must never re-credit the export:\n{out}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     };
 
     // (1) Flip the literal default consistently in the source AND encoded
@@ -7500,8 +7284,6 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
             &format!(".vectorGetOrDefault {arr_ty} {box_idx} {to_index_idx}"),
         )
     });
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The five real source functions the Int value-comparison faces were built
@@ -7570,7 +7352,6 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
                 "the verdict for {source} must credit `{witness}`:\n{report}"
             );
         }
-        let _ = std::fs::remove_dir_all(&out_dir);
     }
 }
 
@@ -7647,7 +7428,6 @@ fn cert_verify_declines_int_comparison_role_tampers() {
             !out.contains("CERTIFIED"),
             "tamper `{name}` must never re-credit an export:\n{out}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     };
 
     // (1) Move the comparison helper's index consistently in the encoded plan
@@ -7673,6 +7453,4 @@ fn cert_verify_declines_int_comparison_role_tampers() {
             .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
             .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
     });
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }

@@ -2195,7 +2195,15 @@ fn map_order_refusal(
     // contributes its body (does anything in here read iteration order? does
     // anything in here compare two maps?) and its signature (over which key
     // type?).
-    let mut pending: Vec<String> = vec![vb.fn_name.clone()];
+    //
+    // Every name in the queue carries the module whose SOURCE it was read in,
+    // which is not always the module the claim lives in: `Peek.entry` calls its
+    // own peer as a bare `hiddenValues`, and that word is a name in `Peek`'s
+    // scope. Resolving the whole cone in the claim's scope instead either found
+    // nothing and stopped the walk one hop short of the observer, or — with a
+    // same-named function in the claim's own file — walked the WRONG body and
+    // reported on a function the claim never calls.
+    let mut pending: Vec<(Option<String>, String)> = vec![(scope.clone(), vb.fn_name.clone())];
     // `vb.cases` alongside the roots, for the same reason the comparison scan
     // reads them below: a law's `lhs`/`rhs` template is never typechecked, and a
     // function handed over by name is only recognisable as one from its type.
@@ -2206,7 +2214,8 @@ fn map_order_refusal(
             .iter()
             .flat_map(|(lhs, rhs)| [lhs, rhs].into_iter()),
     ) {
-        collect_called_names(root, &mut pending);
+        // The claim's own expressions are written in the claim's module.
+        push_called_names(root, scope.as_deref(), &mut pending);
     }
     let mut seen: HashSet<String> = HashSet::new();
     let mut key_types: Vec<String> = Vec::new();
@@ -2239,13 +2248,21 @@ fn map_order_refusal(
     ) {
         collect_compared_map_key_types(root, ctx, &mut compared_keys, &mut compared_seen);
     }
-    while let Some(name) = pending.pop() {
-        if !seen.insert(name.clone()) {
-            continue;
-        }
-        let Some((owner, fd)) = reached_fn_def(ctx, &name, scope.as_deref()) else {
+    while let Some((written_in, name)) = pending.pop() {
+        let Some((owner, fd)) = reached_fn_def(ctx, &name, written_in.as_deref()) else {
             continue;
         };
+        // "Already walked this one" is keyed on the declaration the name
+        // RESOLVED to, not on the word — the same reason the type side keys on
+        // `type_def_identity`. Two modules may declare the same bare function
+        // name, and keyed on the word the first one reached claimed it: a claim
+        // that walked a map-order-free `hiddenValues` in its own file first
+        // skipped the observing `Peek.hiddenValues` as already-seen and
+        // exported, while the same claim with the two calls written the other
+        // way round was refused.
+        if !seen.insert(fn_def_identity(owner, fd)) {
+            continue;
+        }
         // A signature's annotations are written in the module that declares the
         // function, which is not always the module the claim lives in.
         for (_, param_type) in &fd.params {
@@ -2257,7 +2274,9 @@ fn map_order_refusal(
                 Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
             };
             observes = observes || expr_calls_named(expr, &observers);
-            collect_called_names(expr, &mut pending);
+            // A body's call names are written in the module that declares the
+            // function, exactly like its signature's annotations above.
+            push_called_names(expr, owner, &mut pending);
             collect_compared_map_key_types(expr, ctx, &mut compared_keys, &mut compared_seen);
         }
     }
@@ -2492,13 +2511,47 @@ fn collect_map_key_types_of_type(
     }
 }
 
-/// The `FnDef` a called name refers to, resolved in the caller's scope first
-/// and then — for a dotted `Dep.helper` — under the named module's own scope,
-/// so a helper on the far side of a module boundary stays inside the cone.
+/// Queue the names an expression reaches, tagged with the module its source is
+/// written in.
+///
+/// The tag travels with the name because a bare word is only a name inside one
+/// scope, and the cone crosses module boundaries. See the queue in
+/// [`map_order_refusal`].
+fn push_called_names(
+    expr: &Spanned<Expr>,
+    written_in: Option<&str>,
+    pending: &mut Vec<(Option<String>, String)>,
+) {
+    let mut names = Vec::new();
+    collect_called_names(expr, &mut names);
+    pending.extend(
+        names
+            .into_iter()
+            .map(|name| (written_in.map(str::to_string), name)),
+    );
+}
+
+/// The identity of a function the cone reached: `Module.name`, or `name` for a
+/// function declared in the entry file.
+///
+/// The declared name alone is not an identity — two modules may declare the
+/// same one — which is why the owner travels with it. Mirrors
+/// [`type_def_identity`] on the type side, for the same reason.
+fn fn_def_identity(owner: Option<&str>, fd: &FnDef) -> String {
+    match owner {
+        Some(prefix) => format!("{prefix}.{}", fd.name),
+        None => fd.name.clone(),
+    }
+}
+
+/// The `FnDef` a called name refers to, resolved in the scope the name was
+/// written in first and then — for a dotted `Dep.helper` — under the named
+/// module's own scope, so a helper on the far side of a module boundary stays
+/// inside the cone.
 ///
 /// The module that declares the function comes back with it: its signature's
-/// annotations are written in that module's source, and that is the scope their
-/// names are read in.
+/// annotations, and the names its body calls, are written in that module's
+/// source, and that is the scope they are read in.
 fn reached_fn_def<'a>(
     ctx: &'a CodegenContext,
     name: &str,
