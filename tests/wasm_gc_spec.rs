@@ -1652,8 +1652,9 @@ fn map_remove_after_a_resize_keeps_a_key_that_wrapped_past_the_end() {
 ///
 /// These thirty keys are all multiples of sixteen, so at the starting
 /// capacity every one of them hashes to bucket 0 — one probe run that
-/// fills the whole table before it can grow, then two more masks that
-/// each split it in half again on the way to 64 buckets. Summing what
+/// reaches twelve of the sixteen starting slots before the load check
+/// grows the table (it is never full; that is the point), then two more
+/// masks that each split the run in half again on the way to 64 buckets. Summing what
 /// comes back out reads every entry, and the sum only comes to
 /// `1 + … + 30` if each key kept its own value across both rebuilds.
 const REHASH_COLLIDING_RUN_SRC: &str = r#"module Tmp

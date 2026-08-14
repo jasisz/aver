@@ -94,10 +94,11 @@ pub(super) const INITIAL_CAP: i32 = 16;
 ///
 /// Linear probing is what makes three quarters the right number
 /// rather than the seven eighths a bucketed table would take. The
-/// expected probe count for a miss goes as `1/(1-α)²`: at 3/4 that is
-/// 16, at 7/8 it is 64. Every insert of a new key performs exactly
-/// that unsuccessful probe, so paying a third more memory to make it
-/// four times cheaper is the trade this table wants. Writing the
+/// expected probe count for a miss is `(1 + 1/(1-α)²)/2` (Knuth):
+/// about 8.5 probes at 3/4 and 32.5 at 7/8. Every insert of a new key
+/// performs exactly that unsuccessful probe, so paying a third more
+/// memory to make it roughly four times cheaper is the trade this
+/// table wants. Writing the
 /// threshold as a shift and a subtract also keeps it exact for every
 /// capacity, with no division and no `cap * 3` to overflow `i32` on a
 /// table large enough to be worth the worry.

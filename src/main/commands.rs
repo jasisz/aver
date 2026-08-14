@@ -5264,9 +5264,9 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
 /// (`wasm-tools print program.wasm`). For pre-opt builds, names survive;
 /// for post-opt, `wasm-opt -Oz` strips the section by design.
 ///
-/// One of those names is load-bearing, not decoration: a map that fills
-/// its fixed bucket count traps, and the capacity is in the trapping
-/// helper's name because a wasm trap carries no message of its own. The
+/// One of those names is load-bearing, not decoration: the map insert
+/// helpers carry a resize-bug backstop trap, and its name is the only
+/// diagnostic a wasm trap can carry (a trap has no message of its own). The
 /// optimize pass costs the program that name twice over — it drops the
 /// section, and `-Oz` / `-O3` inline a sole-call-site helper into its
 /// caller, so `-g` would only hand back an empty name map. Nothing here
