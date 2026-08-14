@@ -4693,13 +4693,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         );
         process::exit(1);
     }
-    // Names that Rust cannot spell at all are refused here rather than
-    // emitted: `r#crate` is a parse error, not an escape, so carrying the
-    // name through would hand back a project that cannot build.
-    if let Err(err) = rust_codegen::unspellable_rust_names(&ctx) {
-        eprintln!("{}", err.red());
-        process::exit(1);
-    }
     let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);

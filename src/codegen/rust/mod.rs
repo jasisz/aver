@@ -70,304 +70,6 @@ fn synthesize_rust_module_cascade(
     files
 }
 
-/// Reject the Aver names that the Rust backend has no way to write down.
-///
-/// `aver_name_to_rust` answers every Rust keyword with the `r#` escape, and
-/// that is a complete answer for all of them but four: a raw identifier may
-/// not be `crate`, `self`, `super` or `Self`, so `r#crate` is not "escaped
-/// `crate`", it is a hard parse error. A fifth name, `_`, has no spelling
-/// either — it is Rust's wildcard, and `r#_` is rejected the same way —
-/// but only where Rust demands a real identifier, so it is refused position
-/// by position rather than outright: as a `let` binding, a match binder or
-/// a parameter of an ordinary function it lowers to a legal discarding
-/// pattern and is left alone; as a `fn` name, a record field or a parameter
-/// of a TAIL-RECURSIVE function it is refused. The last of those is the one
-/// that is not obvious: tail recursion takes a parameter out of pattern
-/// position, into a `mut` binding the loop rebinds and — in a mutual group
-/// — a value the wrapper passes by name to build the trampoline variant.
-///
-/// None of the five is an Aver keyword, so a program can name a function, a
-/// parameter, a binding, a match binder, a record field or a module-level
-/// binding with any of them, and every one of those used to produce a
-/// project that does not build.
-///
-/// This refuses instead of renaming. A silent rename would have to invent a
-/// name that is not already taken, in a namespace the user cannot see, and
-/// would make the built binary disagree with the source about what things
-/// are called; the effect checker already takes the same line when a target
-/// cannot support something, and a named refusal at compile time is what
-/// the reporter of the original issue asked for.
-///
-/// Tail recursion gets a look of its own, because it changes what a name
-/// has to be. A trampoline variant is the member's name CAPITALISED, and
-/// Unicode's case mapping reaches `Self` from a third name besides `self`
-/// and `Self` — `ſelf`, since U+017F upper-cases to `S` — which no
-/// comparison against the name itself would catch, so the variant is
-/// checked as the string that actually gets emitted. And a parameter of a
-/// tail-recursive function stops being a pattern, so `_` has no spelling
-/// there either. Both are asked per recursion group / per loop, against the
-/// same classification the emitter routes on, so a name that merely EXISTS
-/// somewhere still compiles.
-///
-/// # What is walked
-///
-/// Every position where the emitter spells a user-chosen name through
-/// `aver_name_to_rust`: function names, parameters, `let` bindings and
-/// match binders inside function bodies, record fields, and the same
-/// bindings and match binders in module-level statements (`ctx.items`,
-/// which the emitter renders into `fn main`). Entry module and dependency
-/// modules alike. Two of those positions are read twice, once as a pattern
-/// and once as an identifier, depending on the recursion shape the emitter
-/// builds around them: the trampoline variant and the tail-recursive
-/// parameter.
-///
-/// # What is not
-///
-/// - **User type and variant names.** They bypass `aver_name_to_rust`
-///   altogether and are emitted verbatim, so `record impl` emits `pub
-///   struct impl` and is broken for *every* keyword, not just these five.
-///   A different defect in a different code path.
-/// - **Module path segments.** `module_segment_to_rust` lowercases them, so
-///   a module named `Crate` becomes the segment `crate`. Also a different
-///   code path.
-/// - **Anything at `aver check` time.** This runs when the Rust backend
-///   does, so a program is only told when it reaches for that backend.
-pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
-    use crate::ast::{Pattern, Stmt, TopLevel};
-    use syntax::{is_never_an_identifier_in_rust, is_never_raw_in_rust};
-
-    // `at` names the offending position in the user's own words, e.g.
-    // "parameter `self` of function `takes`".
-    let explain = |name: &str, at: &str| -> String {
-        if name == "_" {
-            format!(
-                "cannot compile to Rust: {at} cannot be spelled in Rust. `_` is \
-                 Rust's wildcard, not an identifier, and the raw form `r#_` is \
-                 rejected too, so there is no escape to fall back on. Rename it."
-            )
-        } else {
-            format!(
-                "cannot compile to Rust: {at} cannot be spelled in Rust. \
-                 `{name}` is not a valid identifier there, and neither is the \
-                 raw form `r#{name}` — Rust rejects raw identifiers for \
-                 `crate`, `self`, `super`, `Self` and `_` specifically, so there \
-                 is no escape to fall back on. Rename it."
-            )
-        }
-    };
-
-    // Positions that lower to a Rust *pattern*, where `_` is legal and
-    // means "discard": a parameter, a `let` binding, a match binder.
-    let refuse = |name: &str, at: &str| -> Result<(), String> {
-        if is_never_raw_in_rust(name) {
-            Err(explain(name, at))
-        } else {
-            Ok(())
-        }
-    };
-
-    // Positions that demand a real Rust identifier: a `fn` name, a struct
-    // field. `_` has no spelling in either.
-    let refuse_identifier = |name: &str, at: &str| -> Result<(), String> {
-        if is_never_an_identifier_in_rust(name) {
-            Err(explain(name, at))
-        } else {
-            Ok(())
-        }
-    };
-
-    fn pattern_binders(pattern: &Pattern, out: &mut Vec<String>) {
-        match pattern {
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
-            Pattern::Ident(name) => out.push(name.clone()),
-            Pattern::Cons(head, tail) => {
-                out.push(head.clone());
-                out.push(tail.clone());
-            }
-            Pattern::Tuple(items) => {
-                for item in items {
-                    pattern_binders(item, out);
-                }
-            }
-            Pattern::Constructor(_, binders) => out.extend(binders.iter().cloned()),
-        }
-    }
-
-    // One statement's spellable surface: the name it binds, and every match
-    // binder inside its expression (those are spelled straight into the
-    // generated `match`). `label` puts the position in the user's own
-    // words — the same walk serves a function body and a module-level
-    // statement, which sit in different places and read differently.
-    let check_stmt = |stmt: &Stmt, label: &dyn Fn(&str, &str) -> String| -> Result<(), String> {
-        match stmt {
-            Stmt::Binding(name, _, _) => refuse(name, &label("binding", name))?,
-            Stmt::Expr(_) => {}
-        }
-        let expr = match stmt {
-            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
-        };
-        let mut names = Vec::new();
-        crate::codegen::expr_walk::walk(expr, &mut |node| {
-            if let crate::ast::Expr::Match { arms, .. } = &node.node {
-                for arm in arms {
-                    pattern_binders(&arm.pattern, &mut names);
-                }
-            }
-        });
-        for name in names {
-            refuse(&name, &label("match binding", &name))?;
-        }
-        Ok(())
-    };
-
-    let check_fn = |fd: &crate::ast::FnDef, scope: &str| -> Result<(), String> {
-        refuse_identifier(&fd.name, &format!("{scope}function `{}`", fd.name))?;
-        for (param, _) in &fd.params {
-            refuse(
-                param,
-                &format!("parameter `{param}` of {scope}function `{}`", fd.name),
-            )?;
-        }
-        for stmt in fd.body.stmts() {
-            check_stmt(stmt, &|kind, name| {
-                format!("{kind} `{name}` in {scope}function `{}`", fd.name)
-            })?;
-        }
-        Ok(())
-    };
-
-    let check_types = |type_defs: &[TypeDef], scope: &str| -> Result<(), String> {
-        for td in type_defs {
-            if let TypeDef::Product { name, fields, .. } = td {
-                for (field, _) in fields {
-                    refuse_identifier(
-                        field,
-                        &format!("field `{field}` of {scope}record `{name}`"),
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    };
-
-    // Tail recursion spells two things the walks above cannot see, and both
-    // of them leave pattern position behind.
-    //
-    // A mutual-recursion group spells each member's name CAPITALISED, as a
-    // trampoline enum variant, and a capitalised name is subject to
-    // Unicode's case mapping rather than ASCII's: `ſ` (U+017F) upper-cases
-    // to `S`, so `fn ſelf` produces the variant `Self`. That is a Rust
-    // keyword with no raw spelling, so the enum would not parse — and
-    // `ſelf` is a perfectly ordinary Aver name that the refusal above,
-    // which compares the name itself, does not see.
-    //
-    // A tail-recursive function's PARAMETERS also change position. Outside
-    // tail recursion a parameter lowers to a pattern, where `_` is a legal
-    // discard; inside it the parameter is the loop's carried state. A
-    // self-TCO signature emits `mut p: T`, and `mut _` is ``mut` must be
-    // followed by a named binding``; a trampoline binds `mut p` in the arm
-    // AND passes the parameter by name where the wrapper builds the enum
-    // variant, and `_` in expression position is ``in expressions, `_` can
-    // only be used on the left-hand side of an assignment``. So a parameter
-    // here is an identifier position, tested with `refuse_identifier`
-    // rather than `refuse`.
-    //
-    // Both are asked of the same classification the emitter routes on —
-    // `find_mutual_tco_groups` for the group, `body_has_self_tailcall` for
-    // the loop — so the refusal and the emitter cannot disagree about which
-    // shape gets built. That scoping is what keeps the working programs
-    // working: `ſelf` outside a group is a valid Rust fn name, and `_` on a
-    // function that is not tail-recursive is a valid Rust pattern, and both
-    // still compile.
-    let check_recursion_shapes =
-        |fn_defs: &[&crate::ast::FnDef], scope: &str| -> Result<(), String> {
-            let mut in_a_group: HashSet<usize> = HashSet::new();
-            for group in toplevel::find_mutual_tco_groups(fn_defs) {
-                for idx in group {
-                    let fd = fn_defs[idx];
-                    let variant = syntax::capitalise_first(&fd.name);
-                    if syntax::is_rust_reserved(&variant) {
-                        return Err(format!(
-                            "cannot compile to Rust: {scope}function `{}` takes part in mutual \
-                             tail recursion, and the trampoline variant for it is its name \
-                             capitalised, which is `{variant}` — a Rust keyword. `{variant}` \
-                             cannot be written as an identifier, and the raw form `r#{variant}` \
-                             is rejected too, so there is no spelling for the variant. Rename \
-                             the function.",
-                            fd.name
-                        ));
-                    }
-                    in_a_group.insert(idx);
-                }
-            }
-            for (idx, fd) in fn_defs.iter().enumerate() {
-                let mutual = in_a_group.contains(&idx);
-                if !mutual && !toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
-                    continue;
-                }
-                let how = if mutual {
-                    "takes part in mutual tail recursion, so every parameter travels through \
-                     the trampoline enum — bound as `mut _` in the match arm, and passed by \
-                     name where the variant is built"
-                } else {
-                    "is tail-recursive, so every parameter is the loop's carried state and the \
-                     signature emits `mut _`"
-                };
-                for (param, _) in &fd.params {
-                    if syntax::is_never_an_identifier_in_rust(param) {
-                        return Err(format!(
-                            "cannot compile to Rust: parameter `{param}` of {scope}function \
-                             `{}` cannot be spelled in Rust. `{}` {how}. `{param}` is Rust's \
-                             wildcard, not an identifier, and the raw form `r#{param}` is \
-                             rejected too, so there is no spelling for it there. The same \
-                             parameter on a function that is not tail-recursive lowers to a \
-                             plain pattern, where `{param}` is a legal discard and still \
-                             compiles. Rename it.",
-                            fd.name, fd.name
-                        ));
-                    }
-                }
-            }
-            Ok(())
-        };
-
-    for fd in &ctx.fn_defs {
-        check_fn(fd, "")?;
-    }
-    check_types(&ctx.type_defs, "")?;
-    // Module-level statements live in `ctx.items` and nowhere else — they
-    // are not part of any `FnDef`, so the loop above never sees them. The
-    // emitter renders each one into `fn main` as `let {name} = …;`
-    // (`toplevel.rs`), which is exactly as unspellable as a binding inside
-    // a function. Only the entry module carries them: `ModuleInfo` has no
-    // `items` field, so a dependency module's top-level statements never
-    // reach the Rust emitter at all.
-    for item in &ctx.items {
-        if let TopLevel::Stmt(stmt) = item {
-            check_stmt(stmt, &|kind, name| format!("module-level {kind} `{name}`"))?;
-        }
-    }
-    // `main` is excluded exactly as the entry-path emitter excludes it before
-    // computing groups, so this asks about the same set of groups the
-    // trampoline is actually built from — and about the same set of fns the
-    // self-TCO signature emit runs over, since `main` reaches the emitter
-    // through `emit_public_main`, which emits no parameters at all. Dep
-    // modules have no `main`, and their emitter passes every fn, which is
-    // what the loop below does.
-    let entry_non_main: Vec<&crate::ast::FnDef> =
-        ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
-    check_recursion_shapes(&entry_non_main, "")?;
-    for module in &ctx.modules {
-        let scope = format!("module `{}` ", module.prefix);
-        for fd in &module.fn_defs {
-            check_fn(fd, &scope)?;
-        }
-        check_types(&module.type_defs, &scope)?;
-        check_recursion_shapes(&module.fn_defs.iter().collect::<Vec<_>>(), &scope)?;
-    }
-    Ok(())
-}
-
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
@@ -1650,9 +1352,7 @@ fn await(n: Int) -> Int
         // Aver reserves these itself, so no program can carry them; the
         // table still has to know them, because it is the escape helper and
         // not the Aver lexer that other emitters ask.
-        for name in [
-            "fn", "match", "type", "true", "false", "self", "crate", "super", "Self",
-        ] {
+        for name in ["fn", "match", "type", "true", "false"] {
             assert_eq!(
                 aver_name_to_rust(name),
                 format!("r#{name}"),
@@ -1661,112 +1361,127 @@ fn await(n: Int) -> Int
         }
     }
 
-    /// `crate`, `self`, `super` and `Self` are the four *words* Rust refuses
-    /// even behind `r#`, and none of them is an Aver keyword, so a program
-    /// can use all four. What would otherwise reach `cargo build` as
-    /// ``error: `crate` cannot be a raw identifier`` is refused here, naming
-    /// the position. The fifth unspellable name, `_`, is not a word and is
-    /// fatal in fewer positions — see
-    /// `underscore_is_refused_only_where_rust_demands_an_identifier`.
+    /// `crate`, `self`, `super`, `Self` and `_` are the five names Rust
+    /// cannot spell as identifiers at all — `r#crate` is a parse error, not
+    /// an escape — and none of them is an Aver keyword, so a program can
+    /// carry all five. Each gets the `_avr_` prefix instead, in every
+    /// position the emitter writes a name: a `fn` name, a parameter, a
+    /// binding, a record field.
+    ///
+    /// What is pinned here is that the rename is applied at the SAME name
+    /// on both sides of each pair — the field declaration and the field
+    /// read, the fn declaration and its call — because a rename applied to
+    /// only one of them is a project that does not build.
     #[test]
-    fn never_raw_rust_names_are_refused_before_emitting() {
-        let cases: &[(&str, &str, &str)] = &[
+    fn never_spellable_names_are_renamed_rather_than_refused() {
+        let cases: &[(&str, &[&str])] = &[
             (
-                "fn crate(n: Int) -> Int\n    n + 1\n",
-                "crate",
-                "function `crate`",
+                "fn crate(n: Int) -> Int\n    n + 1\n\nfn calls(n: Int) -> Int\n    crate(n)\n",
+                &["pub fn _avr_crate(", "_avr_crate("],
             ),
-            (
-                "fn takes(self: Int) -> Int\n    self + 1\n",
-                "self",
-                "parameter `self` of function `takes`",
-            ),
+            ("fn takes(self: Int) -> Int\n    self + 1\n", &["_avr_self"]),
             (
                 "fn binds(n: Int) -> Int\n    super = n + 1\n    super\n",
-                "super",
-                "binding `super` in function `binds`",
+                &["let _avr_super"],
             ),
+            ("fn discards(_: Int) -> Int\n    7\n", &["_avr__"]),
             (
-                "record Holder\n  crate: Int\n\nfn use(h: Holder) -> Int\n    h.crate\n",
-                "crate",
-                "field `crate` of record `Holder`",
+                "record Holder\n  crate: Int\n\nfn read(h: Holder) -> Int\n    h.crate\n",
+                &["_avr_crate: ", "._avr_crate"],
             ),
         ];
 
-        for (body, name, expected) in cases {
-            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
-            let err = super::unspellable_rust_names(&ctx).expect_err(&format!(
-                "`{name}` should be refused, but codegen accepted it"
-            ));
+        for (body, wanted) in cases {
+            let mut ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let out = transpile(&mut ctx);
+            let entry = generated_rust_entry_file(&out);
+            for want in *wanted {
+                assert!(
+                    entry.contains(want),
+                    "expected the renamed spelling `{want}` in:\n{entry}"
+                );
+            }
             assert!(
-                err.contains(expected),
-                "refusal does not say which name is at fault; wanted `{expected}` in:\n{err}"
-            );
-            assert!(
-                err.contains(&format!("r#{name}")),
-                "refusal does not explain that the raw escape is unavailable:\n{err}"
+                !entry.contains("r#crate")
+                    && !entry.contains("r#self")
+                    && !entry.contains("r#super")
+                    && !entry.contains("r#_"),
+                "a name with no raw spelling was escaped instead of renamed:\n{entry}"
             );
         }
+    }
+
+    /// The rename has to be INJECTIVE, or two different things silently
+    /// become one. The prefix is doubled for a name that already carries
+    /// it, so a user's own `_avr_self` and Aver's rename of `self` stay
+    /// apart — and a program holding both builds and keeps them apart.
+    #[test]
+    fn the_mangle_prefix_is_doubled_so_the_rename_stays_injective() {
+        use crate::codegen::rust::syntax::aver_name_to_rust;
+
+        assert_eq!(aver_name_to_rust("self"), "_avr_self");
+        assert_eq!(aver_name_to_rust("_avr_self"), "_avr__avr_self");
+        assert_ne!(
+            aver_name_to_rust("self"),
+            aver_name_to_rust("_avr_self"),
+            "the rename collapsed two different Aver names onto one Rust name"
+        );
+
+        // Identity for everything else — which is every name in the corpus,
+        // so no existing program's emitted bytes move.
+        for name in ["value", "isOdd", "_private", "日本語", ""] {
+            assert_eq!(aver_name_to_rust(name), name);
+        }
+        assert_eq!(aver_name_to_rust("await"), "r#await");
     }
 
     /// A binding written at module level, outside any function, is a
-    /// `TopLevel::Stmt` — it lives in `ctx.items` and in nothing else. The
-    /// refusal used to walk `fn_defs` and `type_defs` only, so a
-    /// module-level `self = 41` sailed past it and the emitter rendered
-    /// `let r#self = 41i64;` into `fn main`, which `cargo build` rejects
-    /// with ``error: `self` cannot be a raw identifier``. Match binders
-    /// inside a module-level statement's expression reach the generated
-    /// `match` the same way.
+    /// `TopLevel::Stmt` — it lives in `ctx.items` and in nothing else, so
+    /// the emitter renders it into `fn main` as `let {name} = …;`. That is
+    /// exactly as unspellable as a binding inside a function and gets the
+    /// same rename; `let r#self = 41i64;` is ``error: `self` cannot be a
+    /// raw identifier``.
     #[test]
-    fn module_level_statements_are_checked_for_unspellable_names() {
-        let cases: &[(&str, &str, &str)] = &[
-            ("self = 41\n", "self", "module-level binding `self`"),
-            (
-                "crate = 1\n\nfn read() -> Int\n    crate\n",
-                "crate",
-                "module-level binding `crate`",
-            ),
-        ];
-
-        for (body, name, expected) in cases {
-            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
-            let err = super::unspellable_rust_names(&ctx).expect_err(&format!(
-                "module-level `{name}` should be refused, but codegen accepted it"
-            ));
-            assert!(
-                err.contains(expected),
-                "refusal does not say which name is at fault; wanted `{expected}` in:\n{err}"
-            );
-            assert!(
-                err.contains(&format!("r#{name}")),
-                "refusal does not explain that the raw escape is unavailable:\n{err}"
-            );
-        }
+    fn module_level_bindings_are_renamed_too() {
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nself = 41\n\nfn read() -> Int\n    self\n",
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("_avr_self"),
+            "the module-level binding was not renamed:\n{entry}"
+        );
+        assert!(
+            !entry.contains("r#self"),
+            "`r#self` is a parse error, not an escape:\n{entry}"
+        );
     }
 
-    /// `_` is the fifth name Rust cannot spell, and the odd one out: it is
-    /// not a keyword but the wildcard, so `r#_` is rejected for the same
-    /// reason `r#self` is. Aver's lexer takes `_` as an ordinary
-    /// identifier, so `fn _(n: Int)` parses and runs, and the Rust backend
-    /// emitted `pub fn _(…)` — ``expected identifier, found reserved
-    /// identifier``.
+    /// `_` is the odd one out among the five: it is not a keyword but the
+    /// wildcard, and Aver's lexer takes it as an ordinary identifier
+    /// (`src/lexer.rs`), so `fn _(n: Int)` parses and runs. Rust has no
+    /// spelling for it anywhere it needs a name — `pub fn _()` is
+    /// ``expected identifier, found reserved identifier``, `mut _` is
+    /// ``mut` must be followed by a named binding``, `_` as a call argument
+    /// is ``in expressions, `_` can only be used on the left-hand side of
+    /// an assignment``, and `r#_` is `` `_` cannot be a raw identifier ``.
     ///
-    /// It is fatal wherever Rust demands a real identifier: a `fn` name, a
-    /// record field, and — the case a pattern-position argument misses — a
-    /// parameter of a TAIL-RECURSIVE function, which is not a pattern
-    /// position at all. A self-TCO signature makes every parameter the
-    /// loop's mutable state (`mut _` is ``mut` must be followed by a named
-    /// binding``), and a mutual-TCO trampoline additionally passes each
-    /// parameter by name when it builds the enum variant (``in
-    /// expressions, `_` can only be used on the left-hand side of an
-    /// assignment``).
+    /// So it is renamed like the other four, and the prefix leads with an
+    /// underscore precisely so `_avr__` still reads as "unused" to rustc:
+    /// a user who writes `_` is saying they do not care about the binding,
+    /// and the rename must not turn that into an unused-variable warning.
     ///
-    /// Everywhere else `_` still lowers to a legal discarding pattern: a
-    /// parameter of a function that is not tail-recursive, a `let` binding
-    /// and a match binder all build and run, so the refusal must not reach
-    /// them.
+    /// Every shape is checked, because each one used to need the wildcard
+    /// to survive a DIFFERENT position: a plain parameter is a pattern, a
+    /// self-TCO parameter is the loop's mutable state (`mut _`), a mutual
+    /// group additionally passes it by name to build the trampoline
+    /// variant, and a collection parameter the ownership analysis proves
+    /// uniquely owned is taken by value as `mut _` with no recursion at
+    /// all.
     #[test]
-    fn underscore_is_refused_only_where_rust_demands_an_identifier() {
+    fn the_wildcard_is_renamed_in_every_position_that_needs_a_name() {
         const SELF_TCO_WILDCARD_PARAM: &str = "\
 fn count(n: Int, _: Int) -> Int
     match n == 0
@@ -1792,55 +1507,56 @@ fn deep(n: Int, _: Int) -> Int
         true -> 0
         false -> deep(n - 1, 0) + 1
 ";
+        // Not recursive at all — but the parameter is a COLLECTION, and
+        // that is the other thing that can put a `mut` in front of it.
+        // `own_param` proves a `Vector` parameter uniquely owned when every
+        // call site passes a fresh value, and the owned spelling is `mut p:
+        // T`. The proof is by parameter POSITION and never reads the name,
+        // so it reaches the wildcard too.
+        const OWNED_COLLECTION_WILDCARD_PARAM: &str = "\
+fn firstOr(v: Vector<Int>, _: Vector<Int>) -> Int
+    Option.withDefault(Vector.get(v, 0), 0)
 
-        let refused: &[(&str, &str)] = &[
-            ("fn _(n: Int) -> Int\n    n + 1\n", "function `_`"),
-            (
-                "record Holder\n  _: Int\n\nfn read(h: Holder) -> Int\n    h._\n",
-                "field `_` of record `Holder`",
-            ),
-            // Self tail recursion: the parameter becomes `mut _`.
-            (SELF_TCO_WILDCARD_PARAM, "parameter `_` of function `count`"),
-            // Mutual tail recursion: `mut _` in the arm, and `_` in
-            // expression position where the wrapper builds the variant.
-            (
-                MUTUAL_TCO_WILDCARD_PARAM,
-                "parameter `_` of function `isEven`",
-            ),
-        ];
+fn caller() -> Int
+    firstOr(Vector.new(5, 7), Vector.new(3, 1))
+";
 
-        for (body, expected) in refused {
-            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
-            let err = super::unspellable_rust_names(&ctx)
-                .expect_err(&format!("`_` should be refused at: {expected}"));
-            assert!(
-                err.contains(expected),
-                "refusal does not say which name is at fault; wanted `{expected}` in:\n{err}"
-            );
-            assert!(
-                err.contains("wildcard"),
-                "refusal should explain that `_` is Rust's wildcard, not an \
-                 identifier:\n{err}"
-            );
-        }
-
-        // The other side of the line: these build and run today, so the
-        // refusal must leave them alone. The last one is the scoping
-        // witness — the same wildcard parameter on a function that recurses
-        // but not in tail position, where the emitter builds neither a loop
-        // nor a trampoline.
         for body in [
-            "fn takes(_: Int) -> Int\n    7\n",
-            "fn binds(n: Int) -> Int\n    _ = n + 1\n    9\n",
+            "fn _(n: Int) -> Int\n    n + 1\n",
+            "record Holder\n  _: Int\n\nfn read(h: Holder) -> Int\n    h._\n",
+            SELF_TCO_WILDCARD_PARAM,
+            MUTUAL_TCO_WILDCARD_PARAM,
             NON_TAIL_RECURSIVE_WILDCARD_PARAM,
+            OWNED_COLLECTION_WILDCARD_PARAM,
         ] {
-            let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let mut ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let out = transpile(&mut ctx);
+            let entry = generated_rust_entry_file(&out);
             assert!(
-                super::unspellable_rust_names(&ctx).is_ok(),
-                "`_` lowers to a legal Rust wildcard here, so it must not be \
-                 refused:\n{body}"
+                entry.contains("_avr__"),
+                "the wildcard was not renamed:\n{body}\n{entry}"
+            );
+            assert!(
+                !entry.contains("mut _:") && !entry.contains("mut _,") && !entry.contains("mut _)"),
+                "`mut _` is ``error: `mut` must be followed by a named \
+                 binding``:\n{body}\n{entry}"
             );
         }
+
+        // A `_` BINDING is the one position with no name to spell: nothing
+        // can read it, so the emitter drops the statement outright. Pinned
+        // so the loop above is not quietly asked the wrong question if that
+        // ever changes.
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nfn binds(n: Int) -> Int\n    _ = n + 1\n    9\n",
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            !entry.contains("let _"),
+            "an unread `_` binding should not be emitted at all:\n{entry}"
+        );
     }
 
     /// A verify block's generated test is named `test_<fn>_case_<n>`, and
@@ -1896,13 +1612,18 @@ verify become
     }
 
     /// The trampoline variant is the function name capitalised, so a
-    /// function named `self` in a mutual-recursion group would produce the
-    /// variant `Self` — a Rust keyword, and one with no raw spelling, so the
-    /// enum itself would not parse. The refusal has to fire on the function
-    /// name, before the group is ever formed.
+    /// function named `self` in a mutual-recursion group produces the
+    /// variant `Self` — a Rust keyword, and one with no raw spelling, so an
+    /// enum carrying it would not parse.
+    ///
+    /// Capitalising FIRST and spelling the result afterwards is what
+    /// answers this with no special case: `Self` is one of the five names
+    /// with no spelling, so the variant is renamed exactly like any other,
+    /// and the fn name (`_avr_self`) and the variant (`_avr_Self`) stay
+    /// distinct.
     #[test]
-    fn mutual_tco_fn_named_self_is_refused_before_the_enum() {
-        let ctx = ctx_from_source(
+    fn mutual_tco_fn_named_self_builds_a_renamed_variant() {
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -1918,32 +1639,36 @@ fn other(n: Int) -> Int
 "#,
             "demo",
         );
-
-        let err = super::unspellable_rust_names(&ctx)
-            .expect_err("`fn self` in a mutual group should be refused");
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
         assert!(
-            err.contains("function `self`"),
-            "refusal should name the function:\n{err}"
+            entry.contains("_avr_Self"),
+            "the trampoline variant was not renamed:\n{entry}"
         );
-
-        // `fn_name_to_variant("self")` would return `Self` — a Rust keyword
-        // with no raw spelling, so neither emitting it nor escaping it to
-        // `r#Self` parses. It is not called on that name here because its own
-        // `debug_assert` refuses to hand back a reserved variant; the refusal
-        // above is what keeps that assertion true.
+        assert!(
+            entry.contains("pub fn _avr_self"),
+            "the function name was not renamed:\n{entry}"
+        );
+        assert!(
+            !entry.contains("r#Self") && !entry.contains("R#"),
+            "a variant with no raw spelling was escaped instead of renamed:\n{entry}"
+        );
     }
 
     /// The same collapse, reached by a name that is NOT itself a Rust word.
     /// `ſ` (U+017F LATIN SMALL LETTER LONG S) upper-cases to `S`, so `ſelf`
-    /// capitalises to `Self` — comparing the function name against the
-    /// unspellable list does not catch this, because `ſelf` is not on it.
+    /// capitalises to `Self` — comparing the FUNCTION name against the
+    /// unspellable list would not catch this, because `ſelf` is not on it.
+    /// Asking the question after capitalising is what catches it, and it
+    /// lands on the same variant `fn self` does.
+    ///
     /// Aver accepts the name (camelCase style warning only) and it is a
-    /// perfectly good Rust identifier on its own, so the refusal has to be
-    /// scoped to the groups that actually build a variant: mutual recursion
-    /// is refused, and the same name without it still compiles.
+    /// perfectly good Rust identifier on its own, so without a trampoline
+    /// there is no variant and the name is emitted verbatim — the rename
+    /// reaches the variant, not the function.
     #[test]
-    fn a_name_that_capitalises_onto_self_is_refused_only_in_a_mutual_group() {
-        let mutual = ctx_from_source(
+    fn a_name_that_capitalises_onto_self_is_renamed_only_in_its_variant() {
+        let mut mutual = ctx_from_source(
             "
 module Demo
 
@@ -1959,15 +1684,19 @@ fn other(n: Int) -> Int
 ",
             "demo",
         );
-        let err = super::unspellable_rust_names(&mutual)
-            .expect_err("a variant that collapses onto `Self` should be refused");
+        let out = transpile(&mut mutual);
+        let entry = generated_rust_entry_file(&out);
         assert!(
-            err.contains("function `ſelf`") && err.contains("`Self`"),
-            "refusal should name both the function and the variant:\n{err}"
+            entry.contains("_avr_Self"),
+            "a variant that collapses onto `Self` was not renamed:\n{entry}"
+        );
+        assert!(
+            entry.contains("ſelf"),
+            "the function name itself is spellable and must be kept:\n{entry}"
         );
 
         // Without the trampoline there is no variant, and `ſelf` is a valid
-        // Rust function name, so this must still compile.
+        // Rust function name, so nothing is renamed at all.
         let mut alone = ctx_from_source(
             "
 module Demo
@@ -1977,19 +1706,22 @@ fn ſelf(n: Int) -> Int
 ",
             "demo",
         );
-        super::unspellable_rust_names(&alone)
-            .expect("a non-recursive `ſelf` builds a fn name, not a variant");
         let out = transpile(&mut alone);
+        let entry = generated_rust_entry_file(&out);
         assert!(
-            generated_rust_entry_file(&out).contains("pub fn ſelf"),
-            "the name should be emitted as-is"
+            entry.contains("pub fn ſelf"),
+            "the name should be emitted as-is:\n{entry}"
+        );
+        assert!(
+            !entry.contains("_avr_"),
+            "a spellable name must not be renamed:\n{entry}"
         );
     }
 
     /// The direct contract of the trampoline variant helper, independent of
-    /// any program that happens to drive it: capitalise, and do not escape.
+    /// any program that happens to drive it: capitalise, then spell.
     #[test]
-    fn fn_name_to_variant_capitalises_and_never_escapes() {
+    fn fn_name_to_variant_capitalises_then_spells() {
         use super::toplevel::fn_name_to_variant;
 
         // Ordinary names are untouched apart from the case change, so
@@ -2010,9 +1742,16 @@ fn ſelf(n: Int) -> Int
             assert!(!fn_name_to_variant(name).contains('#'));
         }
 
+        // The three names that capitalise onto `Self` — the one keyword
+        // with no raw spelling — all land on the renamed variant, and the
+        // rename is what the enum carries.
+        for name in ["self", "Self", "ſelf"] {
+            assert_eq!(fn_name_to_variant(name), "_avr_Self");
+        }
+        assert_eq!(fn_name_to_variant("_"), "_avr__");
+
         // Names whose first character has no uppercase form come through
-        // unchanged — and are still not keywords, which is what makes the
-        // post-capitalisation escape dead code.
+        // unchanged — and are still not keywords.
         assert_eq!(fn_name_to_variant("_await"), "_await");
         assert_eq!(fn_name_to_variant("日本語"), "日本語");
         assert_eq!(fn_name_to_variant(""), "");

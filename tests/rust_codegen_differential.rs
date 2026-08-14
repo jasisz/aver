@@ -715,31 +715,35 @@ fn main() -> Unit
 }
 
 /// `crate`, `self`, `super`, `Self` and `_` have no Rust spelling at all —
-/// `r#` is a parse error for exactly these five — so the backend refuses
-/// them instead of emitting a project that cannot build. This drives the
-/// real `aver compile` binary, because the refusal is only useful if it
-/// reaches the command line: before it, each of these programs compiled
-/// "successfully" and then failed `cargo build` naming a generated file the
-/// user never wrote.
+/// `r#` is a parse error for exactly these five — so the backend renames
+/// them, with the `_avr_` prefix, at the one place it spells a name. This
+/// drives the real `aver compile` binary and then `cargo build`, because
+/// the rename is only worth anything if the project it produces builds:
+/// before it, each of these programs compiled "successfully" and then
+/// failed `cargo build` naming a generated file the user never wrote.
 ///
-/// Three shapes, because each reached the emitter down a different path:
+/// Four shapes, because each reached the emitter down a different path:
 ///
-/// - `fn crate` — a function name, the shape reported on the issue.
+/// - `fn crate` — a function name, the shape reported on the issue. It
+///   emitted `pub fn crate(…)`.
 /// - `self = 41` at module level — a `TopLevel::Stmt`, which lives in
-///   `ctx.items` and in no `FnDef`, so the refusal's `fn_defs` walk never
-///   saw it. It emitted `let r#self = 41i64;` into `fn main` and the build
-///   stopped at ``error: `self` cannot be a raw identifier``.
+///   `ctx.items` and in no `FnDef`. It emitted `let r#self = 41i64;` into
+///   `fn main` and the build stopped at ``error: `self` cannot be a raw
+///   identifier``.
 /// - `fn _` — `_` is not a keyword, it is Rust's wildcard, so it is not in
 ///   the escape table and needs no escape; it simply has no identifier
 ///   form. It emitted `pub fn _(…)` and the build stopped at ``expected
 ///   identifier, found reserved identifier``.
+/// - a record field named `super`, read back through `h.super` — the
+///   declaration and the read have to be renamed together or the struct
+///   and its use disagree.
 ///
-/// Each program runs correctly on the VM first, so what is being pinned is
-/// a Rust-backend limit rather than a broken program.
+/// Each program runs on the VM first and the Rust answer has to match it:
+/// the rename is a spelling, so it must not be observable in the output.
 #[test]
-fn never_raw_rust_name_is_refused_by_compile_with_a_named_error() {
-    // (label, source, expected VM output, expected fragment of the refusal)
-    let cases: &[(&str, &str, &str, &str)] = &[
+fn never_spellable_rust_names_build_and_match_vm() {
+    // (label, source, expected output)
+    let cases: &[(&str, &str, &str)] = &[
         (
             "fn_name",
             r#"module NeverRaw
@@ -756,7 +760,6 @@ fn main() -> Unit
     Console.print("{crate(1)}")
 "#,
             "2",
-            "function `crate`",
         ),
         (
             "module_level_binding",
@@ -772,7 +775,6 @@ fn main() -> Unit
     Console.print(String.fromInt(self))
 "#,
             "41",
-            "module-level binding `self`",
         ),
         (
             "underscore_fn_name",
@@ -790,69 +792,69 @@ fn main() -> Unit
     Console.print(String.fromInt(_(1)))
 "#,
             "2",
-            "function `_`",
+        ),
+        (
+            "record_field",
+            r#"module NeverRawField
+    intent = "A record field named with a word Rust cannot spell"
+    effects [Console.print]
+
+record Holder
+  super: Int
+
+fn read(h: Holder) -> Int
+    ? "Read the field back."
+    h.super
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print(String.fromInt(read(Holder(super = 7))))
+"#,
+            "7",
         ),
     ];
 
-    for (label, src, expected_vm, expected_refusal) in cases {
-        let dir = temp_dir(&format!("never_raw_rust_name_{label}"));
-        let src_path = dir.join("main.av");
-        fs::write(&src_path, src).expect("write source");
-
-        // The VM has no such limitation, so the program itself is fine.
-        let vm = run_vm_inline(&format!("never_raw_rust_name_{label}"), src).expect("vm run");
+    for (label, src, expected) in cases {
+        let name = format!("never_spellable_{label}");
+        let vm = run_vm_inline(&name, src).expect("vm run");
+        assert_eq!(vm, *expected, "the {label} program is valid Aver");
+        let rust = build_run_rust_inline(&name, src)
+            .unwrap_or_else(|e| panic!("the {label} program must build and run: {e}"));
         assert_eq!(
-            vm, *expected_vm,
-            "the {label} program is valid Aver and the VM runs it"
+            rust, vm,
+            "the rename is a spelling and must not change what the {label} \
+             program prints"
         );
-
-        let out = Command::new(aver_bin())
-            .arg("compile")
-            .arg("-o")
-            .arg(dir.join("out"))
-            .arg(&src_path)
-            .output()
-            .expect("run aver compile");
-
-        assert!(
-            !out.status.success(),
-            "compile should refuse the {label} unspellable name, but it succeeded"
-        );
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            stderr.contains(expected_refusal),
-            "refusal must name the position at fault; wanted `{expected_refusal}` in:\n{stderr}"
-        );
-        assert!(
-            stderr.contains("no escape to fall back on"),
-            "refusal must explain that the raw escape is not available:\n{stderr}"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }
 
-/// `_` as a PARAMETER, which is a legal Rust pattern right up until the
-/// function is tail-recursive.
+/// `_` as a PARAMETER, in every shape that decides how it is spelled.
 ///
-/// A parameter normally lowers to a pattern, where `_` means "discard" and
-/// builds fine. Tail recursion moves it out of pattern position: a self-TCO
-/// signature makes every parameter the loop's mutable state, so it emits
-/// `pub fn count(mut n: i64, mut _: aver_rt::AverInt)` — ``error: `mut`
-/// must be followed by a named binding``. A mutual-TCO trampoline is worse:
-/// the arm binds `__MutualTco1::IsEven(mut n, mut _)` and the wrapper then
-/// passes the parameter BY NAME to build the variant,
-/// `__MutualTco1::IsEven(n, _)` — ``error: in expressions, `_` can only be
-/// used on the left-hand side of an assignment``.
+/// A parameter normally lowers to a Rust pattern, where a bare `_` means
+/// "discard" and builds fine. Three things take it out of pattern position,
+/// and each one used to be a broken build:
 ///
-/// Both programs run correctly on the VM, so what is pinned here is a
-/// Rust-backend limit, refused by name at compile time, rather than a
-/// broken program. The third case is the scoping witness: the same wildcard
-/// parameter on a function that recurses but NOT in tail position builds
-/// and runs, so the refusal must not reach it.
+/// - a self-TCO signature makes every parameter the loop's mutable state,
+///   so it emitted `pub fn count(mut n: i64, mut _: aver_rt::AverInt)` —
+///   ``error: `mut` must be followed by a named binding``;
+/// - a mutual-TCO trampoline binds `__MutualTco1::IsEven(mut n, mut _)` and
+///   the wrapper then passes the parameter BY NAME to build the variant,
+///   `__MutualTco1::IsEven(n, _)` — ``error: in expressions, `_` can only
+///   be used on the left-hand side of an assignment``;
+/// - a COLLECTION parameter needs no recursion at all: `own_param` proves
+///   it uniquely owned when every call site passes a fresh value, and the
+///   owned spelling is `mut p: T`. The proof is by parameter position and
+///   never reads the name, so it reached the wildcard too and emitted
+///   `mut _: aver_rt::AverVector<…>`, which `aver check`, `aver run` and
+///   `aver compile` all accepted and only `cargo build` rejected.
+///
+/// All four shapes (the three above plus the plain pattern) now spell the
+/// parameter `_avr__` and build. Every program runs on the VM first, and
+/// the Rust answer has to match it.
 #[test]
-fn underscore_param_is_refused_only_when_the_fn_is_tail_recursive() {
-    let refused: &[(&str, &str, &str, &str)] = &[
+fn a_wildcard_parameter_builds_in_every_shape_that_spells_it() {
+    let cases: &[(&str, &str, &str)] = &[
         (
             "self_tco",
             r#"module WildcardSelfTco
@@ -871,7 +873,6 @@ fn main() -> Unit
     Console.print("{count(5, 7)}")
 "#,
             "0",
-            "parameter `_` of function `count`",
         ),
         (
             "mutual_tco",
@@ -897,51 +898,10 @@ fn main() -> Unit
     Console.print("{isEven(10, 7)}")
 "#,
             "true",
-            "parameter `_` of function `isEven`",
         ),
-    ];
-
-    for (label, src, expected_vm, expected_refusal) in refused {
-        let dir = temp_dir(&format!("wildcard_tco_param_{label}"));
-        let src_path = dir.join("main.av");
-        fs::write(&src_path, src).expect("write source");
-
-        let vm = run_vm_inline(&format!("wildcard_tco_param_{label}"), src).expect("vm run");
-        assert_eq!(
-            vm, *expected_vm,
-            "the {label} program is valid Aver and the VM runs it"
-        );
-
-        let out = Command::new(aver_bin())
-            .arg("compile")
-            .arg("-o")
-            .arg(dir.join("out"))
-            .arg(&src_path)
-            .output()
-            .expect("run aver compile");
-
-        assert!(
-            !out.status.success(),
-            "compile should refuse the {label} wildcard parameter, but it succeeded"
-        );
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            stderr.contains(expected_refusal),
-            "refusal must name the position at fault; wanted `{expected_refusal}` in:\n{stderr}"
-        );
-        assert!(
-            stderr.contains("tail recursion") || stderr.contains("tail-recursive"),
-            "refusal must say that tail recursion is what moved the parameter \
-             out of pattern position:\n{stderr}"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    // The scoping witness, backed by a real build: recursion that is not in
-    // tail position builds neither a loop nor a trampoline, so the wildcard
-    // parameter stays a plain Rust pattern and the program still works.
-    let ok_src = r#"module WildcardNonTail
+        (
+            "non_tail",
+            r#"module WildcardNonTail
     intent = "A wildcard parameter on a function that recurses off tail position"
     effects [Console.print]
 
@@ -955,16 +915,110 @@ fn main() -> Unit
     ? "Print it."
     ! [Console.print]
     Console.print("{deep(5, 7)}")
-"#;
-    let vm = run_vm_inline("wildcard_non_tail_param", ok_src).expect("vm run");
-    let rust = build_run_rust_inline("wildcard_non_tail_param", ok_src)
-        .expect("a wildcard parameter off tail position must still compile, build and run");
-    assert_eq!(vm, "5", "VM answer for the non-tail-recursive shape");
-    assert_eq!(
-        rust, vm,
-        "the Rust backend must still accept a wildcard parameter where it \
-         lowers to a plain pattern"
-    );
+"#,
+            "5",
+        ),
+        (
+            "owned_collection",
+            r#"module WildcardOwnedCollection
+    intent = "A wildcard collection parameter on a function that is not recursive"
+    effects [Console.print]
+
+fn firstOr(v: Vector<Int>, _: Vector<Int>) -> Int
+    ? "Read the first cell of v, ignoring the second vector entirely."
+    Option.withDefault(Vector.get(v, 0), 0)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{firstOr(Vector.new(5, 7), Vector.new(3, 1))}")
+"#,
+            "7",
+        ),
+    ];
+
+    for (label, src, expected) in cases {
+        let name = format!("wildcard_param_{label}");
+        let vm = run_vm_inline(&name, src).expect("vm run");
+        assert_eq!(vm, *expected, "the {label} program is valid Aver");
+        let rust = build_run_rust_inline(&name, src)
+            .unwrap_or_else(|e| panic!("the {label} wildcard parameter must build and run: {e}"));
+        assert_eq!(
+            rust, vm,
+            "the Rust backend must spell a wildcard parameter without \
+             changing what the {label} program prints"
+        );
+    }
+}
+
+/// A mutually tail-recursive function named `self`, and one named `ſelf`
+/// (U+017F LATIN SMALL LETTER LONG S, which upper-cases to `S`). Both
+/// capitalise onto `Self` — the one Rust keyword with no raw spelling — so
+/// both need the trampoline variant renamed, and `ſelf` reaches it without
+/// being one of the five names itself. The function keeps its own spelling
+/// where it is legal (`ſelf` is a fine Rust identifier; `self` is not), so
+/// this also pins that the rename follows the position, not the program.
+#[test]
+fn mutual_recursion_through_a_name_that_capitalises_onto_self_builds() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "self",
+            r#"module SelfMutual
+    intent = "Mutual tail recursion through a function named self"
+    effects [Console.print]
+
+fn self(n: Int) -> Int
+    ? "Count down through the other one."
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    ? "Count down through self."
+    match n == 0
+        true -> 1
+        false -> self(n - 1)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{self(6)}")
+"#,
+        ),
+        (
+            "long_s",
+            r#"module LongSMutual
+    intent = "Mutual tail recursion through a name that capitalises onto Self"
+    effects [Console.print]
+
+fn ſelf(n: Int) -> Int
+    ? "Count down through the other one."
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    ? "Count down through the long-s one."
+    match n == 0
+        true -> 1
+        false -> ſelf(n - 1)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{ſelf(6)}")
+"#,
+        ),
+    ];
+
+    for (label, src) in cases {
+        let name = format!("capitalises_onto_self_{label}");
+        let vm = run_vm_inline(&name, src).expect("vm run");
+        assert_eq!(vm, "0", "the {label} program is valid Aver");
+        let rust = build_run_rust_inline(&name, src)
+            .unwrap_or_else(|e| panic!("the {label} trampoline must build and run: {e}"));
+        assert_eq!(rust, vm, "Rust answer for the {label} trampoline");
+    }
 }
 
 /// A verify block on a keyword-named function, driven through the real

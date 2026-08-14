@@ -39,49 +39,29 @@ const RUST_RESERVED: &[&str] = &[
     "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
 ];
 
-/// The four Rust *words* that cannot be spelled as identifiers at all —
-/// `r#` does not rescue them, because a raw identifier may not be `crate`,
-/// `self`, `super` or `Self`.
+/// The five names Rust cannot spell as an identifier at all, not even
+/// behind `r#`: the four *words* `Self`, `crate`, `self` and `super`, for
+/// which a raw identifier is explicitly rejected, and the wildcard `_`,
+/// which is not a word at all.
 ///
 /// For every other entry in [`RUST_RESERVED`] the `r#` escape is a complete
-/// answer, so the emitter can carry the name through unchanged. For these
-/// four there is no spelling, so the only honest options are to rename the
-/// user's function behind their back or to refuse. Codegen refuses; see
-/// `unspellable_rust_names` in the backend's `mod.rs`.
+/// answer, so the emitter carries the name through unchanged. For these
+/// five there is no escape, so the name is renamed instead — see
+/// [`MANGLE_PREFIX`] and [`aver_name_to_rust`].
 ///
-/// Rust has a fifth unspellable name, `_`, which is deliberately NOT
-/// listed here — see [`is_never_an_identifier_in_rust`] for why it needs a
-/// different test.
-pub(crate) const RUST_NEVER_RAW: &[&str] = &["Self", "crate", "self", "super"];
+/// All five are ordinary Aver identifiers (`src/lexer.rs` takes `_` as one
+/// too), so a program can name a function, a parameter, a binding, a match
+/// binder or a record field with any of them.
+const RUST_NEVER_SPELLABLE: &[&str] = &["Self", "_", "crate", "self", "super"];
 
-/// True when `name` cannot be spelled in Rust even as a raw identifier, in
-/// a position where Rust would otherwise accept a wildcard.
-///
-/// This is the test for a `let` binding, a match binder and a parameter of
-/// an ordinary function: all three lower to Rust pattern positions, where
-/// `_` is legal and means "discard", so `_` must pass here. Use
-/// [`is_never_an_identifier_in_rust`] where Rust demands a real name — a
-/// parameter counts as that once the function is tail-recursive.
-pub(crate) fn is_never_raw_in_rust(name: &str) -> bool {
-    RUST_NEVER_RAW.contains(&name)
-}
-
-/// True when `name` cannot stand where Rust demands a real identifier — a
-/// `fn` name, a struct field, or a parameter of a tail-recursive function,
-/// which the emitter writes as `mut p` and a trampoline wrapper also passes
-/// by name.
-///
-/// That is the four [`RUST_NEVER_RAW`] words plus `_`. `_` is not a
-/// keyword, it is the wildcard, so it is not in the table and never needs
-/// the escape in a pattern; but `pub fn _()` is `expected identifier,
-/// found reserved identifier`, `mut _` is ``mut` must be followed by a
-/// named binding``, `_` as a call argument is ``in expressions, `_` can
-/// only be used on the left-hand side of an assignment``, and `r#_` is
-/// `` `_` cannot be a raw identifier ``, so in these positions it has no
-/// spelling either way. Aver's lexer takes `_` as an ordinary identifier
-/// (`src/lexer.rs`), so a program can carry it.
-pub(crate) fn is_never_an_identifier_in_rust(name: &str) -> bool {
-    name == "_" || is_never_raw_in_rust(name)
+/// True when `name` has no Rust spelling at all — neither bare nor behind
+/// `r#`. `pub fn _()` is `expected identifier, found reserved identifier`,
+/// `mut _` is ``mut` must be followed by a named binding``, `_` as a call
+/// argument is ``in expressions, `_` can only be used on the left-hand side
+/// of an assignment``, `r#_` is `` `_` cannot be a raw identifier ``, and
+/// `r#crate` is `` `crate` cannot be a raw identifier ``.
+pub(crate) fn is_never_spellable_in_rust(name: &str) -> bool {
+    RUST_NEVER_SPELLABLE.contains(&name)
 }
 
 /// True when `name` needs the `r#` escape to stand as a Rust identifier.
@@ -91,15 +71,16 @@ pub(crate) fn is_rust_reserved(name: &str) -> bool {
 
 /// Upper-case the first character, leaving the rest alone.
 ///
-/// The mutual-recursion trampoline builds its enum variants this way, and
-/// the refusal that guards those variants has to predict the same string,
-/// so both go through here rather than each spelling the transform.
+/// The mutual-recursion trampoline builds its enum variants this way.
 ///
 /// Note `char::to_uppercase` is not "make ASCII uppercase": it is the
 /// Unicode mapping, and it is neither injective nor length-preserving. In
 /// particular `ſ` (U+017F LATIN SMALL LETTER LONG S) maps to `S`, which is
 /// the one way an Aver name other than `self`/`Self` can capitalise into a
-/// Rust keyword.
+/// Rust keyword. Capitalising FIRST and spelling the result through
+/// [`aver_name_to_rust`] is what makes that need no special case:
+/// `fn ſelf` capitalises to `Self`, which is unspellable, which the
+/// spelling step then renames like any other.
 pub(crate) fn capitalise_first(name: &str) -> String {
     let mut chars = name.chars();
     match chars.next() {
@@ -111,27 +92,59 @@ pub(crate) fn capitalise_first(name: &str) -> String {
     }
 }
 
+/// The prefix the Rust backend puts in front of a name it has no other way
+/// to write down.
+///
+/// It leads with `_` on purpose. The name that most needs this is Aver's
+/// own wildcard: a user who writes `_` is saying they do not care about
+/// that binding, and `_avr__` keeps rustc's unused-variable lint quiet
+/// about exactly the thing they said to ignore.
+pub(crate) const MANGLE_PREFIX: &str = "_avr_";
+
 /// Convert an Aver identifier to a valid Rust identifier that stands
 /// ALONE.
 ///
-/// Valid for every reserved word except the four in [`RUST_NEVER_RAW`],
-/// which have no spelling at all; those are refused before codegen runs,
-/// so this function never has to answer for them. `_` passes through
-/// unchanged and correctly so — it needs no escape, and it is legal in
-/// the pattern positions this is called from. It reaches only those:
-/// `unspellable_rust_names` refuses `_` wherever the emitter needs a real
-/// name for it, which is a `fn` name, a record field, and a parameter of a
-/// tail-recursive function (where the emitter writes `mut _`, and a
-/// trampoline wrapper additionally passes it by name).
+/// Three answers, in order:
+///
+/// 1. A name with no Rust spelling at all ([`is_never_spellable_in_rust`])
+///    gets [`MANGLE_PREFIX`] in front of it: `self` → `_avr_self`, `_` →
+///    `_avr__`.
+/// 2. A name that ALREADY starts with the prefix gets it again:
+///    `_avr_self` → `_avr__avr_self`. This is what keeps the map
+///    injective — without it a user's own `_avr_self` and Aver's rename of
+///    `self` would be the same Rust name, and two different things would
+///    silently become one.
+/// 3. Everything else keeps today's behaviour: verbatim, or the `r#`
+///    escape for the [`RUST_RESERVED`] keywords, which is a complete
+///    answer for all of them.
+///
+/// So the map is injective: rule 1 and rule 2 produce exactly the names
+/// beginning with the prefix and are each injective on their own domain;
+/// rule 3 is identity or a `#`-bearing name, and an Aver identifier can
+/// contain neither the prefix (rule 2 catches those) nor a `#`. It is also
+/// the IDENTITY for every name that is not one of the five and does not
+/// start with the prefix, which is every name in the corpus — so no
+/// existing program's emitted bytes move.
+///
+/// This renames rather than refusing. The rename is deterministic, it is
+/// confined to the Rust backend's spelling of a name (the VM, wasm, Lean
+/// and Dafny backends never call this), and the only place a user meets it
+/// is cosmetic: a mangled name in a generated-project backtrace or in the
+/// playground's Rust export. Refusing instead would have turned five
+/// ordinary Aver names into names no program may use on one backend.
 ///
 /// Do not call this on a name that will then be embedded inside a longer
 /// identifier. `r#` is a prefix on a whole identifier, so
 /// `format!("test_{}", aver_name_to_rust("await"))` is `test_r#await` — a
 /// `#` in the middle of a word, which ends the identifier and fails to
-/// parse. A name in that position never needs the escape anyway: the
+/// parse. A name in that position never needs either treatment anyway: the
 /// surrounding text makes the result a new word, and a new word that is
-/// not a keyword. Compose from the raw name; `emit_verify_blocks` in
-/// `toplevel.rs` is the one site that does this.
+/// neither a keyword nor unspellable. Compose from the raw name;
+/// `emit_verify_blocks` in `toplevel.rs` is the one site that does this.
 pub fn aver_name_to_rust(name: &str) -> String {
-    crate::codegen::common::escape_reserved_word_prefix(name, RUST_RESERVED, "r#")
+    if is_never_spellable_in_rust(name) || name.starts_with(MANGLE_PREFIX) {
+        format!("{MANGLE_PREFIX}{name}")
+    } else {
+        crate::codegen::common::escape_reserved_word_prefix(name, RUST_RESERVED, "r#")
+    }
 }
