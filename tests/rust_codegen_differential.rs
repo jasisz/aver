@@ -1214,6 +1214,102 @@ fn main() -> Unit
     assert_eq!(rust, vm, "Rust Crypto.sha256 codegen diverged from VM");
 }
 
+/// `List.drop` on the compiled backend: stepping through a list must see
+/// exactly what stepping by destructuring sees, and the two answers are
+/// printed side by side so a skipped or duplicated element shows up in the
+/// line itself.
+///
+/// This is the backend the issue was measured on (#913), and the only one
+/// whose count clamp lives in the emitted expression rather than in a shared
+/// builtin: reading `to_usize().unwrap_or(usize::MAX)` straight had a
+/// negative count DROP the whole list here and drop nothing everywhere else,
+/// with `List.take` inverted the same way. No cheaper harness reaches that —
+/// the wasm-gc and VM spellings of the clamp are separate code — so the
+/// negative-count lines below are the whole reason this case is in the
+/// default tier.
+#[test]
+fn rust_list_drop_walk_matches_destructuring_and_the_vm() {
+    let src = r#"module ListDropWalk
+    intent = "Stepping a list with List.drop must agree with destructuring"
+    effects [Console.print]
+
+fn built(n: Int, acc: List<Int>) -> List<Int>
+    ? "A list of n elements, grown from the front."
+    match n <= 0
+        true -> acc
+        false -> built(n - 1, List.prepend(n, acc))
+
+fn grown(i: Int, n: Int, acc: List<Int>) -> List<Int>
+    ? "A list grown from the back, so the runtime holds it as a spine."
+    match i >= n
+        true -> acc
+        false -> grown(i + 1, n, List.concat(acc, [i]))
+
+fn walkByDrop(xs: List<Int>, step: Int, acc: Int) -> Int
+    ? "Advance step at a time with List.drop."
+    match xs
+        [] -> acc
+        [head, ..tail] -> walkByDrop(List.drop(xs, step), step, acc + head)
+
+fn skip(xs: List<Int>, n: Int) -> List<Int>
+    ? "Step over n elements by destructuring."
+    match n <= 0
+        true -> xs
+        false -> skipOne(xs, n)
+
+fn skipOne(xs: List<Int>, n: Int) -> List<Int>
+    ? "One element at a time."
+    match xs
+        [] -> []
+        [head, ..tail] -> skip(tail, n - 1)
+
+fn walkByUncons(xs: List<Int>, step: Int, acc: Int) -> Int
+    ? "The same walk, written as destructuring."
+    match xs
+        [] -> acc
+        [head, ..tail] -> walkByUncons(skip(xs, step), step, acc + head)
+
+fn joinInts(xs: List<Int>) -> String
+    ? "Render a list of ints."
+    match xs
+        [] -> "."
+        [x, ..rest] -> String.fromInt(x) + "," + joinInts(rest)
+
+fn walks(xs: List<Int>) -> String
+    ? "Both walks over the same list, side by side."
+    String.fromInt(walkByDrop(xs, 7, 0)) + "/" + String.fromInt(walkByUncons(xs, 7, 0))
+
+fn main() -> Unit
+    ? "Walk three list shapes two ways, then the counts at the edges."
+    ! [Console.print]
+    prepended = built(200, [])
+    spined = grown(0, 60, [])
+    Console.print(walks(prepended))
+    Console.print(walks(spined))
+    Console.print(walks(List.concat(prepended, spined)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 2)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 0)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 9)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], -3)))
+    Console.print(joinInts(List.take([1, 2, 3, 4, 5], -3)))
+"#;
+
+    let expected = "2871/2871\n\
+                    252/252\n\
+                    3150/3150\n\
+                    3,4,5,.\n\
+                    1,2,3,4,5,.\n\
+                    .\n\
+                    1,2,3,4,5,.\n\
+                    .";
+
+    let vm = run_vm_inline("list_drop_walk", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("list_drop_walk", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "the VM's List.drop contract changed");
+    assert_eq!(rust, vm, "Rust List.drop / List.take diverged from the VM");
+}
+
 /// A program whose ONLY `Crypto.sha256` call sits in a verify case still
 /// generates a project whose `#[cfg(test)]` module references
 /// `crate::aver_generated::crypto::digest32::Digest32` — the implicit
@@ -2072,6 +2168,341 @@ fn aver_path_literal(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
+}
+
+// ─── Mode (b'): the policy-checked argument is evaluated once ───────────
+//
+// The policy check and the effect call are two use sites of the SAME
+// argument. Emitting the argument expression at both of them evaluated
+// it twice: any non-`Copy` binding it named was moved by the check and
+// then used again by the call (the generated project failed to build
+// with E0382), and any effect it carried ran twice (the built binary
+// diverged from the VM). Both halves ride one program here: `pathOf`
+// takes two non-`Copy` parameters AND announces itself, and it feeds a
+// one-argument `Disk.readText` and a two-argument `Disk.writeText`.
+
+/// `__DIR__` is substituted with a real directory at test time.
+const POLICY_ARG_PROBE: &str = r#"module PolicyArgProbe
+    intent =
+        "Writes then reads a file whose path is built from parameters,"
+        "announcing the path once per call. Probes the policy-checked"
+        "argument: it must be evaluated exactly once."
+    effects [Console, Disk]
+
+fn pathOf(dir: String, n: Int) -> String
+    ? "Says which file it means, then names it."
+    ! [Console.print]
+    said = Console.print("naming")
+    "{dir}/f{n}.txt"
+
+fn writeAt(dir: String, n: Int, body: String) -> Result<Unit, String>
+    ? "Writes to a path built from two parameters."
+    ! [Console.print, Disk.writeText]
+    Disk.writeText(pathOf(dir, n), body)
+
+fn readAt(dir: String, n: Int) -> Result<String, String>
+    ? "Reads a path built from two parameters."
+    ! [Console.print, Disk.readText]
+    Disk.readText(pathOf(dir, n))
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.readText, Disk.writeText]
+    written = writeAt("__DIR__", 1, "payload")?
+    text = readAt("__DIR__", 1)?
+    shown = Console.print(text)
+    Result.Ok(Unit)
+"#;
+
+/// How many times the emitted module mentions `pathOf` — one definition
+/// plus one mention per call site. A policy check that re-emits the
+/// argument expression pushes this up by one per guarded call.
+fn path_of_mentions(emitted: &str) -> usize {
+    emitted.matches("pathOf(").count()
+}
+
+fn write_policy_arg_probe(dir: &Path, target_dir: &Path) -> PathBuf {
+    fs::create_dir_all(dir).expect("create source dir");
+    let src = dir.join("policy_arg_probe.av");
+    fs::write(
+        &src,
+        POLICY_ARG_PROBE.replace("__DIR__", &aver_path_literal(target_dir)),
+    )
+    .expect("write probe source");
+    src
+}
+
+fn generated_entry(project: &Path) -> Result<String, String> {
+    fs::read_to_string(
+        project
+            .join("src")
+            .join("aver_generated")
+            .join("entry")
+            .join("mod.rs"),
+    )
+    .map_err(|e| format!("read emitted module: {e}"))
+}
+
+#[test]
+fn policy_checked_disk_argument_builds_and_matches_vm() {
+    let ws = temp_dir("policy-arg");
+    // The embedded aver.toml is read from the module root at compile
+    // time, so the source + the policy share a dir.
+    let proj_root = ws.join("src-root");
+    let files = ws.join("files");
+    fs::create_dir_all(&files).expect("create target dir");
+    let src = write_policy_arg_probe(&proj_root, &files);
+    // A real allow-list naming the write/read directory: the check has
+    // to see the same path the call uses, or the run is denied.
+    write_embedded_disk_policy(&proj_root, &files.to_string_lossy());
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "policy_arg_probe";
+
+    let result = (|| -> Result<(), String> {
+        // No `--policy` flag: the default (embed) is what a plain
+        // `aver compile` does, and the presence of aver.toml alone is
+        // what turns the check on.
+        compile_rust(&src, &project, name, Some(&proj_root), &[])?;
+        let emitted = generated_entry(&project)?;
+        if !emitted.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_policy::check_disk` wrapper — \
+                 the probe would be testing nothing:\n{emitted}"
+            ));
+        }
+        let mentions = path_of_mentions(&emitted);
+        if mentions != 3 {
+            return Err(format!(
+                "`pathOf` is mentioned {mentions} times (expected 3: one \
+                 definition + one per call site) — the policy check is \
+                 re-emitting the argument expression:\n{emitted}"
+            ));
+        }
+
+        // The real gate: rustc rejects the second evaluation (E0382 on
+        // the moved parameters), and the run shows how often the
+        // argument's own effect fired.
+        let bin = cargo_build(&project, name)?;
+        let run = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run policy-arg binary: {e}"))?;
+        if !run.status.success() {
+            return Err(format!("policy-arg run failed:\n{}", format_output(&run)));
+        }
+        let rust_stdout = String::from_utf8_lossy(&run.stdout).trim().to_string();
+        let vm_stdout = run_vm(&src, Some(&proj_root))?;
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "Rust diverged from the VM: the argument expression's effect \
+                 ran a different number of times\nvm:\n{vm_stdout}\nrust:\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn policy_check_rides_any_aver_toml_and_leaves_the_unguarded_shape_alone() {
+    let ws = temp_dir("policy-arg-shape");
+    let files = ws.join("files");
+    fs::create_dir_all(&files).expect("create target dir");
+
+    let result = (|| -> Result<(), String> {
+        // (1) An aver.toml that says nothing about Disk. The check is
+        // emitted anyway — the trigger is the file's existence — so the
+        // argument still has two use sites and must still be rendered
+        // once.
+        let quiet_root = ws.join("quiet-root");
+        let quiet_src = write_policy_arg_probe(&quiet_root, &files);
+        fs::write(
+            quiet_root.join("aver.toml"),
+            "[[check.suppress]]\nslug = \"verify-coverage\"\nfiles = [\"nothing.av\"]\nreason = \"placeholder\"\n",
+        )
+        .expect("write aver.toml");
+        let quiet_project = ws.join("quiet-project");
+        compile_rust(
+            &quiet_src,
+            &quiet_project,
+            "policy_arg_quiet",
+            Some(&quiet_root),
+            &[],
+        )?;
+        let quiet = generated_entry(&quiet_project)?;
+        if !quiet.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "an aver.toml with no Disk section emitted no check — the \
+                 trigger for this emission changed:\n{quiet}"
+            ));
+        }
+        let mentions = path_of_mentions(&quiet);
+        if mentions != 3 {
+            return Err(format!(
+                "`pathOf` is mentioned {mentions} times under a policy-free \
+                 aver.toml (expected 3) — the check is re-emitting the \
+                 argument expression:\n{quiet}"
+            ));
+        }
+
+        // (2) Control: no aver.toml, no check, and the call keeps the
+        // shape it always had.
+        let bare_root = ws.join("bare-root");
+        let bare_src = write_policy_arg_probe(&bare_root, &files);
+        let bare_project = ws.join("bare-project");
+        compile_rust(
+            &bare_src,
+            &bare_project,
+            "policy_arg_bare",
+            Some(&bare_root),
+            &[],
+        )?;
+        let bare = generated_entry(&bare_project)?;
+        if bare.contains("aver_policy") {
+            return Err(format!(
+                "no aver.toml, but a policy check was emitted:\n{bare}"
+            ));
+        }
+        let bare_mentions = path_of_mentions(&bare);
+        if bare_mentions != 3 {
+            return Err(format!(
+                "`pathOf` is mentioned {bare_mentions} times with no policy \
+                 at all (expected 3) — the unguarded emission changed:\n{bare}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+// ─── Mode (b''): the policy-checked argument keeps its ownership ────────
+//
+// Binding the checked argument to a local fixed the double evaluation but
+// made that local an OWNING position, which the argument had never been
+// asked to satisfy: every guarded raw body reads argument 0 as `&{}`, so
+// before the temp existed both use sites merely borrowed. Two argument
+// shapes are moved by the bind and are not moved by a borrow:
+//
+//   * a local that the program reads again after the guarded call — the
+//     temp takes it, and the later read is `error[E0382]: borrow of moved
+//     value`;
+//   * a field read through a record parameter — record params are emitted
+//     as `&T`, so the temp is `error[E0507]: cannot move out of *place`,
+//     which needs no second read at all.
+//
+// `POLICY_ARG_PROBE` cannot see either one: its argument is `pathOf(dir, n)`,
+// a call result that already owns itself, and the same is true of every
+// other guarded call site in the corpus. Both shapes ride one program here,
+// and the `cargo build` is the gate — the emission assertions above it only
+// say which of the two went wrong.
+
+/// `__DIR__` is substituted with a real directory at test time.
+const POLICY_ARG_OWNERSHIP_PROBE: &str = r#"module PolicyArgOwnership
+    intent =
+        "Names a path once and uses it twice, and reads a path a record"
+        "carries. Probes the policy-checked argument's ownership: binding"
+        "it must not take the value away from the rest of the program."
+    effects [Console, Disk]
+
+record Location
+    dir: String
+    segment: String
+
+fn writeThenCheck(dir: String, n: Int) -> Result<Unit, String>
+    ? "Writes a file, checks it, then prints the path it used."
+    ! [Console.print, Disk.exists, Disk.writeText]
+    path = "{dir}/f{n}.txt"
+    written = Disk.writeText(path, "payload")?
+    present = Disk.exists(path)
+    shown = Console.print("exists {path}: {present}")
+    Result.Ok(Unit)
+
+fn readThere(place: Location) -> Result<String, String>
+    ? "Reads the file a record field names."
+    ! [Disk.readText]
+    Disk.readText(place.segment)
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.exists, Disk.readText, Disk.writeText]
+    checked = writeThenCheck("__DIR__", 1)?
+    place = Location(dir = "__DIR__", segment = "__DIR__/f1.txt")
+    text = readThere(place)?
+    echoed = Console.print("read {text}")
+    Result.Ok(Unit)
+"#;
+
+#[test]
+fn policy_checked_argument_keeps_its_ownership() {
+    let ws = temp_dir("policy-arg-own");
+    let proj_root = ws.join("src-root");
+    let files = ws.join("files");
+    fs::create_dir_all(&files).expect("create target dir");
+    fs::create_dir_all(&proj_root).expect("create src root");
+    let src = proj_root.join("policy_arg_ownership.av");
+    fs::write(
+        &src,
+        POLICY_ARG_OWNERSHIP_PROBE.replace("__DIR__", &aver_path_literal(&files)),
+    )
+    .expect("write probe source");
+    write_embedded_disk_policy(&proj_root, &files.to_string_lossy());
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "policy_arg_ownership";
+
+    let result = (|| -> Result<(), String> {
+        compile_rust(&src, &project, name, Some(&proj_root), &[])?;
+        let emitted = generated_entry(&project)?;
+        if !emitted.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_policy::check_disk` wrapper — \
+                 the probe would be testing nothing:\n{emitted}"
+            ));
+        }
+        // A local the program reads again: the temp has to own a copy,
+        // not take the local.
+        if !emitted.contains("let __policy_arg = path.clone();") {
+            return Err(format!(
+                "the policy temp takes `path` instead of owning a copy of it — \
+                 every later read of `path` is E0382:\n{emitted}"
+            ));
+        }
+        // A field read through a `&Location` param: the temp has to own a
+        // copy, not move out of the borrow.
+        if !emitted.contains("let __policy_arg = place.segment.clone();") {
+            return Err(format!(
+                "the policy temp moves `place.segment` out of a shared \
+                 reference — E0507 on the first and only use:\n{emitted}"
+            ));
+        }
+
+        // The gate: rustc is the judge of both shapes.
+        let bin = cargo_build(&project, name)?;
+        let run = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run policy-arg-ownership binary: {e}"))?;
+        if !run.status.success() {
+            return Err(format!(
+                "policy-arg-ownership run failed:\n{}",
+                format_output(&run)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&run.stdout).trim().to_string();
+        let vm_stdout = run_vm(&src, Some(&proj_root))?;
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "Rust diverged from the VM\nvm:\n{vm_stdout}\nrust:\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
 }
 
 // ─── Mode (c): record / replay ──────────────────────────────────────────

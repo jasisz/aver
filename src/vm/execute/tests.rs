@@ -1,6 +1,6 @@
 use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
-use crate::vm::opcode::{LOAD_CONST, RETURN};
+use crate::vm::opcode::{CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, VECTOR_SET_OR_KEEP};
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 use crate::{lexer::Lexer, parser::Parser, vm};
 
@@ -178,6 +178,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         globals_dirty: false,
         yard_dirty: false,
         handoff_dirty: false,
+        inplace_write_escaped: false,
         thin: true,
         parent_thin: false,
     });
@@ -1020,5 +1021,193 @@ fn writing_a_heap_backed_value_into_a_map_of_immediates_puts_the_reads_back() {
         "one heap-backed value was written into an all-immediate map and the \
          collector went on skipping it, which leaves that value's arena index \
          un-rewritten after it moves: read {degraded} entries",
+    );
+}
+
+/// Map entries the collector read while running the in-place-write shape.
+///
+/// The number is the descent's cost in the only form that does not need a
+/// stopwatch. A map is one arena entry and carries no all-immediate escape, so
+/// a boundary that descends into an out-of-region map reads it entry by entry
+/// and one that leaves it alone reads nothing. The map is carried across every
+/// boundary unchanged, so every entry in this count is a boundary that chose to
+/// descend into it.
+fn inplace_write_scan_cost(src: &str) -> u64 {
+    let mut vm = compile_vm_with_ownership(src);
+    vm.run().expect("in-place write program should run");
+    vm.arena.map_entries_scanned()
+}
+
+/// One in-place write in `main`, then `n` iterations of a loop that runs in a
+/// frame of its own.
+fn armed_once_then_many_frames(n: i64) -> u64 {
+    let src = format!(
+        "fn buildMap(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> buildMap(n - 1, Map.set(acc, n, \"row-{{n}}\"))\n        false -> acc\n\nfn touch(v: Vector<String>, s: String) -> Vector<String>\n    Option.withDefault(Vector.set(v, 0, s), v)\n\nfn spin(m: Map<Int, String>, i: Int, n: Int, tag: String) -> Int\n    match i >= n\n        true -> Map.len(m) + String.len(tag)\n        false -> spin(m, i + 1, n, String.toUpper(tag))\n\nfn main() -> Int\n    m = buildMap(32, {{}})\n    v = touch(Vector.new(2, \"seed-string\"), String.toUpper(\"payload-marker\"))\n    spin(m, 0, {n}, \"tag-value\") + Vector.len(v)\n"
+    );
+    inplace_write_scan_cost(&src)
+}
+
+/// The same `n` iterations, with the write inside the looping frame so every
+/// boundary is armed again.
+fn writing_at_every_boundary(n: i64) -> u64 {
+    let src = format!(
+        "fn buildMap(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> buildMap(n - 1, Map.set(acc, n, \"row-{{n}}\"))\n        false -> acc\n\nfn spin(v: Vector<String>, m: Map<Int, String>, i: Int, n: Int, tag: String) -> Int\n    match i >= n\n        true -> Map.len(m) + Vector.len(v) + String.len(tag)\n        false -> spin(Option.withDefault(Vector.set(v, 0, String.toUpper(\"payload-{{i}}\")), v), m, i + 1, n, String.toUpper(tag))\n\nfn main() -> Int\n    m = buildMap(32, {{}})\n    spin(Vector.new(2, \"seed-string\"), m, 0, {n}, \"tag-value\")\n"
+    );
+    inplace_write_scan_cost(&src)
+}
+
+/// The flag an in-place write sets is a property of ONE frame, and this is the
+/// receipt for it: a write early in `main` costs the fifty or hundred frames
+/// that run afterwards exactly nothing.
+///
+/// A frame is pushed with the flag clear and only a write of its own — or a
+/// callee handing one up on return — ever sets it, so the cost of arming a
+/// frame is bounded by that frame's own boundaries. It does not become a tax
+/// on the rest of the program. Doubling the iteration count leaves the number
+/// unchanged to the entry; the constant that remains is the map being built
+/// before the loop starts.
+#[test]
+fn an_early_in_place_write_does_not_arm_the_frames_that_run_after_it() {
+    let fifty = armed_once_then_many_frames(50);
+    let hundred = armed_once_then_many_frames(100);
+    assert_eq!(
+        fifty, hundred,
+        "doubling the number of frames that run after one in-place write \
+         changed what the collector read: 50 iterations read {fifty} map \
+         entries, 100 read {hundred}",
+    );
+}
+
+/// The control, and the honest half of the pair.
+///
+/// Same loop, same carried map, one difference: the write is inside the
+/// looping frame, so every boundary is armed again and every boundary descends.
+/// The reads then grow with the iteration count times the size of what the
+/// frame carries — the quadratic this fix knowingly pays on the shape that used
+/// to return the wrong answer, and what a remembered set at element granularity
+/// would be for.
+///
+/// It is also what keeps the test above from being vacuous: the counter does
+/// move when a boundary descends.
+#[test]
+fn writing_at_every_boundary_reads_the_carried_map_at_every_boundary() {
+    let fifty = writing_at_every_boundary(50);
+    let hundred = writing_at_every_boundary(100);
+    let extra = hundred - fifty;
+    assert!(
+        extra >= 50 * 32,
+        "fifty more armed boundaries did not read the 32-entry map they carry \
+         fifty more times: 50 iterations read {fifty}, 100 read {hundred}",
+    );
+}
+
+/// The depth-0 return boundary, driven through the real dispatch loop.
+///
+/// `call_function` records `caller_depth = frames.len()`, so the callee of a
+/// host callback, an oracle stub or an HTTP handler returns through
+/// `finalize_frame_return` rather than through either caller path — and a
+/// vector handed to it can already be in stable, because that is where this
+/// same boundary puts every result it returns.
+///
+/// The arming is correct here: stable is not frame-local, so the write sets
+/// `inplace_write_escaped` and the barrier keeps the frame off the
+/// young-truncate fast return. What it lands on instead is the path that
+/// promotes to stable — which used to hand a stable root back unread and then
+/// truncate the payload away underneath it.
+#[test]
+fn a_stable_vector_written_in_place_survives_the_depth_zero_return() {
+    let mut code = CodeStore::new();
+    let writer_id = code.add_function(FnChunk {
+        name: "writer".to_string(),
+        arity: 1,
+        local_count: 1,
+        // vec, 0, ("PAYLOAD-" ++ "MARKER") -> owned in-place set -> return vec.
+        // The concatenation is what makes the payload a FRESH allocation above
+        // the frame's mark; a string constant is already in the arena and would
+        // never have been dropped.
+        code: vec![
+            LOAD_LOCAL,
+            0,
+            LOAD_CONST,
+            0,
+            0,
+            LOAD_CONST,
+            0,
+            1,
+            LOAD_CONST,
+            0,
+            2,
+            CONCAT,
+            VECTOR_SET_OR_KEEP,
+            1,
+            RETURN,
+        ],
+        constants: Vec::new(),
+        effects: Vec::new(),
+        thin: true,
+        parent_thin: false,
+        leaf: false,
+        no_alloc: false,
+        source_file: String::new(),
+        line_table: Vec::new(),
+    });
+
+    // The vector and the two string constants all start in stable, which is
+    // where this boundary leaves everything it returns.
+    let mut arena = Arena::new();
+    let mut promoted = [
+        NanValue::new_vector(arena.push_vector(vec![NanValue::new_int_inline(0)])),
+        NanValue::new_string(arena.push_string("PAYLOAD-")),
+        NanValue::new_string(arena.push_string("MARKER")),
+    ];
+    arena.promote_roots_to_stable(&mut promoted, false);
+    let vector = promoted[0];
+    code.functions[writer_id as usize].constants =
+        vec![NanValue::new_int_inline(0), promoted[1], promoted[2]];
+
+    // A suspended caller frame, so `call_function` records a caller depth of 1
+    // and the writer's own return is the depth boundary.
+    let mut vm = VM::new(code, Vec::new(), arena);
+    vm.frames.push(CallFrame {
+        fn_id: writer_id,
+        ip: 0,
+        bp: 0,
+        local_count: 0,
+        arena_mark: 0,
+        yard_base: 0,
+        yard_mark: 0,
+        handoff_mark: 0,
+        globals_dirty: false,
+        yard_dirty: false,
+        handoff_dirty: false,
+        inplace_write_escaped: false,
+        thin: true,
+        parent_thin: false,
+    });
+    vm.start_profiling();
+
+    let result = vm
+        .call_function(writer_id, &[vector])
+        .expect("writer should return");
+
+    let report = vm.profile_report().expect("profiling should be enabled");
+    assert_eq!(
+        (
+            report.returns.thin_fast_returns,
+            report.returns.young_truncate_fast_returns,
+            report.returns.thin_slow_returns,
+        ),
+        (0, 0, 1),
+        "the write did not reroute the return onto the promoting boundary, so \
+         this is no longer a test of that boundary",
+    );
+
+    // Whatever runs next takes the slot the payload had.
+    let _filler = NanValue::new_string(vm.arena.push_string("JUNK-FILLER-ONE"));
+    let element = vm.arena.vector_ref_value(result)[0];
+    assert_eq!(
+        vm.arena.get_string_value(element).to_string(),
+        "PAYLOAD-MARKER",
+        "the depth-0 return dropped the element written into a stable vector",
     );
 }
