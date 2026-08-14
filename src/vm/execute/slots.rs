@@ -53,6 +53,12 @@ use crate::vm::builtin::VmBuiltin;
 /// when it is dropped at the join. That undercounts both numbers, never the
 /// reverse, and it costs no guard: a branch that broke the soundness direction
 /// asserts inside its own VM before the join is reached.
+///
+/// They also see only the `CALL_BUILTIN` / `CALL_BUILTIN_OWNED` dispatch. A
+/// collection builtin reached as a first-class value goes through `CALL_VALUE`,
+/// which carries no owned mask and takes no owned path, so there is no grant
+/// there to check — and a write the runtime could see through goes uncounted.
+/// Same direction again: the preview is a floor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VmSlotUniquenessStats {
     /// Heap-backed collection targets a `CALL_BUILTIN_OWNED` mask granted
