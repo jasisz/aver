@@ -16,6 +16,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_copied: 0,
             list_elements_scanned: 0,
             map_entries_copied: 0,
+            map_entries_scanned: 0,
             type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -46,6 +47,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_copied: 0,
             list_elements_scanned: 0,
             map_entries_copied: 0,
+            map_entries_scanned: 0,
             type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
@@ -332,14 +334,19 @@ impl<T: ArenaTypes> Arena<T> {
         self.list_elements_scanned
     }
 
-    /// Map entries duplicated by a key/value update that could not consume its
-    /// target, the map counterpart of [`Arena::list_elements_copied`].
+    /// Map entries duplicated by a builtin that had to preserve the map it was
+    /// handed, the map counterpart of [`Arena::list_elements_copied`].
     ///
     /// A `Map.set` whose target is still reachable has to preserve it, so it
-    /// duplicates the whole storage. Threading one map through a fold makes that
-    /// n^2/2 entries; consuming the target instead leaves this at zero. Reading
-    /// it is how a copy-per-insert regression is caught structurally rather than
-    /// with a stopwatch.
+    /// duplicates the whole storage; so does a builder that rebuilds its table
+    /// once per entry. Either makes that n^2/2 entries over one fold, and
+    /// consuming the target instead leaves this at zero.
+    ///
+    /// Read it as "no builtin rebuilt a map table", and nothing wider. It says
+    /// nothing about time — see [`Arena::map_entries_scanned`] — and it does not
+    /// cover the collector, which duplicates a live map's table of its own
+    /// accord when it promotes it to the stable space. Zero here is therefore
+    /// not a claim that no map storage was copied anywhere.
     #[inline]
     pub fn map_entries_copied(&self) -> u64 {
         self.map_entries_copied
@@ -350,6 +357,32 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub fn note_map_entries_copied(&mut self, entries: usize) {
         self.map_entries_copied += entries as u64;
+    }
+
+    /// Map entries the collector has read while deciding whether a live map
+    /// needs rewriting, the map counterpart of
+    /// [`Arena::list_elements_scanned`].
+    ///
+    /// This is the counter that tracks *time*, and for maps there is no escape
+    /// from it. A list body built entirely out of immediates is skipped without
+    /// being read; a map has no such flag, so a live `Map<Int, Int>` — in which
+    /// nothing can ever relocate — is still read entry by entry on every
+    /// collection that sees it. Threading one map through a fold therefore
+    /// grows this quadratically whatever the map holds, which is the residual
+    /// cost left over once the duplication above is gone.
+    ///
+    /// One read is missed on purpose: the pre-scan in the promotion fast path
+    /// stops at the first entry that has to move, and only the runs that scan a
+    /// map in full are counted. That undercounts, never the reverse.
+    #[inline]
+    pub fn map_entries_scanned(&self) -> u64 {
+        self.map_entries_scanned
+    }
+
+    /// Record that `entries` map entries were read by a collection.
+    #[inline]
+    pub fn note_map_entries_scanned(&mut self, entries: usize) {
+        self.map_entries_scanned += entries as u64;
     }
 
     #[inline]

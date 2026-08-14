@@ -588,27 +588,62 @@ fn compile_vm_with_ownership(src: &str) -> VM {
     VM::new(code, globals, arena)
 }
 
-/// Map entries duplicated by `n` inserts into one accumulator threaded through
-/// a tail call — the shape from issue #900.
+/// What one run of the map-building shape from issue #900 cost: entries a
+/// builtin duplicated because it had to preserve the map it was handed, and
+/// entries the collector read while deciding whether a live map had to move.
+///
+/// The same split as [`ListCopyCost`], and the same reason for it. The copies
+/// are the memory half — the half that put 8 GB behind 20,000 short string
+/// pairs — and zero there does not mean the fold got cheap. The reads are what
+/// the residual time follows, and for a map there is no element type that
+/// escapes them.
+struct MapBuildCost {
+    copied: u64,
+    scanned: u64,
+}
+
+/// Run the fold at size `n`: `n` inserts into one accumulator threaded through
+/// a tail call.
 ///
 /// `seed` is the expression the accumulator starts from, and it is the only
-/// thing that varies between the two tests below: what the fold does with the
-/// map is identical, so a difference in the count is a statement about the
-/// seed alone.
-///
-/// This counts duplication, not the whole cost, and the same warning applies as
-/// to the list pair above: a map the collector keeps looking at is still read
-/// entry by entry on every collection that sees it, so zero here does not mean
-/// the fold got cheap. It means it stopped rebuilding the map — which is the
-/// memory half, and the half that put 8 GB behind 20,000 short string pairs.
-fn map_build_copies(n: i64, seed: &str) -> u64 {
+/// thing that varies between the seed tests below: what the fold does with the
+/// map is identical, so a difference in the copies is a statement about the
+/// seed alone. `key_ty`/`val_ty` and the two expressions vary independently, so
+/// the same shape can be run over a map in which nothing can ever relocate.
+fn map_build_cost(
+    n: i64,
+    seed: &str,
+    seed_entries: i64,
+    key_ty: &str,
+    val_ty: &str,
+    key: &str,
+    value: &str,
+) -> MapBuildCost {
     let src = format!(
-        "fn build(n: Int, acc: Map<String, String>) -> Map<String, String>\n    match n > 0\n        true -> build(n - 1, Map.set(acc, \"k{{n}}\", \"v{{n}}\"))\n        false -> acc\n\nfn main() -> Int\n    Map.len(build({n}, {seed}))\n"
+        "fn build(n: Int, acc: Map<{key_ty}, {val_ty}>) -> Map<{key_ty}, {val_ty}>\n    match n > 0\n        true -> build(n - 1, Map.set(acc, {key}, {value}))\n        false -> acc\n\nfn main() -> Int\n    Map.len(build({n}, {seed}))\n"
     );
     let mut vm = compile_vm_with_ownership(&src);
     let result = vm.run().expect("map build program should run");
-    assert_eq!(result.as_int(&vm.arena), n);
-    vm.arena.map_entries_copied()
+    assert_eq!(result.as_int(&vm.arena), n + seed_entries);
+    MapBuildCost {
+        copied: vm.arena.map_entries_copied(),
+        scanned: vm.arena.map_entries_scanned(),
+    }
+}
+
+/// The string-keyed fold from issue #900 at size `n`, seeded from a `seed` that
+/// already holds `seed_entries` keys none of the fold's own keys collide with.
+fn map_build_copies(n: i64, seed: &str, seed_entries: i64) -> u64 {
+    map_build_cost(
+        n,
+        seed,
+        seed_entries,
+        "String",
+        "String",
+        "\"k{n}\"",
+        "\"v{n}\"",
+    )
+    .copied
 }
 
 #[test]
@@ -620,8 +655,8 @@ fn growing_a_map_seeded_from_from_list_consumes_it_instead_of_copying_it() {
     // flagged as possibly-shared and every insert preserved the whole map it was
     // handed. That is n^2/2 entries — 79,800 here and 319,600 at n=800 — against
     // a fold that needs to copy nothing at all.
-    let small = map_build_copies(400, "Map.fromList([])");
-    let large = map_build_copies(800, "Map.fromList([])");
+    let small = map_build_copies(400, "Map.fromList([])", 0);
+    let large = map_build_copies(800, "Map.fromList([])", 0);
 
     assert_eq!(
         (small, large),
@@ -635,13 +670,145 @@ fn growing_a_map_seeded_from_from_list_consumes_it_instead_of_copying_it() {
 fn growing_a_map_seeded_from_a_literal_consumes_it_instead_of_copying_it() {
     // The control the test above is measured against: same fold, same inserts,
     // seeded from `{}`. This one was already free, and it stays that way.
-    let small = map_build_copies(400, "{}");
-    let large = map_build_copies(800, "{}");
+    let small = map_build_copies(400, "{}", 0);
+    let large = map_build_copies(800, "{}", 0);
 
     assert_eq!(
         (small, large),
         (0, 0),
         "a literal-seeded accumulator was preserved rather than consumed: \
          n=400 copied {small} entries, n=800 copied {large}",
+    );
+}
+
+#[test]
+fn a_non_empty_map_literal_seed_pays_for_its_own_entries_and_nothing_more() {
+    // `{}` is the cheapest possible control, because a literal with no entries
+    // does no work at all. A literal with entries does: it lowers to a
+    // `LOAD_CONST` of the empty map plus one plain `CALL_BUILTIN` MapSet per
+    // entry (`vm/compiler/mir.rs`, the `MirExpr::MapLiteral` arm), and those
+    // inserts are not owned — the target is a stack temporary, and the first one
+    // is a constant that every re-evaluation of the literal shares, so neither
+    // can be consumed. Writing k entries therefore duplicates 0+1+...+(k-1)
+    // entries.
+    //
+    // That cost is real but it is bounded by what the source says, not by what
+    // the program computes: three entries here cost three copies at n=400 and
+    // three at n=800. The fold itself still copies nothing, which is what makes
+    // this a control rather than a second bug — an unowned insert *inside* the
+    // fold would grow with n.
+    let seed = "{\"a\" => \"1\", \"b\" => \"2\", \"c\" => \"3\"}";
+    let small = map_build_copies(400, seed, 3);
+    let large = map_build_copies(800, seed, 3);
+
+    assert_eq!(
+        (small, large),
+        (3, 3),
+        "a three-entry literal seed must cost 0+1+2 copies and the fold after \
+         it must cost none: n=400 copied {small} entries, n=800 copied {large}",
+    );
+}
+
+/// Entries duplicated while turning a list of `n` pairs into a map with one
+/// `Map.fromList` call.
+fn map_from_list_copies(n: i64) -> u64 {
+    let src = format!(
+        "fn pairs(n: Int, acc: List<Tuple<String, String>>) -> List<Tuple<String, String>>\n    match n > 0\n        true -> pairs(n - 1, List.prepend((\"k{{n}}\", \"v{{n}}\"), acc))\n        false -> acc\n\nfn main() -> Int\n    Map.len(Map.fromList(pairs({n}, [])))\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("fromList program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.map_entries_copied()
+}
+
+#[test]
+fn building_a_map_from_a_list_of_pairs_does_not_rebuild_the_table_per_entry() {
+    // `Map.fromList(pairs)` is how a log or a decoded document becomes a map,
+    // and it was quadratic on its own — nothing to do with which seed a fold
+    // uses. The builder held the map under construction and inserted through
+    // `AverMap::insert`, which takes `&self` and therefore has to preserve what
+    // it is handed: `Rc::make_mut` rebuilt the whole table once per entry.
+    // Building 400 entries duplicated 79,800 of them and 800 duplicated 319,600
+    // — n^2/2, measured with the counter this test reads.
+    //
+    // The map under construction is unreachable from anywhere else, so the owned
+    // insert is what belongs here, and it duplicates nothing.
+    let small = map_from_list_copies(400);
+    let large = map_from_list_copies(800);
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "Map.fromList rebuilt its own table while filling it: n=400 copied \
+         {small} entries, n=800 copied {large}",
+    );
+}
+
+/// The residual left over once the duplication is gone, and the measurement the
+/// map half of issue #898 has to start from.
+///
+/// Copies are gone; reads are not. Every collection that sees a live map walks
+/// it entry by entry to establish that nothing in it moved, and a map has no
+/// counterpart of `ListBody::all_immediate` to escape that walk. The second
+/// case here is the control that isolates it: a `Map<Int, Int>` in which no key
+/// and no value can ever relocate, run at the same allocation rate as the
+/// string one because each step builds a throwaway string it does not store.
+/// Its reads come out identical to the heap-valued map's, digit for digit —
+/// 80,600 at n = 400 and 321,200 at n = 800 for both, against 0 for a
+/// `List<Int>` of the same size. What the map holds makes no difference at all.
+///
+/// The allocation rate is why the control needs the throwaway string. The same
+/// `Map<Int, Int>` fold without it reads only n — 400 and 800 — not because the
+/// map is skipped but because that program allocates so little that the
+/// collector hardly ever runs. Reading that number as an immediate-valued
+/// escape is the mistake this control exists to prevent.
+///
+/// Both halves are asserted quadratic on purpose. If a later change makes
+/// either one linear, this test is supposed to fail — retire it deliberately
+/// rather than loosen the bound.
+#[test]
+fn a_live_map_is_read_entry_by_entry_whether_or_not_anything_in_it_can_move() {
+    let heap_small = map_build_cost(400, "{}", 0, "String", "String", "\"k{n}\"", "\"v{n}\"");
+    let heap_large = map_build_cost(800, "{}", 0, "String", "String", "\"k{n}\"", "\"v{n}\"");
+    let imm_small = map_build_cost(400, "{}", 0, "Int", "Int", "n", "String.len(\"pad{n}\")");
+    let imm_large = map_build_cost(800, "{}", 0, "Int", "Int", "n", "String.len(\"pad{n}\")");
+
+    for (label, small, large) in [
+        ("Map<String, String>", &heap_small, &heap_large),
+        ("Map<Int, Int>", &imm_small, &imm_large),
+    ] {
+        assert_eq!(
+            (small.copied, large.copied),
+            (0, 0),
+            "{label}: the fold duplicated entries it did not have to",
+        );
+        assert!(
+            small.scanned >= 400 * 400 / 4 && large.scanned >= 800 * 800 / 4,
+            "{label}: reads over a live map came in far under n^2/2 — if that is \
+             a real improvement, this test has served its purpose and should be \
+             retired deliberately rather than loosened: n=400 read {}, n=800 \
+             read {}",
+            small.scanned,
+            large.scanned,
+        );
+        assert!(
+            large.scanned >= 3 * small.scanned,
+            "{label}: doubling the input less than tripled the reads, so this is \
+             no longer the quadratic control this test is here to be: n=400 read \
+             {}, n=800 read {}",
+            small.scanned,
+            large.scanned,
+        );
+    }
+
+    assert!(
+        imm_small.scanned >= heap_small.scanned && imm_large.scanned >= heap_large.scanned,
+        "a map whose keys and values can never relocate was read less than one \
+         holding heap indices, which would mean maps grew an all-immediate \
+         escape: immediates read {} and {}, heap-backed {} and {}",
+        imm_small.scanned,
+        imm_large.scanned,
+        heap_small.scanned,
+        heap_large.scanned,
     );
 }

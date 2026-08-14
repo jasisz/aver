@@ -575,6 +575,19 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
     }
     let items = arena.list_to_vec_value(args[0]);
     let mut out = crate::nan_value::PersistentMap::new();
+    // The map under construction is ours alone until it is pushed into the
+    // arena, so every entry goes in through the owned path. Spelling this loop
+    // `out = out.insert(..)` — which is what it used to be — made `Map.fromList`
+    // quadratic in its own input all by itself: `insert` takes `&self` and has
+    // to preserve the map it is handed, so `Rc::make_mut` rebuilt the whole
+    // table once per entry. That is n^2/2 entries to turn a list of pairs into a
+    // map, which is the replay-a-log shape from issue #900 and the one the empty
+    // seed `Map.fromList([])` never reached.
+    //
+    // `table_id` is what keeps that honest. It changes only when the table was
+    // actually rebuilt, so the count below is the duplication that happened
+    // rather than an inference from which method this line names.
+    let mut table = out.table_id();
     for (idx, pair) in items.iter().enumerate() {
         if !pair.is_tuple() {
             return Err(RuntimeError::Error(format!(
@@ -593,7 +606,13 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         let value = parts[1];
         ensure_hashable_nv("Map.fromList", key)?;
         let key_hash = nv_key_bits(key, arena);
-        out = out.insert(key_hash, (key, value));
+        let entries_before = out.len();
+        out = out.insert_owned(key_hash, (key, value));
+        let table_after = out.table_id();
+        if table_after != table {
+            arena.note_map_entries_copied(entries_before);
+            table = table_after;
+        }
     }
     if out.is_empty() {
         Ok(NanValue::EMPTY_MAP)

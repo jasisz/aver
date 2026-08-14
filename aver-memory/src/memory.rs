@@ -237,6 +237,19 @@ impl<T: ArenaTypes> Arena<T> {
                 ArenaEntry::Vector(items)
             }
             ArenaEntry::Map(mut map) => {
+                // Every entry is read to find out whether anything in it has to
+                // move, and a map has no equivalent of `ListBody::all_immediate`
+                // to escape that: a `Map<Int, Int>`, in which nothing can ever
+                // relocate, is walked in full here just the same.
+                //
+                // On the stable-promotion path this also *duplicates* the table.
+                // `promote_value_to_stable` clones the entry out of a slot that
+                // still holds the map, so the `Rc::make_mut` inside
+                // `rewrite_values_mut` sees a second owner and rebuilds the whole
+                // thing. That copy is real and is not in `map_entries_copied`,
+                // which counts what the builtins do; the entry count it costs is
+                // the number recorded here.
+                self.note_map_entries_scanned(map.len());
                 map.rewrite_values_mut(|pair| {
                     pair.0 = rewrite(self, pair.0);
                     pair.1 = rewrite(self, pair.1);
@@ -1597,6 +1610,12 @@ impl<T: ArenaTypes> Arena<T> {
                             || Self::value_needs_young_promotion(*v, mark)
                     }) =>
             {
+                // Reaching here means the guard read every entry to establish
+                // that none of them moves. The entry itself is then moved as-is
+                // — no rewrite, no duplication — but the read already cost what
+                // a full walk costs, so it belongs in the same counter.
+                let entries = map.len();
+                self.note_map_entries_scanned(entries);
                 return entry;
             }
             _ => {}

@@ -238,3 +238,62 @@ fn main() -> Int
         "param stored as a collection element/value arg must stay flagged"
     );
 }
+
+/// The seed decides, and it decides the same way for both collections.
+///
+/// `Vector.fromList` and `Map.fromList` build their collection from scratch and
+/// hand back either an immediate empty value or a slot nothing else has an
+/// index to (`vec_from_list_nv` in `src/types/vector.rs`, `from_list_nv` in
+/// `src/types/map.rs`), so an accumulator spelled either way is exactly as
+/// fresh as `Vector.new(5, 0)` or `{}`. Both must graduate.
+///
+/// This is issue #900 at the analysis level: while `Map.fromList` was missing
+/// from the freshness list, a fold seeded from it kept its accumulator flagged
+/// for the whole run and every insert preserved the map by copying it.
+/// `Vector.fromList` sat in the same gap with the same proof.
+#[test]
+fn from_list_seeded_params_graduate() {
+    let vector_src = r#"module FillFromList
+    intent = "vector fill seeded from Vector.fromList"
+    depends []
+    effects []
+
+fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    ? "tail-recursive fill: write i*i at position i"
+    match i == n
+        true -> v
+        false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
+
+fn main() -> Int
+    v = fillVector(Vector.fromList([0, 0, 0, 0, 0]), 5, 0)
+    Option.withDefault(Vector.get(v, 0), 0)
+"#;
+    let program = refine(vector_src);
+    assert!(
+        !param_flagged(&program, "fillVector", 0),
+        "a Vector accumulator seeded from Vector.fromList must graduate — \
+         fromList hands back a fresh handle, exactly like Vector.new"
+    );
+
+    let map_src = r#"module MapBuildFromList
+    intent = "map build seeded from Map.fromList"
+    depends []
+    effects []
+
+fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
+    ? "tail-recursively insert n entries"
+    match n
+        0 -> m
+        _ -> buildMap(n - 1, Map.set(m, String.fromInt(n), n))
+
+fn main() -> Int
+    m = buildMap(5, Map.fromList([]))
+    Map.len(m)
+"#;
+    let program = refine(map_src);
+    assert!(
+        !param_flagged(&program, "buildMap", 1),
+        "a Map accumulator seeded from Map.fromList must graduate — this is the \
+         copy-per-insert gap from issue #900"
+    );
+}
