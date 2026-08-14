@@ -1,6 +1,7 @@
 mod alloc_policy;
-// `VmBuiltin::ALL` is the list of names a program can call, which the proof
-// backends check their own emission against.
+// `VmBuiltin::ALL` is the list of builtins the VM can execute. The proof
+// backends check their emission against the codegen table's `Builtin::ALL`
+// (src/codegen/builtins.rs), which is the superset the emitters can render.
 pub(crate) mod builtin;
 mod compiler;
 mod execute;
