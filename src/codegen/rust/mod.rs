@@ -220,7 +220,13 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
         check_fn(fd, "")?;
     }
     check_types(&ctx.type_defs, "")?;
-    check_variants(&ctx.fn_defs.iter().collect::<Vec<_>>(), "")?;
+    // `main` is excluded exactly as the entry-path emitter excludes it before
+    // computing groups, so this asks about the same set of groups the
+    // trampoline is actually built from. Dep modules have no `main`, and
+    // their emitter passes every fn, which is what the loop below does.
+    let entry_non_main: Vec<&crate::ast::FnDef> =
+        ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+    check_variants(&entry_non_main, "")?;
     for module in &ctx.modules {
         let scope = format!("module `{}` ", module.prefix);
         for fd in &module.fn_defs {
