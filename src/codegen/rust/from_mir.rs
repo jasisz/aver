@@ -2585,6 +2585,19 @@ pub(super) fn emit_mir_fn_body(
 /// it needing the wrapper, because `emit_mir_expr` renders both bare: a
 /// read of a borrowed param (`&T` against a by-value return type) and a
 /// field read through one at any depth (a move out of a shared reference).
+///
+/// The tail applies a WIDER rule than [`emit_mir_binding_value`] does, and
+/// the difference is deliberate rather than incidental: a bare `Local` tail
+/// goes through the full [`mir_maybe_clone`] policy, which also covers an
+/// `rc_wrapped` local (`(*x).clone()`) and a non-last-use owned local
+/// (`x.clone()`) — neither of which is a borrowed-param read. Only the
+/// non-`Local` shapes fall back to the narrow root-of-a-projection rule.
+/// The extra reach is inert today (`rc_wrapped` is populated only on the
+/// TCO paths, and a top-level tail read is by definition a last use), which
+/// is why the binding position was not widened to match: it would change no
+/// emitted byte and would cost a second policy to keep honest. A future
+/// merge of the TCO and non-TCO policies would make the difference live, so
+/// widen the binding rule at the same time if that ever happens.
 fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let code = emit_mir_expr(expr, ctx)?;
     if local_of(&expr.node).is_some() {
@@ -2593,16 +2606,38 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
     Some(mir_own_borrowed_read(code, &expr.node, ctx))
 }
 
-/// Emit a `let` binding's value as an OWNED value when it reads a borrowed
-/// param.
+/// Emit a `let` binding's value as an OWNED value when it reads a BORROWED
+/// PARAM — and only then.
 ///
-/// Naming an intermediate is not supposed to change what a function may do
+/// Naming a read of a borrowed param does not change what a function may do
 /// with it: `p.y` in return position and `y = p.y` then `y` are the same
 /// program. `emit_mir_expr` renders a binding value raw, so the second one
 /// used to bind `&T` (or move a field out of a shared reference) and the
 /// generated project would not build. The binding is an owning position for
 /// the same reason the tail is — the name outlives the expression that
 /// produced it — so it goes through the same materialisation step.
+///
+/// KNOWN GAP (pre-existing, not closed here): the rule fires only when
+/// [`mir_projection_root_local`] bottoms out in a borrowed param. A binding
+/// whose value is an OWNED local — a plain `let`, or an `own_param`-
+/// graduated by-value collection param — is still emitted as a raw move, so
+/// naming it and then reading the original does change what the fn may do:
+///
+/// ```text
+/// fn twice(n: Int) -> Int
+///     b = Vector.new(n, 1)
+///     a = b
+///     Vector.len(a) + Vector.len(b)
+/// ```
+///
+/// emits `let a = b;` and rustc rejects `b.len()` after it (E0382). The wide
+/// rule would close it for free — [`mir_maybe_clone`] emits `.clone()` for a
+/// local read that is not `last_use`, which is exactly this shape, and
+/// [`emit_mir_tail_value`] already uses it for a bare `Local` tail. It is
+/// left alone because widening here changes emitted bytes for every fn that
+/// names a live local, and the corpus has no instance of the shape
+/// (`examples/` and `self_hosted/` contain no bare `name = name` binding).
+/// Close it together with the tail/binding rule merge, not on its own.
 fn emit_mir_binding_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let code = emit_mir_expr(expr, ctx)?;
     Some(mir_own_borrowed_read(code, &expr.node, ctx))
@@ -5666,6 +5701,22 @@ mod tests {
     // suite proves the emitted project builds and agrees with the VM;
     // these are the same rules at walker resolution, cheap enough to run
     // on every `cargo test`.
+    //
+    // WHAT THESE CAN AND CANNOT PIN. They run against `ctx_over`, which
+    // is NOT the ctx production uses: production always goes through
+    // `MirEmitCtx::for_fn` with `codegen: Some(ctx)` and the fn's params
+    // in `local_types`, while `ctx_over` leaves `codegen` `None` and
+    // takes `local_types` from an empty policy. That is sound today
+    // because the three rules under test — `mir_projection_root_local`,
+    // `mir_own_borrowed_read` and the `mir_maybe_clone` path they reach
+    // — read neither field. It stops being sound the moment either
+    // owning position starts consulting a rule that does: the nearest
+    // one is `mir_clone_arg`'s Copy-field elision, whose
+    // `mir_attr_result_is_copy` returns `false` whenever `codegen` is
+    // `None` or the base type is missing from `local_types`. Route the
+    // binding or the tail through that and these tests stay green while
+    // the emitted bytes change. The net that would see it is the
+    // build-and-run differential, not this module.
 
     /// A read of the named local (`last_use`, so nothing but the borrow
     /// policy can ask for a clone).
@@ -5693,7 +5744,9 @@ mod tests {
     }
 
     /// A ctx over `policy` — the borrow-field plumbing of `empty_ctx`
-    /// with a real `borrowed_params` set behind it.
+    /// with a real `borrowed_params` set behind it. `codegen` stays
+    /// `None` and `local_types` stays empty; see the section note above
+    /// for what that costs.
     fn ctx_over(policy: &MirFnEmitPolicy) -> MirEmitCtx<'_> {
         use std::sync::OnceLock;
         static SYMBOLS: OnceLock<SymbolTable> = OnceLock::new();

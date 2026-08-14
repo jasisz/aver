@@ -1056,9 +1056,21 @@ fn main() -> Unit
 /// caller's map compiles fine) and only shows up as a divergence from the VM,
 /// so it is the one shape here that the stdout comparison, not rustc, decides.
 ///
-/// `shifted` is the mirror of that on the new path: it NAMES the borrowed
-/// param before building a changed copy from the name, so the caller's
-/// `origin` and the returned `moved` must differ by exactly one.
+/// `shifted` is a PARITY WITNESS, not a guard, and the caption says so
+/// because the honest accounting matters more than the extra shape: it
+/// NAMES the borrowed param and then reads fields through the name, but it
+/// cannot go red either way. Pre-fix the emitter wrote `let kept = p;`,
+/// which binds `&Point`, and `kept.x` / `kept.y` autoderef through the
+/// shared reference — measured: that project builds and prints `10 11`
+/// unchanged. And no emission can make `origin` differ, because
+/// `Point(x = …, y = …)` allocates a fresh record and Aver never writes
+/// through the `&T`. It is here to show the new binding path carries a
+/// record read through a name end-to-end without disturbing the caller.
+///
+/// The shapes that actually go red before the fix are `keptOutcome`
+/// (E0308: `&Result<…>` returned where `Result<…>` is expected), `keptY`
+/// (E0507: move out of `p.y`) and `nestedNamed` (E0507: move out of
+/// `s.piece.kind`) — three rustc errors in one build.
 #[test]
 fn rust_param_returned_via_a_name_or_a_nested_field_builds_and_matches_vm() {
     let src = r#"module CloseAfter
