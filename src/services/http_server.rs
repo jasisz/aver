@@ -289,7 +289,7 @@ fn parse_http_response_headers(val: Value) -> Result<HttpHeaders, RuntimeError> 
                 }
             }
         }
-        out = out.insert(AverStr::from(name), AverList::from_vec(buf));
+        out = out.insert_owned(AverStr::from(name), AverList::from_vec(buf));
     }
 
     Ok(out)

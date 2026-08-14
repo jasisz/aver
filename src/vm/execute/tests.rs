@@ -646,6 +646,126 @@ fn map_build_copies(n: i64, seed: &str, seed_entries: i64) -> u64 {
     .copied
 }
 
+/// The same fold, with the seed bound to a name before it is passed.
+///
+/// Identical to [`map_build_copies`] except for one `let`, which is the whole
+/// point: the fold does the same work, so a difference in the copies is a
+/// statement about naming the seed and nothing else.
+fn map_build_copies_from_named_seed(n: i64, seed: &str) -> u64 {
+    let src = format!(
+        "fn seedPairs() -> List<Tuple<String, String>>\n    [(\"s\", \"z\")]\n\nfn build(n: Int, acc: Map<String, String>) -> Map<String, String>\n    match n > 0\n        true -> build(n - 1, Map.set(acc, \"k{{n}}\", \"v{{n}}\"))\n        false -> acc\n\nfn main() -> Int\n    seed = {seed}\n    Map.len(build({n}, seed))\n"
+    );
+    let mut vm = compile_vm_typechecked(&src);
+    let result = vm.run().expect("map build program should run");
+    assert_eq!(result.as_int(&vm.arena), n + 1);
+    vm.arena.map_entries_copied()
+}
+
+#[test]
+fn growing_a_map_seeded_from_a_named_from_list_result_consumes_it_too() {
+    // Freshness is decided twice, by two lists that have to agree.
+    // `own_param::uniquely_owned` reads the call argument, so it sees
+    // `Map.fromList([])` written inline at the call. `alias.rs`'s
+    // `is_fresh_collection_builtin` decides a *binding*, and that is the list a
+    // named seed goes through — `slot_owned` answers false for a flagged
+    // non-param slot without ever looking at what the binding was built from.
+    // So while `Map.fromList` was in one list and not the other, hoisting the
+    // seed into a `let` put the whole of issue #900 back: n^2/2 entries copied,
+    // 79,800 at n=400 and 319,600 at n=800.
+    //
+    // Naming a value cannot make it shared, and the control below says so: the
+    // literal seed costs the same nothing under either spelling.
+    let small = map_build_copies_from_named_seed(400, "Map.fromList(seedPairs())");
+    let large = map_build_copies_from_named_seed(800, "Map.fromList(seedPairs())");
+    let literal_small = map_build_copies_from_named_seed(400, "{\"s\" => \"z\"}");
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "a named `Map.fromList` seed was preserved rather than consumed while \
+         the same seed written inline was free: n=400 copied {small} entries, \
+         n=800 copied {large}",
+    );
+    assert_eq!(
+        literal_small, 0,
+        "the control moved: a named map-literal seed copied {literal_small} \
+         entries, so this test is no longer isolating the fromList spelling",
+    );
+}
+
+/// Like [`compile_vm_with_ownership`], but through the real pipeline, typecheck
+/// included — which is what any test about a *binding*'s ownership needs.
+///
+/// The subset helper above stops short of a typecheck, so every binding slot
+/// keeps `Type::Invalid` and `ir::alias`'s destination half, guarded by
+/// `slot_is_collection`, never fires on a local at all. Param ownership is
+/// unaffected (params get their types from the signature), which is why the
+/// seed tests are fine on the subset; a named collection is not.
+fn compile_vm_typechecked(src: &str) -> VM {
+    let mut items = crate::source::parse_source(src).expect("parse failed");
+    let result = crate::ir::pipeline::run(
+        &mut items,
+        crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    let tc = result.typecheck.as_ref().expect("typecheck requested");
+    assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program_with_mir_fallback(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        None,
+    )
+    .expect("compile failed");
+    VM::new(code, globals, arena)
+}
+
+/// Entries duplicated by one `Map.set` written onto a NAMED `Map.fromList`
+/// result of `n` entries — the intra-procedural half of the freshness question.
+///
+/// The pairs come from a recursive builder rather than a list literal on
+/// purpose: a `Map.fromList` of literal pairs folds away at compile time and
+/// the program then copies nothing whatever the analysis believes.
+fn set_on_named_from_list_copies(n: i64) -> u64 {
+    let src = format!(
+        "fn pairs(n: Int, acc: List<Tuple<String, String>>) -> List<Tuple<String, String>>\n    match n > 0\n        true -> pairs(n - 1, List.prepend((\"k{{n}}\", \"v{{n}}\"), acc))\n        false -> acc\n\nfn main() -> Int\n    m = Map.fromList(pairs({n}, []))\n    Map.len(Map.set(m, \"z\", \"9\"))\n"
+    );
+    let mut vm = compile_vm_typechecked(&src);
+    let result = vm.run().expect("map set program should run");
+    assert_eq!(result.as_int(&vm.arena), n + 1);
+    vm.arena.map_entries_copied()
+}
+
+#[test]
+fn setting_on_a_named_from_list_result_does_not_copy_it() {
+    // Freshness is decided by two lists that have to agree, and they were one
+    // name apart. `own_param::uniquely_owned` reads a call ARGUMENT, so it sees
+    // `Map.fromList(..)` written inline at a call site. `alias.rs`'s
+    // `is_fresh_collection_builtin` decides a BINDING, and it is what a named
+    // result goes through — `Vector.fromList` was in it and `Map.fromList` was
+    // not, so `m = Map.fromList(..)` stayed flagged as possibly-shared and the
+    // very next `Map.set` preserved the whole map by duplicating it.
+    //
+    // The cost is the map's own size, once — 400 entries here and 800 there, not
+    // n^2/2 — because one binding is flagged, not a whole fold. That is the
+    // difference between this and the seed tests above, and it is why this shape
+    // is the one the missing name is visible in at all.
+    let small = set_on_named_from_list_copies(400);
+    let large = set_on_named_from_list_copies(800);
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "`Map.set` on a named `Map.fromList` result duplicated the whole map to \
+         preserve something nothing else can reach: n=400 copied {small} \
+         entries, n=800 copied {large}",
+    );
+}
+
 #[test]
 fn growing_a_map_seeded_from_from_list_consumes_it_instead_of_copying_it() {
     // `Map.fromList([])` is how a program with no map literal in reach spells an
@@ -766,6 +886,15 @@ fn building_a_map_from_a_list_of_pairs_does_not_rebuild_the_table_per_entry() {
 /// Both halves are asserted quadratic on purpose. If a later change makes
 /// either one linear, this test is supposed to fail — retire it deliberately
 /// rather than loosen the bound.
+///
+/// What it is deliberately blind to is MAGNITUDE. How many entries a fold reads
+/// is the map size times the number of collections that saw it, and the second
+/// factor is the young collector's tuning, not anything about maps: raise the
+/// threshold and every number here falls by the same constant. So the
+/// assertions below are all ratios of one program against itself at two sizes,
+/// where that constant cancels. A young-collector change should move the
+/// figures quoted above and leave this test green; a map that stopped being
+/// walked in full should fail it.
 #[test]
 fn a_live_map_is_read_entry_by_entry_whether_or_not_anything_in_it_can_move() {
     let heap_small = map_build_cost(400, "{}", 0, "String", "String", "\"k{n}\"", "\"v{n}\"");
@@ -783,14 +912,18 @@ fn a_live_map_is_read_entry_by_entry_whether_or_not_anything_in_it_can_move() {
             "{label}: the fold duplicated entries it did not have to",
         );
         assert!(
-            small.scanned >= 400 * 400 / 4 && large.scanned >= 800 * 800 / 4,
-            "{label}: reads over a live map came in far under n^2/2 — if that is \
-             a real improvement, this test has served its purpose and should be \
-             retired deliberately rather than loosened: n=400 read {}, n=800 \
-             read {}",
+            small.scanned > 0 && large.scanned > 0,
+            "{label}: a live map was never read at all, which would mean maps \
+             grew a skip like `ListBody::all_immediate` — a real improvement, \
+             and the point at which this test should be retired deliberately \
+             rather than loosened: n=400 read {}, n=800 read {}",
             small.scanned,
             large.scanned,
         );
+        // Doubling n doubles both the map's size and the number of collections
+        // that walk it, so the reads go up by 4. Requiring 3 leaves a third of
+        // that headroom while still excluding every linear curve, which could
+        // only reach 2.
         assert!(
             large.scanned >= 3 * small.scanned,
             "{label}: doubling the input less than tripled the reads, so this is \
@@ -798,6 +931,20 @@ fn a_live_map_is_read_entry_by_entry_whether_or_not_anything_in_it_can_move() {
              {}, n=800 read {}",
             small.scanned,
             large.scanned,
+        );
+        // The same statement per entry, which is what makes it a claim about
+        // the walk rather than about how much the program allocates: a fold
+        // that read each entry a bounded number of times would hold this ratio
+        // flat.
+        let small_per_entry = small.scanned / 400;
+        let large_per_entry = large.scanned / 800;
+        assert!(
+            large_per_entry >= 3 * small_per_entry / 2,
+            "{label}: reads per entry barely grew, so the walk is no longer \
+             repeating over the whole map as it fills: n=400 read {} per entry, \
+             n=800 read {} per entry",
+            small_per_entry,
+            large_per_entry,
         );
     }
 

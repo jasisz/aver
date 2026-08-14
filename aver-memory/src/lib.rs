@@ -1238,16 +1238,21 @@ pub struct Arena<T: ArenaTypes> {
     /// immediates escapes the read, so this is the counter that says which
     /// element types the traversal cost is actually linear in.
     list_elements_scanned: u64,
-    /// Total map entries duplicated by a builtin that had to preserve the map
-    /// it was handed — `Map.set` and `Map.remove` on a target the ownership
-    /// analysis could not prove unshared, and any map builder that rebuilds its
-    /// table per entry. A map threaded linearly through a fold leaves this
-    /// proportional to the number of inserts; one the analysis gave up on makes
-    /// it quadratic, which is visible here without any wall-clock measurement.
+    /// Total map entries duplicated because a table was rebuilt instead of
+    /// written into — `Map.set` and `Map.remove` on a target the ownership
+    /// analysis could not prove unshared, any map builder that rebuilds its
+    /// table per entry, and [`Arena::deep_import`] carrying a map into another
+    /// arena. A map threaded linearly through a fold leaves this proportional
+    /// to the number of inserts; one the analysis gave up on makes it
+    /// quadratic, which is visible here without any wall-clock measurement.
     ///
-    /// This counts builtin-level duplication only. The collector duplicates map
-    /// storage of its own accord on the stable-promotion path, and that copy is
-    /// not in this number — see [`Arena::map_entries_scanned`].
+    /// One copy is deliberately outside it: the collector duplicates map
+    /// storage of its own accord on the stable-promotion path, and that is not
+    /// in this number — see [`Arena::map_entries_scanned`].
+    ///
+    /// The count is per-arena. [`Arena::clone_static`] starts a child at zero,
+    /// and [`Arena::absorb_copy_counters`] folds a child's total back into its
+    /// parent when the branch rejoins.
     map_entries_copied: u64,
     /// Total map entries the collector has *read* while deciding whether a live
     /// map needs rewriting. Unlike a list body, a map carries no

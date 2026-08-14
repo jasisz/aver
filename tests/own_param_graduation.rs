@@ -297,3 +297,80 @@ fn main() -> Int
          copy-per-insert gap from issue #900"
     );
 }
+
+/// The same seed, named before it is passed — the spelling the test above
+/// structurally cannot see.
+///
+/// Freshness is decided in two places that have to agree. `own_param`'s
+/// `uniquely_owned` reads a call ARGUMENT, so it sees `Map.fromList(..)`
+/// written inline at the call. `ir::alias`'s `is_fresh_collection_builtin`
+/// decides a BINDING, and that is what a *named* seed goes through:
+/// `slot_owned` answers false for a flagged non-param slot without ever
+/// consulting what the binding was built from, so one missing name there
+/// un-graduates the callee's accumulator however well `own_param` knows the
+/// builtin. `Vector.fromList` was in that list and `Map.fromList` was not,
+/// which left the named map spelling exactly as quadratic as issue #900
+/// reported while the inline one was already fixed — 80,200 entries copied at
+/// n=400 and 320,400 at n=800, measured in
+/// `vm::execute::tests::growing_a_map_seeded_from_a_named_from_list_result_consumes_it_too`.
+///
+/// The seed is passed from the tail expression rather than through a further
+/// binding, because a bare collection local that flows into another binding's
+/// value is flagged by the ESCAPE half whatever it was built from — a separate
+/// condition this entry does not touch, and one the vector control below shares.
+///
+/// Both collections are checked on purpose: an entry present in one list and
+/// not the other is the defect this pair exists to catch.
+#[test]
+fn from_list_seeds_graduate_when_the_seed_is_named_first_vector() {
+    let vector_src = r#"module FillFromNamedList
+    intent = "vector fill seeded from a named Vector.fromList result"
+    depends []
+    effects []
+
+fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    ? "tail-recursive fill: write i*i at position i"
+    match i == n
+        true -> v
+        false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
+
+fn main() -> Int
+    seed = Vector.fromList([0, 0, 0, 0, 0])
+    Option.withDefault(Vector.get(fillVector(seed, 5, 0), 0), 0)
+"#;
+    let program = refine(vector_src);
+    assert!(
+        !param_flagged(&program, "fillVector", 0),
+        "a Vector accumulator seeded from a NAMED Vector.fromList result must \
+         graduate — naming the seed cannot make a fresh handle shared"
+    );
+}
+
+#[test]
+fn from_list_seeds_graduate_when_the_seed_is_named_first_map() {
+    let map_src = r#"module MapBuildFromNamedList
+    intent = "map build seeded from a named Map.fromList result"
+    depends []
+    effects []
+
+fn seedPairs() -> List<Tuple<String, Int>>
+    ? "one pair, so the seed's element type is known without a call-site hint"
+    [("s", 0)]
+
+fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
+    ? "tail-recursively insert n entries"
+    match n
+        0 -> m
+        _ -> buildMap(n - 1, Map.set(m, String.fromInt(n), n))
+
+fn main() -> Int
+    seed = Map.fromList(seedPairs())
+    Map.len(buildMap(5, seed))
+"#;
+    let program = refine(map_src);
+    assert!(
+        !param_flagged(&program, "buildMap", 1),
+        "a Map accumulator seeded from a NAMED Map.fromList result must \
+         graduate — this is issue #900 surviving in the hoisted spelling"
+    );
+}
