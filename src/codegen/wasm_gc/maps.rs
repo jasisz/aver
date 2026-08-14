@@ -37,7 +37,7 @@
 //! What the growth buys is an invariant: **a map never fills**. After
 //! any insert, occupancy is at most three quarters of capacity, so
 //! some slot is always free and every probe loop terminates on it.
-//! The two insert helpers still carry the wrap guard that #906 added,
+//! The two insert helpers still carry their wrap guard,
 //! and it is now a backstop rather than a limit — reaching it means
 //! the growth above it did not happen, which is a compiler bug, and
 //! trapping is how that bug surfaces instead of hanging. The rehash
@@ -1335,7 +1335,7 @@ fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
 
 /// Where an insert helper's probe writes: into a private copy of the
 /// map's arrays, or into the map's own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 enum TableSource {
     /// Clone-on-write. The helper allocates fresh keys/values arrays,
     /// copies the map's contents in, and probes the copies, so nobody
