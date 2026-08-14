@@ -188,6 +188,15 @@ fn compile_rust_env(
 /// front — a zero would mean the construct under test never reached the
 /// walker (so the build / parity assertions would pass for the wrong
 /// reason).
+///
+/// BLIND SPOT — do not guard an effect probe with this. The coverage walk
+/// runs `MirEmitCtx::for_test`, whose builtin table is empty, so it counts
+/// EVERY fn that calls a builtin (`String.len` as much as
+/// `Disk.writeText`) as a fallback. A program whose every fn calls a
+/// builtin therefore reports `mir_lowered = 0` however cleanly the
+/// production path emits it, and a `> 0` guard on it can only ever fail.
+/// Use it on probes that contain at least one builtin-free fn; elsewhere
+/// assert on the emitted Rust instead.
 fn mir_lowered_count(
     file: &Path,
     module_root: Option<&Path>,
@@ -2689,9 +2698,13 @@ fn record_replay_roundtrips_effects_through_invoke_wrapper() {
 // the policy is actually enforced / the effect is actually captured, so
 // a dropped MIR wrapper reaches the built binary and the probe catches it.
 //
-// `mir_lowered_count(...)` asserts up front that the effectful fn really
-// lowered to MIR — without that guard an empty program would let the
-// probe pass for the wrong reason.
+// An effect probe cannot use the `mir_lowered_count(...)` guard. Every fn
+// in one calls a builtin, and the coverage walk behind
+// `--explain-mir-coverage` reports every `Call(Builtin)` as a fallback
+// (its `for_test` ctx carries an empty builtin table), so the guard reads
+// zero on a program the production path emits fine — it can only ever
+// fail. What proves the wrapper was emitted is the structural tripwire on
+// the emitted Rust plus the deny / capture run below.
 
 /// Single-fn Disk-write program for the embedded-policy probe. The
 /// write rides a helper fn (`writeIt`) that is a single-expr body, so the
@@ -2746,17 +2759,18 @@ fn mir_forced_embedded_policy_rejects_denied_disk_write() {
     .expect("write probe source");
 
     let result = (|| -> Result<(), String> {
-        // (0) PROVE the MIR path is actually exercised: the effectful
-        // `writeIt` must lower to MIR. Without this, an empty program
-        // would make the probe meaningless.
-        let lowered = mir_lowered_count(&src, Some(&proj_root), &["--policy", "embed"])?;
-        if lowered == 0 {
-            return Err(
-                "no fn lowered to MIR — the effectful builtin emit is not being \
-                 exercised by the MIR walker; the probe would be testing nothing"
-                    .to_string(),
-            );
-        }
+        // (0) NOTE: no `mir_lowered_count` guard here. Both fns in this
+        // probe call a builtin (`Disk.writeText` / `Console.print`), and
+        // the coverage walk behind `--explain-mir-coverage` reports every
+        // `Call(Builtin)` as a fallback — its `for_test` ctx carries an
+        // empty builtin table — so it answers `mir_lowered = 0` for this
+        // program even though the production path emits both fns fine. A
+        // guard on that number cannot pass on an effect probe; it only
+        // short-circuited the deny/allow assertions below, which is the
+        // whole point of the test. The structural tripwire (the emitted
+        // Rust must carry the `aver_policy::check_disk` wrapper) plus the
+        // deny/allow runs are the real "the MIR walker emitted this
+        // effect" evidence.
 
         // (1) DENY: embed an aver.toml whose allow-list names a
         // DIFFERENT path → the write to out.txt is denied at compile-
