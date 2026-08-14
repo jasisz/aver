@@ -131,6 +131,39 @@ fn main() -> Unit
     assert_eq!(out, "0,1,2");
 }
 
+/// The one read the guard permits still has to be the accumulator. Here
+/// the cons pattern binds the head of the input under the accumulator's
+/// own name, so the prepend threads that head — a different loop, whose
+/// answer the buffer does not reproduce.
+#[test]
+fn a_pattern_shadowing_the_accumulator_keeps_its_unfused_answer() {
+    let out = run_program(
+        "shadow_pattern",
+        r#"module ShadowPattern
+    intent =
+        "Binds the head of the input under the accumulator's own name."
+    exposes [render]
+    effects [Console.print]
+
+fn f(values: List<List<String>>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [acc, ..tail] -> f(tail, List.prepend("x", acc))
+
+fn render(values: List<List<String>>) -> String
+    String.join(f(values, []), ",")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(render([["a"], ["b"]]))
+"#,
+    );
+    assert_eq!(
+        out, "b,x",
+        "the prepend threads the last head, not the accumulator the loop was given"
+    );
+}
+
 /// The match subject is copied onto the buffered variant unchanged, so a
 /// loop that decides when to stop by measuring what it has collected has
 /// to be declined for the same reason.

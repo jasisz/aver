@@ -316,6 +316,21 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
         return None;
     }
 
+    // An arm that re-binds the accumulator's name makes the reads below
+    // mean something else: `[acc, ..tail] -> f(tail, List.prepend(x, acc))`
+    // threads the HEAD OF THE INPUT, not the accumulator the loop was
+    // handed, and the base case still returns the untouched parameter.
+    // The occurs-check would see one read in the prepend tail and be
+    // satisfied — it counts names, and here the name lies. The rewrite
+    // keeps the pattern and drops the parameter, so the loop it emits is
+    // not the loop that was written.
+    if arms
+        .iter()
+        .any(|a| pattern_binds_name(&a.pattern, &acc_name))
+    {
+        return None;
+    }
+
     // Try the InternalReverse shape first: `match <bool> { true -> List.reverse(acc); false -> recurse(... prepend(_, acc)) }`.
     if let Some((true_body, false_body)) = pair_bool_arms(arms)
         && is_list_reverse_of(true_body, &acc_name)
@@ -583,6 +598,19 @@ fn is_self_tail_with_prepend_acc(
         .map(|a| count_ident_reads(&a.node, acc_name))
         .sum();
     reads == 1
+}
+
+/// True when `pattern` introduces a binding called `name`. Exhaustive
+/// for the same reason as [`count_ident_reads`]: a pattern form nobody
+/// classified would be a shadow nobody noticed.
+fn pattern_binds_name(pattern: &Pattern, name: &str) -> bool {
+    match pattern {
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => false,
+        Pattern::Ident(n) => n == name,
+        Pattern::Cons(head, tail) => head == name || tail == name,
+        Pattern::Tuple(items) => items.iter().any(|p| pattern_binds_name(p, name)),
+        Pattern::Constructor(_, bindings) => bindings.iter().any(|b| b == name),
+    }
 }
 
 /// How many times `name` is read as a plain identifier anywhere in
@@ -2208,6 +2236,28 @@ fn build(word: String, acc: List<String>) -> List<String>
         assert!(
             sinks_of(&items).is_empty(),
             "a match subject reading the accumulator must not be fused"
+        );
+    }
+
+    /// Counting references is not enough on its own: the one permitted
+    /// read has to be the accumulator. A cons pattern that binds the
+    /// head under the accumulator's own name makes the prepend thread
+    /// that head instead, which is a different loop with a different
+    /// answer — and the rewrite, which keeps the pattern and drops the
+    /// parameter, would not preserve it.
+    #[test]
+    fn declines_when_the_cons_pattern_shadows_the_accumulator() {
+        let items = parse_and_tco(
+            r#"
+fn f(values: List<List<String>>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [acc, ..tail] -> f(tail, List.prepend("x", acc))
+"#,
+        );
+        assert!(
+            sinks_of(&items).is_empty(),
+            "a pattern binding that shadows the accumulator must not be fused"
         );
     }
 
