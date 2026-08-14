@@ -18,6 +18,8 @@ impl<T: ArenaTypes> Arena<T> {
             map_entries_copied: 0,
             map_entries_scanned: 0,
             rewrite_out_of_region_roots: false,
+            inplace_visit_stamps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            inplace_visit_epoch: 0,
             type_keys: Vec::new(),
             type_names: Vec::new(),
             type_field_names: Vec::new(),
@@ -59,6 +61,8 @@ impl<T: ArenaTypes> Arena<T> {
             map_entries_copied: 0,
             map_entries_scanned: 0,
             rewrite_out_of_region_roots: false,
+            inplace_visit_stamps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            inplace_visit_epoch: 0,
             type_keys: self.type_keys.clone(),
             type_names: self.type_names.clone(),
             type_field_names: self.type_field_names.clone(),
@@ -454,6 +458,37 @@ impl<T: ArenaTypes> Arena<T> {
         self.peak_usage.yard = self.peak_usage.yard.max(usage.yard);
         self.peak_usage.handoff = self.peak_usage.handoff.max(usage.handoff);
         self.peak_usage.stable = self.peak_usage.stable.max(usage.stable);
+    }
+
+    /// Open a fresh memo for one descent into out-of-region slots.
+    ///
+    /// Every stamp written by an earlier boundary is now stale by construction,
+    /// because nothing equals the new epoch. Wrapping past `u32::MAX` would let
+    /// a stamp from 4 billion boundaries ago read as current, so that one case
+    /// clears the arrays for real.
+    pub(crate) fn begin_inplace_visit_epoch(&mut self) {
+        self.inplace_visit_epoch = self.inplace_visit_epoch.wrapping_add(1);
+        if self.inplace_visit_epoch == 0 {
+            for stamps in &mut self.inplace_visit_stamps {
+                stamps.clear();
+            }
+            self.inplace_visit_epoch = 1;
+        }
+    }
+
+    /// Claim a slot for the descent now running: `true` the first time this
+    /// boundary reaches it, `false` every time after.
+    pub(crate) fn claim_inplace_visit(&mut self, space: HeapSpace, raw_index: usize) -> bool {
+        let epoch = self.inplace_visit_epoch;
+        let stamps = &mut self.inplace_visit_stamps[space as usize];
+        if stamps.len() <= raw_index {
+            stamps.resize(raw_index + 1, 0);
+        }
+        if stamps[raw_index] == epoch {
+            return false;
+        }
+        stamps[raw_index] = epoch;
+        true
     }
 
     #[inline]

@@ -71,6 +71,7 @@ impl VM {
         }
     }
 
+    /// Finish the frame's regions before the tail call reuses it.
     // One over the limit, and the one over is `inplace_write_escaped`, which
     // the evacuation below needs.
     #[allow(clippy::too_many_arguments)]

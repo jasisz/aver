@@ -59,6 +59,13 @@ fn run_vm(name: &str, source: &str) -> String {
 /// the caller's vector as a root. The vector's arena slot is BELOW the frame's
 /// young mark, so `evacuate_local_root` returns it untouched — and the strings
 /// it was just given, which live ABOVE the mark, are truncated away.
+///
+/// This is also the test that catches clearing `inplace_write_escaped` when the
+/// tail call reuses the frame, alongside the dirty bits: the survivors that
+/// boundary compacts land above `yard_base`, which the frame's own RETURN
+/// truncates to, so the obligation is still outstanding and clearing it here
+/// loses an element three iterations later — as an out-of-bounds arena index
+/// rather than a wrong string, since the stale index falls past the region.
 #[test]
 fn tail_call_evacuation_keeps_the_element_written_in_place() {
     let src = r#"module FrameBoundaryTail

@@ -960,3 +960,80 @@ fn a_live_map_is_read_entry_by_entry_whether_or_not_anything_in_it_can_move() {
         heap_large.scanned,
     );
 }
+
+/// Map entries the collector read while running the in-place-write shape.
+///
+/// The number is the descent's cost in the only form that does not need a
+/// stopwatch. A map is one arena entry and carries no all-immediate escape, so
+/// a boundary that descends into an out-of-region map reads it entry by entry
+/// and one that leaves it alone reads nothing. The map is carried across every
+/// boundary unchanged, so every entry in this count is a boundary that chose to
+/// descend into it.
+fn inplace_write_scan_cost(src: &str) -> u64 {
+    let mut vm = compile_vm_with_ownership(src);
+    vm.run().expect("in-place write program should run");
+    vm.arena.map_entries_scanned()
+}
+
+/// One in-place write in `main`, then `n` iterations of a loop that runs in a
+/// frame of its own.
+fn armed_once_then_many_frames(n: i64) -> u64 {
+    let src = format!(
+        "fn buildMap(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> buildMap(n - 1, Map.set(acc, n, \"row-{{n}}\"))\n        false -> acc\n\nfn touch(v: Vector<String>, s: String) -> Vector<String>\n    Option.withDefault(Vector.set(v, 0, s), v)\n\nfn spin(m: Map<Int, String>, i: Int, n: Int, tag: String) -> Int\n    match i >= n\n        true -> Map.len(m) + String.len(tag)\n        false -> spin(m, i + 1, n, String.toUpper(tag))\n\nfn main() -> Int\n    m = buildMap(32, {{}})\n    v = touch(Vector.new(2, \"seed-string\"), String.toUpper(\"payload-marker\"))\n    spin(m, 0, {n}, \"tag-value\") + Vector.len(v)\n"
+    );
+    inplace_write_scan_cost(&src)
+}
+
+/// The same `n` iterations, with the write inside the looping frame so every
+/// boundary is armed again.
+fn writing_at_every_boundary(n: i64) -> u64 {
+    let src = format!(
+        "fn buildMap(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> buildMap(n - 1, Map.set(acc, n, \"row-{{n}}\"))\n        false -> acc\n\nfn spin(v: Vector<String>, m: Map<Int, String>, i: Int, n: Int, tag: String) -> Int\n    match i >= n\n        true -> Map.len(m) + Vector.len(v) + String.len(tag)\n        false -> spin(Option.withDefault(Vector.set(v, 0, String.toUpper(\"payload-{{i}}\")), v), m, i + 1, n, String.toUpper(tag))\n\nfn main() -> Int\n    m = buildMap(32, {{}})\n    spin(Vector.new(2, \"seed-string\"), m, 0, {n}, \"tag-value\")\n"
+    );
+    inplace_write_scan_cost(&src)
+}
+
+/// The flag an in-place write sets is a property of ONE frame, and this is the
+/// receipt for it: a write early in `main` costs the fifty or hundred frames
+/// that run afterwards exactly nothing.
+///
+/// A frame is pushed with the flag clear and only a write of its own — or a
+/// callee handing one up on return — ever sets it, so the cost of arming a
+/// frame is bounded by that frame's own boundaries. It does not become a tax
+/// on the rest of the program. Doubling the iteration count leaves the number
+/// unchanged to the entry; the constant that remains is the map being built
+/// before the loop starts.
+#[test]
+fn an_early_in_place_write_does_not_arm_the_frames_that_run_after_it() {
+    let fifty = armed_once_then_many_frames(50);
+    let hundred = armed_once_then_many_frames(100);
+    assert_eq!(
+        fifty, hundred,
+        "doubling the number of frames that run after one in-place write \
+         changed what the collector read: 50 iterations read {fifty} map \
+         entries, 100 read {hundred}",
+    );
+}
+
+/// The control, and the honest half of the pair.
+///
+/// Same loop, same carried map, one difference: the write is inside the
+/// looping frame, so every boundary is armed again and every boundary descends.
+/// The reads then grow with the iteration count times the size of what the
+/// frame carries — the quadratic this fix knowingly pays on the shape that used
+/// to return the wrong answer, and what a remembered set at element granularity
+/// would be for.
+///
+/// It is also what keeps the test above from being vacuous: the counter does
+/// move when a boundary descends.
+#[test]
+fn writing_at_every_boundary_reads_the_carried_map_at_every_boundary() {
+    let fifty = writing_at_every_boundary(50);
+    let hundred = writing_at_every_boundary(100);
+    let extra = hundred - fifty;
+    assert!(
+        extra >= 50 * 32,
+        "fifty more armed boundaries did not read the 32-entry map they carry \
+         fifty more times: 50 iterations read {fifty}, 100 read {hundred}",
+    );
+}

@@ -1,15 +1,29 @@
 use super::*;
 
+/// Where the evacuation walk has to put a cons cell back once it has rewritten
+/// it: into the compacted region it was moved to, or into the slot it never
+/// left.
+///
+/// The second case is the out-of-region tail. It exists for the same reason
+/// [`Arena::rewrite_evacuated_refs_in_place`] does — an in-place vector write
+/// can leave a below-mark cell holding an above-mark index — and it mirrors
+/// `PromoteRewriteSlot`, which the promotion walk has always had.
 #[derive(Clone, Copy)]
-struct LocalEvacuatedSlot {
-    target: AllocSpace,
-    compacted_pos: u32,
+enum LocalRewriteSlot {
+    InPlace {
+        space: HeapSpace,
+        raw_index: usize,
+    },
+    Evacuated {
+        target: AllocSpace,
+        compacted_pos: u32,
+    },
 }
 
 struct LocalTailEntry<T: ArenaTypes> {
     value: NanValue,
     entry: ArenaEntry<T>,
-    slot: LocalEvacuatedSlot,
+    slot: LocalRewriteSlot,
 }
 
 enum LocalTailStep<T: ArenaTypes> {
@@ -121,6 +135,9 @@ impl<T: ArenaTypes> Arena<T> {
         rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
+        if rewrite_out_of_region_roots {
+            self.begin_inplace_visit_epoch();
+        }
         let mut relocated_young = Self::take_u32_scratch(
             &mut self.scratch_young,
             self.young_entries.len().saturating_sub(young_mark as usize),
@@ -213,19 +230,88 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
-    fn store_local_evacuated_slot(
-        slot: LocalEvacuatedSlot,
+    fn store_local_rewrite_slot(
+        &mut self,
+        slot: LocalRewriteSlot,
         entry: ArenaEntry<T>,
         compacted_yard: &mut [ArenaEntry<T>],
         compacted_handoff: &mut [ArenaEntry<T>],
     ) {
-        Self::store_local_target_entry(
-            slot.target,
-            slot.compacted_pos,
-            entry,
-            compacted_yard,
-            compacted_handoff,
-        );
+        match slot {
+            LocalRewriteSlot::Evacuated {
+                target,
+                compacted_pos,
+            } => Self::store_local_target_entry(
+                target,
+                compacted_pos,
+                entry,
+                compacted_yard,
+                compacted_handoff,
+            ),
+            LocalRewriteSlot::InPlace { space, raw_index } => {
+                self.store_out_of_region_entry(space, raw_index, entry)
+            }
+        }
+    }
+
+    /// Take an out-of-region entry out of its slot, leaving `Int(0)` behind.
+    ///
+    /// `None` means there is nothing here worth rewriting: an index past the
+    /// end of its space, or one inside the region this boundary is about to
+    /// compact — a stale index is only ever read back out of an entry the
+    /// boundary KEEPS. `None` is also what a slot this boundary has already
+    /// descended into returns, which is what keeps the walk idempotent.
+    fn take_out_of_region_entry(
+        &mut self,
+        space: HeapSpace,
+        raw_index: usize,
+        young_mark: u32,
+        yard_mark: u32,
+        handoff_mark: u32,
+    ) -> Option<ArenaEntry<T>> {
+        let survives_the_truncate = match space {
+            HeapSpace::Young => {
+                raw_index < self.young_entries.len() && raw_index < young_mark as usize
+            }
+            HeapSpace::Yard => {
+                raw_index < self.yard_entries.len() && raw_index < yard_mark as usize
+            }
+            HeapSpace::Handoff => {
+                raw_index < self.handoff_entries.len() && raw_index < handoff_mark as usize
+            }
+            HeapSpace::Stable => raw_index < self.stable_entries.len(),
+        };
+        if !survives_the_truncate || !self.claim_inplace_visit(space, raw_index) {
+            return None;
+        }
+        Some(match space {
+            HeapSpace::Young => {
+                core::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Yard => {
+                core::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Handoff => {
+                core::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Stable => {
+                core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0))
+            }
+        })
+    }
+
+    fn store_out_of_region_entry(
+        &mut self,
+        space: HeapSpace,
+        raw_index: usize,
+        entry: ArenaEntry<T>,
+    ) {
+        match space {
+            HeapSpace::Young => self.young_entries[raw_index] = entry,
+            HeapSpace::Yard => self.yard_entries[raw_index] = entry,
+            HeapSpace::Handoff => self.handoff_entries[raw_index] = entry,
+            HeapSpace::Stable => self.stable_entries[raw_index] = entry,
+        }
     }
 
     #[inline(always)]
@@ -544,9 +630,16 @@ impl<T: ArenaTypes> Arena<T> {
     ///
     /// This mirrors `rewrite_young_refs_in_place` (relocation) and
     /// `rewrite_promoted_young_refs_in_place` (promotion), which already do the
-    /// same descent for their own families. As there, taking the entry out of
-    /// its slot before descending doubles as the cycle guard: a value that
-    /// reaches itself meets `Int(0)` and stops.
+    /// same descent for their own families — but NOT their idempotence, which
+    /// they get for free rather than by construction. Both of those relocate by
+    /// APPENDING (promotion) or into a young region they own outright, and in a
+    /// world without in-place writes an old slot holds nothing they would move,
+    /// so descending twice rewrites nothing twice. This one relocates into a
+    /// region whose live entries the walk has not reached yet, so a second
+    /// descent would read an already-rewritten index as an original one. The
+    /// visit memo consulted by `take_out_of_region_entry` is what makes the
+    /// walk idempotent here, and it doubles as the cycle guard: a value that
+    /// reaches itself is claimed already and stops.
     #[allow(clippy::too_many_arguments)]
     fn rewrite_evacuated_refs_in_place(
         &mut self,
@@ -563,34 +656,10 @@ impl<T: ArenaTypes> Arena<T> {
         compacted_handoff: &mut Vec<ArenaEntry<T>>,
     ) {
         let raw_index = raw_index as usize;
-        // Only slots that outlive the truncate are worth rewriting; a stale
-        // index is read back from an entry the boundary keeps, never from one
-        // it drops.
-        let entry = match space {
-            HeapSpace::Young => {
-                if raw_index >= self.young_entries.len() || raw_index >= young_mark as usize {
-                    return;
-                }
-                core::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0))
-            }
-            HeapSpace::Yard => {
-                if raw_index >= self.yard_entries.len() || raw_index >= yard_mark as usize {
-                    return;
-                }
-                core::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0))
-            }
-            HeapSpace::Handoff => {
-                if raw_index >= self.handoff_entries.len() || raw_index >= handoff_mark as usize {
-                    return;
-                }
-                core::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0))
-            }
-            HeapSpace::Stable => {
-                if raw_index >= self.stable_entries.len() {
-                    return;
-                }
-                core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0))
-            }
+        let Some(entry) =
+            self.take_out_of_region_entry(space, raw_index, young_mark, yard_mark, handoff_mark)
+        else {
+            return;
         };
         let new_entry = self.evacuate_local_entry(
             entry,
@@ -604,12 +673,7 @@ impl<T: ArenaTypes> Arena<T> {
             compacted_yard,
             compacted_handoff,
         );
-        match space {
-            HeapSpace::Young => self.young_entries[raw_index] = new_entry,
-            HeapSpace::Yard => self.yard_entries[raw_index] = new_entry,
-            HeapSpace::Handoff => self.handoff_entries[raw_index] = new_entry,
-            HeapSpace::Stable => self.stable_entries[raw_index] = new_entry,
-        }
+        self.store_out_of_region_entry(space, raw_index, new_entry);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -837,7 +901,7 @@ impl<T: ArenaTypes> Arena<T> {
                 LocalTailStep::Taken(LocalTailEntry {
                     value: value.with_heap_index(new_index),
                     entry,
-                    slot: LocalEvacuatedSlot {
+                    slot: LocalRewriteSlot::Evacuated {
                         target: young_target,
                         compacted_pos,
                     },
@@ -872,7 +936,7 @@ impl<T: ArenaTypes> Arena<T> {
                 LocalTailStep::Taken(LocalTailEntry {
                     value: value.with_heap_index(new_index),
                     entry,
-                    slot: LocalEvacuatedSlot {
+                    slot: LocalRewriteSlot::Evacuated {
                         target,
                         compacted_pos,
                     },
@@ -907,11 +971,37 @@ impl<T: ArenaTypes> Arena<T> {
                 LocalTailStep::Taken(LocalTailEntry {
                     value: value.with_heap_index(new_index),
                     entry,
-                    slot: LocalEvacuatedSlot {
+                    slot: LocalRewriteSlot::Evacuated {
                         target,
                         compacted_pos,
                     },
                 })
+            }
+            // An out-of-region cons cell. Its own handle does not change, but a
+            // vector held further down the chain may have been written in place
+            // and be pointing above the marks, so the walk has to continue
+            // through it rather than stop here — which is what the promotion
+            // walk (`take_promote_tail_value`) has always done. The memo inside
+            // `take_out_of_region_entry` keeps a chain reached twice, or one
+            // that loops back on itself, from being rewritten twice.
+            _ if self.rewrite_out_of_region_roots => {
+                match self.take_out_of_region_entry(
+                    space,
+                    raw_index as usize,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                ) {
+                    Some(entry) => LocalTailStep::Taken(LocalTailEntry {
+                        value,
+                        entry,
+                        slot: LocalRewriteSlot::InPlace {
+                            space,
+                            raw_index: raw_index as usize,
+                        },
+                    }),
+                    None => LocalTailStep::Done(value),
+                }
             }
             _ => LocalTailStep::Done(value),
         }
@@ -1039,7 +1129,7 @@ impl<T: ArenaTypes> Arena<T> {
                     );
                     match next {
                         LocalTailStep::Done(rewritten_tail) => {
-                            Self::store_local_evacuated_slot(
+                            self.store_local_rewrite_slot(
                                 current.slot,
                                 ArenaEntry::List(ArenaList::Prepend {
                                     head: rewritten_head,
@@ -1052,7 +1142,7 @@ impl<T: ArenaTypes> Arena<T> {
                             return first_value;
                         }
                         LocalTailStep::Taken(next_entry) => {
-                            Self::store_local_evacuated_slot(
+                            self.store_local_rewrite_slot(
                                 current.slot,
                                 ArenaEntry::List(ArenaList::Prepend {
                                     head: rewritten_head,
@@ -1079,7 +1169,7 @@ impl<T: ArenaTypes> Arena<T> {
                         compacted_yard,
                         compacted_handoff,
                     );
-                    Self::store_local_evacuated_slot(
+                    self.store_local_rewrite_slot(
                         current.slot,
                         new_entry,
                         compacted_yard,

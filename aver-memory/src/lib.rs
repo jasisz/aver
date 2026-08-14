@@ -1271,6 +1271,27 @@ pub struct Arena<T: ArenaTypes> {
     /// [`Arena::evacuate_frame_to_handoff`]. Set only for the span of one
     /// `evacuate_frame_locals` call and cleared when it returns.
     rewrite_out_of_region_roots: bool,
+    /// Which out-of-region slots the descent above has already rewritten, one
+    /// stamp array per heap space, indexed by raw arena index.
+    ///
+    /// The descent is not idempotent and cannot cheaply be made so: it rewrites
+    /// a slot's reference to the index its target will occupy AFTER the
+    /// compaction, and for the length of the walk that index still names a
+    /// live, unrelated entry. A second descent into the same slot reads the
+    /// rewritten index as if it were an original one and relocates it again, so
+    /// the walk has to remember where it has been. A slot reached twice — two
+    /// roots holding one vector, or one structure that mentions it twice — is
+    /// then descended once.
+    ///
+    /// A stamp equal to `inplace_visit_epoch` means "already visited during the
+    /// boundary now running". Bumping the epoch is what clears the memo, so
+    /// there is no per-boundary refill; the arrays grow on demand and stay
+    /// empty for programs that never take the descent at all.
+    inplace_visit_stamps: [Vec<u32>; 4],
+    /// Epoch stamped into `inplace_visit_stamps` by the descent currently
+    /// running. Starts at 0, which no live stamp ever equals, and is bumped
+    /// once per descending boundary.
+    inplace_visit_epoch: u32,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in
     /// lockstep with `type_names`.

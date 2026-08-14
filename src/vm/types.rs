@@ -74,6 +74,14 @@ pub struct CallFrame {
     /// Set by `VECTOR_SET_OR_KEEP`'s owned branch and inherited from callees,
     /// it withholds the return path that truncates young without rewriting
     /// anything first.
+    ///
+    /// Once set it stays set for the life of the frame, unlike the three dirty
+    /// bits above, which a tail call clears when it reuses the frame. It has to:
+    /// a boundary can only discharge the obligation by dropping everything the
+    /// frame owns, and the tail-call boundary compacts relative to `yard_mark`
+    /// while the frame's return truncates to `yard_base`, which is taken once
+    /// at entry and never re-marked. The survivors of a tail-call compaction
+    /// therefore still sit inside the region the frame's own return drops.
     pub inplace_write_escaped: bool,
     /// Conservatively classified as cheap enough for a fast return path.
     pub thin: bool,
