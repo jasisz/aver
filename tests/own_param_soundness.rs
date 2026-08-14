@@ -891,6 +891,59 @@ fn main() -> Unit
     assert_sound("round3_live_alias_at_callsite_map", src, "7");
 }
 
+/// The call-result class through a NAMED USER FUNCTION
+/// (`MirCallee::Fn`). Apart from the fn-value sibling below, every test in
+/// this file binds a call result to a local before it is used again, which
+/// settles ownership on the binding rules; here `keepFirst(base, {})` is
+/// `growth`'s argument directly, so the decision rests on the call-result
+/// arm of `uniquely_owned`. `keepFirst` hands one of its arguments straight
+/// back, so granting ownership lets `growth` empty the caller's map:
+/// correct = `6 2/7`, corruption surfaces as `6 0/-1`.
+///
+/// The VM twin of the structural
+/// `own_param_graduation::named_fn_call_result_argument_keeps_the_param_flagged`
+/// and of the end-to-end
+/// `rust_codegen_differential::rust_fn_result_argument_keeps_the_callers_map_intact`.
+/// It exists so this edge keeps a cheap observable witness even if the
+/// build-and-run differential ever moves to the full tier — the
+/// compiled-Rust leg of that differential cannot go red for this class
+/// anyway, because aver-rt collections are copy-on-write.
+#[test]
+fn named_fn_result_argument_is_not_mutated_in_place() {
+    let src = r#"module OwnedFnResultMap
+    intent = "a helper's map result flows straight into another call"
+    depends []
+    effects [Console.print]
+
+fn keepFirst(a: Map<String, Int>, b: Map<String, Int>) -> Map<String, Int>
+    ? "returns one of its arguments — the result shares the caller's map"
+    match Map.len(a) > 0
+        true -> a
+        false -> b
+
+fn growth(m: Map<String, Int>, n: Int) -> Int
+    ? "threads the map linearly, then reports its size"
+    match n == 0
+        true -> Map.len(m)
+        false -> growth(Map.set(m, "g{n}", n), n - 1)
+
+fn render(m: Map<String, Int>) -> String
+    ? "size plus the value under a"
+    "{Map.len(m)}/{Option.withDefault(Map.get(m, "a"), 0 - 1)}"
+
+fn run() -> String
+    ? "the named fn's result is the next call's argument; base is read after"
+    base = Map.set(Map.set({}, "a", 7), "b", 8)
+    grown = growth(keepFirst(base, {}), 4)
+    "{grown} {render(base)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    assert_sound("named_fn_result_arg", src, "6 2/7");
+}
+
 /// The call-result class through a FIRST-CLASS FN VALUE. Every other test
 /// in this file binds a call result to a local before it is used again,
 /// which settles ownership on the binding rules; here `f(base)` is

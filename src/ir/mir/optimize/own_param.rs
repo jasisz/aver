@@ -509,6 +509,8 @@ fn uniquely_owned(
             // - `Fn`: a named user function.
             //   `named_fn_call_result_argument_keeps_the_param_flagged`,
             //   plus the behavioural
+            //   `own_param_soundness::named_fn_result_argument_is_not_mutated_in_place`
+            //   and the end-to-end
             //   `rust_fn_result_argument_keeps_the_callers_map_intact`
             //   in `tests/rust_codegen_differential.rs`.
             // - `LocalSlot`: a first-class fn value read out of a slot,
@@ -519,11 +521,13 @@ fn uniquely_owned(
             //   `tests/own_param_soundness.rs`.
             //
             // `Intrinsic` has no pin because it cannot be reached with a
-            // collection: the deforestation intrinsics return a String,
-            // an Int or a buffer handle (`BufNew` / `BufAppend` /
-            // `BufAppendSepUnlessFirst` / `BufFinalize` / `ToStr` /
-            // `IntDivEuclid` / `IntModEuclid`), never a Vector or Map, so
-            // such a call is never the argument of an alias-prone param.
+            // collection: no member of `BuiltinIntrinsic` returns one.
+            // The full set today is `BufNew` / `BufAppend` /
+            // `BufAppendSepUnlessFirst` / `BufFinalize` (a buffer handle),
+            // `ToStr` (a String), and `IntDivEuclid` / `IntModEuclid` /
+            // `BitsShiftLeft` / `BitsShiftRight` / `BitsLow` (all
+            // `(Int, Int) -> Int`) — never a Vector or Map, so such a call
+            // is never the argument of an alias-prone param.
             //
             // The pinned shapes all feed a call result STRAIGHT into
             // another call's argument and read the caller's own
