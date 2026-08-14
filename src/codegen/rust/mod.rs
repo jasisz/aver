@@ -186,16 +186,48 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
         Ok(())
     };
 
+    // A mutual-recursion group additionally spells each member's name
+    // CAPITALISED, as a trampoline enum variant, and a capitalised name is
+    // subject to Unicode's case mapping rather than ASCII's: `ſ` (U+017F)
+    // upper-cases to `S`, so `fn ſelf` produces the variant `Self`. That is
+    // a Rust keyword with no raw spelling, so the enum would not parse —
+    // and `ſelf` is a perfectly ordinary Aver name that the refusal above,
+    // which compares the name itself, does not see. Checked per group so a
+    // program that merely HAS such a name (where the variant is never
+    // built, and the plain fn name is valid Rust) still compiles.
+    let check_variants = |fn_defs: &[&crate::ast::FnDef], scope: &str| -> Result<(), String> {
+        for group in toplevel::find_mutual_tco_groups(fn_defs) {
+            for idx in group {
+                let fd = fn_defs[idx];
+                let variant = syntax::capitalise_first(&fd.name);
+                if syntax::is_rust_reserved(&variant) {
+                    return Err(format!(
+                        "cannot compile to Rust: {scope}function `{}` takes part in mutual \
+                         tail recursion, and the trampoline variant for it is its name \
+                         capitalised, which is `{variant}` — a Rust keyword. `{variant}` \
+                         cannot be written as an identifier, and the raw form `r#{variant}` \
+                         is rejected too, so there is no spelling for the variant. Rename \
+                         the function.",
+                        fd.name
+                    ));
+                }
+            }
+        }
+        Ok(())
+    };
+
     for fd in &ctx.fn_defs {
         check_fn(fd, "")?;
     }
     check_types(&ctx.type_defs, "")?;
+    check_variants(&ctx.fn_defs.iter().collect::<Vec<_>>(), "")?;
     for module in &ctx.modules {
         let scope = format!("module `{}` ", module.prefix);
         for fd in &module.fn_defs {
             check_fn(fd, &scope)?;
         }
         check_types(&module.type_defs, &scope)?;
+        check_variants(&module.fn_defs.iter().collect::<Vec<_>>(), &scope)?;
     }
     Ok(())
 }
@@ -1575,6 +1607,59 @@ fn other(n: Int) -> Int
         // `r#Self` parses. It is not called on that name here because its own
         // `debug_assert` refuses to hand back a reserved variant; the refusal
         // above is what keeps that assertion true.
+    }
+
+    /// The same collapse, reached by a name that is NOT itself a Rust word.
+    /// `ſ` (U+017F LATIN SMALL LETTER LONG S) upper-cases to `S`, so `ſelf`
+    /// capitalises to `Self` — comparing the function name against the
+    /// unspellable list does not catch this, because `ſelf` is not on it.
+    /// Aver accepts the name (camelCase style warning only) and it is a
+    /// perfectly good Rust identifier on its own, so the refusal has to be
+    /// scoped to the groups that actually build a variant: mutual recursion
+    /// is refused, and the same name without it still compiles.
+    #[test]
+    fn a_name_that_capitalises_onto_self_is_refused_only_in_a_mutual_group() {
+        let mutual = ctx_from_source(
+            "
+module Demo
+
+fn ſelf(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    match n == 0
+        true -> 1
+        false -> ſelf(n - 1)
+",
+            "demo",
+        );
+        let err = super::unspellable_rust_names(&mutual)
+            .expect_err("a variant that collapses onto `Self` should be refused");
+        assert!(
+            err.contains("function `ſelf`") && err.contains("`Self`"),
+            "refusal should name both the function and the variant:\n{err}"
+        );
+
+        // Without the trampoline there is no variant, and `ſelf` is a valid
+        // Rust function name, so this must still compile.
+        let mut alone = ctx_from_source(
+            "
+module Demo
+
+fn ſelf(n: Int) -> Int
+    n + 1
+",
+            "demo",
+        );
+        super::unspellable_rust_names(&alone)
+            .expect("a non-recursive `ſelf` builds a fn name, not a variant");
+        let out = transpile(&mut alone);
+        assert!(
+            generated_rust_entry_file(&out).contains("pub fn ſelf"),
+            "the name should be emitted as-is"
+        );
     }
 
     /// The direct contract of the trampoline variant helper, independent of

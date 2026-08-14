@@ -1096,44 +1096,41 @@ pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
 /// first: `await` became `r#await`, whose capitalisation `R#await` is not an
 /// identifier at all, so the trampoline enum stopped the parser.
 ///
-/// The escape is not merely unnecessary after capitalising — it is
-/// unreachable, and running it anyway would be wrong. Unreachable: a
-/// capitalised name can never be a Rust keyword. Every reserved word is
-/// lowercase ASCII except `Self`, and no `char::to_uppercase` mapping
-/// produces a lowercase ASCII letter, so `capitalise(name)` never begins
-/// with one and never equals a lowercase keyword; names whose first
-/// character has no uppercase form (a leading `_`, a digit, a letter from a
-/// caseless script) come through unchanged and are not keywords either, for
-/// the same reason. Wrong: the one remaining candidate is `Self`, reachable
-/// only from an Aver `fn self` or `fn Self` — and `r#Self` is a parse error,
-/// not an escape, so escaping would turn a refusable program into a broken
-/// one. Both spellings are refused by `unspellable_rust_names` before any
-/// trampoline is built, so `Self` cannot arrive here.
+/// Escaping afterwards would be worse than useless. Exactly three Aver
+/// names capitalise onto a Rust keyword — `Self`, `self`, and `ſelf`, the
+/// last because U+017F LATIN SMALL LETTER LONG S upper-cases to `S` — and
+/// all three land on `Self`, the one keyword with no raw spelling at all.
+/// Escaping would emit `r#Self`, which is a parse error rather than an
+/// escape. So the answer is not to escape here but to refuse earlier:
+/// `unspellable_rust_names` rejects all three before a trampoline is built,
+/// which is what makes the assertion below safe to hold.
+///
+/// That every OTHER capitalised name is keyword-free is not a guess. No
+/// `char::to_uppercase` mapping in Unicode produces a lowercase ASCII
+/// letter, so a capitalised name never begins with one and can never equal
+/// one of the 51 lowercase-ASCII reserved words; names whose first character
+/// has no uppercase form (a leading `_`, a digit, a caseless script) come
+/// through unchanged and are not keywords either. `Self` is the only
+/// non-lowercase entry in the table, which is why it is the only case left.
 ///
 /// Not injective: `await` and `Await` in one recursion group both map to
 /// `Await`. That is a duplicate variant in the emitted enum, which rustc
 /// reports as E0428 with both spans — loud, immediate, and pointing at the
-/// generated file, unlike the silent `R#await` this replaced. Aver's own
-/// naming rules make a PascalCase function name a style warning already, so
-/// the pair is hard to write by accident; a dedicated Aver-side error is
-/// worth adding only alongside the broader compile-time name check that
-/// issue #899 also asks for.
+/// generated file, unlike the silent `R#await` this replaced. It can only
+/// ever fail a build, never produce a wrong binary. Aver's own naming rules
+/// make a PascalCase function name a style warning already, so the pair is
+/// hard to write by accident; a dedicated Aver-side error is worth adding
+/// only alongside the broader compile-time name check issue #899 also asks
+/// for.
 pub(super) fn fn_name_to_variant(name: &str) -> String {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) => {
-            let upper: String = c.to_uppercase().collect();
-            let variant = format!("{}{}", upper, chars.as_str());
-            debug_assert!(
-                !super::syntax::is_rust_reserved(&variant),
-                "trampoline variant `{variant}` is a Rust keyword; the argument \
-                 that capitalisation cannot produce one no longer holds, and \
-                 escaping it here would emit `r#Self`, which does not parse"
-            );
-            variant
-        }
-        None => String::new(),
-    }
+    let variant = super::syntax::capitalise_first(name);
+    debug_assert!(
+        variant.is_empty() || !super::syntax::is_rust_reserved(&variant),
+        "trampoline variant `{variant}` is a Rust keyword, so the enum will \
+         not parse. `unspellable_rust_names` is supposed to have refused the \
+         function name that produced it before codegen ran."
+    );
+    variant
 }
 
 /// Emit the main function, incorporating top-level statements.

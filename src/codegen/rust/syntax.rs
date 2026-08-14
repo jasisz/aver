@@ -60,6 +60,28 @@ pub(crate) fn is_rust_reserved(name: &str) -> bool {
     RUST_RESERVED.contains(&name)
 }
 
+/// Upper-case the first character, leaving the rest alone.
+///
+/// The mutual-recursion trampoline builds its enum variants this way, and
+/// the refusal that guards those variants has to predict the same string,
+/// so both go through here rather than each spelling the transform.
+///
+/// Note `char::to_uppercase` is not "make ASCII uppercase": it is the
+/// Unicode mapping, and it is neither injective nor length-preserving. In
+/// particular `ſ` (U+017F LATIN SMALL LETTER LONG S) maps to `S`, which is
+/// the one way an Aver name other than `self`/`Self` can capitalise into a
+/// Rust keyword.
+pub(crate) fn capitalise_first(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) => {
+            let upper: String = c.to_uppercase().collect();
+            format!("{}{}", upper, chars.as_str())
+        }
+        None => String::new(),
+    }
+}
+
 /// Convert an Aver identifier to a valid Rust identifier.
 ///
 /// Valid for every reserved word except the four in [`RUST_NEVER_RAW`],
