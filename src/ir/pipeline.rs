@@ -515,6 +515,8 @@ impl PipelineResult {
     /// asking this question. `items` is the caller's post-pipeline
     /// vec (the pipeline mutates it in place and does not own it) and
     /// is used only when no proof stage ran.
+    ///
+    /// Takes the view out of the result — one context per run.
     pub fn codegen_view(&mut self, items: Vec<TopLevel>) -> AstView {
         match self.proof_view.take() {
             Some(view) => view,
@@ -557,7 +559,6 @@ impl PipelineResult {
 /// The fields mirror the `PipelineResult` ones a `CodegenContext` is
 /// built from — same data, derived from the snapshot instead of from
 /// the optimised AST.
-#[derive(Default)]
 pub struct AstView {
     /// Entry-module items — as of the snapshot point when this is the
     /// proof view.
