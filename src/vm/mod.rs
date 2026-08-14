@@ -1,5 +1,8 @@
 mod alloc_policy;
-mod builtin;
+// `VmBuiltin::ALL` is the list of builtins the VM can execute. The proof
+// backends check their emission against the codegen table's `Builtin::ALL`
+// (src/codegen/builtins.rs), which is the superset the emitters can render.
+pub(crate) mod builtin;
 mod compiler;
 mod execute;
 pub mod opcode;

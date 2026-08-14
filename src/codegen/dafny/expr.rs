@@ -453,7 +453,7 @@ fn dafny_bits_counted(op: &str, a: &[String], message: &str) -> String {
     )
 }
 
-fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
+pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
     use crate::codegen::builtins::Builtin::*;
     match b {
         // Constructors
