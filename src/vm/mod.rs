@@ -1,5 +1,7 @@
 mod alloc_policy;
-mod builtin;
+// `VmBuiltin::ALL` is the list of names a program can call, which the proof
+// backends check their own emission against.
+pub(crate) mod builtin;
 mod compiler;
 mod execute;
 pub mod opcode;

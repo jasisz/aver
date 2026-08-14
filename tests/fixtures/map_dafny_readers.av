@@ -3,6 +3,7 @@ module MapDafnyReaders
         "Every map reader the Dafny emitter can produce has to resolve in the file it writes."
         "`Map.keys` and `Map.values` emit `MapKeys(m)` and `MapValues(m)`; neither name was declared in the Dafny prelude and neither triggered the map helper block, so a program using only these two exported a file Dafny could not resolve."
         "The laws here read both sequences on both sides, so they close against an uninterpreted declaration and fail loudly against a missing one."
+        "`aValueForEveryKey` asks for more than resolution: a map has as many values as it has keys, which only holds in a model that reads both off one sequence."
     effects [Console]
 
 fn keyList(m: Map<String, Int>) -> List<String>
@@ -17,6 +18,10 @@ fn keyCount(m: Map<String, Int>) -> Int
     ? "How many keys the map has, counted through the key sequence."
     List.len(Map.keys(m))
 
+fn valueCount(m: Map<String, Int>) -> Int
+    ? "How many values the map has, counted through the value sequence."
+    List.len(Map.values(m))
+
 verify keyList law keysAreTheMapsKeys
     given m: Map<String, Int> = [{"a" => 1}, {"b" => 2, "a" => 1}]
     keyList(m) => Map.keys(m)
@@ -28,6 +33,10 @@ verify valueList law valuesAreTheMapsValues
 verify keyCount law countIsTheKeySequenceLength
     given m: Map<String, Int> = [{"a" => 1}, {"b" => 2, "a" => 1}]
     keyCount(m) => List.len(Map.keys(m))
+
+verify valueCount law aValueForEveryKey
+    given m: Map<String, Int> = [{"a" => 1}, {"b" => 2, "a" => 1}]
+    valueCount(m) => keyCount(m)
 
 fn main() -> Unit
     ! [Console.print]

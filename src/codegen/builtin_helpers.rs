@@ -69,11 +69,13 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "ListTail(",
             "ListTake(",
             "ListDrop(",
+            "ListZip(",
         ],
         // Dafny's `ListHead` returns `Option<T>`. Lean has native Option.
         depends_on: &["OptionDatatype"],
         doc: "Recursion helpers and structural list utilities (Lean's `AverList.` namespace; \
-              Dafny's `ListReverse` / `ListHead` / `ListTail` / `ListTake` / `ListDrop`).",
+              Dafny's `ListReverse` / `ListHead` / `ListTail` / `ListTake` / `ListDrop` / \
+              `ListZip`).",
     },
     BuiltinHelper {
         key: "StringHelpers",
@@ -227,14 +229,28 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     // pure-Int examples.
     BuiltinHelper {
         key: "ResultDatatype",
-        body_tokens: &["Result<", "Result.Ok", "Result.Err", "Ok(", "Err("],
+        body_tokens: &[
+            "Result<",
+            "Result.Ok",
+            "Result.Err",
+            "Ok(",
+            "Err(",
+            "ResultWithDefault(",
+        ],
         depends_on: &[],
         doc: "Dafny `datatype Result<T, E>` declaration plus `ResultWithDefault` destructor. \
               Lean uses native `Except`; this key is a no-op there.",
     },
     BuiltinHelper {
         key: "OptionDatatype",
-        body_tokens: &["Option<", "Option.Some", "Option.None", "Some(", "None"],
+        body_tokens: &[
+            "Option<",
+            "Option.Some",
+            "Option.None",
+            "Some(",
+            "None",
+            "OptionWithDefault(",
+        ],
         depends_on: &[],
         doc: "Dafny `datatype Option<T>` declaration plus `OptionWithDefault` destructor. \
               Lean uses native `Option`; this key is a no-op there.",
