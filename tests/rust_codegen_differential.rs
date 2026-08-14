@@ -489,6 +489,603 @@ fn main() -> Unit
     );
 }
 
+/// A function whose Aver name is a Rust keyword, in MUTUAL tail recursion.
+/// The trampoline variant is the name capitalised, and capitalising the
+/// already-escaped `r#await` gave `R#await` — not an identifier, so the
+/// emitted project stopped parsing there and every later declaration
+/// vanished with it. `cargo check` alone would not have caught it any
+/// earlier than a build, but nothing caught it at all, so the program had
+/// to be built to be told. Both halves of the trigger have controls in the
+/// same file: a keyword-named SELF-recursive fn (no trampoline) and a
+/// mutual pair of ordinary names (trampoline, no escape).
+///
+/// The second half of the file is the plainer failure the same bug was
+/// hiding: functions named with a Rust keyword that the escape table simply
+/// did not list. `become`, `try`, `macro` and the rest need no recursion and
+/// no trampoline — they were emitted as `pub fn become(…)` and the project
+/// did not parse. They are here rather than in a second test because the
+/// expensive part is the `cargo build`, and one build can carry both.
+///
+/// The third half, for the same reason, is one keyword name in each of the
+/// OTHER positions the escape helper touches — a parameter, a `let`
+/// binding, a match binder, a record field and a module-level binding — so
+/// the claim that every such position is escaped is backed by a build and a
+/// run rather than by reading the emitter.
+#[test]
+fn rust_keyword_named_mutual_recursion_builds_and_matches_vm() {
+    let src = r#"module KeywordMutualTco
+    intent = "Rust keywords as function names, in mutual tail recursion"
+    effects [Console.print]
+
+record Holder
+    move: Int
+
+static = 41
+
+fn await(budget: Int) -> String
+    ? "Hand off to the other one."
+    match budget > 0
+        true -> resume(budget - 1)
+        false -> "done"
+
+fn resume(budget: Int) -> String
+    ? "Hand back."
+    match budget > 0
+        true -> await(budget - 1)
+        false -> "handed back"
+
+fn impl(n: Int) -> Int
+    ? "A second keyword pair, so one repaired name is not enough to pass."
+    match n == 0
+        true -> 0
+        false -> move(n - 1)
+
+fn move(n: Int) -> Int
+    ? "The other half of the second keyword pair."
+    match n == 0
+        true -> 1
+        false -> impl(n - 1)
+
+fn unsafe(n: Int) -> Int
+    ? "Control: a keyword name that only recurses into itself."
+    match n == 0
+        true -> 7
+        false -> unsafe(n - 1)
+
+fn ping(n: Int) -> Int
+    ? "Control: mutual recursion between ordinary names."
+    match n == 0
+        true -> 11
+        false -> pong(n - 1)
+
+fn pong(n: Int) -> Int
+    ? "The other ordinary half."
+    match n == 0
+        true -> 13
+        false -> ping(n - 1)
+
+fn become(n: Int) -> Int
+    ? "Reserved for a future Rust, and named in the issue. No recursion."
+    n + 1
+
+fn try(n: Int) -> Int
+    ? "Reserved since edition 2018."
+    n + 2
+
+fn macro(n: Int) -> Int
+    ? "Reserved, and not the same word as the weak keyword macro_rules."
+    n + 3
+
+fn final(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 4
+
+fn virtual(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 5
+
+fn do(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 6
+
+fn priv(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 7
+
+fn abstract(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 8
+
+fn override(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 9
+
+fn typeof(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 10
+
+fn unsized(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 11
+
+fn gen(n: Int) -> Int
+    ? "Strict since edition 2024, which is what the generated crate asks for."
+    n + 12
+
+fn takesKeyword(box: Int) -> Int
+    ? "A keyword name in the parameter position."
+    box + 1
+
+fn bindsKeyword(n: Int) -> Int
+    ? "A keyword name in the let-binding position."
+    loop = n + 1
+    loop + 1
+
+fn matchesKeyword(xs: List<Int>) -> Int
+    ? "Keyword names in both match-binder positions."
+    match xs
+        [] -> 0
+        [ref, ..mut] -> ref + 1
+
+fn readsKeywordField(h: Holder) -> Int
+    ? "A keyword name in the record-field position."
+    h.move
+
+fn main() -> Unit
+    ? "Print every shape, so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print(await(4))
+    Console.print(resume(2))
+    Console.print("{impl(4)} {move(4)} {unsafe(3)} {ping(4)} {pong(4)}")
+    Console.print("{become(0)} {try(0)} {macro(0)} {final(0)} {virtual(0)} {do(0)}")
+    Console.print("{priv(0)} {abstract(0)} {override(0)} {typeof(0)} {unsized(0)} {gen(0)}")
+    Console.print("{takesKeyword(1)} {bindsKeyword(1)} {matchesKeyword([5, 6])} {readsKeywordField(Holder(move = 3))} {static}")
+"#;
+    let expected = "done\nhanded back\n0 1 7 11 13\n1 2 3 4 5 6\n7 8 9 10 11 12\n2 3 6 3 41";
+
+    let vm = run_vm_inline("keyword_mutual_tco", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("keyword_mutual_tco", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM keyword-name contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust keyword-name contract diverged from VM"
+    );
+}
+
+/// The reported shape, which is a two-file one: the keyword-named mutual
+/// pair lives in a DEPENDENCY module and the entry module only calls into
+/// it. That is how the bug stayed hidden — the dep module had been
+/// uncompilable since it was written, and nothing said so until a second
+/// module depended on it. The dep module's trampoline is emitted into its
+/// own file, so the entry module's output can be perfectly fine while the
+/// project still does not build.
+#[test]
+fn rust_dep_module_keyword_mutual_recursion_builds_and_matches_vm() {
+    let dir = temp_dir("dep_keyword_mutual");
+    fs::write(
+        dir.join("Worker.av"),
+        r#"module Worker
+    exposes [await]
+    intent = "A keyword-named mutual pair, in a dependency module"
+    effects []
+
+fn await(n: Int) -> Int
+    ? "One half of the pair."
+    match n == 0
+        true -> 0
+        false -> resume(n - 1)
+
+fn resume(n: Int) -> Int
+    ? "The other half."
+    match n == 0
+        true -> 1
+        false -> await(n - 1)
+"#,
+    )
+    .expect("write dep module");
+
+    let entry = dir.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Worker]
+    intent = "Calls a keyword-named mutual pair across a module boundary"
+    effects [Console.print]
+
+fn main() -> Unit
+    ? "Both parities of the bounce, so a dropped arm shows as a diff."
+    ! [Console.print]
+    Console.print("{Worker.await(4)} {Worker.await(5)}")
+"#,
+    )
+    .expect("write entry module");
+
+    let expected = "0 1";
+
+    let vm = run_vm(&entry, Some(&dir)).expect("vm run");
+    assert_eq!(vm, expected, "VM contract changed");
+
+    let project = dir.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    compile_rust(&entry, &project, "dep_keyword_mutual", Some(&dir), &[])
+        .expect("aver compile --target rust");
+    let bin = cargo_build(&project, "dep_keyword_mutual").expect("cargo build");
+    let out = Command::new(&bin).output().expect("run compiled binary");
+    assert!(
+        out.status.success(),
+        "compiled binary failed:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        expected,
+        "Rust dep-module keyword contract diverged from VM"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `crate`, `self`, `super`, `Self` and `_` have no Rust spelling at all —
+/// `r#` is a parse error for exactly these five — so the backend renames
+/// them, with the `_avr_` prefix, at the one place it spells a name. This
+/// drives the real `aver compile` binary and then `cargo build`, because
+/// the rename is only worth anything if the project it produces builds:
+/// before it, each of these programs compiled "successfully" and then
+/// failed `cargo build` naming a generated file the user never wrote.
+///
+/// Four shapes, because each reached the emitter down a different path:
+///
+/// - `fn crate` — a function name, the shape reported on the issue. It
+///   emitted `pub fn crate(…)`.
+/// - `self = 41` at module level — a `TopLevel::Stmt`, which lives in
+///   `ctx.items` and in no `FnDef`. It emitted `let r#self = 41i64;` into
+///   `fn main` and the build stopped at ``error: `self` cannot be a raw
+///   identifier``.
+/// - `fn _` — `_` is not a keyword, it is Rust's wildcard, so it is not in
+///   the escape table and needs no escape; it simply has no identifier
+///   form. It emitted `pub fn _(…)` and the build stopped at ``expected
+///   identifier, found reserved identifier``.
+/// - a record field named `super`, read back through `h.super` — the
+///   declaration and the read have to be renamed together or the struct
+///   and its use disagree.
+///
+/// Each program runs on the VM first and the Rust answer has to match it:
+/// the rename is a spelling, so it must not be observable in the output.
+#[test]
+fn never_spellable_rust_names_build_and_match_vm() {
+    // (label, source, expected output)
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "fn_name",
+            r#"module NeverRaw
+    intent = "A function named with a word Rust cannot spell"
+    effects [Console.print]
+
+fn crate(n: Int) -> Int
+    ? "Legal Aver, unspellable Rust."
+    n + 1
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{crate(1)}")
+"#,
+            "2",
+        ),
+        (
+            "module_level_binding",
+            r#"module NeverRawTop
+    intent = "A module-level binding named with a word Rust cannot spell"
+    effects [Console.print]
+
+self = 41
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print(String.fromInt(self))
+"#,
+            "41",
+        ),
+        (
+            "underscore_fn_name",
+            r#"module NeverRawUnderscore
+    intent = "A function named with a single underscore"
+    effects [Console.print]
+
+fn _(n: Int) -> Int
+    ? "Legal Aver, no Rust identifier form."
+    n + 1
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print(String.fromInt(_(1)))
+"#,
+            "2",
+        ),
+        (
+            "record_field",
+            r#"module NeverRawField
+    intent = "A record field named with a word Rust cannot spell"
+    effects [Console.print]
+
+record Holder
+  super: Int
+
+fn read(h: Holder) -> Int
+    ? "Read the field back."
+    h.super
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print(String.fromInt(read(Holder(super = 7))))
+"#,
+            "7",
+        ),
+    ];
+
+    for (label, src, expected) in cases {
+        let name = format!("never_spellable_{label}");
+        let vm = run_vm_inline(&name, src).expect("vm run");
+        assert_eq!(vm, *expected, "the {label} program is valid Aver");
+        let rust = build_run_rust_inline(&name, src)
+            .unwrap_or_else(|e| panic!("the {label} program must build and run: {e}"));
+        assert_eq!(
+            rust, vm,
+            "the rename is a spelling and must not change what the {label} \
+             program prints"
+        );
+    }
+}
+
+/// `_` as a PARAMETER, in every shape that decides how it is spelled.
+///
+/// A parameter normally lowers to a Rust pattern, where a bare `_` means
+/// "discard" and builds fine. Three things take it out of pattern position,
+/// and each one used to be a broken build:
+///
+/// - a self-TCO signature makes every parameter the loop's mutable state,
+///   so it emitted `pub fn count(mut n: i64, mut _: aver_rt::AverInt)` —
+///   ``error: `mut` must be followed by a named binding``;
+/// - a mutual-TCO trampoline binds `__MutualTco1::IsEven(mut n, mut _)` and
+///   the wrapper then passes the parameter BY NAME to build the variant,
+///   `__MutualTco1::IsEven(n, _)` — ``error: in expressions, `_` can only
+///   be used on the left-hand side of an assignment``;
+/// - a COLLECTION parameter needs no recursion at all: `own_param` proves
+///   it uniquely owned when every call site passes a fresh value, and the
+///   owned spelling is `mut p: T`. The proof is by parameter position and
+///   never reads the name, so it reached the wildcard too and emitted
+///   `mut _: aver_rt::AverVector<…>`, which `aver check`, `aver run` and
+///   `aver compile` all accepted and only `cargo build` rejected.
+///
+/// All four shapes (the three above plus the plain pattern) now spell the
+/// parameter `_avr__` and build. Every program runs on the VM first, and
+/// the Rust answer has to match it.
+#[test]
+fn a_wildcard_parameter_builds_in_every_shape_that_spells_it() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "self_tco",
+            r#"module WildcardSelfTco
+    intent = "A wildcard parameter on a self tail-recursive function"
+    effects [Console.print]
+
+fn count(n: Int, _: Int) -> Int
+    ? "Count down, ignoring the second argument."
+    match n == 0
+        true -> 0
+        false -> count(n - 1, 0)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{count(5, 7)}")
+"#,
+            "0",
+        ),
+        (
+            "mutual_tco",
+            r#"module WildcardMutualTco
+    intent = "A wildcard parameter on a mutually tail-recursive pair"
+    effects [Console.print]
+
+fn isEven(n: Int, _: Int) -> Bool
+    ? "True when n is even, ignoring the second argument."
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1, 0)
+
+fn isOdd(n: Int, _: Int) -> Bool
+    ? "True when n is odd, ignoring the second argument."
+    match n == 0
+        true -> false
+        false -> isEven(n - 1, 0)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{isEven(10, 7)}")
+"#,
+            "true",
+        ),
+        (
+            "non_tail",
+            r#"module WildcardNonTail
+    intent = "A wildcard parameter on a function that recurses off tail position"
+    effects [Console.print]
+
+fn deep(n: Int, _: Int) -> Int
+    ? "Recurse off tail position, ignoring the second argument."
+    match n == 0
+        true -> 0
+        false -> deep(n - 1, 0) + 1
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{deep(5, 7)}")
+"#,
+            "5",
+        ),
+        (
+            "owned_collection",
+            r#"module WildcardOwnedCollection
+    intent = "A wildcard collection parameter on a function that is not recursive"
+    effects [Console.print]
+
+fn firstOr(v: Vector<Int>, _: Vector<Int>) -> Int
+    ? "Read the first cell of v, ignoring the second vector entirely."
+    Option.withDefault(Vector.get(v, 0), 0)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{firstOr(Vector.new(5, 7), Vector.new(3, 1))}")
+"#,
+            "7",
+        ),
+    ];
+
+    for (label, src, expected) in cases {
+        let name = format!("wildcard_param_{label}");
+        let vm = run_vm_inline(&name, src).expect("vm run");
+        assert_eq!(vm, *expected, "the {label} program is valid Aver");
+        let rust = build_run_rust_inline(&name, src)
+            .unwrap_or_else(|e| panic!("the {label} wildcard parameter must build and run: {e}"));
+        assert_eq!(
+            rust, vm,
+            "the Rust backend must spell a wildcard parameter without \
+             changing what the {label} program prints"
+        );
+    }
+}
+
+/// A mutually tail-recursive function named `self`, and one named `ſelf`
+/// (U+017F LATIN SMALL LETTER LONG S, which upper-cases to `S`). Both
+/// capitalise onto `Self` — the one Rust keyword with no raw spelling — so
+/// both need the trampoline variant renamed, and `ſelf` reaches it without
+/// being one of the five names itself. The function keeps its own spelling
+/// where it is legal (`ſelf` is a fine Rust identifier; `self` is not), so
+/// this also pins that the rename follows the position, not the program.
+#[test]
+fn mutual_recursion_through_a_name_that_capitalises_onto_self_builds() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "self",
+            r#"module SelfMutual
+    intent = "Mutual tail recursion through a function named self"
+    effects [Console.print]
+
+fn self(n: Int) -> Int
+    ? "Count down through the other one."
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    ? "Count down through self."
+    match n == 0
+        true -> 1
+        false -> self(n - 1)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{self(6)}")
+"#,
+        ),
+        (
+            "long_s",
+            r#"module LongSMutual
+    intent = "Mutual tail recursion through a name that capitalises onto Self"
+    effects [Console.print]
+
+fn ſelf(n: Int) -> Int
+    ? "Count down through the other one."
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    ? "Count down through the long-s one."
+    match n == 0
+        true -> 1
+        false -> ſelf(n - 1)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{ſelf(6)}")
+"#,
+        ),
+    ];
+
+    for (label, src) in cases {
+        let name = format!("capitalises_onto_self_{label}");
+        let vm = run_vm_inline(&name, src).expect("vm run");
+        assert_eq!(vm, "0", "the {label} program is valid Aver");
+        let rust = build_run_rust_inline(&name, src)
+            .unwrap_or_else(|e| panic!("the {label} trampoline must build and run: {e}"));
+        assert_eq!(rust, vm, "Rust answer for the {label} trampoline");
+    }
+}
+
+/// A verify block on a keyword-named function, driven through the real
+/// `cargo test` of the emitted project.
+///
+/// The generated test is named `test_<fn>_case_<n>`, so the function name
+/// lands in the MIDDLE of an identifier. Escaping it first produced `fn
+/// test_r#await_case_1()`, where the `#` ends the identifier: the project
+/// still passed `cargo build` (the verify module is `#[cfg(test)]`) and
+/// only fell over under `cargo test` with ``error: prefix `test_r` is
+/// unknown``. `become` is here as well as `await` because `become` was not
+/// in the escape table before this change — `verify become` used to emit a
+/// perfectly good `test_become_case_1`, so completing the table turned a
+/// working program into a broken one until the composition was fixed too.
+#[test]
+fn rust_verify_block_on_a_keyword_named_fn_passes_cargo_test() {
+    let src = r#"module KeywordVerify
+    intent = "Verify blocks on keyword-named functions must survive cargo test"
+    effects [Console.print]
+
+fn await(n: Int) -> Int
+    ? "A keyword name that was already escaped before this change."
+    n + 1
+
+fn become(n: Int) -> Int
+    ? "A keyword name the escape table only learned in this change."
+    n + 2
+
+verify await
+    await(1) => 2
+    await(2) => 3
+
+verify become
+    become(1) => 3
+
+fn main() -> Unit
+    ? "Print both, so the binary exercises them too."
+    ! [Console.print]
+    Console.print("{await(1)} {become(1)}")
+"#;
+
+    let name = "keyword_verify";
+    let ws = temp_dir(name);
+    let src_file = ws.join(format!("{name}.av"));
+    fs::write(&src_file, src).expect("write source");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&src_file, &project, name, None, &[])?;
+        cargo_test_in(&project, &shared_target_dir())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.expect("rust compile + cargo test of the generated verify module");
+}
+
 /// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in
 /// the emitted project, so this regression must drive `Tcp.sendBytes` through
 /// a real `cargo build`. Invalid raw lists fail at `Bytes.fromList` before any

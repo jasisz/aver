@@ -1216,6 +1216,654 @@ fn isOdd(n: Int) -> Bool
     }
 
     #[test]
+    fn mutual_tco_variant_for_keyword_named_fn_is_an_identifier() {
+        // A function whose Aver name is a Rust keyword takes part in a
+        // mutual-TCO group. The trampoline variant is the function name
+        // capitalised, so it must be capitalised BEFORE the keyword
+        // escape — escaping first yields `R#await`, which is not an
+        // identifier and stops the parser on the generated project.
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn await(budget: Int) -> Int
+    match budget == 0
+        true -> 0
+        false -> resume(budget - 1)
+
+fn resume(budget: Int) -> Int
+    match budget == 0
+        true -> 1
+        false -> await(budget - 1)
+
+fn move(n: Int) -> Int
+    match n == 0
+        true -> 2
+        false -> impl(n - 1)
+
+fn impl(n: Int) -> Int
+    match n == 0
+        true -> 3
+        false -> move(n - 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // Both pairs really went through the trampoline.
+        assert!(
+            entry.contains("enum __MutualTco1"),
+            "no trampoline:\n{entry}"
+        );
+        assert!(
+            entry.contains("enum __MutualTco2"),
+            "no trampoline:\n{entry}"
+        );
+
+        // Variants are the capitalised names — plain identifiers, no escape.
+        for variant in ["Await", "Resume", "Move", "Impl"] {
+            assert!(
+                entry.contains(&format!("::{}", variant)),
+                "missing variant `{variant}`:\n{entry}"
+            );
+        }
+
+        // Nothing anywhere may carry a capitalised raw-identifier prefix.
+        assert!(
+            !entry.contains("R#"),
+            "capitalised raw-identifier prefix in generated code:\n{entry}"
+        );
+
+        // The wrapper fns keep the ordinary lowercase escape.
+        assert!(entry.contains("pub fn r#await"), "no escaped fn:\n{entry}");
+        assert!(entry.contains("pub fn r#move"), "no escaped fn:\n{entry}");
+        assert!(entry.contains("pub fn r#impl"), "no escaped fn:\n{entry}");
+    }
+
+    #[test]
+    fn self_tco_keyword_named_fn_stays_escaped() {
+        // Control for the mutual-TCO variant fix: a keyword-named function
+        // that only recurses into itself emits no trampoline enum, and its
+        // name keeps the lowercase raw-identifier escape.
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn await(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> await(n - 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("pub fn r#await"), "no escaped fn:\n{entry}");
+        assert!(!entry.contains("R#"), "bad escape:\n{entry}");
+    }
+
+    /// Every Rust word that cannot be an identifier gets escaped, not just
+    /// the handful that recursion happens to exercise. The escape table used
+    /// to hold only the words someone had run into, so a plain
+    /// `fn become(n: Int) -> Int` emitted `pub fn become` and the generated
+    /// project did not parse — no recursion, no trampoline, nothing exotic.
+    ///
+    /// The list is the strict and reserved-for-future keywords of Rust
+    /// edition 2024, read off `rustc` rather than remembered: a word belongs
+    /// here exactly when `pub fn WORD() {}` is rejected and `pub fn r#WORD()
+    /// {}` is accepted. Words Aver's own lexer reserves (`fn`, `match`,
+    /// `type`, `true`, `false`) can never reach the emitter, so they are
+    /// checked through the escape helper instead of through a program.
+    #[test]
+    fn every_rust_reserved_word_is_escaped_as_a_fn_name() {
+        use crate::codegen::rust::syntax::aver_name_to_rust;
+
+        // Reachable as an Aver fn name: not an Aver keyword, and spellable
+        // in Rust once escaped.
+        let nameable = [
+            "as", "async", "await", "box", "break", "const", "continue", "dyn", "else", "enum",
+            "extern", "for", "gen", "if", "impl", "in", "let", "loop", "mod", "move", "mut", "pub",
+            "ref", "return", "static", "struct", "trait", "unsafe", "use", "where", "while",
+            "yield", "abstract", "become", "do", "final", "macro", "override", "priv", "typeof",
+            "unsized", "virtual", "try",
+        ];
+
+        let mut src = String::from("module Demo\n\n");
+        for name in nameable {
+            src.push_str(&format!("fn {name}(n: Int) -> Int\n    n + 1\n\n"));
+        }
+        let mut ctx = ctx_from_source(&src, "demo");
+        let entry = {
+            let out = transpile(&mut ctx);
+            generated_rust_entry_file(&out).to_string()
+        };
+
+        for name in nameable {
+            assert!(
+                entry.contains(&format!("pub fn r#{name}(")),
+                "`{name}` was emitted unescaped, so the project will not parse:\n{entry}"
+            );
+        }
+
+        // Aver reserves these itself, so no program can carry them; the
+        // table still has to know them, because it is the escape helper and
+        // not the Aver lexer that other emitters ask.
+        for name in ["fn", "match", "type", "true", "false"] {
+            assert_eq!(
+                aver_name_to_rust(name),
+                format!("r#{name}"),
+                "`{name}` is a Rust keyword but the escape table does not list it"
+            );
+        }
+    }
+
+    /// `crate`, `self`, `super`, `Self` and `_` are the five names Rust
+    /// cannot spell as identifiers at all — `r#crate` is a parse error, not
+    /// an escape — and none of them is an Aver keyword, so a program can
+    /// carry all five. Each gets the `_avr_` prefix instead, in every
+    /// position the emitter writes a name: a `fn` name, a parameter, a
+    /// binding, a record field.
+    ///
+    /// What is pinned here is that the rename is applied at the SAME name
+    /// on both sides of each pair — the field declaration and the field
+    /// read, the fn declaration and its call — because a rename applied to
+    /// only one of them is a project that does not build.
+    #[test]
+    fn never_spellable_names_are_renamed_rather_than_refused() {
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "fn crate(n: Int) -> Int\n    n + 1\n\nfn calls(n: Int) -> Int\n    crate(n)\n",
+                &["pub fn _avr_crate(", "_avr_crate("],
+            ),
+            ("fn takes(self: Int) -> Int\n    self + 1\n", &["_avr_self"]),
+            (
+                "fn binds(n: Int) -> Int\n    super = n + 1\n    super\n",
+                &["let _avr_super"],
+            ),
+            ("fn discards(_: Int) -> Int\n    7\n", &["_avr__"]),
+            (
+                "record Holder\n  crate: Int\n\nfn read(h: Holder) -> Int\n    h.crate\n",
+                &["_avr_crate: ", "._avr_crate"],
+            ),
+        ];
+
+        for (body, wanted) in cases {
+            let mut ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let out = transpile(&mut ctx);
+            let entry = generated_rust_entry_file(&out);
+            for want in *wanted {
+                assert!(
+                    entry.contains(want),
+                    "expected the renamed spelling `{want}` in:\n{entry}"
+                );
+            }
+            assert!(
+                !entry.contains("r#crate")
+                    && !entry.contains("r#self")
+                    && !entry.contains("r#super")
+                    && !entry.contains("r#_"),
+                "a name with no raw spelling was escaped instead of renamed:\n{entry}"
+            );
+        }
+    }
+
+    /// The rename has to be INJECTIVE, or two different things silently
+    /// become one. The prefix is doubled for a name that already carries
+    /// it, so a user's own `_avr_self` and Aver's rename of `self` stay
+    /// apart — and a program holding both builds and keeps them apart.
+    #[test]
+    fn the_mangle_prefix_is_doubled_so_the_rename_stays_injective() {
+        use crate::codegen::rust::syntax::aver_name_to_rust;
+
+        assert_eq!(aver_name_to_rust("self"), "_avr_self");
+        assert_eq!(aver_name_to_rust("_avr_self"), "_avr__avr_self");
+        assert_ne!(
+            aver_name_to_rust("self"),
+            aver_name_to_rust("_avr_self"),
+            "the rename collapsed two different Aver names onto one Rust name"
+        );
+
+        // Identity for everything else — which is every name in the corpus,
+        // so no existing program's emitted bytes move.
+        for name in ["value", "isOdd", "_private", "日本語", ""] {
+            assert_eq!(aver_name_to_rust(name), name);
+        }
+        assert_eq!(aver_name_to_rust("await"), "r#await");
+    }
+
+    /// A binding written at module level, outside any function, is a
+    /// `TopLevel::Stmt` — it lives in `ctx.items` and in nothing else, so
+    /// the emitter renders it into `fn main` as `let {name} = …;`. That is
+    /// exactly as unspellable as a binding inside a function and gets the
+    /// same rename; `let r#self = 41i64;` is ``error: `self` cannot be a
+    /// raw identifier``.
+    #[test]
+    fn module_level_bindings_are_renamed_too() {
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nself = 41\n\nfn read() -> Int\n    self\n",
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("_avr_self"),
+            "the module-level binding was not renamed:\n{entry}"
+        );
+        assert!(
+            !entry.contains("r#self"),
+            "`r#self` is a parse error, not an escape:\n{entry}"
+        );
+    }
+
+    /// `_` is the odd one out among the five: it is not a keyword but the
+    /// wildcard, and Aver's lexer takes it as an ordinary identifier
+    /// (`src/lexer.rs`), so `fn _(n: Int)` parses and runs. Rust has no
+    /// spelling for it anywhere it needs a name — `pub fn _()` is
+    /// ``expected identifier, found reserved identifier``, `mut _` is
+    /// ``mut` must be followed by a named binding``, `_` as a call argument
+    /// is ``in expressions, `_` can only be used on the left-hand side of
+    /// an assignment``, and `r#_` is `` `_` cannot be a raw identifier ``.
+    ///
+    /// So it is renamed like the other four, and the prefix leads with an
+    /// underscore precisely so `_avr__` still reads as "unused" to rustc:
+    /// a user who writes `_` is saying they do not care about the binding,
+    /// and the rename must not turn that into an unused-variable warning.
+    ///
+    /// Every shape is checked, because each one used to need the wildcard
+    /// to survive a DIFFERENT position: a plain parameter is a pattern, a
+    /// self-TCO parameter is the loop's mutable state (`mut _`), a mutual
+    /// group additionally passes it by name to build the trampoline
+    /// variant, and a collection parameter the ownership analysis proves
+    /// uniquely owned is taken by value as `mut _` with no recursion at
+    /// all.
+    #[test]
+    fn the_wildcard_is_renamed_in_every_position_that_needs_a_name() {
+        const SELF_TCO_WILDCARD_PARAM: &str = "\
+fn count(n: Int, _: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> count(n - 1, 0)
+";
+        const MUTUAL_TCO_WILDCARD_PARAM: &str = "\
+fn isEven(n: Int, _: Int) -> Bool
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1, 0)
+
+fn isOdd(n: Int, _: Int) -> Bool
+    match n == 0
+        true -> false
+        false -> isEven(n - 1, 0)
+";
+        // Recursive, but the call is not in tail position, so no loop and
+        // no trampoline is built: the parameter stays a plain pattern.
+        const NON_TAIL_RECURSIVE_WILDCARD_PARAM: &str = "\
+fn deep(n: Int, _: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> deep(n - 1, 0) + 1
+";
+        // Not recursive at all — but the parameter is a COLLECTION, and
+        // that is the other thing that can put a `mut` in front of it.
+        // `own_param` proves a `Vector` parameter uniquely owned when every
+        // call site passes a fresh value, and the owned spelling is `mut p:
+        // T`. The proof is by parameter POSITION and never reads the name,
+        // so it reaches the wildcard too.
+        const OWNED_COLLECTION_WILDCARD_PARAM: &str = "\
+fn firstOr(v: Vector<Int>, _: Vector<Int>) -> Int
+    Option.withDefault(Vector.get(v, 0), 0)
+
+fn caller() -> Int
+    firstOr(Vector.new(5, 7), Vector.new(3, 1))
+";
+
+        for body in [
+            "fn _(n: Int) -> Int\n    n + 1\n",
+            "record Holder\n  _: Int\n\nfn read(h: Holder) -> Int\n    h._\n",
+            SELF_TCO_WILDCARD_PARAM,
+            MUTUAL_TCO_WILDCARD_PARAM,
+            NON_TAIL_RECURSIVE_WILDCARD_PARAM,
+            OWNED_COLLECTION_WILDCARD_PARAM,
+        ] {
+            let mut ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
+            let out = transpile(&mut ctx);
+            let entry = generated_rust_entry_file(&out);
+            assert!(
+                entry.contains("_avr__"),
+                "the wildcard was not renamed:\n{body}\n{entry}"
+            );
+            assert!(
+                !entry.contains("mut _:") && !entry.contains("mut _,") && !entry.contains("mut _)"),
+                "`mut _` is ``error: `mut` must be followed by a named \
+                 binding``:\n{body}\n{entry}"
+            );
+        }
+
+        // A `_` BINDING is the one position with no name to spell: nothing
+        // can read it, so the emitter drops the statement outright. Pinned
+        // so the loop above is not quietly asked the wrong question if that
+        // ever changes.
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nfn binds(n: Int) -> Int\n    _ = n + 1\n    9\n",
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            !entry.contains("let _"),
+            "an unread `_` binding should not be emitted at all:\n{entry}"
+        );
+    }
+
+    /// A verify block's generated test is named `test_<fn>_case_<n>`, and
+    /// the function name goes in the MIDDLE of that identifier. Escaping it
+    /// first produced `fn test_r#await_case_1()`, where the `#` ends the
+    /// identifier — ``error: prefix `test_r` is unknown`` under `cargo
+    /// test`. A name embedded inside a longer identifier never needs the
+    /// escape, so the test name is composed from the raw Aver name.
+    #[test]
+    fn verify_test_names_are_composed_from_the_raw_fn_name() {
+        let out = transpile(&mut ctx_from_source(
+            r#"
+module Demo
+
+fn await(n: Int) -> Int
+    n + 1
+
+fn become(n: Int) -> Int
+    n + 2
+
+verify await
+    await(1) => 2
+
+verify become
+    become(1) => 3
+"#,
+            "demo",
+        ));
+        let verify = generated_file(&out, "src/verify.rs");
+
+        let test_fns: Vec<&str> = verify
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("fn "))
+            .collect();
+        assert!(
+            !test_fns.is_empty(),
+            "expected the verify module to declare test fns:\n{verify}"
+        );
+        for line in &test_fns {
+            assert!(
+                !line.contains('#'),
+                "a generated test fn name carries a `#`, so the identifier ends \
+                 there and the module does not parse: {line}"
+            );
+        }
+        for wanted in ["fn test_await_case_1()", "fn test_become_case_1()"] {
+            assert!(
+                verify.contains(wanted),
+                "expected `{wanted}` in the generated verify module:\n{verify}"
+            );
+        }
+    }
+
+    /// The trampoline variant is the function name capitalised, so a
+    /// function named `self` in a mutual-recursion group produces the
+    /// variant `Self` — a Rust keyword, and one with no raw spelling, so an
+    /// enum carrying it would not parse.
+    ///
+    /// Capitalising FIRST and spelling the result afterwards is what
+    /// answers this with no special case: `Self` is one of the five names
+    /// with no spelling, so the variant is renamed exactly like any other,
+    /// and the fn name (`_avr_self`) and the variant (`_avr_Self`) stay
+    /// distinct.
+    #[test]
+    fn mutual_tco_fn_named_self_builds_a_renamed_variant() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn self(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    match n == 0
+        true -> 1
+        false -> self(n - 1)
+"#,
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("_avr_Self"),
+            "the trampoline variant was not renamed:\n{entry}"
+        );
+        assert!(
+            entry.contains("pub fn _avr_self"),
+            "the function name was not renamed:\n{entry}"
+        );
+        assert!(
+            !entry.contains("r#Self") && !entry.contains("R#"),
+            "a variant with no raw spelling was escaped instead of renamed:\n{entry}"
+        );
+    }
+
+    /// The same collapse, reached by a name that is NOT itself a Rust word.
+    /// `ſ` (U+017F LATIN SMALL LETTER LONG S) upper-cases to `S`, so `ſelf`
+    /// capitalises to `Self` — comparing the FUNCTION name against the
+    /// unspellable list would not catch this, because `ſelf` is not on it.
+    /// Asking the question after capitalising is what catches it, and it
+    /// lands on the same variant `fn self` does.
+    ///
+    /// Aver accepts the name (camelCase style warning only) and it is a
+    /// perfectly good Rust identifier on its own, so without a trampoline
+    /// there is no variant and the name is emitted verbatim — the rename
+    /// reaches the variant, not the function.
+    #[test]
+    fn a_name_that_capitalises_onto_self_is_renamed_only_in_its_variant() {
+        let mut mutual = ctx_from_source(
+            "
+module Demo
+
+fn ſelf(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> other(n - 1)
+
+fn other(n: Int) -> Int
+    match n == 0
+        true -> 1
+        false -> ſelf(n - 1)
+",
+            "demo",
+        );
+        let out = transpile(&mut mutual);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("_avr_Self"),
+            "a variant that collapses onto `Self` was not renamed:\n{entry}"
+        );
+        assert!(
+            entry.contains("ſelf"),
+            "the function name itself is spellable and must be kept:\n{entry}"
+        );
+
+        // Without the trampoline there is no variant, and `ſelf` is a valid
+        // Rust function name, so nothing is renamed at all.
+        let mut alone = ctx_from_source(
+            "
+module Demo
+
+fn ſelf(n: Int) -> Int
+    n + 1
+",
+            "demo",
+        );
+        let out = transpile(&mut alone);
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("pub fn ſelf"),
+            "the name should be emitted as-is:\n{entry}"
+        );
+        assert!(
+            !entry.contains("_avr_"),
+            "a spellable name must not be renamed:\n{entry}"
+        );
+    }
+
+    /// The direct contract of the trampoline variant helper, independent of
+    /// any program that happens to drive it: capitalise, then spell.
+    #[test]
+    fn fn_name_to_variant_capitalises_then_spells() {
+        use super::toplevel::fn_name_to_variant;
+
+        // Ordinary names are untouched apart from the case change, so
+        // already-generated trampolines keep the variants they had.
+        assert_eq!(fn_name_to_variant("isOdd"), "IsOdd");
+        assert_eq!(fn_name_to_variant("ping"), "Ping");
+
+        // Rust keywords capitalise out of keyword-hood; the escape must not
+        // run afterwards, because `R#await` is not an identifier.
+        for (name, variant) in [
+            ("await", "Await"),
+            ("move", "Move"),
+            ("impl", "Impl"),
+            ("become", "Become"),
+            ("try", "Try"),
+        ] {
+            assert_eq!(fn_name_to_variant(name), variant);
+            assert!(!fn_name_to_variant(name).contains('#'));
+        }
+
+        // The three names that capitalise onto `Self` — the one keyword
+        // with no raw spelling — all land on the renamed variant, and the
+        // rename is what the enum carries.
+        for name in ["self", "Self", "ſelf"] {
+            assert_eq!(fn_name_to_variant(name), "_avr_Self");
+        }
+        assert_eq!(fn_name_to_variant("_"), "_avr__");
+
+        // Names whose first character has no uppercase form come through
+        // unchanged — and are still not keywords.
+        assert_eq!(fn_name_to_variant("_await"), "_await");
+        assert_eq!(fn_name_to_variant("日本語"), "日本語");
+        assert_eq!(fn_name_to_variant(""), "");
+    }
+
+    /// A keyword-named function in a mutual group that also carries a
+    /// by-reference parameter: the trampoline splits its parameters, passing
+    /// the ref-counted ones alongside the enum rather than inside it, and
+    /// spells both the variant and the borrowed parameter name. Both
+    /// spellings have to survive the escape.
+    #[test]
+    fn mutual_tco_keyword_fn_with_borrowed_param_spells_both_names() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn await(unsafe: String, n: Int) -> Int
+    match n == 0
+        true -> String.len(unsafe)
+        false -> resume(unsafe, n - 1)
+
+fn resume(unsafe: String, n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> await(unsafe, n - 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(
+            entry.contains("enum __MutualTco1"),
+            "no trampoline:\n{entry}"
+        );
+        assert!(entry.contains("Await"), "missing variant:\n{entry}");
+        assert!(
+            entry.contains("r#unsafe"),
+            "keyword-named param lost its escape:\n{entry}"
+        );
+        assert!(!entry.contains("R#"), "capitalised escape prefix:\n{entry}");
+    }
+
+    /// A keyword-named function defined in a DEP module and called across
+    /// the module boundary: the call site spells the escaped name behind a
+    /// module path, which is a different emitter arm from the same-module
+    /// call. This is the shape the original report actually had — the module
+    /// had been uncompilable since it was written and only surfaced when a
+    /// second module started depending on it.
+    ///
+    /// The dep module's own trampoline is NOT asserted here: `ctx_from_multi`
+    /// runs the TCO stage over the entry module only, so a dep-module mutual
+    /// group never forms in this harness even though it does in production.
+    /// `rust_dep_module_keyword_mutual_recursion_builds_and_matches_vm`
+    /// (`tests/rust_codegen_differential.rs`) covers that through a real
+    /// two-file `aver compile` and `cargo build`.
+    #[test]
+    fn keyword_named_fn_in_a_dep_module_is_called_with_the_escaped_name() {
+        let mut ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Worker]
+    intent = "Calls a keyword-named mutual pair across a module boundary."
+    effects []
+
+fn main() -> Int
+    Worker.await(4)
+"#,
+            &[(
+                "Worker",
+                r#"
+module Worker
+    exposes [await]
+    intent = "A keyword-named mutual pair."
+    effects []
+
+fn await(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> resume(n - 1)
+
+fn resume(n: Int) -> Int
+    match n == 0
+        true -> 1
+        false -> await(n - 1)
+"#,
+            )],
+            "dep_keyword_mutual",
+        );
+
+        let out = transpile(&mut ctx);
+        let worker = generated_file(&out, "src/aver_generated/worker/mod.rs");
+
+        assert!(
+            worker.contains("pub fn r#await"),
+            "the dep module's definition keeps the escape:\n{worker}"
+        );
+        assert!(
+            !worker.contains("R#"),
+            "capitalised escape prefix:\n{worker}"
+        );
+
+        // The cross-module call site spells the escaped name behind the path.
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("worker::r#await"),
+            "cross-module call must use the escaped name:\n{entry}"
+        );
+    }
+
+    #[test]
     fn field_access_does_not_double_clone() {
         let mut ctx = ctx_from_source(
             r#"

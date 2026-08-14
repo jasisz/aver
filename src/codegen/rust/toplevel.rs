@@ -1091,16 +1091,47 @@ pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
 }
 
 /// Convert an Aver function name to a PascalCase enum variant name.
+///
+/// Capitalise FIRST, then spell the result the same way every other name is
+/// spelled. Order is the whole trick. Spelling first is what the original
+/// bug did: `await` became `r#await`, whose capitalisation `R#await` is not
+/// an identifier at all, so the trampoline enum stopped the parser.
+/// Capitalising first hands `aver_name_to_rust` a name it can answer for.
+///
+/// It also removes the one case that used to need special handling.
+/// Exactly three Aver names capitalise onto `Self` — `Self`, `self`, and
+/// `ſelf`, the last because U+017F LATIN SMALL LETTER LONG S upper-cases to
+/// `S` — and `Self` is the keyword with no raw spelling at all. It is also
+/// one of the five names the spelling step renames, so all three arrive at
+/// the variant `_avr_Self` with nothing here having to know about them.
+///
+/// That every OTHER capitalised name is keyword-free is not a guess. No
+/// `char::to_uppercase` mapping in Unicode produces a lowercase ASCII
+/// letter, so a capitalised name never begins with one and can never equal
+/// one of the 51 lowercase-ASCII reserved words; names whose first character
+/// has no uppercase form (a leading `_`, a digit, a caseless script) come
+/// through unchanged and are not keywords either. `Self` is the only
+/// non-lowercase entry in the table, which is why it is the only case left
+/// — and so the `r#` branch of the spelling step is unreachable from here.
+///
+/// Not injective: `await` and `Await` in one recursion group both map to
+/// `Await`, and so do `self` and `ſelf`. That is a duplicate variant in the
+/// emitted enum, which rustc reports as E0428 with both spans — loud,
+/// immediate, and pointing at the generated file, unlike the silent
+/// `R#await` this replaced. It can only ever fail a build, never produce a
+/// wrong binary. Aver's own naming rules make a PascalCase function name a
+/// style warning already, so the pair is hard to write by accident; a
+/// dedicated Aver-side error is worth adding only alongside the broader
+/// compile-time name check issue #899 also asks for.
 pub(super) fn fn_name_to_variant(name: &str) -> String {
-    let rust_name = aver_name_to_rust(name);
-    let mut chars = rust_name.chars();
-    match chars.next() {
-        Some(c) => {
-            let upper: String = c.to_uppercase().collect();
-            format!("{}{}", upper, chars.as_str())
-        }
-        None => rust_name,
-    }
+    let variant = super::syntax::aver_name_to_rust(&super::syntax::capitalise_first(name));
+    debug_assert!(
+        !variant.contains('#')
+            && (variant.is_empty() || !super::syntax::is_rust_reserved(&variant)),
+        "trampoline variant `{variant}` cannot stand as an enum variant name, \
+         so the enum will not parse"
+    );
+    variant
 }
 
 /// Emit the main function, incorporating top-level statements.
@@ -1416,7 +1447,16 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             if has_given || verify_case_is_oracle_only(&left.node, &right.node) {
                 continue;
             }
-            let fn_key = aver_name_to_rust(&vb.fn_name);
+            // Compose the test name from the RAW Aver name. The escape
+            // exists for a name that has to stand ALONE as an identifier;
+            // here the name goes in the middle of a longer one, and
+            // `test_r#await_case_1` is not an identifier at all — the `#`
+            // ends it, so `cargo test` fails with ``error: prefix `test_r`
+            // is unknown``. Nothing needs escaping in the composed result
+            // either: every Rust keyword is a whole word, and `test_…`
+            // cannot be one, so a `test_` prefix is a complete guarantee on
+            // its own.
+            let fn_key = vb.fn_name.clone();
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
