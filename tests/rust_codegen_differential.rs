@@ -847,6 +847,170 @@ fn main() -> Unit
     );
 }
 
+// ─── fn-result arguments never carry ownership ──────────────────────────
+//
+// `own_param`'s `uniquely_owned` answers `false` for the result of a user
+// fn call (the `MirCallee::Fn` arm): a callee may hand back one of its own
+// arguments, so the result can share a collection the caller still holds.
+// Every shape below feeds a call result STRAIGHT into another call's
+// argument — never through a `let`, which is what keeps the decision on
+// that arm instead of on the binding rules — while the caller keeps its own
+// handle on the same collection and reads it back AFTER the call. Granting
+// ownership there lets the callee mutate the caller's collection in place,
+// so the original changes under it. The parity assert is what catches this:
+// the compiled Rust keeps the collection's copy-on-write protection, so the
+// two backends print different answers the moment the grant is wrong.
+
+/// The `Map` half. `keepFirst` hands back one of its two argument maps, and
+/// that result is `growth`'s argument with no binding in between; `run`
+/// keeps `base` live and prints it afterwards, so an ownership grant on the
+/// call result shows up as `base` losing its entries.
+#[test]
+fn rust_fn_result_argument_keeps_the_callers_map_intact() {
+    let src = r#"module OwnedFnResultMap
+    intent = "A helper's Map result flows straight into another call while the caller keeps its own map"
+    depends []
+    effects [Console.print]
+
+fn keepFirst(a: Map<String, Int>, b: Map<String, Int>) -> Map<String, Int>
+    ? "Returns one of its arguments, so the result shares a caller value."
+    match Map.len(a) > 0
+        true -> a
+        false -> b
+
+fn growth(m: Map<String, Int>, n: Int) -> Int
+    ? "Threads the map linearly, then reports its size."
+    match n == 0
+        true -> Map.len(m)
+        false -> growth(Map.set(m, "g{n}", n), n - 1)
+
+fn render(m: Map<String, Int>) -> String
+    ? "Size plus the value under a."
+    "{Map.len(m)}/{Option.withDefault(Map.get(m, "a"), 0 - 1)}"
+
+fn run() -> String
+    ? "Pass a call result straight into another call, then read the original."
+    base = Map.set(Map.set({}, "a", 7), "b", 8)
+    grown = growth(keepFirst(base, {}), 4)
+    "{grown} {render(base)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // 4 keys added to a 2-key map, and `base` still holds its own 2 entries.
+    let expected = "6 2/7";
+    let vm = run_vm_inline("own_fn_result_map", src).expect("vm run");
+    let rust = build_run_rust_inline("own_fn_result_map", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the map the caller kept was mutated through a call result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a call result was treated as a uniquely-owned map"
+    );
+}
+
+/// The reported `viaHelper` shape: a one-line helper that returns
+/// `Map.set` of its own parameter, its result handed straight to the fold
+/// that grows the map. `run` reads its original map after the fold, so a
+/// fold that mutates the helper's result in place is visible as the
+/// original losing its entries.
+#[test]
+fn rust_via_helper_map_result_keeps_the_callers_map_intact() {
+    let src = r#"module ViaHelperMap
+    intent = "A helper returns Map.set of its own parameter and the result goes straight into a fold"
+    depends []
+    effects [Console.print]
+
+fn setOne(into: Map<String, String>, key: String, skip: Bool) -> Map<String, String>
+    ? "Returns a Map built from its own parameter, or the parameter itself."
+    match skip
+        true -> into
+        false -> Map.set(into, key, "v")
+
+fn fill(keys: List<String>, into: Map<String, String>) -> Map<String, String>
+    ? "Folds the keys into the map it was handed."
+    match keys
+        [] -> into
+        [head, ..tail] -> fill(tail, Map.set(into, head, "v"))
+
+fn render(m: Map<String, String>) -> String
+    ? "Size plus the value under a."
+    "{Map.len(m)}/{Option.withDefault(Map.get(m, "a"), "gone")}"
+
+fn run() -> String
+    ? "The helper result is the fold's argument; the original map is read afterwards."
+    base = Map.set(Map.set({}, "a", "0"), "b", "1")
+    grown = render(fill(["x", "y", "z"], setOne(base, "c", Map.has(base, "a"))))
+    "{grown} {render(base)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // The fold sees 5 keys; `base` still holds its own 2, "a" among them.
+    let expected = "5/0 2/0";
+    let vm = run_vm_inline("via_helper_map", src).expect("vm run");
+    let rust = build_run_rust_inline("via_helper_map", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the map the caller kept was mutated through the helper's result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — the helper's returned map was treated as uniquely owned"
+    );
+}
+
+/// The `Vector` half of the same class — the other collection `own_param`
+/// can graduate. `keepLonger` hands back one of its argument vectors
+/// straight into `overwrite`, which writes over every position, and `run`
+/// reads position 0 of its own vector afterwards.
+#[test]
+fn rust_fn_result_argument_keeps_the_callers_vector_intact() {
+    let src = r#"module OwnedFnResultVector
+    intent = "A helper's Vector result flows straight into another call while the caller keeps its own vector"
+    depends []
+    effects [Console.print]
+
+fn keepLonger(a: Vector<Int>, b: Vector<Int>) -> Vector<Int>
+    ? "Returns one of its arguments, so the result shares a caller value."
+    match Vector.len(a) >= Vector.len(b)
+        true -> a
+        false -> b
+
+fn overwrite(v: Vector<Int>, i: Int, n: Int) -> Int
+    ? "Threads the vector linearly, writing i*i at every position."
+    match i == n
+        true -> Vector.len(v)
+        false -> overwrite(Option.withDefault(Vector.set(v, i, i * i), v), i + 1, n)
+
+fn run() -> String
+    ? "Pass a call result straight into another call, then read the original."
+    base = Option.withDefault(Vector.set(Vector.new(4, 0), 0, 7), Vector.new(4, 0))
+    touched = overwrite(keepLonger(base, Vector.new(2, 0)), 0, 4)
+    "{touched} {Option.withDefault(Vector.get(base, 0), 0 - 1)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run())
+"#;
+    // 4 positions overwritten, and `base` still reads 7 at position 0.
+    let expected = "4 7";
+    let vm = run_vm_inline("own_fn_result_vector", src).expect("vm run");
+    let rust = build_run_rust_inline("own_fn_result_vector", src).expect("rust build+run");
+    assert_eq!(
+        vm, expected,
+        "the vector the caller kept was mutated through a call result"
+    );
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a call result was treated as a uniquely-owned vector"
+    );
+}
+
 /// Nested-tuple Int-literal match on the RUST backend. After the
 /// `Int -> AverInt` migration an `AverInt` can't be a Rust `match` pattern,
 /// so Int-literal arms lower to an if/else-if equality-guard chain. That

@@ -498,7 +498,13 @@ fn uniquely_owned(
             }
             // User-fn / fn-value / intrinsic results may alias an arg
             // (the RULE-2 gap) — never provably owned without a
-            // returns-fresh analysis (deferred).
+            // returns-fresh analysis (deferred). Answering `true` here
+            // lets a callee mutate a collection its caller still holds:
+            // the `*_keeps_the_callers_{map,vector}_intact` tests in
+            // `tests/rust_codegen_differential.rs` feed a call result
+            // straight into another call's argument and read the
+            // caller's own collection back afterwards, which is the
+            // shape that turns red.
             MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => false,
         },
         // A live (last-use), owned slot read.
