@@ -513,7 +513,42 @@ fn uniquely_owned(
             }
             // User-fn / fn-value / intrinsic results may alias an arg
             // (the RULE-2 gap) — never provably owned without a
-            // returns-fresh analysis (deferred).
+            // returns-fresh analysis (deferred). Answering `true` here
+            // lets a callee mutate a collection its caller still holds.
+            //
+            // Two of the three constructors reach this arm from real
+            // source with a collection result, and each is pinned
+            // SEPARATELY in `tests/own_param_graduation.rs` — relaxing
+            // one alone leaves the other test green:
+            //
+            // - `Fn`: a named user function.
+            //   `named_fn_call_result_argument_keeps_the_param_flagged`,
+            //   plus the behavioural
+            //   `own_param_soundness::named_fn_result_argument_is_not_mutated_in_place`
+            //   and the end-to-end
+            //   `rust_fn_result_argument_keeps_the_callers_map_intact`
+            //   in `tests/rust_codegen_differential.rs`.
+            // - `LocalSlot`: a first-class fn value read out of a slot,
+            //   which this pass cannot see through at all.
+            //   `fn_value_call_result_argument_keeps_the_param_flagged`,
+            //   plus the behavioural
+            //   `fn_value_result_argument_is_not_mutated_in_place` in
+            //   `tests/own_param_soundness.rs`.
+            //
+            // `Intrinsic` has no pin because it cannot be reached with a
+            // collection: no member of `BuiltinIntrinsic` returns one.
+            // The full set today is `BufNew` / `BufAppend` /
+            // `BufAppendSepUnlessFirst` / `BufFinalize` (a buffer handle),
+            // `ToStr` (a String), and `IntDivEuclid` / `IntModEuclid` /
+            // `BitsShiftLeft` / `BitsShiftRight` / `BitsLow` (all
+            // `(Int, Int) -> Int`) — never a Vector or Map, so such a call
+            // is never the argument of an alias-prone param.
+            //
+            // The pinned shapes all feed a call result STRAIGHT into
+            // another call's argument and read the caller's own
+            // collection back afterwards. Going through a `let` first
+            // would settle the question on the binding rules instead —
+            // the argument would be a `MirExpr::Local`, not a `Call`.
             MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => false,
         },
         // A live (last-use), owned slot read.
