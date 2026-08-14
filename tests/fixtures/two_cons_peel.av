@@ -1,0 +1,18 @@
+module TwoConsPeel
+    intent =
+        "Walks a list two cells at a time, the shape a hex-pair parser has."
+    exposes [pairSums]
+    effects []
+
+fn pairSums(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Sum adjacent pairs from left to right, keeping a lone trailing element."
+    match xs
+        [] -> List.reverse(acc)
+        [first, ..afterFirst] -> match afterFirst
+            [] -> List.reverse(List.prepend(first, acc))
+            [second, ..rest] -> pairSums(rest, List.prepend(first + second, acc))
+
+verify pairSums
+    pairSums([], []) => []
+    pairSums([1, 2, 3, 4], []) => [3, 7]
+    pairSums([1, 2, 3], []) => [3, 3]

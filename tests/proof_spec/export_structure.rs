@@ -1431,3 +1431,130 @@ fn proof_export_of_a_set_shaped_map_builds() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn proof_export_two_cons_peel_is_structural_not_partial() {
+    // A list walked TWO cells per step. The inner `match afterFirst` binds
+    // `rest` as a cons-tail of `afterFirst`, which is itself a cons-tail of
+    // the parameter `xs` — so `rest` is a tail of a tail, and the recursion
+    // is as structurally terminating as a one-cell peel. While the tail-binder
+    // collection only recorded binders from a match whose subject was
+    // LITERALLY the parameter, `rest` never qualified and the whole fn fell
+    // out of the proof subset: Lean got a `partial def` (opaque to the kernel)
+    // and every verify case over it was pushed to `native_decide`.
+    //
+    // Both halves are pinned here because they fail independently: the
+    // emitted definition (total `def` + `termination_by xs.length`) and the
+    // per-case tactic routing that follows from it.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = temp_output_dir("aver-proof-two-cons-peel");
+
+    let mut command = Command::new(aver_bin);
+    command
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/two_cons_peel.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&root);
+    let lake = Command::new("lake").arg("--version").output().is_ok();
+    if lake {
+        command.arg("--check");
+    } else {
+        eprintln!("skipping the lake build: `lake` not available");
+    }
+    let output = command
+        .output()
+        .expect("aver proof --backend lean for the two-cons peel");
+    assert!(
+        output.status.success(),
+        "proof export failed:\n{}",
+        format_output(&output)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("'pairSums' is outside proof subset"),
+        "a two-cell peel is structural recursion — it must not be reported \
+         outside the proof subset:\n{stderr}"
+    );
+
+    let lean =
+        std::fs::read_to_string(root.join("TwoConsPeel.lean")).expect("read TwoConsPeel.lean");
+    assert!(
+        !lean.contains("partial def pairSums"),
+        "a two-cell peel must not fall back to `partial def`:\n{lean}"
+    );
+    assert!(
+        lean.contains("def pairSums (xs : List Int) (acc : List Int)"),
+        "expected a total `def` for the two-cell peel:\n{lean}"
+    );
+    assert!(
+        lean.contains("termination_by xs.length"),
+        "the structural emission must state the list-length measure:\n{lean}"
+    );
+    for line in lean.lines().filter(|l| l.starts_with("example : ")) {
+        assert!(
+            line.ends_with(":= by decide +kernel"),
+            "with `pairSums` total, its verify cases reduce in the kernel:\n{line}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn proof_export_two_cons_peel_gets_a_dafny_decreases_not_an_axiom() {
+    // Dafny mirror of the peel: `decreases |xs|` rather than the opaque
+    // `function {:axiom}` fallback, so a Dafny consumer can still unfold the
+    // parser. Verified by running `dafny verify` when the toolchain is on
+    // PATH; without it, the emitted clause is what is asserted.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = temp_output_dir("aver-proof-two-cons-peel-dafny");
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/two_cons_peel.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&root)
+        .output()
+        .expect("aver proof --backend dafny for the two-cons peel");
+    assert!(
+        output.status.success(),
+        "proof export failed:\n{}",
+        format_output(&output)
+    );
+    let dafny =
+        std::fs::read_to_string(root.join("TwoConsPeel.dfy")).expect("read TwoConsPeel.dfy");
+    assert!(
+        !dafny.contains("function {:axiom} pairSums"),
+        "a two-cell peel must not export as an opaque Dafny axiom:\n{dafny}"
+    );
+    assert!(
+        dafny
+            .contains("function pairSums(xs: seq<int>, acc: seq<int>): seq<int>\n  decreases |xs|"),
+        "expected `decreases |xs|` on the two-cell peel:\n{dafny}"
+    );
+
+    if Command::new("dafny").arg("--version").output().is_ok() {
+        let verify = Command::new("dafny")
+            .current_dir(&root)
+            .arg("verify")
+            .arg("TwoConsPeel.dfy")
+            .output()
+            .expect("dafny verify for the two-cons peel");
+        assert!(
+            verify.status.success(),
+            "Dafny rejected the emitted termination measure:\n{}",
+            format_output(&verify)
+        );
+    } else {
+        eprintln!("skipping `dafny verify`: `dafny` not available");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}

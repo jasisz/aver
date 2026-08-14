@@ -2,7 +2,7 @@ module StdlibBytesApp
     intent =
         "Consumes byte and digest refinements from Aver's embedded standard library."
     depends [Bytes, Crypto.Digest32]
-    exposes [roundTrip, hexRoundTrip, digestLength, checkedDigestLength, checkedDigestHex, shaHex, doubleShaHex]
+    exposes [roundTrip, hexRoundTrip, digestLength, checkedDigestLength, checkedDigestHex, shaHex, doubleShaHex, checkedChecksum]
     effects []
 
 fn roundTrip(values: List<Int>) -> Result<List<Int>, String>
@@ -43,6 +43,19 @@ fn doubleShaHex(values: List<Int>) -> Result<String, String>
     second = Crypto.sha256(Crypto.Digest32.toBytes(first))
     Result.Ok(Crypto.Digest32.toHex(second))
 
+fn pairwiseChecksum(values: List<Int>) -> Int
+    ? "Add the leading pair and fold the sum back in until one value is left."
+    match values
+        [] -> 0
+        [only, ..afterOnly] -> match afterOnly
+            [] -> only
+            [next, ..rest] -> pairwiseChecksum(List.prepend(only + next, rest))
+
+fn checkedChecksum(values: List<Int>) -> Result<Int, String>
+    ? "Validate the octets, then fold them down to one checksum value."
+    bytes = Bytes.fromList(values)?
+    Result.Ok(pairwiseChecksum(Bytes.toList(bytes)))
+
 verify roundTrip
     roundTrip([0, 127, 255]) => Result.Ok([0, 127, 255])
     roundTrip([0, 256]) => Result.Err("byte 256 at index 1 is outside 0..=255")
@@ -67,3 +80,12 @@ verify shaHex
 
 verify doubleShaHex
     doubleShaHex([97, 98, 99]) => Result.Ok("4f8b42c22dd3729b519ba6f68d2da7cc5b2d606d05daed5ad5128cc03e6c6358")
+
+verify pairwiseChecksum
+    pairwiseChecksum([]) => 0
+    pairwiseChecksum([7]) => 7
+    pairwiseChecksum([1, 2, 3, 4]) => 10
+
+verify checkedChecksum
+    checkedChecksum([1, 2, 3, 4]) => Result.Ok(10)
+    checkedChecksum([256]) => Result.Err("byte 256 at index 0 is outside 0..=255")

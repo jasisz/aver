@@ -102,7 +102,16 @@ pub enum RecursionPlan {
     LinearRecurrence2,
     /// Single-fn structural recursion on a `List<_>` parameter; proof
     /// backends emit as structural recursion directly (no fuel).
-    ListStructural { param_index: usize },
+    ListStructural {
+        param_index: usize,
+        /// Cons cells peeled off that param per step — `1` for the
+        /// classic `[x, ..rest] -> self(rest, …)` walk, `2` for a parser
+        /// that consumes a PAIR (a hex byte) each time round. Any peel
+        /// `>= 1` is a strict decrease, so this does not affect whether
+        /// the fn is classified; it is here so a backend can state the
+        /// SIZE of the step rather than infer it from the body again.
+        peel: usize,
+    },
     /// Single-fn structural recursion on a recursive user ADT; proof
     /// backends emit through a sizeOf-guarded fuel helper.
     SizeOfStructural,
