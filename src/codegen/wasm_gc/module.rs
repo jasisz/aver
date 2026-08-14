@@ -5125,6 +5125,24 @@ pub(super) fn emit_module_with(
         module.section(&data);
     }
 
+    // ── Name section ───────────────────────────────────────────────
+    // Custom section: no bearing on validation, indices or semantics.
+    // It names the map insert helpers, the only bodies that trap, so a
+    // full-table trap prints `Map.set Map<K,V> (fixed capacity 16384,
+    // no resize)` in the engine backtrace instead of `<wasm function
+    // N>`. Emitted only when the program instantiates a map, so a
+    // map-free module's bytes are unchanged.
+    let map_helper_names = map_helpers.capacity_helper_names();
+    if !map_helper_names.is_empty() {
+        let mut names = wasm_encoder::NameSection::new();
+        let mut fn_names = wasm_encoder::NameMap::new();
+        for (idx, name) in &map_helper_names {
+            fn_names.append(*idx, name);
+        }
+        names.functions(&fn_names);
+        module.section(&names);
+    }
+
     let bytes = module.finish();
     if let Err(e) = validate(&bytes) {
         // Dump invalid bytes for `wasm-tools print` inspection.

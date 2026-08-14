@@ -284,3 +284,35 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     module::emit_module_with(items, Some(handler), TargetMode::Wasip2, &HashMap::new())
         .map(|(bytes, _, _)| bytes)
 }
+
+/// True when `bytes` names its map insert helpers — the `name` section
+/// the emitter writes for a program that instantiates a `Map`, so that
+/// filling the fixed bucket count traps with the capacity in the
+/// backtrace instead of `<wasm function N>` (see `maps.rs`).
+///
+/// Read by the `--optimize` path, which is about to destroy exactly
+/// that: `wasm-opt` drops the section, and inlines the helper besides.
+/// Malformed bytes answer "no names" — this decides whether to print a
+/// note, and the real decoders report bad input with a better message.
+pub fn carries_capacity_helper_names(bytes: &[u8]) -> bool {
+    use wasmparser::{KnownCustom, Name, Parser, Payload};
+    for payload in Parser::new(0).parse_all(bytes).flatten() {
+        let Payload::CustomSection(section) = payload else {
+            continue;
+        };
+        let KnownCustom::Name(names) = section.as_known() else {
+            continue;
+        };
+        for subsection in names.flatten() {
+            let Name::Function(map) = subsection else {
+                continue;
+            };
+            for naming in map.into_iter().flatten() {
+                if naming.name.starts_with(maps::CAPACITY_HELPER_NAME_PREFIX) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
