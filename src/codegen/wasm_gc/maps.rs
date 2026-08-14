@@ -34,8 +34,18 @@
 //! once a probe walks the whole table without finding a free slot —
 //! the entry has nowhere to go and the table cannot grow — and the
 //! lookup helpers report the miss, which is what `remove` already did.
+//! `remove`'s two loops stop on the same wrap test.
 //! `capacity_helper_names` feeds the wasm `name` section so that trap
 //! names the capacity it hit instead of an anonymous fn index.
+//!
+//! **That name survives `--optimize` only by luck.** `wasm-opt -Oz` /
+//! `-O3` drop the `name` section outright, and `-g` does not buy it
+//! back in the shape that traps: a program that fills a map from one
+//! `Map.set` call site gets that helper inlined into its caller, so
+//! the named body no longer exists and `-g` writes an empty name map.
+//! An optimized artifact therefore traps with `<wasm function N>`.
+//! `finalize_wasm_artifact` (src/main/commands.rs) says so on stderr
+//! when it optimizes a module carrying these names.
 
 use std::collections::HashMap;
 
@@ -48,6 +58,13 @@ use super::wat_helper;
 /// Initial bucket count — power of two so masking with `cap-1`
 /// instead of `i32.rem_u` works. Sized for the bench scenarios.
 const INITIAL_CAP: i32 = 16384;
+
+/// Every name `capacity_helper_names` builds starts with this. The
+/// `--optimize` path reads it back out of the finished module (see
+/// `carries_capacity_helper_names` in the parent module) to tell
+/// whether the pass it is about to run drops a naming channel that
+/// was there.
+pub(super) const CAPACITY_HELPER_NAME_PREFIX: &str = "Map.set ";
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct KeyHelpers {
@@ -523,11 +540,13 @@ impl MapHelperRegistry {
             };
             named.push((
                 h.set,
-                format!("Map.set {canonical} (fixed capacity {INITIAL_CAP}, no resize)"),
+                format!("{CAPACITY_HELPER_NAME_PREFIX}{canonical} (fixed capacity {INITIAL_CAP}, no resize)"),
             ));
             named.push((
                 h.set_in_place,
-                format!("Map.set {canonical} in place (fixed capacity {INITIAL_CAP}, no resize)"),
+                format!(
+                    "{CAPACITY_HELPER_NAME_PREFIX}{canonical} in place (fixed capacity {INITIAL_CAP}, no resize)"
+                ),
             ));
         }
         named.sort_by_key(|(idx, _)| *idx);
@@ -1275,7 +1294,8 @@ fn emit_map_set(
     let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     // params: 0=map, 1=k, 2=v
-    // locals: 3=cap, 4=mask, 5=idx, 6=keys (CLONED), 7=values (CLONED), 8=cur_key
+    // locals: 3=cap, 4=mask, 5=idx, 6=keys (CLONED), 7=values (CLONED),
+    //         8=cur_key, 9=home
     //
     // Clone-on-write: at entry we allocate fresh `keys` and `values`
     // arrays, `array.copy` the source map's contents into them, and
@@ -1461,6 +1481,30 @@ fn emit_full_table_trap(f: &mut Function, idx_local: u32, home_local: u32) {
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::Unreachable);
+    f.instruction(&Instruction::End);
+}
+
+/// The lookup half of [`emit_full_table_trap`], shared by `get`,
+/// `get_or_default` and `get_pair`: `idx` back at `home` means every
+/// slot was occupied and none matched, so the key is absent. A miss is
+/// an answer, not an error — `remove` has always given it — so each
+/// helper returns its own shape of "absent", emitted by `miss`.
+///
+/// Same placement rule as the insert guard: after the
+/// `idx = (idx + 1) & mask` step, so the slot the probe started at is
+/// examined before the wrap is declared.
+fn emit_wrap_miss(
+    f: &mut Function,
+    idx_local: u32,
+    home_local: u32,
+    miss: impl FnOnce(&mut Function),
+) {
+    f.instruction(&Instruction::LocalGet(idx_local));
+    f.instruction(&Instruction::LocalGet(home_local));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    miss(f);
+    f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 }
 
@@ -1723,17 +1767,12 @@ fn emit_map_get(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
-    // wrapped back to home → every slot occupied, none matched:
-    // a full-table miss, the same answer `remove` gives.
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0));
-    emit_default_value_for(&mut f, v_val);
-    f.instruction(&Instruction::StructNew(opt_idx));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
+    // wrapped back to home → full-table miss, return None.
+    emit_wrap_miss(&mut f, 4, 8, |f| {
+        f.instruction(&Instruction::I32Const(0));
+        emit_default_value_for(f, v_val);
+        f.instruction(&Instruction::StructNew(opt_idx));
+    });
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End); // loop
     f.instruction(&Instruction::End); // block
@@ -1758,7 +1797,7 @@ fn emit_map_get_or_default(
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     let _ = (k_val, v_val);
     // params: 0=map, 1=k, 2=default
-    // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key
+    // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key, 9=home
     let mut f = Function::new([
         (1, ValType::I32), // 3: cap
         (1, ValType::I32), // 4: mask
@@ -1847,13 +1886,9 @@ fn emit_map_get_or_default(
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
     // wrapped back to home → full-table miss, return the default.
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(9));
-    f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
+    emit_wrap_miss(&mut f, 5, 9, |f| {
+        f.instruction(&Instruction::LocalGet(2));
+    });
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -1880,7 +1915,7 @@ fn emit_map_get_pair(
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     let _ = k_val;
     // params: 0=map, 1=k
-    // locals: 2=cap, 3=mask, 4=idx, 5=keys, 6=values, 7=cur_key
+    // locals: 2=cap, 3=mask, 4=idx, 5=keys, 6=values, 7=cur_key, 8=home
     let mut f = Function::new([
         (1, ValType::I32), // 2: cap
         (1, ValType::I32), // 3: mask
@@ -1971,14 +2006,10 @@ fn emit_map_get_pair(
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
     // wrapped back to home → full-table miss, return (0, default<V>).
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0));
-    emit_default_value_for(&mut f, v_val);
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
+    emit_wrap_miss(&mut f, 4, 8, |f| {
+        f.instruction(&Instruction::I32Const(0));
+        emit_default_value_for(f, v_val);
+    });
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -2799,7 +2830,7 @@ fn emit_map_remove(
     let _ = v_val; // values array uses its own slot type
     // params: 0=map, 1=k.
     // locals: 2=cap, 3=mask, 4=keys, 5=values, 6=h, 7=i, 8=j,
-    //         9=cur_key, 10=natural, 11=gap, 12=disp.
+    //         9=cur_key, 10=natural, 11=gap, 12=disp, 13=hole.
     let mut f = Function::new([
         (1, ValType::I32), // 2: cap
         (1, ValType::I32), // 3: mask
@@ -2824,6 +2855,7 @@ fn emit_map_remove(
         (1, ValType::I32), // 10: natural
         (1, ValType::I32), // 11: gap
         (1, ValType::I32), // 12: disp
+        (1, ValType::I32), // 13: hole (slot the removed key vacated)
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
@@ -2898,7 +2930,9 @@ fn emit_map_remove(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
-    // Backwards-shift: j = (i+1) & mask
+    // Backwards-shift: hole = i; j = (i+1) & mask
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalSet(13));
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Add);
@@ -2907,6 +2941,21 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
+    // `j` back at the slot the removal emptied → the walk has gone all
+    // the way round. It normally stops well before that: on a null slot,
+    // or on an entry already sitting at its home bucket (`disp < gap`,
+    // and `gap` is 1 on every iteration, so that test reads as
+    // `disp == 0`). It would also stop without this guard — each shift
+    // moves one entry one slot closer to home, so the sum of all
+    // displacements, a non-negative integer, drops by exactly one per
+    // iteration. But that is an argument about which tables are
+    // reachable, and this file claims every probe loop is bounded by
+    // construction, so the wrap is tested rather than reasoned about:
+    // at most `cap - 1` shifts, whatever the buckets hold.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::BrIf(1));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::ArrayGet(slots.keys_array));

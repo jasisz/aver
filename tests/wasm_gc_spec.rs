@@ -77,13 +77,7 @@ fn run_int_result(source: &str) -> Result<i64, String> {
     let instance = linker
         .instantiate(&mut store, &module)
         .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
-    let main = instance
-        .get_func(&mut store, "main")
-        .unwrap_or_else(|| panic!("main export missing"));
-    let mut results = [wasmtime::Val::I32(0)];
-    main.call(&mut store, &[], &mut results)
-        .map_err(|e| format!("{e:#}"))?;
-    Ok(extract_aint_small(&mut store, &results[0]))
+    call_main_aint_result(&mut store, &instance)
 }
 
 /// Call the `main` export and extract its `Int` return. `Int = ℤ`:
@@ -94,13 +88,22 @@ fn run_int_result(source: &str) -> Result<i64, String> {
 /// result would need the limb-array decode, which these in-range tests
 /// never produce.
 fn call_main_aint(store: &mut wasmtime::Store<()>, instance: &wasmtime::Instance) -> i64 {
+    call_main_aint_result(store, instance).unwrap_or_else(|e| panic!("main trapped: {e}"))
+}
+
+/// The call itself, shared by [`run_int_result`] (which reports a trap)
+/// and [`call_main_aint`] (which panics on one).
+fn call_main_aint_result(
+    store: &mut wasmtime::Store<()>,
+    instance: &wasmtime::Instance,
+) -> Result<i64, String> {
     let main = instance
         .get_func(&mut *store, "main")
         .unwrap_or_else(|| panic!("main export missing"));
     let mut results = [wasmtime::Val::I32(0)];
     main.call(&mut *store, &[], &mut results)
-        .unwrap_or_else(|e| panic!("main trapped: {e}"));
-    extract_aint_small(store, &results[0])
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(extract_aint_small(store, &results[0]))
 }
 
 /// Read the Small (`$small`, field 0) i64 out of an `$AverInt` carrier
@@ -1212,6 +1215,14 @@ fn main() -> Int
 /// no resize, so the insert probe walks a table with no free slot. It
 /// must trap, and the trap has to name the capacity it hit rather than
 /// spin forever.
+///
+/// This drives `set_in_place`: the accumulator is uniquely owned, so
+/// the alias pass picks the in-place insert. The clone-on-write `set`
+/// carries the same guard, emitted by the same helper, but no test
+/// executes its trap — reaching it needs a full table built through
+/// aliased maps, which costs about 45 minutes of `array.copy` per run.
+/// That one is validated, not executed, and this comment is the record
+/// of which half is which.
 #[test]
 fn map_past_capacity_traps_naming_the_limit() {
     let err = run_int_result(
@@ -1265,6 +1276,169 @@ fn main() -> Int
 "#
         ),
         6
+    );
+}
+
+/// The test above reads the map through `Option.withDefault(Map.get(…))`,
+/// which the emitter fuses into the `get_or_default` helper — so it
+/// never touches the `get` helper that actually returns an `Option`.
+/// Here the `Option` has to exist: it is returned across a function
+/// boundary and then matched. Same full table, same absent key, and
+/// the answer is still `None`.
+#[test]
+fn map_full_table_miss_through_an_option_returning_call_is_none() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "unfused Option lookup in a full map"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn lookup(m: Map<Int, Int>, k: Int) -> Option<Int>
+    Map.get(m, k)
+
+fn main() -> Int
+    m = fill(16384, {})
+    hit = lookup(m, 7)
+    miss = lookup(m, 99999)
+    hitValue = match hit
+        Option.Some(v) -> v
+        Option.None -> -1
+    missValue = match miss
+        Option.Some(v) -> v
+        Option.None -> -1
+    hitValue + missValue
+"#
+        ),
+        6
+    );
+}
+
+/// `Map.has` is the third lookup helper, `get_pair` — it answers from
+/// the same probe loop and drops the value. A full table must still
+/// report membership honestly in both directions.
+#[test]
+fn map_full_table_membership_answers_both_ways() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "membership in a map filled to the fixed wasm-gc capacity"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn main() -> Int
+    m = fill(16384, {})
+    match Bool.and(Map.has(m, 7), Bool.not(Map.has(m, 99999)))
+        true -> 1
+        false -> 0
+"#
+        ),
+        1
+    );
+}
+
+/// A full table still takes a write, as long as the write lands on a
+/// key that is already there: the probe matches before it can wrap, so
+/// the guard never fires. The count must not move either — an update
+/// that inserted a phantom entry would show up here.
+#[test]
+fn map_update_of_a_present_key_in_a_full_table_writes_the_value() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "update an existing key in a full map"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn main() -> Int
+    m = fill(16384, {})
+    updated = Map.set(m, 7, 42)
+    Map.len(updated) + Option.withDefault(Map.get(updated, 7), -1)
+"#
+        ),
+        16426
+    );
+}
+
+/// Removing from a full table is the deepest the backward-shift loop
+/// ever runs: every slot it walks is occupied, so only an entry already
+/// at its home bucket stops it. The removed key must be gone and every
+/// other key must still be findable — a shift that dropped or
+/// resurrected an entry shows up as a wrong count or a wrong lookup.
+#[test]
+fn map_remove_from_a_full_table_keeps_every_other_key() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "remove from a map filled to the fixed wasm-gc capacity"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn main() -> Int
+    m = fill(16384, {})
+    smaller = Map.remove(m, 7)
+    gone = Option.withDefault(Map.get(smaller, 7), -1)
+    kept = Option.withDefault(Map.get(smaller, 8), -1)
+    last = Option.withDefault(Map.get(smaller, 16384), -1)
+    Map.len(smaller) + gone + kept + last
+"#
+        ),
+        16383 + -1 + 8 + 16384
+    );
+}
+
+/// The capacity rides in the trapping helper's name, and the
+/// `--optimize` path reads that back to warn it is about to strip it
+/// (`finalize_wasm_artifact`). Both halves of the predicate matter: a
+/// map-using module carries the names, a map-free one carries nothing
+/// to lose.
+#[test]
+fn capacity_helper_names_are_present_exactly_when_a_map_is() {
+    let with_map = compile_bytes(
+        r#"module Tmp
+    intent = "map program carries helper names"
+    depends []
+
+fn build() -> Map<Int, Int>
+    Map.set({}, 1, 1)
+
+fn main() -> Int
+    Map.len(build())
+"#,
+    );
+    assert!(
+        aver::codegen::wasm_gc::carries_capacity_helper_names(&with_map),
+        "a program that instantiates a Map must name its insert helpers"
+    );
+
+    let without_map = compile_bytes(
+        r#"module Tmp
+    intent = "map-free program carries no helper names"
+    depends []
+
+fn main() -> Int
+    1 + 1
+"#,
+    );
+    assert!(
+        !aver::codegen::wasm_gc::carries_capacity_helper_names(&without_map),
+        "a program with no Map must not carry map helper names"
     );
 }
 

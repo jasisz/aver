@@ -5263,6 +5263,14 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
 /// emitted by codegen makes the binary readable through standard tooling
 /// (`wasm-tools print program.wasm`). For pre-opt builds, names survive;
 /// for post-opt, `wasm-opt -Oz` strips the section by design.
+///
+/// One of those names is load-bearing, not decoration: a map that fills
+/// its fixed bucket count traps, and the capacity is in the trapping
+/// helper's name because a wasm trap carries no message of its own. The
+/// optimize pass costs the program that name twice over — it drops the
+/// section, and `-Oz` / `-O3` inline a sole-call-site helper into its
+/// caller, so `-g` would only hand back an empty name map. Nothing here
+/// can preserve it, so the build says out loud what the artifact lost.
 #[cfg(feature = "wasm")]
 fn finalize_wasm_artifact(
     wasm_file: &Path,
@@ -5271,6 +5279,7 @@ fn finalize_wasm_artifact(
     let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
     let mut compile_suffix = String::new();
     if let Some(mode) = optimize {
+        warn_optimize_drops_capacity_names(wasm_file);
         final_size = run_optimize_pipeline(wasm_file, mode).unwrap_or_else(|err| {
             eprintln!("{}", err.red());
             process::exit(1);
@@ -5278,6 +5287,29 @@ fn finalize_wasm_artifact(
         compile_suffix = format!(", optimized for {}", optimize_label(mode));
     }
     (final_size, compile_suffix)
+}
+
+/// Say on stderr that the artifact about to be optimized carries the map
+/// capacity-helper names, and will not carry them afterwards. Silent for
+/// a program that instantiates no map — the emitter writes the names
+/// only for those, so their presence is the exact test.
+#[cfg(feature = "wasm")]
+fn warn_optimize_drops_capacity_names(wasm_file: &Path) {
+    let Ok(bytes) = std::fs::read(wasm_file) else {
+        return;
+    };
+    if !aver::codegen::wasm_gc::carries_capacity_helper_names(&bytes) {
+        return;
+    }
+    eprintln!(
+        "{} this program uses a Map, whose wasm-gc bucket count is fixed \
+         at 16384 with no resize. Filling it traps, and in an un-optimized \
+         build the trapping helper's name reports the capacity. \
+         `--optimize` drops the name section and inlines the helper, so \
+         the same trap prints `<wasm function N>` here. Build without \
+         `--optimize` to read the backtrace.",
+        "note:".yellow()
+    );
 }
 
 #[cfg(feature = "wasm")]
@@ -5311,8 +5343,10 @@ fn run_optimize_pipeline(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Res
 
     // Aggressive optimization with --converge (run passes to
     // fixed point) and metadata strip. -Oz already drops the name
-    // section; --strip-producers and --strip-target-features remove
-    // sections that survive otherwise and bloat merged artifacts.
+    // section — `warn_optimize_drops_capacity_names` says so when that
+    // costs the map capacity trap its name; --strip-producers and
+    // --strip-target-features remove sections that survive otherwise
+    // and bloat merged artifacts.
     let output = std::process::Command::new("wasm-opt")
         .arg(opt_flag)
         .arg("--converge")
