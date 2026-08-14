@@ -4466,15 +4466,14 @@ fn emit_mir_builtin_call(
 // fallback); Wave 3b emits them, threading `ctx.policy` +
 // `ctx.emit_replay_runtime` (reachable through `ctx.codegen`).
 //
-// The three wrappers HIR applies are reproduced by the SAME shared
-// composers `emit_builtin_call` calls — `compose_replay_effect_call`
-// (replay reroute), `compose_effectful_builtin_raw` (the raw `aver_rt::*`
-// body), and `compose_effect_wrap` (policy `check_*` + bare
-// `cancel_checkpoint` framing) — so the MIR output is byte-identical to
-// HIR by construction. The only walker-specific inputs are the per-arg
-// renders: `mir_clone_arg` (the replay temps, HIR's `clone_arg`) and the
-// raw `emit_mir_expr` (the non-replay args + the policy first arg, HIR's
-// `emit_expr`).
+// The wrappers HIR applies are reproduced by the SAME shared composers
+// `emit_builtin_call` calls — `compose_replay_effect_call` (replay
+// reroute) and `compose_effectful_builtin` (the raw `aver_rt::*` body,
+// the policy `check_*`, and the bare `cancel_checkpoint` framing) — so
+// the MIR output is byte-identical to HIR by construction. The only
+// walker-specific inputs are the per-arg renders: `mir_clone_arg` (the
+// replay temps, HIR's `clone_arg`) and the raw `emit_mir_expr` (the
+// non-replay args, HIR's `emit_expr`).
 //
 // A dropped composer here silently disables aver.toml DENY enforcement
 // or record/replay capture (invisible to rustc + coverage + happy-path
@@ -4512,38 +4511,36 @@ fn emit_mir_effectful_builtin_call(
         return super::builtins::compose_replay_effect_call(name, &arg_clones);
     }
 
-    // (2) Raw effect body — mirror of `emit_builtin_call_inner`'s
-    //     effectful arms, every arg by-value (raw `emit_mir_expr`, HIR's
-    //     `emit_arg`). The shared composer renders the `aver_rt::*` call.
-    let mut arg_strs = Vec::with_capacity(args.len());
-    for a in args {
-        arg_strs.push(emit_mir_expr(a, ctx)?);
-    }
-    let result = super::builtins::compose_effectful_builtin_raw(name, &arg_strs)?;
-
-    // `.into_aver()` post-step for String-returning effectful builtins
-    // (mirror of `emit_builtin_call`'s `builtin_needs_str_conversion`).
-    let result = if super::builtins::builtin_needs_str_conversion(name) {
-        format!("({}).into_aver()", result)
-    } else {
-        result
-    };
-
-    // (3) Policy wrap (Http/Disk/Env) + bare `cancel_checkpoint` framing
-    //     — mirror of `emit_builtin_call`'s tail. The first arg for the
-    //     `check_*` call is rendered raw (HIR's `emit_expr`).
+    // (2) Raw effect body + policy / bare framing — mirror of
+    //     `emit_builtin_call`'s tail. Every arg is rendered ONCE here
+    //     (raw `emit_mir_expr`, HIR's `emit_arg`); the shared composer
+    //     owns every use of those strings, including the policy check's,
+    //     so no argument expression can reach the output twice.
+    //
+    //     One arg is rendered differently: when the policy check is on,
+    //     argument 0 becomes `let __policy_arg = …;`, which is an OWNING
+    //     position and so takes the same clone step every other owning
+    //     position takes — `mir_clone_arg`, the one the replay temps just
+    //     above use for exactly the same job. Rendering it raw there binds
+    //     a local the program reads again (E0382) or moves a field out of
+    //     a borrowed record param (E0507); the guarded raw bodies all read
+    //     argument 0 as `&{}`, so nothing asked for ownership until the
+    //     temp did. `mir_clone_arg` leaves an owned rvalue (a call result,
+    //     a literal, a last-use local) untouched, so the emission only
+    //     moves for the shapes that were breaking, and the clone is on the
+    //     one render — the argument is still evaluated exactly once.
     let policy_active = codegen.policy.is_some() && !codegen.emit_replay_runtime;
-    let first_arg = if policy_active && !args.is_empty() {
-        Some(emit_mir_expr(&args[0], ctx)?)
-    } else {
-        None
-    };
-    Some(super::builtins::compose_effect_wrap(
-        name,
-        result,
-        policy_active,
-        first_arg,
-    ))
+    let owning_first_arg = super::builtins::policy_binds_first_arg(name, policy_active);
+    let mut arg_strs = Vec::with_capacity(args.len());
+    for (i, a) in args.iter().enumerate() {
+        let code = emit_mir_expr(a, ctx)?;
+        arg_strs.push(if i == 0 && owning_first_arg {
+            mir_clone_arg(code, &a.node, ctx)
+        } else {
+            code
+        });
+    }
+    super::builtins::compose_effectful_builtin(name, &arg_strs, policy_active)
 }
 
 /// Emit one of the 5 deforestation intrinsics from MIR, byte-identical
