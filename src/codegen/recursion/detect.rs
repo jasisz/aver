@@ -1088,8 +1088,8 @@ fn self_call_args<'a>(expr: &'a Spanned<Expr>, fn_name: &str) -> Option<&'a [Spa
     match &expr.node {
         Expr::FnCall(callee, args) => expr_to_dotted_name(callee)
             .is_some_and(|name| call_matches(&name, fn_name))
-            .then(|| args.as_slice()),
-        Expr::TailCall(tc) => call_matches(&tc.target, fn_name).then(|| tc.args.as_slice()),
+            .then_some(args.as_slice()),
+        Expr::TailCall(tc) => call_matches(&tc.target, fn_name).then_some(tc.args.as_slice()),
         _ => None,
     }
 }
