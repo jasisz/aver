@@ -182,6 +182,84 @@ fn main() -> String
     assert_eq!(data["rewrites_by_sink"]["build"], 1);
 }
 
+/// The pipeline `--explain-passes` runs sees the entry file only, so a
+/// program whose DEPENDENCY carries the fusable shape was reported as
+/// having no fusion sites at all — while the compile path was quietly
+/// deforesting that dependency. The report has to cover every module
+/// the artifact is built from, with dep-side names module-qualified.
+#[test]
+fn buffer_build_pass_reports_a_fusion_site_living_in_a_dependency() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("rows.av"),
+        r#"module Rows
+    intent = "a dependency that owns the builder"
+    exposes [render]
+    effects []
+
+fn collect(xs: List<Int>, acc: List<String>) -> List<String>
+    ? "Render each value into the accumulator."
+    match xs
+        [] -> acc
+        [h, ..t] -> collect(t, List.prepend(String.fromInt(h), acc))
+
+fn render(xs: List<Int>) -> String
+    ? "Join the rendered values with commas."
+    String.join(List.reverse(collect(xs, [])), ",")
+"#,
+    )
+    .expect("write rows.av");
+    let entry = dir.path().join("main.av");
+    std::fs::write(
+        &entry,
+        r#"module Main
+    intent = "entry with no fusable shape of its own"
+    depends [Rows]
+    effects []
+
+fn main() -> String
+    Rows.render([1, 2, 3])
+"#,
+    )
+    .expect("write main.av");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
+        .arg(&entry)
+        .arg("--explain-passes")
+        .arg("--json")
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .expect("invoke aver");
+    assert!(
+        output.status.success(),
+        "aver compile failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse JSON output");
+
+    let bb = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "buffer_build")
+        .expect("buffer_build pass present");
+    let data = &bb["data"];
+    assert_eq!(
+        data["rewrites"], 1,
+        "the dependency's fusion site must be counted: {data}"
+    );
+    let synthesized = data["synthesized"].as_array().unwrap();
+    assert!(
+        synthesized.iter().any(|s| s == "Rows.collect__buffered"),
+        "expected the module-qualified synthesized name: {synthesized:?}"
+    );
+    assert_eq!(data["rewrites_by_sink"]["Rows.collect"], 1);
+}
+
 #[test]
 fn analyze_pass_exposes_alloc_recursion_summary() {
     let json = run_explain_passes(

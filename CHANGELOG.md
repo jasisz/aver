@@ -26,6 +26,23 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Building a string out of a list loop is recognised in more shapes, and `aver run` optimises it the same way `aver compile` does.** When a program builds up a list of pieces with a tail-recursive loop and hands the result to `String.join`, Aver skips the list entirely and writes the pieces straight into the finished string. Two spellings of that loop were recognised. The one most Aver code actually writes was not — the loop that walks the input list and reverses in its own empty-list case:
+
+  ```aver
+  fn parts(values: List<Int>, acc: List<String>) -> List<String>
+      match values
+          [] -> List.reverse(acc)
+          [head, ..tail] -> parts(tail, List.prepend(render(head), acc))
+  ```
+
+  Aver's own `Bytes.toHex` is written exactly like that, so the standard library was missing an optimisation the standard library ships. It no longer is, and neither is your code.
+
+  The other half is *where* it applies. A loop living in a module you `depends` on was optimised when you ran `aver compile` and left alone when you ran `aver run` — the same source, two different programs, and the only visible difference was speed. `aver run` now applies it too, so what you measure on the VM is what the compiled binary does. `--target wasm-gc` and `--target wasip2` are unchanged: that backend has nothing to write the pieces into, and the loop stays a list there.
+
+  A loop is only rewritten when its shape says the rewrite cannot change the answer. Anything else — an accumulator that starts non-empty, a reverse in a place that would then happen twice, a base case returning something other than the accumulator — is left exactly as written, silently and safely. `aver compile --explain-passes` is how you check which side of that line your loop landed on.
+
+- **`aver compile --explain-passes` reports what happened in dependency modules, not just the entry file.** It ran the pipeline over the file you named and nothing else, so a program whose dependency *was* optimised got told `no fusion sites detected` — the report contradicting the binary next to it. Sites in dependency modules are now counted too, with the module name in front of the function (`Bytes.hexParts`), in both the text and `--json` output.
+
 - **An unrecognised field in a module header is now an error.** The header used to stop at the first line it did not recognise and hand that line back to the top level. A typo'd `expose [main]` therefore produced no diagnostic at all when its right-hand side happened to resolve, and a mistyped field silently did nothing. Header-shaped lines — `name = value` or `name [list]` — are now checked against the five allowed fields.
 
   This is breaking for one shape: a top-level binding written *indented*, directly under the header, used to be accepted and now is not. The fix is to unindent it — bindings belong at column 0, outside the header — and the error says so.

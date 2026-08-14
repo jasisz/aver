@@ -1189,7 +1189,20 @@ pub(super) fn cmd_run_vm(
     // `resolve_dotted_call_target` fallback — same dispatch outcome
     // but a leaky `resolved_items` contract. PR 7.2 of #147 closes
     // the gap by mirroring what `cmd_compile_aver` already does.
-    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
+    //
+    // `run_buffer_build: true` mirrors the entry module, which gets the
+    // pass from `Default::default()` below. Loading deps without it made
+    // `aver run` execute the unfused spelling of the very code
+    // `aver compile` deforests — a `String.join` builder living in a
+    // dependency was fused for the Rust target and left alone for the
+    // VM. The synthesized `<dep>.<fn>__buffered` names have to be in the
+    // symbol table this pipeline builds, because the VM compiler
+    // re-parses each dep and re-runs the pass against exactly these
+    // symbols (`adopt_buffer_build_if_symbols_agree`).
+    //
+    // `run_interp_lower` stays off here: it is a separate stage with its
+    // own history and no reported inconsistency.
+    let dep_modules = load_compile_deps(&items, &module_root, false, true, false);
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
@@ -3827,7 +3840,8 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     // Pre-load dep modules so proof_lower has the data to walk; without
     // them the stage would only see entry-file refinement records.
     let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
-    let result = aver::ir::pipeline::run(
+    let dep_fusion = dep_buffer_build_reports(&items, &module_root);
+    let mut result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full {
@@ -3848,11 +3862,102 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
         eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
         process::exit(1);
     }
+    merge_dep_buffer_build(&mut result.pass_diagnostics, &dep_fusion);
 
     if json {
         print!("{}", render_pass_diagnostics_json(&result.pass_diagnostics));
     } else {
         print!("{}", render_pass_diagnostics(&result.pass_diagnostics));
+    }
+}
+
+/// Per-dependency `buffer_build` reports, for `--explain-passes`.
+///
+/// The pipeline this command runs sees the ENTRY file only, so a program
+/// whose dependency fuses — Aver's own `Bytes.toHex` is one — was
+/// reported as having no fusion sites at all. That is the diagnostic
+/// lying about the artifact: the compile path runs the pass over every
+/// dep module too.
+///
+/// The dep `ModuleInfo`s cannot answer this. They come back resolved,
+/// and the recogniser matches `Expr::Ident` shapes that `resolve` has
+/// already rewritten to `Expr::Resolved`; re-detecting on them finds
+/// nothing. So re-run the pre-resolve prefix of the pipeline on a fresh
+/// parse of each dep and keep only its report. Typecheck is skipped —
+/// `load_compile_deps` has already surfaced any dep type errors, and
+/// detection is purely syntactic.
+fn dep_buffer_build_reports(
+    items: &[TopLevel],
+    module_root: &str,
+) -> Vec<(String, aver::ir::BufferBuildPassReport)> {
+    let Some(module) = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m),
+        _ => None,
+    }) else {
+        return vec![];
+    };
+    let mut roots = module.depends.clone();
+    roots.extend(aver::stdlib::implicit_stdlib_deps(items));
+    let Ok(loaded) = aver::source::load_module_tree(&roots, module_root) else {
+        // Unresolvable deps are already a hard error on the loader path
+        // above; a diagnostic must not exit twice on the same fault.
+        return vec![];
+    };
+
+    let mut out = Vec::new();
+    for m in loaded {
+        let mut dep_items = m.items;
+        let result = aver::ir::pipeline::run(
+            &mut dep_items,
+            aver::ir::PipelineConfig {
+                typecheck: None,
+                run_resolve: false,
+                run_last_use: false,
+                run_analyze: false,
+                run_escape: false,
+                ..Default::default()
+            },
+        );
+        if let Some(report) = result.buffer_build
+            && report.rewrites > 0
+        {
+            out.push((m.dep_name, report));
+        }
+    }
+    out
+}
+
+/// Fold per-dependency fusion into the entry's `buffer_build` pass
+/// report so both renderers show one honest total. Dep-side names are
+/// module-qualified (`Bytes.hexParts`) — the entry's own stay bare, so
+/// the reader can tell which file a site lives in.
+fn merge_dep_buffer_build(
+    diagnostics: &mut [aver::ir::PassDiagnostic],
+    dep_reports: &[(String, aver::ir::BufferBuildPassReport)],
+) {
+    if dep_reports.is_empty() {
+        return;
+    }
+    for diagnostic in diagnostics.iter_mut() {
+        let aver::ir::PassReport::BufferBuild(entry) = &mut diagnostic.report else {
+            continue;
+        };
+        for (prefix, dep) in dep_reports {
+            entry.rewrites += dep.rewrites;
+            entry
+                .synthesized
+                .extend(dep.synthesized.iter().map(|n| format!("{prefix}.{n}")));
+            entry
+                .sink_fns
+                .extend(dep.sink_fns.iter().map(|n| format!("{prefix}.{n}")));
+            for (sink, count) in &dep.rewrites_by_sink {
+                *entry
+                    .rewrites_by_sink
+                    .entry(format!("{prefix}.{sink}"))
+                    .or_default() += count;
+            }
+        }
+        entry.sink_fns.sort();
     }
 }
 

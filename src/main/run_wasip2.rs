@@ -95,6 +95,14 @@ fn build_component_bytes(
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            // Both traversal-lowering stages stay OFF for wasip2, and
+            // that is a backend limit, not an oversight: this path
+            // lowers through wasm-gc, which has no representation for
+            // the `Buffer` the pass introduces. Turning the flag on and
+            // running a fusable program answers with
+            // `aver_to_wasm: cannot lower type 'Buffer' to a wasm
+            // representation`. The VM and Rust targets, which do own a
+            // buffer, run the pass — see `cmd_run_vm`.
             run_interp_lower: false,
             run_buffer_build: false,
             ..Default::default()

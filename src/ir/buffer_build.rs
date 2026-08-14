@@ -10,6 +10,18 @@
 //!         false -> build(..., List.prepend(<elem>, acc))
 //! ```
 //!
+//! …and the list-driven spelling of the same loop, which is what most
+//! Aver code actually writes:
+//!
+//! ```aver
+//! fn build(xs: List<S>, acc: List<T>) -> List<T>
+//!     match xs
+//!         [] -> List.reverse(acc)
+//!         [head, ..tail] -> build(tail, List.prepend(<elem>, acc))
+//! ```
+//!
+//! See [`BufferBuildKind`] for the full set of recognised idioms.
+//!
 //! When such a fn is called from `String.join(build(..., []), sep)`, the
 //! whole pipeline is semantically equivalent to a single buffer-write
 //! loop — Wadler 1990 shortcut fusion / deforestation. This module is
@@ -27,31 +39,42 @@ use std::sync::Arc;
 
 use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TailCallData};
 
-/// Where the matched builder puts the `List.reverse` step that gives
-/// the result its forward order.
+/// Which builder idiom the sink follows — the cross product of two
+/// independent axes: what drives the loop (a `Bool` condition or the
+/// input list itself) and where the single `List.reverse` lives (in the
+/// sink's own base case, or at the call site).
 ///
 /// `prepend(elem, acc)` builds the accumulator in reverse-of-input
 /// order. To get a forward list (the order we'd hand to `String.join`)
-/// it has to be reversed exactly once. Two equally common Aver idioms
-/// place that reverse in different spots:
+/// it has to be reversed exactly once. The three recognised idioms:
 ///
-/// - `InternalReverse`: the sink itself has `true -> List.reverse(acc)`
-///   in its base case. Caller writes `String.join(<sink>(args, []), sep)`.
-///   This is the classic "loop with reversed accumulator + reverse on
-///   exit" shape.
-/// - `ExternalReverse`: the sink has `[] -> acc` (no reverse) and
-///   matches on the input list directly. Caller writes
+/// - `InternalReverse`: Bool-driven. The sink has
+///   `true -> List.reverse(acc)` in its base case. Caller writes
+///   `String.join(<sink>(args, []), sep)`. The classic "count down,
+///   reverse on exit" shape.
+/// - `ExternalReverse`: list-driven, no reverse in the sink
+///   (`[] -> acc`). Caller writes
 ///   `String.join(List.reverse(<sink>(args, [])), sep)`. Common in the
 ///   payment_ops / workflow_engine codebases under the `*Into` naming
 ///   convention (e.g. `serializeEntriesInto`, `filterSubjectInto`).
+/// - `ListInternalReverse`: list-driven AND reverse in the sink
+///   (`[] -> List.reverse(acc)`), so the caller writes the plain
+///   `String.join(<sink>(args, []), sep)` again. This is the most
+///   idiomatic Aver list loop and the shape Aver's own
+///   `Bytes.hexParts` / `Bytes.toHex` pair uses.
 ///
-/// Both shapes lower to the same buffered variant — appending in
+/// All three lower to the same buffered variant — appending in
 /// processing order (which is forward order of the input) yields the
-/// final string in the right order without any explicit reverse.
+/// final string in the right order without any explicit reverse. The
+/// kind still matters at the call site: it decides whether a
+/// `List.reverse(...)` wrapper is REQUIRED there or FORBIDDEN, and a
+/// mismatch means the program reverses a different number of times
+/// than the rewrite would.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BufferBuildKind {
     InternalReverse,
     ExternalReverse,
+    ListInternalReverse,
 }
 
 /// Information about a fn that matches the buffer-build sink shape.
@@ -290,18 +313,29 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
         }
     }
 
-    // Otherwise try the ExternalReverse shape: `match <list> { [] -> acc;
-    // [_, .._] -> recurse(... prepend(_, acc)) }`. The reverse lives at
-    // the caller, e.g. `List.reverse(<this>(args, []))` (see the
-    // `BufferBuildKind` doc above for context).
+    // Otherwise the loop is list-driven: `match <list> { [] -> <base>;
+    // [_, .._] -> recurse(... prepend(_, acc)) }`. The recursive arm is
+    // identical in both list-driven idioms; only the base arm differs,
+    // and it is exactly what says where the single reverse lives:
+    //   `[] -> acc`               → ExternalReverse (caller reverses)
+    //   `[] -> List.reverse(acc)` → ListInternalReverse (sink reverses)
+    // Anything else in the base arm — reversing some other binding,
+    // returning a literal, a nested call — stays unmatched, and an
+    // unmatched sink is simply never fused.
     if let Some((nil_body, cons_body)) = pair_nil_cons_arms(arms)
-        && is_ident_named(nil_body, &acc_name)
         && is_self_tail_with_prepend_acc(cons_body, &fd.name, acc_idx, &acc_name)
     {
+        let kind = if is_ident_named(nil_body, &acc_name) {
+            BufferBuildKind::ExternalReverse
+        } else if is_list_reverse_of(nil_body, &acc_name) {
+            BufferBuildKind::ListInternalReverse
+        } else {
+            return None;
+        };
         return Some(BufferBuildShape {
             acc_param_idx: acc_idx,
             acc_param_name: acc_name,
-            kind: BufferBuildKind::ExternalReverse,
+            kind,
         });
     }
 
@@ -393,7 +427,10 @@ fn match_string_join_fusion_site(
 
     let kinds_align = matches!(
         (saw_external_reverse, &shape.kind),
-        (false, BufferBuildKind::InternalReverse) | (true, BufferBuildKind::ExternalReverse)
+        (
+            false,
+            BufferBuildKind::InternalReverse | BufferBuildKind::ListInternalReverse
+        ) | (true, BufferBuildKind::ExternalReverse)
     );
     if !kinds_align {
         return None;
@@ -930,11 +967,15 @@ fn try_rewrite_fusion_site(
 /// changed shape between detection and synthesis, skip).
 fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef> {
     // Original body: `match <subject> { <terminating-arm>; <recursive-arm> }`.
-    // The two BufferBuildKind variants pair different patterns:
-    //   InternalReverse: `true -> List.reverse(acc)`, `false -> recurse(...)`.
-    //   ExternalReverse: `[] -> acc`, `[head, ..rest] -> recurse(...)`.
-    // We extract the recursive arm in both cases (for the prepend tail
+    // The BufferBuildKind variants pair different patterns:
+    //   InternalReverse:     `true -> List.reverse(acc)`, `false -> recurse(...)`.
+    //   ExternalReverse:     `[] -> acc`, `[head, ..rest] -> recurse(...)`.
+    //   ListInternalReverse: `[] -> List.reverse(acc)`, `[head, ..rest] -> recurse(...)`.
+    // We extract the recursive arm in every case (for the prepend tail
     // call) and rebuild the match with terminating arm `... -> __buf`.
+    // The two list-driven kinds are indistinguishable from here on: the
+    // base arm they differ in is exactly the arm the rewrite replaces
+    // with a bare buffer, and both drop the reverse for the same reason.
     let stmts = fd.body.stmts();
     if stmts.len() != 1 {
         return None;
@@ -952,7 +993,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
             .iter()
             .find(|a| matches!(a.pattern, Pattern::Literal(Literal::Bool(false))))
             .map(|a| a.body.as_ref())?,
-        BufferBuildKind::ExternalReverse => arms_orig
+        BufferBuildKind::ExternalReverse | BufferBuildKind::ListInternalReverse => arms_orig
             .iter()
             .find(|a| matches!(a.pattern, Pattern::Cons(_, _)))
             .map(|a| a.body.as_ref())?,
@@ -1042,8 +1083,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
 
     // Terminating arm body: just return `__buf` — the buffer IS the result.
     // Pattern depends on which sink shape we matched: `true` for the
-    // InternalReverse idiom (where the original returned `List.reverse(acc)`),
-    // `[]` for ExternalReverse (where the original returned `acc`).
+    // Bool-driven InternalReverse idiom, `[]` for both list-driven ones.
     let new_arms = match shape.kind {
         BufferBuildKind::InternalReverse => vec![
             MatchArm {
@@ -1057,7 +1097,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
                 binding_slots: std::sync::OnceLock::new(),
             },
         ],
-        BufferBuildKind::ExternalReverse => {
+        BufferBuildKind::ExternalReverse | BufferBuildKind::ListInternalReverse => {
             // Re-use the cons binding names from the original arm so
             // any `head` / `rest` references inside the recursive body
             // continue to resolve.
@@ -1766,6 +1806,184 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             _ => false,
         });
         assert!(synth_present, "build__buffered must be appended");
+    }
+
+    /// Parse + TCO a snippet the way the real pipeline does, so the
+    /// list-driven tests below match on the same AST the compiler sees.
+    fn parse_and_tco(src: &str) -> Vec<crate::ast::TopLevel> {
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::ir::pipeline::tco(&mut items);
+        items
+    }
+
+    fn fn_named<'a>(items: &'a [crate::ast::TopLevel], name: &str) -> &'a FnDef {
+        items
+            .iter()
+            .find_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) if fd.name == name => Some(fd),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("fn {name} not found"))
+    }
+
+    /// The fourth quadrant: list-driven loop with the reverse in the
+    /// base case, consumed by a plain `String.join(<sink>(xs, []), sep)`.
+    /// This is Aver's own `Bytes.hexParts` / `Bytes.toHex` pair copied
+    /// verbatim except for the module wrapper — before the recogniser
+    /// learned this shape, the standard library's own `toHex` missed the
+    /// pass Aver ships.
+    #[test]
+    fn list_driven_internal_reverse_fuses_the_hex_parts_shape() {
+        let mut items = parse_and_tco(
+            r#"
+fn byteToHex(value: Int) -> String
+    String.fromInt(value)
+
+fn hexParts(values: List<Int>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> hexParts(tail, List.prepend(byteToHex(head), acc))
+
+fn toHex(values: List<Int>) -> String
+    String.join(hexParts(values, []), "")
+"#,
+        );
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let sinks = compute_buffer_build_sinks(&fns);
+        let shape = sinks
+            .get("hexParts")
+            .expect("list-driven internal-reverse sink should be detected");
+        assert_eq!(shape.kind, BufferBuildKind::ListInternalReverse);
+        assert_eq!(shape.acc_param_idx, 1);
+        assert_eq!(shape.acc_param_name, "acc");
+        drop(fns);
+
+        let report = run_buffer_build_pass(&mut items);
+        assert_eq!(report.rewrites, 1, "toHex should be one fusion site");
+        assert_eq!(report.synthesized, vec!["hexParts__buffered".to_string()]);
+
+        // The call site now allocates a buffer, runs the buffered
+        // variant, and finalizes — no intermediate List<String>.
+        let to_hex = fn_named(&items, "toHex");
+        let body = match &to_hex.body.stmts()[0] {
+            Stmt::Expr(s) => &s.node,
+            other => panic!("expected expression body, got {other:?}"),
+        };
+        let finalize_args = match body {
+            Expr::FnCall(callee, args) => {
+                assert!(
+                    matches!(&callee.node, Expr::Ident(n) if n == "__buf_finalize"),
+                    "expected __buf_finalize wrapper, got {:?}",
+                    callee.node
+                );
+                args
+            }
+            other => panic!("expected __buf_finalize call, got {other:?}"),
+        };
+        match &finalize_args[0].node {
+            Expr::FnCall(callee, args) => {
+                assert!(
+                    matches!(&callee.node, Expr::Ident(n) if n == "hexParts__buffered"),
+                    "expected buffered variant call, got {:?}",
+                    callee.node
+                );
+                // `values`, the fresh buffer, and the separator — the
+                // accumulator argument is gone.
+                assert_eq!(args.len(), 3);
+            }
+            other => panic!("expected hexParts__buffered call, got {other:?}"),
+        }
+
+        // The buffered variant keeps the list-driven arms and returns
+        // the buffer straight out of the `[]` case.
+        let buffered = fn_named(&items, "hexParts__buffered");
+        assert_eq!(buffered.return_type, "Buffer");
+        let arms = match &buffered.body.stmts()[0] {
+            Stmt::Expr(s) => match &s.node {
+                Expr::Match { arms, .. } => arms,
+                other => panic!("expected match body, got {other:?}"),
+            },
+            other => panic!("expected expression body, got {other:?}"),
+        };
+        let nil_arm = arms
+            .iter()
+            .find(|a| matches!(a.pattern, Pattern::EmptyList))
+            .expect("nil arm");
+        assert!(
+            matches!(&nil_arm.body.node, Expr::Ident(n) if n == "__buf"),
+            "nil arm must return the buffer, got {:?}",
+            nil_arm.body.node
+        );
+        let cons_arm = arms
+            .iter()
+            .find(|a| matches!(a.pattern, Pattern::Cons(_, _)))
+            .expect("cons arm");
+        assert!(
+            matches!(&cons_arm.body.node, Expr::TailCall(d) if d.target == "hexParts__buffered"),
+            "cons arm must tail-call the buffered variant, got {:?}",
+            cons_arm.body.node
+        );
+    }
+
+    /// Conservatism: the same sink consumed through a call site that
+    /// ALSO reverses would come out backwards after the rewrite (the
+    /// sink's own reverse is what the buffer replaces). The call site
+    /// must be left alone.
+    #[test]
+    fn list_driven_internal_reverse_refuses_a_reversing_call_site() {
+        let mut items = parse_and_tco(
+            r#"
+fn hexParts(values: List<Int>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> hexParts(tail, List.prepend(String.fromInt(head), acc))
+
+fn toHex(values: List<Int>) -> String
+    String.join(List.reverse(hexParts(values, [])), "")
+"#,
+        );
+        let report = run_buffer_build_pass(&mut items);
+        assert_eq!(
+            report.rewrites, 0,
+            "a doubly-reversing call site must not be fused"
+        );
+        assert!(report.synthesized.is_empty());
+    }
+
+    /// Conservatism: a list-driven loop whose base case reverses the
+    /// INPUT rather than the accumulator is a different function. It
+    /// must stay unrecognised (and therefore unfused) rather than be
+    /// normalised into the shape we know.
+    #[test]
+    fn list_driven_base_arm_reversing_another_binding_is_not_a_sink() {
+        let items = parse_and_tco(
+            r#"
+fn build(values: List<Int>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(values)
+        [head, ..tail] -> build(tail, List.prepend(String.fromInt(head), acc))
+"#,
+        );
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            compute_buffer_build_sinks(&fns).is_empty(),
+            "reversing a binding other than the accumulator must not match"
+        );
     }
 
     fn ident_expr(name: &str) -> Spanned<Expr> {

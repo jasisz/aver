@@ -138,6 +138,19 @@ pub struct PipelineConfig<'a> {
     /// `Some(mode)` runs the type checker with that driver; `None` skips it.
     pub typecheck: Option<TypecheckMode<'a>>,
     pub run_interp_lower: bool,
+    /// Whether to run the buffer-build deforestation pass. Runtime
+    /// backends that own a growable buffer (VM, Rust) turn it on; the
+    /// wasm-gc family cannot lower the `Buffer` it introduces and leaves
+    /// it off.
+    ///
+    /// It is also the seam that keeps deforestation invisible to the
+    /// proof exporters, and today that seam is a CONVENTION, not a
+    /// structure: every proof caller has to remember to pass `false`
+    /// here (and a reviewer has to notice when one forgets). Making
+    /// proof-lower read a snapshot taken before the optimising passes —
+    /// so the exporters cannot see a rewritten body no matter what a
+    /// caller passes — is a separate change; until it lands, treat a new
+    /// `true` on a proof-facing path as a soundness-grade edit.
     pub run_buffer_build: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
