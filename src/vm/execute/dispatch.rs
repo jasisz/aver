@@ -106,6 +106,68 @@ impl VM {
             }};
         }
 
+        // Local macro: leave the current function carrying an error value,
+        // for the two exits that are not `RETURN` (`PROPAGATE_ERR` and the
+        // failing branch of `CALL_PAR`). Expands to nothing when the current
+        // function does own a `CallFrame`, leaving the caller's ordinary
+        // frame-popping path to run.
+        //
+        // The frame being left may not exist. A callee entered through
+        // `CALL_LEAF` pushes no `CallFrame` — its caller's context is parked
+        // in `leaf_return` instead — so popping `self.frames` there pops the
+        // CALLER's frame and returns the error out of the wrong function.
+        // `RETURN` already consults `leaf_return`; every frame exit owes the
+        // same check, and owes the same `take()`, or a later `RETURN` would
+        // spend a frameless return that has already been used.
+        //
+        // The wider rule this belongs to: nothing may treat `self.frames.last()`
+        // as its own frame without first ruling out `leaf_return`. Sites split
+        // three ways.
+        //
+        // Sites that take their RESUME POSITION from it. Getting this wrong
+        // runs the caller's function at this chunk's offset, which is the whole
+        // bug class. Five: `RETURN`, the two exits this macro serves, and
+        // `is_http_server` under `CALL_BUILTIN` — all four ask `leaf_return`
+        // first — plus `is_http_server` under `CALL_VALUE`, which is covered by
+        // classification instead: a chunk containing `CALL_VALUE` is never a
+        // leaf.
+        //
+        // Sites that PARK a position in it across a nested call, for whatever
+        // walks `self.frames` while that call runs. `CALL_KNOWN` and
+        // `CALL_VALUE` sit behind leaf-disqualifying opcodes; `CALL_PAR` does
+        // not, and asks `leaf_return` first.
+        //
+        // Sites that want THE FRAME THAT OWNS THE NEXT BOUNDARY — `STORE_GLOBAL`
+        // marking globals dirty, `VECTOR_SET` handing up an escaped in-place
+        // write. For a frameless chunk that frame IS the caller's, because
+        // `CALL_LEAF` records no arena marks and its return does no boundary
+        // work, so these are right as they stand. Their region tests read the
+        // caller's older marks, which widens what counts as frame-local — an
+        // over-approximation, in the direction that reports more.
+        //
+        // Everything else that reads `self.frames.last()` (the three tail
+        // calls) sits behind an opcode `classify_leaf_chunk` refuses leaf
+        // status for.
+        macro_rules! leaf_error_return {
+            ($result:expr) => {{
+                if let Some((saved_fn_id, saved_ip, saved_bp)) = leaf_return.take() {
+                    let result = $result;
+                    // Drop the leaf's arguments and whatever the enclosing
+                    // call had already pushed of its own argument list, the
+                    // same way `RETURN`'s frameless path does. `CALL_LEAF`
+                    // records no arena marks, so there is nothing else to
+                    // unwind: the error value itself stays reachable.
+                    self.stack.truncate(bp);
+                    self.stack.push(result);
+                    fn_id = saved_fn_id;
+                    ip = saved_ip;
+                    bp = saved_bp;
+                    refresh_code!();
+                    continue;
+                }
+            }};
+        }
+
         // Per-call dispatched-opcode counter. Bumped every iteration;
         // checked against `step_limit` in the same 256-op cadence as
         // cancellation so the hot path stays branch-light. Reset by
@@ -548,6 +610,13 @@ impl VM {
                                     builtin,
                                     symbol_id,
                                 )?;
+                                // Unlike the `CALL_BUILTIN` twin below, this
+                                // one may park its position in
+                                // `self.frames.last()` unconditionally: reaching
+                                // it means the chunk contains `CALL_VALUE`, and
+                                // `classify_leaf_chunk` refuses leaf status to
+                                // any chunk that does — so this chunk always
+                                // owns the frame it is writing to.
                                 self.frames.last_mut().unwrap().ip = ip as u32;
                                 let result = self.dispatch_http_server(builtin, &args)?;
                                 self.stack.push(result);
@@ -731,14 +800,34 @@ impl VM {
                             builtin,
                             symbol_id,
                         )?;
-                        self.frames.last_mut().unwrap().ip = ip as u32;
+                        // The server call runs request handlers through a
+                        // nested `call_function`, so this chunk's position is
+                        // parked in its `CallFrame` across it and read back
+                        // afterwards. A chunk entered through `CALL_LEAF` owns
+                        // no `CallFrame`: `self.frames.last()` is its CALLER's.
+                        // Parking there would overwrite the caller's saved `ip`
+                        // with this chunk's, and reading it back would resume
+                        // the CALLER's function at THIS chunk's offset. The
+                        // interpreter-local `fn_id`/`ip`/`bp` come back from
+                        // the nested call untouched, so a frameless chunk just
+                        // keeps them — the same rule `RETURN` and the two error
+                        // exits follow. `HttpServer.listen` alone in a body is
+                        // exactly that shape: `CALL_BUILTIN` does not disqualify
+                        // a leaf, so `fn serve(port: Int) -> Unit
+                        // HttpServer.listen(port, handleRequest)` is one.
+                        let framed = leaf_return.is_none();
+                        if framed {
+                            self.frames.last_mut().unwrap().ip = ip as u32;
+                        }
                         let result = self.dispatch_http_server(builtin, &args)?;
                         self.stack.push(result);
-                        let f = self.frames.last().unwrap();
-                        fn_id = f.fn_id;
-                        ip = f.ip as usize;
-                        bp = f.bp as usize;
-                        refresh_code!();
+                        if framed {
+                            let f = self.frames.last().unwrap();
+                            fn_id = f.fn_id;
+                            ip = f.ip as usize;
+                            bp = f.bp as usize;
+                            refresh_code!();
+                        }
                         continue;
                     }
 
@@ -1087,8 +1176,20 @@ impl VM {
                     let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
                     self.stack.truncate(items_start);
 
-                    // Save caller IP — drop code borrow before call_function
-                    self.frames.last_mut().unwrap().ip = ip as u32;
+                    // Save caller IP — drop code borrow before call_function.
+                    // The branches themselves are entered with `caller_fn_id` /
+                    // `caller_ip` below, so this park is for whatever walks
+                    // `self.frames` while they run. A chunk entered through
+                    // `CALL_LEAF` owns no frame — `CALL_PAR` is not in
+                    // `classify_leaf_chunk`'s disqualifying set, so a body like
+                    // `Result.Ok((f(a), g(b))?!)` is one — and parking there
+                    // would overwrite the CALLER's position with this chunk's.
+                    // Nothing reads that field before the caller's next call
+                    // rewrites it, but leaving the caller's own position in
+                    // place is what the rest of the loop does and costs a test.
+                    if leaf_return.is_none() {
+                        self.frames.last_mut().unwrap().ip = ip as u32;
+                    }
                     let _saved_fn_id = fn_id;
                     let caller_fn_id = fn_id;
                     let caller_ip = ip;
@@ -1341,6 +1442,7 @@ impl VM {
 
                         // Propagate: real Err takes priority, then cancellation VmError
                         if let Some(err_val) = first_real_err {
+                            leaf_error_return!(err_val);
                             let frame = self.frames.pop().unwrap();
                             self.stack.truncate(frame.bp as usize);
                             match self.complete_frame_return(frame, err_val, caller_depth) {
@@ -1382,6 +1484,7 @@ impl VM {
                     }
                     if value.is_err() {
                         let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        leaf_error_return!(result);
                         let frame = self.frames.pop().unwrap();
                         self.stack.truncate(frame.bp as usize);
                         match self.complete_frame_return(frame, result, caller_depth) {
