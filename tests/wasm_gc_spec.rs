@@ -1233,15 +1233,16 @@ fn main() -> Int
     );
 }
 
-/// A map filled to exactly the fixed bucket count still answers
-/// `len`. The slot the last key takes is the final free one, so this
-/// is the boundary case one insert below the trap.
+/// Sixteen thousand keys into a table that starts at sixteen buckets:
+/// ten doublings, each one rehashing everything inserted so far. `len`
+/// counting them all is the cheapest statement that nothing was
+/// dropped or duplicated on the way through.
 #[test]
-fn map_filled_to_capacity_still_works() {
+fn map_filled_across_ten_doublings_counts_every_key() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "map filled to the fixed wasm-gc capacity"
+    intent = "map filled across ten wasm-gc table doublings"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1284,16 +1285,20 @@ fn main() -> Int
     );
 }
 
-/// Looking a key up in a table with no free slot is a plain miss, not
-/// an error — the answer `remove` has always given. The lookup probe
-/// has to notice it walked the whole table and say so; a present key
-/// must still be found.
+/// Reads on a table that has been through ten doublings. The rehash
+/// rebuilds every probe run under a wider mask, so a hit has to be
+/// found wherever it landed last and a miss has to stop.
+///
+/// This used to be the full-table read: 16384 keys filled a table of
+/// 16384 buckets, and the miss was answered by the wrap guard. A map
+/// never fills now, so the guard is unreachable and what is left to
+/// pin is that reads survive the rehashing.
 #[test]
-fn map_lookup_in_a_full_table_finds_hits_and_reports_misses() {
+fn map_lookup_after_many_doublings_finds_hits_and_reports_misses() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "lookup in a map filled to the fixed wasm-gc capacity"
+    intent = "lookup in a map that has doubled ten times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1316,14 +1321,14 @@ fn main() -> Int
 /// which the emitter fuses into the `get_or_default` helper — so it
 /// never touches the `get` helper that actually returns an `Option`.
 /// Here the `Option` has to exist: it is returned across a function
-/// boundary and then matched. Same full table, same absent key, and
+/// boundary and then matched. Same grown table, same absent key, and
 /// the answer is still `None`.
 #[test]
-fn map_full_table_miss_through_an_option_returning_call_is_none() {
+fn map_grown_table_miss_through_an_option_returning_call_is_none() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "unfused Option lookup in a full map"
+    intent = "unfused Option lookup in a map that has doubled ten times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1352,14 +1357,14 @@ fn main() -> Int
 }
 
 /// `Map.has` is the third lookup helper, `get_pair` — it answers from
-/// the same probe loop and drops the value. A full table must still
+/// the same probe loop and drops the value. A grown table must still
 /// report membership honestly in both directions.
 #[test]
-fn map_full_table_membership_answers_both_ways() {
+fn map_grown_table_membership_answers_both_ways() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "membership in a map filled to the fixed wasm-gc capacity"
+    intent = "membership in a map that has doubled ten times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1378,16 +1383,17 @@ fn main() -> Int
     );
 }
 
-/// A full table still takes a write, as long as the write lands on a
-/// key that is already there: the probe matches before it can wrap, so
-/// the guard never fires. The count must not move either — an update
-/// that inserted a phantom entry would show up here.
+/// Overwriting a key that is already there must not change the count.
+/// The insert helper tests the load factor before it probes, so it
+/// cannot yet know the key is present and may grow the table for an
+/// entry that never gets added — the count is what proves it did not
+/// also leave a phantom entry behind while it was there.
 #[test]
-fn map_update_of_a_present_key_in_a_full_table_writes_the_value() {
+fn map_update_of_a_present_key_in_a_grown_table_writes_the_value() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "update an existing key in a full map"
+    intent = "update an existing key in a map that has doubled ten times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1405,22 +1411,22 @@ fn main() -> Int
     );
 }
 
-/// Removing from a full table of Int keys is now the LONGEST scan in
-/// this suite: small Int keys hash to themselves, so every entry sits
-/// at its home bucket, no entry ever needs to move — but with no null
-/// slot to stop on, the shift loop visits all cap-1 occupied slots and
-/// is terminated only by the wrap guard reaching the emptied slot
-/// again. That guard is therefore EXECUTED here, not merely validated.
-/// What this pins: the removed key must be gone and every other key
-/// must still be findable in a table with no null slot to stop a probe
-/// early, and the wrap guard must end a scan that finds nothing to
-/// move.
+/// Removal from a table that has been through ten doublings. The
+/// removed key must be gone and every other key still findable,
+/// including the one inserted last and the one next to the hole.
+///
+/// This test used to fill the table exactly and so drove the shift
+/// scan's wrap guard, which was the only witness that EXECUTED it.
+/// Growth took that away: at 16384 entries the table holds 32768
+/// buckets, so the scan stops on a null slot like any other. The
+/// guard is unreachable from Aver source now, and its remaining job
+/// is to bound the scan if the growth above it ever breaks.
 #[test]
-fn map_remove_from_a_full_table_keeps_every_other_key() {
+fn map_remove_from_a_grown_table_keeps_every_other_key() {
     assert_eq!(
         run_int(
             r#"module Tmp
-    intent = "remove from a map filled to the fixed wasm-gc capacity"
+    intent = "remove from a map that has doubled ten times"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1443,8 +1449,10 @@ fn main() -> Int
 
 /// Two keys that share a bucket sit in one probe run, and removing the
 /// first must not cut the run in half. Small `Int` keys hash to
-/// themselves and the bucket is `hash & (16384 - 1)`, so `1` and `16385`
-/// both live at bucket 1; inserting `1`, `2`, `16385` in that order puts
+/// themselves and the bucket is `hash & (cap - 1)`, so `1` and `16385`
+/// collide at every capacity a three-entry map can have — 16384 is a
+/// multiple of all of them. The map here never grows (three entries in
+/// sixteen buckets), so inserting `1`, `2`, `16385` in that order puts
 /// them in slots 1, 2, 3. `16385` is reachable only by probing through
 /// slot 1, so removing `1` has to walk the rest of the run and pull
 /// `16385` back into the hole it left.
@@ -1478,7 +1486,9 @@ fn map_remove_keeps_a_key_that_probed_past_the_removed_bucket() {
 }
 
 /// The same question over two probe runs, one of which crosses the end
-/// of the table. After the ten inserts the run in slots 5..10 is:
+/// of the table. Ten entries stay inside the sixteen buckets a map
+/// starts with, so the table never grows here and the buckets are
+/// `key & 15`. After the ten inserts the run in slots 5..10 is:
 /// 5(home 5), 6(home 6), 16389(home 5), 7(home 7, displaced), 32773
 /// (home 5), 8(home 8, displaced). Removing `5` reads one entry that
 /// stays put (`6`, at its home) and then a run of four that must each
@@ -1489,8 +1499,8 @@ fn map_remove_keeps_a_key_that_probed_past_the_removed_bucket() {
 /// case rests on the loop's invariant argument, not on a test.
 ///
 /// The second run starts at the last bucket: `16383` and `32767` hash to
-/// bucket 16383, `16384` and `32768` to bucket 0, and inserting them as
-/// `16383`, `16384`, `32767`, `32768` puts them in slots 16383, 0, 1, 2
+/// bucket 15, `16384` and `32768` to bucket 0, and inserting them as
+/// `16383`, `16384`, `32767`, `32768` puts them in slots 15, 0, 1, 2
 /// — a run that wraps. Removing `16383` empties the last slot, and
 /// `32767` is only reachable through it.
 ///
@@ -1536,27 +1546,198 @@ fn map_remove_keeps_every_survivor_of_a_colliding_run() {
     assert_eq!(run_int(REMOVE_CLUSTER_SRC), 8 * 100 + 2 * 10 + 8);
 }
 
+/// The two witnesses above stay inside the initial sixteen buckets, so
+/// they say nothing about removal from a table that has grown. These do.
+/// A grow rehashes every entry under a wider mask and resets the
+/// displacements the old mask built up, which is exactly the state the
+/// backwards-shift scan reads — so the collision runs have to be built
+/// AFTER the growth, at the capacity the map actually ends up with.
+///
+/// Thirty `Int` keys leave a map at 64 buckets: it doubles at 12 and at
+/// 24 entries (three quarters of 16 and of 32), and 30 is below the 48
+/// that would double it again. Keys `1..30` sit at their own buckets
+/// `1..30`, leaving `0` and `31..63` free to build runs in.
+///
+/// `40`, `104` and `168` are `k`, `k + 64` and `k + 2 * 64`: one home
+/// bucket, three entries, slots 40, 41, 42. Removing `40` must pull both
+/// of the others back — a two-step shift where the hole travels.
+const REMOVE_AFTER_RESIZE_SRC: &str = r#"module Tmp
+    intent = "remove a key that another key probed past, after the table grew"
+    depends []
+
+fn hit(m: Map<Int, Int>, k: Int) -> Int
+    match Option.withDefault(Map.get(m, k), -1) == k
+        true  -> 1
+        false -> 0
+
+fn absent(m: Map<Int, Int>, k: Int) -> Int
+    match Map.has(m, k)
+        true  -> 0
+        false -> 1
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn build() -> Map<Int, Int>
+    grown = fill(30, {})
+    s1 = Map.set(grown, 40, 40)
+    s2 = Map.set(s1, 104, 104)
+    Map.set(s2, 168, 168)
+
+fn main() -> Int
+    m = Map.remove(build(), 40)
+    kept = hit(m, 104) + hit(m, 168) + hit(m, 1) + hit(m, 30)
+    missing = absent(m, 40)
+    kept * 100 + missing * 10 + Map.len(m)
+"#;
+
+#[test]
+fn map_remove_after_a_resize_keeps_the_keys_that_probed_past() {
+    assert_eq!(run_int(REMOVE_AFTER_RESIZE_SRC), 4 * 100 + 10 + 32);
+}
+
+/// The same, over the end of the grown table. `63` is the last bucket at
+/// 64 and `127` is `63 + 64`, so `127` wraps into slot 0 — which the
+/// growth left free, since the thirty keys `1..30` claimed slots `1..30`
+/// and nothing claimed `0`. Removing `63` empties the last slot, and
+/// `127` is reachable only through it, so the shift scan has to cross
+/// the wrap point to pull it back.
+///
+/// It then has to STOP pulling: `1` sits at its own bucket and moving it
+/// into the hole at slot 0 would make it unfindable. That is the case
+/// the run before the growth could not stage.
+const WRAP_AFTER_RESIZE_SRC: &str = r#"module Tmp
+    intent = "remove across the wrap point of a table that grew"
+    depends []
+
+fn hit(m: Map<Int, Int>, k: Int) -> Int
+    match Option.withDefault(Map.get(m, k), -1) == k
+        true  -> 1
+        false -> 0
+
+fn absent(m: Map<Int, Int>, k: Int) -> Int
+    match Map.has(m, k)
+        true  -> 0
+        false -> 1
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n, n))
+
+fn build() -> Map<Int, Int>
+    grown = fill(30, {})
+    s1 = Map.set(grown, 63, 63)
+    Map.set(s1, 127, 127)
+
+fn main() -> Int
+    m = Map.remove(build(), 63)
+    kept = hit(m, 127) + hit(m, 1) + hit(m, 2) + hit(m, 30)
+    missing = absent(m, 63)
+    kept * 100 + missing * 10 + Map.len(m)
+"#;
+
+#[test]
+fn map_remove_after_a_resize_keeps_a_key_that_wrapped_past_the_end() {
+    assert_eq!(run_int(WRAP_AFTER_RESIZE_SRC), 4 * 100 + 10 + 31);
+}
+
+/// Growth has to rehash, not copy: a key's bucket is `hash & (cap - 1)`,
+/// so doubling `cap` exposes one more hash bit and moves about half the
+/// entries. A grow that copied slot for slot would leave every entry
+/// findable only at the bucket it had under the old mask, which is not
+/// where a probe under the new one looks.
+///
+/// These thirty keys are all multiples of sixteen, so at the starting
+/// capacity every one of them hashes to bucket 0 — a single probe run
+/// thirty slots long, rebuilt twice on the way to 64 buckets. Summing
+/// what comes back out reads every entry, and the sum only comes to
+/// `1 + … + 30` if each key kept its own value across both rebuilds.
+const REHASH_COLLIDING_RUN_SRC: &str = r#"module Tmp
+    intent = "grow a table whose keys all start in one bucket"
+    depends []
+
+fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, n * 16, n))
+
+fn total(m: Map<Int, Int>, n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> total(m, n - 1, acc + Option.withDefault(Map.get(m, n * 16), -1000))
+
+fn main() -> Int
+    m = fill(30, {})
+    total(m, 30, 0) * 100 + Map.len(m)
+"#;
+
+#[test]
+fn map_growth_rehashes_a_run_that_shared_one_bucket() {
+    assert_eq!(run_int(REHASH_COLLIDING_RUN_SRC), 465 * 100 + 30);
+}
+
 /// The VM is the oracle: the same program has to give the same answer on
-/// both backends. These two witnesses were wasm-gc-only divergences —
-/// the VM never lost a key — so pin the pair, not just the constant.
+/// both backends. The first two witnesses were wasm-gc-only divergences —
+/// the VM never lost a key — so pin the pair, not just the constant. The
+/// resize witnesses join them because the same reasoning applies: only
+/// the wasm-gc map has buckets at all, so only it can rehash them wrong.
 #[test]
 #[cfg(feature = "runtime")]
 fn map_remove_witnesses_answer_the_vm() {
+    for src in [
+        REMOVE_SHARED_BUCKET_SRC,
+        REMOVE_CLUSTER_SRC,
+        REMOVE_AFTER_RESIZE_SRC,
+        WRAP_AFTER_RESIZE_SRC,
+        REHASH_COLLIDING_RUN_SRC,
+    ] {
+        assert_eq!(run_int(src), run_int_on_vm(src));
+    }
+}
+
+/// The shape #896 was reported on: an index of tens of thousands of
+/// String keys, which is what a map is for and what the fixed 16384
+/// buckets made impossible. A hundred thousand distinct keys is twelve
+/// doublings from sixteen, and every one of them rehashes every entry
+/// inserted so far — so this also states that the amortised cost stays
+/// affordable, since a quadratic rebuild at this size would not finish.
+///
+/// The spot checks are the first key in, the last, one from the middle
+/// and one that was never there.
+#[test]
+fn map_of_a_hundred_thousand_string_keys_holds_all_of_them() {
     assert_eq!(
-        run_int(REMOVE_SHARED_BUCKET_SRC),
-        run_int_on_vm(REMOVE_SHARED_BUCKET_SRC)
-    );
-    assert_eq!(
-        run_int(REMOVE_CLUSTER_SRC),
-        run_int_on_vm(REMOVE_CLUSTER_SRC)
+        run_int(
+            r#"module Tmp
+    intent = "a hundred thousand distinct String keys on wasm-gc"
+    depends []
+
+fn fill(n: Int, acc: Map<String, Int>) -> Map<String, Int>
+    match n
+        0 -> acc
+        _ -> fill(n - 1, Map.set(acc, "key-{n}", n))
+
+fn main() -> Int
+    m = fill(100000, {})
+    first = Option.withDefault(Map.get(m, "key-1"), -1)
+    middle = Option.withDefault(Map.get(m, "key-50000"), -1)
+    last = Option.withDefault(Map.get(m, "key-100000"), -1)
+    absent = Option.withDefault(Map.get(m, "key-100001"), -1)
+    Map.len(m) + first + middle + last + absent
+"#
+        ),
+        100000 + 1 + 50000 + 100000 + -1
     );
 }
 
-/// The capacity rides in the trapping helper's name, and the
-/// `--optimize` path reads that back to warn it is about to strip it
-/// (`finalize_wasm_artifact`). Both halves of the predicate matter: a
-/// map-using module carries the names, a map-free one carries nothing
-/// to lose.
+/// The insert helpers are named in the module so a stop inside one is
+/// attributable, and the `--optimize` path reads that back to warn it
+/// is about to strip it (`finalize_wasm_artifact`). Both halves of the
+/// predicate matter: a map-using module carries the names, a map-free
+/// one carries nothing to lose.
 #[test]
 fn capacity_helper_names_are_present_exactly_when_a_map_is() {
     let with_map = compile_bytes(

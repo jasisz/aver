@@ -9,7 +9,7 @@
 //! Other K kinds surface as Unimplemented when their hash / eq would
 //! need writing — see `emit_hash_for` / `emit_eq_for`.
 //!
-//! Open-addressing layout, fixed initial capacity, no resize:
+//! Open-addressing layout, small initial capacity, doubling on load:
 //!
 //! ```text
 //! struct $map_KV {
@@ -24,25 +24,36 @@
 //! cannot legitimately be null, which Aver guarantees for ref types
 //! since the type system rejects null at the source level).
 //!
-//! Resize is a phase-3c+ extension. Cap is fixed at 16384 entries
-//! today — large enough for the bench scenarios (5000 keys), small
-//! enough to keep the `array.new_default` allocation under wasmtime's
-//! GC heap pressure threshold.
+//! The table grows. Both insert helpers check, before they probe,
+//! whether the entry they are about to add would push occupancy past
+//! three quarters of capacity (see [`LOAD_SHIFT`]); when it would,
+//! they allocate keys/values arrays at twice the capacity, rehash every
+//! live entry into the wider mask, and probe there instead. `Map.set`
+//! is therefore total up to memory exhaustion, the same promise the
+//! VM and the Rust backend make. Capacity is per-map state in the
+//! struct, so every other helper reads it from the map it was handed
+//! and needs no change.
 //!
-//! Every probe loop is bounded, because a full table is reachable:
-//! the 16384th key fills the last slot. The two insert helpers trap
-//! once a probe walks the whole table without finding a free slot —
-//! the entry has nowhere to go and the table cannot grow — and the
-//! lookup helpers report the miss, which is what `remove` already did.
+//! What the growth buys is an invariant: **a map never fills**. After
+//! any insert, occupancy is at most three quarters of capacity, so
+//! some slot is always free and every probe loop terminates on it.
+//! The two insert helpers still carry the wrap guard that #906 added,
+//! and it is now a backstop rather than a limit — reaching it means
+//! the growth above it did not happen, which is a compiler bug, and
+//! trapping is how that bug surfaces instead of hanging. The rehash
+//! probe carries the same guard for the same reason. The lookup
+//! helpers keep their wrap guards too, though a full table can no
+//! longer produce one: they report the miss, which is what `remove`
+//! has always done.
 //! `remove`'s two loops stop on the same wrap test: its locate probe
 //! when it is back at the key's home bucket, its backwards-shift scan
 //! when it is back at the slot the removal emptied.
-//! `capacity_helper_names` feeds the wasm `name` section so that trap
-//! names the capacity it hit instead of an anonymous fn index.
+//! `capacity_helper_names` feeds the wasm `name` section so a backstop
+//! trap names the helper it fired in instead of an anonymous fn index.
 //!
 //! **That name survives `--optimize` only by luck.** `wasm-opt -Oz` /
 //! `-O3` drop the `name` section outright, and `-g` does not buy it
-//! back in the shape that traps: a program that fills a map from one
+//! back in the shape that traps: a program driving a map from one
 //! `Map.set` call site gets that helper inlined into its caller, so
 //! the named body no longer exists and `-g` writes an empty name map.
 //! An optimized artifact therefore traps with `<wasm function N>`.
@@ -58,8 +69,39 @@ use super::types::{MapSlots, TypeRegistry};
 use super::wat_helper;
 
 /// Initial bucket count — power of two so masking with `cap-1`
-/// instead of `i32.rem_u` works. Sized for the bench scenarios.
-const INITIAL_CAP: i32 = 16384;
+/// instead of `i32.rem_u` works, and every doubling keeps it one.
+///
+/// Sized for the map that is created and never filled, because that
+/// is the common one: a literal `{}`, and on `--target wasip2` a
+/// fresh header map per `Http.get` call and per inbound request.
+/// Sixteen buckets cost two 16-element arrays; the old fixed 16384
+/// cost two 16384-element ones, roughly 128 KB of zeroes per empty
+/// map. It also bounds the clone-on-write `set`, which copies `cap`
+/// slots on every call — a three-key map used to pay 16384 element
+/// copies per insert. Doubling makes the total cost of reaching `n`
+/// entries linear in `n`, so starting small costs a few extra
+/// rehashes early and nothing after that.
+///
+/// Shared with the three places that inline the same empty-map
+/// allocation instead of calling the `empty` helper: `wasip2_http`,
+/// `wasip2_http_server` and `body::builtins_wasip2`. They used to
+/// carry their own copy of the number with a comment saying it had
+/// to match this one.
+pub(super) const INITIAL_CAP: i32 = 16;
+
+/// Load factor the insert helpers grow at, expressed as the shift in
+/// `threshold = cap - (cap >> LOAD_SHIFT)`. Two gives three quarters.
+///
+/// Linear probing is what makes three quarters the right number
+/// rather than the seven eighths a bucketed table would take. The
+/// expected probe count for a miss goes as `1/(1-α)²`: at 3/4 that is
+/// 16, at 7/8 it is 64. Every insert of a new key performs exactly
+/// that unsuccessful probe, so paying a third more memory to make it
+/// four times cheaper is the trade this table wants. Writing the
+/// threshold as a shift and a subtract also keeps it exact for every
+/// capacity, with no division and no `cap * 3` to overflow `i32` on a
+/// table large enough to be worth the worry.
+const LOAD_SHIFT: i32 = 2;
 
 /// Every name `capacity_helper_names` builds starts with this. The
 /// `--optimize` path reads it back out of the finished module (see
@@ -531,10 +573,12 @@ impl MapHelperRegistry {
     /// registered `Map<K, V>`, ascending by index — the shape the
     /// `name` section's function subsection wants.
     ///
-    /// These are the only helpers that can trap: their probe loop
-    /// gives up when the fixed bucket count is full. wasm traps carry
-    /// no message of their own, so the capacity rides in the fn name
-    /// and comes back out in the engine's backtrace.
+    /// These are the only helpers that can trap, and they can only do
+    /// it on a broken invariant: the table grows before it fills, so a
+    /// probe that runs out of slots means the growth did not happen.
+    /// wasm traps carry no message of their own, so the name says
+    /// which map's insert stopped and that a stop there is a bug, and
+    /// the engine's backtrace reads it back.
     pub(super) fn capacity_helper_names(&self) -> Vec<(u32, String)> {
         let mut named = Vec::with_capacity(self.kv_order.len() * 2);
         for canonical in &self.kv_order {
@@ -543,12 +587,12 @@ impl MapHelperRegistry {
             };
             named.push((
                 h.set,
-                format!("{CAPACITY_HELPER_NAME_PREFIX}{canonical} (fixed capacity {INITIAL_CAP}, no resize)"),
+                format!("{CAPACITY_HELPER_NAME_PREFIX}{canonical} (table grows; a stop here is a resize bug)"),
             ));
             named.push((
                 h.set_in_place,
                 format!(
-                    "{CAPACITY_HELPER_NAME_PREFIX}{canonical} in place (fixed capacity {INITIAL_CAP}, no resize)"
+                    "{CAPACITY_HELPER_NAME_PREFIX}{canonical} in place (table grows; a stop here is a resize bug)"
                 ),
             ));
         }
@@ -1285,99 +1329,97 @@ fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
     Ok(f)
 }
 
-/// `set(map, k, v) -> map`. Linear-probing open-addressing insert.
-/// Mutates `map` in place; returns same ref.
+/// Where an insert helper's probe writes: into a private copy of the
+/// map's arrays, or into the map's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableSource {
+    /// Clone-on-write. The helper allocates fresh keys/values arrays,
+    /// copies the map's contents in, and probes the copies, so nobody
+    /// holding an alias of the input map ever observes it mutated.
+    /// Without this, `Vector.new(n, m)` produced N aliases of `m` and a
+    /// `Map.set(row, …)` on a row fetched via `Vector.get(outer, i)`
+    /// silently rewrote every alias of that map.
+    Clone,
+    /// In place. `ir::alias` plus last-use proved the caller's map slot
+    /// is uniquely owned, so the helper probes the map's own arrays and
+    /// writes into them — two `array.new_default` and two `array.copy`
+    /// per call saved.
+    Owned,
+}
+
+/// `set(map, k, v) -> map`. Linear-probing open-addressing insert over
+/// a clone of the map's arrays. Returns a fresh map struct wrapping
+/// them; the input map is never observed mutated.
 fn emit_map_set(
     canonical: &str,
     registry: &TypeRegistry,
     keyh: KeyHelpers,
 ) -> Result<Function, WasmGcError> {
+    emit_map_insert(canonical, registry, keyh, TableSource::Clone)
+}
+
+/// `set_in_place(map, k, v) -> map`. Same insert as [`emit_map_set`]
+/// without the entry-time copy of `keys` / `values` — the caller has
+/// proven the map's arrays are uniquely owned. The returned struct
+/// still re-wraps the arrays with the updated size; callers expect a
+/// fresh map handle either way, which is also what lets a grow swap
+/// the arrays out from under the old one.
+fn emit_map_set_in_place(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+) -> Result<Function, WasmGcError> {
+    emit_map_insert(canonical, registry, keyh, TableSource::Owned)
+}
+
+/// The body both insert helpers share: settle which arrays to probe
+/// (growing first if this entry would overfill the table), then
+/// linear-probe from the key's home bucket — empty slot inserts,
+/// matching key updates. The two differ only in [`TableSource`], which
+/// the prologue reads; every instruction after it is the same, so it
+/// is written once.
+fn emit_map_insert(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+    source: TableSource,
+) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
-    let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
-    let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
+    // Both K and V must have a wasm representation to store; the
+    // conversions are the check, their results are unused here.
+    let _ = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
+    let _ = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
+    let keys_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.keys_array),
+    });
+    let values_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.values_array),
+    });
     // params: 0=map, 1=k, 2=v
-    // locals: 3=cap, 4=mask, 5=idx, 6=keys (CLONED), 7=values (CLONED),
-    //         8=cur_key, 9=home
+    // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key,
+    //         9=home, 10=src_keys, 11=src_values, 12=i
     //
-    // Clone-on-write: at entry we allocate fresh `keys` and `values`
-    // arrays, `array.copy` the source map's contents into them, and
-    // probe / mutate exclusively on the clones. The returned map struct
-    // wraps the cloned arrays, so the input map's keys/values are
-    // never observed mutated by anyone holding an alias of it. Without
-    // this, `Vector.new(n, m)` produced N aliases of `m` and a
-    // `Map.set(row, …)` on a row fetched via `Vector.get(outer, i)`
-    // silently rewrote every alias of that map.
+    // 6/7 are the arrays the probe writes to — a clone, the map's own,
+    // or a wider pair a grow just filled. 10/11 are the map's arrays as
+    // handed in, which the grow rehashes out of and the clone copies
+    // from. 12 walks them. 5/8/9 are reused by both probe loops.
     let mut f = Function::new([
-        (1, ValType::I32), // 3: cap
-        (1, ValType::I32), // 4: mask
-        (1, ValType::I32), // 5: idx
-        (
-            1,
-            ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(slots.keys_array),
-            }),
-        ), // 6: keys (the freshly-allocated clone)
-        (
-            1,
-            ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(slots.values_array),
-            }),
-        ), // 7: values (the freshly-allocated clone)
+        (1, ValType::I32),                            // 3: cap
+        (1, ValType::I32),                            // 4: mask
+        (1, ValType::I32),                            // 5: idx
+        (1, keys_ref),                                // 6: keys (probe target)
+        (1, values_ref),                              // 7: values (probe target)
         (1, key_storage_val_type(k_aver, registry)?), // 8: cur_key (boxed for primitive)
-        (1, ValType::I32), // 9: home (probe start bucket)
+        (1, ValType::I32),                            // 9: home (probe start bucket)
+        (1, keys_ref),                                // 10: src_keys (the map's own)
+        (1, values_ref),                              // 11: src_values (the map's own)
+        (1, ValType::I32),                            // 12: i (rehash / copy cursor)
     ]);
-    let _ = (v_val, k_val);
 
-    // cap = map.cap; mask = cap - 1
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(4));
-
-    // keys = array.new_default $keys cap; array.copy keys 0 map.keys 0 cap
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
-    f.instruction(&Instruction::LocalSet(6));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 2,
-    });
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayCopy {
-        array_type_index_dst: slots.keys_array,
-        array_type_index_src: slots.keys_array,
-    });
-
-    // values = array.new_default $values cap; array.copy values 0 map.values 0 cap
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
-    f.instruction(&Instruction::LocalSet(7));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 3,
-    });
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayCopy {
-        array_type_index_dst: slots.values_array,
-        array_type_index_src: slots.values_array,
-    });
+    emit_insert_prologue(&mut f, slots, k_aver, registry, keyh, source);
 
     // idx = hash(k) & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
@@ -1388,7 +1430,9 @@ fn emit_map_set(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalSet(9));
 
-    // Probe from `home`, bounded by the wrap guard at the bottom.
+    // Probe from `home`. The prologue left at least a quarter of the
+    // table empty, so a free slot exists; the wrap guard at the bottom
+    // is the backstop for that not being true.
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
     // cur_key = keys[idx]
@@ -1412,7 +1456,7 @@ fn emit_map_set(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArraySet(slots.values_array));
-    // return struct.new $map (map.size + 1, cap, new_keys, new_values)
+    // return struct.new $map (map.size + 1, cap, keys, values)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -1427,7 +1471,7 @@ fn emit_map_set(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // else if eq(unbox(cur_key), k): update value at idx, return clone.
+    // else if eq(unbox(cur_key), k): update value at idx, size unchanged.
     f.instruction(&Instruction::LocalGet(8));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
@@ -1437,7 +1481,7 @@ fn emit_map_set(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArraySet(slots.values_array));
-    // return struct.new $map (map.size, cap, new_keys, new_values)
+    // return struct.new $map (map.size, cap, keys, values)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -1466,18 +1510,235 @@ fn emit_map_set(
     Ok(f)
 }
 
-/// Bottom-of-probe-loop guard for the two insert helpers: `idx` back at
+/// Settle `cap` (3), `mask` (4) and the arrays the probe will write to
+/// (6, 7) for one insert, growing the table first when the entry about
+/// to be added would push occupancy past three quarters of capacity.
+///
+/// Growing and copying are the same act, so they are one branch each
+/// and never both: a clone-on-write insert that grows allocates the
+/// wider arrays and rehashes straight into them, which copies every
+/// live entry exactly once. The `array.copy` in the other branch is
+/// the cheaper move for the far more common insert that does not grow.
+///
+/// Rehashing rather than copying is what the wider mask requires: a
+/// key's bucket is `hash & (cap - 1)`, so doubling `cap` exposes one
+/// more hash bit and moves roughly half the entries. It also resets
+/// every displacement a collision run built up, which is why a probe
+/// on a grown table is no longer than on a fresh one.
+///
+/// The map's own arrays are read out first (10, 11) because both
+/// branches need them, and because reading them before the branch
+/// keeps the grow path from re-reading struct fields per entry.
+fn emit_insert_prologue(
+    f: &mut Function,
+    slots: MapSlots,
+    k_aver: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+    source: TableSource,
+) {
+    // cap = map.cap; src_keys = map.keys; src_values = map.values
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(11));
+
+    // Grow when map.size + 1 > cap - (cap >> LOAD_SHIFT).
+    //
+    // `size + 1` is the occupancy an insert of a new key would leave.
+    // Testing it before the probe overestimates for a key already
+    // present — that insert grows a table it did not have to. The cost
+    // is one early doubling of a map that is being overwritten at
+    // three-quarters full, and the gain is that the check reads two
+    // struct fields and needs no answer from the probe.
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(LOAD_SHIFT));
+    f.instruction(&Instruction::I32ShrU);
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32GtS);
+    f.instruction(&Instruction::If(BlockType::Empty));
+
+    // ── grow ──────────────────────────────────────────────────────
+    // cap = cap * 2; mask = cap - 1
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+    // keys = array.new_default cap; values = array.new_default cap
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
+    f.instruction(&Instruction::LocalSet(7));
+    // for i in 0 .. len(src_keys): rehash src[i] into the new arrays
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // i >= len(src_keys) → done. The old capacity is the array's own
+    // length, so the doubling above did not have to be remembered.
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    // cur_key = src_keys[i]
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(8));
+    // occupied slot → place it
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // idx = hash(unbox(cur_key)) & mask; home = idx
+    f.instruction(&Instruction::LocalGet(8));
+    emit_unbox_key(f, k_aver, registry);
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // The keys are distinct by construction, so the first free slot
+    // takes this one — no equality test, and the stored key moves
+    // across already boxed.
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::ArraySet(slots.keys_array));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    f.instruction(&Instruction::ArraySet(slots.values_array));
+    f.instruction(&Instruction::Br(2)); // placed → leave the probe
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(5));
+    // Backstop: the destination is twice the size of a table that was
+    // at most three quarters full, so it cannot be full.
+    emit_full_table_trap(f, 5, 9);
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // probe loop
+    f.instruction(&Instruction::End); // probe block
+    f.instruction(&Instruction::End); // occupied-slot if
+    // i = i + 1
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // rehash loop
+    f.instruction(&Instruction::End); // rehash block
+
+    f.instruction(&Instruction::Else);
+
+    // ── no growth ─────────────────────────────────────────────────
+    // mask = cap - 1
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+    match source {
+        TableSource::Clone => {
+            // keys = array.new_default cap; array.copy keys 0 src_keys 0 cap
+            f.instruction(&Instruction::LocalGet(3));
+            f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
+            f.instruction(&Instruction::LocalSet(6));
+            f.instruction(&Instruction::LocalGet(6));
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::LocalGet(10));
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::LocalGet(3));
+            f.instruction(&Instruction::ArrayCopy {
+                array_type_index_dst: slots.keys_array,
+                array_type_index_src: slots.keys_array,
+            });
+            // values = array.new_default cap; array.copy values 0 src_values 0 cap
+            f.instruction(&Instruction::LocalGet(3));
+            f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
+            f.instruction(&Instruction::LocalSet(7));
+            f.instruction(&Instruction::LocalGet(7));
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::LocalGet(11));
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::LocalGet(3));
+            f.instruction(&Instruction::ArrayCopy {
+                array_type_index_dst: slots.values_array,
+                array_type_index_src: slots.values_array,
+            });
+        }
+        TableSource::Owned => {
+            f.instruction(&Instruction::LocalGet(10));
+            f.instruction(&Instruction::LocalSet(6));
+            f.instruction(&Instruction::LocalGet(11));
+            f.instruction(&Instruction::LocalSet(7));
+        }
+    }
+    f.instruction(&Instruction::End); // grow if/else
+}
+
+/// Bottom-of-probe-loop guard for the insert probes: `idx` back at
 /// `home` means all `cap` slots were visited, every one occupied and
-/// none matching the key. The table does not resize, so the entry has
-/// nowhere to go — trap rather than probe forever.
+/// none matching the key.
+///
+/// **Unreachable, and that is the point.** An insert grows the table
+/// before probing it whenever the entry would leave occupancy above
+/// three quarters, so a free slot always exists and this guard never
+/// fires. Reaching it means the growth above it is broken — a compiler
+/// bug, not a program hitting a limit — and the cheapest honest answer
+/// to a broken invariant is to stop. The alternative, dropping the
+/// guard, turns the same bug back into the unbounded hang this table
+/// used to have.
 ///
 /// Placed after the `idx = (idx + 1) & mask` step, so the loop has
 /// already examined `home … home + cap - 1`: a table with a single free
-/// slot still inserts, and only a genuinely full one traps.
+/// slot still inserts, and only a genuinely full one trips the guard.
 ///
 /// The `name` section (see `MapHelperRegistry::capacity_helper_names`)
-/// carries the capacity into the helper's name, so wasmtime's backtrace
-/// says which limit was hit instead of `<wasm function N>`.
+/// carries the helper's identity, so wasmtime's backtrace says which
+/// map's insert stopped instead of `<wasm function N>`.
 fn emit_full_table_trap(f: &mut Function, idx_local: u32, home_local: u32) {
     f.instruction(&Instruction::LocalGet(idx_local));
     f.instruction(&Instruction::LocalGet(home_local));
@@ -1492,6 +1753,11 @@ fn emit_full_table_trap(f: &mut Function, idx_local: u32, home_local: u32) {
 /// slot was occupied and none matched, so the key is absent. A miss is
 /// an answer, not an error — `remove` has always given it — so each
 /// helper returns its own shape of "absent", emitted by `miss`.
+///
+/// A full table cannot be reached through the insert helpers now, so
+/// this guard is as unreachable as the insert one. It stays for the
+/// same reason and costs the same three instructions, and unlike the
+/// insert guard it has an answer rather than a trap to give.
 ///
 /// Same placement rule as the insert guard: after the
 /// `idx = (idx + 1) & mask` step, so the slot the probe started at is
@@ -1509,158 +1775,6 @@ fn emit_wrap_miss(
     miss(f);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-}
-
-/// `set_in_place(map, k, v) -> map`. Same probe-and-write loop as
-/// `emit_map_set` but without the entry-time `array.copy` of
-/// `keys` / `values` — the caller has proven (via `ir::alias` and
-/// `last_use`) that `map`'s engine arrays are uniquely owned, so
-/// rewriting them in place is sound and saves two `array.new_default`
-/// plus two `array.copy` per call. The returned struct still re-wraps
-/// the same arrays with the updated size; callers expect a fresh
-/// map handle either way.
-fn emit_map_set_in_place(
-    canonical: &str,
-    registry: &TypeRegistry,
-    keyh: KeyHelpers,
-) -> Result<Function, WasmGcError> {
-    let slots = slots_for(canonical, registry)?;
-    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
-    let _ = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
-    let _ = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
-    // params: 0=map, 1=k, 2=v
-    // locals: 3=cap, 4=mask, 5=idx,
-    //         6=keys (alias of map.keys), 7=values (alias of map.values),
-    //         8=cur_key, 9=home
-    let mut f = Function::new([
-        (1, ValType::I32),
-        (1, ValType::I32),
-        (1, ValType::I32),
-        (
-            1,
-            ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(slots.keys_array),
-            }),
-        ),
-        (
-            1,
-            ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(slots.values_array),
-            }),
-        ),
-        (1, key_storage_val_type(k_aver, registry)?),
-        (1, ValType::I32), // 9: home (probe start bucket)
-    ]);
-
-    // cap = map.cap; mask = cap - 1
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(4));
-
-    // keys = map.keys; values = map.values  (no array.copy — alias-free)
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 2,
-    });
-    f.instruction(&Instruction::LocalSet(6));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 3,
-    });
-    f.instruction(&Instruction::LocalSet(7));
-
-    // idx = hash(k) & mask; home = idx
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::Call(keyh.hash));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(5));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalSet(9));
-
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    // cur_key = keys[idx]
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::ArrayGet(slots.keys_array));
-    f.instruction(&Instruction::LocalSet(8));
-
-    // empty slot: insert
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(1));
-    emit_box_key(&mut f, k_aver, registry);
-    f.instruction(&Instruction::ArraySet(slots.keys_array));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArraySet(slots.values_array));
-    // size + 1, cap, keys, values  (same arrays, fresh struct)
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::StructNew(slots.map));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-
-    // matching key: update value
-    f.instruction(&Instruction::LocalGet(8));
-    emit_unbox_key(&mut f, k_aver, registry);
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::Call(keyh.eq));
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArraySet(slots.values_array));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::StructNew(slots.map));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-
-    // collision: probe forward
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(5));
-    emit_full_table_trap(&mut f, 5, 9);
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // loop
-    f.instruction(&Instruction::End); // block
-    f.instruction(&Instruction::Unreachable);
-    f.instruction(&Instruction::End);
-    Ok(f)
 }
 
 /// `get(map, k) -> Option<V>`. Linear-probing lookup; null slot →

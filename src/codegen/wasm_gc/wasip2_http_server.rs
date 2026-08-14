@@ -166,11 +166,12 @@ pub(super) struct ServerHandlerHelperFns {
     pub user_handler_fn: u32,
 }
 
-/// Same `INITIAL_CAP` as `emit_map_empty` in `maps.rs`. The
-/// request-headers map allocates this once per inbound request;
-/// follow-up work can shrink it when small-headers becomes the
-/// hot path.
-const INITIAL_CAP: i32 = 16384;
+/// The bucket count `emit_map_empty` starts a map at, imported
+/// rather than restated so the two cannot drift. The request-headers
+/// map allocates it once per inbound request and grows from there as
+/// the headers arrive, so the small-headers case — the common one —
+/// pays for sixteen buckets and no more.
+use super::maps::INITIAL_CAP;
 
 /// Canonical HTTP method discriminants per `wasi:http/types.method`
 /// variant. Order MUST match the WIT — the host writes the raw
