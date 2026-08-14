@@ -21,14 +21,18 @@
 //! "traversal lowering" toggle — `run_interp_lower` and `run_buffer_build`
 //! are independent flags so callers can mix them however they need.
 //!
-//! The order carries one more invariant: the **proof snapshot point**.
-//! `run` copies the AST once, after the stages that establish what the
-//! program means (TCO, typecheck) and before the first stage that exists
-//! to make it faster, and the proof-export stages read that copy — see
-//! [`AstView`]. So an optimising pass added below the snapshot point is
-//! invisible to Lean / Dafny by construction, however its flag is set;
-//! one added above it changes what gets proven and is a soundness-grade
-//! edit.
+//! The pipeline carries one more invariant, cutting ACROSS the order:
+//! the **proof line**. A pass that puts entities in the AST which the
+//! source does not contain (`interp_lower`'s `__buf_*` chain,
+//! `buffer_build`'s `<sink>__buffered` sink, the planned chars-fusion)
+//! sits below it and must never be visible to Lean / Dafny; every other
+//! pass sits above it and the proof exporters read its output. `run`
+//! serves both halves from one run: it snapshots the AST before the
+//! first fabricating stage and completes the copy afterwards by
+//! re-running the above-the-line stages on it — see [`AstView`]. So a
+//! new fabricating pass is proof-invisible by construction as long as
+//! it is not re-run on the snapshot, and moving a pass across the line
+//! is a soundness-grade edit.
 
 use crate::ast::TopLevel;
 use crate::ir::buffer_build::BufferBuildPassReport;
@@ -155,11 +159,12 @@ pub struct PipelineConfig<'a> {
     /// It used to double as the seam that keeps deforestation invisible
     /// to the proof exporters, and that seam was a CONVENTION: every
     /// proof caller had to remember to pass `false` here. It is now
-    /// STRUCTURAL — `run` snapshots the AST before this pass (see
-    /// [`AstView`]) and the proof stages read the snapshot, so what
-    /// you pass here cannot change what gets proven. A new AST pass is
-    /// automatically proof-invisible as long as it runs after the
-    /// snapshot point, which is where every optimising pass belongs.
+    /// STRUCTURAL — this pass is below the proof line, `run` snapshots
+    /// the AST before it and never re-runs it on the copy (see
+    /// [`AstView`]), so what you pass here cannot change what gets
+    /// proven. A new pass that synthesizes entities the source does not
+    /// contain belongs here, below the line, and is proof-invisible for
+    /// free.
     pub run_buffer_build: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
@@ -169,6 +174,12 @@ pub struct PipelineConfig<'a> {
     /// Independent of `run_resolve`: enabling LastUse without Resolve is
     /// a no-op (no resolved slots to annotate); skipping LastUse keeps
     /// every reference pessimistically marked as "not last".
+    ///
+    /// Above the proof line (see [`AstView`]) — it annotates, it does
+    /// not synthesize. The proof exporters ignore the annotations, so
+    /// running it on the proof view changes no emitted proof; what it
+    /// buys is that the view is the artifact's AST exactly, with no
+    /// "modulo annotations" left in the claim.
     pub run_last_use: bool,
     /// Whether to run the IR-level analysis pass after `last_use`. The
     /// pass is read-only — it populates `PipelineResult.analysis` with
@@ -181,8 +192,13 @@ pub struct PipelineConfig<'a> {
     /// with field substitution — eliminates the fresh struct alloc
     /// per call. Backend-agnostic: every backend benefits because
     /// the `RecordCreate` simply disappears from the IR.
-    /// Proof exporters (Lean / Dafny) want the source-level shape
-    /// preserved and skip this stage.
+    ///
+    /// ABOVE the proof line (see [`AstView`]): the pass introduces no
+    /// entity the source does not contain, and a certificate's model
+    /// must describe the same program its bytes were compiled from —
+    /// so the proof view runs it too, on whatever this flag says. Off,
+    /// and both halves of the run see the un-inlined program; on, and
+    /// both see the scalar-replaced one.
     pub run_escape: bool,
     /// Whether to run the refinement-lift pass. Walks user type defs
     /// and smart constructors, populating `ProofIR.refined_types`.
@@ -497,7 +513,8 @@ pub struct PipelineResult {
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
     pub pass_diagnostics: Vec<PassDiagnostic>,
-    /// What the proof exporters are allowed to see. `Some` iff a proof
+    /// The one proof-facing view — what `aver proof` exports and what
+    /// the artifact-certificate model is built from. `Some` iff a proof
     /// stage ran; see [`AstView`] for why it is a separate view and
     /// not just `items`.
     pub proof_view: Option<AstView>,
@@ -506,8 +523,8 @@ pub struct PipelineResult {
 impl PipelineResult {
     /// The view a [`crate::codegen::CodegenContext`] must be assembled
     /// from: the proof view when the proof stages ran — so Lean and
-    /// Dafny describe the source the user wrote — and the
-    /// runtime-facing pipeline output otherwise.
+    /// Dafny describe the program the certified artifact was compiled
+    /// from — and the runtime-facing pipeline output otherwise.
     ///
     /// This is the only place the choice is made, which is what keeps
     /// it from being a convention again: a caller cannot forget to
@@ -516,15 +533,18 @@ impl PipelineResult {
     /// vec (the pipeline mutates it in place and does not own it) and
     /// is used only when no proof stage ran.
     ///
-    /// Takes the view out of the result — one context per run.
-    pub fn codegen_view(&mut self, items: Vec<TopLevel>) -> AstView {
-        match self.proof_view.take() {
+    /// Consumes the result — one context per run, and asking twice is
+    /// a compile error rather than a second view that silently differs
+    /// from the first. Read anything else you need off the result
+    /// (`typecheck`, `proof_ir`, `pass_diagnostics`, …) before calling.
+    pub fn codegen_view(self, items: Vec<TopLevel>) -> AstView {
+        match self.proof_view {
             Some(view) => view,
             None => AstView {
                 items,
-                analysis: self.analysis.take(),
-                symbol_table: std::mem::take(&mut self.symbol_table),
-                resolved_items: std::mem::take(&mut self.resolved_items),
+                analysis: self.analysis,
+                symbol_table: self.symbol_table,
+                resolved_items: self.resolved_items,
             },
         }
     }
@@ -532,35 +552,53 @@ impl PipelineResult {
 
 /// An AST plus the facts derived from THAT AST — the bundle a
 /// `CodegenContext` is assembled from. Held on
-/// [`PipelineResult::proof_view`] as the snapshot taken before the
-/// first pass that exists to make the program faster.
+/// [`PipelineResult::proof_view`] as the one view every proof-facing
+/// consumer reads.
 ///
-/// A proof export must describe the program the user wrote. Optimising
-/// passes rewrite the surface AST (`buffer_build` replaces a
-/// `String.join(<builder>(…), sep)` pipeline with a buffer loop and
-/// synthesizes a `<sink>__buffered` fn; the planned chars-fusion pass
-/// will rewrite traversals the same way), so an exporter reading the
-/// post-pipeline `items` would state its theorems about the rewritten
-/// program. Keeping that from happening used to be a convention —
-/// every proof-facing caller passing `run_buffer_build: false` — and
-/// one forgotten `true` silently changed what got proven.
+/// Two rules meet in this type, and they pull in opposite directions.
 ///
-/// [`run`] therefore snapshots `items` after the stages that establish
-/// MEANING and IDENTITY (TCO, typecheck, and — mirroring the caller's
-/// own `run_resolve` / `run_analyze` gates — slot resolution and the
-/// read-only analyze pass) and before every stage that exists to make
-/// the program FASTER (`interp_lower`, `buffer_build`, `escape`, and
-/// the `last_use` / alias ownership annotations). The proof-lowering
-/// stages read this view unconditionally, and proof-facing callers
-/// build their `CodegenContext` from it, so a single pipeline run can
-/// hand a deforested AST to a runtime backend AND a pristine one to
-/// Lean / Dafny.
+/// A proof must not describe a program that does not exist in source.
+/// `buffer_build` replaces a `String.join(<builder>(…), sep)` pipeline
+/// with a buffer loop and synthesizes a `<sink>__buffered` fn;
+/// `interp_lower` replaces an interpolation with a `__buf_*` chain; the
+/// planned chars-fusion pass will do the same to traversals. Those
+/// FABRICATING passes are below the proof line. Keeping them off a
+/// proof used to be a convention — every proof-facing caller passing
+/// `run_buffer_build: false` — and one forgotten `true` silently
+/// changed what got proven.
+///
+/// A certificate must not describe a different program from the one it
+/// certifies: the artifact-certificate model is a trusted oracle over
+/// the emitted bytes (the recursion classifier reads the step operator
+/// off the MODEL, because the bytes cannot tell the bignum helpers
+/// apart), so a model built from a differently-optimised AST than the
+/// bytes attributes one program's facts to another's body. `escape` —
+/// the narrow scalar-replace of a fresh record built at a call site and
+/// immediately consumed; Aver has no general inliner — rewrites
+/// callers, so it is ABOVE the line: small, semantics-preserving, ours,
+/// guarded by the differential, and seen by both halves.
+///
+/// The line therefore cuts by WHAT A PASS DOES, and that is not a point
+/// in the stage order: `buffer_build` runs before `escape`. So [`run`]
+/// snapshots `items` before the first fabricating stage and completes
+/// the copy afterwards, re-running on it — in the pipeline's own order,
+/// and mirroring the caller's own flags — every above-the-line stage:
+/// slot resolution, `analyze`, `escape`, the `last_use` / alias
+/// ownership annotations, then the symbol table and the resolved HIR.
+/// The invariant that falls out:
+///
+/// > the proof view is the program this same run would have compiled
+/// > with the fabricating passes turned off.
+///
+/// So one pipeline run can hand a deforested AST to a runtime backend
+/// and the unfabricated one to Lean / Dafny, and a certificate's model
+/// and its bytes describe the same program.
 ///
 /// The fields mirror the `PipelineResult` ones a `CodegenContext` is
-/// built from — same data, derived from the snapshot instead of from
-/// the optimised AST.
+/// built from — same data, derived from this AST instead of from the
+/// fabricated one.
 pub struct AstView {
-    /// Entry-module items — as of the snapshot point when this is the
+    /// Entry-module items — the unfabricated program when this is the
     /// proof view.
     pub items: Vec<TopLevel>,
     /// `analyze` over [`Self::items`]. `None` when the caller left
@@ -676,13 +714,15 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
 
     // ── The proof snapshot point ────────────────────────────────────
     //
-    // Everything above this line establishes what the program MEANS
-    // (tail calls, types). Everything below it exists to make the
-    // program run faster, and the proof exporters must not see any of
-    // it — so the AST they read is copied here, once, and never again
-    // touched by a pass. A new optimising pass added below this line is
-    // proof-invisible by construction; one added above it is a
-    // soundness-grade edit.
+    // The next two stages are the FABRICATING ones: `interp_lower`
+    // replaces an interpolation with a `__buf_*` chain, `buffer_build`
+    // replaces a join pipeline with a `<sink>__buffered` loop. Both put
+    // entities in the AST that the source does not contain, and a proof
+    // about those is a proof about a program the user never wrote — so
+    // the AST the proof exporters read is copied here, before either
+    // runs. The copy is completed below by re-running the
+    // above-the-line stages on it; see [`AstView`] for why the line
+    // cannot simply be a point in this stage order.
     let proof_snapshot: Option<Vec<TopLevel>> = proof_stages.then(|| items.clone());
 
     if cfg.run_interp_lower {
@@ -787,16 +827,13 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     if proof_stages {
-        // Build the proof view from the snapshot: re-run, on the
-        // pristine copy, exactly the identity-establishing stages the
-        // caller asked for — and none of the optimising ones. See
-        // [`AstView`]. `resolve` is here because the proof exporters
-        // genuinely depend on it (the per-case kernel-decidability
-        // classifier reads resolved HIR, and unresolved idents make it
-        // fall back to `native_decide`); `escape` and the `last_use` /
-        // alias annotations are not, which the emitted-proof
-        // differential over `examples/` + `tests/fixtures/` confirms
-        // byte-for-byte.
+        // Complete the proof view on the snapshot: re-run, on the copy,
+        // every above-the-line stage this caller enabled, in this
+        // pipeline's own order — and none of the fabricating ones. The
+        // result is the program this run would have compiled with
+        // `run_interp_lower` / `run_buffer_build` off, which is exactly
+        // the AST the certified artifact is compiled from. See
+        // [`AstView`].
         let mut proof_items =
             proof_snapshot.expect("snapshot is taken whenever a proof stage is enabled");
         if cfg.run_resolve {
@@ -806,6 +843,13 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             let adapter = CallCtxAdapter(cfg.call_ctx);
             crate::ir::analyze(&proof_items, cfg.alloc_policy, &adapter)
         });
+        if cfg.run_escape {
+            crate::ir::escape::run(&mut proof_items);
+        }
+        if cfg.run_last_use {
+            last_use(&mut proof_items);
+            crate::ir::alias::annotate_program_alias_slots(&mut proof_items);
+        }
         let proof_symbol_table = crate::ir::SymbolTable::build(&proof_items, cfg.dep_modules);
         let proof_resolved_items =
             crate::ir::hir::resolve_program(&proof_symbol_table, &proof_items);
@@ -879,7 +923,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         if cfg.run_refinement_lower {
             crate::codegen::proof_lower::populate_refined_types(&inputs, &mut ir);
             result.pass_diagnostics.push(diag_for_refinement_lower(&ir));
-            fire(&mut cfg, PipelineStage::RefinementLower, items);
+            fire(&mut cfg, PipelineStage::RefinementLower, &proof_items);
         }
         if cfg.run_interval_analyze {
             // Read-only: consumes the just-built `ir.refined_types`
@@ -891,17 +935,17 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
                 .pass_diagnostics
                 .push(diag_for_interval_analyze(&analysis));
             result.interval_analysis = Some(analysis);
-            fire(&mut cfg, PipelineStage::IntervalAnalyze, items);
+            fire(&mut cfg, PipelineStage::IntervalAnalyze, &proof_items);
         }
         if cfg.run_contract_lower {
             crate::codegen::proof_lower::populate_fn_contracts(&inputs, &mut ir);
             result.pass_diagnostics.push(diag_for_contract_lower(&ir));
-            fire(&mut cfg, PipelineStage::ContractLower, items);
+            fire(&mut cfg, PipelineStage::ContractLower, &proof_items);
         }
         if cfg.run_law_lower {
             crate::codegen::proof_lower::populate_law_theorems(&inputs, &mut ir);
             result.pass_diagnostics.push(diag_for_law_lower(&ir));
-            fire(&mut cfg, PipelineStage::LawLower, items);
+            fire(&mut cfg, PipelineStage::LawLower, &proof_items);
         }
         result.proof_ir = Some(ir);
         result.proof_view = Some(AstView {

@@ -1,84 +1,126 @@
-//! The proof snapshot seam: an optimising pass can never change what
-//! gets proven.
+//! The proof-facing view: ONE program, described by the proof and
+//! compiled into the certified artifact.
 //!
-//! `buffer_build` (and the AST passes that will follow it) rewrites the
-//! surface AST the proof exporters read. Keeping deforestation invisible
-//! to Lean / Dafny used to be a CONVENTION — every proof-facing caller
-//! had to remember `run_buffer_build: false`, and one forgotten `true`
-//! silently changed the theorem statements. `pipeline::run` now
-//! snapshots the AST before the first optimising pass and hands the
-//! proof stages that snapshot, so the convention is a structure.
+//! Two rules meet here, and they pull in opposite directions.
 //!
-//! The test runs ONE pipeline with fusion ON — the scenario the
-//! convention could not survive: the same run produces a deforested AST
-//! for the runtime backend AND a pristine proof view — and asserts the
-//! emitted `.lean` / `.dfy` are byte-identical to a run with every
-//! optimising pass off.
+//! A proof must not describe a program that does not exist in source.
+//! `buffer_build` replaces a `String.join(<builder>(…), sep)` pipeline
+//! with a buffer loop and synthesizes a `<sink>__buffered` fn;
+//! `interp_lower` replaces an interpolation with a `__buf_*` chain; the
+//! planned chars-fusion will do the same to traversals. An exporter
+//! reading the post-pass AST states its theorems about entities the
+//! user never wrote. Those passes are BELOW the proof line.
+//!
+//! A certificate must not describe a different program from the one it
+//! certifies. The artifact-certificate model is a trusted oracle over
+//! the emitted bytes — the recursion classifier reads the step operator
+//! off the MODEL because the bytes cannot tell the bignum helpers
+//! apart — so a model built from a differently-optimised AST than the
+//! bytes would attribute one program's facts to another's body.
+//! `escape` — the narrow scalar-replace of a fresh record built at a
+//! call site and immediately consumed (Aver has no general inliner) —
+//! rewrites callers, so it is ABOVE the proof line: small,
+//! semantics-preserving, ours, guarded by the differential, and seen by
+//! both halves.
+//!
+//! The line therefore cuts by WHAT A PASS DOES, not by where it sits in
+//! the stage order — and the two are not the same cut, because
+//! `buffer_build` runs before `escape`. So `pipeline::run` snapshots the
+//! AST before the first fabricating pass and completes the proof view on
+//! that copy by re-running the above-the-line stages the caller asked
+//! for. The invariant that falls out is the one this file tests:
+//!
+//! > the proof view is the program this same run would have compiled
+//! > with the fabricating passes turned off.
+//!
+//! Which gives both rules at once: no synthesized entity can reach a
+//! proof, and the certificate model is the artifact's own AST.
 
+use aver::ast::TopLevel;
 use aver::codegen::{CodegenContext, build_context};
-use aver::ir::{PipelineConfig, TypecheckMode};
+use aver::ir::{PassReport, PipelineConfig, PipelineResult, TypecheckMode};
 use aver::source::parse_source;
 
 /// Canonical `String.join(<builder>(xs, []), sep)` sink — the shape
-/// `buffer_build` fuses.
+/// `buffer_build` fuses into a `__buffered` loop.
 const FUSABLE: &str = include_str!("fixtures/proof_seam_fusable.av");
 
-struct Exported {
-    lean: String,
-    dafny: String,
-    /// Did the buffer-build pass actually fire in this run? Guards the
-    /// vacuous pass where both sides are pristine because nothing fused.
-    fused: bool,
-    /// Did the post-pipeline (runtime-facing) AST carry the synthesized
-    /// buffered variant? Same guard, read off the items a backend gets.
-    items_carry_buffered: bool,
+/// `manhattan(Point(x = n, y = n * 2))` — the shape `escape`
+/// scalar-replaces into the caller.
+const ESCAPABLE: &str = include_str!("fixtures/proof_seam_escapable.av");
+
+/// What a caller asks the pipeline for. Named rather than inlined so a
+/// test reads as the claim it makes.
+#[derive(Clone, Copy)]
+struct Flags {
+    /// The passes that introduce entities the source does not contain:
+    /// `interp_lower` (`__buf_*`, `__to_str`) and `buffer_build`
+    /// (`<sink>__buffered`, `Buffer`). Below the proof line.
+    fabricating: bool,
+    /// The scalar-replace pass. Above the proof line — see the module
+    /// doc.
+    escape: bool,
+    /// Whether the proof-lowering stages run, i.e. whether this run
+    /// produces a proof view at all.
+    proof_stages: bool,
 }
 
-/// Export the fixture through the proof backends. `optimising` turns on
-/// every AST-rewriting pass a runtime backend wants — exactly what a
-/// proof-facing caller must NOT have to remember to turn off.
-fn export(optimising: bool) -> Exported {
-    let mut items = parse_source(FUSABLE).expect("fixture parses");
-    let mut pipeline_result = aver::ir::pipeline::run(
+/// One pipeline run, with both of the ASTs it can hand out.
+struct Run {
+    /// What a runtime backend compiles — post every pass this run enabled.
+    runtime_items: Vec<TopLevel>,
+    /// What `aver proof` exports and what the artifact-certificate
+    /// model is built from. `None` when no proof stage ran.
+    proof_items: Option<Vec<TopLevel>>,
+    lean: String,
+    dafny: String,
+    /// `buffer_build` fusion sites rewritten in the runtime half.
+    fusion_rewrites: usize,
+    /// Did the runtime-facing AST end up carrying a synthesized
+    /// `__buffered` sink? Read off the items a backend gets.
+    runtime_carries_buffered: bool,
+    /// `escape` call sites rewritten in the runtime half.
+    escape_rewrites: usize,
+}
+
+fn run(source: &str, project: &str, flags: Flags) -> Run {
+    let mut items = parse_source(source).expect("fixture parses");
+    let mut result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
-            run_interp_lower: optimising,
-            run_buffer_build: optimising,
-            run_escape: optimising,
-            run_refinement_lower: true,
-            run_contract_lower: true,
-            run_law_lower: true,
+            run_interp_lower: flags.fabricating,
+            run_buffer_build: flags.fabricating,
+            run_escape: flags.escape,
+            run_refinement_lower: flags.proof_stages,
+            run_contract_lower: flags.proof_stages,
+            run_law_lower: flags.proof_stages,
             run_build_symbols: true,
             ..Default::default()
         },
     );
-    let tc = pipeline_result
-        .typecheck
-        .take()
-        .expect("typecheck requested");
+    let tc = result.typecheck.take().expect("typecheck requested");
     assert!(tc.errors.is_empty(), "fixture typechecks: {:?}", tc.errors);
 
-    let fused = pipeline_result
-        .buffer_build
-        .as_ref()
-        .is_some_and(|r| r.rewrites > 0 && !r.synthesized.is_empty());
-    let items_carry_buffered = items.iter().any(|item| match item {
-        aver::ast::TopLevel::FnDef(fd) => fd.name.contains("__buffered"),
+    let fusion_rewrites = result.buffer_build.as_ref().map_or(0, |r| r.rewrites);
+    let runtime_carries_buffered = items.iter().any(|item| match item {
+        TopLevel::FnDef(fd) => fd.name.contains("__buffered"),
         _ => false,
     });
+    let escape_rewrites = escape_rewrites(&result);
+    let proof_ir = result.proof_ir.take();
+    let runtime_items = items.clone();
 
-    let proof_ir = pipeline_result.proof_ir.take();
-    // What a proof-facing caller assembles its context from. With the
-    // proof stages on, `codegen_view` hands back the AST as it stood
-    // before the first optimising pass plus the facts derived from it
-    // — never the `items` the runtime backend gets.
-    let view = pipeline_result.codegen_view(items);
+    // Every proof-facing caller assembles its context from the same
+    // accessor — `aver proof`, the certificate model, the playground,
+    // these tests. There is no second way to reach an AST from here.
+    let view = result.codegen_view(items);
+    let proof_items = flags.proof_stages.then(|| view.items.clone());
     let mut ctx: CodegenContext = build_context(
         view.items,
         &tc,
         view.analysis.as_ref(),
-        "ProofSeamFusable".to_string(),
+        project.to_string(),
         vec![],
         view.symbol_table,
         view.resolved_items,
@@ -99,37 +141,184 @@ fn export(optimising: bool) -> Exported {
         .map(|(path, body)| format!("== {path} ==\n{body}"))
         .collect::<Vec<_>>()
         .join("\n");
-    Exported {
+    Run {
+        runtime_items,
+        proof_items,
         lean,
         dafny,
-        fused,
-        items_carry_buffered,
+        fusion_rewrites,
+        runtime_carries_buffered,
+        escape_rewrites,
     }
+}
+
+fn escape_rewrites(result: &PipelineResult) -> usize {
+    result
+        .pass_diagnostics
+        .iter()
+        .find_map(|d| match d.report {
+            PassReport::Escape { rewrites } => Some(rewrites),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// Every pass exists to serve the program the user wrote, so nothing it
+/// invents may reach a proof. This compiler names everything it
+/// synthesizes with a leading `__` (`__buffered`, `__buf_new`,
+/// `__to_str`), and no Aver source in this repo uses one — so a `__`
+/// anywhere in the view's own Debug rendering means a fabricated entity
+/// got through, wherever it sits in the AST. Backstop to the equality
+/// tests below: those pin the view against a REFERENCE RUN, which a new
+/// fabricating pass with a default-on flag would move too.
+fn assert_no_synthesized_entity(items: &[TopLevel], what: &str) {
+    let rendered = format!("{items:?}");
+    assert!(
+        !rendered.contains("__"),
+        "{what} carries a compiler-synthesized entity — a proof about it \
+         would be a proof about a program that does not exist in source"
+    );
+}
+
+/// THE invariant. `aver proof` and the artifact-certificate model both
+/// read this view, and the certified bytes are compiled from an AST
+/// that ran the same above-the-line passes — so the two agree by
+/// construction rather than by two callers happening to pass matching
+/// flags.
+///
+/// `reference` mirrors what `cmd_compile_wasm_gc` compiles on the
+/// `--certify` path (`run_interp_lower: false`, `run_buffer_build:
+/// false`, every other pass at its default) and `model` mirrors the
+/// `build_codegen_context` call `emit_artifact_certificate` makes for
+/// the model, plus — for the fusable fixture — the fabricating passes a
+/// VM/Rust build would additionally run.
+fn assert_proof_view_is_the_unfabricated_program(source: &str, project: &str, fabricating: bool) {
+    let model = run(
+        source,
+        project,
+        Flags {
+            fabricating,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+    let artifact = run(
+        source,
+        project,
+        Flags {
+            fabricating: false,
+            escape: true,
+            proof_stages: false,
+        },
+    );
+    let proof_items = model.proof_items.expect("proof stages ran");
+    assert_eq!(
+        proof_items, artifact.runtime_items,
+        "the proof view must be the program this run would have compiled \
+         with the fabricating passes off — otherwise a certificate's model \
+         and its bytes describe two different programs"
+    );
+    assert!(
+        !model.lean.is_empty() && !model.dafny.is_empty(),
+        "the export must be non-empty — an empty one satisfies every equality here"
+    );
+    assert_no_synthesized_entity(&proof_items, "the proof view");
+}
+
+#[test]
+fn proof_view_is_what_the_certified_artifact_was_compiled_from() {
+    // The `--certify` shape: the model run and the artifact run pass
+    // the same flags, and `escape` rewrites the program under both.
+    assert_proof_view_is_the_unfabricated_program(
+        ESCAPABLE,
+        "ProofSeamEscapable",
+        /* fabricating */ false,
+    );
+
+    // Non-vacuity: `escape` must actually fire on this fixture, and the
+    // view must actually differ from the snapshot the pipeline takes —
+    // otherwise the equality above holds for a program nothing rewrote.
+    let model = run(
+        ESCAPABLE,
+        "ProofSeamEscapable",
+        Flags {
+            fabricating: false,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+    assert!(
+        model.escape_rewrites > 0,
+        "fixture must scalar-replace — otherwise this test proves nothing"
+    );
+    let unescaped = run(
+        ESCAPABLE,
+        "ProofSeamEscapable",
+        Flags {
+            fabricating: false,
+            escape: false,
+            proof_stages: true,
+        },
+    );
+    assert_ne!(
+        model.proof_items.expect("proof stages ran"),
+        unescaped.proof_items.expect("proof stages ran"),
+        "the proof view must be the post-escape program, not the snapshot \
+         the pipeline took before it"
+    );
+    assert_ne!(
+        model.lean, unescaped.lean,
+        "scalar replacement must be visible in the emitted proof — the \
+         certificate's model is a claim about the artifact's own body"
+    );
 }
 
 #[test]
 fn fusion_cannot_change_what_gets_proven() {
-    let pristine = export(false);
-    let fused = export(true);
+    // The two runs differ in the fabricating passes and NOTHING else:
+    // every other stage is at its default on both sides, so what this
+    // measures is deforestation, not a pile of flags.
+    let pristine = run(
+        FUSABLE,
+        "ProofSeamFusable",
+        Flags {
+            fabricating: false,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+    let fused = run(
+        FUSABLE,
+        "ProofSeamFusable",
+        Flags {
+            fabricating: true,
+            escape: true,
+            proof_stages: true,
+        },
+    );
 
     // Non-vacuity: the optimising run really did deforest, in the same
     // pipeline run that produced the proof export.
     assert!(
-        fused.fused && fused.items_carry_buffered,
-        "fixture must fuse with the optimising passes on — otherwise this test proves nothing"
+        fused.fusion_rewrites > 0 && fused.runtime_carries_buffered,
+        "fixture must fuse with the fabricating passes on — otherwise this test proves nothing"
     );
     assert!(
-        !pristine.fused,
+        pristine.fusion_rewrites == 0 && !pristine.runtime_carries_buffered,
         "the pristine run must not fuse — otherwise the two sides agree trivially"
+    );
+    assert!(
+        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        "the export must be non-empty — an empty one satisfies every equality here"
     );
 
     assert_eq!(
         pristine.lean, fused.lean,
-        "emitted Lean must not depend on whether the optimising passes ran"
+        "emitted Lean must not depend on whether the fabricating passes ran"
     );
     assert_eq!(
         pristine.dafny, fused.dafny,
-        "emitted Dafny must not depend on whether the optimising passes ran"
+        "emitted Dafny must not depend on whether the fabricating passes ran"
     );
     assert!(
         !fused.lean.contains("__buffered"),
@@ -138,5 +327,19 @@ fn fusion_cannot_change_what_gets_proven() {
     assert!(
         !fused.dafny.contains("__buffered"),
         "the deforested shape leaked into the emitted Dafny"
+    );
+}
+
+/// The same AST invariant as the certificate half, on the fixture that
+/// fuses: with the fabricating passes ON, the proof view is still the
+/// program a fabrication-free build compiles. Separate from the emitted
+/// -text test above so a regression reports both facts, not the first
+/// one to trip.
+#[test]
+fn proof_view_under_fusion_is_the_unfused_program() {
+    assert_proof_view_is_the_unfabricated_program(
+        FUSABLE,
+        "ProofSeamFusable",
+        /* fabricating */ true,
     );
 }

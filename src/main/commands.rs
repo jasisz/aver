@@ -2838,12 +2838,17 @@ fn build_codegen_context(
         }
     };
     // A context that carries ProofIR is one the proof exporters read,
-    // so its dep modules stay source-level whatever the caller asked
-    // for at `apply_traversal_lowering`. The entry module's own seam is
-    // structural (`pipeline::run` snapshots the AST for the proof
-    // stages); this is the same rule one level down, where the dep
+    // so its dep modules keep the fabricating passes off whatever the
+    // caller asked for at `apply_traversal_lowering`. The entry
+    // module's own line is structural (`pipeline::run` snapshots the
+    // AST for the proof stages and completes the copy without those
+    // passes); this is the same line one level down, where the dep
     // module's post-pass items are what `ModuleInfo.fn_defs` carries
-    // into the export.
+    // into the export. Everything above the line — `escape`, the
+    // ownership annotations — runs on a dep exactly as it does on the
+    // entry module and on the certified artifact's own dep load
+    // (`cmd_compile_wasm_gc` passes the same two `false`s), so the two
+    // sides of a certificate agree on dep bodies as well.
     let proof_facing = run_refinement_lower || run_contract_lower || run_law_lower;
     let dep_lowering = apply_traversal_lowering && !proof_facing;
     // Load dep modules BEFORE the entry pipeline runs — needed because
@@ -3570,12 +3575,17 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // Proof stages don't transform items — they produce a side
     // artifact. Render the lowered ProofIR (whichever fields the
     // selected stage populated) instead of the (unchanged) items list.
+    // Its `FnId`s are keyed through the symbol table of the AST the
+    // stages read, which is the proof view's, not the runtime one's —
+    // these defaults leave fusion on, and a fused run's table carries
+    // a `__buffered` entry the proof view has no name for.
     if proof_target {
-        match pipeline_result.proof_ir {
-            Some(ir) => print!(
-                "{}",
-                render_proof_ir_dump(&ir, &pipeline_result.symbol_table)
-            ),
+        let symbols = match pipeline_result.proof_view.as_ref() {
+            Some(view) => &view.symbol_table,
+            None => &pipeline_result.symbol_table,
+        };
+        match pipeline_result.proof_ir.as_ref() {
+            Some(ir) => print!("{}", render_proof_ir_dump(ir, symbols)),
             None => {
                 eprintln!(
                     "{}",

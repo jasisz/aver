@@ -89,7 +89,7 @@ Options:
       --verify-mode <VERIFY_MODE>  Lean only: auto | sorry | theorem-skeleton
 ```
 
-The export always describes the source you wrote. The pipeline snapshots the AST after `tco` + `typecheck` and before `interp_lower` — the first pass that exists to make the program faster — and the proof stages read that snapshot, so no optimisation (`interp_lower`, `buffer_build`, `escape`, or one added later) can change what gets proven. `--emit-ir-after=buffer_build` shows what the runtime backends compile; the proof export is pinned to the `typecheck` stage's IR.
+The export never describes a program that does not exist in your source. Passes that synthesize code of their own — `interp_lower`'s string-buffer chain, `buffer_build`'s fused sink, the traversal fusion that follows them — are invisible to a proof by construction: the pipeline snapshots the AST before the first of them and the proof stages read that copy, so no flag on any caller can put an entity you never wrote into a theorem. A pass that only rewrites code you did write runs on the copy too — today that is `escape`, which replaces a record you build at a call site and the callee only reads with the callee's own body — because a certificate has to state its theorems about the same program its certified bytes were compiled from. So an exported proof describes your source as your artifact was built from it, and `aver compile --target wasm-gc --certify` produces a model and a binary that are two renderings of one program. `--emit-ir-after=buffer_build` shows what the runtime backends compile, fused sinks and all; that dump is not what the export reads.
 
 ### Debugging a law that didn't auto-prove
 
