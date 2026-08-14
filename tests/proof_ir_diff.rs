@@ -29,7 +29,7 @@ fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
     // Proof-mode minimal pipeline: rewrite stages off (would alter
     // source-level recursion shapes the classifier matches against).
-    let pipeline_result = aver::ir::pipeline::run(
+    let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             run_tco: true,
@@ -54,17 +54,23 @@ fn build_ctx(src: &str) -> CodegenContext {
             on_after_pass: None,
         },
     );
-    let tc = pipeline_result.typecheck.expect("typecheck requested");
+    let tc = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck requested");
     assert!(tc.errors.is_empty(), "source typechecks: {:?}", tc.errors);
-    let proof_ir = pipeline_result.proof_ir;
+    let proof_ir = pipeline_result.proof_ir.take();
+    // Assemble through `codegen_view`, the way every proof-facing
+    // caller does — see `aver::ir::AstView`.
+    let view = pipeline_result.codegen_view(items);
     let mut ctx = aver::codegen::build_context(
-        items,
+        view.items,
         &tc,
-        pipeline_result.analysis.as_ref(),
+        view.analysis.as_ref(),
         "diff".to_string(),
         vec![],
-        pipeline_result.symbol_table,
-        pipeline_result.resolved_items,
+        view.symbol_table,
+        view.resolved_items,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;

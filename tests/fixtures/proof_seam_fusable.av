@@ -1,0 +1,29 @@
+module ProofSeamFusable
+    intent =
+        "An entry-module sink in the canonical `String.join(<builder>(xs, []), sep)`"
+        "shape, so the buffer-build deforestation pass fires on it. Fixture for the"
+        "proof snapshot seam: the emitted proof must describe THIS source, whether or"
+        "not the optimising passes rewrote the program for a runtime backend."
+    effects [Console]
+
+fn labels(values: List<Int>, acc: List<String>) -> List<String>
+    ? "Render each value as its own piece, accumulating in reverse."
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> labels(tail, List.prepend(String.fromInt(head), acc))
+
+fn render(values: List<Int>) -> String
+    ? "Join the rendered pieces with a comma."
+    String.join(labels(values, []), ",")
+
+verify labels
+    labels([], []) => []
+    labels([1, 20], []) => ["1", "20"]
+
+verify render
+    render([]) => ""
+    render([1, 20]) => "1,20"
+
+fn main()
+    ! [Console.print]
+    Console.print(render([1, 2, 3]))

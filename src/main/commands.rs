@@ -2837,6 +2837,15 @@ fn build_codegen_context(
             base_dir: Some(&module_root),
         }
     };
+    // A context that carries ProofIR is one the proof exporters read,
+    // so its dep modules stay source-level whatever the caller asked
+    // for at `apply_traversal_lowering`. The entry module's own seam is
+    // structural (`pipeline::run` snapshots the AST for the proof
+    // stages); this is the same rule one level down, where the dep
+    // module's post-pass items are what `ModuleInfo.fn_defs` carries
+    // into the export.
+    let proof_facing = run_refinement_lower || run_contract_lower || run_law_lower;
+    let dep_lowering = apply_traversal_lowering && !proof_facing;
     // Load dep modules BEFORE the entry pipeline runs — needed because
     // the proof-lower pipeline stage walks both entry items and dep
     // module type/fn defs in one sweep (cross-module refinement records,
@@ -2846,12 +2855,12 @@ fn build_codegen_context(
     let modules = load_compile_deps(
         &items,
         &module_root,
-        apply_traversal_lowering, // run_interp_lower
-        apply_traversal_lowering, // run_buffer_build
-        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
+        dep_lowering,           // run_interp_lower
+        dep_lowering,           // run_buffer_build
+        with_self_host_support, // self_host_mode → bypass opaque in dep modules
     );
 
-    let pipeline_result = aver::ir::pipeline::run(
+    let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(typecheck_mode),
@@ -2871,7 +2880,10 @@ fn build_codegen_context(
             ..Default::default()
         },
     );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
+    let tc_result = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         print_type_errors(&tc_result.errors);
         process::exit(1);
@@ -2909,15 +2921,22 @@ fn build_codegen_context(
     // ProofIR (when proof stages ran) comes pre-computed from the
     // pipeline; pull it across before assembly so build_context doesn't
     // redundantly recompute it.
-    let prebuilt_proof_ir = pipeline_result.proof_ir;
+    let prebuilt_proof_ir = pipeline_result.proof_ir.take();
+    // A proof-facing context is assembled from the pipeline's proof
+    // view — the AST as it stood before the first optimising pass, plus
+    // the facts derived from THAT AST — so the exporters describe the
+    // program the user wrote no matter which passes this build ran.
+    // Runtime backends keep the post-pipeline items, deforestation and
+    // all. `codegen_view` is where that choice is made.
+    let view = pipeline_result.codegen_view(items);
     let mut ctx = codegen::build_context(
-        items,
+        view.items,
         &tc_result,
-        pipeline_result.analysis.as_ref(),
+        view.analysis.as_ref(),
         name,
         modules,
-        pipeline_result.symbol_table,
-        pipeline_result.resolved_items,
+        view.symbol_table,
+        view.resolved_items,
     );
     #[cfg(feature = "runtime")]
     if let Some(ir) = prebuilt_proof_ir {

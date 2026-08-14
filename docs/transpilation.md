@@ -89,6 +89,8 @@ Options:
       --verify-mode <VERIFY_MODE>  Lean only: auto | sorry | theorem-skeleton
 ```
 
+The export always describes the source you wrote. The pipeline snapshots the AST after `tco` + `typecheck` and before `interp_lower` — the first pass that exists to make the program faster — and the proof stages read that snapshot, so no optimisation (`interp_lower`, `buffer_build`, `escape`, or one added later) can change what gets proven. `--emit-ir-after=buffer_build` shows what the runtime backends compile; the proof export is pinned to the `typecheck` stage's IR.
+
 ### Debugging a law that didn't auto-prove
 
 When a `verify <fn> law` emits `sorry` (Lean) or empty-body (Dafny), the question is always: did the lowerer fail to classify the shape, or did it classify and the backend's auto-proof fell short?

@@ -20,6 +20,15 @@
 //! is which stages run, not their ordering. There is **no** bundled
 //! "traversal lowering" toggle — `run_interp_lower` and `run_buffer_build`
 //! are independent flags so callers can mix them however they need.
+//!
+//! The order carries one more invariant: the **proof snapshot point**.
+//! `run` copies the AST once, after the stages that establish what the
+//! program means (TCO, typecheck) and before the first stage that exists
+//! to make it faster, and the proof-export stages read that copy — see
+//! [`AstView`]. So an optimising pass added below the snapshot point is
+//! invisible to Lean / Dafny by construction, however its flag is set;
+//! one added above it changes what gets proven and is a soundness-grade
+//! edit.
 
 use crate::ast::TopLevel;
 use crate::ir::buffer_build::BufferBuildPassReport;
@@ -143,14 +152,14 @@ pub struct PipelineConfig<'a> {
     /// wasm-gc family cannot lower the `Buffer` it introduces and leaves
     /// it off.
     ///
-    /// It is also the seam that keeps deforestation invisible to the
-    /// proof exporters, and today that seam is a CONVENTION, not a
-    /// structure: every proof caller has to remember to pass `false`
-    /// here (and a reviewer has to notice when one forgets). Making
-    /// proof-lower read a snapshot taken before the optimising passes —
-    /// so the exporters cannot see a rewritten body no matter what a
-    /// caller passes — is a separate change; until it lands, treat a new
-    /// `true` on a proof-facing path as a soundness-grade edit.
+    /// It used to double as the seam that keeps deforestation invisible
+    /// to the proof exporters, and that seam was a CONVENTION: every
+    /// proof caller had to remember to pass `false` here. It is now
+    /// STRUCTURAL — `run` snapshots the AST before this pass (see
+    /// [`AstView`]) and the proof stages read the snapshot, so what
+    /// you pass here cannot change what gets proven. A new AST pass is
+    /// automatically proof-invisible as long as it runs after the
+    /// snapshot point, which is where every optimising pass belongs.
     pub run_buffer_build: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
@@ -488,6 +497,78 @@ pub struct PipelineResult {
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
     pub pass_diagnostics: Vec<PassDiagnostic>,
+    /// What the proof exporters are allowed to see. `Some` iff a proof
+    /// stage ran; see [`AstView`] for why it is a separate view and
+    /// not just `items`.
+    pub proof_view: Option<AstView>,
+}
+
+impl PipelineResult {
+    /// The view a [`crate::codegen::CodegenContext`] must be assembled
+    /// from: the proof view when the proof stages ran — so Lean and
+    /// Dafny describe the source the user wrote — and the
+    /// runtime-facing pipeline output otherwise.
+    ///
+    /// This is the only place the choice is made, which is what keeps
+    /// it from being a convention again: a caller cannot forget to
+    /// prefer the proof view, because asking for context inputs IS
+    /// asking this question. `items` is the caller's post-pipeline
+    /// vec (the pipeline mutates it in place and does not own it) and
+    /// is used only when no proof stage ran.
+    pub fn codegen_view(&mut self, items: Vec<TopLevel>) -> AstView {
+        match self.proof_view.take() {
+            Some(view) => view,
+            None => AstView {
+                items,
+                analysis: self.analysis.take(),
+                symbol_table: std::mem::take(&mut self.symbol_table),
+                resolved_items: std::mem::take(&mut self.resolved_items),
+            },
+        }
+    }
+}
+
+/// An AST plus the facts derived from THAT AST — the bundle a
+/// `CodegenContext` is assembled from. Held on
+/// [`PipelineResult::proof_view`] as the snapshot taken before the
+/// first pass that exists to make the program faster.
+///
+/// A proof export must describe the program the user wrote. Optimising
+/// passes rewrite the surface AST (`buffer_build` replaces a
+/// `String.join(<builder>(…), sep)` pipeline with a buffer loop and
+/// synthesizes a `<sink>__buffered` fn; the planned chars-fusion pass
+/// will rewrite traversals the same way), so an exporter reading the
+/// post-pipeline `items` would state its theorems about the rewritten
+/// program. Keeping that from happening used to be a convention —
+/// every proof-facing caller passing `run_buffer_build: false` — and
+/// one forgotten `true` silently changed what got proven.
+///
+/// [`run`] therefore snapshots `items` after the stages that establish
+/// MEANING and IDENTITY (TCO, typecheck, and — mirroring the caller's
+/// own `run_resolve` / `run_analyze` gates — slot resolution and the
+/// read-only analyze pass) and before every stage that exists to make
+/// the program FASTER (`interp_lower`, `buffer_build`, `escape`, and
+/// the `last_use` / alias ownership annotations). The proof-lowering
+/// stages read this view unconditionally, and proof-facing callers
+/// build their `CodegenContext` from it, so a single pipeline run can
+/// hand a deforested AST to a runtime backend AND a pristine one to
+/// Lean / Dafny.
+///
+/// The fields mirror the `PipelineResult` ones a `CodegenContext` is
+/// built from — same data, derived from the snapshot instead of from
+/// the optimised AST.
+#[derive(Default)]
+pub struct AstView {
+    /// Entry-module items — as of the snapshot point when this is the
+    /// proof view.
+    pub items: Vec<TopLevel>,
+    /// `analyze` over [`Self::items`]. `None` when the caller left
+    /// `run_analyze` off (the main view is `None` then too).
+    pub analysis: Option<AnalysisResult>,
+    /// Symbol table built over [`Self::items`].
+    pub symbol_table: crate::ir::SymbolTable,
+    /// Resolved HIR lifted from [`Self::items`].
+    pub resolved_items: Vec<crate::ir::hir::ResolvedTopLevel>,
 }
 
 // ── Per-stage entry points ──────────────────────────────────────────
@@ -561,6 +642,14 @@ pub fn last_use(items: &mut [TopLevel]) {
 pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineResult {
     let mut result = PipelineResult::default();
 
+    // Proof stages run at the tail of the pipeline but read an AST from
+    // its head — see [`AstView`]. Knowing up front whether any of them
+    // is on is what makes the snapshot free for runtime-only pipelines.
+    let proof_stages = cfg.run_refinement_lower
+        || cfg.run_interval_analyze
+        || cfg.run_contract_lower
+        || cfg.run_law_lower;
+
     if cfg.run_tco {
         let pre = pass_diag::collect(items);
         tco(items);
@@ -583,6 +672,17 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             return result;
         }
     }
+
+    // ── The proof snapshot point ────────────────────────────────────
+    //
+    // Everything above this line establishes what the program MEANS
+    // (tail calls, types). Everything below it exists to make the
+    // program run faster, and the proof exporters must not see any of
+    // it — so the AST they read is copied here, once, and never again
+    // touched by a pass. A new optimising pass added below this line is
+    // proof-invisible by construction; one added above it is a
+    // soundness-grade edit.
+    let proof_snapshot: Option<Vec<TopLevel>> = proof_stages.then(|| items.clone());
 
     if cfg.run_interp_lower {
         let pre = pass_diag::collect(items);
@@ -685,11 +785,30 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         fire(&mut cfg, PipelineStage::NameResolve, items);
     }
 
-    if cfg.run_refinement_lower
-        || cfg.run_interval_analyze
-        || cfg.run_contract_lower
-        || cfg.run_law_lower
-    {
+    if proof_stages {
+        // Build the proof view from the snapshot: re-run, on the
+        // pristine copy, exactly the identity-establishing stages the
+        // caller asked for — and none of the optimising ones. See
+        // [`AstView`]. `resolve` is here because the proof exporters
+        // genuinely depend on it (the per-case kernel-decidability
+        // classifier reads resolved HIR, and unresolved idents make it
+        // fall back to `native_decide`); `escape` and the `last_use` /
+        // alias annotations are not, which the emitted-proof
+        // differential over `examples/` + `tests/fixtures/` confirms
+        // byte-for-byte.
+        let mut proof_items =
+            proof_snapshot.expect("snapshot is taken whenever a proof stage is enabled");
+        if cfg.run_resolve {
+            resolve(&mut proof_items);
+        }
+        let proof_analysis = cfg.run_analyze.then(|| {
+            let adapter = CallCtxAdapter(cfg.call_ctx);
+            crate::ir::analyze(&proof_items, cfg.alloc_policy, &adapter)
+        });
+        let proof_symbol_table = crate::ir::SymbolTable::build(&proof_items, cfg.dep_modules);
+        let proof_resolved_items =
+            crate::ir::hir::resolve_program(&proof_symbol_table, &proof_items);
+
         // Round-5: union entry's analyze with each dep module's
         // `analysis.recursive_fns`. Without this, multi-module proof
         // export's `populate_fn_contracts` only sees entry-recursive
@@ -704,10 +823,10 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         // uses to populate `ctx.recursive_fns`. Without a symbol
         // table the producer side of proof_lower can't run anyway
         // (populate panics by design), so default to empty.
-        let symbols = &result.symbol_table;
+        let symbols = &proof_symbol_table;
         let recursive_fns_owned: std::collections::HashSet<crate::ir::FnId> = {
             let mut set = std::collections::HashSet::new();
-            if let Some(a) = result.analysis.as_ref() {
+            if let Some(a) = proof_analysis.as_ref() {
                 set.extend(crate::codegen::scc::analysis_set_to_fn_ids(
                     &a.recursive_fns,
                     symbols,
@@ -735,8 +854,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         // archetype facts here only see entry-module resolved fns,
         // which is enough for the current refinement adapter (dep
         // modules don't expose ResolvedFnDef to the pipeline yet).
-        let entry_resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> = result
-            .resolved_items
+        let entry_resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> = proof_resolved_items
             .iter()
             .filter_map(|t| match t {
                 crate::ir::hir::ResolvedTopLevel::FnDef(fd) => Some(fd),
@@ -745,11 +863,11 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             .collect();
         let program_shape = crate::analysis::shape::analyze_program_with_modules(
             &entry_resolved_fns,
-            items,
+            &proof_items,
             cfg.dep_modules,
         );
         let inputs = crate::codegen::proof_lower::ProofLowerInputs {
-            entry_items: items,
+            entry_items: &proof_items,
             dep_modules: cfg.dep_modules,
             module_prefixes: &module_prefixes,
             recursive_fns: &recursive_fns_owned,
@@ -785,6 +903,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             fire(&mut cfg, PipelineStage::LawLower, items);
         }
         result.proof_ir = Some(ir);
+        result.proof_view = Some(AstView {
+            items: proof_items,
+            analysis: proof_analysis,
+            symbol_table: proof_symbol_table,
+            resolved_items: proof_resolved_items,
+        });
     }
 
     result

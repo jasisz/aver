@@ -293,7 +293,7 @@ fn build_ctx(
     // requirements always co-vary in the playground, so the same
     // flag drives both.
     let proof_target = !apply_traversal_lowering;
-    let pipeline_result = crate::ir::pipeline::run(
+    let mut pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
@@ -305,19 +305,26 @@ fn build_ctx(
             ..Default::default()
         },
     );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
+    let tc_result = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
-    let proof_ir = pipeline_result.proof_ir;
+    let proof_ir = pipeline_result.proof_ir.take();
+    // Proof targets assemble from the pipeline's proof view — the AST
+    // as of the snapshot point, before any optimising pass; the Rust
+    // target keeps the deforested items. `codegen_view` picks.
+    let view = pipeline_result.codegen_view(items);
     let mut ctx = codegen::build_context(
-        items,
+        view.items,
         &tc_result,
-        pipeline_result.analysis.as_ref(),
+        view.analysis.as_ref(),
         "playground".to_string(),
         vec![],
-        pipeline_result.symbol_table,
-        pipeline_result.resolved_items,
+        view.symbol_table,
+        view.resolved_items,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
@@ -387,7 +394,7 @@ fn build_project_ctx(
     // stages so the FnId-keyed `fn_contracts` / `refined_types` maps
     // are reachable downstream.
     let proof_target = !apply_traversal_lowering;
-    let pipeline_result = crate::ir::pipeline::run(
+    let mut pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
@@ -400,20 +407,26 @@ fn build_project_ctx(
             ..Default::default()
         },
     );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
+    let tc_result = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    let proof_ir = pipeline_result.proof_ir;
+    let proof_ir = pipeline_result.proof_ir.take();
+    // Proof targets assemble from the pipeline's proof view; the Rust
+    // target keeps the deforested items. `codegen_view` picks.
+    let view = pipeline_result.codegen_view(entry_items);
     let mut ctx = codegen::build_context(
-        entry_items,
+        view.items,
         &tc_result,
-        pipeline_result.analysis.as_ref(),
+        view.analysis.as_ref(),
         "playground".to_string(),
         modules,
-        pipeline_result.symbol_table,
-        pipeline_result.resolved_items,
+        view.symbol_table,
+        view.resolved_items,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
