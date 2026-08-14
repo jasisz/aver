@@ -44,9 +44,11 @@ pub struct VM {
     /// the arena GC — buffer handles travel as `Int(idx)` NanValues.
     buffer_pool: Vec<Option<String>>,
     /// How the compiler's static owned mask and the operand stack's own view of
-    /// who holds a slot compared, over this VM's lifetime. Maintained whether or
-    /// not profiling is on: the events are rare and the soundness direction is
-    /// worth counting in a release build, where its assertion is compiled out.
+    /// who holds a slot compared, over this VM's lifetime. Maintained where the
+    /// answer has a reader — a debug build, where the same comparison is also an
+    /// assertion, or a run that asked for a profile — and left at zero on the
+    /// default release path, where computing it would mean walking the stack
+    /// once per collection write for nobody.
     slot_uniqueness: VmSlotUniquenessStats,
 }
 

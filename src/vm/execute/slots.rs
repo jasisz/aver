@@ -27,11 +27,27 @@
 //! deciding about: the thing being avoided is `O(size)`, the question is
 //! `O(depth)`.
 //!
-//! The pathological shape is a program writing to a small collection from the
-//! bottom of a very deep recursion, where the walk is long and the copy it would
-//! replace is short. Nothing in the corpus is that shape, and it is worth saying
-//! out loud rather than capping the walk: a cap would make the answer depend on
-//! how deeply the program happened to be nested.
+//! ## Who pays for the walk
+//!
+//! Nobody, unless they asked. The comparison decides nothing in P1, so the only
+//! consumers are the assertion — compiled out of a release build — and the
+//! `--profile` report. [`VM::cross_check_owned_mask`] therefore skips the walk
+//! entirely in a release build that did not ask for a profile, and a default
+//! release run pays one predictable branch per collection write instead.
+//!
+//! That gate is not bookkeeping tidiness. The shape that pays is a program
+//! writing to a collection from the bottom of a deep NON-TAIL recursion: every
+//! suspended frame's locals are cells the walk has to visit, and the granted
+//! case — the in-place fold the optimizer worked hardest on — is precisely the
+//! one where the walk finds no holder and therefore scans all of them. Measured
+//! at depth 2000 with two million inserts underneath it, `--release`, serial,
+//! the binaries interleaved, per-round spreads under 0.04: walking
+//! unconditionally cost 12.9x against `main`, and the gate takes that to 0.99.
+//! The same gated binary run with `--profile` is back at 3.61 s against the
+//! ungated 3.38 s, which is the point: the walk is not gone, it is charged to
+//! the run that asked for it. Capping the walk was the other option and is
+//! worse, because the answer would then depend on how deeply the program
+//! happened to be nested.
 //!
 //! ## What the count is NOT
 //!
@@ -41,6 +57,47 @@
 //! count is observed, and the only thing consulted is the DIRECTIONAL
 //! cross-check against the static owned mask. Anything that later wants to take
 //! a decision from it owes the other holders a separate argument.
+//!
+//! ## What the cross-check never sees
+//!
+//! Four blind spots. All four undercount and none costs a guard, but the last
+//! two are the reason the numbers below are a MAP-shaped picture, and P2 owes
+//! each of them an answer before a decision is taken from any of this.
+//!
+//! - A parallel independent product gives each branch a VM of its own, so a
+//!   branch's writes are counted there and go with it when its arena is dropped
+//!   at the join. A branch that broke the soundness direction still asserts
+//!   inside its own VM before the join is reached, so what is lost is the
+//!   tally, not the check.
+//! - A collection builtin reached as a first-class value goes through
+//!   `CALL_VALUE`, which carries no owned mask and takes no owned path. There
+//!   is no grant there to check; a write the runtime could have seen through
+//!   goes uncounted.
+//! - A DECLINED `Vector.set` never reaches this code at all. `mir` lowers it to
+//!   the dedicated `VECTOR_SET` opcode and only routes the owned spelling
+//!   through `CALL_BUILTIN_OWNED`, so `unique_slot_without_owned_grant` — the
+//!   number that previews what a runtime decision would buy — is a statement
+//!   about maps. P2 sizing the payoff from it would be reading a Map-shaped
+//!   floor and calling it the whole picture.
+//! - `VECTOR_SET_OR_KEEP`'s owned branch is not audited here, and the predicate
+//!   does not extend to it. That branch is the VM's only true in-place arena
+//!   write — the one static grant where a whitelist error rewrites an entry
+//!   another holder can still read, which is exactly what the soundness
+//!   direction exists to catch — and its grant is `vec_last_use ||
+//!   def_last_use`. In the fused shape the inner vector read compiles to
+//!   `LOAD_LOCAL` rather than `MOVE_LOCAL`, because `last_use` annotates the
+//!   textually-last read, which the fusion deletes. So the target's own local
+//!   cell is STILL LIVE at the write, and [`VM::slot_is_unheld`] would answer
+//!   HELD at the strongest grant in the VM. The trick that makes the builtin
+//!   check work — ask once the argument list has been popped — has no analogue
+//!   at a fused opcode that never builds one. This one needs a predicate of its
+//!   own, not another call site, and that is P2's to design.
+//!
+//! The two vector items are pinned rather than asserted in prose:
+//! `a_vector_fold_writes_nothing_the_cross_check_can_see` in
+//! `tests/vm_slot_uniqueness.rs` runs both vector spellings and expects all four
+//! tallies to stay at zero, so the day either one starts being observed, that
+//! test is what says the list above needs rewriting.
 
 use super::VM;
 use crate::nan_value::NanValue;
@@ -49,17 +106,16 @@ use crate::vm::builtin::VmBuiltin;
 /// Tallies from the directional cross-check between the compiler's static owned
 /// mask and the runtime reference count.
 ///
-/// They are per-VM, and an independent product run in parallel gives each branch
-/// a VM of its own, so writes inside a branch are counted there and go with it
-/// when it is dropped at the join. That undercounts both numbers, never the
-/// reverse, and it costs no guard: a branch that broke the soundness direction
-/// asserts inside its own VM before the join is reached.
+/// Every collection write the cross-check sees lands in exactly one of three
+/// buckets — granted, declined with nobody else holding the slot, declined with
+/// somebody holding it — so the three add up to the writes observed, and a
+/// write that moves between buckets moves two numbers at once. That is what the
+/// exit-path tests read: a frame that left a cell of its own standing turns a
+/// declined-and-unheld write into a declined-and-held one.
 ///
-/// They also see only the `CALL_BUILTIN` / `CALL_BUILTIN_OWNED` dispatch. A
-/// collection builtin reached as a first-class value goes through `CALL_VALUE`,
-/// which carries no owned mask and takes no owned path, so there is no grant
-/// there to check — and a write the runtime could see through goes uncounted.
-/// Same direction again: the preview is a floor.
+/// They are per-VM and they are not maintained on the default release path: see
+/// the module for who pays for the walk, and for the four writes the
+/// cross-check never sees at all.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VmSlotUniquenessStats {
     /// Heap-backed collection targets a `CALL_BUILTIN_OWNED` mask granted
@@ -83,11 +139,23 @@ pub struct VmSlotUniquenessStats {
     /// previews that payoff — and nothing asserts on it, because a static
     /// decline is always allowed.
     ///
-    /// It is a preview, not a list of grants. The count cannot see a global or a
-    /// chunk constant holding the same slot, and a map literal's first insert
-    /// targets exactly that, so whoever turns this into a decision owes the
-    /// other root sets an argument of their own.
+    /// It is a preview, not a list of grants, and it is a preview of the MAP
+    /// side. The count cannot see a global or a chunk constant holding the same
+    /// slot, and a map literal's first insert targets exactly that; a declined
+    /// `Vector.set` never reaches the cross-check at all, because it is lowered
+    /// to its own opcode. Whoever turns this into a decision owes both the other
+    /// root sets and the vector side an argument of their own.
     pub unique_slot_without_owned_grant: u64,
+    /// Collection targets another operand-stack cell was still holding where the
+    /// static mask also declined to grant ownership.
+    ///
+    /// The two analyses agreeing, which is the uninteresting case for a decision
+    /// and the load-bearing one for a test: it is the only tally that grows when
+    /// a reference genuinely exists at the moment of a write, so a shape whose
+    /// holders are known pins a number that is not zero. A frame that failed to
+    /// give back a cell on the way out shows up here, one write at a time, as
+    /// the same write leaving `unique_slot_without_owned_grant`.
+    pub declined_with_slot_still_held: u64,
 }
 
 impl VmSlotUniquenessStats {
@@ -95,6 +163,7 @@ impl VmSlotUniquenessStats {
         self.owned_grants += other.owned_grants;
         self.owned_grants_without_unique_slot += other.owned_grants_without_unique_slot;
         self.unique_slot_without_owned_grant += other.unique_slot_without_owned_grant;
+        self.declined_with_slot_still_held += other.declined_with_slot_still_held;
     }
 }
 
@@ -136,9 +205,14 @@ impl VM {
 
     /// Total live references the operand stack holds across every arena slot.
     ///
-    /// Zero once a run has finished is the whole-program form of "the count
-    /// returns to zero at frame exit": every exit path the run went through gave
-    /// back what it took, or a cell would still be standing here.
+    /// A whole-stack figure, useful where the stack is under the caller's
+    /// control — the VM's own tests build one cell at a time. It is worth being
+    /// clear about what it does NOT establish: reading it after a run has
+    /// finished says nothing about any exit path in particular, because a
+    /// successful run ends with an empty stack whatever an inner frame did. Its
+    /// caller truncates to its own base on the way out and erases the evidence.
+    /// The exit paths are pinned where the answer is used instead — see
+    /// `tests/vm_slot_uniqueness.rs`.
     pub fn live_slot_refs(&self) -> u64 {
         self.stack
             .iter()
@@ -147,6 +221,9 @@ impl VM {
     }
 
     /// Tallies from the cross-check against the compiler's static owned mask.
+    ///
+    /// All zero from a release build that was not asked for a profile: the
+    /// comparison behind them is skipped there rather than computed for nobody.
     pub fn slot_uniqueness_stats(&self) -> VmSlotUniquenessStats {
         self.slot_uniqueness
     }
@@ -170,14 +247,25 @@ impl VM {
         args: &[NanValue],
         owned_mask: u8,
     ) {
-        // Only the receiver of a builtin that can mutate its target in place is
-        // worth comparing. Every other argument is declined by a mask that never
-        // had a bit for it, so counting those would drown the number that means
-        // something in one that means "this builtin does not mutate".
-        if !matches!(
-            builtin,
-            VmBuiltin::MapSet | VmBuiltin::VectorSet | VmBuiltin::MapRemove
-        ) {
+        // Only a builtin the runtime really hands its target to is worth
+        // comparing: `invoke_builtin_with_owned` takes the owned path for
+        // `Map.set` and `Vector.set` and falls through to the copying call for
+        // everything else, so a mask bit on any other builtin grants nothing
+        // and mutates nothing. `Map.remove` is the one that looks like it
+        // belongs here and does not — the mask reaches it, the runtime ignores
+        // it — and counting it would put writes that never happened in the same
+        // number as writes that did.
+        if !matches!(builtin, VmBuiltin::MapSet | VmBuiltin::VectorSet) {
+            return;
+        }
+        // Nobody is listening on the default release path, so nobody pays for
+        // the walk there. The assertion below is compiled out where assertions
+        // are off, and the tallies are only ever read back out of the profile
+        // report — so with neither in play the answer would be computed and
+        // dropped, once per collection write, at a cost that grows with how
+        // deeply the program happens to be nested. A debug build keeps the full
+        // audit, and `--profile` buys it back in a release one.
+        if !cfg!(debug_assertions) && self.profile.is_none() {
             return;
         }
         let Some(target) = args.first().copied() else {
@@ -190,13 +278,14 @@ impl VM {
         }
         let granted = owned_mask & 1 != 0;
         let unheld = self.slot_is_unheld(target);
-        if granted {
-            self.slot_uniqueness.owned_grants += 1;
-            if !unheld {
+        match (granted, unheld) {
+            (true, true) => self.slot_uniqueness.owned_grants += 1,
+            (true, false) => {
+                self.slot_uniqueness.owned_grants += 1;
                 self.slot_uniqueness.owned_grants_without_unique_slot += 1;
             }
-        } else if unheld {
-            self.slot_uniqueness.unique_slot_without_owned_grant += 1;
+            (false, true) => self.slot_uniqueness.unique_slot_without_owned_grant += 1,
+            (false, false) => self.slot_uniqueness.declined_with_slot_still_held += 1,
         }
         debug_assert!(
             !granted || unheld,

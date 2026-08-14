@@ -50,9 +50,11 @@ pub struct VmProfileReport {
     /// How the compiler's static owned mask and the operand stack's own view of
     /// who holds a slot compared over the run.
     ///
-    /// Unlike everything else here, these are counted whether or not profiling
-    /// is on — the run maintains them regardless, and the report is only where
-    /// they are surfaced.
+    /// A debug build maintains these whether or not profiling is on, because
+    /// the same comparison is an assertion there. A release build maintains
+    /// them only for a run that asked for this report, since answering "who
+    /// else holds this slot?" costs a walk of the stack and nothing else would
+    /// read the answer.
     pub slot_uniqueness: super::VmSlotUniquenessStats,
 }
 
