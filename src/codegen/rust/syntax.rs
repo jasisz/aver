@@ -109,9 +109,12 @@ pub(crate) fn capitalise_first(name: &str) -> String {
 /// Convert an Aver identifier to a valid Rust identifier that stands
 /// ALONE.
 ///
-/// Valid for every reserved word except the four in [`RUST_NEVER_RAW`] and
-/// the wildcard `_`, which have no spelling at all; those are refused
-/// before codegen runs, so this function never has to answer for them.
+/// Valid for every reserved word except the four in [`RUST_NEVER_RAW`],
+/// which have no spelling at all; those are refused before codegen runs,
+/// so this function never has to answer for them. `_` passes through
+/// unchanged and correctly so — it needs no escape, and it is legal in
+/// every position this is called from that survives
+/// `is_never_an_identifier_in_rust`.
 ///
 /// Do not call this on a name that will then be embedded inside a longer
 /// identifier. `r#` is a prefix on a whole identifier, so
