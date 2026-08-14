@@ -477,6 +477,82 @@ fn main() -> Unit
     );
 }
 
+/// A function whose Aver name is a Rust keyword, in MUTUAL tail recursion.
+/// The trampoline variant is the name capitalised, and capitalising the
+/// already-escaped `r#await` gave `R#await` — not an identifier, so the
+/// emitted project stopped parsing there and every later declaration
+/// vanished with it. `cargo check` alone would not have caught it any
+/// earlier than a build, but nothing caught it at all, so the program had
+/// to be built to be told. Both halves of the trigger have controls in the
+/// same file: a keyword-named SELF-recursive fn (no trampoline) and a
+/// mutual pair of ordinary names (trampoline, no escape).
+#[test]
+fn rust_keyword_named_mutual_recursion_builds_and_matches_vm() {
+    let src = r#"module KeywordMutualTco
+    intent = "Rust keywords as function names, in mutual tail recursion"
+    effects [Console.print]
+
+fn await(budget: Int) -> String
+    ? "Hand off to the other one."
+    match budget > 0
+        true -> resume(budget - 1)
+        false -> "done"
+
+fn resume(budget: Int) -> String
+    ? "Hand back."
+    match budget > 0
+        true -> await(budget - 1)
+        false -> "handed back"
+
+fn impl(n: Int) -> Int
+    ? "A second keyword pair, so one repaired name is not enough to pass."
+    match n == 0
+        true -> 0
+        false -> move(n - 1)
+
+fn move(n: Int) -> Int
+    ? "The other half of the second keyword pair."
+    match n == 0
+        true -> 1
+        false -> impl(n - 1)
+
+fn unsafe(n: Int) -> Int
+    ? "Control: a keyword name that only recurses into itself."
+    match n == 0
+        true -> 7
+        false -> unsafe(n - 1)
+
+fn ping(n: Int) -> Int
+    ? "Control: mutual recursion between ordinary names."
+    match n == 0
+        true -> 11
+        false -> pong(n - 1)
+
+fn pong(n: Int) -> Int
+    ? "The other ordinary half."
+    match n == 0
+        true -> 13
+        false -> ping(n - 1)
+
+fn main() -> Unit
+    ? "Print every shape, so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print(await(4))
+    Console.print(resume(2))
+    Console.print("{impl(4)} {move(4)} {unsafe(3)} {ping(4)} {pong(4)}")
+"#;
+    let expected = "done\nhanded back\n0 1 7 11 13";
+
+    let vm = run_vm_inline("keyword_mutual_tco", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("keyword_mutual_tco", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM keyword-name contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust keyword-name contract diverged from VM"
+    );
+}
+
 /// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in
 /// the emitted project, so this regression must drive `Tcp.sendBytes` through
 /// a real `cargo build`. Invalid raw lists fail at `Bytes.fromList` before any

@@ -1091,16 +1091,23 @@ pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
 }
 
 /// Convert an Aver function name to a PascalCase enum variant name.
+///
+/// Capitalise the RAW name first, then escape: escaping first turns
+/// `await` into `r#await`, whose capitalisation `R#await` is not an
+/// identifier at all. Rust keywords are all lowercase, so the escape
+/// almost never fires afterwards, but it stays for the degenerate names
+/// that capitalise to themselves — a leading `_`, a digit, or a letter
+/// from a caseless script — which can still land on a reserved word.
 pub(super) fn fn_name_to_variant(name: &str) -> String {
-    let rust_name = aver_name_to_rust(name);
-    let mut chars = rust_name.chars();
-    match chars.next() {
+    let mut chars = name.chars();
+    let capitalised = match chars.next() {
         Some(c) => {
             let upper: String = c.to_uppercase().collect();
             format!("{}{}", upper, chars.as_str())
         }
-        None => rust_name,
-    }
+        None => return aver_name_to_rust(name),
+    };
+    aver_name_to_rust(&capitalised)
 }
 
 /// Emit the main function, incorporating top-level statements.

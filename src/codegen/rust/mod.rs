@@ -1216,6 +1216,97 @@ fn isOdd(n: Int) -> Bool
     }
 
     #[test]
+    fn mutual_tco_variant_for_keyword_named_fn_is_an_identifier() {
+        // A function whose Aver name is a Rust keyword takes part in a
+        // mutual-TCO group. The trampoline variant is the function name
+        // capitalised, so it must be capitalised BEFORE the keyword
+        // escape — escaping first yields `R#await`, which is not an
+        // identifier and stops the parser on the generated project.
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn await(budget: Int) -> Int
+    match budget == 0
+        true -> 0
+        false -> resume(budget - 1)
+
+fn resume(budget: Int) -> Int
+    match budget == 0
+        true -> 1
+        false -> await(budget - 1)
+
+fn move(n: Int) -> Int
+    match n == 0
+        true -> 2
+        false -> impl(n - 1)
+
+fn impl(n: Int) -> Int
+    match n == 0
+        true -> 3
+        false -> move(n - 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // Both pairs really went through the trampoline.
+        assert!(
+            entry.contains("enum __MutualTco1"),
+            "no trampoline:\n{entry}"
+        );
+        assert!(
+            entry.contains("enum __MutualTco2"),
+            "no trampoline:\n{entry}"
+        );
+
+        // Variants are the capitalised names — plain identifiers, no escape.
+        for variant in ["Await", "Resume", "Move", "Impl"] {
+            assert!(
+                entry.contains(&format!("::{}", variant)),
+                "missing variant `{variant}`:\n{entry}"
+            );
+        }
+
+        // Nothing anywhere may carry a capitalised raw-identifier prefix.
+        assert!(
+            !entry.contains("R#"),
+            "capitalised raw-identifier prefix in generated code:\n{entry}"
+        );
+
+        // The wrapper fns keep the ordinary lowercase escape.
+        assert!(entry.contains("pub fn r#await"), "no escaped fn:\n{entry}");
+        assert!(entry.contains("pub fn r#move"), "no escaped fn:\n{entry}");
+        assert!(entry.contains("pub fn r#impl"), "no escaped fn:\n{entry}");
+    }
+
+    #[test]
+    fn self_tco_keyword_named_fn_stays_escaped() {
+        // Control for the mutual-TCO variant fix: a keyword-named function
+        // that only recurses into itself emits no trampoline enum, and its
+        // name keeps the lowercase raw-identifier escape.
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn await(n: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> await(n - 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("pub fn r#await"), "no escaped fn:\n{entry}");
+        assert!(!entry.contains("R#"), "bad escape:\n{entry}");
+    }
+
+    #[test]
     fn field_access_does_not_double_clone() {
         let mut ctx = ctx_from_source(
             r#"
