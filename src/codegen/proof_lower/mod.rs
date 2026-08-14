@@ -1952,7 +1952,7 @@ fn populate_fn_contracts_for_scope(
         // terminating); the metric stays as `SeqLenPlusOne` for
         // backend-symmetric framing, and the consumer ignores it
         // when emitting plain structural recursion.
-        if let RecursionPlan::ListStructural { param_index } = plan {
+        if let RecursionPlan::ListStructural { param_index, .. } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
                     canonical_key,

@@ -181,96 +181,109 @@ pub(crate) fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Spanne
     out
 }
 
-pub(crate) fn collect_list_tail_binders_from_expr(
-    expr: &Spanned<Expr>,
-    list_param_name: &str,
-    tails: &mut HashSet<String>,
-) {
-    match &expr.node {
-        Expr::Match { subject, arms, .. } => {
-            if local_name_of(subject).is_some_and(|id| id == list_param_name) {
-                for MatchArm { pattern, .. } in arms {
-                    if let Pattern::Cons(_, tail) = pattern {
-                        tails.insert(tail.clone());
-                    }
-                }
-            }
-            for arm in arms {
-                collect_list_tail_binders_from_expr(&arm.body, list_param_name, tails);
-            }
-            collect_list_tail_binders_from_expr(subject, list_param_name, tails);
-        }
-        Expr::FnCall(callee, args) => {
-            collect_list_tail_binders_from_expr(callee, list_param_name, tails);
-            for arg in args {
-                collect_list_tail_binders_from_expr(arg, list_param_name, tails);
-            }
-        }
-        Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: _, args, ..
-            } = boxed.as_ref();
-            for arg in args {
-                collect_list_tail_binders_from_expr(arg, list_param_name, tails);
-            }
-        }
-        Expr::Attr(obj, _) => collect_list_tail_binders_from_expr(obj, list_param_name, tails),
-        Expr::BinOp(_, left, right) => {
-            collect_list_tail_binders_from_expr(left, list_param_name, tails);
-            collect_list_tail_binders_from_expr(right, list_param_name, tails);
-        }
-        Expr::Neg(inner) => collect_list_tail_binders_from_expr(inner, list_param_name, tails),
-        Expr::Constructor(_, inner) => {
-            if let Some(inner) = inner {
-                collect_list_tail_binders_from_expr(inner, list_param_name, tails);
-            }
-        }
-        Expr::ErrorProp(inner) => {
-            collect_list_tail_binders_from_expr(inner, list_param_name, tails)
-        }
-        Expr::InterpolatedStr(parts) => {
-            for p in parts {
-                if let crate::ast::StrPart::Parsed(e) = p {
-                    collect_list_tail_binders_from_expr(e, list_param_name, tails);
-                }
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for item in items {
-                collect_list_tail_binders_from_expr(item, list_param_name, tails);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                collect_list_tail_binders_from_expr(k, list_param_name, tails);
-                collect_list_tail_binders_from_expr(v, list_param_name, tails);
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                collect_list_tail_binders_from_expr(v, list_param_name, tails);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_list_tail_binders_from_expr(base, list_param_name, tails);
-            for (_, v) in updates {
-                collect_list_tail_binders_from_expr(v, list_param_name, tails);
-            }
-        }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+/// Names a pattern brings into scope. Needed by the tail-binder closure
+/// below: a binder that SHADOWS a tracked name stops standing for the tail
+/// it used to name, and treating the shadowed one as a subterm would claim a
+/// decrease the recursion does not make.
+fn pattern_bound_names(pattern: &Pattern) -> Vec<&str> {
+    match pattern {
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
+        Pattern::Ident(name) => vec![name.as_str()],
+        Pattern::Cons(head, tail) => vec![head.as_str(), tail.as_str()],
+        Pattern::Constructor(_, binders) => binders.iter().map(String::as_str).collect(),
+        Pattern::Tuple(items) => items.iter().flat_map(pattern_bound_names).collect(),
     }
 }
 
-pub(crate) fn collect_list_tail_binders(fd: &FnDef, list_param_name: &str) -> HashSet<String> {
-    let mut tails = HashSet::new();
+/// Record `name` as a tail reached by peeling `depth` cons cells, keeping the
+/// SMALLEST depth when the same binder name is reached along several paths —
+/// the guaranteed peel, never an optimistic one.
+fn record_tail_depth(out: &mut HashMap<String, usize>, name: &str, depth: usize) {
+    out.entry(name.to_string())
+        .and_modify(|seen| *seen = (*seen).min(depth))
+        .or_insert(depth);
+}
+
+/// A tail of a tail is a tail: transitive, depth-tagged closure of "cons-tail
+/// of the list parameter", carrying how many cells were peeled to reach each
+/// binder.
+///
+/// `tracked` maps the names currently known to be subterms of the parameter to
+/// their peel depth (the parameter itself sits at `0`). Matching a tracked
+/// subject at depth `d` with `[head, ..tail]` makes `tail` a subterm at depth
+/// `d + 1`, and that binder is tracked for the rest of THAT arm — which is how
+/// a parser that consumes a hex PAIR per step (`match chars { [] -> …;
+/// [high, ..afterHigh] -> match afterHigh { [] -> …; [low, ..rest] ->
+/// self(rest, …) } }`) is recognised: `rest` sits at depth 2.
+///
+/// The old collection stopped at depth 1 — a match subject had to be
+/// LITERALLY the parameter — so the k-per-step shape fell out of the proof
+/// subset entirely and exported as an opaque `partial def`.
+fn collect_list_tail_binder_depths_from_expr(
+    expr: &Spanned<Expr>,
+    tracked: &HashMap<String, usize>,
+    out: &mut HashMap<String, usize>,
+) {
+    if let Expr::Match { subject, arms } = &expr.node {
+        collect_list_tail_binder_depths_from_expr(subject, tracked, out);
+        let subject_depth = local_name_of(subject).and_then(|id| tracked.get(id).copied());
+        for MatchArm { pattern, body, .. } in arms {
+            let mut scoped = tracked.clone();
+            for bound in pattern_bound_names(pattern) {
+                scoped.remove(bound);
+            }
+            if let (Some(depth), Pattern::Cons(_, tail)) = (subject_depth, pattern) {
+                record_tail_depth(out, tail, depth + 1);
+                scoped.insert(tail.clone(), depth + 1);
+            }
+            collect_list_tail_binder_depths_from_expr(body, &scoped, out);
+        }
+        return;
+    }
+    // Every other shape binds nothing, so the descent is the generic one —
+    // and going through `expr_walk` means a new `Expr` variant cannot be
+    // silently skipped here.
+    crate::codegen::expr_walk::for_each_child(expr, &mut |child| {
+        collect_list_tail_binder_depths_from_expr(child, tracked, out)
+    });
+}
+
+/// [`collect_list_tail_binder_depths_from_expr`] over a whole fn body.
+pub(crate) fn collect_list_tail_binder_depths(
+    fd: &FnDef,
+    list_param_name: &str,
+) -> HashMap<String, usize> {
+    let mut tracked = HashMap::from([(list_param_name.to_string(), 0usize)]);
+    let mut out = HashMap::new();
     for stmt in fd.body.stmts() {
         match stmt {
-            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-                collect_list_tail_binders_from_expr(expr, list_param_name, &mut tails)
+            Stmt::Binding(name, _, expr) => {
+                collect_list_tail_binder_depths_from_expr(expr, &tracked, &mut out);
+                // A `let` of the same name shadows the subterm from here on.
+                tracked.remove(name);
             }
+            Stmt::Expr(expr) => collect_list_tail_binder_depths_from_expr(expr, &tracked, &mut out),
         }
     }
-    tails
+    out
+}
+
+/// The DEPTH-1 cons-tails only: binders the fn obtains by peeling exactly one
+/// cell off the list parameter.
+///
+/// The mutual lex-list synthesiser reads this and nothing else, because its
+/// offset propagation is arithmetic on the peel: a strict subterm edge is
+/// assumed to hand the callee `len - 1`, and it pays for that with `off + 1`
+/// so the lex measure's first component stays EQUAL and the rank tie-break
+/// carries the decrease. A depth-2 binder would break that equality, so the
+/// deeper tails stay out of this view until that synthesiser learns to
+/// propagate the peel amount.
+pub(crate) fn collect_list_tail_binders(fd: &FnDef, list_param_name: &str) -> HashSet<String> {
+    collect_list_tail_binder_depths(fd, list_param_name)
+        .into_iter()
+        .filter(|(_, depth)| *depth == 1)
+        .map(|(name, _)| name)
+        .collect()
 }
 
 pub(crate) fn recursive_constructor_binders(
@@ -1043,7 +1056,15 @@ pub(crate) fn single_adt_structural_param_index(
         })
 }
 
-pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
+/// The single `List<_>` param every self-call shrinks, plus how many cons
+/// cells the shrink peels off it per step.
+///
+/// The peel is the SMALLEST depth any self-call passes, i.e. what the fn is
+/// guaranteed to consume per step: `1` for the classic `[x, ..rest] ->
+/// self(rest, …)` walk, `2` for a hex-pair parser. Every peel `>= 1` is a
+/// strict structural decrease, so the peel does not change WHETHER the fn is
+/// classified — only what a backend can say about the size of the step.
+pub(crate) fn single_list_structural_param(fd: &FnDef) -> Option<(usize, usize)> {
     fd.params
         .iter()
         .enumerate()
@@ -1052,7 +1073,7 @@ pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
                 return None;
             }
 
-            let tails = collect_list_tail_binders(fd, param_name);
+            let tails = collect_list_tail_binder_depths(fd, param_name);
             if tails.is_empty() {
                 return None;
             }
@@ -1067,14 +1088,19 @@ pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
                 return None;
             }
 
-            recursive_calls
-                .into_iter()
-                .all(|arg| {
-                    arg.and_then(local_name_of)
-                        .is_some_and(|id| tails.contains(id))
-                })
-                .then_some(param_index)
+            let mut peel = usize::MAX;
+            for arg in recursive_calls {
+                let depth = arg
+                    .and_then(local_name_of)
+                    .and_then(|id| tails.get(id).copied())?;
+                peel = peel.min(depth);
+            }
+            Some((param_index, peel))
         })
+}
+
+pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
+    single_list_structural_param(fd).map(|(param_index, _)| param_index)
 }
 
 /// `true` iff every recursive self-call of `fd` passes, at `param_index`, a
@@ -2174,10 +2200,10 @@ pub fn analyze_plans_in_scope(
             // keeps its `ListStructural` plan — its laws induct on the list, and
             // stealing it to the ADT driver regressed `drop`-concat decomposition.
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
-        } else if let Some(param_index) = single_list_structural_param_index(fd) {
+        } else if let Some((param_index, peel)) = single_list_structural_param(fd) {
             plans.insert(
                 fd.name.clone(),
-                RecursionPlan::ListStructural { param_index },
+                RecursionPlan::ListStructural { param_index, peel },
             );
         } else if supports_single_string_pos_advance(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::StringPosAdvance);

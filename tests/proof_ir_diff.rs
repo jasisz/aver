@@ -759,6 +759,7 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
 
     let RecursionPlan::ListStructural {
         param_index: legacy_idx,
+        peel,
     } = plans
         .get("len")
         .unwrap_or_else(|| panic!("len expected as ListStructural, got: {:?}", plans))
@@ -768,6 +769,11 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
             plans.get("len")
         );
     };
+    assert_eq!(
+        *peel, 1,
+        "`len` peels one cell per step — a plan claiming otherwise would let a \
+         backend state a decrease the body does not make"
+    );
 
     let contract = fn_contract(&ctx, "len").expect("len has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
@@ -790,6 +796,41 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
         })
         .expect("len FnDef");
     assert_eq!(param, &fd.params[*legacy_idx].0);
+}
+
+#[test]
+fn two_cell_peel_is_list_structural_and_records_its_depth() {
+    // `rest` is the tail of `afterFirst`, which is the tail of the parameter
+    // `xs` — a tail of a tail. The classifier reaches it through the
+    // transitive tail-binder closure and records that the step consumes TWO
+    // cells; without the closure the whole fn fell outside the proof subset
+    // and exported opaque.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn pairs(xs: List<Int>) -> Int\n\
+         \x20   match xs\n\
+         \x20       [] -> 0\n\
+         \x20       [_, ..afterFirst] -> match afterFirst\n\
+         \x20           [] -> 1\n\
+         \x20           [_, ..rest] -> 1 + pairs(rest)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, issues) = analyze_plans_in_scope(&inputs, None, true);
+    assert!(
+        issues.is_empty(),
+        "a two-cell peel is structural — it must not be reported outside the \
+         proof subset: {issues:?}"
+    );
+    assert_eq!(
+        plans.get("pairs"),
+        Some(&RecursionPlan::ListStructural {
+            param_index: 0,
+            peel: 2,
+        }),
+        "expected a two-cell ListStructural plan, got: {:?}",
+        plans.get("pairs")
+    );
 }
 
 #[test]

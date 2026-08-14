@@ -26,6 +26,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **A list consumed two cells at a time now proves terminating, so hex parsing is checked by the Lean kernel.** `Bytes.fromHex` reads its characters in pairs, and the proof export used to give up on that shape: the parser came out as an opaque `partial def`, and every `verify` case whose answer passed through it — anything decoding hexadecimal, a 32-byte digest included — fell back to `native_decide`, which trusts Lean's compiler and evaluator instead of its kernel. Termination now follows a tail through a nested match, on the reading that the tail of a tail is still a tail, so the parser exports as an ordinary total definition with its list-length measure and those cases close with `decide +kernel`: the kernel recomputes the answer itself, and `Lean.ofReduceBool` is gone from their axiom trace. Any function that peels a fixed number of cells per step — pairs, triples, a fixed-width record read off a stream — is recognised the same way.
+
 - **An unrecognised field in a module header is now an error.** The header used to stop at the first line it did not recognise and hand that line back to the top level. A typo'd `expose [main]` therefore produced no diagnostic at all when its right-hand side happened to resolve, and a mistyped field silently did nothing. Header-shaped lines — `name = value` or `name [list]` — are now checked against the five allowed fields.
 
   This is breaking for one shape: a top-level binding written *indented*, directly under the header, used to be accepted and now is not. The fix is to unindent it — bindings belong at column 0, outside the header — and the error says so.

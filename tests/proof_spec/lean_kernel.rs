@@ -2138,13 +2138,21 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
     // Per-case tactic routing for sampled `verify` cases. A case whose whole
     // emitted closure reduces in the kernel is closed by `decide +kernel`, so
     // nothing beyond the kernel is trusted. `stdlib_bytes_app` is the
-    // discriminating fixture: its SHA-256 and byte-range cases route through
-    // the total, axiom-free crypto model and the well-founded `Bytes` helpers
-    // (all kernel-reducible), while its hex cases route through
-    // `Bytes.parseHexChars`, which the proof backend emits as `partial def` —
-    // an opaque constant the kernel can never unfold. One file, both verdicts,
-    // so a classifier that collapses to "always native" or "always kernel"
-    // fails here.
+    // discriminating fixture: its SHA-256, byte-range and HEX cases route
+    // through total, kernel-reducible definitions, while `checkedChecksum`
+    // routes through `pairwiseChecksum`, which recurses on a REBUILT list
+    // (`List.prepend(only + next, rest)`) — no whitelisted shape covers an
+    // argument that is not a subterm binder, so the proof backend emits it as
+    // `partial def`, an opaque constant the kernel can never unfold. One
+    // file, both verdicts, so a classifier that collapses to "always native"
+    // or "always kernel" fails here.
+    //
+    // The hex cases used to be the opaque half: `Bytes.parseHexChars` peels
+    // TWO cells per step and the tail-binder collection only reached one, so
+    // the stdlib hex parser fell out of the proof subset. It is structural
+    // now, which is why the hex cases sit with the kernel-decided group and
+    // a shape the whitelist genuinely does not cover took over the other
+    // side of the fixture.
     //
     // Then the real gate: `#print axioms`. `native_decide` puts
     // `Lean.ofReduceBool` into a theorem's axiom closure; `decide +kernel`
@@ -2190,15 +2198,17 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
                 "doubleShaHex ",
                 "roundTrip ",
                 "checkedDigestLength ",
+                "hexRoundTrip ",
+                "checkedDigestHex ",
             ]
             .as_slice(),
             "decide +kernel",
             "reduces in the kernel end to end",
         ),
         (
-            ["hexRoundTrip ", "checkedDigestHex "].as_slice(),
+            ["checkedChecksum "].as_slice(),
             "native_decide",
-            "routes through the `partial def` hex parser",
+            "routes through a `partial def` — its recursion rebuilds the list",
         ),
     ] {
         for needle in fns {
@@ -2249,9 +2259,14 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
         probe.push_str(&format!("theorem {name} : {prop} := by decide +kernel\n"));
         probe_names.push(format!("StdlibBytesApp.{name}"));
     }
+    // Every case in the fixture except the two `checkedChecksum` ones, which
+    // are the deliberate opaque half. The floor is stated so that a silent
+    // collapse of the promoted hex cases back to `native_decide` shrinks the
+    // audited set and fails here as well as in the routing loop above.
     assert!(
-        probe_names.len() >= 7,
-        "expected the crypto fixture to contribute several kernel cases, got {}",
+        probe_names.len() >= 13,
+        "expected the crypto fixture to contribute a kernel case per non-opaque \
+         sample, got {}",
         probe_names.len()
     );
     probe.push_str("\nend StdlibBytesApp\n\n");
