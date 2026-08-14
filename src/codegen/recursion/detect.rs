@@ -181,10 +181,10 @@ pub(crate) fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Spanne
     out
 }
 
-/// Names a pattern brings into scope. Needed by the tail-binder closure
-/// below: a binder that SHADOWS a tracked name stops standing for the tail
-/// it used to name, and treating the shadowed one as a subterm would claim a
-/// decrease the recursion does not make.
+/// Names a pattern brings into scope. Needed by the tail-binder scope below:
+/// inside an arm, a binder the pattern introduces names whatever the pattern
+/// matched, so any tracked subterm of the same name is no longer reachable
+/// under that name there.
 fn pattern_bound_names(pattern: &Pattern) -> Vec<&str> {
     match pattern {
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
@@ -204,21 +204,43 @@ fn record_tail_depth(out: &mut HashMap<String, usize>, name: &str, depth: usize)
         .or_insert(depth);
 }
 
-/// A tail of a tail is a tail: transitive, depth-tagged closure of "cons-tail
-/// of the list parameter", carrying how many cells were peeled to reach each
-/// binder.
+/// The tracked map an arm's body sees.
 ///
-/// `tracked` maps the names currently known to be subterms of the parameter to
-/// their peel depth (the parameter itself sits at `0`). Matching a tracked
-/// subject at depth `d` with `[head, ..tail]` makes `tail` a subterm at depth
-/// `d + 1`, and that binder is tracked for the rest of THAT arm — which is how
-/// a parser that consumes a hex PAIR per step (`match chars { [] -> …;
-/// [high, ..afterHigh] -> match afterHigh { [] -> …; [low, ..rest] ->
-/// self(rest, …) } }`) is recognised: `rest` sits at depth 2.
+/// `tracked` maps the names that stand for a subterm of the list parameter,
+/// right here, to their peel depth (the parameter itself sits at `0`). Two
+/// edits happen at an arm boundary, in this order:
 ///
-/// The old collection stopped at depth 1 — a match subject had to be
-/// LITERALLY the parameter — so the k-per-step shape fell out of the proof
-/// subset entirely and exported as an opaque `partial def`.
+/// - every name the pattern binds LEAVES, because inside the arm that name
+///   is whatever the pattern matched, not the subterm it named outside;
+/// - if the subject is itself tracked at depth `d` and the pattern is
+///   `[head, ..tail]`, `tail` ENTERS at depth `d + 1`.
+///
+/// A tail of a tail is therefore a tail, one cell deeper — which is how a
+/// parser consuming a hex PAIR per step (`match chars { [] -> …; [high,
+/// ..afterHigh] -> match afterHigh { [] -> …; [low, ..rest] -> self(rest, …)
+/// } }`) is recognised: inside the inner arm, `rest` sits at depth 2.
+fn arm_scope(
+    tracked: &HashMap<String, usize>,
+    pattern: &Pattern,
+    subject_depth: Option<usize>,
+) -> HashMap<String, usize> {
+    let mut scoped = tracked.clone();
+    for bound in pattern_bound_names(pattern) {
+        scoped.remove(bound);
+    }
+    if let (Some(depth), Pattern::Cons(_, tail)) = (subject_depth, pattern) {
+        scoped.insert(tail.clone(), depth + 1);
+    }
+    scoped
+}
+
+/// Walk `expr` recording every binder that names a cons-tail of the parameter
+/// SOMEWHERE below, tagged with its peel depth.
+///
+/// This is a whole-body UNION over scopes and it is deliberately not exposed:
+/// see [`collect_list_tail_binders`] for what such a union can and cannot be
+/// asked. Deciding a self-call goes through [`self_call_peel`], which keeps
+/// the scope.
 fn collect_list_tail_binder_depths_from_expr(
     expr: &Spanned<Expr>,
     tracked: &HashMap<String, usize>,
@@ -228,13 +250,9 @@ fn collect_list_tail_binder_depths_from_expr(
         collect_list_tail_binder_depths_from_expr(subject, tracked, out);
         let subject_depth = local_name_of(subject).and_then(|id| tracked.get(id).copied());
         for MatchArm { pattern, body, .. } in arms {
-            let mut scoped = tracked.clone();
-            for bound in pattern_bound_names(pattern) {
-                scoped.remove(bound);
-            }
+            let scoped = arm_scope(tracked, pattern, subject_depth);
             if let (Some(depth), Pattern::Cons(_, tail)) = (subject_depth, pattern) {
                 record_tail_depth(out, tail, depth + 1);
-                scoped.insert(tail.clone(), depth + 1);
             }
             collect_list_tail_binder_depths_from_expr(body, &scoped, out);
         }
@@ -249,10 +267,7 @@ fn collect_list_tail_binder_depths_from_expr(
 }
 
 /// [`collect_list_tail_binder_depths_from_expr`] over a whole fn body.
-pub(crate) fn collect_list_tail_binder_depths(
-    fd: &FnDef,
-    list_param_name: &str,
-) -> HashMap<String, usize> {
+fn collect_list_tail_binder_depths(fd: &FnDef, list_param_name: &str) -> HashMap<String, usize> {
     let mut tracked = HashMap::from([(list_param_name.to_string(), 0usize)]);
     let mut out = HashMap::new();
     for stmt in fd.body.stmts() {
@@ -268,8 +283,16 @@ pub(crate) fn collect_list_tail_binder_depths(
     out
 }
 
-/// The DEPTH-1 cons-tails only: binders the fn obtains by peeling exactly one
-/// cell off the list parameter.
+/// The DEPTH-1 cons-tails only: binders that, SOMEWHERE in the body, name a
+/// list obtained by peeling exactly one cell off the list parameter.
+///
+/// This is a union over the whole body, so read what it says carefully. It
+/// answers "does this name stand for a one-cell tail of the parameter at some
+/// point in this fn" — a fact about the body. It does NOT answer "is the
+/// argument of THIS call a one-cell tail of the parameter": the same name can
+/// be a tail of the parameter in one arm and a tail of an unrelated list, or a
+/// pattern binder shadowing it, in another. A caller that needs the per-site
+/// answer must keep the scope, the way [`self_call_peel`] does.
 ///
 /// The mutual lex-list synthesiser reads this and nothing else, because its
 /// offset propagation is arithmetic on the peel: a strict subterm edge is
@@ -1056,6 +1079,89 @@ pub(crate) fn single_adt_structural_param_index(
         })
 }
 
+/// The arguments of a self-call of `fn_name`, if `expr` is one.
+///
+/// Both call shapes count: the TCO transform rewrites in-SCC tail calls into
+/// [`Expr::TailCall`] before any backend looks, so a self-recursive fn's calls
+/// are often not [`Expr::FnCall`] by then.
+fn self_call_args<'a>(expr: &'a Spanned<Expr>, fn_name: &str) -> Option<&'a [Spanned<Expr>]> {
+    match &expr.node {
+        Expr::FnCall(callee, args) => expr_to_dotted_name(callee)
+            .is_some_and(|name| call_matches(&name, fn_name))
+            .then(|| args.as_slice()),
+        Expr::TailCall(tc) => call_matches(&tc.target, fn_name).then(|| tc.args.as_slice()),
+        _ => None,
+    }
+}
+
+/// How every self-call of `fd` moves the argument at `param_index`, when that
+/// param is tracked as a list being peeled.
+#[derive(Default)]
+struct PeelScan {
+    /// Smallest peel over the self-calls seen so far; `None` until the first
+    /// one, so "no self-call at all" and "peels nothing" stay distinct.
+    peel: Option<usize>,
+    /// Some self-call passed, at `param_index`, something that is not a
+    /// strict cons-tail of the param IN THE SCOPE THAT CALL SITS IN.
+    rejected: bool,
+}
+
+impl PeelScan {
+    /// The guaranteed peel per step, or `None` if any call site failed or
+    /// there were no self-calls to judge.
+    fn verdict(&self) -> Option<usize> {
+        (!self.rejected).then_some(self.peel).flatten()
+    }
+}
+
+/// Walk `expr` deciding each self-call's `param_index` argument against the
+/// tail-binder scope IN FORCE at that call.
+///
+/// This is the whole difference between "the body mentions a tail of this
+/// param somewhere" and "this call passes one". Deciding against a whole-body
+/// union classifies `f(xs, ys)` whose `xs = []` arm recurses on a tail of
+/// `ys`, and classifies a call whose argument is a binder SHADOWING the tail
+/// rather than the tail — both of them recursions that never terminate.
+fn self_call_peel(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    param_index: usize,
+    tracked: &HashMap<String, usize>,
+    scan: &mut PeelScan,
+) {
+    if let Some(args) = self_call_args(expr, fn_name) {
+        // Depth `0` is the parameter itself, passed on unpeeled: tracked, but
+        // not a decrease. Only a strict subterm counts.
+        match args
+            .get(param_index)
+            .and_then(local_name_of)
+            .and_then(|id| tracked.get(id).copied())
+            .filter(|depth| *depth >= 1)
+        {
+            Some(depth) => {
+                scan.peel = Some(scan.peel.map_or(depth, |seen: usize| seen.min(depth)));
+            }
+            None => scan.rejected = true,
+        }
+    }
+
+    if let Expr::Match { subject, arms } = &expr.node {
+        self_call_peel(subject, fn_name, param_index, tracked, scan);
+        let subject_depth = local_name_of(subject).and_then(|id| tracked.get(id).copied());
+        for MatchArm { pattern, body, .. } in arms {
+            let scoped = arm_scope(tracked, pattern, subject_depth);
+            self_call_peel(body, fn_name, param_index, &scoped, scan);
+        }
+        return;
+    }
+    // A match is the only shape that changes the scope, so everything else
+    // descends generically — through `expr_walk`, which has no wildcard arm,
+    // so a new `Expr` variant cannot be silently skipped here.
+    crate::codegen::expr_walk::for_each_child(expr, &mut |child| {
+        self_call_peel(child, fn_name, param_index, tracked, scan)
+    });
+}
+
 /// The single `List<_>` param every self-call shrinks, plus how many cons
 /// cells the shrink peels off it per step.
 ///
@@ -1064,6 +1170,10 @@ pub(crate) fn single_adt_structural_param_index(
 /// self(rest, …)` walk, `2` for a hex-pair parser. Every peel `>= 1` is a
 /// strict structural decrease, so the peel does not change WHETHER the fn is
 /// classified — only what a backend can say about the size of the step.
+///
+/// Each call site is judged against the tails in scope THERE
+/// ([`self_call_peel`]), not against a whole-body union of them, so the
+/// answer is per-site and the peel is a minimum over sites.
 pub(crate) fn single_list_structural_param(fd: &FnDef) -> Option<(usize, usize)> {
     fd.params
         .iter()
@@ -1073,29 +1183,21 @@ pub(crate) fn single_list_structural_param(fd: &FnDef) -> Option<(usize, usize)>
                 return None;
             }
 
-            let tails = collect_list_tail_binder_depths(fd, param_name);
-            if tails.is_empty() {
-                return None;
+            let mut tracked = HashMap::from([(param_name.to_string(), 0usize)]);
+            let mut scan = PeelScan::default();
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    Stmt::Binding(name, _, expr) => {
+                        self_call_peel(expr, &fd.name, param_index, &tracked, &mut scan);
+                        // A `let` of the same name shadows the param from here on.
+                        tracked.remove(name);
+                    }
+                    Stmt::Expr(expr) => {
+                        self_call_peel(expr, &fd.name, param_index, &tracked, &mut scan)
+                    }
+                }
             }
-
-            let recursive_calls: Vec<Option<&Spanned<Expr>>> =
-                collect_calls_from_body(fd.body.as_ref())
-                    .into_iter()
-                    .filter(|(name, _)| call_matches(name, &fd.name))
-                    .map(|(_, args)| args.get(param_index).cloned())
-                    .collect();
-            if recursive_calls.is_empty() {
-                return None;
-            }
-
-            let mut peel = usize::MAX;
-            for arg in recursive_calls {
-                let depth = arg
-                    .and_then(local_name_of)
-                    .and_then(|id| tails.get(id).copied())?;
-                peel = peel.min(depth);
-            }
-            Some((param_index, peel))
+            scan.verdict().map(|peel| (param_index, peel))
         })
 }
 

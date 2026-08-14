@@ -2206,7 +2206,13 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
             "reduces in the kernel end to end",
         ),
         (
-            ["checkedChecksum "].as_slice(),
+            // `pairwiseChecksum` IS the opaque definition and
+            // `checkedChecksum` is the wrapper that calls it. Both are
+            // pinned: asserting only the wrapper would leave the direct
+            // consumer of the deliberate landmine unchecked, so a promotion
+            // of `pairwiseChecksum` alone would empty the opaque half of
+            // this fixture without failing anything here.
+            ["pairwiseChecksum ", "checkedChecksum "].as_slice(),
             "native_decide",
             "routes through a `partial def` — its recursion rebuilds the list",
         ),
@@ -2259,10 +2265,12 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
         probe.push_str(&format!("theorem {name} : {prop} := by decide +kernel\n"));
         probe_names.push(format!("StdlibBytesApp.{name}"));
     }
-    // Every case in the fixture except the two `checkedChecksum` ones, which
-    // are the deliberate opaque half. The floor is stated so that a silent
-    // collapse of the promoted hex cases back to `native_decide` shrinks the
-    // audited set and fails here as well as in the routing loop above.
+    // The fixture has 18 verify cases and FIVE of them are the deliberate
+    // opaque half — three `pairwiseChecksum` plus the two `checkedChecksum`
+    // that wrap it — so 13 is exactly the non-opaque count, not a slack
+    // bound. The floor is stated so that a silent collapse of the promoted
+    // hex cases back to `native_decide` shrinks the audited set and fails
+    // here as well as in the routing loop above.
     assert!(
         probe_names.len() >= 13,
         "expected the crypto fixture to contribute a kernel case per non-opaque \
