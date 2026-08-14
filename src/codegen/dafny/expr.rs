@@ -523,8 +523,6 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         StringSplit => format!("StringSplit({}, {})", a[0], a[1]),
         StringJoin => format!("StringJoin({}, {})", a[1], a[0]), // Aver: join(list, sep)
         StringReplace => format!("StringReplace({}, {}, {})", a[0], a[1], a[2]),
-        StringRepeat => format!("StringRepeat({}, {})", a[0], a[1]),
-        StringIndexOf => format!("StringIndexOf({}, {})", a[0], a[1]),
         StringToUpper => format!("StringToUpper({})", a[0]),
         StringToLower => format!("StringToLower({})", a[0]),
         StringFromBool => format!("StringFromBool({})", a[0]),

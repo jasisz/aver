@@ -154,8 +154,6 @@ pub fn emit_builtin_call(
         StringSplit => format!("AverString.split {} {}", p(&a[0]), p(&a[1])),
         StringJoin => format!("String.intercalate {} {}", p(&a[1]), p(&a[0])),
         StringReplace => format!("{}.replace {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
-        StringRepeat => format!("AverString.repeat {} {}", p(&a[0]), p(&a[1])),
-        StringIndexOf => format!("AverString.indexOf {} {}", p(&a[0]), p(&a[1])),
         StringToUpper => format!("{}.toUpper", p(&a[0])),
         StringToLower => format!("{}.toLower", p(&a[0])),
         StringFromInt => format!("String.fromInt {}", p(&a[0])),
