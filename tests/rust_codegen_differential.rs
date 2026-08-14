@@ -486,6 +486,13 @@ fn main() -> Unit
 /// to be built to be told. Both halves of the trigger have controls in the
 /// same file: a keyword-named SELF-recursive fn (no trampoline) and a
 /// mutual pair of ordinary names (trampoline, no escape).
+///
+/// The second half of the file is the plainer failure the same bug was
+/// hiding: functions named with a Rust keyword that the escape table simply
+/// did not list. `become`, `try`, `macro` and the rest need no recursion and
+/// no trampoline — they were emitted as `pub fn become(…)` and the project
+/// did not parse. They are here rather than in a second test because the
+/// expensive part is the `cargo build`, and one build can carry both.
 #[test]
 fn rust_keyword_named_mutual_recursion_builds_and_matches_vm() {
     let src = r#"module KeywordMutualTco
@@ -534,14 +541,64 @@ fn pong(n: Int) -> Int
         true -> 13
         false -> ping(n - 1)
 
+fn become(n: Int) -> Int
+    ? "Reserved for a future Rust, and named in the issue. No recursion."
+    n + 1
+
+fn try(n: Int) -> Int
+    ? "Reserved since edition 2018."
+    n + 2
+
+fn macro(n: Int) -> Int
+    ? "Reserved, and not the same word as the weak keyword macro_rules."
+    n + 3
+
+fn final(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 4
+
+fn virtual(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 5
+
+fn do(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 6
+
+fn priv(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 7
+
+fn abstract(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 8
+
+fn override(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 9
+
+fn typeof(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 10
+
+fn unsized(n: Int) -> Int
+    ? "Reserved for a future Rust."
+    n + 11
+
+fn gen(n: Int) -> Int
+    ? "Strict since edition 2024, which is what the generated crate asks for."
+    n + 12
+
 fn main() -> Unit
     ? "Print every shape, so a backend that drifts shows a diff, not a pass."
     ! [Console.print]
     Console.print(await(4))
     Console.print(resume(2))
     Console.print("{impl(4)} {move(4)} {unsafe(3)} {ping(4)} {pong(4)}")
+    Console.print("{become(0)} {try(0)} {macro(0)} {final(0)} {virtual(0)} {do(0)}")
+    Console.print("{priv(0)} {abstract(0)} {override(0)} {typeof(0)} {unsized(0)} {gen(0)}")
 "#;
-    let expected = "done\nhanded back\n0 1 7 11 13";
+    let expected = "done\nhanded back\n0 1 7 11 13\n1 2 3 4 5 6\n7 8 9 10 11 12";
 
     let vm = run_vm_inline("keyword_mutual_tco", src).expect("vm run");
     let rust =
@@ -551,6 +608,135 @@ fn main() -> Unit
         rust, expected,
         "Rust keyword-name contract diverged from VM"
     );
+}
+
+/// The reported shape, which is a two-file one: the keyword-named mutual
+/// pair lives in a DEPENDENCY module and the entry module only calls into
+/// it. That is how the bug stayed hidden — the dep module had been
+/// uncompilable since it was written, and nothing said so until a second
+/// module depended on it. The dep module's trampoline is emitted into its
+/// own file, so the entry module's output can be perfectly fine while the
+/// project still does not build.
+#[test]
+fn rust_dep_module_keyword_mutual_recursion_builds_and_matches_vm() {
+    let dir = temp_dir("dep_keyword_mutual");
+    fs::write(
+        dir.join("Worker.av"),
+        r#"module Worker
+    exposes [await]
+    intent = "A keyword-named mutual pair, in a dependency module"
+    effects []
+
+fn await(n: Int) -> Int
+    ? "One half of the pair."
+    match n == 0
+        true -> 0
+        false -> resume(n - 1)
+
+fn resume(n: Int) -> Int
+    ? "The other half."
+    match n == 0
+        true -> 1
+        false -> await(n - 1)
+"#,
+    )
+    .expect("write dep module");
+
+    let entry = dir.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Worker]
+    intent = "Calls a keyword-named mutual pair across a module boundary"
+    effects [Console.print]
+
+fn main() -> Unit
+    ? "Both parities of the bounce, so a dropped arm shows as a diff."
+    ! [Console.print]
+    Console.print("{Worker.await(4)} {Worker.await(5)}")
+"#,
+    )
+    .expect("write entry module");
+
+    let expected = "0 1";
+
+    let vm = run_vm(&entry, Some(&dir)).expect("vm run");
+    assert_eq!(vm, expected, "VM contract changed");
+
+    let project = dir.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    compile_rust(&entry, &project, "dep_keyword_mutual", Some(&dir), &[])
+        .expect("aver compile --target rust");
+    let bin = cargo_build(&project, "dep_keyword_mutual").expect("cargo build");
+    let out = Command::new(&bin).output().expect("run compiled binary");
+    assert!(
+        out.status.success(),
+        "compiled binary failed:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        expected,
+        "Rust dep-module keyword contract diverged from VM"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `crate`, `self`, `super` and `Self` have no Rust spelling at all — `r#`
+/// is a parse error for exactly these four — so the backend refuses them
+/// instead of emitting a project that cannot build. This drives the real
+/// `aver compile` binary, because the refusal is only useful if it reaches
+/// the command line: before it, this program compiled "successfully" and
+/// then failed `cargo build` with ``error: `crate` cannot be a raw
+/// identifier``, naming a generated file the user never wrote.
+#[test]
+fn never_raw_rust_name_is_refused_by_compile_with_a_named_error() {
+    let src = r#"module NeverRaw
+    intent = "A function named with a word Rust cannot spell"
+    effects [Console.print]
+
+fn crate(n: Int) -> Int
+    ? "Legal Aver, unspellable Rust."
+    n + 1
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{crate(1)}")
+"#;
+
+    let dir = temp_dir("never_raw_rust_name");
+    let src_path = dir.join("main.av");
+    fs::write(&src_path, src).expect("write source");
+
+    // The VM has no such limitation, so the program itself is fine.
+    let vm = run_vm_inline("never_raw_rust_name", src).expect("vm run");
+    assert_eq!(vm, "2", "the program is valid Aver and the VM runs it");
+
+    let out = Command::new(aver_bin())
+        .arg("compile")
+        .arg("-o")
+        .arg(dir.join("out"))
+        .arg(&src_path)
+        .output()
+        .expect("run aver compile");
+
+    assert!(
+        !out.status.success(),
+        "compile should refuse an unspellable name, but it succeeded"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("function `crate`"),
+        "refusal must name the function at fault:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("r#crate"),
+        "refusal must explain that the raw escape is not available:\n{stderr}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// `aver compile` can succeed while leaving a MIR-walker `compile_error!` in

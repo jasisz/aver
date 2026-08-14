@@ -346,6 +346,7 @@ pub fn proof_dafny_files(source: &str) -> Result<HashMap<String, String>, String
 #[cfg(feature = "runtime")]
 pub fn compile_rust_files(source: &str) -> Result<HashMap<String, String>, String> {
     let mut ctx = build_ctx(source, true)?;
+    codegen::rust::unspellable_rust_names(&ctx)?;
     let output = codegen::rust::transpile(&mut ctx);
     Ok(output.files.into_iter().collect())
 }
@@ -451,6 +452,7 @@ pub fn compile_rust_files_project(
     entry: &str,
 ) -> Result<HashMap<String, String>, String> {
     let mut ctx = build_project_ctx(files, entry, true)?;
+    codegen::rust::unspellable_rust_names(&ctx)?;
     let output = codegen::rust::transpile(&mut ctx);
     Ok(output.files.into_iter().collect())
 }
