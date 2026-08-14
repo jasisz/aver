@@ -26,6 +26,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Stepping through a list in compiled code no longer allocates per element.** Destructuring a list — `match items` with a `[head, ..rest]` arm, the shape every recursive list function is written in — used to build a fresh list for the rest on every single step, so walking a million elements allocated and freed a million times over whatever the walk was actually doing. The rest of a list is now the same list read from one element further in: a step costs a reference count and nothing else. A walk that does little per element — counting, summing, range-checking — is about three times faster in a release build, and a walk that does more per element saves the same time in absolute terms. Nothing in your code changes; every compiled program that steps through a list gets the constant back. `List.drop` already handed back a view of the list it stepped into, and destructuring now steps the same way.
+
 - **An unrecognised field in a module header is now an error.** The header used to stop at the first line it did not recognise and hand that line back to the top level. A typo'd `expose [main]` therefore produced no diagnostic at all when its right-hand side happened to resolve, and a mistyped field silently did nothing. Header-shaped lines — `name = value` or `name [list]` — are now checked against the five allowed fields.
 
   This is breaking for one shape: a top-level binding written *indented*, directly under the header, used to be accepted and now is not. The fix is to unindent it — bindings belong at column 0, outside the header — and the error says so.

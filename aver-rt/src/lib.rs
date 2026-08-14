@@ -455,12 +455,19 @@ const LIST_APPEND_CHUNK_LIMIT: usize = 128;
 
 pub struct AverList<T> {
     inner: Rc<AverListInner<T>>,
+    /// How many elements at the front of a flat body this list starts past.
+    ///
+    /// It lives on the list rather than in the shared node so that the rest of
+    /// a flat list is the very same node read from one element further in —
+    /// stepping is a reference count and an offset, with nothing built. Only a
+    /// flat body carries a non-zero offset; the other shapes step the way they
+    /// always have, by rebuilding the node the step lands on.
+    start: usize,
 }
 
 enum AverListInner<T> {
     Flat {
         items: Rc<Vec<T>>,
-        start: usize,
     },
     Prepend {
         head: T,
@@ -483,13 +490,13 @@ enum AverListInner<T> {
 fn empty_list_inner<T>() -> Rc<AverListInner<T>> {
     Rc::new(AverListInner::Flat {
         items: Rc::new(Vec::new()),
-        start: 0,
     })
 }
 
 fn empty_list<T>(inner: &Rc<AverListInner<T>>) -> AverList<T> {
     AverList {
         inner: Rc::clone(inner),
+        start: 0,
     }
 }
 
@@ -564,19 +571,26 @@ impl<T> Clone for AverList<T> {
     fn clone(&self) -> Self {
         Self {
             inner: Rc::clone(&self.inner),
+            start: self.start,
         }
     }
 }
 
 impl<T> AverList<T> {
-    fn concat_node(left: &Self, right: &Self) -> Self {
+    /// A list that is a whole node — every shape but a stepped-into flat body.
+    fn node(inner: AverListInner<T>) -> Self {
         Self {
-            inner: Rc::new(AverListInner::Concat {
-                left: left.clone(),
-                right: right.clone(),
-                len: left.len() + right.len(),
-            }),
+            inner: Rc::new(inner),
+            start: 0,
         }
+    }
+
+    fn concat_node(left: &Self, right: &Self) -> Self {
+        Self::node(AverListInner::Concat {
+            left: left.clone(),
+            right: right.clone(),
+            len: left.len() + right.len(),
+        })
     }
 
     fn segments_rc(mut current: Self, rest: Rc<Vec<Self>>, mut start: usize) -> Self {
@@ -594,14 +608,12 @@ impl<T> AverList<T> {
         }
 
         let len = current.len() + rest[start..].iter().map(AverList::len).sum::<usize>();
-        Self {
-            inner: Rc::new(AverListInner::Segments {
-                current,
-                rest,
-                start,
-                len,
-            }),
-        }
+        Self::node(AverListInner::Segments {
+            current,
+            rest,
+            start,
+            len,
+        })
     }
 
     fn rebuild_from_rights(mut base: Self, mut rights: Vec<Self>) -> Self {
@@ -611,18 +623,23 @@ impl<T> AverList<T> {
         base
     }
 
-    fn flat_tail(items: &Rc<Vec<T>>, start: usize) -> Option<Self> {
-        if start >= items.len() {
+    /// The rest of a flat body of `len` elements: the same node, read from one
+    /// element further in.
+    ///
+    /// Nothing is built for the step — a walk costs the walk, not a node per
+    /// element (issue #911). The last step hands back the empty list rather
+    /// than a spent view, so a list walked to its end stops holding the body
+    /// it walked over.
+    fn flat_tail(&self, len: usize) -> Option<Self> {
+        if self.start >= len {
             return None;
         }
-        if start + 1 >= items.len() {
+        if self.start + 1 >= len {
             return Some(Self::empty());
         }
         Some(Self {
-            inner: Rc::new(AverListInner::Flat {
-                items: Rc::clone(items),
-                start: start + 1,
-            }),
+            inner: Rc::clone(&self.inner),
+            start: self.start + 1,
         })
     }
 
@@ -632,9 +649,9 @@ impl<T> AverList<T> {
 
         loop {
             match current.inner.as_ref() {
-                AverListInner::Flat { items, start } => {
-                    let head = items.get(*start)?;
-                    let tail = Self::flat_tail(items, *start)?;
+                AverListInner::Flat { items } => {
+                    let head = items.get(current.start)?;
+                    let tail = current.flat_tail(items.len())?;
                     return Some((head, Self::rebuild_from_rights(tail, rights)));
                 }
                 AverListInner::Prepend { head, tail, .. } => {
@@ -709,12 +726,10 @@ impl<T> AverList<T> {
             // The step lands strictly inside `current`.
             let node = Rc::clone(&current.inner);
             match node.as_ref() {
-                AverListInner::Flat { items, start } => {
+                AverListInner::Flat { .. } => {
                     let view = Self {
-                        inner: Rc::new(AverListInner::Flat {
-                            items: Rc::clone(items),
-                            start: start + remaining,
-                        }),
+                        inner: Rc::clone(&current.inner),
+                        start: current.start + remaining,
                     };
                     return Self::rebuild_from_rights(view, rights);
                 }
@@ -779,19 +794,14 @@ impl<T> AverList<T> {
     }
 
     pub fn from_vec(items: Vec<T>) -> Self {
-        Self {
-            inner: Rc::new(AverListInner::Flat {
-                items: Rc::new(items),
-                start: 0,
-            }),
-        }
+        Self::node(AverListInner::Flat {
+            items: Rc::new(items),
+        })
     }
 
     /// O(1) if Flat with start=0, wraps existing Rc<Vec<T>> directly.
     pub fn from_rc_vec(items: Rc<Vec<T>>) -> Self {
-        Self {
-            inner: Rc::new(AverListInner::Flat { items, start: 0 }),
-        }
+        Self::node(AverListInner::Flat { items })
     }
 
     /// Extract the backing Rc<Vec<T>> — O(1) if Flat with start=0, O(n) otherwise.
@@ -800,14 +810,14 @@ impl<T> AverList<T> {
         T: Clone,
     {
         match self.inner.as_ref() {
-            AverListInner::Flat { items, start } if *start == 0 => Rc::clone(items),
+            AverListInner::Flat { items } if self.start == 0 => Rc::clone(items),
             _ => Rc::new(self.to_vec()),
         }
     }
 
     pub fn len(&self) -> usize {
         match self.inner.as_ref() {
-            AverListInner::Flat { items, start } => items.len().saturating_sub(*start),
+            AverListInner::Flat { items } => items.len().saturating_sub(self.start),
             AverListInner::Prepend { len, .. }
             | AverListInner::Concat { len, .. }
             | AverListInner::Segments { len, .. } => *len,
@@ -824,8 +834,8 @@ impl<T> AverList<T> {
 
         loop {
             match current.inner.as_ref() {
-                AverListInner::Flat { items, start } => {
-                    return items.get(start.saturating_add(remaining));
+                AverListInner::Flat { items } => {
+                    return items.get(current.start.saturating_add(remaining));
                 }
                 AverListInner::Prepend { head, tail, .. } => {
                     if remaining == 0 {
@@ -876,7 +886,7 @@ impl<T> AverList<T> {
 
     pub fn as_slice(&self) -> Option<&[T]> {
         match self.inner.as_ref() {
-            AverListInner::Flat { items, start } => Some(items.get(*start..).unwrap_or(&[])),
+            AverListInner::Flat { items } => Some(items.get(self.start..).unwrap_or(&[])),
             AverListInner::Prepend { .. }
             | AverListInner::Concat { .. }
             | AverListInner::Segments { .. } => None,
@@ -892,7 +902,7 @@ impl<T> AverList<T> {
 
     pub fn tail(&self) -> Option<Self> {
         match self.inner.as_ref() {
-            AverListInner::Flat { items, start } => Self::flat_tail(items, *start),
+            AverListInner::Flat { items } => self.flat_tail(items.len()),
             AverListInner::Prepend { tail, .. } => Some(tail.clone()),
             AverListInner::Concat { .. } | AverListInner::Segments { .. } => {
                 self.uncons().map(|(_, tail)| tail)
@@ -904,13 +914,11 @@ impl<T> AverList<T> {
         if list.is_empty() {
             return Self::from_vec(vec![item]);
         }
-        Self {
-            inner: Rc::new(AverListInner::Prepend {
-                head: item,
-                tail: list.clone(),
-                len: list.len() + 1,
-            }),
-        }
+        Self::node(AverListInner::Prepend {
+            head: item,
+            tail: list.clone(),
+            len: list.len() + 1,
+        })
     }
 
     pub fn concat(left: &Self, right: &Self) -> Self {
@@ -993,8 +1001,8 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                     }
                 }
                 ListCursor::Node(list) => match list.inner.as_ref() {
-                    AverListInner::Flat { items, start } => {
-                        let slice = items.get(*start..).unwrap_or(&[]);
+                    AverListInner::Flat { items } => {
+                        let slice = items.get(list.start..).unwrap_or(&[]);
                         if !slice.is_empty() {
                             self.stack.push(ListCursor::Slice(slice, 0));
                         }
@@ -1143,6 +1151,60 @@ mod tests {
     use super::{
         AverList, AverListInner, LIST_APPEND_CHUNK_LIMIT, aver_display, env_set, string_slice,
     };
+
+    /// One step off a flat list allocates nothing: the tail is the node it was
+    /// taken from, read from one element further in. A fresh node per step is
+    /// what every compiled list walk used to pay for (issue #911).
+    #[test]
+    fn unconsing_a_flat_list_steps_without_building_a_node() {
+        let list = AverList::from_vec((0..64).collect::<Vec<i32>>());
+        let (head, tail) = super::list_uncons(&list).expect("non-empty list unconses");
+
+        assert_eq!(*head, 0);
+        assert!(
+            super::Rc::ptr_eq(&list.inner, &tail.inner),
+            "uncons built a node for the tail instead of stepping the offset",
+        );
+        assert_eq!(tail.len(), 63);
+        assert_eq!(tail.first(), Some(&1));
+    }
+
+    /// The same for `tail`, which reaches the flat step by its own path.
+    #[test]
+    fn tail_of_a_flat_list_steps_without_building_a_node() {
+        let list = AverList::from_vec((0..8).collect::<Vec<i32>>());
+        let tail = list.tail().expect("non-empty list has a tail");
+
+        assert!(
+            super::Rc::ptr_eq(&list.inner, &tail.inner),
+            "tail built a node instead of stepping the offset",
+        );
+        assert_eq!(tail.to_vec(), (1..8).collect::<Vec<i32>>());
+    }
+
+    /// Per element, not just for the first one: walking a flat list end to end
+    /// stays on the one node the list started as. The last step is the empty
+    /// list, which stops holding the body it walked over.
+    #[test]
+    fn walking_a_flat_list_stays_on_one_node() {
+        let list = AverList::from_vec((0..256).collect::<Vec<i32>>());
+        let mut rest = list.clone();
+        let mut seen = Vec::new();
+
+        while let Some((head, tail)) = super::list_uncons(&rest) {
+            seen.push(*head);
+            if !tail.is_empty() {
+                assert!(
+                    super::Rc::ptr_eq(&list.inner, &tail.inner),
+                    "the walk left the node it started on at element {}",
+                    seen.len(),
+                );
+            }
+            rest = tail;
+        }
+
+        assert_eq!(seen, (0..256).collect::<Vec<i32>>());
+    }
 
     #[test]
     fn prepend_and_tail_share_structure() {
