@@ -1065,3 +1065,235 @@ fn the_stable_promotion_reads_a_stable_root_only_when_told_to() {
         "the promotion skipped a stable list it had been asked to repair",
     );
 }
+
+// ─── `List.drop` shares what destructuring shares (issue #913) ───────────────
+//
+// `List.drop(xs, n)` should cost what it steps over, not what is left. The
+// evidence is structural rather than a stopwatch: the list handed back must be
+// a *view* over the body it was given — the same allocation at an advanced
+// offset, which is exactly what `list_uncons` hands out — so nothing is copied
+// and a walk that steps through a list is linear instead of quadratic.
+//
+// Every test below drives the real builtin (`List.drop` through `call_nv`),
+// not the arena helper underneath it, so a builtin that stops using the helper
+// is still caught.
+
+/// Drive the `List.drop` builtin the way the VM does.
+fn drop_builtin(arena: &mut Arena, list: NanValue, count: i64) -> NanValue {
+    let count = NanValue::new_int(count, arena);
+    crate::types::list::call_nv("List.drop", &[list, count], arena)
+        .expect("List.drop is owned by the list namespace")
+        .expect("List.drop over a list and an int")
+}
+
+fn list_contents(arena: &Arena, list: NanValue) -> Vec<i64> {
+    (0..arena.list_len_value(list))
+        .map(|i| arena.list_get_value(list, i).unwrap().as_int(arena))
+        .collect()
+}
+
+/// The load-bearing one: a flat body is shared, and only the offset moves.
+#[test]
+fn dropping_a_prefix_shares_the_list_body_and_advances_the_offset() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..64).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+    let shared = flat_body!(arena, list);
+
+    let dropped = drop_builtin(&mut arena, list, 16);
+
+    let (body, start) = match arena.get_list(dropped.arena_index()) {
+        ArenaList::Flat { items, start } => (items.clone(), *start),
+        other => panic!("expected a flat view, got {other:?}"),
+    };
+    assert!(
+        std::sync::Arc::ptr_eq(&shared, &body),
+        "List.drop copied the remainder into a fresh body instead of sharing \
+         the one it was given",
+    );
+    assert_eq!(start, 16, "List.drop did not advance the slice offset");
+    assert_eq!(arena.list_len_value(dropped), 48);
+    assert_eq!(arena.list_get_value(dropped, 0).unwrap().as_int(&arena), 16);
+    assert_eq!(
+        arena.list_get_value(dropped, 47).unwrap().as_int(&arena),
+        63
+    );
+}
+
+/// Dropping nothing must hand the list straight back rather than rebuild it.
+#[test]
+fn dropping_nothing_returns_the_list_it_was_given() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..8).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+
+    for count in [0, -1, -1000] {
+        let dropped = drop_builtin(&mut arena, list, count);
+        assert_eq!(
+            dropped.bits(),
+            list.bits(),
+            "List.drop({count}) rebuilt a list it was not asked to step into",
+        );
+    }
+}
+
+/// Stepping past the end yields the canonical empty list — the same value
+/// unconsing to the end yields, so the two walks stay interchangeable.
+#[test]
+fn dropping_past_the_end_yields_the_canonical_empty_list() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..3).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+
+    let mut unconsed = list;
+    while let Some((_, tail)) = arena.list_uncons(unconsed) {
+        unconsed = tail;
+    }
+
+    for count in [3, 4, 4_000] {
+        let dropped = drop_builtin(&mut arena, list, count);
+        assert!(
+            arena.list_is_empty_value(dropped),
+            "List.drop({count}) over a 3-element list is not empty",
+        );
+        assert_eq!(
+            dropped.bits(),
+            unconsed.bits(),
+            "List.drop({count}) does not agree with unconsing to the end",
+        );
+    }
+}
+
+/// A prepend chain has no offset to advance, so the walk steps link by link —
+/// what repeated `list_uncons` does — and lands on the shared body underneath.
+#[test]
+fn dropping_through_a_prepend_chain_lands_on_the_shared_body() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (2..6).map(NanValue::new_int_inline).collect();
+    let base = NanValue::new_list(arena.push_list(items));
+    let shared = flat_body!(arena, base);
+    let one = NanValue::new_list(arena.push_list_prepend(NanValue::new_int_inline(1), base));
+    let list = NanValue::new_list(arena.push_list_prepend(NanValue::new_int_inline(0), one));
+
+    let dropped = drop_builtin(&mut arena, list, 2);
+
+    let body = flat_body!(arena, dropped);
+    assert!(
+        std::sync::Arc::ptr_eq(&shared, &body),
+        "stepping over a prepend chain rebuilt the body it arrived at",
+    );
+    assert_eq!(list_contents(&arena, dropped), vec![2, 3, 4, 5]);
+}
+
+/// Landing inside the right half of a concat shares the right half's body.
+#[test]
+fn dropping_into_the_right_half_of_a_concat_shares_its_body() {
+    let mut arena = Arena::new();
+    let left_items: Vec<NanValue> = (0..2).map(NanValue::new_int_inline).collect();
+    let left = NanValue::new_list(arena.push_list(left_items));
+    let right_items: Vec<NanValue> = (2..6).map(NanValue::new_int_inline).collect();
+    let right = NanValue::new_list(arena.push_list(right_items));
+    let shared = flat_body!(arena, right);
+    let joined = NanValue::new_list(arena.push_list_concat(left, right));
+
+    let dropped = drop_builtin(&mut arena, joined, 3);
+
+    let (body, start) = match arena.get_list(dropped.arena_index()) {
+        ArenaList::Flat { items, start } => (items.clone(), *start),
+        other => panic!("expected a flat view, got {other:?}"),
+    };
+    assert!(
+        std::sync::Arc::ptr_eq(&shared, &body),
+        "stepping into the right half of a concat rebuilt it",
+    );
+    assert_eq!(start, 1);
+    assert_eq!(list_contents(&arena, dropped), vec![3, 4, 5]);
+}
+
+/// Stepping into the LEFT half must keep the right half attached. This is the
+/// trap `list_uncons` carries a comment about: a node reached down the left
+/// spine of a concat has right-siblings waiting, and forgetting them silently
+/// deletes everything after the step.
+#[test]
+fn dropping_into_the_left_half_of_a_concat_keeps_the_right_half() {
+    let mut arena = Arena::new();
+    let left_items: Vec<NanValue> = (0..4).map(NanValue::new_int_inline).collect();
+    let left = NanValue::new_list(arena.push_list(left_items));
+    let right_items: Vec<NanValue> = (4..7).map(NanValue::new_int_inline).collect();
+    let right = NanValue::new_list(arena.push_list(right_items));
+    let joined = NanValue::new_list(arena.push_list_concat(left, right));
+
+    let dropped = drop_builtin(&mut arena, joined, 2);
+
+    assert_eq!(list_contents(&arena, dropped), vec![2, 3, 4, 5, 6]);
+}
+
+/// The same trap one shape deeper: a segmented list on the left of a concat.
+/// This is the shape `list_uncons` had to grow its `parts ++ rights` fold for.
+#[test]
+fn dropping_into_a_segmented_left_half_keeps_the_right_half() {
+    let mut arena = Arena::new();
+    let mut appended = NanValue::new_list(arena.push_list(vec![NanValue::new_int_inline(0)]));
+    for value in 1..200 {
+        let next = arena.push_list_append(appended, NanValue::new_int_inline(value));
+        appended = NanValue::new_list(next);
+    }
+    let right = NanValue::new_list(arena.push_list(vec![NanValue::new_int_inline(999)]));
+    let joined = NanValue::new_list(arena.push_list_concat(appended, right));
+
+    let dropped = drop_builtin(&mut arena, joined, 150);
+
+    let contents = list_contents(&arena, dropped);
+    assert_eq!(
+        contents.len(),
+        51,
+        "stepping over a segmented list lost elements",
+    );
+    assert_eq!(contents.first().copied(), Some(150));
+    assert_eq!(contents.last().copied(), Some(999));
+}
+
+/// Walking a list by repeated `List.drop` must agree with walking it by
+/// repeated `list_uncons`, on every shape the arena can hold.
+#[test]
+fn walking_by_drop_agrees_with_walking_by_uncons() {
+    let mut arena = Arena::new();
+    let flat_items: Vec<NanValue> = (0..40).map(NanValue::new_int_inline).collect();
+    let flat = NanValue::new_list(arena.push_list(flat_items));
+    let mut prepended = flat;
+    for value in (100..110).rev() {
+        let next = arena.push_list_prepend(NanValue::new_int_inline(value), prepended);
+        prepended = NanValue::new_list(next);
+    }
+    let mut appended = NanValue::new_list(arena.push_list(vec![NanValue::new_int_inline(0)]));
+    for value in 1..300 {
+        let next = arena.push_list_append(appended, NanValue::new_int_inline(value));
+        appended = NanValue::new_list(next);
+    }
+    let concat = NanValue::new_list(arena.push_list_concat(prepended, appended));
+
+    for list in [flat, prepended, appended, concat] {
+        for step in [1, 3, 7, 64] {
+            let mut by_drop = list;
+            let mut by_uncons = list;
+            loop {
+                let expected = list_contents(&arena, by_uncons);
+                assert_eq!(
+                    list_contents(&arena, by_drop),
+                    expected,
+                    "a drop-walk in steps of {step} diverged from an uncons-walk",
+                );
+                if expected.is_empty() {
+                    break;
+                }
+                by_drop = drop_builtin(&mut arena, by_drop, step);
+                for _ in 0..step {
+                    by_uncons = match arena.list_uncons(by_uncons) {
+                        Some((_, tail)) => tail,
+                        None => break,
+                    };
+                }
+            }
+        }
+    }
+}

@@ -5264,9 +5264,9 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
 /// (`wasm-tools print program.wasm`). For pre-opt builds, names survive;
 /// for post-opt, `wasm-opt -Oz` strips the section by design.
 ///
-/// One of those names is load-bearing, not decoration: a map that fills
-/// its fixed bucket count traps, and the capacity is in the trapping
-/// helper's name because a wasm trap carries no message of its own. The
+/// One of those names is load-bearing, not decoration: the map insert
+/// helpers carry a resize-bug backstop trap, and its name is the only
+/// diagnostic a wasm trap can carry (a trap has no message of its own). The
 /// optimize pass costs the program that name twice over — it drops the
 /// section, and `-Oz` / `-O3` inline a sole-call-site helper into its
 /// caller, so `-g` would only hand back an empty name map. Nothing here
@@ -5290,7 +5290,7 @@ fn finalize_wasm_artifact(
 }
 
 /// Say on stderr that the artifact about to be optimized carries the map
-/// capacity-helper names, and will not carry them afterwards. Silent for
+/// insert-helper names, and will not carry them afterwards. Silent for
 /// a program that instantiates no map — the emitter writes the names
 /// only for those, so their presence is the exact test.
 #[cfg(feature = "wasm")]
@@ -5302,12 +5302,12 @@ fn warn_optimize_drops_capacity_names(wasm_file: &Path) {
         return;
     }
     eprintln!(
-        "{} this program uses a Map, whose wasm-gc bucket count is fixed \
-         at 16384 with no resize. Filling it traps, and in an un-optimized \
-         build the trapping helper's name reports the capacity. \
-         `--optimize` drops the name section and inlines the helper, so \
-         the same trap prints `<wasm function N>` here. Build without \
-         `--optimize` to read the backtrace.",
+        "{} this program uses a Map. Its wasm-gc table grows on demand, \
+         so an insert has no size limit to hit — but if one ever stops, \
+         the helper's name in an un-optimized build says which map it \
+         was. `--optimize` drops the name section and inlines the \
+         helper, so the same stop prints `<wasm function N>` here. \
+         Build without `--optimize` to read the backtrace.",
         "note:".yellow()
     );
 }

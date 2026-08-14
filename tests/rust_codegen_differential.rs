@@ -1282,6 +1282,102 @@ fn main() -> Unit
     assert_eq!(rust, vm, "Rust Crypto.sha256 codegen diverged from VM");
 }
 
+/// `List.drop` on the compiled backend: stepping through a list must see
+/// exactly what stepping by destructuring sees, and the two answers are
+/// printed side by side so a skipped or duplicated element shows up in the
+/// line itself.
+///
+/// This is the backend the issue was measured on (#913), and the only one
+/// whose count clamp lives in the emitted expression rather than in a shared
+/// builtin: reading `to_usize().unwrap_or(usize::MAX)` straight had a
+/// negative count DROP the whole list here and drop nothing everywhere else,
+/// with `List.take` inverted the same way. No cheaper harness reaches that —
+/// the wasm-gc and VM spellings of the clamp are separate code — so the
+/// negative-count lines below are the whole reason this case is in the
+/// default tier.
+#[test]
+fn rust_list_drop_walk_matches_destructuring_and_the_vm() {
+    let src = r#"module ListDropWalk
+    intent = "Stepping a list with List.drop must agree with destructuring"
+    effects [Console.print]
+
+fn built(n: Int, acc: List<Int>) -> List<Int>
+    ? "A list of n elements, grown from the front."
+    match n <= 0
+        true -> acc
+        false -> built(n - 1, List.prepend(n, acc))
+
+fn grown(i: Int, n: Int, acc: List<Int>) -> List<Int>
+    ? "A list grown from the back, so the runtime holds it as a spine."
+    match i >= n
+        true -> acc
+        false -> grown(i + 1, n, List.concat(acc, [i]))
+
+fn walkByDrop(xs: List<Int>, step: Int, acc: Int) -> Int
+    ? "Advance step at a time with List.drop."
+    match xs
+        [] -> acc
+        [head, ..tail] -> walkByDrop(List.drop(xs, step), step, acc + head)
+
+fn skip(xs: List<Int>, n: Int) -> List<Int>
+    ? "Step over n elements by destructuring."
+    match n <= 0
+        true -> xs
+        false -> skipOne(xs, n)
+
+fn skipOne(xs: List<Int>, n: Int) -> List<Int>
+    ? "One element at a time."
+    match xs
+        [] -> []
+        [head, ..tail] -> skip(tail, n - 1)
+
+fn walkByUncons(xs: List<Int>, step: Int, acc: Int) -> Int
+    ? "The same walk, written as destructuring."
+    match xs
+        [] -> acc
+        [head, ..tail] -> walkByUncons(skip(xs, step), step, acc + head)
+
+fn joinInts(xs: List<Int>) -> String
+    ? "Render a list of ints."
+    match xs
+        [] -> "."
+        [x, ..rest] -> String.fromInt(x) + "," + joinInts(rest)
+
+fn walks(xs: List<Int>) -> String
+    ? "Both walks over the same list, side by side."
+    String.fromInt(walkByDrop(xs, 7, 0)) + "/" + String.fromInt(walkByUncons(xs, 7, 0))
+
+fn main() -> Unit
+    ? "Walk three list shapes two ways, then the counts at the edges."
+    ! [Console.print]
+    prepended = built(200, [])
+    spined = grown(0, 60, [])
+    Console.print(walks(prepended))
+    Console.print(walks(spined))
+    Console.print(walks(List.concat(prepended, spined)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 2)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 0)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], 9)))
+    Console.print(joinInts(List.drop([1, 2, 3, 4, 5], -3)))
+    Console.print(joinInts(List.take([1, 2, 3, 4, 5], -3)))
+"#;
+
+    let expected = "2871/2871\n\
+                    252/252\n\
+                    3150/3150\n\
+                    3,4,5,.\n\
+                    1,2,3,4,5,.\n\
+                    .\n\
+                    1,2,3,4,5,.\n\
+                    .";
+
+    let vm = run_vm_inline("list_drop_walk", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("list_drop_walk", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "the VM's List.drop contract changed");
+    assert_eq!(rust, vm, "Rust List.drop / List.take diverged from the VM");
+}
+
 /// A program whose ONLY `Crypto.sha256` call sits in a verify case still
 /// generates a project whose `#[cfg(test)]` module references
 /// `crate::aver_generated::crypto::digest32::Digest32` — the implicit
