@@ -1953,10 +1953,13 @@ impl<T: ArenaTypes> Arena<T> {
             // rest of the roots lands in one stable slot instead of two, and
             // the two references to it stay the same reference.
             //
-            // The memo is doing two jobs. It keeps a slot reached twice from
-            // being descended into twice, and it terminates a stable value that
-            // reaches itself — which nothing but an in-place write can build,
-            // and which would otherwise recur forever here.
+            // The memo keeps a slot reached twice from being descended into
+            // twice. A self-reaching stable value (which only an in-place
+            // write can build) terminates even without it — the take below
+            // leaves `Int(0)` in the slot, so a re-entry reads the
+            // placeholder, exactly as the promotion sibling does — but the
+            // memo makes the second visit a no-op by construction instead of
+            // by meeting the placeholder.
             HeapSpace::Stable if self.rewrite_out_of_region_roots => {
                 let raw_index = raw_index as usize;
                 if raw_index < self.stable_entries.len()
