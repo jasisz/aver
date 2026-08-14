@@ -586,29 +586,37 @@ fn build_common_dafny(union_body: &str) -> String {
     }
     sections.push(DAFNY_PRELUDE_CORE_HELPERS.to_string());
     for helper in crate::codegen::builtin_helpers::needed_helpers(union_body, false) {
-        match helper.key {
-            "BranchPath" => sections.push(DAFNY_HELPER_BRANCH_PATH.to_string()),
-            "AverList" => sections.push(DAFNY_HELPER_AVER_LIST.to_string()),
-            "StringHelpers" => sections.push(DAFNY_HELPER_STRING_HELPERS.to_string()),
-            "NumericParse" => sections.push(DAFNY_HELPER_NUMERIC_PARSE.to_string()),
-            "CharCode" => sections.push(DAFNY_HELPER_CHAR.to_string()),
-            "AverBits" => sections.push(DAFNY_HELPER_BITS.to_string()),
-            "AverMap" => sections.push(DAFNY_HELPER_AVER_MAP.to_string()),
-            "AverMeasure" | "ProofFuel" => {}
-            "FloatInstances" | "ExceptInstances" | "StringHadd" => {}
-            "ResultDatatype" => sections.push(DAFNY_HELPER_RESULT_DATATYPE.to_string()),
-            "OptionDatatype" => sections.push(DAFNY_HELPER_OPTION_DATATYPE.to_string()),
-            "OptionToResult" => sections.push(DAFNY_HELPER_OPTION_TO_RESULT.to_string()),
-            "BranchPathDatatype" => sections.push(DAFNY_HELPER_BRANCH_PATH_DATATYPE.to_string()),
-            other => panic!(
-                "Dafny backend has no implementation for builtin helper key '{}'. \
-                 Add a match arm in build_common_dafny or remove the key from BUILTIN_HELPERS.",
-                other
-            ),
+        if let Some(block) = dafny_helper_block(helper.key) {
+            sections.push(block.to_string());
         }
     }
     sections.push("}".to_string());
     sections.join("\n")
+}
+
+/// The Dafny text a builtin-helper key contributes to `common.dfy`, or `None`
+/// for the keys that are Lean-only (Dafny gets those from native constructs).
+fn dafny_helper_block(key: &str) -> Option<&'static str> {
+    match key {
+        "BranchPath" => Some(DAFNY_HELPER_BRANCH_PATH),
+        "AverList" => Some(DAFNY_HELPER_AVER_LIST),
+        "StringHelpers" => Some(DAFNY_HELPER_STRING_HELPERS),
+        "NumericParse" => Some(DAFNY_HELPER_NUMERIC_PARSE),
+        "CharCode" => Some(DAFNY_HELPER_CHAR),
+        "AverBits" => Some(DAFNY_HELPER_BITS),
+        "AverMap" => Some(DAFNY_HELPER_AVER_MAP),
+        "AverMeasure" | "ProofFuel" => None,
+        "FloatInstances" | "ExceptInstances" | "StringHadd" => None,
+        "ResultDatatype" => Some(DAFNY_HELPER_RESULT_DATATYPE),
+        "OptionDatatype" => Some(DAFNY_HELPER_OPTION_DATATYPE),
+        "OptionToResult" => Some(DAFNY_HELPER_OPTION_TO_RESULT),
+        "BranchPathDatatype" => Some(DAFNY_HELPER_BRANCH_PATH_DATATYPE),
+        other => panic!(
+            "Dafny backend has no implementation for builtin helper key '{}'. \
+             Add a match arm in dafny_helper_block or remove the key from BUILTIN_HELPERS.",
+            other
+        ),
+    }
 }
 
 const DAFNY_PRELUDE_HEAD: &str = r#"// --- Prelude: standard types and helpers ---
@@ -680,6 +688,17 @@ function BranchPath_parse(s: string): BranchPath {
 }
 "#;
 
+/// `ListFind` and `ListAny` are here for a rendering the emitter can
+/// produce but no source file can reach today: `List.find` / `List.any` are
+/// in the codegen name table, so `emit_dafny_builtin` writes
+/// `ListFind(xs, p)`, while the typechecker registers no signature for
+/// either and rejects the call before codegen runs. Declaring them costs
+/// two definitions and removes the state #881 is about — a rendering with
+/// nowhere to resolve to — instead of leaving it parked behind an
+/// unreachability argument that stops holding the moment either name gets a
+/// signature. They mirror Lean's model of the same two builtins
+/// (`codegen::lean::builtins` renders `xs.find? p` and `xs.any p`): first
+/// match wins, and `ListAny` is the existential, false on the empty list.
 const DAFNY_HELPER_AVER_LIST: &str = r#"
 function ListReverse<T>(xs: seq<T>): seq<T>
   decreases |xs|
@@ -709,15 +728,49 @@ function ListDrop<T>(xs: seq<T>, n: int): seq<T> {
   else if n >= |xs| then []
   else xs[n..]
 }
+
+function ListZip<A, B>(xs: seq<A>, ys: seq<B>): seq<(A, B)>
+  decreases |xs|
+{
+  if |xs| == 0 || |ys| == 0 then []
+  else [(xs[0], ys[0])] + ListZip(xs[1..], ys[1..])
+}
+
+function ListFind<T>(xs: seq<T>, p: T -> bool): Option<T>
+  decreases |xs|
+{
+  if |xs| == 0 then None
+  else if p(xs[0]) then Some(xs[0])
+  else ListFind(xs[1..], p)
+}
+
+function ListAny<T>(xs: seq<T>, p: T -> bool): bool
+  decreases |xs|
+{
+  if |xs| == 0 then false
+  else p(xs[0]) || ListAny(xs[1..], p)
+}
 "#;
 
-/// The three iteration readers — `MapEntries`, `MapKeys`, `MapValues` — are
-/// declared with a signature and no body on purpose. Dafny's `map` is
-/// unordered, so there is no expression here that reproduces the runtime's
-/// key-sorted sequence; leaving them uninterpreted commits the model to
-/// nothing about the order, which makes an order-dependent law simply not
-/// provable rather than provable-and-wrong. A law that only needs the name to
-/// stand for *something* (both sides read the same sequence) still closes.
+/// `MapEntries` is declared with a signature and no body on purpose. Dafny's
+/// `map` is unordered and this declaration is generic in the key type, so
+/// there is no expression here that reproduces the runtime's key-sorted
+/// sequence (`types/map.rs::compare_scalar_keys`); leaving it uninterpreted
+/// commits the model to nothing about the order, which makes a law that names
+/// the sequence itself simply not provable rather than provable-and-wrong.
+/// Nothing about the order is assumed either — there is no postcondition and
+/// no `{:axiom}` here, so the only facts the verifier has about a map's
+/// iteration are the ones the definitions below give it.
+///
+/// `MapKeys` and `MapValues` are the two projections of that one sequence,
+/// which is the part of the runtime's behaviour this model *can* express.
+/// Declaring them as three unrelated uninterpreted functions would let the
+/// verifier work in a world where a map's keys and values have different
+/// lengths, or where `keys[i]` does not belong with `values[i]` — a state the
+/// runtime cannot be in, and the exact divergence that compiled Rust was
+/// found in when `Map.values` walked the hash map while `Map.keys` beside it
+/// sorted. Reading all three off one sequence rules that out, and does it
+/// without claiming what the order is.
 ///
 /// All three must be listed in the `AverMap` helper's `body_tokens`
 /// (`codegen::builtin_helpers`), or a program that uses only `Map.keys` gets
@@ -729,8 +782,17 @@ function MapGet<K, V>(m: map<K, V>, k: K): Option<V> {
 }
 
 function MapEntries<K, V>(m: map<K, V>): seq<(K, V)>
-function MapKeys<K, V>(m: map<K, V>): seq<K>
-function MapValues<K, V>(m: map<K, V>): seq<V>
+
+function MapKeys<K, V>(m: map<K, V>): seq<K> {
+  var entries := MapEntries(m);
+  seq(|entries|, i requires 0 <= i < |entries| => entries[i].0)
+}
+
+function MapValues<K, V>(m: map<K, V>): seq<V> {
+  var entries := MapEntries(m);
+  seq(|entries|, i requires 0 <= i < |entries| => entries[i].1)
+}
+
 function MapFromList<K, V>(entries: seq<(K, V)>): map<K, V>
   decreases |entries|
 {
@@ -1142,6 +1204,293 @@ mod tests {
             !dfy.contains("down__fuel"),
             "should not emit fuel helper for native shape, got:\n{}",
             dfy
+        );
+    }
+
+    /// The name the Dafny resolver has to find for every call in `text`: the
+    /// leftmost segment of the call target, so `MapKeys(m)` asks for
+    /// `MapKeys` and `Result<int, string>.Err(e)` asks for `Result`.
+    fn dafny_call_targets(text: &str) -> Vec<String> {
+        let chars: Vec<char> = text.chars().collect();
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+        let ident_start = |end: usize| {
+            let mut start = end;
+            while start > 0 && is_ident(chars[start - 1]) {
+                start -= 1;
+            }
+            start
+        };
+        let mut targets = Vec::new();
+        for (open, ch) in chars.iter().enumerate() {
+            if *ch != '(' {
+                continue;
+            }
+            let mut end = open;
+            let mut start = ident_start(end);
+            if start == end {
+                // A parenthesised group, not a call.
+                continue;
+            }
+            // Step left over `.member` and any `<...>` instantiation between
+            // the two, until the segment the resolver looks up first.
+            while start > 0 && chars[start - 1] == '.' {
+                let mut at = start - 1;
+                if at > 0 && chars[at - 1] == '>' {
+                    let mut depth = 0usize;
+                    while at > 0 {
+                        at -= 1;
+                        match chars[at] {
+                            '>' => depth += 1,
+                            '<' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let qualifier = ident_start(at);
+                if qualifier == at {
+                    break;
+                }
+                start = qualifier;
+                end = at;
+            }
+            targets.push(chars[start..end].iter().collect::<String>());
+        }
+        targets
+    }
+
+    /// Does `block` declare `name` — as a function, a datatype or one of its
+    /// constructors, or a module?
+    fn dafny_declares(block: &str, name: &str) -> bool {
+        [
+            "function ",
+            "predicate ",
+            "lemma ",
+            "method ",
+            "datatype ",
+            "module ",
+            "type ",
+            "const ",
+            "= ",
+            "| ",
+        ]
+        .iter()
+        .any(|prefix| {
+            let needle = format!("{}{}", prefix, name);
+            block.match_indices(&needle).any(|(at, hit)| {
+                !matches!(
+                    block[at + hit.len()..].chars().next(),
+                    Some(c) if c.is_alphanumeric() || c == '_'
+                )
+            })
+        })
+    }
+
+    /// The builtins that have a name in the codegen table — so
+    /// `emit_dafny_builtin` renders them — but no signature the typechecker
+    /// registers, so no source file that reaches codegen can name one.
+    /// `check` rejects `List.find(xs, isBig)` with "Unknown member
+    /// 'List.find' (not exposed or missing)" before any backend runs, and
+    /// the proof backends only ever see a program that type-checked.
+    ///
+    /// This is the "provably unreachable" half of #881's dichotomy, and the
+    /// guard below asserts it rather than assuming it: the list has to match
+    /// the uncallable names exactly, so a builtin that gains a surface
+    /// signature — or a new name added to the codegen table with no
+    /// signature — lands here for a decision instead of slipping past.
+    const UNCALLABLE_BUILTINS: &[&str] = &["List.head", "List.tail", "List.find", "List.any"];
+
+    /// The dotted names a source program can call, as the typechecker sees
+    /// them. `TypeCheckResult::fn_sigs` flattens the builtin signature table
+    /// (`types::checker::builtins`) together with the program's own
+    /// functions, so a module that declares none leaves exactly the builtin
+    /// surface behind.
+    fn typechecker_builtin_surface() -> std::collections::HashSet<String> {
+        let src = "module Probe\n    intent = \"t\"\n    effects []\n";
+        let items = parse_source(src).expect("parse");
+        let result = crate::types::checker::run_type_check_full(&items, None);
+        assert!(
+            result.errors.is_empty(),
+            "probe module should type-check: {:?}",
+            result.errors
+        );
+        result.fn_sigs.into_keys().collect()
+    }
+
+    /// Every builtin the Dafny emitter can render has to resolve in the file
+    /// it writes, and two lists have to agree for that to hold: what the
+    /// emitter renders the builtin as, and which prelude blocks `common.dfy`
+    /// carries — which is decided by matching call forms against the emitted
+    /// body (`codegen::builtin_helpers`). `Map.keys` fell out of both at once:
+    /// `MapKeys(m)` was declared nowhere and matched no trigger, so `dafny
+    /// verify` stopped at `unresolved identifier: MapKeys` before checking a
+    /// single obligation (#881), while `aver proof` reported success.
+    /// `List.zip` sat in the same state behind it, and nothing was watching
+    /// the two lists for drift.
+    ///
+    /// The set walked here is `Builtin::ALL` — every variant
+    /// `emit_dafny_builtin` matches on, which is also every name
+    /// `recognize_builtin` accepts, because the enum and the name table are
+    /// one list. That is the set the emitter can *produce*; reading a
+    /// different table (`VmBuiltin::ALL`, say, which has no entry for the
+    /// `Result.Ok` constructors or for `List.find`) silently excuses exactly
+    /// the renderings most likely to have been forgotten.
+    ///
+    /// LIMITATION: each builtin is rendered with placeholder arguments
+    /// `a0`..`a3`, so this sees name resolution only. A resolution failure
+    /// that depends on the *shape* of an argument stays invisible — most
+    /// sharply, an empty list literal passed to a generic helper:
+    /// `pairCount([], [])` emits `|ListZip([], [])|` and Dafny answers "type
+    /// parameter 'A' (inferred to be '?') could not be determined". Giving
+    /// the placeholders types would not catch it either; only emitting from
+    /// real call sites would, which is what the `--check` export tests in
+    /// `proof_spec` do for the fixtures they carry.
+    #[test]
+    fn every_builtin_the_emitter_can_render_resolves_in_the_dafny_prelude() {
+        let args: Vec<String> = (0..4).map(|i| format!("a{}", i)).collect();
+        let mut covered: Vec<(&str, String)> = Vec::new();
+        for builtin in crate::codegen::builtins::Builtin::ALL {
+            let name = builtin.name();
+            let emitted = super::expr::emit_dafny_builtin(*builtin, &args);
+            let mut visible: Vec<&str> = vec![DAFNY_PRELUDE_CORE_HELPERS];
+            for helper in crate::codegen::builtin_helpers::needed_helpers(&emitted, false) {
+                if let Some(block) = dafny_helper_block(helper.key) {
+                    visible.push(block);
+                }
+            }
+            if emitted.contains("Aver_Crypto.") {
+                // Emitted as its own file, on the same `contains` condition
+                // `build_project` uses.
+                visible.push(crypto::SOURCE);
+            }
+            for target in dafny_call_targets(&emitted) {
+                if target == "seq" {
+                    // Dafny's own sequence constructor.
+                    continue;
+                }
+                assert!(
+                    visible.iter().any(|block| dafny_declares(block, &target)),
+                    "`{}` emits `{}`, and no helper block the emitted file pulls in \
+                     declares `{}`. Dafny stops at an unresolved identifier before it \
+                     checks a single obligation. Declare it in a helper block, and list \
+                     the call form in that helper's `body_tokens` so the block is \
+                     actually included.",
+                    name,
+                    emitted,
+                    target
+                );
+                covered.push((name, target));
+            }
+        }
+        // The names #881 is about have to be among the ones checked, or this
+        // test passes by looking at nothing.
+        for (surface, emitted) in [
+            ("Map.keys", "MapKeys"),
+            ("List.zip", "ListZip"),
+            ("List.find", "ListFind"),
+            ("List.any", "ListAny"),
+            // A constructor: the shape `VmBuiltin::ALL` had no entry for.
+            ("Result.Ok", "Result"),
+        ] {
+            assert!(
+                covered.iter().any(|(n, t)| *n == surface && t == emitted),
+                "`{}` must reach this check as `{}` — it did not, so the check is \
+                 vacuous for the builtins it was written for. Covered: {:?}",
+                surface,
+                emitted,
+                covered
+            );
+        }
+
+        // The other half of #881's dichotomy: every name that is NOT callable
+        // from source is one this file claims is unreachable, and the claim is
+        // checked against the typechecker rather than trusted.
+        let callable = typechecker_builtin_surface();
+        let uncallable: Vec<&str> = crate::codegen::builtins::Builtin::ALL
+            .iter()
+            .map(|b| b.name())
+            .filter(|name| !callable.contains(*name))
+            .collect();
+        assert_eq!(
+            uncallable, UNCALLABLE_BUILTINS,
+            "the builtins with a Dafny rendering but no typechecker signature \
+             changed. A name that gained one is now callable — check its \
+             rendering against the prelude declaration and drop it from \
+             UNCALLABLE_BUILTINS. A name that lost one, or a new codegen-table \
+             entry with no signature, needs the opposite decision."
+        );
+    }
+
+    /// The guard above asks whether a declaration EXISTS. This one asks
+    /// whether Dafny accepts it, over every helper block at once.
+    ///
+    /// Nothing else covers the blocks no fixture reaches. `ListFind` /
+    /// `ListAny` are the sharpest case — the two builtins the guard above
+    /// proves no program can call — but the same hole covers any block whose
+    /// trigger no example happens to hit: a malformed body, a call to a name
+    /// declared in a block this one does not depend on, or a recursion Dafny
+    /// cannot see terminating would sit there until the first user wrote the
+    /// program that pulls it in.
+    ///
+    /// Skips when `dafny` is not installed, the same condition the export
+    /// tests in `proof_spec` use. Restricted to `--lib`, so the Proof Export
+    /// lane is where it actually runs (`.github/workflows/proof.yml`).
+    #[test]
+    fn every_dafny_helper_block_verifies_together() {
+        if std::process::Command::new("dafny")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping dafny prelude check: `dafny` not available");
+            return;
+        }
+        // `force_all` asks for every helper key; the map from key to Dafny
+        // text is the same one `build_common_dafny` uses, so this is the
+        // prelude as shipped, not a copy of it.
+        let mut sections: Vec<String> = vec![
+            "// Aver-generated shared library: built-in records and helpers".to_string(),
+            "module AverCommon {".to_string(),
+            DAFNY_PRELUDE_HEAD.to_string(),
+        ];
+        for record in crate::codegen::builtin_records::needed_records("", true) {
+            sections.push(crate::codegen::builtin_records::render_dafny(record));
+        }
+        sections.push(DAFNY_PRELUDE_CORE_HELPERS.to_string());
+        for helper in crate::codegen::builtin_helpers::needed_helpers("", true) {
+            if let Some(block) = dafny_helper_block(helper.key) {
+                sections.push(block.to_string());
+            }
+        }
+        sections.push("}".to_string());
+        let prelude = sections.join("\n");
+        assert!(
+            prelude.contains("function ListFind<") && prelude.contains("function ListAny<"),
+            "the forced prelude must carry the blocks no fixture reaches, or \
+             this test is vacuous:\n{prelude}"
+        );
+
+        let dir = std::env::temp_dir().join(format!("aver-dafny-prelude-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("common.dfy");
+        std::fs::write(&path, &prelude).expect("write prelude");
+        let run = std::process::Command::new("dafny")
+            .arg("verify")
+            .arg(&path)
+            .output()
+            .expect("dafny verify should run");
+        let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            run.status.success(),
+            "every helper block has to resolve and verify on its own — a \
+             program that pulls this one in gets no obligation checked \
+             otherwise.\n{stdout}\n{stderr}"
         );
     }
 }

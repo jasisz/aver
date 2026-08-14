@@ -1,0 +1,28 @@
+module ListZipDafny
+    intent =
+        "Every list reader the Dafny emitter can produce has to resolve in the file it writes."
+        "`List.zip` emits `ListZip(xs, ys)`, a name the Dafny prelude declared nowhere and no helper trigger recognised, so a program using it exported a file Dafny stopped on before checking a single obligation."
+        "The laws here read the same sequence on both sides, so what they cannot survive is a missing declaration."
+    effects [Console]
+
+fn pairUp(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
+    ? "The two lists read side by side, one pair per position."
+    List.zip(xs, ys)
+
+fn pairCount(xs: List<Int>, ys: List<Int>) -> Int
+    ? "How many pairs the two lists make."
+    List.len(List.zip(xs, ys))
+
+verify pairUp law pairsAreTheZip
+    given xs: List<Int> = [[1], [1, 2]]
+    given ys: List<Int> = [[3], [3, 4]]
+    pairUp(xs, ys) => List.zip(xs, ys)
+
+verify pairCount law countIsTheZipLength
+    given xs: List<Int> = [[1], [1, 2]]
+    given ys: List<Int> = [[3], [3, 4]]
+    pairCount(xs, ys) => List.len(List.zip(xs, ys))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{pairCount([1, 2], [3, 4])}")

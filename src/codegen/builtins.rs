@@ -2,232 +2,175 @@
 ///
 /// Each backend matches on `Builtin` variants to emit target-specific code.
 /// Adding a new variant here forces all backends to handle it (exhaustive match).
-/// A recognized Aver builtin function or constructor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Builtin {
-    // --- Constructors ---
-    ResultOk,
-    ResultErr,
-    OptionSome,
+///
+/// The variant list and the dotted names it is recognised under are one
+/// list, expanded into the enum, [`Builtin::name`], [`Builtin::ALL`] and
+/// [`recognize_builtin`] together. A backend can only ever render a
+/// `Builtin`, and a `Builtin` only ever comes out of `recognize_builtin`,
+/// so this is the exact set of names a proof backend has to have a
+/// declaration for — which is what
+/// `dafny::tests::every_builtin_the_emitter_can_render_resolves_in_the_dafny_prelude`
+/// walks. Keeping the two halves in one macro is what stops that guard
+/// from being handed a shorter list than the emitter can actually produce.
+macro_rules! codegen_builtins {
+    ($($variant:ident => $name:literal,)+) => {
+        /// A recognized Aver builtin function or constructor.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(crate) enum Builtin {
+            $($variant,)+
+        }
 
-    // --- Result/Option combinators ---
-    ResultWithDefault,
-    OptionWithDefault,
-    OptionToResult,
+        #[cfg(test)]
+        impl Builtin {
+            /// The dotted Aver name this builtin is recognised under.
+            pub(crate) const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
 
-    // --- Int ---
-    IntAbs,
-    IntFromFloat,
-    IntFromString,
-    IntMin,
-    IntMax,
-    IntMod,
-    IntDiv,
+            /// Every builtin any backend can be asked to render.
+            pub(crate) const ALL: &'static [Self] = &[
+                $(Self::$variant,)+
+            ];
+        }
 
-    // --- Bits (a bit-level view of Int, not a type) ---
-    BitsAnd,
-    BitsOr,
-    BitsXor,
-    BitsNot,
-    BitsShiftLeft,
-    BitsShiftRight,
-    BitsLow,
-
-    // --- Float ---
-    FloatAbs,
-    FloatSqrt,
-    FloatPow,
-    FloatRound,
-    FloatFloor,
-    FloatCeil,
-    FloatFromInt,
-    FloatFromString,
-    FloatPi,
-    FloatMin,
-    FloatMax,
-    FloatSin,
-    FloatCos,
-    FloatAtan2,
-
-    // --- String ---
-    StringLen,
-    StringCharAt,
-    StringChars,
-    StringSlice,
-    StringContains,
-    StringStartsWith,
-    StringEndsWith,
-    StringTrim,
-    StringSplit,
-    StringJoin,
-    StringReplace,
-    StringToUpper,
-    StringToLower,
-    StringFromInt,
-    StringFromFloat,
-    StringFromBool,
-    StringByteLength,
-
-    // --- Bool ---
-    BoolOr,
-    BoolAnd,
-    BoolNot,
-
-    // --- Char ---
-    CharToCode,
-    CharFromCode,
-
-    // --- Crypto ---
-    CryptoSha256,
-
-    // --- List ---
-    ListLen,
-    ListHead,
-    ListTail,
-    ListPrepend,
-    ListTake,
-    ListDrop,
-    ListConcat,
-    ListReverse,
-    ListContains,
-    ListFind,
-    ListAny,
-    ListZip,
-
-    // --- Vector ---
-    VectorNew,
-    VectorGet,
-    VectorSet,
-    VectorLen,
-    VectorFromList,
-    ListFromVector,
-
-    // --- Map ---
-    MapGet,
-    MapSet,
-    MapHas,
-    MapRemove,
-    MapKeys,
-    MapValues,
-    MapEntries,
-    MapLen,
-    MapFromList,
+        /// Try to recognize a dotted name as a known Aver builtin.
+        ///
+        /// Returns `None` for user-defined functions and effectful services
+        /// (Console, Disk, Http, Tcp, etc.).
+        pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
+            Some(match name {
+                $($name => Builtin::$variant,)+
+                _ => return None,
+            })
+        }
+    };
 }
 
-/// Try to recognize a dotted name as a known Aver builtin.
-///
-/// Returns `None` for user-defined functions and effectful services
-/// (Console, Disk, Http, Tcp, etc.).
-pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
-    Some(match name {
-        // Constructors
-        "Result.Ok" => Builtin::ResultOk,
-        "Result.Err" => Builtin::ResultErr,
-        "Option.Some" => Builtin::OptionSome,
+codegen_builtins! {
+    // --- Constructors ---
+    ResultOk => "Result.Ok",
+    ResultErr => "Result.Err",
+    OptionSome => "Option.Some",
 
-        // Result/Option combinators
-        "Result.withDefault" => Builtin::ResultWithDefault,
-        "Option.withDefault" => Builtin::OptionWithDefault,
-        "Option.toResult" => Builtin::OptionToResult,
+    // --- Result/Option combinators ---
+    ResultWithDefault => "Result.withDefault",
+    OptionWithDefault => "Option.withDefault",
+    OptionToResult => "Option.toResult",
 
-        // Int
-        "Int.abs" => Builtin::IntAbs,
-        "Int.fromFloat" => Builtin::IntFromFloat,
-        "Int.fromString" => Builtin::IntFromString,
-        "Int.min" => Builtin::IntMin,
-        "Int.max" => Builtin::IntMax,
-        "Int.mod" => Builtin::IntMod,
-        "Int.div" => Builtin::IntDiv,
+    // --- Int ---
+    IntAbs => "Int.abs",
+    IntFromFloat => "Int.fromFloat",
+    IntFromString => "Int.fromString",
+    IntMin => "Int.min",
+    IntMax => "Int.max",
+    IntMod => "Int.mod",
+    IntDiv => "Int.div",
 
-        // Bits
-        "Bits.and" => Builtin::BitsAnd,
-        "Bits.or" => Builtin::BitsOr,
-        "Bits.xor" => Builtin::BitsXor,
-        "Bits.not" => Builtin::BitsNot,
-        "Bits.shiftLeft" => Builtin::BitsShiftLeft,
-        "Bits.shiftRight" => Builtin::BitsShiftRight,
-        "Bits.low" => Builtin::BitsLow,
+    // --- Bits (a bit-level view of Int, not a type) ---
+    BitsAnd => "Bits.and",
+    BitsOr => "Bits.or",
+    BitsXor => "Bits.xor",
+    BitsNot => "Bits.not",
+    BitsShiftLeft => "Bits.shiftLeft",
+    BitsShiftRight => "Bits.shiftRight",
+    BitsLow => "Bits.low",
 
-        // Float
-        "Float.abs" => Builtin::FloatAbs,
-        "Float.sqrt" => Builtin::FloatSqrt,
-        "Float.pow" => Builtin::FloatPow,
-        "Float.round" => Builtin::FloatRound,
-        "Float.floor" => Builtin::FloatFloor,
-        "Float.ceil" => Builtin::FloatCeil,
-        "Float.fromInt" => Builtin::FloatFromInt,
-        "Float.fromString" => Builtin::FloatFromString,
-        "Float.pi" => Builtin::FloatPi,
-        "Float.min" => Builtin::FloatMin,
-        "Float.max" => Builtin::FloatMax,
-        "Float.sin" => Builtin::FloatSin,
-        "Float.cos" => Builtin::FloatCos,
-        "Float.atan2" => Builtin::FloatAtan2,
+    // --- Float ---
+    FloatAbs => "Float.abs",
+    FloatSqrt => "Float.sqrt",
+    FloatPow => "Float.pow",
+    FloatRound => "Float.round",
+    FloatFloor => "Float.floor",
+    FloatCeil => "Float.ceil",
+    FloatFromInt => "Float.fromInt",
+    FloatFromString => "Float.fromString",
+    FloatPi => "Float.pi",
+    FloatMin => "Float.min",
+    FloatMax => "Float.max",
+    FloatSin => "Float.sin",
+    FloatCos => "Float.cos",
+    FloatAtan2 => "Float.atan2",
 
-        // String
-        "String.len" => Builtin::StringLen,
-        "String.charAt" => Builtin::StringCharAt,
-        "String.chars" => Builtin::StringChars,
-        "String.slice" => Builtin::StringSlice,
-        "String.contains" => Builtin::StringContains,
-        "String.startsWith" => Builtin::StringStartsWith,
-        "String.endsWith" => Builtin::StringEndsWith,
-        "String.trim" => Builtin::StringTrim,
-        "String.split" => Builtin::StringSplit,
-        "String.join" => Builtin::StringJoin,
-        "String.replace" => Builtin::StringReplace,
-        "String.toUpper" => Builtin::StringToUpper,
-        "String.toLower" => Builtin::StringToLower,
-        "String.fromInt" => Builtin::StringFromInt,
-        "String.fromFloat" => Builtin::StringFromFloat,
-        "String.fromBool" => Builtin::StringFromBool,
-        "String.byteLength" => Builtin::StringByteLength,
+    // --- String ---
+    StringLen => "String.len",
+    StringCharAt => "String.charAt",
+    StringChars => "String.chars",
+    StringSlice => "String.slice",
+    StringContains => "String.contains",
+    StringStartsWith => "String.startsWith",
+    StringEndsWith => "String.endsWith",
+    StringTrim => "String.trim",
+    StringSplit => "String.split",
+    StringJoin => "String.join",
+    StringReplace => "String.replace",
+    StringToUpper => "String.toUpper",
+    StringToLower => "String.toLower",
+    StringFromInt => "String.fromInt",
+    StringFromFloat => "String.fromFloat",
+    StringFromBool => "String.fromBool",
+    StringByteLength => "String.byteLength",
 
-        // Bool
-        "Bool.or" => Builtin::BoolOr,
-        "Bool.and" => Builtin::BoolAnd,
-        "Bool.not" => Builtin::BoolNot,
+    // --- Bool ---
+    BoolOr => "Bool.or",
+    BoolAnd => "Bool.and",
+    BoolNot => "Bool.not",
 
-        // Char
-        "Char.toCode" => Builtin::CharToCode,
-        "Char.fromCode" => Builtin::CharFromCode,
+    // --- Char ---
+    CharToCode => "Char.toCode",
+    CharFromCode => "Char.fromCode",
 
-        // Crypto
-        "Crypto.sha256" => Builtin::CryptoSha256,
+    // --- Crypto ---
+    CryptoSha256 => "Crypto.sha256",
 
-        // List
-        "List.len" => Builtin::ListLen,
-        "List.head" => Builtin::ListHead,
-        "List.tail" => Builtin::ListTail,
-        "List.prepend" => Builtin::ListPrepend,
-        "List.take" => Builtin::ListTake,
-        "List.drop" => Builtin::ListDrop,
-        "List.concat" => Builtin::ListConcat,
-        "List.reverse" => Builtin::ListReverse,
-        "List.contains" => Builtin::ListContains,
-        "List.find" => Builtin::ListFind,
-        "List.any" => Builtin::ListAny,
-        "List.zip" => Builtin::ListZip,
+    // --- List ---
+    ListLen => "List.len",
+    ListHead => "List.head",
+    ListTail => "List.tail",
+    ListPrepend => "List.prepend",
+    ListTake => "List.take",
+    ListDrop => "List.drop",
+    ListConcat => "List.concat",
+    ListReverse => "List.reverse",
+    ListContains => "List.contains",
+    ListFind => "List.find",
+    ListAny => "List.any",
+    ListZip => "List.zip",
 
-        // Vector
-        "Vector.new" => Builtin::VectorNew,
-        "Vector.get" => Builtin::VectorGet,
-        "Vector.set" => Builtin::VectorSet,
-        "Vector.len" => Builtin::VectorLen,
-        "Vector.fromList" => Builtin::VectorFromList,
-        "List.fromVector" => Builtin::ListFromVector,
+    // --- Vector ---
+    VectorNew => "Vector.new",
+    VectorGet => "Vector.get",
+    VectorSet => "Vector.set",
+    VectorLen => "Vector.len",
+    VectorFromList => "Vector.fromList",
+    ListFromVector => "List.fromVector",
 
-        // Map
-        "Map.get" => Builtin::MapGet,
-        "Map.set" => Builtin::MapSet,
-        "Map.has" => Builtin::MapHas,
-        "Map.remove" => Builtin::MapRemove,
-        "Map.keys" => Builtin::MapKeys,
-        "Map.values" => Builtin::MapValues,
-        "Map.entries" => Builtin::MapEntries,
-        "Map.len" => Builtin::MapLen,
-        "Map.fromList" => Builtin::MapFromList,
+    // --- Map ---
+    MapGet => "Map.get",
+    MapSet => "Map.set",
+    MapHas => "Map.has",
+    MapRemove => "Map.remove",
+    MapKeys => "Map.keys",
+    MapValues => "Map.values",
+    MapEntries => "Map.entries",
+    MapLen => "Map.len",
+    MapFromList => "Map.fromList",
+}
 
-        _ => return None,
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_builtin_round_trips_through_its_name() {
+        for builtin in Builtin::ALL {
+            assert_eq!(
+                recognize_builtin(builtin.name()),
+                Some(*builtin),
+                "`{}` must recognise back to the variant it names",
+                builtin.name()
+            );
+        }
+    }
 }
