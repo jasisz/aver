@@ -71,22 +71,35 @@ impl<T: ArenaTypes> Arena<T> {
         self.handoff_entries.truncate(mark as usize);
     }
 
+    /// `rewrite_out_of_region_roots` reports that the returning frame, or
+    /// something it called, stored a value into an arena slot outside its own
+    /// regions — see [`Arena::rewrite_out_of_region_roots`].
     pub fn evacuate_frame_to_yard(
         &mut self,
         young_mark: u32,
         yard_mark: u32,
         handoff_mark: u32,
         roots: &mut [NanValue],
+        rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
-        self.evacuate_frame_locals(young_mark, yard_mark, handoff_mark, roots, AllocSpace::Yard)
+        self.evacuate_frame_locals(
+            young_mark,
+            yard_mark,
+            handoff_mark,
+            roots,
+            AllocSpace::Yard,
+            rewrite_out_of_region_roots,
+        )
     }
 
+    /// See [`Arena::evacuate_frame_to_yard`] for `rewrite_out_of_region_roots`.
     pub fn evacuate_frame_to_handoff(
         &mut self,
         young_mark: u32,
         yard_mark: u32,
         handoff_mark: u32,
         roots: &mut [NanValue],
+        rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
         self.evacuate_frame_locals(
             young_mark,
@@ -94,6 +107,7 @@ impl<T: ArenaTypes> Arena<T> {
             handoff_mark,
             roots,
             AllocSpace::Handoff,
+            rewrite_out_of_region_roots,
         )
     }
 
@@ -104,7 +118,9 @@ impl<T: ArenaTypes> Arena<T> {
         handoff_mark: u32,
         roots: &mut [NanValue],
         young_target: AllocSpace,
+        rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
+        self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
         let mut relocated_young = Self::take_u32_scratch(
             &mut self.scratch_young,
             self.young_entries.len().saturating_sub(young_mark as usize),
@@ -148,6 +164,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.handoff_entries.truncate(handoff_mark as usize);
         self.handoff_entries.extend(compacted_handoff);
         self.note_peak_usage();
+        self.rewrite_out_of_region_roots = false;
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated_young);
         Self::recycle_u32_scratch(&mut self.scratch_yard, relocated_yard);
         Self::recycle_u32_scratch(&mut self.scratch_handoff, relocated_handoff);
@@ -446,7 +463,7 @@ impl<T: ArenaTypes> Arena<T> {
         let Some(index) = value.heap_index() else {
             return value;
         };
-        let (space, _) = Self::decode_index(index);
+        let (space, raw_index) = Self::decode_index(index);
         match space {
             HeapSpace::Young if self.is_young_index_in_region(index, young_mark) => self
                 .evacuate_young_value(
@@ -487,7 +504,111 @@ impl<T: ArenaTypes> Arena<T> {
                     compacted_yard,
                     compacted_handoff,
                 ),
+            _ if self.rewrite_out_of_region_roots => {
+                // The root lives outside the regions this boundary is about to
+                // truncate, so its own handle does not change — but it may hold
+                // references INTO those regions and those still have to be
+                // rewritten before the truncate.
+                self.rewrite_evacuated_refs_in_place(
+                    space,
+                    raw_index,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                );
+                value
+            }
             _ => value,
+        }
+    }
+
+    /// Rewrite, in place, the frame-local references held by a value that lives
+    /// OUTSIDE the returning frame's regions.
+    ///
+    /// Ordinarily an older slot cannot point into a younger region, so this
+    /// descent would be pure cost — on a program carrying a long list of
+    /// strings, a quadratic one. The VM's owned in-place vector write
+    /// (`VECTOR_SET_OR_KEEP`) is the one operation that breaks the rule: it
+    /// stores an arbitrary value into an EXISTING arena slot, so a vector held
+    /// below the marks can end up holding a value allocated above them. Without
+    /// this descent the truncate at the end of `evacuate_frame_locals` drops
+    /// that value and the vector element silently reads back as whatever later
+    /// reuses the slot. `rewrite_out_of_region_roots` is how the caller says
+    /// such a write happened, so ordinary frames keep paying nothing.
+    ///
+    /// This mirrors `rewrite_young_refs_in_place` (relocation) and
+    /// `rewrite_promoted_young_refs_in_place` (promotion), which already do the
+    /// same descent for their own families. As there, taking the entry out of
+    /// its slot before descending doubles as the cycle guard: a value that
+    /// reaches itself meets `Int(0)` and stops.
+    #[allow(clippy::too_many_arguments)]
+    fn rewrite_evacuated_refs_in_place(
+        &mut self,
+        space: HeapSpace,
+        raw_index: u32,
+        young_mark: u32,
+        yard_mark: u32,
+        handoff_mark: u32,
+        young_target: AllocSpace,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+        compacted_yard: &mut Vec<ArenaEntry<T>>,
+        compacted_handoff: &mut Vec<ArenaEntry<T>>,
+    ) {
+        let raw_index = raw_index as usize;
+        // Only slots that outlive the truncate are worth rewriting; a stale
+        // index is read back from an entry the boundary keeps, never from one
+        // it drops.
+        let entry = match space {
+            HeapSpace::Young => {
+                if raw_index >= self.young_entries.len() || raw_index >= young_mark as usize {
+                    return;
+                }
+                core::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Yard => {
+                if raw_index >= self.yard_entries.len() || raw_index >= yard_mark as usize {
+                    return;
+                }
+                core::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Handoff => {
+                if raw_index >= self.handoff_entries.len() || raw_index >= handoff_mark as usize {
+                    return;
+                }
+                core::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0))
+            }
+            HeapSpace::Stable => {
+                if raw_index >= self.stable_entries.len() {
+                    return;
+                }
+                core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0))
+            }
+        };
+        let new_entry = self.evacuate_local_entry(
+            entry,
+            young_mark,
+            yard_mark,
+            handoff_mark,
+            young_target,
+            relocated_young,
+            relocated_yard,
+            relocated_handoff,
+            compacted_yard,
+            compacted_handoff,
+        );
+        match space {
+            HeapSpace::Young => self.young_entries[raw_index] = new_entry,
+            HeapSpace::Yard => self.yard_entries[raw_index] = new_entry,
+            HeapSpace::Handoff => self.handoff_entries[raw_index] = new_entry,
+            HeapSpace::Stable => self.stable_entries[raw_index] = new_entry,
         }
     }
 

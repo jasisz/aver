@@ -16,10 +16,20 @@ impl VM {
         })
     }
 
+    /// Drop the frame's young region without rewriting anything.
+    ///
+    /// The result handle test alone is not enough. It says the handle we hand
+    /// back does not point into the region about to go, but says nothing about
+    /// what that value CONTAINS — and an owned in-place vector write can leave
+    /// a vector below the marks holding a value allocated above them. The
+    /// frame's `inplace_write_escaped` flag is what reports that; while it is
+    /// set the frame must go the long way round, where the references are
+    /// rewritten before anything is dropped.
     fn can_fast_return_with_young_truncate(&self, frame: &CallFrame, result: NanValue) -> bool {
         !frame.globals_dirty
             && !frame.yard_dirty
             && !frame.handoff_dirty
+            && !frame.inplace_write_escaped
             && self.arena.yard_len() == frame.yard_mark as usize
             && self.arena.handoff_len() == frame.handoff_mark as usize
             && self.arena.young_len() > frame.arena_mark as usize
@@ -61,6 +71,9 @@ impl VM {
         }
     }
 
+    // One over the limit, and the one over is `inplace_write_escaped`, which
+    // the evacuation below needs.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_frame_locals_for_tail_call(
         &mut self,
         arena_mark: u32,
@@ -68,6 +81,7 @@ impl VM {
         handoff_mark: u32,
         globals_dirty: bool,
         yard_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) {
         let _ = yard_dirty;
@@ -80,8 +94,13 @@ impl VM {
         let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
 
         if has_local_yard || has_local_handoff {
-            self.arena
-                .evacuate_frame_to_yard(arena_mark, yard_mark, handoff_mark, frame_roots);
+            self.arena.evacuate_frame_to_yard(
+                arena_mark,
+                yard_mark,
+                handoff_mark,
+                frame_roots,
+                inplace_write_escaped,
+            );
             return;
         }
 
@@ -104,6 +123,7 @@ impl VM {
         yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) -> (bool, bool) {
         if globals_dirty {
@@ -155,6 +175,7 @@ impl VM {
                 yard_base,
                 handoff_mark,
                 frame_roots,
+                inplace_write_escaped,
             );
         }
 
@@ -187,6 +208,7 @@ impl VM {
         yard_base: u32,
         handoff_mark: u32,
         globals_dirty: bool,
+        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) -> (bool, bool) {
         if globals_dirty {
@@ -203,6 +225,7 @@ impl VM {
                 yard_base,
                 handoff_mark,
                 globals_dirty,
+                inplace_write_escaped,
                 frame_roots,
             );
         }
@@ -230,6 +253,14 @@ impl VM {
         }
     }
 
+    /// Return without touching the arena at all.
+    ///
+    /// `inplace_write_escaped` deliberately does not appear here. This path
+    /// drops nothing — no truncate, no compaction — so a reference into this
+    /// frame's regions cannot go stale at this boundary whatever the frame
+    /// wrote. What it also does not do is REPAIR one, so the obligation simply
+    /// outlives the frame; `complete_frame_return` hands the flag to the caller
+    /// so the boundary that does drop something still knows about it.
     pub(super) fn can_fast_return(&self, frame: &CallFrame) -> bool {
         if frame.parent_thin {
             // Parent-thin frames are allowed to grow the borrowed young lane;
@@ -256,6 +287,20 @@ impl VM {
         mut result: NanValue,
         caller_depth: usize,
     ) -> ReturnControl {
+        // An escaping in-place write is an obligation on whichever boundary
+        // eventually drops the region the written value lives in, and this
+        // frame's boundary is not always that one. Hand it up unconditionally
+        // rather than trying to work out which paths discharge it: where a
+        // boundary really did rewrite the references, it already reports
+        // `yard_dirty` / `handoff_dirty` to the caller, which withholds the
+        // same fast return — so the inherited flag costs nothing there and is
+        // load-bearing exactly where nothing else was reported.
+        if frame.inplace_write_escaped
+            && let Some(caller) = self.frames.last_mut()
+        {
+            caller.inplace_write_escaped = true;
+        }
+
         if self.can_fast_return(&frame) {
             if let Some(profile) = self.profile.as_mut() {
                 profile.record_return_path(&frame, ReturnPathProfileKind::Fast);
@@ -296,6 +341,9 @@ impl VM {
         }
 
         if self.frames.len() == caller_depth {
+            // No flag to pass: this path promotes the roots to stable, which
+            // takes every space wholesale rather than by region, so an
+            // in-place write into an older slot is carried along with the rest.
             self.finalize_frame_return(
                 frame.arena_mark,
                 frame.yard_base,
@@ -315,6 +363,7 @@ impl VM {
                 frame.yard_base,
                 frame.handoff_mark,
                 frame.globals_dirty,
+                frame.inplace_write_escaped,
                 std::slice::from_mut(&mut result),
             );
             let caller = self.frames.last_mut().unwrap();
@@ -333,6 +382,7 @@ impl VM {
             frame.yard_base,
             frame.handoff_mark,
             frame.globals_dirty,
+            frame.inplace_write_escaped,
             std::slice::from_mut(&mut result),
         );
         let caller = self.frames.last_mut().unwrap();

@@ -1260,6 +1260,17 @@ pub struct Arena<T: ArenaTypes> {
     /// map whatever the map holds. It is the counter the residual time of a
     /// map-building program follows.
     map_entries_scanned: u64,
+    /// Whether the evacuation currently in progress has to descend into roots
+    /// that live OUTSIDE the frame's regions.
+    ///
+    /// Normally an older slot cannot hold a younger index, so those roots need
+    /// no work and reading them would be pure cost — on a program that carries
+    /// a long list of strings it is a quadratic one. The runtime's owned
+    /// in-place vector write is the single exception, and the caller says so by
+    /// passing `true` to [`Arena::evacuate_frame_to_yard`] /
+    /// [`Arena::evacuate_frame_to_handoff`]. Set only for the span of one
+    /// `evacuate_frame_locals` call and cleared when it returns.
+    rewrite_out_of_region_roots: bool,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in
     /// lockstep with `type_names`.

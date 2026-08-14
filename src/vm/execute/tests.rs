@@ -178,6 +178,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         globals_dirty: false,
         yard_dirty: false,
         handoff_dirty: false,
+        inplace_write_escaped: false,
         thin: true,
         parent_thin: false,
     });

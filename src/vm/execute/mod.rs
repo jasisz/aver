@@ -311,6 +311,7 @@ impl VM {
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,
+            inplace_write_escaped: false,
             thin: chunk.thin,
             parent_thin: chunk.parent_thin,
         });

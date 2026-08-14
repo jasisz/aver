@@ -498,6 +498,7 @@ impl VM {
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
+                        inplace_write_escaped: false,
                         thin: target.thin,
                         parent_thin: target.parent_thin,
                     });
@@ -680,6 +681,7 @@ impl VM {
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
+                        inplace_write_escaped: false,
                         thin: target.thin,
                         parent_thin: target.parent_thin,
                     });
@@ -789,6 +791,8 @@ impl VM {
                         let handoff_mark = self.frames.last().unwrap().handoff_mark;
                         let globals_dirty = self.frames.last().unwrap().globals_dirty;
                         let yard_dirty = self.frames.last().unwrap().yard_dirty;
+                        let inplace_write_escaped =
+                            self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
                         self.finalize_frame_locals_for_tail_call(
                             frame_mark,
@@ -796,6 +800,7 @@ impl VM {
                             handoff_mark,
                             globals_dirty,
                             yard_dirty,
+                            inplace_write_escaped,
                             &mut promoted_args,
                         );
                         self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
@@ -861,6 +866,8 @@ impl VM {
                         let handoff_mark = self.frames.last().unwrap().handoff_mark;
                         let globals_dirty = self.frames.last().unwrap().globals_dirty;
                         let yard_dirty = self.frames.last().unwrap().yard_dirty;
+                        let inplace_write_escaped =
+                            self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
                         self.finalize_frame_locals_for_tail_call(
                             frame_mark,
@@ -868,6 +875,7 @@ impl VM {
                             handoff_mark,
                             globals_dirty,
                             yard_dirty,
+                            inplace_write_escaped,
                             &mut promoted_args,
                         );
                         self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
@@ -1691,6 +1699,35 @@ impl VM {
                     if vec_owned && !vec.is_empty_vector_immediate() {
                         // Owned path: modify vector in-place at the same arena slot.
                         // No new allocation, no promotion needed.
+                        //
+                        // This is the VM's only true in-place arena write, and
+                        // therefore the only way an arena slot the return
+                        // boundary keeps can come to hold an index into a
+                        // region the boundary drops: the vector may live below
+                        // this frame's marks while `value` was allocated above
+                        // them. Record that so the boundary does not take the
+                        // return path that truncates young with no rewrite.
+                        //
+                        // The region test is the boundary's own predicate
+                        // (`yard_mark`, matching `result_uses_frame_local_heap`)
+                        // rather than the `yard_base` one `STORE_GLOBAL` uses.
+                        // That is the conservative half of the pair — `yard_base
+                        // <= yard_mark`, so `yard_mark` counts fewer slots as
+                        // this frame's own and flags strictly more writes — and
+                        // it is the line the guarded boundary actually draws.
+                        let target_outside_frame = self.frames.last().is_some_and(|frame| {
+                            !vec.heap_index().is_some_and(|index| {
+                                self.arena.is_frame_local_index(
+                                    index,
+                                    frame.arena_mark,
+                                    frame.yard_mark,
+                                    frame.handoff_mark,
+                                )
+                            })
+                        });
+                        if target_outside_frame && let Some(frame) = self.frames.last_mut() {
+                            frame.inplace_write_escaped = true;
+                        }
                         let items = self.arena.get_vector_mut(vec.arena_index());
                         if i < items.len() {
                             items[i] = value;
