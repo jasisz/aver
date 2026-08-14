@@ -1419,14 +1419,16 @@ fn main() -> Int
     );
 }
 
-/// Removing from a full table of Int keys exercises the SHALLOWEST
-/// backward-shift run, not the deepest: small Int keys hash to
-/// themselves, so every entry sits at its home bucket and the loop
-/// breaks on its first read with zero shifts. The wrap guard on that
-/// loop is therefore validated-not-executed here, like the
-/// clone-on-write trap above. What this pins: the removed key must be
-/// gone and every other key must still be findable in a table with no
-/// null slot to stop a probe early.
+/// Removing from a full table of Int keys is now the LONGEST scan in
+/// this suite: small Int keys hash to themselves, so every entry sits
+/// at its home bucket, no entry ever needs to move — but with no null
+/// slot to stop on, the shift loop visits all cap-1 occupied slots and
+/// is terminated only by the wrap guard reaching the emptied slot
+/// again. That guard is therefore EXECUTED here, not merely validated.
+/// What this pins: the removed key must be gone and every other key
+/// must still be findable in a table with no null slot to stop a probe
+/// early, and the wrap guard must end a scan that finds nothing to
+/// move.
 #[test]
 fn map_remove_from_a_full_table_keeps_every_other_key() {
     assert_eq!(
@@ -1490,12 +1492,15 @@ fn map_remove_keeps_a_key_that_probed_past_the_removed_bucket() {
 }
 
 /// The same question over two probe runs, one of which crosses the end
-/// of the table. Bucket 5 holds `5`, `16389` and `32773`; `6`, `7`, `8`
-/// sit at their own home buckets and get pushed along, so the run in
-/// slots 5..10 alternates between entries that must move when slot 5
-/// empties and entries that must stay put. Removing `5` therefore skips
-/// some slots and shifts others, and the entry pulled back travels more
-/// than one slot.
+/// of the table. After the ten inserts the run in slots 5..10 is:
+/// 5(home 5), 6(home 6), 16389(home 5), 7(home 7, displaced), 32773
+/// (home 5), 8(home 8, displaced). Removing `5` reads one entry that
+/// stays put (`6`, at its home) and then a run of four that must each
+/// move — so the hole travels several slots and entries are pulled back
+/// across occupied ones. The wrap run has the same shape: one stay,
+/// then moves. Not exercised by any witness here: a STAY evaluated
+/// after the hole has already moved (gap > 1 at the comparison); that
+/// case rests on the loop's invariant argument, not on a test.
 ///
 /// The second run starts at the last bucket: `16383` and `32767` hash to
 /// bucket 16383, `16384` and `32768` to bucket 0, and inserting them as
