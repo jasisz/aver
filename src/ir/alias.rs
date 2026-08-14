@@ -131,7 +131,7 @@ fn param_type_is_alias_prone(ty: &str) -> bool {
 
 /// A binding RHS that yields a PROVABLY-FRESH `Vector` / `Map` — a `MapLiteral`,
 /// an allocating builtin (`Vector.new` of a non-compound element, `Vector.set`,
-/// `Vector.fromList`, `Map.set`, `Map.remove`), a self-keep rebuild
+/// `Vector.fromList`, `Map.set`, `Map.remove`, `Map.fromList`), a self-keep rebuild
 /// `withDefault(set(L,..), L)`, or a `withDefault` whose branches are each
 /// fresh — produces a uniquely-owned arena entry, so the destination local is
 /// safe for the owned in-place fast path. Every other collection-typed RHS may
