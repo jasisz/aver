@@ -793,6 +793,12 @@ impl VM {
                     let args_start = self.stack.len() - argc;
                     let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                     self.stack.truncate(args_start);
+                    // AFTER the truncate, deliberately: with the argument list
+                    // off the stack, "no cell holds this slot" and "the argument
+                    // cell was the only holder" are the same statement, so the
+                    // cross-check needs no correction for the argument's own
+                    // reference.
+                    self.cross_check_owned_mask(builtin, &args, owned_mask);
 
                     if builtin.is_http_server() {
                         self.runtime.ensure_builtin_effects_allowed(

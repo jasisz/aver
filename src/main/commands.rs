@@ -1423,6 +1423,16 @@ pub(super) fn cmd_run_vm(
             r.young_truncate_fast_returns,
             r.thin_slow_returns + r.parent_thin_slow_returns + r.regular_slow_returns
         );
+        let slots = &report.slot_uniqueness;
+        eprintln!("\nCollection targets (Map.set and Vector.set):");
+        eprintln!(
+            "  owned by the compiler:{} of which not uniquely held at run time:{}",
+            slots.owned_grants, slots.owned_grants_without_unique_slot
+        );
+        eprintln!(
+            "  not owned by the compiler, uniquely held at run time:{} still held:{}",
+            slots.unique_slot_without_owned_grant, slots.declined_with_slot_still_held
+        );
         eprintln!("────────────────────────────────────────────────\n");
     }
 

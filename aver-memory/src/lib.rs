@@ -807,6 +807,19 @@ impl NanValue {
         self.heap_index().is_none()
     }
 
+    /// Cheap necessary condition for [`NanValue::heap_index`] answering `Some`.
+    ///
+    /// One mask and one compare, with no tag dispatch behind it: `false` settles
+    /// the question — the value carries no arena index, so a caller looking for
+    /// references to a slot is done with this one. `true` does not settle it,
+    /// because a symbol handle passes this test and still has no heap index. It
+    /// is a filter to put in FRONT of `heap_index` where the tag match would be
+    /// the bulk of the work, never a replacement for it.
+    #[inline]
+    pub fn may_hold_heap_index(self) -> bool {
+        (self.0 & (QNAN_MASK | ARENA_REF_BIT)) == (QNAN | ARENA_REF_BIT)
+    }
+
     #[inline]
     pub fn heap_index(self) -> Option<u32> {
         if !self.is_nan_boxed() {

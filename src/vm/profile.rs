@@ -47,6 +47,15 @@ pub struct VmProfileReport {
     pub functions: Vec<VmFunctionProfile>,
     pub builtins: Vec<VmBuiltinProfile>,
     pub returns: VmReturnStats,
+    /// How the compiler's static owned mask and the operand stack's own view of
+    /// who holds a slot compared over the run.
+    ///
+    /// A debug build maintains these whether or not profiling is on, because
+    /// the same comparison is an assertion there. A release build maintains
+    /// them only for a run that asked for this report, since answering "who
+    /// else holds this slot?" costs a walk of the stack and nothing else would
+    /// read the answer.
+    pub slot_uniqueness: super::VmSlotUniquenessStats,
 }
 
 impl VmProfileReport {
@@ -93,6 +102,7 @@ impl VmProfileReport {
         self.returns.thin_slow_returns += other.returns.thin_slow_returns;
         self.returns.parent_thin_slow_returns += other.returns.parent_thin_slow_returns;
         self.returns.regular_slow_returns += other.returns.regular_slow_returns;
+        self.slot_uniqueness.merge(&other.slot_uniqueness);
     }
 }
 
@@ -192,7 +202,11 @@ impl VmProfileState {
         }
     }
 
-    pub(crate) fn report(&self, code: &CodeStore) -> VmProfileReport {
+    pub(crate) fn report(
+        &self,
+        code: &CodeStore,
+        slot_uniqueness: super::VmSlotUniquenessStats,
+    ) -> VmProfileReport {
         let total_opcodes = self.opcode_counts.iter().sum();
         let mut opcodes = self
             .opcode_counts
@@ -250,6 +264,7 @@ impl VmProfileState {
             functions,
             builtins,
             returns: self.return_stats.clone(),
+            slot_uniqueness,
         }
     }
 }

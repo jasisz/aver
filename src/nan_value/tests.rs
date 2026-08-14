@@ -161,6 +161,65 @@ fn empty_collections_stay_inline() {
     assert_eq!(NanValue::EMPTY_MAP.repr(&arena), "{}");
 }
 
+/// `may_hold_heap_index` is a filter put in front of `heap_index` where the tag
+/// match would be the bulk of the work — the interpreter's walk over the operand
+/// stack looking for holders of a slot — so it has to be a NECESSARY condition:
+/// anything it turns away must really carry no arena index. A false negative
+/// there is silent, because the reference is simply never seen and the slot
+/// reads as unheld, so this walks every tag rather than the handful the callers
+/// happen to use today.
+#[test]
+fn the_cheap_heap_reference_filter_turns_nothing_heap_backed_away() {
+    let mut arena = Arena::new();
+
+    let mut cases = vec![
+        NanValue::UNIT,
+        NanValue::TRUE,
+        NanValue::FALSE,
+        NanValue::NONE,
+        NanValue::EMPTY_LIST,
+        NanValue::EMPTY_MAP,
+        NanValue::new_int_inline(0),
+        NanValue::new_int_inline(-1),
+        NanValue::new_int_inline(crate::nan_value::INT_INLINE_MAX),
+        NanValue::new_int_inline(crate::nan_value::INT_INLINE_MIN),
+        NanValue::new_float(1.5),
+        NanValue::new_float(f64::NAN),
+        NanValue::new_some(0),
+        NanValue::new_ok(0),
+        NanValue::new_err(0),
+        NanValue::new_string(arena.push_string("heap backed")),
+        NanValue::new_fn(arena.push_symbol(ArenaSymbol::Builtin("Map.set".into()))),
+    ];
+    // An integer past what the payload holds inline, plus the containers.
+    cases.push(NanValue::new_big_int(
+        num_bigint::BigInt::from(i64::MAX) + 1,
+        &mut arena,
+    ));
+    cases.push(NanValue::new_tuple(
+        arena.push_tuple(vec![NanValue::UNIT, NanValue::TRUE]),
+    ));
+    cases.push(NanValue::new_vector(
+        arena.push(ArenaEntry::Vector(vec![NanValue::UNIT])),
+    ));
+    cases.push(NanValue::new_list(arena.push(ArenaEntry::List(
+        ArenaList::Flat {
+            items: std::sync::Arc::new(crate::nan_value::ListBody::new(vec![NanValue::TRUE])),
+            start: 0,
+        },
+    ))));
+
+    for value in cases {
+        if value.heap_index().is_some() {
+            assert!(
+                value.may_hold_heap_index(),
+                "{value:?} carries an arena index the cheap filter turns away, so \
+                 every reference to it would go uncounted",
+            );
+        }
+    }
+}
+
 #[test]
 fn empty_collection_immediates_roundtrip_through_value() {
     use crate::value::Value;

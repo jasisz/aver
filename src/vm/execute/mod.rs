@@ -2,9 +2,12 @@ mod boundary;
 mod dispatch;
 mod host;
 mod ops;
+mod slots;
 
 #[cfg(test)]
 mod tests;
+
+pub use slots::VmSlotUniquenessStats;
 
 use super::runtime::VmRuntime;
 use super::types::{CallFrame, CodeStore, VmError};
@@ -40,6 +43,13 @@ pub struct VM {
     /// slots before extending. The pool lives on the host heap, opaque to
     /// the arena GC — buffer handles travel as `Int(idx)` NanValues.
     buffer_pool: Vec<Option<String>>,
+    /// How the compiler's static owned mask and the operand stack's own view of
+    /// who holds a slot compared, over this VM's lifetime. Maintained where the
+    /// answer has a reader — a debug build, where the same comparison is also an
+    /// assertion, or a run that asked for a profile — and left at zero on the
+    /// default release path, where computing it would mean walking the stack
+    /// once per collection write for nobody.
+    slot_uniqueness: VmSlotUniquenessStats,
 }
 
 enum ReturnControl {
@@ -67,6 +77,7 @@ impl VM {
             cancelled: None,
             buffer_pool: Vec::new(),
             step_limit: None,
+            slot_uniqueness: VmSlotUniquenessStats::default(),
         }
     }
 
@@ -88,9 +99,10 @@ impl VM {
     }
 
     pub fn profile_report(&self) -> Option<VmProfileReport> {
+        let slot_uniqueness = self.slot_uniqueness;
         self.profile
             .as_ref()
-            .map(|profile| profile.report(&self.code))
+            .map(|profile| profile.report(&self.code, slot_uniqueness))
     }
 
     pub fn profile_top_bigrams(&self, n: usize) -> Vec<((u8, u8), u64)> {

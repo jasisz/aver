@@ -129,6 +129,56 @@ fn assert_parallel_base_context_is_static_only(
     }
 }
 
+/// The count itself, away from any program: cells naming a slot, cells naming a
+/// different one, and the tag question underneath.
+///
+/// Two handles that name the SAME arena slot under DIFFERENT tags both hold it —
+/// the entry is what a mutation would be observed through, not the wrapper the
+/// handle happens to wear. A predicate written as raw-bit equality would miss
+/// that pair, and missing a holder is the one direction that cannot be allowed:
+/// it reads as unique and a decision taken on it would rewrite something still
+/// reachable.
+#[test]
+fn a_slot_is_held_by_every_cell_naming_it_whatever_tag_it_wears() {
+    let mut arena = Arena::new();
+    let held = arena.push_string("held");
+    let other = arena.push_string("other");
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), arena);
+
+    let handle = NanValue::new_string(held);
+    let elsewhere = NanValue::new_string(other);
+    assert!(
+        vm.slot_is_unheld(handle),
+        "an empty stack holds nothing, so the slot starts unheld",
+    );
+    assert!(
+        !vm.slot_is_unheld(NanValue::new_int_inline(7)),
+        "an immediate names no slot, so it can never be the unique holder of one",
+    );
+
+    vm.stack.push(handle);
+    vm.stack.push(elsewhere);
+    assert_eq!(vm.live_refs_to_slot(held), 1);
+    assert_eq!(vm.live_refs_to_slot(other), 1);
+    assert!(!vm.slot_is_unheld(handle));
+
+    // A `Some(..)` over the same arena entry is a different NanValue with the
+    // same heap index — a second holder, not a second slot.
+    vm.stack.push(NanValue::new_some(held));
+    assert_eq!(vm.live_refs_to_slot(held), 2);
+    assert_eq!(vm.live_slot_refs(), 3);
+
+    vm.stack.pop();
+    vm.stack.pop();
+    assert_eq!(vm.live_refs_to_slot(held), 1);
+    assert!(!vm.slot_is_unheld(handle));
+
+    vm.stack.pop();
+    assert_eq!(vm.live_refs_to_slot(held), 0);
+    assert_eq!(vm.live_slot_refs(), 0);
+    assert!(vm.slot_is_unheld(handle));
+}
+
 #[test]
 fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
     let mut code = CodeStore::new();
