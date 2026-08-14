@@ -832,6 +832,141 @@ fn main() -> Unit
     }
 }
 
+/// `_` as a PARAMETER, which is a legal Rust pattern right up until the
+/// function is tail-recursive.
+///
+/// A parameter normally lowers to a pattern, where `_` means "discard" and
+/// builds fine. Tail recursion moves it out of pattern position: a self-TCO
+/// signature makes every parameter the loop's mutable state, so it emits
+/// `pub fn count(mut n: i64, mut _: aver_rt::AverInt)` — ``error: `mut`
+/// must be followed by a named binding``. A mutual-TCO trampoline is worse:
+/// the arm binds `__MutualTco1::IsEven(mut n, mut _)` and the wrapper then
+/// passes the parameter BY NAME to build the variant,
+/// `__MutualTco1::IsEven(n, _)` — ``error: in expressions, `_` can only be
+/// used on the left-hand side of an assignment``.
+///
+/// Both programs run correctly on the VM, so what is pinned here is a
+/// Rust-backend limit, refused by name at compile time, rather than a
+/// broken program. The third case is the scoping witness: the same wildcard
+/// parameter on a function that recurses but NOT in tail position builds
+/// and runs, so the refusal must not reach it.
+#[test]
+fn underscore_param_is_refused_only_when_the_fn_is_tail_recursive() {
+    let refused: &[(&str, &str, &str, &str)] = &[
+        (
+            "self_tco",
+            r#"module WildcardSelfTco
+    intent = "A wildcard parameter on a self tail-recursive function"
+    effects [Console.print]
+
+fn count(n: Int, _: Int) -> Int
+    ? "Count down, ignoring the second argument."
+    match n == 0
+        true -> 0
+        false -> count(n - 1, 0)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{count(5, 7)}")
+"#,
+            "0",
+            "parameter `_` of function `count`",
+        ),
+        (
+            "mutual_tco",
+            r#"module WildcardMutualTco
+    intent = "A wildcard parameter on a mutually tail-recursive pair"
+    effects [Console.print]
+
+fn isEven(n: Int, _: Int) -> Bool
+    ? "True when n is even, ignoring the second argument."
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1, 0)
+
+fn isOdd(n: Int, _: Int) -> Bool
+    ? "True when n is odd, ignoring the second argument."
+    match n == 0
+        true -> false
+        false -> isEven(n - 1, 0)
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{isEven(10, 7)}")
+"#,
+            "true",
+            "parameter `_` of function `isEven`",
+        ),
+    ];
+
+    for (label, src, expected_vm, expected_refusal) in refused {
+        let dir = temp_dir(&format!("wildcard_tco_param_{label}"));
+        let src_path = dir.join("main.av");
+        fs::write(&src_path, src).expect("write source");
+
+        let vm = run_vm_inline(&format!("wildcard_tco_param_{label}"), src).expect("vm run");
+        assert_eq!(
+            vm, *expected_vm,
+            "the {label} program is valid Aver and the VM runs it"
+        );
+
+        let out = Command::new(aver_bin())
+            .arg("compile")
+            .arg("-o")
+            .arg(dir.join("out"))
+            .arg(&src_path)
+            .output()
+            .expect("run aver compile");
+
+        assert!(
+            !out.status.success(),
+            "compile should refuse the {label} wildcard parameter, but it succeeded"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(expected_refusal),
+            "refusal must name the position at fault; wanted `{expected_refusal}` in:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("tail recursion") || stderr.contains("tail-recursive"),
+            "refusal must say that tail recursion is what moved the parameter \
+             out of pattern position:\n{stderr}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // The scoping witness, backed by a real build: recursion that is not in
+    // tail position builds neither a loop nor a trampoline, so the wildcard
+    // parameter stays a plain Rust pattern and the program still works.
+    let ok_src = r#"module WildcardNonTail
+    intent = "A wildcard parameter on a function that recurses off tail position"
+    effects [Console.print]
+
+fn deep(n: Int, _: Int) -> Int
+    ? "Recurse off tail position, ignoring the second argument."
+    match n == 0
+        true -> 0
+        false -> deep(n - 1, 0) + 1
+
+fn main() -> Unit
+    ? "Print it."
+    ! [Console.print]
+    Console.print("{deep(5, 7)}")
+"#;
+    let vm = run_vm_inline("wildcard_non_tail_param", ok_src).expect("vm run");
+    let rust = build_run_rust_inline("wildcard_non_tail_param", ok_src)
+        .expect("a wildcard parameter off tail position must still compile, build and run");
+    assert_eq!(vm, "5", "VM answer for the non-tail-recursive shape");
+    assert_eq!(
+        rust, vm,
+        "the Rust backend must still accept a wildcard parameter where it \
+         lowers to a plain pattern"
+    );
+}
+
 /// A verify block on a keyword-named function, driven through the real
 /// `cargo test` of the emitted project.
 ///

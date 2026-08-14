@@ -77,9 +77,14 @@ fn synthesize_rust_module_cascade(
 /// not be `crate`, `self`, `super` or `Self`, so `r#crate` is not "escaped
 /// `crate`", it is a hard parse error. A fifth name, `_`, has no spelling
 /// either — it is Rust's wildcard, and `r#_` is rejected the same way —
-/// but only where Rust demands a real identifier; as a parameter, a `let`
-/// binding or a match binder it lowers to a legal discarding pattern, so
-/// it is refused in the `fn`-name and record-field positions only.
+/// but only where Rust demands a real identifier, so it is refused position
+/// by position rather than outright: as a `let` binding, a match binder or
+/// a parameter of an ordinary function it lowers to a legal discarding
+/// pattern and is left alone; as a `fn` name, a record field or a parameter
+/// of a TAIL-RECURSIVE function it is refused. The last of those is the one
+/// that is not obvious: tail recursion takes a parameter out of pattern
+/// position, into a `mut` binding the loop rebinds and — in a mutual group
+/// — a value the wrapper passes by name to build the trampoline variant.
 ///
 /// None of the five is an Aver keyword, so a program can name a function, a
 /// parameter, a binding, a match binder, a record field or a module-level
@@ -93,11 +98,16 @@ fn synthesize_rust_module_cascade(
 /// cannot support something, and a named refusal at compile time is what
 /// the reporter of the original issue asked for.
 ///
-/// This also covers the mutual-recursion trampoline, without having to look
-/// at it. A trampoline variant is the function name capitalised, so the only
-/// way to reach a never-raw variant name is `Self`, and the only Aver names
-/// that capitalise to `Self` are `self` and `Self` — both refused here, as
-/// function names, before any enum is emitted.
+/// Tail recursion gets a look of its own, because it changes what a name
+/// has to be. A trampoline variant is the member's name CAPITALISED, and
+/// Unicode's case mapping reaches `Self` from a third name besides `self`
+/// and `Self` — `ſelf`, since U+017F upper-cases to `S` — which no
+/// comparison against the name itself would catch, so the variant is
+/// checked as the string that actually gets emitted. And a parameter of a
+/// tail-recursive function stops being a pattern, so `_` has no spelling
+/// there either. Both are asked per recursion group / per loop, against the
+/// same classification the emitter routes on, so a name that merely EXISTS
+/// somewhere still compiles.
 ///
 /// # What is walked
 ///
@@ -106,7 +116,10 @@ fn synthesize_rust_module_cascade(
 /// match binders inside function bodies, record fields, and the same
 /// bindings and match binders in module-level statements (`ctx.items`,
 /// which the emitter renders into `fn main`). Entry module and dependency
-/// modules alike.
+/// modules alike. Two of those positions are read twice, once as a pattern
+/// and once as an identifier, depending on the recursion shape the emitter
+/// builds around them: the trampoline variant and the tail-recursive
+/// parameter.
 ///
 /// # What is not
 ///
@@ -237,35 +250,86 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
         Ok(())
     };
 
-    // A mutual-recursion group additionally spells each member's name
-    // CAPITALISED, as a trampoline enum variant, and a capitalised name is
-    // subject to Unicode's case mapping rather than ASCII's: `ſ` (U+017F)
-    // upper-cases to `S`, so `fn ſelf` produces the variant `Self`. That is
-    // a Rust keyword with no raw spelling, so the enum would not parse —
-    // and `ſelf` is a perfectly ordinary Aver name that the refusal above,
-    // which compares the name itself, does not see. Checked per group so a
-    // program that merely HAS such a name (where the variant is never
-    // built, and the plain fn name is valid Rust) still compiles.
-    let check_variants = |fn_defs: &[&crate::ast::FnDef], scope: &str| -> Result<(), String> {
-        for group in toplevel::find_mutual_tco_groups(fn_defs) {
-            for idx in group {
-                let fd = fn_defs[idx];
-                let variant = syntax::capitalise_first(&fd.name);
-                if syntax::is_rust_reserved(&variant) {
-                    return Err(format!(
-                        "cannot compile to Rust: {scope}function `{}` takes part in mutual \
-                         tail recursion, and the trampoline variant for it is its name \
-                         capitalised, which is `{variant}` — a Rust keyword. `{variant}` \
-                         cannot be written as an identifier, and the raw form `r#{variant}` \
-                         is rejected too, so there is no spelling for the variant. Rename \
-                         the function.",
-                        fd.name
-                    ));
+    // Tail recursion spells two things the walks above cannot see, and both
+    // of them leave pattern position behind.
+    //
+    // A mutual-recursion group spells each member's name CAPITALISED, as a
+    // trampoline enum variant, and a capitalised name is subject to
+    // Unicode's case mapping rather than ASCII's: `ſ` (U+017F) upper-cases
+    // to `S`, so `fn ſelf` produces the variant `Self`. That is a Rust
+    // keyword with no raw spelling, so the enum would not parse — and
+    // `ſelf` is a perfectly ordinary Aver name that the refusal above,
+    // which compares the name itself, does not see.
+    //
+    // A tail-recursive function's PARAMETERS also change position. Outside
+    // tail recursion a parameter lowers to a pattern, where `_` is a legal
+    // discard; inside it the parameter is the loop's carried state. A
+    // self-TCO signature emits `mut p: T`, and `mut _` is ``mut` must be
+    // followed by a named binding``; a trampoline binds `mut p` in the arm
+    // AND passes the parameter by name where the wrapper builds the enum
+    // variant, and `_` in expression position is ``in expressions, `_` can
+    // only be used on the left-hand side of an assignment``. So a parameter
+    // here is an identifier position, tested with `refuse_identifier`
+    // rather than `refuse`.
+    //
+    // Both are asked of the same classification the emitter routes on —
+    // `find_mutual_tco_groups` for the group, `body_has_self_tailcall` for
+    // the loop — so the refusal and the emitter cannot disagree about which
+    // shape gets built. That scoping is what keeps the working programs
+    // working: `ſelf` outside a group is a valid Rust fn name, and `_` on a
+    // function that is not tail-recursive is a valid Rust pattern, and both
+    // still compile.
+    let check_recursion_shapes =
+        |fn_defs: &[&crate::ast::FnDef], scope: &str| -> Result<(), String> {
+            let mut in_a_group: HashSet<usize> = HashSet::new();
+            for group in toplevel::find_mutual_tco_groups(fn_defs) {
+                for idx in group {
+                    let fd = fn_defs[idx];
+                    let variant = syntax::capitalise_first(&fd.name);
+                    if syntax::is_rust_reserved(&variant) {
+                        return Err(format!(
+                            "cannot compile to Rust: {scope}function `{}` takes part in mutual \
+                             tail recursion, and the trampoline variant for it is its name \
+                             capitalised, which is `{variant}` — a Rust keyword. `{variant}` \
+                             cannot be written as an identifier, and the raw form `r#{variant}` \
+                             is rejected too, so there is no spelling for the variant. Rename \
+                             the function.",
+                            fd.name
+                        ));
+                    }
+                    in_a_group.insert(idx);
                 }
             }
-        }
-        Ok(())
-    };
+            for (idx, fd) in fn_defs.iter().enumerate() {
+                let mutual = in_a_group.contains(&idx);
+                if !mutual && !toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
+                    continue;
+                }
+                let how = if mutual {
+                    "takes part in mutual tail recursion, so every parameter travels through \
+                     the trampoline enum — bound as `mut _` in the match arm, and passed by \
+                     name where the variant is built"
+                } else {
+                    "is tail-recursive, so every parameter is the loop's carried state and the \
+                     signature emits `mut _`"
+                };
+                for (param, _) in &fd.params {
+                    if syntax::is_never_an_identifier_in_rust(param) {
+                        return Err(format!(
+                            "cannot compile to Rust: parameter `{param}` of {scope}function \
+                             `{}` cannot be spelled in Rust. `{}` {how}. `{param}` is Rust's \
+                             wildcard, not an identifier, and the raw form `r#{param}` is \
+                             rejected too, so there is no spelling for it there. The same \
+                             parameter on a function that is not tail-recursive lowers to a \
+                             plain pattern, where `{param}` is a legal discard and still \
+                             compiles. Rename it.",
+                            fd.name, fd.name
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        };
 
     for fd in &ctx.fn_defs {
         check_fn(fd, "")?;
@@ -285,18 +349,21 @@ pub fn unspellable_rust_names(ctx: &CodegenContext) -> Result<(), String> {
     }
     // `main` is excluded exactly as the entry-path emitter excludes it before
     // computing groups, so this asks about the same set of groups the
-    // trampoline is actually built from. Dep modules have no `main`, and
-    // their emitter passes every fn, which is what the loop below does.
+    // trampoline is actually built from — and about the same set of fns the
+    // self-TCO signature emit runs over, since `main` reaches the emitter
+    // through `emit_public_main`, which emits no parameters at all. Dep
+    // modules have no `main`, and their emitter passes every fn, which is
+    // what the loop below does.
     let entry_non_main: Vec<&crate::ast::FnDef> =
         ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
-    check_variants(&entry_non_main, "")?;
+    check_recursion_shapes(&entry_non_main, "")?;
     for module in &ctx.modules {
         let scope = format!("module `{}` ", module.prefix);
         for fd in &module.fn_defs {
             check_fn(fd, &scope)?;
         }
         check_types(&module.type_defs, &scope)?;
-        check_variants(&module.fn_defs.iter().collect::<Vec<_>>(), &scope)?;
+        check_recursion_shapes(&module.fn_defs.iter().collect::<Vec<_>>(), &scope)?;
     }
     Ok(())
 }
@@ -1684,18 +1751,61 @@ fn await(n: Int) -> Int
     /// emitted `pub fn _(…)` — ``expected identifier, found reserved
     /// identifier``.
     ///
-    /// It is fatal only where Rust demands a real identifier: a `fn` name
-    /// and a record field. A parameter, a `let` binding and a match binder
-    /// all lower to positions where `_` is a legal (discarding) Rust
-    /// pattern, and those programs build and run, so the refusal must not
-    /// reach them.
+    /// It is fatal wherever Rust demands a real identifier: a `fn` name, a
+    /// record field, and — the case a pattern-position argument misses — a
+    /// parameter of a TAIL-RECURSIVE function, which is not a pattern
+    /// position at all. A self-TCO signature makes every parameter the
+    /// loop's mutable state (`mut _` is ``mut` must be followed by a named
+    /// binding``), and a mutual-TCO trampoline additionally passes each
+    /// parameter by name when it builds the enum variant (``in
+    /// expressions, `_` can only be used on the left-hand side of an
+    /// assignment``).
+    ///
+    /// Everywhere else `_` still lowers to a legal discarding pattern: a
+    /// parameter of a function that is not tail-recursive, a `let` binding
+    /// and a match binder all build and run, so the refusal must not reach
+    /// them.
     #[test]
     fn underscore_is_refused_only_where_rust_demands_an_identifier() {
+        const SELF_TCO_WILDCARD_PARAM: &str = "\
+fn count(n: Int, _: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> count(n - 1, 0)
+";
+        const MUTUAL_TCO_WILDCARD_PARAM: &str = "\
+fn isEven(n: Int, _: Int) -> Bool
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1, 0)
+
+fn isOdd(n: Int, _: Int) -> Bool
+    match n == 0
+        true -> false
+        false -> isEven(n - 1, 0)
+";
+        // Recursive, but the call is not in tail position, so no loop and
+        // no trampoline is built: the parameter stays a plain pattern.
+        const NON_TAIL_RECURSIVE_WILDCARD_PARAM: &str = "\
+fn deep(n: Int, _: Int) -> Int
+    match n == 0
+        true -> 0
+        false -> deep(n - 1, 0) + 1
+";
+
         let refused: &[(&str, &str)] = &[
             ("fn _(n: Int) -> Int\n    n + 1\n", "function `_`"),
             (
                 "record Holder\n  _: Int\n\nfn read(h: Holder) -> Int\n    h._\n",
                 "field `_` of record `Holder`",
+            ),
+            // Self tail recursion: the parameter becomes `mut _`.
+            (SELF_TCO_WILDCARD_PARAM, "parameter `_` of function `count`"),
+            // Mutual tail recursion: `mut _` in the arm, and `_` in
+            // expression position where the wrapper builds the variant.
+            (
+                MUTUAL_TCO_WILDCARD_PARAM,
+                "parameter `_` of function `isEven`",
             ),
         ];
 
@@ -1715,10 +1825,14 @@ fn await(n: Int) -> Int
         }
 
         // The other side of the line: these build and run today, so the
-        // refusal must leave them alone.
+        // refusal must leave them alone. The last one is the scoping
+        // witness — the same wildcard parameter on a function that recurses
+        // but not in tail position, where the emitter builds neither a loop
+        // nor a trampoline.
         for body in [
             "fn takes(_: Int) -> Int\n    7\n",
             "fn binds(n: Int) -> Int\n    _ = n + 1\n    9\n",
+            NON_TAIL_RECURSIVE_WILDCARD_PARAM,
         ] {
             let ctx = ctx_from_source(&format!("module Demo\n\n{body}"), "demo");
             assert!(

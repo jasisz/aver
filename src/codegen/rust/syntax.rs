@@ -57,24 +57,29 @@ pub(crate) const RUST_NEVER_RAW: &[&str] = &["Self", "crate", "self", "super"];
 /// True when `name` cannot be spelled in Rust even as a raw identifier, in
 /// a position where Rust would otherwise accept a wildcard.
 ///
-/// This is the test for a parameter, a `let` binding and a match binder:
-/// all three lower to Rust pattern positions, where `_` is legal and means
-/// "discard", so `_` must pass here. Use
-/// [`is_never_an_identifier_in_rust`] where Rust demands a real name.
+/// This is the test for a `let` binding, a match binder and a parameter of
+/// an ordinary function: all three lower to Rust pattern positions, where
+/// `_` is legal and means "discard", so `_` must pass here. Use
+/// [`is_never_an_identifier_in_rust`] where Rust demands a real name — a
+/// parameter counts as that once the function is tail-recursive.
 pub(crate) fn is_never_raw_in_rust(name: &str) -> bool {
     RUST_NEVER_RAW.contains(&name)
 }
 
 /// True when `name` cannot stand where Rust demands a real identifier — a
-/// `fn` name or a struct field.
+/// `fn` name, a struct field, or a parameter of a tail-recursive function,
+/// which the emitter writes as `mut p` and a trampoline wrapper also passes
+/// by name.
 ///
 /// That is the four [`RUST_NEVER_RAW`] words plus `_`. `_` is not a
 /// keyword, it is the wildcard, so it is not in the table and never needs
 /// the escape in a pattern; but `pub fn _()` is `expected identifier,
-/// found reserved identifier` and `r#_` is `` `_` cannot be a raw
-/// identifier ``, so in these two positions it has no spelling either way.
-/// Aver's lexer takes `_` as an ordinary identifier (`src/lexer.rs`), so a
-/// program can carry it.
+/// found reserved identifier`, `mut _` is ``mut` must be followed by a
+/// named binding``, `_` as a call argument is ``in expressions, `_` can
+/// only be used on the left-hand side of an assignment``, and `r#_` is
+/// `` `_` cannot be a raw identifier ``, so in these positions it has no
+/// spelling either way. Aver's lexer takes `_` as an ordinary identifier
+/// (`src/lexer.rs`), so a program can carry it.
 pub(crate) fn is_never_an_identifier_in_rust(name: &str) -> bool {
     name == "_" || is_never_raw_in_rust(name)
 }
@@ -113,8 +118,11 @@ pub(crate) fn capitalise_first(name: &str) -> String {
 /// which have no spelling at all; those are refused before codegen runs,
 /// so this function never has to answer for them. `_` passes through
 /// unchanged and correctly so — it needs no escape, and it is legal in
-/// every position this is called from that survives
-/// `is_never_an_identifier_in_rust`.
+/// the pattern positions this is called from. It reaches only those:
+/// `unspellable_rust_names` refuses `_` wherever the emitter needs a real
+/// name for it, which is a `fn` name, a record field, and a parameter of a
+/// tail-recursive function (where the emitter writes `mut _`, and a
+/// trampoline wrapper additionally passes it by name).
 ///
 /// Do not call this on a name that will then be embedded inside a longer
 /// identifier. `r#` is a prefix on a whole identifier, so
