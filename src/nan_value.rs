@@ -88,6 +88,14 @@ pub type Arena = aver_memory::Arena<AverTypes>;
 pub type ArenaEntry = aver_memory::ArenaEntry<AverTypes>;
 pub type ArenaSymbol = aver_memory::ArenaSymbol<AverTypes>;
 
+/// Every arena slot is one of these, so the widest variant sets what a slot
+/// costs whatever it holds. `Namespace` is the widest at 40 bytes, which leaves
+/// the `all_immediate` flag beside the 8-byte map handle riding in padding that
+/// was already there — the flag that lets the collector skip a map of
+/// immediates costs nothing per slot. A variant that grew past 40 would put
+/// that back, on every entry in the arena, which is why this is pinned.
+const _: () = assert!(core::mem::size_of::<ArenaEntry>() == 48);
+
 // ---------------------------------------------------------------------------
 // Extension trait for Value <-> NanValue conversion
 // ---------------------------------------------------------------------------

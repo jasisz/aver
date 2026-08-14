@@ -55,7 +55,7 @@ fn assert_no_young_refs(value: NanValue, arena: &Arena, context: &str) {
                     assert_no_young_refs(item, arena, context);
                 }
             }
-            ArenaEntry::Map(map) => {
+            ArenaEntry::Map { map, .. } => {
                 for (_, (key, value)) in map.iter() {
                     assert_no_young_refs(*key, arena, context);
                     assert_no_young_refs(*value, arena, context);
@@ -864,98 +864,150 @@ fn building_a_map_from_a_list_of_pairs_does_not_rebuild_the_table_per_entry() {
     );
 }
 
-/// The residual left over once the duplication is gone, and the measurement the
-/// map half of issue #898 has to start from.
-///
-/// Copies are gone; reads are not. Every collection that sees a live map walks
-/// it entry by entry to establish that nothing in it moved, and a map has no
-/// counterpart of `ListBody::all_immediate` to escape that walk. The second
-/// case here is the control that isolates it: a `Map<Int, Int>` in which no key
-/// and no value can ever relocate, run at the same allocation rate as the
-/// string one because each step builds a throwaway string it does not store.
-/// Its reads come out identical to the heap-valued map's, digit for digit —
-/// 80,600 at n = 400 and 321,200 at n = 800 for both, against 0 for a
-/// `List<Int>` of the same size. What the map holds makes no difference at all.
-///
-/// The allocation rate is why the control needs the throwaway string. The same
-/// `Map<Int, Int>` fold without it reads only n — 400 and 800 — not because the
-/// map is skipped but because that program allocates so little that the
-/// collector hardly ever runs. Reading that number as an immediate-valued
-/// escape is the mistake this control exists to prevent.
-///
-/// Both halves are asserted quadratic on purpose. If a later change makes
-/// either one linear, this test is supposed to fail — retire it deliberately
-/// rather than loosen the bound.
-///
-/// What it is deliberately blind to is MAGNITUDE. How many entries a fold reads
-/// is the map size times the number of collections that saw it, and the second
-/// factor is the young collector's tuning, not anything about maps: raise the
-/// threshold and every number here falls by the same constant. So the
-/// assertions below are all ratios of one program against itself at two sizes,
-/// where that constant cancels. A young-collector change should move the
-/// figures quoted above and leave this test green; a map that stopped being
-/// walked in full should fail it.
 #[test]
-fn a_live_map_is_read_entry_by_entry_whether_or_not_anything_in_it_can_move() {
-    let heap_small = map_build_cost(400, "{}", 0, "String", "String", "\"k{n}\"", "\"v{n}\"");
-    let heap_large = map_build_cost(800, "{}", 0, "String", "String", "\"k{n}\"", "\"v{n}\"");
-    let imm_small = map_build_cost(400, "{}", 0, "Int", "Int", "n", "String.len(\"pad{n}\")");
-    let imm_large = map_build_cost(800, "{}", 0, "Int", "Int", "n", "String.len(\"pad{n}\")");
+fn folding_over_a_map_of_immediates_never_reads_it() {
+    // A `Map<Int, Int>` holds nothing a collection could relocate, so rewriting
+    // its entries is provably the identity and the collector has no reason to
+    // look at them. It used to look anyway, once per entry per collection: this
+    // fold read 80,600 entries at n=400 and 321,200 at n=800 — n^2/2, the shape
+    // of the whole residual time of issue #900.
+    //
+    // The fold is run at the allocation rate of the heap-backed control below,
+    // by building a throwaway string on every step that it does not store.
+    // Without that the collector hardly ever runs and a zero here would say
+    // nothing about the escape.
+    let small = map_build_cost(400, "{}", 0, "Int", "Int", "n", "String.len(\"pad{n}\")");
+    let large = map_build_cost(800, "{}", 0, "Int", "Int", "n", "String.len(\"pad{n}\")");
 
-    for (label, small, large) in [
-        ("Map<String, String>", &heap_small, &heap_large),
-        ("Map<Int, Int>", &imm_small, &imm_large),
-    ] {
-        assert_eq!(
-            (small.copied, large.copied),
-            (0, 0),
-            "{label}: the fold duplicated entries it did not have to",
-        );
-        assert!(
-            small.scanned > 0 && large.scanned > 0,
-            "{label}: a live map was never read at all, which would mean maps \
-             grew a skip like `ListBody::all_immediate` — a real improvement, \
-             and the point at which this test should be retired deliberately \
-             rather than loosened: n=400 read {}, n=800 read {}",
-            small.scanned,
-            large.scanned,
-        );
-        // Doubling n doubles both the map's size and the number of collections
-        // that walk it, so the reads go up by 4. Requiring 3 leaves a third of
-        // that headroom while still excluding every linear curve, which could
-        // only reach 2.
-        assert!(
-            large.scanned >= 3 * small.scanned,
-            "{label}: doubling the input less than tripled the reads, so this is \
-             no longer the quadratic control this test is here to be: n=400 read \
-             {}, n=800 read {}",
-            small.scanned,
-            large.scanned,
-        );
-        // The same statement per entry, which is what makes it a claim about
-        // the walk rather than about how much the program allocates: a fold
-        // that read each entry a bounded number of times would hold this ratio
-        // flat.
-        let small_per_entry = small.scanned / 400;
-        let large_per_entry = large.scanned / 800;
-        assert!(
-            large_per_entry >= 3 * small_per_entry / 2,
-            "{label}: reads per entry barely grew, so the walk is no longer \
-             repeating over the whole map as it fills: n=400 read {} per entry, \
-             n=800 read {} per entry",
-            small_per_entry,
-            large_per_entry,
-        );
-    }
+    assert_eq!(
+        (small.scanned, large.scanned),
+        (0, 0),
+        "a map of immediates was read entry by entry; the whole point of the \
+         all-immediate flag is that this table never has to be looked at",
+    );
+    assert_eq!(
+        (small.copied, large.copied),
+        (0, 0),
+        "the fold duplicated entries it did not have to",
+    );
+}
 
+#[test]
+fn folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step() {
+    // The control for the test above, and the limit of this fix — the same role
+    // `copying_a_list_of_strings_still_reads_shared_bodies_quadratically` plays
+    // for lists. Same fold, same sizes, one difference: the keys and values
+    // carry heap indices, so nothing can be proved about them without reading
+    // them and the walk stays n^2/2.
+    //
+    // The bounds are the ones the retired issue-#905 tripwire held the
+    // heap-backed half to, unchanged. If a later change makes this program
+    // linear too, this test is supposed to fail — retire it deliberately rather
+    // than loosen it.
+    //
+    // "String" is not the dividing line: a string of five UTF-8 bytes or fewer
+    // is NaN-boxed inline and belongs with the immediates. `"k{n}"` at these
+    // sizes is four, which is why the values here are spelled long enough to
+    // reach the heap.
+    let small = map_build_cost(
+        400,
+        "{}",
+        0,
+        "String",
+        "String",
+        "\"key-no-{n}\"",
+        "\"val-no-{n}\"",
+    );
+    let large = map_build_cost(
+        800,
+        "{}",
+        0,
+        "String",
+        "String",
+        "\"key-no-{n}\"",
+        "\"val-no-{n}\"",
+    );
+
+    assert_eq!(
+        (small.copied, large.copied),
+        (0, 0),
+        "the fold duplicated entries it did not have to",
+    );
     assert!(
-        imm_small.scanned >= heap_small.scanned && imm_large.scanned >= heap_large.scanned,
-        "a map whose keys and values can never relocate was read less than one \
-         holding heap indices, which would mean maps grew an all-immediate \
-         escape: immediates read {} and {}, heap-backed {} and {}",
-        imm_small.scanned,
-        imm_large.scanned,
-        heap_small.scanned,
-        heap_large.scanned,
+        small.scanned > 0 && large.scanned > 0,
+        "a live map holding heap indices was never read at all, which cannot be \
+         right: skipping it would leave stale arena indices behind. n=400 read \
+         {}, n=800 read {}",
+        small.scanned,
+        large.scanned,
+    );
+    // Doubling n doubles both the map's size and the number of collections that
+    // walk it, so the reads go up by 4. Requiring 3 leaves a third of that
+    // headroom while still excluding every linear curve, which could only
+    // reach 2.
+    assert!(
+        large.scanned >= 3 * small.scanned,
+        "doubling the input less than tripled the reads, so this is no longer \
+         the quadratic control this test is here to be: n=400 read {}, n=800 \
+         read {}",
+        small.scanned,
+        large.scanned,
+    );
+    // The same statement per entry, which is what makes it a claim about the
+    // walk rather than about how much the program allocates.
+    let small_per_entry = small.scanned / 400;
+    let large_per_entry = large.scanned / 800;
+    assert!(
+        large_per_entry >= 3 * small_per_entry / 2,
+        "reads per entry barely grew, so the walk is no longer repeating over \
+         the whole map as it fills: n=400 read {} per entry, n=800 read {} per \
+         entry",
+        small_per_entry,
+        large_per_entry,
+    );
+}
+
+/// Entries the collector reads while a map built by `built` is held live across
+/// a stretch of allocation that does not touch it.
+///
+/// The map is a `Map<Int, String>` whose values are one byte long, so they are
+/// NaN-boxed inline and the whole table is immediate. `built` is the only thing
+/// that varies, which makes any difference in the reads a statement about what
+/// was written into the map and nothing else.
+fn map_held_live_scans(built: &str) -> u64 {
+    let src = format!(
+        "fn build(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> build(n - 1, Map.set(acc, n, \"s\"))\n        false -> acc\n\nfn churn(n: Int, m: Map<Int, String>, acc: Int) -> Int\n    match n > 0\n        true -> churn(n - 1, m, acc + String.len(\"padding-{{n}}\") + Map.len(m))\n        false -> acc\n\nfn main() -> Int\n    m = {built}\n    churn(4000, m, 0)\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    vm.run().expect("map churn program should run");
+    vm.arena.map_entries_scanned()
+}
+
+#[test]
+fn writing_a_heap_backed_value_into_a_map_of_immediates_puts_the_reads_back() {
+    // The flag is a claim about content, so every write has to re-establish it,
+    // and the direction that matters is losing it: a map that was all-immediate
+    // and then had something relocatable written into it must go back to being
+    // walked. Getting this wrong is silent — the collector would skip a table
+    // holding arena indices and leave them pointing at where the values used to
+    // be.
+    //
+    // Same map, same held-live stretch, one extra `Map.set` between them. The
+    // value it writes is ten bytes, past the five that fit in a NaN box, so it
+    // is the one entry in the table that carries a heap index.
+    let immediate = map_held_live_scans("build(400, {})");
+    let degraded = map_held_live_scans("Map.set(build(400, {}), 0, \"heapbacked\")");
+
+    assert_eq!(
+        immediate, 0,
+        "a map built only out of immediates was read {immediate} times",
+    );
+    // At least the whole table once, so this cannot be satisfied by a single
+    // stray read of some other map the program happens to hold.
+    assert!(
+        degraded >= 400,
+        "one heap-backed value was written into an all-immediate map and the \
+         collector went on skipping it, which leaves that value's arena index \
+         un-rewritten after it moves: read {degraded} entries",
     );
 }

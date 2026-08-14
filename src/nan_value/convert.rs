@@ -88,7 +88,7 @@ impl NanValueConvert for NanValue {
                         table = table_after;
                     }
                 }
-                let idx = arena.push(ArenaEntry::Map(nv_map));
+                let idx = arena.push_map(nv_map);
                 NanValue::new_map(idx)
             }
             Value::Fn(f) => NanValue::new_fn(arena.push_fn(Rc::clone(f))),
