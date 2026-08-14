@@ -411,17 +411,20 @@ impl<T: ArenaTypes> Arena<T> {
     /// needs rewriting, the map counterpart of
     /// [`Arena::list_elements_scanned`].
     ///
-    /// This is the counter that tracks *time*, and for maps there is no escape
-    /// from it. A list body built entirely out of immediates is skipped without
-    /// being read; a map has no such flag, so a live `Map<Int, Int>` — in which
-    /// nothing can ever relocate — is still read entry by entry on every
-    /// collection that sees it. Threading one map through a fold therefore
-    /// grows this quadratically whatever the map holds, which is the residual
-    /// cost left over once the duplication above is gone.
+    /// This is the counter that tracks *time*. Maps now carry the same
+    /// all-immediate escape lists have: a table whose keys and values are all
+    /// immediate is returned unread by the collector and adds nothing here, so
+    /// a live `Map<Int, Int>` threaded through a fold reads as 0. A map
+    /// holding anything heap-backed is still read entry by entry on every
+    /// collection that sees it, and threading one through a fold grows this
+    /// quadratically — the residual cost left over once the duplication above
+    /// is gone.
     ///
-    /// One read is missed on purpose: the pre-scan in the promotion fast path
-    /// stops at the first entry that has to move, and only the runs that scan a
-    /// map in full are counted. That undercounts, never the reverse.
+    /// Reads are missed on purpose in two places: the pre-scan in the
+    /// promotion fast path stops at the first entry that has to move (only
+    /// runs that scan a map in full are counted), and the all-immediate arms
+    /// in `rewrite_map_with` / `promote_entry_to_target` return without
+    /// reading anything at all. Both undercount, never the reverse.
     #[inline]
     pub fn map_entries_scanned(&self) -> u64 {
         self.map_entries_scanned

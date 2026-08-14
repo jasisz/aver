@@ -1282,10 +1282,10 @@ pub struct Arena<T: ArenaTypes> {
     /// parent when the branch rejoins.
     map_entries_copied: u64,
     /// Total map entries the collector has *read* while deciding whether a live
-    /// map needs rewriting. Unlike a list body, a map carries no
-    /// all-immediate flag, so this grows on every collection that sees a live
-    /// map whatever the map holds. It is the counter the residual time of a
-    /// map-building program follows.
+    /// map needs rewriting. A map whose `all_immediate` flag is set is
+    /// returned unread and adds nothing here; a map holding anything
+    /// heap-backed grows this on every collection that sees it. It is the
+    /// counter the residual time of a map-building program follows.
     map_entries_scanned: u64,
     /// Canonical lookup keys consulted by `find_type_id`: bare for entry and
     /// builtin types, and module-qualified for dependency types. Kept in

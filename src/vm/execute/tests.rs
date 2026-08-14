@@ -992,6 +992,17 @@ fn writing_a_heap_backed_value_into_a_map_of_immediates_puts_the_reads_back() {
     // holding arena indices and leave them pointing at where the values used to
     // be.
     //
+    // Which write path this exercises: `Map.set` on a call result is not a
+    // local, so the owned bit never fires and this goes through the SHARED
+    // path (`set_nv` -> `push_map`, flag proved by a full scan). The O(1)
+    // derivation in `set_nv_owned` — the one place the flag is derived rather
+    // than proved — is pinned by
+    // `folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step`:
+    // its fold threads the accumulator as a bare param local (owned path,
+    // `copied == (0,0)` proves it fires) and writes heap-backed pairs, so
+    // dropping either `is_immediate()` conjunct there turns its
+    // `scanned > 0` red. Do not remove that control without replacing this pin.
+    //
     // Same map, same held-live stretch, one extra `Map.set` between them. The
     // value it writes is ten bytes, past the five that fit in a NaN box, so it
     // is the one entry in the table that carries a heap index.
