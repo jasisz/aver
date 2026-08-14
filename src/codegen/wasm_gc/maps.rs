@@ -34,7 +34,9 @@
 //! once a probe walks the whole table without finding a free slot —
 //! the entry has nowhere to go and the table cannot grow — and the
 //! lookup helpers report the miss, which is what `remove` already did.
-//! `remove`'s two loops stop on the same wrap test.
+//! `remove`'s two loops stop on the same wrap test: its locate probe
+//! when it is back at the key's home bucket, its backwards-shift scan
+//! when it is back at the slot the removal emptied.
 //! `capacity_helper_names` feeds the wasm `name` section so that trap
 //! names the capacity it hit instead of an anonymous fn index.
 //!
@@ -109,9 +111,10 @@ pub(super) struct MapKVHelpers {
     /// the values array, only when the corresponding key slot is
     /// occupied (`keys[i] != null`).
     pub(super) values: u32,
-    /// `remove(m, k) -> m`. Linear-probe locate of `k`, then
-    /// backwards-shift the contiguous probe chain so subsequent
-    /// `get` calls still find their entries. Mutates `m` in place
+    /// `remove(m, k) -> m`. Linear-probe locate of `k`, then a
+    /// backwards-shift scan over the rest of the probe run so every
+    /// entry that probed past the emptied slot is still found by a
+    /// later `get` — see `emit_map_remove`. Mutates `m` in place
     /// and returns the same handle (Aver semantics: same shape as
     /// `set`, the returned ref is structurally equal).
     pub(super) remove: u32,
@@ -2813,11 +2816,11 @@ fn emit_map_hash(
 }
 
 /// `remove(map, k) -> map`. Linear-probe locate the entry; if not
-/// found, return the map unchanged. If found, do a backwards-shift
-/// over the contiguous probe chain so subsequent `get` calls still
-/// land their entries (Robin-Hood / canonical open-addressing
-/// remove). Decrements `map.size`. Same-handle return (mutates in
-/// place).
+/// found, return the map unchanged. If found, empty its slot and walk
+/// the rest of the probe run, pulling back every entry that the new
+/// hole would otherwise hide from its own lookup — the backwards-shift
+/// deletion for linear probing. Decrements `map.size`. Same-handle
+/// return (mutates in place).
 fn emit_map_remove(
     canonical: &str,
     registry: &TypeRegistry,
@@ -2831,6 +2834,10 @@ fn emit_map_remove(
     // params: 0=map, 1=k.
     // locals: 2=cap, 3=mask, 4=keys, 5=values, 6=h, 7=i, 8=j,
     //         9=cur_key, 10=natural, 11=gap, 12=disp, 13=hole.
+    // `7=i` is the probe index while the entry is being located, then
+    // the hole the shift is filling — which travels as entries move.
+    // `13=hole` keeps the slot the removed key vacated, unchanged, as
+    // the shift scan's wrap guard.
     let mut f = Function::new([
         (1, ValType::I32), // 2: cap
         (1, ValType::I32), // 3: mask
@@ -2930,7 +2937,30 @@ fn emit_map_remove(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
-    // Backwards-shift: hole = i; j = (i+1) & mask
+    // Backwards-shift deletion for linear probing (Knuth 6.4 R). `i` is
+    // the hole — the slot holding no live key — and `j` scans forward
+    // from the slot after it. Two rules, one per entry the scan reads:
+    //
+    //   * the entry at `j` MOVES into the hole when the hole lies on its
+    //     probe path, i.e. when its home bucket is NOT inside the
+    //     half-open cyclic interval `(hole, j]`. On masked distances
+    //     that reads `(j - natural) >= (j - hole)`: the entry is at
+    //     least as far from home as the hole is, so a probe starting at
+    //     its home would hit the hole and give up before reaching it.
+    //     Moving it empties `j`, which becomes the new hole.
+    //   * otherwise the entry STAYS and the scan moves on. Its home is
+    //     past the hole, so the hole is not on its probe path and it is
+    //     still found where it sits.
+    //
+    // Stopping at the first staying entry instead of skipping it would
+    // be a Robin-Hood rule, and it does not hold here: the inserts take
+    // the first free slot without stealing, so nothing orders a probe
+    // run by displacement, and an entry sitting at its home bucket can
+    // have entries behind it that probed past the removed slot to get
+    // there. Those are exactly the entries a stop would strand.
+    //
+    // `hole` (local 13) keeps the slot the removal emptied — the scan's
+    // wrap guard, see below. The live hole travels in `i`.
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::LocalSet(13));
     f.instruction(&Instruction::LocalGet(7));
@@ -2941,17 +2971,12 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
-    // `j` back at the slot the removal emptied → the walk has gone all
-    // the way round. It normally stops well before that: on a null slot,
-    // or on an entry already sitting at its home bucket (`disp < gap`,
-    // and `gap` is 1 on every iteration, so that test reads as
-    // `disp == 0`). It would also stop without this guard — each shift
-    // moves one entry one slot closer to home, so the sum of all
-    // displacements, a non-negative integer, drops by exactly one per
-    // iteration. But that is an argument about which tables are
-    // reachable, and this file claims every probe loop is bounded by
-    // construction, so the wrap is tested rather than reasoned about:
-    // at most `cap - 1` shifts, whatever the buckets hold.
+    // `j` back at the slot the removal emptied → the scan has gone all
+    // the way round a table with no null slot in it, and every entry has
+    // been considered once. It normally stops well before that, on the
+    // first null. Either way the scan visits each slot at most once — `j`
+    // only ever advances — so this loop runs at most `cap - 1` times,
+    // whatever the buckets hold.
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::LocalGet(13));
     f.instruction(&Instruction::I32Eq);
@@ -2971,25 +2996,26 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(10));
-    // gap = (j - i) & mask
+    // gap = (j - i) & mask — how far the hole is from `j`
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(11));
-    // disp = (j - natural) & mask
+    // disp = (j - natural) & mask — how far the entry is from home
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::LocalGet(10));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(12));
-    // if disp < gap → break
+    // if disp >= gap → move the entry into the hole, and `j` becomes
+    // the hole. Otherwise leave it where it is and keep scanning.
     f.instruction(&Instruction::LocalGet(12));
     f.instruction(&Instruction::LocalGet(11));
-    f.instruction(&Instruction::I32LtU);
-    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
     // shift: keys[i] = next; values[i] = values[j]
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(7));
@@ -3001,9 +3027,13 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::ArraySet(slots.values_array));
-    // i = j; j = (j+1) & mask
+    // i = j — the slot just vacated is the new hole. Its stale key stays
+    // in the array until the next move overwrites it or the `keys[i] =
+    // null` below clears it, and no lookup can reach it in between.
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::End);
+    // j = (j+1) & mask
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Add);

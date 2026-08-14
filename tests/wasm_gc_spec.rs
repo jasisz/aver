@@ -80,6 +80,53 @@ fn run_int_result(source: &str) -> Result<i64, String> {
     call_main_aint_result(&mut store, &instance)
 }
 
+/// Run the same source on the bytecode VM and read `main`'s `Int`. The
+/// VM is the reference answer both backends owe: a wasm-gc test that
+/// asserts a constant pins what the module does, and pairing it with
+/// this pins that the two backends agree. Gated on `runtime` so a
+/// `--no-default-features --features wasm` build still compiles.
+#[cfg(feature = "runtime")]
+fn run_int_on_vm(source: &str) -> i64 {
+    use aver::nan_value::{Arena, NanValueConvert};
+    use aver::value::Value;
+
+    let mut items = aver::source::parse_source(source).unwrap_or_else(|e| {
+        panic!("parse failed: {e}\n--- source ---\n{source}");
+    });
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        panic!(
+            "typecheck failed: {:?}\n--- source ---\n{source}",
+            tc.errors
+        );
+    }
+    let mut arena = Arena::new();
+    aver::vm::register_service_types(&mut arena);
+    let (code, globals) = aver::vm::compile_program_with_mir_fallback(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        result.analysis.as_ref(),
+    )
+    .unwrap_or_else(|e| panic!("VM compile failed: {e:?}"));
+    let mut machine = aver::vm::VM::new(code, globals, arena);
+    let returned = machine
+        .run_named_function("main", &[])
+        .unwrap_or_else(|e| panic!("VM run failed: {e:?}"));
+    match returned.to_value(&machine.arena) {
+        Value::Int(n) => n.to_i64().expect("VM main returned an out-of-range Int"),
+        other => panic!("VM main returned a non-Int: {other:?}"),
+    }
+}
+
 /// Call the `main` export and extract its `Int` return. `Int = ℤ`:
 /// `main` now returns a `(ref null $AverInt)` carrier, not a scalar
 /// `i64`. Every program in this spec returns a value that fits i64 (a
@@ -1403,6 +1450,114 @@ fn main() -> Int
 "#
         ),
         16383 + -1 + 8 + 16384
+    );
+}
+
+/// Two keys that share a bucket sit in one probe run, and removing the
+/// first must not cut the run in half. Small `Int` keys hash to
+/// themselves and the bucket is `hash & (16384 - 1)`, so `1` and `16385`
+/// both live at bucket 1; inserting `1`, `2`, `16385` in that order puts
+/// them in slots 1, 2, 3. `16385` is reachable only by probing through
+/// slot 1, so removing `1` has to walk the rest of the run and pull
+/// `16385` back into the hole it left.
+///
+/// The answer packs the count and three lookups into one Int —
+/// `len * 1000 + get(16385) * 10 + get(2) + get(1)`, with `-1` for a
+/// miss: two entries left, `16385 -> 33`, `2 -> 22`, `1` gone.
+const REMOVE_SHARED_BUCKET_SRC: &str = r#"module Tmp
+    intent = "remove a key that another key probed past"
+    depends []
+
+fn build() -> Map<Int, Int>
+    withOne = Map.set({}, 1, 11)
+    withTwo = Map.set(withOne, 2, 22)
+    Map.set(withTwo, 16385, 33)
+
+fn main() -> Int
+    m = Map.remove(build(), 1)
+    shared = Option.withDefault(Map.get(m, 16385), -1)
+    neighbour = Option.withDefault(Map.get(m, 2), -1)
+    removed = Option.withDefault(Map.get(m, 1), -1)
+    Map.len(m) * 1000 + shared * 10 + neighbour + removed
+"#;
+
+#[test]
+fn map_remove_keeps_a_key_that_probed_past_the_removed_bucket() {
+    assert_eq!(
+        run_int(REMOVE_SHARED_BUCKET_SRC),
+        2 * 1000 + 33 * 10 + 22 + -1
+    );
+}
+
+/// The same question over two probe runs, one of which crosses the end
+/// of the table. Bucket 5 holds `5`, `16389` and `32773`; `6`, `7`, `8`
+/// sit at their own home buckets and get pushed along, so the run in
+/// slots 5..10 alternates between entries that must move when slot 5
+/// empties and entries that must stay put. Removing `5` therefore skips
+/// some slots and shifts others, and the entry pulled back travels more
+/// than one slot.
+///
+/// The second run starts at the last bucket: `16383` and `32767` hash to
+/// bucket 16383, `16384` and `32768` to bucket 0, and inserting them as
+/// `16383`, `16384`, `32767`, `32768` puts them in slots 16383, 0, 1, 2
+/// — a run that wraps. Removing `16383` empties the last slot, and
+/// `32767` is only reachable through it.
+///
+/// The answer is `kept * 100 + missing * 10 + len`: all eight survivors
+/// found under their own value, both removed keys absent, count 8.
+const REMOVE_CLUSTER_SRC: &str = r#"module Tmp
+    intent = "remove across a colliding run and across the wrap point"
+    depends []
+
+fn hit(m: Map<Int, Int>, k: Int) -> Int
+    match Option.withDefault(Map.get(m, k), -1) == k
+        true  -> 1
+        false -> 0
+
+fn absent(m: Map<Int, Int>, k: Int) -> Int
+    match Map.has(m, k)
+        true  -> 0
+        false -> 1
+
+fn build() -> Map<Int, Int>
+    s1 = Map.set({}, 5, 5)
+    s2 = Map.set(s1, 6, 6)
+    s3 = Map.set(s2, 16389, 16389)
+    s4 = Map.set(s3, 7, 7)
+    s5 = Map.set(s4, 32773, 32773)
+    s6 = Map.set(s5, 8, 8)
+    s7 = Map.set(s6, 16383, 16383)
+    s8 = Map.set(s7, 16384, 16384)
+    s9 = Map.set(s8, 32767, 32767)
+    Map.set(s9, 32768, 32768)
+
+fn main() -> Int
+    withoutFive = Map.remove(build(), 5)
+    m = Map.remove(withoutFive, 16383)
+    keptLow = hit(m, 6) + hit(m, 7) + hit(m, 8) + hit(m, 16389) + hit(m, 32773)
+    keptWrap = hit(m, 16384) + hit(m, 32767) + hit(m, 32768)
+    missing = absent(m, 5) + absent(m, 16383)
+    (keptLow + keptWrap) * 100 + missing * 10 + Map.len(m)
+"#;
+
+#[test]
+fn map_remove_keeps_every_survivor_of_a_colliding_run() {
+    assert_eq!(run_int(REMOVE_CLUSTER_SRC), 8 * 100 + 2 * 10 + 8);
+}
+
+/// The VM is the oracle: the same program has to give the same answer on
+/// both backends. These two witnesses were wasm-gc-only divergences —
+/// the VM never lost a key — so pin the pair, not just the constant.
+#[test]
+#[cfg(feature = "runtime")]
+fn map_remove_witnesses_answer_the_vm() {
+    assert_eq!(
+        run_int(REMOVE_SHARED_BUCKET_SRC),
+        run_int_on_vm(REMOVE_SHARED_BUCKET_SRC)
+    );
+    assert_eq!(
+        run_int(REMOVE_CLUSTER_SRC),
+        run_int_on_vm(REMOVE_CLUSTER_SRC)
     );
 }
 
