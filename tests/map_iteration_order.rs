@@ -25,6 +25,7 @@ const EQUALITY_FIXTURE: &str = "tests/fixtures/map_equality_unmodelled_keys.av";
 const ADT_CONTROL_FIXTURE: &str = "tests/fixtures/map_equality_adt_control.av";
 const COLLIDING_TYPE_DIR: &str = "tests/fixtures/map_equality_colliding_type";
 const CROSS_MODULE_DIR: &str = "tests/fixtures/map_order_cross_module";
+const NAME_COLLISION_DIR: &str = "tests/fixtures/map_order_name_collision";
 const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order";
 const FIELD_COLLISION_DIR: &str = "tests/fixtures/map_equality_field_collision";
 const FN_PARAM_FIXTURE: &str = "tests/fixtures/map_order_fn_param.av";
@@ -1286,6 +1287,104 @@ fn a_given_named_after_a_map_reader_is_not_refused() {
     assert!(
         stdout.contains("0 failed"),
         "the control law must hold on the VM:\n{}",
+        format_output(&verify)
+    );
+}
+
+/// A bare call to a module's own peer is read in THAT module's scope.
+///
+/// The walk crosses a module boundary by following a dotted `Peek.describe`,
+/// and then reads the names inside that body — but it resolved every one of
+/// them in the CLAIM's scope. `Peek.describe` calls its peer as a bare
+/// `hiddenValues`, which is a name in `Peek` and nowhere else, so the cone
+/// stopped one hop short of `Map.values` and both laws exported as
+/// `native_decide` theorems that `aver verify` refutes 0/2.
+///
+/// With a same-named function in the claim's own file the miss is worse than a
+/// stop: the walk resolved `hiddenValues` to the entry file's map-free
+/// namesake and reported on a function the claim never calls.
+///
+/// The call is written inside `"{…}"` on both sides of the boundary, so the
+/// descent into an interpolated segment is exercised end to end here as well.
+#[test]
+fn an_observer_behind_a_bare_peer_call_is_still_refused() {
+    let lean = emit_lean_in_dir(
+        NAME_COLLISION_DIR,
+        "main.av",
+        "aver-map-order-name-collision",
+        "MapOrderNameCollision",
+    );
+    assert!(
+        lean.contains(
+            "-- verify law renderedThenLocal.renderedThenLocalIsWrittenOrder: map iteration \
+             order is not exported"
+        ),
+        "the walk must follow a bare peer call inside the module that wrote \
+         it:\n{lean}"
+    );
+    assert!(
+        !lean.contains("native_decide"),
+        "neither law may be stated as a theorem — the VM refutes both:\n{lean}"
+    );
+}
+
+/// The verdict does not depend on WHICH same-named function the walk met
+/// first.
+///
+/// `renderedThenLocal` and `localThenRendered` are one claim written twice,
+/// differing only in the order of the two calls inside the interpolated
+/// string: the entry file's map-free `hiddenValues` and `Peek.describe`, which
+/// reaches the observing `Peek.hiddenValues`. Same runtime answer, and `aver
+/// verify` refutes both.
+///
+/// "Already walked this one" has to be keyed on the declaration the name
+/// RESOLVED to, not on the word. Keyed on the word — which is all the queue
+/// carried while this was being written — whichever `hiddenValues` the walk
+/// popped first claimed the name and the other module's was skipped as
+/// already-seen: reaching the map-free one first hid the observer, and that
+/// law exported while its mirror image was refused.
+///
+/// A test over one ordering passes on that code. This one pins both.
+#[test]
+fn the_map_order_verdict_is_the_same_whichever_namesake_came_first() {
+    let lean = emit_lean_in_dir(
+        NAME_COLLISION_DIR,
+        "main.av",
+        "aver-map-order-name-collision-order",
+        "MapOrderNameCollision",
+    );
+    for law in [
+        "renderedThenLocal.renderedThenLocalIsWrittenOrder",
+        "localThenRendered.localThenRenderedIsWrittenOrder",
+    ] {
+        assert!(
+            lean.contains(&format!(
+                "-- verify law {law}: map iteration order is not exported"
+            )),
+            "{law} reaches the same observer as its mirror image and must get \
+             the same verdict:\n{lean}"
+        );
+    }
+}
+
+/// Both name-collision laws are refuted by the VM.
+///
+/// Without this the two tests above could be satisfied by a gate that refuses
+/// everything. The claims are FALSE at runtime — that is what makes exporting
+/// them a soundness hole rather than a lost opportunity.
+#[test]
+fn the_name_collision_laws_are_refuted_by_the_vm() {
+    let verify = run_aver(&[
+        "verify",
+        &format!("{NAME_COLLISION_DIR}/main.av"),
+        "--module-root",
+        NAME_COLLISION_DIR,
+    ]);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("0/2 cases passed"),
+        "both laws must FAIL on the VM — otherwise refusing them proves \
+         nothing:\n{}",
         format_output(&verify)
     );
 }
