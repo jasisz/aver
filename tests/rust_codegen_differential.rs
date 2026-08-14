@@ -1067,10 +1067,14 @@ fn main() -> Unit
 /// through the `&T`. It is here to show the new binding path carries a
 /// record read through a name end-to-end without disturbing the caller.
 ///
-/// The shapes that actually go red before the fix are `keptOutcome`
-/// (E0308: `&Result<…>` returned where `Result<…>` is expected), `keptY`
-/// (E0507: move out of `p.y`) and `nestedNamed` (E0507: move out of
-/// `s.piece.kind`) — three rustc errors in one build.
+/// The shapes that actually go red are the other seven. Against the base
+/// commit this program fails to build with seven rustc errors: `closeAfter`
+/// and `keptOutcome` E0308 (`&Result<…>` where `Result<…>` is expected),
+/// `yAfter` and `keptY` E0507 (move out of `p.y`), `nestedTail`,
+/// `nestedNamed` and `nestedAfter` E0507 (move out of `s.piece.kind`).
+/// Three of those seven — `keptOutcome`, `keptY`, `nestedNamed` — are the
+/// binding position specifically: reverting only the binding call sites,
+/// with the tail rule left in place, still fails with exactly those three.
 #[test]
 fn rust_param_returned_via_a_name_or_a_nested_field_builds_and_matches_vm() {
     let src = r#"module CloseAfter
