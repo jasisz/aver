@@ -2527,9 +2527,8 @@ fn mir_subject_is_borrowed_param(subject: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -
 /// construct anywhere in the tree), the signal for the caller to emit a
 /// hard codegen diagnostic.
 ///
-/// One return-position detail: a field access (`Project`) on a borrowed
-/// param in tail/return position needs `.clone()` to produce an owned
-/// value (`emit_mir_expr` emits `obj.field` without it).
+/// The tail expression is a return position, so it goes through
+/// [`emit_mir_tail_value`] to materialise an owned value.
 ///
 /// A top-level `Let` chain (the MIR shape a `Block` body with `let`
 /// bindings lowers to) is emitted as flat statement lines —
@@ -2572,17 +2571,31 @@ pub(super) fn emit_mir_fn_body(
     // `Box` nodes. So the default emit below renders the boxed-return tail
     // correctly without a codegen-side boxing pass.
 
-    let mut code = emit_mir_expr(body, emit_ctx)?;
-    // Return-position field access on a borrowed param → clone for
-    // an owned result. Mirror of HIR's
-    // `emit_body_expr_plan_with_options` `Leaf`/`Expr` arms.
-    if let MirExpr::Project(p) = &body.node
-        && let Some(local) = local_of(&p.node.base.node)
-        && emit_ctx.is_borrowed_param(&local.name)
-    {
-        code = format!("{}.clone()", code);
-    }
+    let code = emit_mir_tail_value(body, emit_ctx)?;
     Some(format!("    crate::cancel_checkpoint();\n    {}", code))
+}
+
+/// Emit a fn body's tail expression as an OWNED value.
+///
+/// The tail is a return position, so whatever lands there has to own what
+/// it hands back — the same rule [`mir_maybe_clone`] already applies to a
+/// call argument, a match arm and a TCO base-case return. Two shapes reach
+/// it needing the wrapper, because `emit_mir_expr` renders both bare: a
+/// read of a borrowed param (`&T` against a by-value return type) and a
+/// field access through one (a move out of a shared reference). Mirror of
+/// HIR's `emit_body_expr_plan_with_options` `Leaf`/`Expr` arms.
+fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    let code = emit_mir_expr(expr, ctx)?;
+    if local_of(&expr.node).is_some() {
+        return Some(mir_maybe_clone(code, &expr.node, ctx));
+    }
+    if let MirExpr::Project(p) = &expr.node
+        && let Some(local) = local_of(&p.node.base.node)
+        && ctx.is_borrowed_param(&local.name)
+    {
+        return Some(format!("{}.clone()", code));
+    }
+    Some(code)
 }
 
 /// Emit a non-TCO body's tail value as a bare `i64` expression. The tail
@@ -2624,7 +2637,9 @@ fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
 /// Emit a top-level `Let` chain as flat Rust statement lines: each
 /// binding becomes `let {name} = {value};` (value rendered raw, no clone
 /// wrapper), one per line, 4-space indented and `\n`-joined, terminated
-/// by the chain's final expression rendered raw on its own line.
+/// by the chain's final expression on its own line. That final expression
+/// is the fn's tail, so it goes through [`emit_mir_tail_value`] — a
+/// statement chain ending in one of its own params returns it by value.
 ///
 /// The chain is the run of directly-nested `Let` nodes: each one emits
 /// its statement line and continues into its body until a body that
@@ -2672,7 +2687,7 @@ fn emit_mir_let_chain_flat(
                 {
                     bare
                 } else {
-                    emit_mir_expr(&current.body, ctx)?
+                    emit_mir_tail_value(&current.body, ctx)?
                 };
                 lines.push(final_expr);
                 break;

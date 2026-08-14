@@ -888,6 +888,217 @@ fn main() -> Unit
     );
 }
 
+/// A parameter handed straight back, once per parameter type. Params of a
+/// collection / sum / product / tuple type are emitted as `&T` while the
+/// return type stays by value, so the fn's tail has to materialise an owned
+/// value — the same `.clone()` a match arm or a call argument already gets.
+/// The tail was the one owning position that never asked for it, so
+/// `passthrough(x) = x` emitted `&T` where `T` was expected and the generated
+/// project would not build at all (`Result`, `Option`, a sum type, a record, a
+/// tuple and a `List` all failed; `String`, `Int`, `Float`, `Bool` and the
+/// `own_param`-graduated `Vector` / `Map` built because they are already
+/// owned). Every shape sits in one program, so a backend that materialises too
+/// little fails the build and one that materialises the wrong value diverges
+/// from the VM.
+#[test]
+fn rust_passthrough_param_of_every_type_builds_and_matches_vm() {
+    let src = r#"module Passthrough
+    intent = "One passthrough fn per parameter type, so every borrow shape is exercised"
+    depends []
+    effects [Console.print]
+
+type Colour
+    Red
+    Green(Int)
+
+record Point
+    x: Int
+    y: Int
+
+fn passResult(v: Result<Int, String>) -> Result<Int, String>
+    ? "Hand back exactly what was given."
+    v
+
+fn passOption(v: Option<Int>) -> Option<Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passColour(v: Colour) -> Colour
+    ? "Hand back exactly what was given."
+    v
+
+fn passPoint(v: Point) -> Point
+    ? "Hand back exactly what was given."
+    v
+
+fn passTuple(v: Tuple<Int, String>) -> Tuple<Int, String>
+    ? "Hand back exactly what was given."
+    v
+
+fn passList(v: List<Int>) -> List<Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passVector(v: Vector<Int>) -> Vector<Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passMap(v: Map<String, Int>) -> Map<String, Int>
+    ? "Hand back exactly what was given."
+    v
+
+fn passString(v: String) -> String
+    ? "Hand back exactly what was given."
+    v
+
+fn passInt(v: Int) -> Int
+    ? "Hand back exactly what was given."
+    v
+
+fn passFloat(v: Float) -> Float
+    ? "Hand back exactly what was given."
+    v
+
+fn passBool(v: Bool) -> Bool
+    ? "Hand back exactly what was given."
+    v
+
+fn showResult(v: Result<Int, String>) -> String
+    ? "Render it."
+    match v
+        Result.Ok(n) -> String.fromInt(n)
+        Result.Err(e) -> e
+
+verify showResult
+    showResult(Result.Ok(1)) => "1"
+    showResult(Result.Err("e")) => "e"
+
+fn showOption(v: Option<Int>) -> String
+    ? "Render it."
+    match v
+        Option.Some(n) -> String.fromInt(n)
+        Option.None -> "none"
+
+verify showOption
+    showOption(Option.Some(2)) => "2"
+    showOption(Option.None) => "none"
+
+fn showColour(v: Colour) -> String
+    ? "Render it."
+    match v
+        Colour.Red -> "red"
+        Colour.Green(n) -> "green {n}"
+
+verify showColour
+    showColour(Colour.Red) => "red"
+    showColour(Colour.Green(3)) => "green 3"
+
+fn showTuple(v: Tuple<Int, String>) -> String
+    ? "Render it."
+    match v
+        (n, s) -> "{n}{s}"
+
+verify showTuple
+    showTuple((6, "t")) => "6t"
+
+fn main() -> Unit
+    ? "Print every passthrough so a divergence shows as a diff, not a pass."
+    ! [Console.print]
+    Console.print(showResult(passResult(Result.Ok(1))))
+    Console.print(showOption(passOption(Option.Some(2))))
+    Console.print(showColour(passColour(Colour.Green(3))))
+    Console.print(String.fromInt(passPoint(Point(x = 4, y = 5)).y))
+    Console.print(showTuple(passTuple((6, "t"))))
+    Console.print(String.fromInt(List.len(passList([7, 8]))))
+    Console.print(String.fromInt(Vector.len(passVector(Vector.new(3, 0)))))
+    Console.print(String.fromInt(Map.len(passMap({"a" => 9}))))
+    Console.print(passString("s"))
+    Console.print(String.fromInt(passInt(10)))
+    Console.print("{passFloat(1.5)}")
+    Console.print("{passBool(true)}")
+"#;
+    let expected = "1\n2\ngreen 3\n5\n6t\n2\n3\n1\ns\n10\n1.5\ntrue";
+    let vm = run_vm_inline("passthrough_param", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("passthrough_param", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM passthrough contract changed");
+    assert_eq!(
+        rust, vm,
+        "Rust passthrough of a borrowed param diverged from the VM"
+    );
+}
+
+/// The cleanup-wrapper shape from the field: do the thing that must happen
+/// either way, then hand back the outcome you were given. The parameter is no
+/// longer the whole body — it is the last line of a statement chain — and that
+/// chain's final expression is a second owning position that never materialised
+/// an owned value, so `closeAfter` emitted `&Result<…>` against a by-value
+/// return type. A field read through a borrowed param on the same line is the
+/// move-out-of-a-reference sibling of the same gap.
+///
+/// The third shape is the ownership guard: `tagged` writes a key into a map it
+/// was given while the caller keeps using the original. Materialising the owned
+/// value with a `.clone()` keeps the two maps separate; handing the callee the
+/// caller's value instead would let the write land in `original` — invisible to
+/// the build, visible only as a divergence from the VM here.
+#[test]
+fn rust_param_returned_after_an_effect_builds_and_matches_vm() {
+    let src = r#"module CloseAfter
+    intent = "A parameter handed back after an effect, and a map the caller keeps using"
+    depends []
+    effects [Console.print]
+
+record Point
+    x: Int
+    y: Int
+
+fn closeAfter(label: String, outcome: Result<Int, String>) -> Result<Int, String>
+    ? "Always print the label, whatever the session did."
+    ! [Console.print]
+    _printed = Console.print(label)
+    outcome
+
+fn yAfter(label: String, p: Point) -> Int
+    ? "Print the label, then hand back a field of the point."
+    ! [Console.print]
+    _printed = Console.print(label)
+    p.y
+
+fn tagged(m: Map<String, Int>) -> Map<String, Int>
+    ? "Add a key and hand the map back."
+    Map.set(m, "b", 2)
+
+fn shown(v: Result<Int, String>) -> String
+    ? "Render it."
+    match v
+        Result.Ok(n) -> String.fromInt(n)
+        Result.Err(e) -> e
+
+verify shown
+    shown(Result.Ok(1)) => "1"
+    shown(Result.Err("e")) => "e"
+
+fn main() -> Unit
+    ? "Print each shape so a divergence shows as a diff, not a pass."
+    ! [Console.print]
+    Console.print(shown(closeAfter("closing", Result.Ok(1))))
+    Console.print(String.fromInt(yAfter("point", Point(x = 4, y = 5))))
+    original = {"a" => 1}
+    grown = tagged(original)
+    Console.print(String.fromInt(Map.len(original)))
+    Console.print(String.fromInt(Map.len(grown)))
+"#;
+    // `original` still has one key after `tagged` added one to its own copy.
+    let expected = "closing\n1\npoint\n5\n1\n2";
+    let vm = run_vm_inline("close_after", src).expect("vm run");
+    let rust = build_run_rust_inline("close_after", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM cleanup-wrapper contract changed");
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from the VM on a parameter handed back after an effect"
+    );
+}
+
 // ─── Mode (b): deny-policy ──────────────────────────────────────────────
 
 /// A Disk-write program. `__PATH__` is substituted with the real
