@@ -121,14 +121,33 @@ impl VM {
         // spend a frameless return that has already been used.
         //
         // The wider rule this belongs to: nothing may treat `self.frames.last()`
-        // as its own frame without first ruling out `leaf_return`. Five places
-        // read it that way. Three ask `leaf_return` directly — `RETURN`, and the
-        // two exits this macro serves. `CALL_BUILTIN`'s `is_http_server` branch
-        // is the fourth and asks the same question. The fifth, the same branch
-        // under `CALL_VALUE`, is covered by classification instead: a chunk
-        // containing `CALL_VALUE` is never a leaf. Every other reader
-        // (`CALL_KNOWN`, `CALL_VALUE`, the three tail calls) sits behind an
-        // opcode `classify_leaf_chunk` refuses leaf status for.
+        // as its own frame without first ruling out `leaf_return`. Sites split
+        // three ways.
+        //
+        // Sites that take their RESUME POSITION from it. Getting this wrong
+        // runs the caller's function at this chunk's offset, which is the whole
+        // bug class. Five: `RETURN`, the two exits this macro serves, and
+        // `is_http_server` under `CALL_BUILTIN` — all four ask `leaf_return`
+        // first — plus `is_http_server` under `CALL_VALUE`, which is covered by
+        // classification instead: a chunk containing `CALL_VALUE` is never a
+        // leaf.
+        //
+        // Sites that PARK a position in it across a nested call, for whatever
+        // walks `self.frames` while that call runs. `CALL_KNOWN` and
+        // `CALL_VALUE` sit behind leaf-disqualifying opcodes; `CALL_PAR` does
+        // not, and asks `leaf_return` first.
+        //
+        // Sites that want THE FRAME THAT OWNS THE NEXT BOUNDARY — `STORE_GLOBAL`
+        // marking globals dirty, `VECTOR_SET` handing up an escaped in-place
+        // write. For a frameless chunk that frame IS the caller's, because
+        // `CALL_LEAF` records no arena marks and its return does no boundary
+        // work, so these are right as they stand. Their region tests read the
+        // caller's older marks, which widens what counts as frame-local — an
+        // over-approximation, in the direction that reports more.
+        //
+        // Everything else that reads `self.frames.last()` (the three tail
+        // calls) sits behind an opcode `classify_leaf_chunk` refuses leaf
+        // status for.
         macro_rules! leaf_error_return {
             ($result:expr) => {{
                 if let Some((saved_fn_id, saved_ip, saved_bp)) = leaf_return.take() {
@@ -1157,8 +1176,20 @@ impl VM {
                     let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
                     self.stack.truncate(items_start);
 
-                    // Save caller IP — drop code borrow before call_function
-                    self.frames.last_mut().unwrap().ip = ip as u32;
+                    // Save caller IP — drop code borrow before call_function.
+                    // The branches themselves are entered with `caller_fn_id` /
+                    // `caller_ip` below, so this park is for whatever walks
+                    // `self.frames` while they run. A chunk entered through
+                    // `CALL_LEAF` owns no frame — `CALL_PAR` is not in
+                    // `classify_leaf_chunk`'s disqualifying set, so a body like
+                    // `Result.Ok((f(a), g(b))?!)` is one — and parking there
+                    // would overwrite the CALLER's position with this chunk's.
+                    // Nothing reads that field before the caller's next call
+                    // rewrites it, but leaving the caller's own position in
+                    // place is what the rest of the loop does and costs a test.
+                    if leaf_return.is_none() {
+                        self.frames.last_mut().unwrap().ip = ip as u32;
+                    }
                     let _saved_fn_id = fn_id;
                     let caller_fn_id = fn_id;
                     let caller_ip = ip;
