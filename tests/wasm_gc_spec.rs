@@ -1258,23 +1258,16 @@ fn main() -> Int
     );
 }
 
-/// One key past the fixed bucket count has nowhere to go: the map has
-/// no resize, so the insert probe walks a table with no free slot. It
-/// must trap, and the trap has to name the capacity it hit rather than
-/// spin forever.
-///
-/// This drives `set_in_place`: the accumulator is uniquely owned, so
-/// the alias pass picks the in-place insert. The clone-on-write `set`
-/// carries the same guard, emitted by the same helper, but no test
-/// executes its trap — reaching it needs a full table built through
-/// aliased maps, which costs about 45 minutes of `array.copy` per run.
-/// That one is validated, not executed, and this comment is the record
-/// of which half is which.
+/// The key that used to have nowhere to go. A map with a fixed 16384
+/// buckets trapped on the 16385th distinct key — the table could not
+/// grow, so the entry had no slot. The table grows now, so this is an
+/// ordinary insert and the count is the count.
 #[test]
-fn map_past_capacity_traps_naming_the_limit() {
-    let err = run_int_result(
-        r#"module Tmp
-    intent = "map one key past the fixed wasm-gc capacity"
+fn map_past_the_old_fixed_capacity_keeps_inserting() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map one key past the old fixed wasm-gc capacity"
     depends []
 
 fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
@@ -1284,17 +1277,10 @@ fn fill(n: Int, acc: Map<Int, Int>) -> Map<Int, Int>
 
 fn main() -> Int
     m = fill(16385, {})
-    Map.len(m)
-"#,
-    )
-    .expect_err("inserting past the fixed capacity must trap");
-    assert!(
-        err.contains("16384"),
-        "trap should name the 16384 capacity limit, got: {err}"
-    );
-    assert!(
-        err.contains("Map.set"),
-        "trap should name the map helper that ran out of slots, got: {err}"
+    Map.len(m) + Option.withDefault(Map.get(m, 16385), -1)
+"#
+        ),
+        16385 + 16385
     );
 }
 
