@@ -4516,11 +4516,30 @@ fn emit_mir_effectful_builtin_call(
     //     (raw `emit_mir_expr`, HIR's `emit_arg`); the shared composer
     //     owns every use of those strings, including the policy check's,
     //     so no argument expression can reach the output twice.
-    let mut arg_strs = Vec::with_capacity(args.len());
-    for a in args {
-        arg_strs.push(emit_mir_expr(a, ctx)?);
-    }
+    //
+    //     One arg is rendered differently: when the policy check is on,
+    //     argument 0 becomes `let __policy_arg = …;`, which is an OWNING
+    //     position and so takes the same clone step every other owning
+    //     position takes — `mir_clone_arg`, the one the replay temps just
+    //     above use for exactly the same job. Rendering it raw there binds
+    //     a local the program reads again (E0382) or moves a field out of
+    //     a borrowed record param (E0507); the guarded raw bodies all read
+    //     argument 0 as `&{}`, so nothing asked for ownership until the
+    //     temp did. `mir_clone_arg` leaves an owned rvalue (a call result,
+    //     a literal, a last-use local) untouched, so the emission only
+    //     moves for the shapes that were breaking, and the clone is on the
+    //     one render — the argument is still evaluated exactly once.
     let policy_active = codegen.policy.is_some() && !codegen.emit_replay_runtime;
+    let owning_first_arg = super::builtins::policy_binds_first_arg(name, policy_active);
+    let mut arg_strs = Vec::with_capacity(args.len());
+    for (i, a) in args.iter().enumerate() {
+        let code = emit_mir_expr(a, ctx)?;
+        arg_strs.push(if i == 0 && owning_first_arg {
+            mir_clone_arg(code, &a.node, ctx)
+        } else {
+            code
+        });
+    }
     super::builtins::compose_effectful_builtin(name, &arg_strs, policy_active)
 }
 

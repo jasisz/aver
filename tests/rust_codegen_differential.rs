@@ -2283,6 +2283,132 @@ fn policy_check_rides_any_aver_toml_and_leaves_the_unguarded_shape_alone() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+// ─── Mode (b''): the policy-checked argument keeps its ownership ────────
+//
+// Binding the checked argument to a local fixed the double evaluation but
+// made that local an OWNING position, which the argument had never been
+// asked to satisfy: every guarded raw body reads argument 0 as `&{}`, so
+// before the temp existed both use sites merely borrowed. Two argument
+// shapes are moved by the bind and are not moved by a borrow:
+//
+//   * a local that the program reads again after the guarded call — the
+//     temp takes it, and the later read is `error[E0382]: borrow of moved
+//     value`;
+//   * a field read through a record parameter — record params are emitted
+//     as `&T`, so the temp is `error[E0507]: cannot move out of *place`,
+//     which needs no second read at all.
+//
+// `POLICY_ARG_PROBE` cannot see either one: its argument is `pathOf(dir, n)`,
+// a call result that already owns itself, and the same is true of every
+// other guarded call site in the corpus. Both shapes ride one program here,
+// and the `cargo build` is the gate — the emission assertions above it only
+// say which of the two went wrong.
+
+/// `__DIR__` is substituted with a real directory at test time.
+const POLICY_ARG_OWNERSHIP_PROBE: &str = r#"module PolicyArgOwnership
+    intent =
+        "Names a path once and uses it twice, and reads a path a record"
+        "carries. Probes the policy-checked argument's ownership: binding"
+        "it must not take the value away from the rest of the program."
+    effects [Console, Disk]
+
+record Location
+    dir: String
+    segment: String
+
+fn writeThenCheck(dir: String, n: Int) -> Result<Unit, String>
+    ? "Writes a file, checks it, then prints the path it used."
+    ! [Console.print, Disk.exists, Disk.writeText]
+    path = "{dir}/f{n}.txt"
+    written = Disk.writeText(path, "payload")?
+    present = Disk.exists(path)
+    shown = Console.print("exists {path}: {present}")
+    Result.Ok(Unit)
+
+fn readThere(place: Location) -> Result<String, String>
+    ? "Reads the file a record field names."
+    ! [Disk.readText]
+    Disk.readText(place.segment)
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.exists, Disk.readText, Disk.writeText]
+    checked = writeThenCheck("__DIR__", 1)?
+    place = Location(dir = "__DIR__", segment = "__DIR__/f1.txt")
+    text = readThere(place)?
+    echoed = Console.print("read {text}")
+    Result.Ok(Unit)
+"#;
+
+#[test]
+fn policy_checked_argument_keeps_its_ownership() {
+    let ws = temp_dir("policy-arg-own");
+    let proj_root = ws.join("src-root");
+    let files = ws.join("files");
+    fs::create_dir_all(&files).expect("create target dir");
+    fs::create_dir_all(&proj_root).expect("create src root");
+    let src = proj_root.join("policy_arg_ownership.av");
+    fs::write(
+        &src,
+        POLICY_ARG_OWNERSHIP_PROBE.replace("__DIR__", &aver_path_literal(&files)),
+    )
+    .expect("write probe source");
+    write_embedded_disk_policy(&proj_root, &files.to_string_lossy());
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "policy_arg_ownership";
+
+    let result = (|| -> Result<(), String> {
+        compile_rust(&src, &project, name, Some(&proj_root), &[])?;
+        let emitted = generated_entry(&project)?;
+        if !emitted.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_policy::check_disk` wrapper — \
+                 the probe would be testing nothing:\n{emitted}"
+            ));
+        }
+        // A local the program reads again: the temp has to own a copy,
+        // not take the local.
+        if !emitted.contains("let __policy_arg = path.clone();") {
+            return Err(format!(
+                "the policy temp takes `path` instead of owning a copy of it — \
+                 every later read of `path` is E0382:\n{emitted}"
+            ));
+        }
+        // A field read through a `&Location` param: the temp has to own a
+        // copy, not move out of the borrow.
+        if !emitted.contains("let __policy_arg = place.segment.clone();") {
+            return Err(format!(
+                "the policy temp moves `place.segment` out of a shared \
+                 reference — E0507 on the first and only use:\n{emitted}"
+            ));
+        }
+
+        // The gate: rustc is the judge of both shapes.
+        let bin = cargo_build(&project, name)?;
+        let run = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run policy-arg-ownership binary: {e}"))?;
+        if !run.status.success() {
+            return Err(format!(
+                "policy-arg-ownership run failed:\n{}",
+                format_output(&run)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&run.stdout).trim().to_string();
+        let vm_stdout = run_vm(&src, Some(&proj_root))?;
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "Rust diverged from the VM\nvm:\n{vm_stdout}\nrust:\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (c): record / replay ──────────────────────────────────────────
 
 /// Reads a file, then echoes its contents via Console.print. The read

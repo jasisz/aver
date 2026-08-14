@@ -324,6 +324,21 @@ fn policy_check_helper(name: &str) -> Option<&'static str> {
 /// carried twice.
 const POLICY_ARG_TEMP: &str = "__policy_arg";
 
+/// Whether [`compose_effectful_builtin`] will bind argument 0 of `name` to
+/// [`POLICY_ARG_TEMP`].
+///
+/// The caller has to know, because the bind is a `let` — an OWNING position.
+/// Every guarded raw body reads argument 0 as `&{}`, so before the temp
+/// existed the argument only ever had to be borrowable; a caller that keeps
+/// rendering it raw hands the temp a value it does not own, and the emitted
+/// project stops building (a local read again later is `E0382`, a field read
+/// through a `&T` param is `E0507`). The render for this argument goes
+/// through the same owning-position step as any other, which for the MIR
+/// walker is `mir_clone_arg` — the step its sibling replay temps already use.
+pub(super) fn policy_binds_first_arg(name: &str, policy_active: bool) -> bool {
+    policy_active && policy_check_helper(name).is_some()
+}
+
 /// Shared effectful-builtin composer (security-sensitive: a dropped
 /// `check_*` here silently disables aver.toml DENY enforcement for an
 /// effect). Takes the args already rendered ONCE by the caller's
@@ -336,7 +351,8 @@ const POLICY_ARG_TEMP: &str = "__policy_arg";
 ///    then arg 0 bound to [`POLICY_ARG_TEMP`], then the matching
 ///    `check_*(<method>, &<temp>).expect(...)`. The raw body reads the
 ///    same temp, so the check and the call see one value from one
-///    evaluation.
+///    evaluation. That bind is an OWNING position and the caller is the
+///    one that has to satisfy it — see [`policy_binds_first_arg`].
 /// 3. **bare framing** — every other effectful builtin gets the bare
 ///    `{ cancel_checkpoint(); <result> }`.
 /// 4. **pure passthrough** — a non-effectful builtin returns the raw
