@@ -2,20 +2,13 @@
 
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
+#[path = "support/scratch_dir.rs"]
+mod scratch_dir;
 
 use cert_wall::materialize as materialize_wall;
+use scratch_dir::temp_dir;
 use std::path::PathBuf;
 use std::process::Command;
-
-fn temp_dir(prefix: &str) -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    dir.push(format!("aver-{prefix}-{nanos}"));
-    dir
-}
 
 fn aver_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
@@ -374,7 +367,6 @@ example : withoutClosure globalReadArtifact := ⟨rfl, rfl, rfl⟩
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// S3 GuardIso: module bytes and every per-claim decode stay identical, while
@@ -649,7 +641,6 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts absentTableArtifact := by
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// Per-role GuardIso for the two Int value-comparison host roles, with
@@ -957,7 +948,6 @@ example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes Artifact
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// Byte offset of the SOLE occurrence of `opcode` inside the body of the
@@ -1349,7 +1339,6 @@ example : AcceptedArtifact.weakCmpTemplateArithTableCheck eqMutBytes ArtifactByt
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// A module WITH the Int box helper whose module-wide role scan fails: it
@@ -1555,7 +1544,6 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// GuardIso for the LEB encoding of the arith template splices. The wall
@@ -1834,7 +1822,6 @@ example : arithRoleCheckRawSplice (natOfBytes honestModuleBytes)
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(wall_dir);
 }
 
 /// The two comparison helper templates at WIDE declared indices, where every
@@ -2050,7 +2037,6 @@ example : AcceptedArtifact.arithRoleCheck (natOfBytes eqModule) eqModule.length
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(wall_dir);
 }
 
 /// F5 GuardIso: bytes and every sibling binding are identical, while only the
@@ -2186,7 +2172,6 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// S1 GuardIso: keep the mutual module bytes fixed and corrupt only the second
@@ -2304,7 +2289,6 @@ example : ¬ mutualDecodeWitness hostileManifest := by
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// F6 self retirement: the checker no longer splices a Rust `self` list into the
@@ -2388,7 +2372,6 @@ example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := rfl
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// The type index the named export's function declares (for anchoring nominal
@@ -2622,7 +2605,6 @@ example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// One `String.concat` module in four states: the Int-carrier struct present or
@@ -2929,7 +2911,6 @@ example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrierlessBytes
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(wall_dir);
 }
 
 /// A minimal but REAL Int runtime: the canonical `__rt_aint_from_i64` helper
@@ -3249,7 +3230,6 @@ example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes trun
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(wall_dir);
 }
 
 /// Extract one top-level `def NAME ...` block (through the line before the
@@ -3477,7 +3457,6 @@ end BoolAndGuardIso
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
 }
 
 /// The canonical tag-dispatch representation plan for a `slotCount`-shaped
@@ -4577,7 +4556,6 @@ example : AverCert.WasmSlice.checkExprProjectionTypes 1 2 0 probeProjFuncEntry
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(wall_dir);
 }
 
 fn read_uleb_at(bytes: &[u8], cursor: &mut usize) -> usize {
@@ -5036,6 +5014,4 @@ fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
-    let _ = std::fs::remove_dir_all(out_dir);
-    let _ = std::fs::remove_dir_all(wall_dir);
 }

@@ -11,21 +11,14 @@
 
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
+#[path = "support/scratch_dir.rs"]
+mod scratch_dir;
 
 use cert_wall::materialize as materialize_wall;
+use scratch_dir::{ScratchDir, temp_dir};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Command;
-
-fn temp_dir(prefix: &str) -> PathBuf {
-    let mut d = std::env::temp_dir();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    d.push(format!("aver-{prefix}-{nanos}"));
-    d
-}
 
 fn aver_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
@@ -173,6 +166,34 @@ fn is_arithmetic_nan_bits(bits: u64) -> bool {
     bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 && bits & 0x0008_0000_0000_0000 != 0
 }
 
+/// A scratch directory survives its test only as long as the test's scope.
+///
+/// Each certificate test writes about 119 MB under its scratch directory, most
+/// of it the `cert/.lake` build tree, and a failing certificate test is the one
+/// a developer re-runs. Cleanup therefore has to happen on the failing path
+/// too, so it hangs off `Drop` rather than a trailing statement that unwinding
+/// skips. The `create_dir_all` here is deliberate: it keeps the check from
+/// passing vacuously against a helper that only names a directory.
+#[test]
+fn a_scratch_directory_is_removed_when_its_test_panics() {
+    let recorded = std::sync::Mutex::new(PathBuf::new());
+    let outcome = std::panic::catch_unwind(|| {
+        let out_dir = temp_dir("certify-panic-cleanup");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        *recorded.lock().unwrap() = out_dir.to_path_buf();
+        std::fs::write(out_dir.join("cert-artifact"), "scratch\n").unwrap();
+        panic!("stand-in for a failing certificate assertion");
+    });
+
+    assert!(outcome.is_err(), "the stand-in failure must unwind");
+    let scratch = recorded.lock().unwrap().clone();
+    assert!(
+        !scratch.exists(),
+        "a panicking certificate test must not leave {} behind",
+        scratch.display()
+    );
+}
+
 #[test]
 fn certify_exits_nonzero_when_the_certificate_package_cannot_be_replaced() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -209,8 +230,6 @@ fn certify_exits_nonzero_when_the_certificate_package_cannot_be_replaced() {
         report.contains("certificate: replace cert dir"),
         "the real package replacement failure must remain visible:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -850,8 +869,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         declined_names.contains("double"),
         "composition helper should remain reported as source-level-only: {declined_names:?}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1386,8 +1403,6 @@ example :
         !combined.contains("sorryAx") && !typecheck_combined.contains("sorryAx"),
         "emitted acceptance wall leaked sorryAx:\n{combined}\n{typecheck_combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 // Hostile-model soundness gates.
@@ -1460,7 +1475,7 @@ const HOSTILE_MUTUAL_MODEL_SHARDS: usize = 2;
 /// setup per shard is nearly free.
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
-fn hostile_models_baseline(prefix: &str) -> Option<PathBuf> {
+fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping hostile leaf-model test: `lake` not available");
         return None;
@@ -1538,10 +1553,7 @@ fn assert_hostile_manifest_model_shard_is_declined(shard: usize) {
             !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&tampered);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Runs the `HOSTILE_MUTUAL_MODELS` entries that belong to `shard`.
@@ -1585,10 +1597,7 @@ fn assert_hostile_mutual_model_shard_is_declined(shard: usize) {
             !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&tampered);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The untampered hostile-model baseline is preflight-clean and its isolated
@@ -1603,9 +1612,6 @@ fn cert_hostile_model_baseline_is_preflight_clean_and_lake_builds() {
     let build_green = temp_dir("certify-hostile-mutual-build-green");
     copy_dir_all(&out_dir, &build_green);
     assert_certificate_target_builds(&build_green.join("cert"), "mutual hostile-model baseline");
-    let _ = std::fs::remove_dir_all(&build_green);
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Hostile model: the generated expression-fragment leaf definition `addTwo`
@@ -1646,9 +1652,6 @@ fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
         !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated expr-fragment model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
-    let _ = std::fs::remove_dir_all(&tampered);
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Hostile manifest obligation models, shard 0: `HOSTILE_MANIFEST_MODELS`
@@ -1714,9 +1717,6 @@ fn cert_hostile_model_declared_construct_index_is_declined() {
         !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong declared constructor index must fail its emitted bridge and be DECLINED:\n{report}"
     );
-    let _ = std::fs::remove_dir_all(&tampered);
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Hostile mutual-recursion model definitions, shard 0: `HOSTILE_MUTUAL_MODELS`
@@ -1794,9 +1794,6 @@ fn cert_hostile_model_fueled_recursion_definition_is_declined() {
         !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
         "wrong generated recursion model definition must fail its emitted bridge and be DECLINED:\n{report}"
     );
-    let _ = std::fs::remove_dir_all(&tampered);
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1870,8 +1867,6 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "certificate leaked sorryAx:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1924,8 +1919,6 @@ fn certify_declines_overflowing_multiplication_recursion() {
         declined.contains(&"wild"),
         "out-of-range multiplier must be declined, got {declined:?}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -2144,7 +2137,6 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
             !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong generated {name} definition must be caught by its semantic bridge:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&tampered);
     }
 
     // GuardIso: the bridges are not decorative. A unary bridge claiming the
@@ -2174,10 +2166,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
             !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
             "wrong {name} must be constrained by the bridge/parsed byte shape:\n{report}"
         );
-        let _ = std::fs::remove_dir_all(&tampered);
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -2299,8 +2288,6 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
             !combined.contains("sorryAx"),
             "mutual certificate {fixture} leaked sorryAx:\n{combined}"
         );
-
-        let _ = std::fs::remove_dir_all(&out_dir);
     }
 }
 
@@ -2400,8 +2387,6 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "verbatim variant dispatch certificate leaked sorryAx:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -2576,8 +2561,6 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "String.eq host-contract certificate leaked sorryAx:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -2748,8 +2731,6 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "String.concat host-contract certificate leaked sorryAx:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -2839,8 +2820,6 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "composition certificate leaked sorryAx:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Non-recursive ADT witness fixtures, as `(source, prefix, expected exports)`.
@@ -3098,8 +3077,6 @@ fn assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(shard: usize) 
                 "generic field-projection/dispatch/construct holds proofs changed axiom surface:\n{combined}"
             );
         }
-
-        let _ = std::fs::remove_dir_all(&out_dir);
     }
 }
 
@@ -3220,11 +3197,9 @@ fn certify_let_named_shapes_certify_and_lake_build() {
 
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping letnamed lake build: `lake` not available");
-        let _ = std::fs::remove_dir_all(&out_dir);
         return;
     }
     assert_certificate_target_builds(&out_dir.join("cert"), "let-named shapes");
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Arity-3 integer/Bool expression fragment through the audited generic
@@ -3283,11 +3258,9 @@ fn certify_arity_three_fragment_certifies_and_lake_builds() {
 
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping arity3 lake build: `lake` not available");
-        let _ = std::fs::remove_dir_all(&out_dir);
         return;
     }
     assert_certificate_target_builds(&out_dir.join("cert"), "arity-3 fragment");
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The s33 heap-type boundary: 16 nominal sum roots plus 46 user variant
@@ -3377,8 +3350,6 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         !combined.contains("sorryAx"),
         "boundary certificate leaked sorryAx:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// A module with no Int carrier certifies exactly its carrier-free classes and
@@ -3567,8 +3538,6 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
         "`main` must decline for the effect it performs, not for its parameter \
          count and not for the missing Int helper"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// Each declined export must be told what is actually stopping it. The Fibonacci
@@ -3665,8 +3634,6 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
             "`{export}` must decline with the blocker that actually applies to it"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// End-to-end on a module WITHOUT the Int box helper: emit the package, then
@@ -3759,8 +3726,6 @@ fn certify_then_verify_carrierless_module_acceptance_pin_closes() {
         !combined.contains("DECLINED"),
         "the carrierless package must not be DECLINED — its acceptance pin must close:\n{combined}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The admission-only path keeps its coverage — it just no longer has a reason
@@ -3885,7 +3850,6 @@ fn comparison_helper_exports_follow_the_emitted_calls() {
             "{name}: declared `eq` role must match the export section"
         );
     }
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -4024,8 +3988,6 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         "== cert-manifest.json ==\n{manifest_json}\n== Manifest.lean ==\n{manifest_lean}\n== Plans.lean ==\n{plans_lean}"
     );
     insta::assert_snapshot!("add_one_certificate_package", golden);
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -4124,8 +4086,6 @@ fn certify_nested_module_models_close_end_to_end() {
     );
 
     assert_certificate_target_builds(&cert_dir, "nested module models");
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 /// The producer's face gate must refuse a host-call-bearing plan that lands on
@@ -4210,6 +4170,4 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
         !plans.contains("validClockValue"),
         "an unplanned export must carry no plan in the certificate:\n{plans}"
     );
-
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
