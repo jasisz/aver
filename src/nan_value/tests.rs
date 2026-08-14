@@ -161,11 +161,13 @@ fn empty_collections_stay_inline() {
     assert_eq!(NanValue::EMPTY_MAP.repr(&arena), "{}");
 }
 
-/// `may_hold_heap_index` is a filter put in front of `heap_index` on the
-/// interpreter's hottest paths, so it has to be a NECESSARY condition: anything
-/// it turns away must really carry no arena index. A false negative there is
-/// silent — the reference is simply never counted — which is why this walks
-/// every tag rather than the handful the callers happen to use today.
+/// `may_hold_heap_index` is a filter put in front of `heap_index` where the tag
+/// match would be the bulk of the work — the interpreter's walk over the operand
+/// stack looking for holders of a slot — so it has to be a NECESSARY condition:
+/// anything it turns away must really carry no arena index. A false negative
+/// there is silent, because the reference is simply never seen and the slot
+/// reads as unheld, so this walks every tag rather than the handful the callers
+/// happen to use today.
 #[test]
 fn the_cheap_heap_reference_filter_turns_nothing_heap_backed_away() {
     let mut arena = Arena::new();
