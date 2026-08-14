@@ -47,6 +47,12 @@ use crate::vm::builtin::VmBuiltin;
 
 /// Tallies from the directional cross-check between the compiler's static owned
 /// mask and the runtime reference count.
+///
+/// They are per-VM, and an independent product run in parallel gives each branch
+/// a VM of its own, so writes inside a branch are counted there and go with it
+/// when it is dropped at the join. That undercounts both numbers, never the
+/// reverse, and it costs no guard: a branch that broke the soundness direction
+/// asserts inside its own VM before the join is reached.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VmSlotUniquenessStats {
     /// Heap-backed collection targets a `CALL_BUILTIN_OWNED` mask granted

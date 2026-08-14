@@ -300,6 +300,76 @@ fn the_runtime_sees_unique_slots_the_static_mask_declined() {
     );
 }
 
+/// The same fold, seeded from a helper's return value rather than an expression
+/// written at the call.
+fn helper_seeded_fold(steps: i64) -> String {
+    format!(
+        r#"module SlotHelperSeed
+    intent = "a map threaded through a fold, seeded by a helper"
+    depends []
+    effects []
+
+fn seedPairs() -> List<Tuple<String, String>>
+    ? "one pair, built where no literal map is in reach"
+    [("s", "z")]
+
+fn seed() -> Map<String, String>
+    ? "hand back a map nothing else holds"
+    Map.fromList(seedPairs())
+
+fn build(n: Int, acc: Map<String, String>) -> Map<String, String>
+    ? "insert once per step into a linearly threaded accumulator"
+    match n > 0
+        true -> build(n - 1, Map.set(acc, "k{{n}}", "v{{n}}"))
+        false -> acc
+
+fn main() -> Int
+    ? "size of what the fold built"
+    Map.len(build({steps}, seed()))
+"#
+    )
+}
+
+#[test]
+fn a_helper_seeded_fold_declines_every_write_the_runtime_can_see_through() {
+    // The shape the axis is for. `own_param::uniquely_owned` reads the ARGUMENT
+    // written at the call site, and a user function's result is not on its list —
+    // it cannot see what the callee did — so the accumulator parameter never
+    // graduates and EVERY insert in the fold is declined. That is the whole of
+    // the copying half of #890 in the VM, and it is the one shape where the
+    // declined-but-unique tally grows with the work rather than with the source:
+    // the map literal above leaves one per entry written, this leaves one per
+    // step taken.
+    //
+    // Nothing here is out of reach of the runtime. The seed is a fresh map, it is
+    // threaded linearly, and the count says so at every step.
+    let mut small = compiled_vm(&helper_seeded_fold(40));
+    small.run().expect("helper-seeded fold should run");
+    let mut large = compiled_vm(&helper_seeded_fold(80));
+    large.run().expect("helper-seeded fold should run");
+
+    let small = small.slot_uniqueness_stats();
+    let large = large.slot_uniqueness_stats();
+
+    assert_eq!(
+        (
+            small.unique_slot_without_owned_grant,
+            large.unique_slot_without_owned_grant
+        ),
+        (40, 80),
+        "a helper-seeded fold should leave one declined-but-unique write per \
+         step: 40 steps left {}, 80 steps left {}",
+        small.unique_slot_without_owned_grant,
+        large.unique_slot_without_owned_grant,
+    );
+    assert_eq!(
+        (small.owned_grants, large.owned_grants),
+        (0, 0),
+        "the static mask granted something here, so the shape is no longer the \
+         one whose every write it declines",
+    );
+}
+
 #[test]
 fn a_seed_the_static_mask_understands_leaves_the_other_direction_empty() {
     // The control for the test above. Same fold, same inserts, seeded from `{}`:
