@@ -2524,3 +2524,88 @@ fn coord(x: Int, y: Int) -> Result<Coord, String>
          unique multi-field carrier's field representation and return 7"
     );
 }
+
+/// A program shaped so the chars-fusion pass fires: a linear loop over
+/// `String.chars` that the pass rewrites into a `__cursor` variant full
+/// of `__str_*` intrinsics, with the call site moved onto the variant.
+const FUSIBLE_DIGITS: &str = r#"
+module Digits
+    intent = "counts the decimal digits in a string, shaped so chars fusion fires"
+    exposes [count]
+    effects []
+
+fn digitCount(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> match head
+            "0" -> digitCount(tail, acc + 1)
+            "1" -> digitCount(tail, acc + 1)
+            _ -> digitCount(tail, acc)
+
+fn count(text: String) -> Int
+    digitCount(String.chars(text), 0)
+
+fn main() -> Int
+    count("a1b0c1")
+"#;
+
+/// The fusion passes synthesize intrinsic calls (`__str_*`, `__buf_*`,
+/// `__lst_*`) that only the VM and the Rust codegen can lower; the
+/// wasm-gc family excludes those passes via pipeline flags. If that
+/// exclusion ever regresses, the intrinsics reach this backend's
+/// emitter — and the emitter must REFUSE with a named compile error,
+/// not fall back to a trap stub that ships a module whose rewritten
+/// call sites trap at runtime (the silent-miscompile hole recorded in
+/// the change that added the list-build pass). Before the refusal
+/// existed, this fixture did not even reach that fall-through: the
+/// emitter's type reader panicked on a synthesized `__str_code1` node
+/// carrying no type stamp — an internal panic either way, never a
+/// compile error.
+#[test]
+fn a_fabricated_intrinsic_reaching_the_emitter_is_refused() {
+    // Drive the hazard for real: the exclusion flag deliberately wrong
+    // (chars fusion ON on the wasm-gc path), everything else as
+    // `compile_bytes` sets it.
+    let mut items = parse_source(FUSIBLE_DIGITS).expect("fixture parses");
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_chars_fusion: true,
+            run_list_build: false,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        panic!("typecheck failed: {:?}", tc.errors);
+    }
+    let err = match compile_to_wasm_gc(&items, result.analysis.as_ref()) {
+        Err(e) => e,
+        Ok(bytes) => panic!(
+            "a fused cursor variant slipped through the wasm-gc emitter: the module \
+             compiled to {} bytes — the fabricated intrinsics fell back to a trap \
+             stub instead of being refused",
+            bytes.len()
+        ),
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("fabricated intrinsic `__str_"),
+        "the refusal names the intrinsic it cannot lower: {msg}"
+    );
+    assert!(
+        msg.contains("does not lower fabricated intrinsics"),
+        "the refusal states the wasm-gc family's contract: {msg}"
+    );
+
+    // The properly-excluded path is untouched: the same program, with
+    // the fusion flags off as every wasm-gc call site sets them,
+    // compiles and answers as it always did.
+    assert_eq!(run_int(FUSIBLE_DIGITS), 3);
+}

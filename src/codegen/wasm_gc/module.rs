@@ -467,6 +467,12 @@ pub(super) fn emit_module_with(
         )
     };
 
+    // Fabricated-intrinsic refusal — before any body is emitted, so a
+    // fusion pass that leaked through the pipeline's exclusion flags is
+    // a compile error naming the intrinsic, not a module whose
+    // rewritten call sites trap at runtime.
+    refuse_fabricated_intrinsics(&mir_program)?;
+
     // Lazy caller_fn name registry — populated during user-fn body
     // emit by `emit_caller_fn_idx` call sites. Threaded into every
     // `emit_fn_body` call via `EmitCtx::caller_fn_collector`. The
@@ -6247,6 +6253,171 @@ fn discover_builtins_in_expr(
 /// full-tree walk shape `own_param.rs::visit_children` uses; built
 /// here standalone so module assembly doesn't depend on optimizer
 /// internals.
+/// Refuse any fabricated intrinsic the wasm-gc family cannot lower.
+///
+/// The fusion passes (`interp_lower` / `buffer_build` / `chars_fusion` /
+/// `list_build`) synthesize intrinsic calls (`__buf_*`, `__to_str`,
+/// `__str_*`, `__lst_*`) that only the VM and the Rust codegen can
+/// lower; every wasm-gc / wasip2 call site keeps those passes off via
+/// pipeline flags. If that exclusion ever regresses, the synthesized
+/// nodes reach this backend — and the failure used to be silent: the
+/// body emitter's `Intrinsic` arm fell through to the per-fn trap-stub
+/// fallback (or the type reader panicked first on a synthesized node
+/// with no type stamp) while the pass had already moved real call
+/// sites onto the rewritten variant, so the artifact shipped and
+/// trapped at runtime. This scan runs before any body is emitted so
+/// the regression surfaces as a compile error that names the
+/// intrinsic.
+///
+/// The classifying match is exhaustive on purpose (the
+/// [`crate::codegen::expr_walk`] lock): a new [`BuiltinIntrinsic`]
+/// variant fails this build until someone states whether the wasm-gc
+/// family lowers it.
+fn refuse_fabricated_intrinsics(
+    mir_program: &crate::ir::mir::MirProgram,
+) -> Result<(), WasmGcError> {
+    use crate::ir::hir::BuiltinIntrinsic;
+    use crate::ir::mir::{MirCallee, MirExpr, MirStrPart};
+
+    /// `true` ⟺ the body emitter's `MirCallee::Intrinsic` arm
+    /// (`body/from_mir/mod.rs`) has a lowering for this intrinsic.
+    fn lowered_here(intr: BuiltinIntrinsic) -> bool {
+        match intr {
+            // Resolver / const-fold discharges backed by a registered
+            // wasm helper or the bignum divmod / Bits routes.
+            BuiltinIntrinsic::IntDivEuclid
+            | BuiltinIntrinsic::IntModEuclid
+            | BuiltinIntrinsic::BitsShiftLeft
+            | BuiltinIntrinsic::BitsShiftRight
+            | BuiltinIntrinsic::BitsLow => true,
+            // Fusion-pass fabrications — VM / Rust codegen only.
+            BuiltinIntrinsic::BufNew
+            | BuiltinIntrinsic::BufAppend
+            | BuiltinIntrinsic::BufAppendSepUnlessFirst
+            | BuiltinIntrinsic::BufFinalize
+            | BuiltinIntrinsic::ToStr
+            | BuiltinIntrinsic::StrCursorEnd
+            | BuiltinIntrinsic::StrCursorHead
+            | BuiltinIntrinsic::StrCursorNext
+            | BuiltinIntrinsic::StrCode1
+            | BuiltinIntrinsic::StrCode1Lower
+            | BuiltinIntrinsic::StrCode1Upper
+            | BuiltinIntrinsic::LstNew
+            | BuiltinIntrinsic::LstPush
+            | BuiltinIntrinsic::LstFinalize => false,
+        }
+    }
+
+    fn walk(e: &MirExpr, fn_name: &str) -> Result<(), WasmGcError> {
+        match e {
+            MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => Ok(()),
+            MirExpr::Let(l) => {
+                walk(&l.node.value.node, fn_name)?;
+                walk(&l.node.body.node, fn_name)
+            }
+            MirExpr::Call(c) => {
+                if let MirCallee::Intrinsic(intr) = c.node.callee
+                    && !lowered_here(intr)
+                {
+                    return Err(WasmGcError::Validation(format!(
+                        "fn `{fn_name}` calls the fabricated intrinsic `{}`; the wasm-gc \
+                         family does not lower fabricated intrinsics — the pass that \
+                         synthesized this call must stay excluded on this path",
+                        intr.name()
+                    )));
+                }
+                for a in &c.node.args {
+                    walk(&a.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::TailCall(tc) => {
+                for a in &tc.node.args {
+                    walk(&a.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::BinOp(b) => {
+                walk(&b.node.lhs.node, fn_name)?;
+                walk(&b.node.rhs.node, fn_name)
+            }
+            MirExpr::Neg(inner)
+            | MirExpr::Try(inner)
+            | MirExpr::Return(inner)
+            | MirExpr::Box(inner)
+            | MirExpr::Unbox(inner) => walk(&inner.node, fn_name),
+            MirExpr::Match(m) => {
+                walk(&m.node.subject.node, fn_name)?;
+                for arm in &m.node.arms {
+                    walk(&arm.body.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::Construct(c) => {
+                for a in &c.node.args {
+                    walk(&a.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::RecordCreate(r) => {
+                for field in &r.node.fields {
+                    walk(&field.value.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::RecordUpdate(u) => {
+                walk(&u.node.base.node, fn_name)?;
+                for field in &u.node.updates {
+                    walk(&field.value.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::Project(p) => walk(&p.node.base.node, fn_name),
+            MirExpr::IfThenElse(ite) => {
+                walk(&ite.node.cond.node, fn_name)?;
+                walk(&ite.node.then_branch.node, fn_name)?;
+                walk(&ite.node.else_branch.node, fn_name)
+            }
+            MirExpr::List(items) | MirExpr::Tuple(items) => {
+                for i in items {
+                    walk(&i.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::MapLiteral(pairs) => {
+                for (k, v) in pairs {
+                    walk(&k.node, fn_name)?;
+                    walk(&v.node, fn_name)?;
+                }
+                Ok(())
+            }
+            MirExpr::InterpolatedStr(parts) => {
+                for p in parts {
+                    if let MirStrPart::Expr(e) = p {
+                        walk(&e.node, fn_name)?;
+                    }
+                }
+                Ok(())
+            }
+            MirExpr::IndependentProduct(ip) => {
+                for i in &ip.node.items {
+                    walk(&i.node, fn_name)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    // Deterministic fn order (sort by FnId, same as every other
+    // program-wide scan here) so the named offender is stable.
+    let mut fns: Vec<(&crate::ir::FnId, &crate::ir::mir::MirFn)> = mir_program.iter().collect();
+    fns.sort_by_key(|(id, _)| **id);
+    for (_, mir_fn) in fns {
+        walk(&mir_fn.body.node, &mir_fn.name)?;
+    }
+    Ok(())
+}
+
 fn collect_address_taken(mir_program: &crate::ir::mir::MirProgram) -> Vec<String> {
     use crate::ir::mir::{MirExpr, MirStrPart};
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();

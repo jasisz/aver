@@ -1058,11 +1058,25 @@ pub(crate) fn emit_mir_expr(
                         emit_bits_counted_value(func, op, &call.args, slots, ctx, &helper)?;
                         return Ok(Some(true));
                     }
-                    // Mirror of `emit_expr`'s `Intrinsic` arm: route the
-                    // bare intrinsic name through the registered-builtin
-                    // fast path. (Buffer intrinsics aren't produced on the
-                    // wasm-gc path — it skips `buffer_build` — so this is
-                    // effectively unreachable; kept for parity.)
+                    // Route the bare intrinsic name through the
+                    // registered-builtin fast path — this serves the
+                    // discharged Euclidean pair when bignum is off
+                    // (`__int_div_euclid` / `__int_mod_euclid` are
+                    // registered wasm helpers).
+                    //
+                    // Anything unregistered is a fabricated intrinsic
+                    // from a fusion pass (`__buf_*`, `__str_*`,
+                    // `__lst_*`, `__to_str`) that only the VM and the
+                    // Rust codegen can lower; the wasm-gc pipeline
+                    // excludes those passes, so one showing up here
+                    // means the exclusion regressed. REFUSE instead of
+                    // falling through to `Ok(None)`: that fallback
+                    // would ship a trap stub for a fn whose call sites
+                    // the pass rewrote — a silent miscompile, not a
+                    // compile error. (`refuse_fabricated_intrinsics` in
+                    // `module.rs` already surfaces the named error
+                    // before any body emit; this arm is the same
+                    // refusal at the seam the hole was recorded on.)
                     match ctx.fn_map.builtins.get(intr.name()) {
                         Some(&wasm_idx) => {
                             if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
@@ -1072,7 +1086,13 @@ pub(crate) fn emit_mir_expr(
                             }
                             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
                         }
-                        None => Ok(None),
+                        None => Err(WasmGcError::Validation(format!(
+                            "the fabricated intrinsic `{}` reached the wasm-gc emitter; \
+                             the wasm-gc family does not lower fabricated intrinsics — \
+                             the pass that synthesized this call must stay excluded on \
+                             this path",
+                            intr.name()
+                        ))),
                     }
                 }
                 // First-class local-slot call: dispatch the `Fn`-param
