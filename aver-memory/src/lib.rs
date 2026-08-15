@@ -1486,9 +1486,27 @@ pub enum ArenaEntry<T: ArenaTypes> {
         ///   stores into, the constants it starts with, and the one opcode that
         ///   writes a value into an existing entry rather than pushing a new one.
         ///
+        /// Two places in the consumer hold a `NanValue` and are on neither list
+        /// — not marked here, not searched by the counterpart — because nothing
+        /// has ever put a map in one. They are named rather than covered, so
+        /// that the list above is a full list of what IS covered:
+        ///
+        /// - the interpreter's symbol table: a `Constant` symbol, and a
+        ///   namespace's members. Every caller that interns a constant passes an
+        ///   immediate, and a namespace's members go through [`Arena::push`]'s
+        ///   namespace arm when the arena stores them, so both arms are empty
+        ///   rather than unchecked;
+        /// - the eight-byte literals a match-dispatch opcode carries inside the
+        ///   bytecode. The emitter restricts them to Int, Bool, Unit, Float bits
+        ///   and strings.
+        ///
+        /// The day either one carries a map it owes a marking site here and an
+        /// arm in the counterpart.
+        ///
         /// The from-scratch counterpart is [`Arena::any_entry_holds_slot`],
         /// which searches instead of trusting the record; the interpreter checks
-        /// one against the other at every grant under debug assertions.
+        /// one against the other at every grant under debug assertions, for as
+        /// long as it can afford to.
         ///
         /// `true` is always safe: it only costs the in-place path. `false` when
         /// something does hold the slot is not, and does not fail loudly on its

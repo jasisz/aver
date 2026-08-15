@@ -15,27 +15,40 @@
 //! - the REFUSALS: every root set the count cannot see has to turn the grant
 //!   down some other way, and each shape below is one root set. A refusal that
 //!   stopped working would not fail here as a slow program — it would fail as a
-//!   map somebody else still holds coming back empty.
+//!   map somebody else still holds coming back empty. The independent-product
+//!   shapes are the sixth: the interpreter used to hold the sibling branches'
+//!   handles in Rust locals, where neither the count nor its mirror could find
+//!   them, and that is the one root set that produced a wrong grant rather than
+//!   an undercount.
 //!
 //! Each refusal was watched to fail against the instrument it belongs to being
-//! removed. Counts are over the 72 tests of this file plus `vm_slot_uniqueness`,
+//! removed. Counts are over the 76 tests of this file, `vm_slot_uniqueness`,
 //! `own_param_soundness`, `own_param_graduation`, `alias_soundness` and
-//! `frame_boundary_inplace_write`:
+//! `frame_boundary_inplace_write` taken together:
 //!
-//! | removed                                               | red |
+//! | removed                                                  | red |
 //! |---|---|
-//! | one holder skipped in `VM::slot_is_unheld`             | 16 — the rename here, 5 in `own_param_soundness`, 3 in `alias_soundness`, 5 tallies in `vm_slot_uniqueness` |
-//! | the `held_elsewhere` test in `runtime_owns_map_target` | 24 — all four off-stack shapes here, and 18 across the other four files |
-//! | `note_held_elsewhere` at `STORE_GLOBAL`                | 3 — the global shape here, and nothing anywhere else |
-//! | the constant-table loop in `VM::new`                   | 24 — the literal seed and the rename here, and 19 elsewhere |
+//! | one holder skipped in `VM::slot_is_unheld`                | 19 — 6 here, 5 in `own_param_soundness`, 3 in `alias_soundness`, 5 tallies in `vm_slot_uniqueness` |
+//! | the `held_elsewhere` test in `runtime_owns_map_target`    | 26 — all four off-stack shapes here, and 19 across the other four files |
+//! | `note_held_elsewhere` at `STORE_GLOBAL`                   | 3 — the global shape here, and nothing anywhere else |
+//! | the constant-table loop in `VM::new`                      | 25 — the literal seed and the rename here, and 19 elsewhere |
+//! | the static mask forced on for `Map.set`                   | 33 — 11 here, and 22 across the other three files |
+//! | `CALL_PAR`'s bundles popped into Rust locals again        | 2 — the sibling shapes here, and nothing anywhere else |
 //!
-//! In every case the mirror assertion fires first and names the slot, which is
-//! what it is for: the wrong answer is a map coming back empty three statements
-//! later, and an assertion at the write is the only place it is still legible.
-//! The same assertion covers the STATIC mask's off-stack half, and forcing that
-//! mask on for `Map.set` reddens the record-field shape below at the second half
-//! rather than the first — the extracted local is at its last use, so the walk
-//! finds nothing and only the flag can say no.
+//! In every case except the last the mirror assertion fires first and names the
+//! slot, which is what it is for: the wrong answer is a map coming back empty
+//! three statements later, and an assertion at the write is the only place it is
+//! still legible. The last row is the exception that made it a row: the popped
+//! bundles are invisible to the mirror as well as to the decision, so nothing
+//! fires and the only signal is the program's answer. Putting them back on the
+//! operand stack is what gives both instruments something to see.
+//!
+//! The static-mask row is a different kind of injection from the other five: it
+//! forces a grant the compiler never makes, so it reddens the answers as well as
+//! the assertions. It is here because the same mirror covers the STATIC mask's
+//! off-stack half, and the record-field shape below is where that half is the
+//! only thing that can say no — the extracted local is at its last use, so the
+//! walk finds nothing.
 
 use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
 use aver::nan_value::Arena;
@@ -99,6 +112,23 @@ fn entries_copied(src: &str) -> u64 {
 /// What the program answered.
 fn answer(src: &str) -> i64 {
     run(src).answer
+}
+
+/// The same run with effect recording switched on.
+///
+/// One shipped way of reaching `CALL_PAR`'s in-parent sequential path, and the
+/// cheapest: `aver run --record` turns this on for the whole run
+/// (`commands.rs`), the branch scheduler sees `is_effect_tracking` and keeps
+/// every branch on the parent VM instead of giving each one a child.
+fn run_recording(src: &str) -> Run {
+    let mut machine = compiled_vm(src);
+    machine.start_recording();
+    let result = machine.run().expect("program should run");
+    Run {
+        answer: result.as_int(&machine.arena),
+        copied: machine.arena.map_entries_copied(),
+        decisions: machine.runtime_ownership_stats(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +574,261 @@ fn each_refusal_is_made_by_the_instrument_that_can_see_that_holder() {
              the shape stopped exercising the flag: {stats:?}",
         );
     }
+}
+
+/// The same map handed to both branches of an independent product.
+///
+/// The branch bundles are popped off the operand stack before the first branch
+/// runs, so while branch 0 writes through its copy of the handle, branch 1's
+/// copy of the SAME handle is in flight — a reference no walk of a truncated
+/// stack could find. `m`'s own local cell is gone too: `peek(m)` is the
+/// textually-last read, so `MOVE_LOCAL` writes `UNIT` back over it before
+/// `CALL_PAR` ever runs. Every root set the decision knows about therefore says
+/// "nobody", and the answer turns on whether the in-flight bundles are one.
+const PARALLEL_BRANCH_SIBLING: &str = r#"module MapRuntimeOwnershipParallelSibling
+    intent = "a map handed to two branches of an independent product"
+    depends []
+    effects []
+
+fn seedPairs() -> List<Tuple<String, String>>
+    ? "two pairs, built where no literal map is in reach"
+    [("a", "1"), ("b", "2")]
+
+fn seed() -> Map<String, String>
+    ? "hand back a map nothing else holds"
+    Map.fromList(seedPairs())
+
+fn setOne(into: Map<String, String>) -> Map<String, String>
+    ? "write through what this branch was handed"
+    Map.set(into, "x", "1")
+
+fn peek(m: Map<String, String>) -> Int
+    ? "read the map the sibling branch is writing through"
+    Map.len(m)
+
+fn main() -> Int
+    ? "what the second branch sees after the first one wrote"
+    m = seed()
+    both = (setOne(m), peek(m))!
+    match both
+        (p, q) -> Map.len(p) + q
+"#;
+
+/// The same shape with the reader FIRST, so the branch that writes runs last.
+///
+/// The other side of the same coin: by the time `setOne` runs, `peek` has
+/// finished with its handle and nothing anywhere is left to read the map, so the
+/// write is the LAST use of it and taking it in place is exactly right. A fix
+/// that refused every write inside a product would answer this one correctly by
+/// giving up, which is why it is here.
+const PARALLEL_BRANCH_SIBLING_REVERSED: &str = r#"module MapRuntimeOwnershipParallelSiblingReversed
+    intent = "a map read by the first branch of an independent product and written by the second"
+    depends []
+    effects []
+
+fn seedPairs() -> List<Tuple<String, String>>
+    ? "two pairs, built where no literal map is in reach"
+    [("a", "1"), ("b", "2")]
+
+fn seed() -> Map<String, String>
+    ? "hand back a map nothing else holds"
+    Map.fromList(seedPairs())
+
+fn setOne(into: Map<String, String>) -> Map<String, String>
+    ? "write through what this branch was handed"
+    Map.set(into, "x", "1")
+
+fn peek(m: Map<String, String>) -> Int
+    ? "read the map the sibling branch is writing through"
+    Map.len(m)
+
+fn main() -> Int
+    ? "what the reader saw, plus the size of what the writer produced"
+    m = seed()
+    both = (peek(m), setOne(m))!
+    match both
+        (q, p) -> Map.len(p) + q
+"#;
+
+/// The map one level down, inside a record the branches are handed.
+///
+/// The bundle cell holds the RECORD, not the map, so covering the popped values
+/// by marking them one for one would miss this unless the arena's own holder
+/// rule covers the rest — which it does, and this is what says so.
+const PARALLEL_BRANCH_NESTED: &str = r#"module MapRuntimeOwnershipParallelNested
+    intent = "a map inside a record handed to two branches of an independent product"
+    depends []
+    effects []
+
+record Box
+    held: Map<String, String>
+
+fn seedPairs() -> List<Tuple<String, String>>
+    ? "two pairs, built where no literal map is in reach"
+    [("a", "1"), ("b", "2")]
+
+fn setOne(b: Box) -> Int
+    ? "write through the field this branch was handed"
+    Map.len(Map.set(b.held, "x", "1"))
+
+fn peek(b: Box) -> Int
+    ? "read the field the sibling branch is writing through"
+    Map.len(b.held)
+
+fn main() -> Int
+    ? "what the second branch sees after the first one wrote"
+    box = Box(held = Map.fromList(seedPairs()))
+    both = (setOne(box), peek(box))!
+    match both
+        (p, q) -> p + q
+"#;
+
+#[test]
+fn a_branch_of_an_independent_product_cannot_take_a_map_its_sibling_holds() {
+    // The fifth root set: `CALL_PAR` pops every branch's callable and arguments
+    // into Rust locals and truncates the stack, so between the pop and the join
+    // the sibling bundles are references nothing the decision looks at can see.
+    // Both instruments were blind together here — the walk found no cell and
+    // `held_elsewhere` had never been told — so the grant went through and the
+    // second branch read a table that had been emptied out from under it.
+    //
+    // Each program answers the value Aver's immutable model mandates: the
+    // writer's result is three entries and the reader's map is still the two it
+    // was handed. A grant that came back shows up as a different number.
+    // The two shapes where a sibling is still holding the map at the write:
+    // its bundle has not been dispatched yet, so refusing is the only right
+    // answer and the write has to duplicate what it was handed.
+    for (name, src) in [
+        ("writer first", PARALLEL_BRANCH_SIBLING),
+        ("nested in a record", PARALLEL_BRANCH_NESTED),
+    ] {
+        let recorded = run_recording(src);
+        assert_eq!(
+            recorded.answer,
+            3 + 2,
+            "{name}: a branch took a map in place that a sibling branch still \
+             held: {:?}",
+            recorded.decisions,
+        );
+        assert_eq!(
+            recorded.decisions.grants, 0,
+            "{name}: the write over a slot an in-flight branch bundle holds was \
+             granted: {:?}",
+            recorded.decisions,
+        );
+        assert!(
+            recorded.copied > 0,
+            "{name}: the write duplicated nothing, so it took the owned path \
+             over a slot a sibling branch holds",
+        );
+    }
+
+    // The writer running LAST is the same program with nothing left to hold the
+    // map, so the answer is the same and the write is granted. The fence is a
+    // record of which handles are still in flight, not a blanket refusal inside
+    // a product — a fix that turned every branch write into a copy would pass
+    // the loop above and fail here.
+    let last = run_recording(PARALLEL_BRANCH_SIBLING_REVERSED);
+    assert_eq!(
+        last.answer,
+        3 + 2,
+        "reader first: the product stopped answering: {:?}",
+        last.decisions,
+    );
+    assert_eq!(
+        last.decisions.grants, 1,
+        "reader first: the last branch's write was refused although its sibling \
+         had already given the handle back: {:?}",
+        last.decisions,
+    );
+}
+
+#[test]
+fn the_products_own_branches_are_what_the_walk_now_sees() {
+    // Which instrument said no, at the shape it was added for. The bundles are
+    // put back on the operand stack for the length of the product, so it is the
+    // WALK that refuses — `held_elsewhere` is false throughout, because nothing
+    // outside the stack ever held this map. A build that popped the bundles into
+    // Rust locals again would score zero here and grant instead.
+    let stats = run_recording(PARALLEL_BRANCH_SIBLING).decisions;
+    assert_eq!(
+        (stats.grants, stats.refused_stack_holder),
+        (0, 1),
+        "the branch write was not refused by the stack walk: {stats:?}",
+    );
+}
+
+#[test]
+fn a_product_whose_branches_share_nothing_still_takes_its_writes_in_place() {
+    // The other direction, and what stops the fix from being "refuse inside a
+    // product". Each branch here builds and writes its own map, so no bundle
+    // holds anybody else's slot and both writes are granted exactly as they
+    // would be outside a product.
+    let src = r#"module MapRuntimeOwnershipParallelDisjoint
+    intent = "two branches of an independent product, each with a map of its own"
+    depends []
+    effects []
+
+fn seedPairs(a: String) -> List<Tuple<String, String>>
+    ? "one pair, built where no literal map is in reach"
+    [(a, "1")]
+
+fn grow(a: String) -> Int
+    ? "build a map nothing else holds, then write through it"
+    Map.len(Map.set(Map.fromList(seedPairs(a)), "x", "1"))
+
+fn main() -> Int
+    ? "both halves, each of which owns what it wrote"
+    both = (grow("a"), grow("b"))!
+    match both
+        (p, q) -> p + q
+"#;
+
+    let recorded = run_recording(src);
+    assert_eq!(
+        recorded.answer,
+        2 + 2,
+        "the disjoint product stopped answering: {:?}",
+        recorded.decisions,
+    );
+    assert_eq!(
+        recorded.decisions.grants, 2,
+        "a branch that owns its own map outright was refused: {:?}",
+        recorded.decisions,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// What the mirror actually covered
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_run_in_the_corpus_outspends_the_mirrors_budget() {
+    // The mirror's arena half is budgeted, and a spent budget is the difference
+    // between "every grant was mirrored against all four root sets" and "every
+    // grant until the budget ran out was". The skip is explicit and counted
+    // rather than answered as "nobody holds it", so this can be asked: run the
+    // heaviest shapes this file has — the two folds and the deep-stack probe,
+    // all on one thread, which is the unit the budget is per — and read the
+    // tally back.
+    //
+    // It is a claim about THIS corpus, not about every program: a long run is
+    // meant to stop paying for the audit. What it pins is that nothing here is
+    // green because the mirror stopped looking.
+    let before = vm::grants_the_mirror_could_not_afford();
+    let _ = run(&helper_returning_set_fold(200));
+    let _ = run(&helper_seeded_fold(200));
+    let _ = run(&map_fold(200, "", "{\"a\" => \"1\"}"));
+    let _ = run(&deep_stack_tiny_map(4));
+    let _ = run_recording(PARALLEL_BRANCH_SIBLING);
+    let after = vm::grants_the_mirror_could_not_afford();
+
+    assert_eq!(
+        (before, after),
+        (0, 0),
+        "the mirror skipped its arena half for some grant in this file, so the \
+         corpus is only checked against three root sets from that write on",
+    );
 }
 
 // ---------------------------------------------------------------------------

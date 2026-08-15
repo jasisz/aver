@@ -1444,6 +1444,16 @@ pub(super) fn cmd_run_vm(
             "  refused, something off the stack holds it:{} not examined, walk dearer than the copy:{}",
             owned.refused_off_stack_holder, owned.unexamined_walk_too_costly
         );
+        // The mirror that re-derives every grant from scratch is budgeted, and a
+        // spent budget is a smaller claim, not a clean one — so it says so. Only
+        // a build with debug assertions runs the mirror at all, which is why a
+        // silent line here is the normal case rather than a missing one.
+        let unaudited = vm::grants_the_mirror_could_not_afford();
+        if unaudited > 0 {
+            eprintln!(
+                "  taken in place without the full cross-check, its budget spent:{unaudited}"
+            );
+        }
         eprintln!("────────────────────────────────────────────────\n");
     }
 

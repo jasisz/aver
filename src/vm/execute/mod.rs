@@ -7,7 +7,9 @@ mod slots;
 #[cfg(test)]
 mod tests;
 
-pub use slots::{VmRuntimeOwnershipStats, VmSlotUniquenessStats};
+pub use slots::{
+    VmRuntimeOwnershipStats, VmSlotUniquenessStats, grants_the_mirror_could_not_afford,
+};
 
 use super::runtime::VmRuntime;
 use super::types::{CallFrame, CodeStore, VmError};

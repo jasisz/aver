@@ -1195,11 +1195,24 @@ impl VM {
                         descs.push(argc);
                     }
 
-                    // Pop callable values plus args from stack.
+                    // Copy the callable values plus args out of the stack, and
+                    // LEAVE THE CELLS WHERE THEY ARE until the product is done.
+                    //
+                    // The copy is what the branches are dispatched from; the
+                    // cells are what says the copies exist. A branch that runs
+                    // on this VM — the sequential arm below — writes against
+                    // this arena while its siblings' bundles are still in
+                    // flight, and `slot_is_unheld` answers by walking exactly
+                    // this vector. Truncating here would take those references
+                    // out of the only place the decision can see them, and a
+                    // sibling's map would read as held by nobody one statement
+                    // before that sibling reads it. Keeping them costs
+                    // `total_items` cells for the length of the product and
+                    // nothing else: every branch frame is pushed above this
+                    // point and truncates back to its own base on the way out.
                     let total_items: usize = descs.iter().map(|argc| argc + 1).sum();
                     let items_start = self.stack.len() - total_items;
                     let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
-                    self.stack.truncate(items_start);
 
                     // Save caller IP — drop code borrow before call_function.
                     // The branches themselves are entered with `caller_fn_id` /
@@ -1222,16 +1235,21 @@ impl VM {
                     // Enter replay group
                     self.runtime.replay_enter_group();
 
-                    // Build per-element callable + arg bundles in source order.
+                    // Build per-element callable + arg bundles in source order,
+                    // remembering where each one sits in the cells left standing
+                    // above.
                     let mut element_calls: Vec<(NanValue, Vec<NanValue>)> =
                         Vec::with_capacity(count);
+                    let mut bundle_spans: Vec<(usize, usize)> = Vec::with_capacity(count);
                     let mut item_offset = 0;
                     for argc in &descs {
+                        let bundle_start = items_start + item_offset;
                         let callable = flat_items[item_offset];
                         item_offset += 1;
                         let args = flat_items[item_offset..item_offset + *argc].to_vec();
                         item_offset += *argc;
                         element_calls.push((callable, args));
+                        bundle_spans.push((bundle_start, items_start + item_offset));
                     }
 
                     // Check if recording/replaying — if so, run sequentially
@@ -1260,6 +1278,16 @@ impl VM {
                         }
                         for i in order {
                             let (callable, args) = &element_calls[i];
+                            // This branch's OWN bundle stops being a holder the
+                            // moment the branch is entered: the callee takes the
+                            // arguments as locals of its own frame, which is
+                            // where every other call in the VM leaves them, and
+                            // a cell here as well would make the branch's own
+                            // argument look like somebody else's reference. Its
+                            // SIBLINGS' bundles stay standing — they are the
+                            // references that have not been handed anywhere yet.
+                            let (bundle_start, bundle_end) = bundle_spans[i];
+                            self.stack[bundle_start..bundle_end].fill(NanValue::UNIT);
                             self.runtime.replay_set_branch(i as u32);
                             let result = self.invoke_callable_value(
                                 *callable,
@@ -1268,6 +1296,16 @@ impl VM {
                                 caller_ip,
                             )?;
                             results[i] = result;
+                            // A finished branch's answer is in flight for as
+                            // long as the ones after it run. Nothing in the
+                            // corpus can name it — a branch can only reach a
+                            // sibling's result through a root that is already
+                            // covered — so this buys no refusal today; it is
+                            // what makes "every value this product is holding
+                            // is an operand-stack cell" a property of the loop
+                            // rather than of a case analysis, which is what the
+                            // decision and its mirror both read.
+                            self.stack.push(result);
                         }
                         results
                     } else {
@@ -1438,6 +1476,13 @@ impl VM {
                             results
                         }
                     };
+
+                    // The product is joined: the bundles and the anchored
+                    // results are references nobody holds any more, and `results`
+                    // carries everything that survives. This is the truncation
+                    // the pop above used to do, moved to where the branches have
+                    // stopped needing to be visible.
+                    self.stack.truncate(items_start);
 
                     // Exit replay group
                     self.runtime.replay_exit_group();

@@ -62,7 +62,10 @@
 //! instruments:
 //!
 //! - the consumer's own handles: every one of them is an operand-stack cell,
-//!   and the walk above enumerates them exactly;
+//!   and the walk above enumerates them exactly. That is a property the
+//!   interpreter has to KEEP, not one it is given — see the independent
+//!   product below, which held handles in Rust locals until it was made to
+//!   leave them where they could be seen;
 //! - everything else: another arena entry, a global, a chunk constant. Those
 //!   cannot be enumerated per write, so they are recorded when the reference is
 //!   MADE. `ArenaEntry::Map`'s `held_elsewhere` flag is that record, marked by
@@ -92,19 +95,52 @@
 //! length, and above that the write copies without looking. The measurements
 //! behind the number are on the constant.
 //!
+//! ## The one root set that is neither walked nor marked
+//!
+//! An independent product does NOT always give each branch a VM of its own.
+//! `CALL_PAR` takes that arm only when it can: recording or replaying effects,
+//! and a verify-time oracle-stub map, both keep state on the parent's runtime
+//! that cannot be shared across threads, so the branches run one after another
+//! ON THIS VM, against THIS arena. `aver run --record` reaches it, and so does
+//! `aver verify` on an effectful law with `given` stubs.
+//!
+//! That arm used to pop every branch's callable and arguments off the operand
+//! stack into Rust locals before running the first one, which put the siblings'
+//! handles somewhere neither instrument looks: not a cell, so the walk found
+//! nothing, and never marked, so the flag said nothing. A branch could take a
+//! map in place that the branch after it was about to read, and the map came
+//! back empty — a wrong grant, not an undercount, and the mirror agreed with the
+//! decision because it searches the same four places.
+//!
+//! The cells therefore stay where they are for the length of the product, and
+//! the branch being entered blanks its OWN bundle first, because a callee takes
+//! its arguments as locals of its own frame — that is where every other call in
+//! the VM leaves them, and a cell here as well would make a branch's own
+//! argument read as somebody else's reference. What is left standing is exactly
+//! the handles that have not been handed anywhere yet, plus the results of the
+//! branches that have already finished. Both instruments see them, because both
+//! read the operand stack, and neither needed a special case to.
+//!
+//! `a_branch_of_an_independent_product_cannot_take_a_map_its_sibling_holds` in
+//! `tests/vm_map_runtime_ownership.rs` is the shape, and the same file's
+//! reader-first program is what says the fence is a record of which handles are
+//! in flight rather than a refusal to decide inside a product: with the write
+//! LAST, nothing holds the map any more and the grant is taken.
+//!
 //! ## What the decision never sees
 //!
-//! The same four blind spots the cross-check has, and every one of them still
-//! UNDERCOUNTS — a write the decision cannot see is a write that copies, which
-//! is what the program did before any of this existed. None of them can produce
-//! a wrong grant. What each one owes a later phase:
+//! Four blind spots, all of them shared with the cross-check, and every one
+//! still UNDERCOUNTS — a write the decision cannot see is a write that copies,
+//! which is what the program did before any of this existed. None of the four
+//! can produce a wrong grant, and the one that could is the section above.
+//! What each one owes a later phase:
 //!
-//! - A parallel independent product gives each branch a VM of its own, so a
-//!   branch's writes are counted there and go with it when its arena is dropped
-//!   at the join. The DECISION is still taken correctly inside the branch —
-//!   its own stack and its own arena are the whole world it can reach, and the
-//!   join deep-imports rather than sharing slots. What is lost is only the
-//!   tally. P3 owes this a merge at the join, not a guard.
+//! - A parallel independent product — the arm above that DOES give each branch
+//!   a VM of its own — counts a branch's writes there, and they go with it when
+//!   its arena is dropped at the join. The decision is still taken correctly
+//!   inside the branch: its own stack and its own arena are the whole world it
+//!   can reach, and the join deep-imports rather than sharing slots. What is
+//!   lost is only the tally. P3 owes this a merge at the join, not a guard.
 //! - A collection builtin reached as a first-class value goes through
 //!   `CALL_VALUE`, which carries no owned mask and never reaches the decision,
 //!   so `Map.set` used as a value always copies. P3 owes this the same call —
@@ -509,7 +545,10 @@ impl VM {
         }
         self.runtime_ownership.grants += 1;
         debug_assert!(
-            self.nothing_else_holds_slot(target.arena_index()),
+            // `None` is the budget being spent, not an answer: the assert is
+            // skipped explicitly and counted, rather than reading an audit
+            // nobody performed as a clean bill.
+            self.nothing_else_holds_slot(target.arena_index()) != Some(false),
             "Map builtin took its target in place on the runtime's word, but \
              slot {} is reachable from somewhere the decision did not look — \
              {} operand stack cell(s) hold it, and the search over globals, \
@@ -520,7 +559,7 @@ impl VM {
         true
     }
 
-    /// Search every root the VM has for a holder of `index`, from scratch.
+    /// Search the roots the VM has for a holder of `index`, from scratch.
     ///
     /// The independent recomputation behind the grant. It shares nothing with
     /// the decision but the stack walk's definition: the other three root sets
@@ -528,17 +567,51 @@ impl VM {
     /// shows up as a failed assertion at the first write that would have been
     /// wrong, rather than as a map that quietly came back empty.
     ///
+    /// `Some(true)` is "searched, nothing holds it", `Some(false)` is "searched,
+    /// something does", and `None` is "the arena half was not searched" — see
+    /// the budget below. The caller asserts on `Some(false)` alone, so an
+    /// unaffordable audit skips the assertion rather than passing it.
+    ///
+    /// ## The roots it searches, and the ones nothing has ever put a map in
+    ///
+    /// Four: the operand stack, the globals table, the chunk constant tables,
+    /// and the arena's entries. That is every root a map can be reached from
+    /// today, and it is the same list [`ArenaEntry::Map::held_elsewhere`] names
+    /// its marking sites for — but the VM does have two more places a heap value
+    /// can sit, and neither is searched here or marked there:
+    ///
+    /// - `VmSymbolTable`'s own cells — `VmSymbolKind::Constant` and a
+    ///   namespace's `members`. Every `intern_constant` caller in the compiler
+    ///   passes an immediate (`NanValue::NONE`), and a namespace's members are
+    ///   re-marked through `ArenaEntry::Namespace` when the arena stores them,
+    ///   so the arm is honestly empty rather than unchecked;
+    /// - the eight-byte literals `MATCH_DISPATCH` and `MATCH_DISPATCH_CONST`
+    ///   carry inside the bytecode. The MIR emitter restricts them to Int, Bool,
+    ///   Unit and Float bits and the HIR path adds strings, so no map reaches
+    ///   one.
+    ///
+    /// Both are latent, both are named rather than covered, and the day either
+    /// one starts carrying a map it owes a marking site and an arm here.
+    ///
+    /// ## What the budget costs the claim
+    ///
     /// The arena half is `O(live heap)` per grant, which no run can afford
     /// forever, so it spends from a per-thread budget and stops looking once
     /// that is gone. A program small enough to be a test is checked end to end;
-    /// a long one is checked until it has been checked enough.
+    /// a long one is checked until it has been checked enough — and after that
+    /// the mirror covers three root sets rather than four, which is a smaller
+    /// statement than the one before the budget ran out. Every skip is counted,
+    /// [`grants_the_mirror_could_not_afford`] reads the tally back, and
+    /// `no_run_in_the_corpus_outspends_the_mirrors_budget` in
+    /// `tests/vm_map_runtime_ownership.rs` is what says the corpus is on the
+    /// covered side of that line.
     #[cfg(debug_assertions)]
-    fn nothing_else_holds_slot(&self, index: u32) -> bool {
+    fn nothing_else_holds_slot(&self, index: u32) -> Option<bool> {
         if self.live_refs_to_slot(index) > 0 {
-            return false;
+            return Some(false);
         }
         if self.globals.iter().any(|v| v.heap_index() == Some(index)) {
-            return false;
+            return Some(false);
         }
         if self
             .code
@@ -547,7 +620,7 @@ impl VM {
             .flat_map(|chunk| chunk.constants.iter())
             .any(|v| v.heap_index() == Some(index))
         {
-            return false;
+            return Some(false);
         }
         let entries = self.arena.len();
         let affordable = AUDIT_BUDGET.with(|budget| {
@@ -555,12 +628,35 @@ impl VM {
             budget.set(left.saturating_sub(entries as u64));
             left >= entries as u64
         });
-        !affordable || !self.arena.any_entry_holds_slot(index)
+        if !affordable {
+            AUDIT_SKIPPED.with(|skipped| skipped.set(skipped.get() + 1));
+            return None;
+        }
+        Some(!self.arena.any_entry_holds_slot(index))
     }
 
     #[cfg(not(debug_assertions))]
-    fn nothing_else_holds_slot(&self, _index: u32) -> bool {
-        true
+    fn nothing_else_holds_slot(&self, _index: u32) -> Option<bool> {
+        None
+    }
+}
+
+/// Grants this thread took whose arena half the mirror could not afford to
+/// search.
+///
+/// Zero means every grant made on this thread was mirrored against all four
+/// root sets. Anything else is the number of grants the assertion was skipped
+/// for — not a number of failures, a number of unasked questions. Always zero
+/// where assertions are compiled out, because the mirror does not run there at
+/// all.
+pub fn grants_the_mirror_could_not_afford() -> u64 {
+    #[cfg(debug_assertions)]
+    {
+        AUDIT_SKIPPED.with(|skipped| skipped.get())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        0
     }
 }
 
@@ -572,4 +668,11 @@ thread_local! {
     /// and the small ones — which is all of the aliasing corpus — are covered
     /// from the first write to the last.
     static AUDIT_BUDGET: std::cell::Cell<u64> = const { std::cell::Cell::new(50_000_000) };
+
+    /// Grants whose arena half went unsearched because the budget was spent.
+    ///
+    /// The number that keeps the mirror's claim the size it really is. Reading
+    /// it back is the difference between "every grant was mirrored" and "every
+    /// grant until the budget ran out was".
+    static AUDIT_SKIPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
