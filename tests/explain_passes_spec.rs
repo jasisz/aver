@@ -89,6 +89,7 @@ fn main() -> Int
             "typecheck",
             "interp_lower",
             "buffer_build",
+            "chars_fusion",
             "resolve",
             "analyze",
             "escape",
@@ -308,6 +309,161 @@ fn main() -> String
         "expected the module-qualified synthesized name: {synthesized:?}"
     );
     assert_eq!(data["rewrites_by_sink"]["Rows.collect"], 1);
+}
+
+/// Chars fusion has to make the same two statements the buffer-build
+/// report makes: what fired, and where the artifact that carries it is.
+/// A loop it DECLINED is reported too — a fusion that silently stops
+/// firing is the regression this diagnostic exists to catch, and there
+/// is no other way to see it from outside.
+#[test]
+fn chars_fusion_pass_reports_what_fired_what_declined_and_for_which_targets() {
+    let json = run_explain_passes(
+        r#"
+module Chars
+    intent = "one loop that fuses, one that cannot, and a character match"
+    effects []
+
+fn value(character: String) -> Int
+    ? "Decode one decimal digit."
+    match String.toLower(character)
+        "0" -> 0
+        "1" -> 1
+        _ -> -1
+
+fn total(chars: List<String>, acc: Int) -> Int
+    ? "Add up the decodable digits."
+    match chars
+        [] -> acc
+        [head, ..tail] -> total(tail, acc + value(head))
+
+fn sized(chars: List<String>, acc: Int) -> Int
+    ? "Stops by measuring the list, so no cursor can stand in for it."
+    match chars
+        [] -> acc
+        [head, ..tail] -> match List.len(chars) > 2
+            true -> sized(tail, acc + 1)
+            false -> acc
+
+fn main() -> Int
+    total(String.chars("101"), 0) + sized(String.chars("101"), 0)
+"#,
+    );
+    let pass = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "chars_fusion")
+        .expect("chars_fusion pass present");
+    let data = &pass["data"];
+    assert_eq!(data["cursor_rewrites"], 1, "one traversal fuses: {data}");
+    assert_eq!(
+        data["synthesized"].as_array().unwrap(),
+        &vec![serde_json::json!("total__cursor")],
+        "{data}"
+    );
+    assert_eq!(
+        data["codepoint_matches"], 1,
+        "the character match fuses too: {data}"
+    );
+    assert_eq!(data["codepoint_matches_by_fn"]["value"], 1);
+    assert!(
+        data["declined"]["sized"]
+            .as_str()
+            .expect("the measured loop is reported as declined")
+            .contains("cursor cannot stand in for"),
+        "{data}"
+    );
+    assert_eq!(
+        data["targets"].as_array().unwrap(),
+        &vec![serde_json::json!("rust"), serde_json::json!("vm")],
+        "the count belongs to the rust and VM artifacts and to no other: {data}"
+    );
+}
+
+/// The same honesty the buffer-build report owes about dependencies:
+/// `aver run` and the Rust compile path fuse every dependency too, so a
+/// report that only looked at the entry file would say a program with a
+/// fused dependency fused nothing.
+#[test]
+fn chars_fusion_pass_reports_a_loop_living_in_a_dependency() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("scan.av"),
+        r#"module Scan
+    intent = "a dependency that owns the character loop"
+    exposes [digits]
+    effects []
+
+fn value(character: String) -> Int
+    ? "Decode one decimal digit."
+    match character
+        "0" -> 0
+        "1" -> 1
+        _ -> -1
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    ? "Add up the decodable digits."
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + value(head))
+
+fn digits(text: String) -> Int
+    ? "Sum the decimal digits of a string."
+    walk(String.chars(text), 0)
+"#,
+    )
+    .expect("write scan.av");
+    let entry = dir.path().join("main.av");
+    std::fs::write(
+        &entry,
+        r#"module Main
+    intent = "entry with no character loop of its own"
+    depends [Scan]
+    effects []
+
+fn main() -> Int
+    Scan.digits("101")
+"#,
+    )
+    .expect("write main.av");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
+        .arg(&entry)
+        .arg("--explain-passes")
+        .arg("--json")
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .expect("invoke aver");
+    assert!(
+        output.status.success(),
+        "aver compile failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse JSON output");
+    let data = &json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "chars_fusion")
+        .expect("chars_fusion pass present")["data"];
+    assert_eq!(
+        data["cursor_rewrites"], 1,
+        "the dependency's traversal must be counted: {data}"
+    );
+    assert!(
+        data["synthesized"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "Scan.walk__cursor"),
+        "expected the module-qualified synthesized name: {data}"
+    );
+    assert_eq!(data["codepoint_matches_by_fn"]["Scan.value"], 1, "{data}");
 }
 
 #[test]

@@ -4,6 +4,7 @@ mod analyze;
 mod body;
 mod buffer_build;
 mod calls;
+mod chars_fusion;
 pub mod dump;
 pub mod escape;
 pub mod hir;
@@ -58,6 +59,9 @@ pub use calls::{
     TailCallPlan, WrapperKind, classify_call_plan, classify_callee, classify_constructor_name,
     classify_forward_call_parts, classify_forward_call_plan, classify_forward_fn_body,
     classify_tail_call_plan, expr_to_dotted_name, is_builtin_namespace,
+};
+pub use chars_fusion::{
+    CharsFusionDecline, CharsFusionPassReport, has_fusable_shape, run_chars_fusion_pass,
 };
 pub use interp_lower::lower_interpolation_pass;
 pub use leaf::{LeafOp, classify_leaf_op};

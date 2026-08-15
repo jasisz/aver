@@ -2022,6 +2022,52 @@ impl VM {
                     self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
 
+                // Codepoint cursor (chars fusion). Every arm delegates
+                // to `aver_rt::strcursor` — the same routines compiled
+                // Rust calls — so the fused loop cannot answer
+                // differently on the two backends. An offset that is
+                // not a character boundary cannot arise: the pass only
+                // ever produces one by stepping from zero.
+                STR_CURSOR_END | STR_CURSOR_HEAD | STR_CURSOR_NEXT => {
+                    let i = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    // A negative or unrepresentable offset is past the
+                    // end of every string, which is where the end test
+                    // stops the loop.
+                    let offset = i.as_aver_int(&self.arena).to_usize().unwrap_or(usize::MAX);
+                    let text = self.arena.get_string_value(s).to_string();
+                    let pushed = match op {
+                        STR_CURSOR_END => {
+                            if aver_rt::str_cursor_end(&text, offset) {
+                                NanValue::TRUE
+                            } else {
+                                NanValue::FALSE
+                            }
+                        }
+                        STR_CURSOR_HEAD => NanValue::new_string_value(
+                            aver_rt::str_cursor_head(&text, offset),
+                            &mut self.arena,
+                        ),
+                        _ => NanValue::new_int(
+                            aver_rt::str_cursor_next(&text, offset) as i64,
+                            &mut self.arena,
+                        ),
+                    };
+                    self.stack.push(pushed);
+                }
+
+                STR_CODE1 | STR_CODE1_LOWER | STR_CODE1_UPPER => {
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let text = self.arena.get_string_value(s).to_string();
+                    let code = match op {
+                        STR_CODE1 => aver_rt::str_code1(&text),
+                        STR_CODE1_LOWER => aver_rt::str_code1_lower(&text),
+                        _ => aver_rt::str_code1_upper(&text),
+                    };
+                    let pushed = NanValue::new_int(code, &mut self.arena);
+                    self.stack.push(pushed);
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;

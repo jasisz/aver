@@ -41,6 +41,24 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
   A loop is only rewritten when its shape says the rewrite cannot change the answer. Anything else — an accumulator that starts non-empty, a reverse in a place that would then happen twice, a base case returning something other than the accumulator — is left exactly as written, silently and safely. The same goes for a loop that *reads* what it has collected so far: once the pieces go straight into the string there is no list left to ask, so a loop that calls `List.contains(acc, head)` to mark repeats, or stops on `List.len(acc)`, keeps its list and its answer. `aver compile --explain-passes` is how you check which side of that line your loop landed on.
 
+- **Walking a string with `String.chars` no longer builds the list, and deciding a character no longer compares strings.** `String.chars(text)` builds one one-character string per character *and* a cons cell per character, and the loop that consumes it takes them apart again immediately. When the list goes straight into a recursive function that only destructures it, Aver now walks `text` itself — the loop keeps its shape, the list is gone:
+
+  ```aver
+  fn digitSum(characters: List<String>, acc: Int) -> Int
+      match characters
+          [] -> acc
+          [head, ..tail] -> digitSum(tail, acc + digitValue(head))
+
+  fn total(text: String) -> Int
+      digitSum(String.chars(text), 0)
+  ```
+
+  The other half is the function that loop calls. A `match` whose arms are single-character literals compares strings once per arm — sixteen of them for a hexadecimal digit, behind a `String.toLower` that builds a string of its own. Aver now reads the character's codepoint once and compares numbers. Both halves are the standard library's own: `Bytes.fromHex` is written exactly this way, so decoding hexadecimal — and anything built on it, a checksum or a 32-byte digest — is roughly twice as fast for the same source, on the VM and in compiled Rust alike. As with the string-building rewrite, `--target wasm-gc` and `--target wasip2` are unchanged.
+
+  The walk is by *character*, not by byte, because `String.chars` is: `"éx"` is two characters however many bytes it takes, so a loop that checks for an even count still gets the answer it always got. Case folding keeps whatever arm `String.toLower` would have chosen, including the characters where that is surprising — `U+212A KELVIN SIGN` lowercases to the ASCII `"k"` and still takes the `"k"` arm.
+
+  And a loop is only rewritten when its shape says the rewrite cannot change the answer. A loop that measures the list it is walking, hands it to another function, or recurses on a *different* list that happens to reuse the tail's name keeps its list and its answer, as does a character match with an arm that binds the character or a literal that is more than one character long. `aver compile --explain-passes` now reports which loops were rewritten, which were not, and why.
+
 - **A proof can no longer describe code the compiler invented, and a certificate describes the program its binary was built from.** Some optimisations write code of their own: the string-building rewrite above replaces a loop with a buffer and a function that appears nowhere in your source, and `"a${x}b"` becomes a chain of calls to the same machinery. The Lean and Dafny exports read the program the compiler is holding, so keeping those inventions out of your theorems was a convention — every path that exports a proof had to remember to switch those passes off first, and one that forgot would have exported theorems about functions you never wrote. It is now structural: the compiler takes your program aside before the first pass that invents anything, and the exporters read that copy, whatever the same build does on its way to a binary.
 
   The other half is the certificate. `aver compile --target wasm-gc --certify` ships a Lean model of your program next to the binary, and the certificate's theorems tie the two together — so the model has to be the program the binary was built from, including the optimisations that only rearrange code you did write. It is: both halves are taken from one view. Where the compiler folds a record you build at a call site into the function that reads it, the model folds it too, because that is what the certified bytes compute. Every `.lean` and `.dfy` Aver emits for `examples/`, `stdlib/` and its own fixtures is byte-for-byte what it was, and so is every certificate.

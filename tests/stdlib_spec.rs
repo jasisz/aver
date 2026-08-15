@@ -190,6 +190,58 @@ fn stdlib_to_hex_is_deforested_and_the_vm_runs_the_fused_shape() {
     );
 }
 
+/// The decoding direction. `Bytes.fromHex` hands `String.chars(text)`
+/// straight into `parseHexChars`, which peels two cells a step and does
+/// nothing else with the list, and `hexDigitValue` decides a character
+/// with sixteen single-character arms behind a `String.toLower` — the
+/// two shapes chars fusion rewrites. Pin both halves the same way
+/// `toHex` is pinned: the pass reports them, and the VM executes what
+/// the pass produced rather than the list spelling.
+#[test]
+fn stdlib_from_hex_walks_a_cursor_and_the_vm_runs_the_fused_shape() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/stdlib_bytes_dehex_app.av")
+        .to_string_lossy()
+        .into_owned();
+
+    let explained = run_aver(&["compile", &fixture, "--explain-passes", "--json"]);
+    assert_success("aver compile --explain-passes", &explained);
+    let report = String::from_utf8_lossy(&explained.stdout);
+    assert!(
+        report.contains("Bytes.parseHexChars__cursor"),
+        "the pass must report the standard library's own character loop: {report}"
+    );
+    assert!(
+        report.contains("Bytes.hexDigitValue"),
+        "and the sixteen-arm character match it calls: {report}"
+    );
+
+    let verify = run_aver(&["verify", &fixture]);
+    assert_success("aver verify", &verify);
+
+    let run = run_aver(&["run", &fixture, "--profile"]);
+    assert_success("aver run --profile", &run);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.starts_with("00ff10abcdef"),
+        "hex round-trip changed: {stdout}"
+    );
+    assert!(
+        stdout.contains("expected an even number of hex characters")
+            && stdout.contains("invalid hexadecimal character 'z'"),
+        "the error arms read the character the cursor is on: {stdout}"
+    );
+    let profile = format!("{stdout}{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        profile.contains("Bytes.parseHexChars__cursor"),
+        "the VM must execute the cursor variant, not the list loop: {profile}"
+    );
+    assert!(
+        !profile.contains("String.chars"),
+        "the list of one-character strings must be gone: {profile}"
+    );
+}
+
 #[cfg(feature = "wasm")]
 #[test]
 fn embedded_crypto_sha256_matches_fips_vectors_on_wasm_gc() {

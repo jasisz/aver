@@ -386,6 +386,87 @@ fn fused_stdlib_hex_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// The decoding direction, which the chars-fusion pass rewrites twice
+/// over: `Bytes.parseHexChars` walks a cursor instead of the list
+/// `String.chars` would have built, and `Bytes.hexDigitValue` compares
+/// codepoints instead of sixteen strings. Both rewrites reach the two
+/// backends by the two different routes the encoding test describes, and
+/// the `Result.Err` arms are in the program on purpose: their message
+/// bytes are built from the character the cursor read, so a cursor that
+/// read the wrong one shows up as a changed message rather than a
+/// changed count.
+#[test]
+fn fused_stdlib_hex_decoding_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/stdlib_bytes_dehex_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Chars fusion, on the shapes where the two backends could disagree.
+///
+/// The cursor steps by CODEPOINTS because `String.chars` yields
+/// codepoints — a byte cursor answers 3 for `"éx"` and flips every
+/// even-length check on multibyte input. The case-folded match keeps
+/// whatever arm `String.toLower` would have chosen, `U+212A KELVIN SIGN`
+/// (lowercase `"k"`) and `U+0130` (lowercase: two characters, so no
+/// single-character arm) included. The VM and the Rust backend lower all
+/// of this separately, so only running both settles it.
+#[test]
+fn rust_chars_fusion_matches_vm() {
+    let src = r#"module CharsFusionDifferential
+    intent = "Every chars-fusion shape in one program, for cross-backend agreement"
+    effects [Console.print]
+
+fn count(chars: List<String>, acc: Int) -> Int
+    ? "The canonical linear traversal — one cursor step per character."
+    match chars
+        [] -> acc
+        [head, ..tail] -> count(tail, acc + 1)
+
+fn pairs(chars: List<String>, acc: List<String>) -> List<String>
+    ? "Two cells per step, so an odd length has to fall out of the middle test."
+    match chars
+        [] -> List.reverse(acc)
+        [first, ..afterFirst] -> match afterFirst
+            [] -> List.reverse(List.prepend("{first}?", acc))
+            [second, ..rest] -> pairs(rest, List.prepend("{first}{second}", acc))
+
+fn value(digit: String) -> Int
+    ? "Sixteen single-character arms behind a case fold."
+    match String.toLower(digit)
+        "0" -> 0
+        "9" -> 9
+        "a" -> 10
+        "f" -> 15
+        "k" -> 20
+        _ -> -1
+
+fn shape(text: String) -> String
+    ? "Length, parity, and the pair split for one input."
+    n = count(String.chars(text), 0)
+    "{n}:{Int.mod(n, 2)}:{String.join(pairs(String.chars(text), []), "-")}"
+
+fn main() -> Unit
+    ? "Print every shape so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print("{shape("")} {shape("abc")} {shape("\u{e9}x")} {shape("\u{1F980}ab")}")
+    Console.print("{value("0")}{value("9")}/{value("A")}{value("f")}/{value("\u{212A}")}/{value("\u{130}")}/{value("ab")}/{value("")}")
+"#
+    .replace("\\u{e9}", "\u{e9}")
+    .replace("\\u{1F980}", "\u{1F980}")
+    .replace("\\u{212A}", "\u{212A}")
+    .replace("\\u{130}", "\u{130}");
+    // "éx" is two codepoints in three bytes; "🦀ab" is three in six.
+    // The Kelvin sign lowercases to "k"; U+0130 lowercases to two
+    // characters and so matches nothing; "" and "ab" are not one
+    // character either.
+    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1";
+    let vm = run_vm_inline("chars_fusion", &src).expect("vm run");
+    let rust =
+        build_run_rust_inline("chars_fusion", &src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM chars-fusion contract changed");
+    assert_eq!(rust, expected, "Rust chars fusion diverged from the VM");
+}
+
 // ─── own_param ownership: build+run rust vs VM + emitted-shape guard ─────
 
 /// Build+run an inline Aver program through the Rust backend and return

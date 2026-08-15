@@ -148,6 +148,7 @@ pub(super) fn try_run_wasm_gc(
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -156,7 +157,8 @@ pub(super) fn try_run_wasm_gc(
     {
         return Err(shared::format_type_errors(&tc.errors));
     }
-    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
+    let dep_modules =
+        load_compile_deps(&items, &module_root, super::commands::DepLowering::PRISTINE);
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after multi-module flatten so the freshly
     // appended dep fns get a `FnResolution` (slot map + slot_types).

@@ -10,6 +10,7 @@ pub mod int;
 pub mod random;
 mod runtime;
 mod service_types;
+pub mod strcursor;
 pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
@@ -23,6 +24,9 @@ pub use runtime::{
 };
 pub use service_types::{
     BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TerminalSize,
+};
+pub use strcursor::{
+    str_code1, str_code1_lower, str_code1_upper, str_cursor_end, str_cursor_head, str_cursor_next,
 };
 
 #[cfg(feature = "terminal")]

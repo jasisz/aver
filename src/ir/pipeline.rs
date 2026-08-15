@@ -36,6 +36,7 @@
 
 use crate::ast::TopLevel;
 use crate::ir::buffer_build::BufferBuildPassReport;
+use crate::ir::chars_fusion::CharsFusionPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
@@ -50,6 +51,13 @@ pub enum PipelineStage {
     Typecheck,
     InterpLower,
     BufferBuild,
+    /// Chars fusion — `String.chars(s)` consumed linearly by a
+    /// self-recursive loop becomes a cursor over `s`, and a match over
+    /// single-character string literals becomes a codepoint comparison.
+    /// Fabricating (a `<fn>__cursor` variant, six `__str_*`
+    /// intrinsics), so it sits BELOW the proof line next to
+    /// `buffer_build` — see [`AstView`].
+    CharsFusion,
     Resolve,
     LastUse,
     Analyze,
@@ -111,6 +119,7 @@ impl PipelineStage {
             Self::Typecheck => "typecheck",
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
+            Self::CharsFusion => "chars_fusion",
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
@@ -166,6 +175,15 @@ pub struct PipelineConfig<'a> {
     /// contain belongs here, below the line, and is proof-invisible for
     /// free.
     pub run_buffer_build: bool,
+    /// Whether to run the chars-fusion pass. Same target matrix as
+    /// `run_buffer_build`, and for the same reason: the intrinsics it
+    /// introduces are lowered by the VM and by the Rust backend, and by
+    /// nothing else — the wasm-gc family has no representation for them
+    /// and leaves this off.
+    ///
+    /// Also below the proof line, so — like `run_buffer_build` — what
+    /// you pass here cannot change what gets proven (see [`AstView`]).
+    pub run_chars_fusion: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
     /// `resolve`. Annotates each `Expr::Resolved` slot reference with
@@ -263,6 +281,7 @@ impl<'a> Default for PipelineConfig<'a> {
             typecheck: None,
             run_interp_lower: true,
             run_buffer_build: true,
+            run_chars_fusion: true,
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
@@ -310,6 +329,7 @@ pub enum PassReport {
         fns_changed: Vec<FnCountChange>,
     },
     BufferBuild(BufferBuildPassReport),
+    CharsFusion(CharsFusionPassReport),
     Resolve {
         slots_resolved: usize,
         fns_with_slots: usize,
@@ -475,6 +495,11 @@ pub struct PipelineResult {
     /// Buffer-build pass report — sinks fired, synthesized fns,
     /// per-sink rewrite counts. `None` when the pass was disabled.
     pub buffer_build: Option<BufferBuildPassReport>,
+    /// Chars-fusion pass report — cursor variants synthesized, producer
+    /// call sites moved, codepoint matches rewritten, and every loop the
+    /// recogniser turned down with its reason. `None` when the pass was
+    /// disabled.
+    pub chars_fusion: Option<CharsFusionPassReport>,
     /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
     /// when `run_analyze` was on. `None` when the stage was disabled.
     pub analysis: Option<AnalysisResult>,
@@ -647,6 +672,15 @@ pub fn interp_lower(items: &mut [TopLevel]) {
     crate::ir::lower_interpolation_pass(items);
 }
 
+/// Chars-fusion pass — turns a `String.chars(s)` list consumed linearly
+/// by a self-recursive loop into a cursor over `s`, and a match over
+/// single-character string literals into a codepoint comparison.
+/// Appends the synthesized `<fn>__cursor` variants to `items`. See
+/// [`crate::ir::chars_fusion`].
+pub fn chars_fusion(items: &mut Vec<TopLevel>) -> CharsFusionPassReport {
+    crate::ir::run_chars_fusion_pass(items)
+}
+
 /// Buffer-build deforestation pass — detects `String.join(<builder>(args, []), sep)`
 /// shapes, rewrites them to `__buf_finalize(<builder>__buffered(...))`, and
 /// appends the synthesized buffered variants to `items`. Returns a
@@ -740,6 +774,13 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         result.pass_diagnostics.push(diag_for_buffer_build(&report));
         result.buffer_build = Some(report);
         fire(&mut cfg, PipelineStage::BufferBuild, items);
+    }
+
+    if cfg.run_chars_fusion {
+        let report = chars_fusion(items);
+        result.pass_diagnostics.push(diag_for_chars_fusion(&report));
+        result.chars_fusion = Some(report);
+        fire(&mut cfg, PipelineStage::CharsFusion, items);
     }
 
     if cfg.run_resolve {
@@ -1072,6 +1113,13 @@ fn diag_for_buffer_build(report: &BufferBuildPassReport) -> PassDiagnostic {
     PassDiagnostic {
         stage: PipelineStage::BufferBuild,
         report: PassReport::BufferBuild(report.clone()),
+    }
+}
+
+fn diag_for_chars_fusion(report: &CharsFusionPassReport) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::CharsFusion,
+        report: PassReport::CharsFusion(report.clone()),
     }
 }
 

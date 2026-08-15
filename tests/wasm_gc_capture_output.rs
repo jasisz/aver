@@ -121,6 +121,7 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -205,6 +206,7 @@ fn wasm_gc_bits_namespace_matches_vm() {
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -251,6 +253,7 @@ fn vm_and_wasm_gc_stdout(src: &str) -> (String, String) {
                 alloc_policy: Some(&aver::ir::NeutralAllocPolicy),
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_chars_fusion: false,
                 ..Default::default()
             },
         );

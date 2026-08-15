@@ -31,6 +31,7 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
             // `--target wasm-gc` path in `cmd_compile_wasm_gc`.
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -76,6 +77,7 @@ pub fn compile_project_to_wasm(
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -139,6 +141,7 @@ pub fn compile_project_to_wasm_with_entry(
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -299,6 +302,7 @@ fn build_ctx(
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_chars_fusion: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
             run_law_lower: proof_target,
@@ -400,6 +404,7 @@ fn build_project_ctx(
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_chars_fusion: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
             run_law_lower: proof_target,
@@ -508,6 +513,7 @@ fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> cod
         PipelineConfig {
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_chars_fusion: apply_traversal_lowering,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },

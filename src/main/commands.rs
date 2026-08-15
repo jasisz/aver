@@ -1202,7 +1202,8 @@ pub(super) fn cmd_run_vm(
     //
     // `run_interp_lower` stays off here: it is a separate stage with its
     // own history and no reported inconsistency.
-    let dep_modules = load_compile_deps(&items, &module_root, false, true, false);
+    let dep_modules =
+        load_compile_deps(&items, &module_root, DepLowering::deforesting(true, false));
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
@@ -1583,6 +1584,7 @@ pub(super) fn cmd_run_self_hosted(
                 }),
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_chars_fusion: false,
                 run_resolve: false,
                 ..Default::default()
             },
@@ -2870,9 +2872,7 @@ fn build_codegen_context(
     let modules = load_compile_deps(
         &items,
         &module_root,
-        dep_lowering,           // run_interp_lower
-        dep_lowering,           // run_buffer_build
-        with_self_host_support, // self_host_mode → bypass opaque in dep modules
+        DepLowering::fully_lowered(dep_lowering, with_self_host_support),
     );
 
     let mut pipeline_result = aver::ir::pipeline::run(
@@ -2881,6 +2881,7 @@ fn build_codegen_context(
             typecheck: Some(typecheck_mode),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_chars_fusion: apply_traversal_lowering,
             run_refinement_lower,
             run_contract_lower,
             run_law_lower,
@@ -3541,7 +3542,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // `--emit-ir-after=name_resolve` show stale `<unresolved:…>`
     // markers that the production run path never emits.
     let _ = proof_target; // kept for future per-target diagnostic shape switches
-    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
+    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -3878,8 +3879,8 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     // including stages a runtime backend would skip (proof_lower).
     // Pre-load dep modules so proof_lower has the data to walk; without
     // them the stage would only see entry-file refinement records.
-    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
-    let dep_fusion = dep_buffer_build_reports(&items, &module_root);
+    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    let dep_fusion = dep_fusion_reports(&items, &module_root);
     let mut result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -3902,6 +3903,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
         process::exit(1);
     }
     merge_dep_buffer_build(&mut result.pass_diagnostics, &dep_fusion);
+    merge_dep_chars_fusion(&mut result.pass_diagnostics, &dep_fusion);
 
     if json {
         print!("{}", render_pass_diagnostics_json(&result.pass_diagnostics));
@@ -3925,7 +3927,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 const DEFORESTING_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
 const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
 
-/// Per-dependency `buffer_build` reports, for `--explain-passes`.
+/// Per-dependency deforestation reports, for `--explain-passes`.
 ///
 /// The pipeline this command runs sees the ENTRY file only, so a program
 /// whose dependency fuses — Aver's own `Bytes.toHex` is one — was
@@ -3940,10 +3942,11 @@ const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines �
 /// parse of each dep and keep only its report. Typecheck is skipped —
 /// `load_compile_deps` has already surfaced any dep type errors, and
 /// detection is purely syntactic.
-fn dep_buffer_build_reports(
-    items: &[TopLevel],
-    module_root: &str,
-) -> Vec<(String, aver::ir::BufferBuildPassReport)> {
+///
+/// Both fabricating string passes are asked at once because both run
+/// over every dependency on the compile path and both would otherwise
+/// be reported as having done nothing.
+fn dep_fusion_reports(items: &[TopLevel], module_root: &str) -> Vec<DepFusion> {
     let Some(module) = items.iter().find_map(|i| match i {
         TopLevel::Module(m) => Some(m),
         _ => None,
@@ -3972,23 +3975,31 @@ fn dep_buffer_build_reports(
                 ..Default::default()
             },
         );
-        if let Some(report) = result.buffer_build
-            && report.rewrites > 0
-        {
-            out.push((m.dep_name, report));
+        let buffer_build = result.buffer_build.unwrap_or_default();
+        let chars_fusion = result.chars_fusion.unwrap_or_default();
+        if buffer_build.rewrites > 0 || chars_fusion.fired() || !chars_fusion.declined.is_empty() {
+            out.push(DepFusion {
+                prefix: m.dep_name,
+                buffer_build,
+                chars_fusion,
+            });
         }
     }
     out
+}
+
+/// One dependency's share of the two fabricating string passes.
+struct DepFusion {
+    prefix: String,
+    buffer_build: aver::ir::BufferBuildPassReport,
+    chars_fusion: aver::ir::CharsFusionPassReport,
 }
 
 /// Fold per-dependency fusion into the entry's `buffer_build` pass
 /// report so both renderers show one honest total. Dep-side names are
 /// module-qualified (`Bytes.hexParts`) — the entry's own stay bare, so
 /// the reader can tell which file a site lives in.
-fn merge_dep_buffer_build(
-    diagnostics: &mut [aver::ir::PassDiagnostic],
-    dep_reports: &[(String, aver::ir::BufferBuildPassReport)],
-) {
+fn merge_dep_buffer_build(diagnostics: &mut [aver::ir::PassDiagnostic], dep_reports: &[DepFusion]) {
     if dep_reports.is_empty() {
         return;
     }
@@ -3996,7 +4007,12 @@ fn merge_dep_buffer_build(
         let aver::ir::PassReport::BufferBuild(entry) = &mut diagnostic.report else {
             continue;
         };
-        for (prefix, dep) in dep_reports {
+        for DepFusion {
+            prefix,
+            buffer_build: dep,
+            ..
+        } in dep_reports
+        {
             entry.rewrites += dep.rewrites;
             entry
                 .synthesized
@@ -4012,6 +4028,46 @@ fn merge_dep_buffer_build(
             }
         }
         entry.sink_fns.sort();
+    }
+}
+
+/// The chars-fusion half of the same fold: a cursor synthesized in a
+/// dependency is a rewrite the artifact carries, and a loop a dependency
+/// DECLINED is the fact this diagnostic exists to surface.
+fn merge_dep_chars_fusion(diagnostics: &mut [aver::ir::PassDiagnostic], dep_reports: &[DepFusion]) {
+    if dep_reports.is_empty() {
+        return;
+    }
+    for diagnostic in diagnostics.iter_mut() {
+        let aver::ir::PassReport::CharsFusion(entry) = &mut diagnostic.report else {
+            continue;
+        };
+        for DepFusion {
+            prefix,
+            chars_fusion: dep,
+            ..
+        } in dep_reports
+        {
+            entry.cursor_rewrites += dep.cursor_rewrites;
+            entry.codepoint_matches += dep.codepoint_matches;
+            entry
+                .synthesized
+                .extend(dep.synthesized.iter().map(|n| format!("{prefix}.{n}")));
+            entry
+                .loop_fns
+                .extend(dep.loop_fns.iter().map(|n| format!("{prefix}.{n}")));
+            for (fn_name, count) in &dep.codepoint_matches_by_fn {
+                *entry
+                    .codepoint_matches_by_fn
+                    .entry(format!("{prefix}.{fn_name}"))
+                    .or_default() += count;
+            }
+            for (fn_name, reason) in &dep.declined {
+                entry.declined.insert(format!("{prefix}.{fn_name}"), reason);
+            }
+        }
+        entry.synthesized.sort();
+        entry.loop_fns.sort();
     }
 }
 
@@ -4046,7 +4102,7 @@ pub(super) fn cmd_explain_mir_coverage(
         }
     };
 
-    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
+    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -4358,6 +4414,32 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
                 }
             }
+            PassReport::CharsFusion(r) => {
+                if !r.fired() {
+                    out.push_str(&format!(
+                        "{label} no String.chars loop or single-character match rewritten\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {} chars traversal(s) rewritten to a cursor, \
+                         {} single-character match(es) rewritten to codepoints\n",
+                        r.cursor_rewrites, r.codepoint_matches
+                    ));
+                    for fn_name in &r.synthesized {
+                        out.push_str(&format!("  • synthesized {fn_name}\n"));
+                    }
+                    for (fn_name, count) in &r.codepoint_matches_by_fn {
+                        out.push_str(&format!("  • {fn_name}: {count} codepoint match(es)\n"));
+                    }
+                    out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
+                }
+                // Declines are reported whether or not anything fired:
+                // a loop the recogniser stopped seeing is exactly the
+                // regression this diagnostic exists to surface.
+                for (fn_name, reason) in &r.declined {
+                    out.push_str(&format!("  • declined {fn_name}: {reason}\n"));
+                }
+            }
             PassReport::Resolve {
                 slots_resolved,
                 fns_with_slots,
@@ -4590,6 +4672,36 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     json_str_array(&r.synthesized),
                     json_str_array(&r.sink_fns),
                     by_sink,
+                    DEFORESTING_TARGETS_JSON
+                ));
+            }
+            PassReport::CharsFusion(r) => {
+                let mut by_fn = String::from("{");
+                for (j, (k, v)) in r.codepoint_matches_by_fn.iter().enumerate() {
+                    if j > 0 {
+                        by_fn.push(',');
+                    }
+                    by_fn.push_str(&format!("{}:{}", json_str(k), v));
+                }
+                by_fn.push('}');
+                let mut declined = String::from("{");
+                for (j, (k, v)) in r.declined.iter().enumerate() {
+                    if j > 0 {
+                        declined.push(',');
+                    }
+                    declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
+                }
+                declined.push('}');
+                out.push_str(&format!(
+                    "{{\"cursor_rewrites\":{},\"synthesized\":{},\"loop_fns\":{},\
+                     \"codepoint_matches\":{},\"codepoint_matches_by_fn\":{},\
+                     \"declined\":{},\"targets\":{}}}",
+                    r.cursor_rewrites,
+                    json_str_array(&r.synthesized),
+                    json_str_array(&r.loop_fns),
+                    r.codepoint_matches,
+                    by_fn,
+                    declined,
                     DEFORESTING_TARGETS_JSON
                 ));
             }
@@ -4913,6 +5025,7 @@ fn cmd_compile_wasm_gc(
             // shape. Keep the source InterpolatedStr in the IR.
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -4930,13 +5043,10 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    let dep_modules = load_compile_deps(
-        &items,
-        &module_root,
-        false, /* run_interp_lower */
-        false, /* run_buffer_build */
-        false, /* self_host_mode — wasm-gc compile path doesn't use self-host */
-    );
+    // The wasm-gc compile path can lower neither the buffer nor the
+    // cursor the fabricating passes introduce, and does not use the
+    // self-host typecheck driver.
+    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
@@ -5172,6 +5282,7 @@ fn cmd_compile_wasip2(
                 alloc_policy: Some(&neutral_policy),
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_chars_fusion: false,
                 ..Default::default()
             },
         );
@@ -5182,7 +5293,7 @@ fn cmd_compile_wasip2(
             process::exit(1);
         }
 
-        let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
+        let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
         // Bypass the `flatten_multimodule` shim in this file (gated on
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
@@ -9763,20 +9874,61 @@ pub(super) fn flatten_multimodule(
     aver::codegen::wasm_gc::flatten_multimodule(items, dep_modules)
 }
 
-/// Load dependent modules for codegen (recursive, with circular import detection).
+/// Which lowering a dependency module gets, mirroring the entry-module
+/// decision the caller already made.
 ///
-/// `run_interp_lower` and `run_buffer_build` mirror the entry-module decision —
-/// proof exporters (Lean/Dafny) pass `false` for both so dep modules also
-/// stay source-level; runtime backends (VM/WASM/Rust) pass `true` for both
-/// so the buffer-build pass fires on sinks living in dep modules too. Split
-/// per-stage rather than a bundled flag so this matches the pipeline gates
-/// 1-to-1 with no magic translation in between.
+/// One field per pipeline gate rather than a bundled "optimise" flag, so
+/// this matches the gates 1-to-1 with no magic translation in between:
+/// proof exporters (Lean/Dafny) and the wasm-gc family ask for
+/// [`Self::PRISTINE`], because neither can represent what the
+/// fabricating passes introduce; the VM and the Rust backend turn them
+/// on so a sink or a character loop living in a dependency is fused
+/// there too.
+#[derive(Clone, Copy)]
+pub(super) struct DepLowering {
+    pub interp_lower: bool,
+    pub buffer_build: bool,
+    pub chars_fusion: bool,
+    /// Self-host typecheck driver — bypasses the opaque-type checks so
+    /// `domain/builtins.av` can round-trip host types.
+    pub self_host: bool,
+}
+
+impl DepLowering {
+    /// Source-level dependencies: nothing that invents code.
+    pub(super) const PRISTINE: Self = Self {
+        interp_lower: false,
+        buffer_build: false,
+        chars_fusion: false,
+        self_host: false,
+    };
+
+    /// Both fabricating string passes on or off together — they share a
+    /// lowering matrix (VM + Rust), so no caller has ever wanted one
+    /// without the other.
+    pub(super) const fn deforesting(on: bool, self_host: bool) -> Self {
+        Self {
+            interp_lower: false,
+            buffer_build: on,
+            chars_fusion: on,
+            self_host,
+        }
+    }
+
+    /// As [`Self::deforesting`], with interpolation lowering too.
+    pub(super) const fn fully_lowered(on: bool, self_host: bool) -> Self {
+        Self {
+            interp_lower: on,
+            ..Self::deforesting(on, self_host)
+        }
+    }
+}
+
+/// Load dependent modules for codegen (recursive, with circular import detection).
 pub(super) fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
-    run_interp_lower: bool,
-    run_buffer_build: bool,
-    self_host_mode: bool,
+    lowering: DepLowering,
 ) -> Vec<ModuleInfo> {
     let module = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
@@ -9793,15 +9945,7 @@ pub(super) fn load_compile_deps(
     let mut loaded = std::collections::HashSet::new();
 
     for dep_name in &module.depends {
-        load_module_recursive(
-            dep_name,
-            module_root,
-            run_interp_lower,
-            run_buffer_build,
-            self_host_mode,
-            &mut result,
-            &mut loaded,
-        );
+        load_module_recursive(dep_name, module_root, lowering, &mut result, &mut loaded);
     }
 
     // Builtins like `Crypto.sha256` cross nominal types owned by embedded
@@ -9811,15 +9955,7 @@ pub(super) fn load_compile_deps(
     // program passes check/verify and fails late inside the generated
     // project. `loaded` dedupes the overlap with the explicit list.
     for dep_name in aver::stdlib::implicit_stdlib_deps(items) {
-        load_module_recursive(
-            &dep_name,
-            module_root,
-            run_interp_lower,
-            run_buffer_build,
-            self_host_mode,
-            &mut result,
-            &mut loaded,
-        );
+        load_module_recursive(&dep_name, module_root, lowering, &mut result, &mut loaded);
     }
 
     result
@@ -9828,9 +9964,7 @@ pub(super) fn load_compile_deps(
 fn load_module_recursive(
     name: &str,
     module_root: &str,
-    run_interp_lower: bool,
-    run_buffer_build: bool,
-    self_host_mode: bool,
+    lowering: DepLowering,
     result: &mut Vec<ModuleInfo>,
     loaded: &mut std::collections::HashSet<String>,
 ) {
@@ -9908,7 +10042,7 @@ fn load_module_recursive(
     // surfaced as fatal — a dep module that fails to typecheck means
     // the program is incoherent and codegen would emit broken output.
     let neutral_policy = aver::ir::NeutralAllocPolicy;
-    let dep_typecheck_mode = if self_host_mode {
+    let dep_typecheck_mode = if lowering.self_host {
         aver::ir::TypecheckMode::FullSelfHost {
             base_dir: Some(module_root),
         }
@@ -9921,8 +10055,9 @@ fn load_module_recursive(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(dep_typecheck_mode),
-            run_interp_lower,
-            run_buffer_build,
+            run_interp_lower: lowering.interp_lower,
+            run_buffer_build: lowering.buffer_build,
+            run_chars_fusion: lowering.chars_fusion,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
@@ -9966,15 +10101,7 @@ fn load_module_recursive(
         }
     }) {
         for dep in &mod_block.depends {
-            load_module_recursive(
-                dep,
-                module_root,
-                run_interp_lower,
-                run_buffer_build,
-                self_host_mode,
-                result,
-                loaded,
-            );
+            load_module_recursive(dep, module_root, lowering, result, loaded);
         }
     }
 
@@ -9983,15 +10110,7 @@ fn load_module_recursive(
     // in its own `depends` — load those implied modules too (see
     // `load_compile_deps` for the entry-level counterpart).
     for dep in aver::stdlib::implicit_stdlib_deps(&items) {
-        load_module_recursive(
-            &dep,
-            module_root,
-            run_interp_lower,
-            run_buffer_build,
-            self_host_mode,
-            result,
-            loaded,
-        );
+        load_module_recursive(&dep, module_root, lowering, result, loaded);
     }
 
     let type_defs: Vec<_> = items

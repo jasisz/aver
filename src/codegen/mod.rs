@@ -1250,10 +1250,21 @@ fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_
             return_type: crate::types::Type::named("Buffer"),
             is_pure: true,
         }),
-        "__buf_finalize" => Some(FnSigInfo {
+        "__buf_finalize" | "__str_cursor_head" => Some(FnSigInfo {
             return_type: crate::types::Type::Str,
             is_pure: true,
         }),
+        // Chars-fusion cursor / codepoint intrinsics, same story.
+        "__str_cursor_end" => Some(FnSigInfo {
+            return_type: crate::types::Type::Bool,
+            is_pure: true,
+        }),
+        "__str_cursor_next" | "__str_code1" | "__str_code1_lower" | "__str_code1_upper" => {
+            Some(FnSigInfo {
+                return_type: crate::types::Type::Int,
+                is_pure: true,
+            })
+        }
         _ => None,
     }
 }
