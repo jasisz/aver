@@ -598,5 +598,9 @@ fn the_byte_sink_cannot_change_what_gets_proven() {
 /// trip.
 #[test]
 fn proof_view_under_the_byte_sink_is_the_unfused_program() {
-    assert_proof_view_is_the_unfabricated_program(BYTES, "ProofSeamBytes", /* fabricating */ true);
+    assert_proof_view_is_the_unfabricated_program(
+        BYTES,
+        "ProofSeamBytes",
+        /* fabricating */ true,
+    );
 }

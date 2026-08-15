@@ -180,7 +180,10 @@ mod tests {
         use std::str::FromStr;
         let mut b = byte_builder_new(0);
         b = byte_builder_push(b, AverInt::from_i64(7));
-        b = byte_builder_push(b, AverInt::from_str("340282366920938463463374607431768211456").unwrap());
+        b = byte_builder_push(
+            b,
+            AverInt::from_str("340282366920938463463374607431768211456").unwrap(),
+        );
         assert_eq!(
             byte_builder_finalize(b).map_err(|e| e.to_string()),
             Err(

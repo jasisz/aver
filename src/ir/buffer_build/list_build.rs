@@ -813,7 +813,8 @@ fn from_list_references() -> &'static [FromListReference] {
             }
             let mut fns = Vec::new();
             for name in FROM_LIST_FAMILY {
-                if let Some(fd) = crate::ir::chars_fusion::fn_defs(&items).find(|fd| fd.name == name)
+                if let Some(fd) =
+                    crate::ir::chars_fusion::fn_defs(&items).find(|fd| fd.name == name)
                 {
                     fns.push(fd.clone());
                 }
@@ -869,7 +870,9 @@ fn from_list_is_the_stdlib_one(items: &[TopLevel]) -> bool {
 fn fn_binds_name(fd: &FnDef, name: &str) -> bool {
     fn walk(expr: &Spanned<Expr>, name: &str) -> bool {
         if let Expr::Match { arms, .. } = &expr.node
-            && arms.iter().any(|arm| pattern_binds_name(&arm.pattern, name))
+            && arms
+                .iter()
+                .any(|arm| pattern_binds_name(&arm.pattern, name))
         {
             return true;
         }
@@ -889,13 +892,10 @@ fn fn_binds_name(fd: &FnDef, name: &str) -> bool {
 /// Does any identifier under `expr` live in a builder namespace this
 /// pass emits into?
 fn mentions_builder_namespace(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => {
-            if BUILDER_PREFIXES.iter().any(|p| n.starts_with(p)) {
-                return true;
-            }
-        }
-        _ => {}
+    if let Expr::Ident(n) | Expr::Resolved { name: n, .. } = &expr.node
+        && BUILDER_PREFIXES.iter().any(|p| n.starts_with(p))
+    {
+        return true;
     }
     let mut found = false;
     crate::ir::chars_fusion::walk_children(expr, &mut |child| {
@@ -967,7 +967,7 @@ fn consumer_variant_call(
 /// `fromList` calls. Declines are recorded per variant; a variant with
 /// no `fromList`-shaped consumer is not a candidate and stays silent.
 fn run_byte_sink_retarget(
-    items: &mut Vec<TopLevel>,
+    items: &mut [TopLevel],
     accepted: &HashMap<String, (String, ListBuildShape)>,
     variants: &mut [FnDef],
     report: &mut ListBuildPassReport,
@@ -1032,10 +1032,7 @@ fn run_byte_sink_retarget(
         }
         scan_consumer_fn(fd, &metas, &mut facts);
     }
-    if facts
-        .values()
-        .all(|f| f.sites == 0 && f.flaw.is_none())
-    {
+    if facts.values().all(|f| f.sites == 0 && f.flaw.is_none()) {
         return;
     }
 
@@ -1219,7 +1216,9 @@ fn scan_consumer_fn(
 fn fn_binds_name_in_patterns(fd: &FnDef, name: &str) -> bool {
     fn walk(expr: &Spanned<Expr>, name: &str) -> bool {
         if let Expr::Match { arms, .. } = &expr.node
-            && arms.iter().any(|arm| pattern_binds_name(&arm.pattern, name))
+            && arms
+                .iter()
+                .any(|arm| pattern_binds_name(&arm.pattern, name))
         {
             return true;
         }
@@ -1251,13 +1250,13 @@ fn scan_direct_sites(
         let is_tail = tail_expr == Some(&expr.node as *const Expr);
         match &args[0].node {
             Expr::FnCall(_, _) => {
-                if let Some(variant) = consumer_variant_call(&args[0].node, &acc_idx_of) {
-                    if metas[&variant].result_kind == Some(false) {
-                        credit(&variant, Ok(()));
-                    }
-                    // A direct application to a Result-answering
-                    // variant never typechecks; the read stays
-                    // uncredited and the occurs accounting declines.
+                // A direct application to a Result-answering variant
+                // never typechecks; the read stays uncredited and the
+                // occurs accounting declines.
+                if let Some(variant) = consumer_variant_call(&args[0].node, &acc_idx_of)
+                    && metas[&variant].result_kind == Some(false)
+                {
+                    credit(&variant, Ok(()));
                 }
             }
             Expr::ErrorProp(inner) => {

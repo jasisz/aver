@@ -621,10 +621,7 @@ fn main() -> Unit
 "#
         ),
     );
-    assert_eq!(
-        out,
-        "ok:150\nerr:value 450 at index 0 is outside 0..=255"
-    );
+    assert_eq!(out, "ok:150\nerr:value 450 at index 0 is outside 0..=255");
 }
 
 /// An exit the accumulator never reaches answers with a list of its
@@ -656,10 +653,7 @@ fn main() -> Unit
 "#
         ),
     );
-    assert_eq!(
-        out,
-        "err:byte 999 at index 1 is outside 0..=255\nok:1, 2"
-    );
+    assert_eq!(out, "err:byte 999 at index 1 is outside 0..=255\nok:1, 2");
 }
 
 /// A call that seeds the accumulator keeps the loop it named — the
