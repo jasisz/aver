@@ -713,6 +713,89 @@ fn main() -> Unit
 }
 
 #[test]
+fn rust_map_iteration_order_matches_vm() {
+    // A map iterates sorted by key on every read: `Map.keys`, `Map.values`
+    // and `Map.entries` must agree with each other and with the VM. The
+    // compiled backend used to walk `HashMap::values()` bare while `keys`
+    // and `entries` beside it sorted, so the value order changed per process
+    // and `zip(keys, values)` stopped matching `entries` — inside ONE
+    // backend, on one run. Six string keys make an accidental agreement a
+    // 1-in-720 event, and the zip-vs-entries line catches it without any
+    // cross-run comparison. The integer-keyed map pins the comparator:
+    // numeric order, not the printed digits that would put 10 before 2.
+    let src = r#"module MapOrderDifferential
+    intent = "Every map iteration read in one program, for cross-backend agreement"
+    effects [Console.print]
+
+fn stringKeyed() -> Map<String, Int>
+    ? "Six keys inserted deliberately out of key order."
+    m0 = Map.set({}, "z", 1)
+    m1 = Map.set(m0, "a", 2)
+    m2 = Map.set(m1, "m", 3)
+    m3 = Map.set(m2, "k", 4)
+    m4 = Map.set(m3, "e", 5)
+    Map.set(m4, "t", 6)
+
+fn intKeyed() -> Map<Int, String>
+    ? "Keys whose numeric order differs from their printed order."
+    m0 = Map.set({}, 10, "ten")
+    m1 = Map.set(m0, 2, "two")
+    Map.set(m1, 33, "lot")
+
+fn joinStrings(xs: List<String>) -> String
+    ? "Joins strings with a comma separator."
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> x
+            _ -> "{x},{joinStrings(rest)}"
+
+fn joinInts(xs: List<Int>) -> String
+    ? "Joins integers with a comma separator."
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> "{x}"
+            _ -> "{x},{joinInts(rest)}"
+
+fn pairText(p: Tuple<String, Int>) -> String
+    ? "Renders one key-value pair."
+    match p
+        (k, v) -> "{k}={v}"
+
+fn joinPairs(xs: List<Tuple<String, Int>>) -> String
+    ? "Joins key-value pairs with a comma separator."
+    match xs
+        [] -> ""
+        [p, ..rest] -> match rest
+            [] -> pairText(p)
+            _ -> "{pairText(p)},{joinPairs(rest)}"
+
+fn main() -> Unit
+    ? "Print every read so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print(joinStrings(Map.keys(stringKeyed())))
+    Console.print(joinInts(Map.values(stringKeyed())))
+    Console.print(joinPairs(Map.entries(stringKeyed())))
+    Console.print(joinPairs(List.zip(Map.keys(stringKeyed()), Map.values(stringKeyed()))))
+    Console.print(joinInts(Map.keys(intKeyed())))
+    Console.print(joinStrings(Map.values(intKeyed())))
+"#;
+    // Lines 3 and 4 are the correspondence check: zip(keys, values) must BE
+    // entries, or `keys[i]` no longer names the key of `values[i]`.
+    let expected = "a,e,k,m,t,z\n2,5,4,3,6,1\na=2,e=5,k=4,m=3,t=6,z=1\na=2,e=5,k=4,m=3,t=6,z=1\n2,10,33\ntwo,ten,lot";
+
+    let vm = run_vm_inline("map_iteration_order", src).expect("vm run");
+    let rust = build_run_rust_inline("map_iteration_order", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM map iteration order changed");
+    assert_eq!(
+        rust, expected,
+        "Rust map iteration diverged from the VM — a map read stopped sorting by key"
+    );
+}
+
+#[test]
 fn rust_try_in_argument_position_matches_vm() {
     // `?` inside an argument returns from the function whose body contains it,
     // and the Rust backend gets this from `?` on a real `Result`. The VM reaches
