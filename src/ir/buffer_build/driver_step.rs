@@ -46,10 +46,10 @@
 //! - it does not recurse into itself — the idiom recurses into the
 //!   DRIVER, and a self-recursive step is its own loop.
 //!
-//! Binder hygiene is mechanical rather than argued per-case: every name
-//! the step's body binds is renamed into the guarded `__stp` namespace
-//! (fresh per inline, so a chain of inlines cannot capture across
-//! rounds), parameters are substituted only when the argument is a bare
+//! Binder hygiene is mechanical rather than argued per-case: every
+//! name this stage synthesizes — binder renames and argument binders
+//! alike — comes from ONE allocator, so no two are ever equal.
+//! Parameters are substituted only when the argument is a bare
 //! identifier or a literal — anything else is bound first, in argument
 //! order, so evaluation order is the call's — and a step whose body
 //! reads a name the driver re-binds anywhere is declined outright.
@@ -79,13 +79,37 @@ use super::list_build::{
 use super::*;
 use crate::ast::TopLevel;
 
-/// The namespace every binder this stage synthesizes lives in. Fresh
-/// names are `__stp<k>_<name>` with `k` unique per inline, so no two
-/// inlines — including two rounds into the same driver — can collide.
-/// A program that binds any name starting with this prefix takes the
-/// stage away for the whole module: the check is on the prefix, so it
-/// covers every `k` at once.
+/// The namespace every name this stage synthesizes lives in. The
+/// names are `__stp<n>` with `n` handed out by [`FreshNames`] — one
+/// allocator per driver build, shared by binder renames and argument
+/// binders across every inline round — so no two synthesized names
+/// are ever equal, by construction. A program that binds any name
+/// starting with this prefix takes the stage away for the whole
+/// module: the check is on the prefix, so it covers every `n` at
+/// once.
 pub(super) const STEP_PREFIX: &str = "__stp";
+
+/// The single fresh-name allocator behind every name this stage
+/// synthesizes. One monotone counter: two allocations can never be
+/// equal BY CONSTRUCTION, with no second namespace to reason about.
+/// This replaced two overlapping hand-rolled schemes (`__stp<k>_<name>`
+/// binder renames beside `__stp<k>_p<idx>` argument binders), where a
+/// step binder literally named `p0` renamed to exactly the fresh name
+/// minted for the bound argument at index 0 and shadowed it.
+#[derive(Default)]
+struct FreshNames {
+    next: usize,
+}
+
+impl FreshNames {
+    /// The next name. No other call on this allocator has returned it
+    /// or ever will.
+    fn next_name(&mut self) -> String {
+        let n = self.next;
+        self.next += 1;
+        format!("{STEP_PREFIX}{n}")
+    }
+}
 
 /// Why the driver-and-step normalization left a pair alone.
 ///
@@ -224,8 +248,11 @@ fn build_and_validate(
     let mut body = fd.body.as_ref().clone();
     let mut steps: Vec<String> = Vec::new();
     let driver_bound = bound_names_of(fd);
+    // One allocator for the whole build: every synthesized name in
+    // every round comes from here, so no two are ever equal.
+    let mut fresh = FreshNames::default();
 
-    for round in 0..MAX_ROUNDS {
+    for _ in 0..MAX_ROUNDS {
         let Some(target) = first_companion_target(&body, &fd.name) else {
             break;
         };
@@ -238,7 +265,7 @@ fn build_and_validate(
             return Err(PairDecline::StepShape.reason());
         };
         check_step_conditions(step, facts).map_err(PairDecline::reason)?;
-        let inlined = inline_step_at(&mut body, step, &driver_bound, &facts.top_level, round)
+        let inlined = inline_step_at(&mut body, step, &driver_bound, &facts.top_level, &mut fresh)
             .map_err(PairDecline::reason)?;
         if !inlined {
             // The walk saw the target but the replacement did not land —
@@ -567,7 +594,7 @@ fn inline_step_at(
     step: &FnDef,
     driver_bound: &HashSet<String>,
     top_level: &HashSet<String>,
-    round: usize,
+    fresh: &mut FreshNames,
 ) -> Result<bool, PairDecline> {
     // Build the replacement first, so a decline leaves the body copy
     // exactly as it was.
@@ -579,7 +606,7 @@ fn inline_step_at(
             step,
             driver_bound,
             top_level,
-            round,
+            fresh,
             &mut done,
             &mut outcome,
         );
@@ -594,7 +621,7 @@ fn replace_step_call(
     step: &FnDef,
     driver_bound: &HashSet<String>,
     top_level: &HashSet<String>,
-    round: usize,
+    fresh: &mut FreshNames,
     done: &mut bool,
     outcome: &mut Result<(), PairDecline>,
 ) {
@@ -604,7 +631,7 @@ fn replace_step_call(
     if let Expr::TailCall(data) = &expr.node
         && data.target == step.name
     {
-        match encode_step_body(step, &data.args, driver_bound, top_level, round) {
+        match encode_step_body(step, &data.args, driver_bound, top_level, fresh) {
             Ok(inlined) => {
                 *expr = inlined;
                 *done = true;
@@ -614,7 +641,7 @@ fn replace_step_call(
         return;
     }
     crate::ir::chars_fusion::walk_children_mut(expr, &mut |child| {
-        replace_step_call(child, step, driver_bound, top_level, round, done, outcome);
+        replace_step_call(child, step, driver_bound, top_level, fresh, done, outcome);
     });
 }
 
@@ -626,7 +653,7 @@ fn encode_step_body(
     args: &[Spanned<Expr>],
     driver_bound: &HashSet<String>,
     top_level: &HashSet<String>,
-    round: usize,
+    fresh: &mut FreshNames,
 ) -> Result<Spanned<Expr>, PairDecline> {
     if args.len() != step.params.len() {
         return Err(PairDecline::StepShape);
@@ -681,9 +708,15 @@ fn encode_step_body(
         return Err(PairDecline::StepShape);
     };
 
-    let rename: HashMap<String, String> = binders
-        .iter()
-        .map(|n| (n.clone(), format!("{STEP_PREFIX}{round}_{n}")))
+    // The rename map's keys are the step's original binder names;
+    // every output comes from the one allocator. Allocation walks the
+    // binders in sorted order so the synthesized names are
+    // deterministic across runs — the set's own order is not.
+    let mut ordered: Vec<String> = binders.iter().cloned().collect();
+    ordered.sort();
+    let rename: HashMap<String, String> = ordered
+        .into_iter()
+        .map(|n| (n, fresh.next_name()))
         .collect();
     for stmt in stmts.iter_mut() {
         if let Stmt::Binding(name, _, _) = stmt
@@ -710,16 +743,20 @@ fn encode_step_body(
     // the cross-backend differential.
     let mut bound_args: Vec<(String, Spanned<Expr>)> = Vec::new();
     let mut subst: HashMap<String, Spanned<Expr>> = HashMap::new();
-    for (idx, ((param, _), arg)) in step.params.iter().zip(args.iter()).enumerate() {
+    for ((param, _), arg) in step.params.iter().zip(args.iter()) {
         let replacement = match &arg.node {
             Expr::Ident(_) | Expr::Literal(_) => arg.clone(),
             _ => {
-                let fresh = format!("{STEP_PREFIX}{round}_p{idx}");
-                let read = sp_at(arg.line, Expr::Ident(fresh.clone()));
+                // The argument binder comes from the same allocator as
+                // the binder renames above, so no binder rename can
+                // spell it — the shadow a `p<idx>`-shaped second
+                // namespace let a step binder cast.
+                let name = fresh.next_name();
+                let read = sp_at(arg.line, Expr::Ident(name.clone()));
                 if let Some(ty) = arg.ty() {
                     read.set_ty(ty.clone());
                 }
-                bound_args.push((fresh, arg.clone()));
+                bound_args.push((name, arg.clone()));
                 read
             }
         };
@@ -1036,6 +1073,69 @@ fn entry(xs: List<Int>) -> List<Int>
                 report.builder_fns,
                 vec!["drive".to_string()],
                 "arguments ({first:?}, {second:?}) (bound: {bound:?}) must fuse"
+            );
+        }
+    }
+
+    /// One cell of the P-BINDER matrix: the step's binder is spelled
+    /// like the index-derived half of a synthesized argument name
+    /// (`p0`, `p1`), and the step reads both parameters again after
+    /// the binding, so a collision between synthesized names changes
+    /// the answer instead of hiding.
+    fn p_binder_program(binder: &str, bound: (bool, bool)) -> String {
+        let arg1 = if bound.0 { "x + 0" } else { "x" };
+        let arg2 = if bound.1 { "y + 0" } else { "y" };
+        format!(
+            r#"module PBinderMatrix
+    intent = "P-binder collision fixture."
+    exposes [entry]
+
+fn drive(xs: List<Int>, acc: List<Int>) -> List<Int>
+    match xs
+        [] -> List.reverse(acc)
+        [x, ..t] -> match t
+            [] -> List.reverse(acc)
+            [y, ..t2] -> step({arg1}, {arg2}, t2, acc)
+
+fn step(sa: Int, sb: Int, st: List<Int>, sacc: List<Int>) -> List<Int>
+    {binder} = sa + sb
+    drive(st, List.prepend({binder} * 10 + sa + sb, sacc))
+
+fn entry(xs: List<Int>) -> List<Int>
+    drive(xs, [])
+"#
+        )
+    }
+
+    /// The P-BINDER axis of the hygiene matrix: a step binder spelled
+    /// like the index-derived half of a synthesized argument name,
+    /// with the argument at that index substituted, bound, and bound
+    /// at the OTHER index. Every synthesized name comes from one
+    /// allocator, so the spelling cannot collide with the name minted
+    /// for the bound argument and every cell fuses; the running
+    /// answers for the same cells are pinned end-to-end in
+    /// `tests/driver_step_pairs.rs`.
+    #[test]
+    fn step_binders_spelled_like_argument_indices_fuse_in_every_cell() {
+        let cells: &[(&str, (bool, bool))] = &[
+            ("p0", (false, false)),
+            ("p0", (true, false)),
+            ("p0", (false, true)),
+            ("p1", (false, false)),
+            ("p1", (false, true)),
+            ("p1", (true, false)),
+        ];
+        for (binder, bound) in cells {
+            let report = pass_on(&p_binder_program(binder, *bound));
+            assert_eq!(
+                report.pair_inlined_by_fn.get("drive"),
+                Some(&vec!["step".to_string()]),
+                "binder {binder:?} (bound: {bound:?}) must not block the inline: {report:?}"
+            );
+            assert_eq!(
+                report.builder_fns,
+                vec!["drive".to_string()],
+                "binder {binder:?} (bound: {bound:?}) must fuse"
             );
         }
     }
