@@ -34,7 +34,7 @@ Options:
 
 ### `--emit-ir-after` quick map
 
-The compiler runs IR transforms in a fixed seven-stage pipeline (see `src/ir/pipeline.rs`). `--emit-ir-after=PASS` short-circuits before codegen and prints the IR snapshot right after the named stage:
+The compiler runs IR transforms in a fixed stage order (see `src/ir/pipeline.rs`). `--emit-ir-after=PASS` short-circuits before codegen and prints the IR snapshot right after the named stage:
 
 | Stage          | What changes between stages                                                |
 |----------------|---------------------------------------------------------------------------|
