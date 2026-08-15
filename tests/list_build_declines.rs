@@ -493,3 +493,236 @@ fn main() -> Unit
     // accumulator — and the caller reverses whatever came back.
     assert_eq!(out, "[8, 7]");
 }
+
+// === The byte sink =====================================================
+//
+// The programs below carry a word-for-word copy of the standard
+// library's `fromList` family, which is what makes them candidates for
+// the byte-sink retarget — the retarget verifies its consumer
+// structurally against the embedded module, and an exact copy passes.
+// Each one then breaks exactly one of the retarget's guards, and the
+// assertion is the answer the unfused pair has always given.
+
+/// The `fromList` family the retarget recognises, verbatim.
+const FROM_LIST_FAMILY: &str = r#"record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+
+fn renderItems(values: List<Int>) -> String
+    ? "The elements, comma-separated."
+    match values
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            [next, ..rest] -> "{head}, {renderItems(tail)}"
+
+fn describe(outcome: Result<Bytes, String>) -> String
+    ? "Render either side of a fromList answer."
+    match outcome
+        Result.Ok(bytes) -> "ok:{renderItems(bytes.values)}"
+        Result.Err(message) -> "err:{message}"
+"#;
+
+/// The consumer reads the collected result once more before handing it
+/// to `fromList` — a length gate, exactly the second reader the
+/// occurs-check exists for. Both reads see the same list, so a fusion
+/// that missed one would hand the gate a builder it already consumed.
+#[test]
+fn a_collected_result_read_twice_keeps_its_validation_walk() {
+    let out = run_program(
+        "byte_second_reader",
+        &format!(
+            r#"module SecondReader
+    intent =
+        "A collected result read once more before its fromList."
+    effects [Console.print]
+
+{FROM_LIST_FAMILY}
+fn collectRange(n: Int, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Collect n samples spaced by sixty, counting down."
+    match n <= 0
+        true -> Result.Ok(List.reverse(acc))
+        false -> collectRange(n - 1, List.prepend(n * 60, acc))
+
+fn toBytes(n: Int) -> Result<Bytes, String>
+    ? "Refuse long runs before validating, which reads the collected list twice."
+    values = collectRange(n, [])?
+    match List.len(values) >= 3
+        true -> Result.Err("three is plenty")
+        false -> fromList(values)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(toBytes(4)))
+    Console.print(describe(toBytes(2)))
+"#
+        ),
+    );
+    assert_eq!(out, "err:three is plenty\nok:120, 60");
+}
+
+/// The consumer is a `fromList` in name only — its message differs
+/// from the standard library's by one word. The retarget bakes in the
+/// library's exact words, so this module keeps its own.
+#[test]
+fn a_from_list_with_its_own_words_keeps_them() {
+    let family_with_other_words = FROM_LIST_FAMILY.replace(
+        "\"byte {firstOutOfRange(xs)}",
+        "\"value {firstOutOfRange(xs)}",
+    );
+    let out = run_program(
+        "byte_modified_words",
+        &format!(
+            r#"module ModifiedWords
+    intent =
+        "A fromList whose message differs from the standard library's by one word."
+    effects [Console.print]
+
+{family_with_other_words}
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    ? "Collect n samples spaced by 150, counting down."
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n * 150, acc))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(fromList(collect(1, []))))
+    Console.print(describe(fromList(collect(3, []))))
+"#
+        ),
+    );
+    assert_eq!(
+        out,
+        "ok:150\nerr:value 450 at index 0 is outside 0..=255"
+    );
+}
+
+/// An exit the accumulator never reaches answers with a list of its
+/// own — and `fromList` judges that list too. A retarget would have
+/// validated only what the loop pushed and answered `ok:7, 999`.
+#[test]
+fn an_exit_the_accumulator_never_reaches_still_gets_validated() {
+    let out = run_program(
+        "byte_bails_into_validation",
+        &format!(
+            r#"module BailsIntoValidation
+    intent =
+        "A loop with an exit the accumulator never reaches, whose list still passes through fromList."
+    effects [Console.print]
+
+{FROM_LIST_FAMILY}
+fn collect(values: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Collect until a zero, which answers with a list of its own."
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> match head == 0
+            true -> [7, 999]
+            false -> collect(tail, List.prepend(head, acc))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(fromList(collect([1, 0, 2], []))))
+    Console.print(describe(fromList(collect([1, 2], []))))
+"#
+        ),
+    );
+    assert_eq!(
+        out,
+        "err:byte 999 at index 1 is outside 0..=255\nok:1, 2"
+    );
+}
+
+/// A call that seeds the accumulator keeps the loop it named — the
+/// family's existing rule — and `fromList` still judges the seeded
+/// element. The empty-started call beside it is free to fuse; both
+/// answers are the pair's.
+#[test]
+fn a_seeded_from_list_call_keeps_its_elements_and_its_judgement() {
+    let out = run_program(
+        "byte_seeded",
+        &format!(
+            r#"module SeededIntoValidation
+    intent =
+        "The same collecting loop started empty and started with an element fromList must still judge."
+    effects [Console.print]
+
+{FROM_LIST_FAMILY}
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    ? "Collect a countdown into the accumulator."
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(fromList(collect(3, [300]))))
+    Console.print(describe(fromList(collect(3, []))))
+"#
+        ),
+    );
+    assert_eq!(
+        out,
+        "err:byte 300 at index 0 is outside 0..=255\nok:3, 2, 1"
+    );
+}
+
+/// The program binds a name in the `__byt_` namespace. A leading `__`
+/// is not reserved — this parses, type-checks and runs — and a binder
+/// is exactly what shadows a name for the code underneath it, so the
+/// whole pass steps aside, list fusion included.
+#[test]
+fn a_program_that_binds_a_byte_builder_name_keeps_its_unfused_answer() {
+    let out = run_program(
+        "byte_name_taken",
+        &format!(
+            r#"module ByteNameTaken
+    intent =
+        "A module that binds a name in the byte builder's namespace keeps every list."
+    effects [Console.print]
+
+{FROM_LIST_FAMILY}
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    ? "Collect a countdown, in a module that binds one of the byte builder's names."
+    __byt_probe = 3
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n + __byt_probe, acc))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(fromList(collect(4, []))))
+"#
+        ),
+    );
+    assert_eq!(out, "ok:7, 6, 5, 4");
+}

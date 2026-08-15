@@ -1,0 +1,74 @@
+module ProofSeamBytes
+    intent =
+        "A collecting loop whose only reader is a word-for-word copy of the standard"
+        "library's fromList, so the list-build pass retargets its builder to bytes."
+        "Fixture for the proof snapshot seam: the emitted proof must describe THIS"
+        "source — no collected variant, no byte builder, no deleted fromList call —"
+        "whether or not the optimising passes rewrote the program for a runtime backend."
+    effects [Console]
+
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+
+fn doubled(values: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Double every element, left to right, collecting into the accumulator."
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> doubled(tail, List.prepend(head * 2, acc))
+
+fn byteCount(values: List<Int>) -> Int
+    ? "How many bytes the doubling produced, or zero when one was too wide."
+    match fromList(doubled(values, []))
+        Result.Ok(bytes) -> List.len(bytes.values)
+        Result.Err(message) -> 0
+
+verify allInRange
+    allInRange([]) => true
+    allInRange([0, 255]) => true
+    allInRange([256]) => false
+
+verify fromList
+    fromList([1, 2]) => Result.Ok(Bytes(values = [1, 2]))
+    fromList([300]) => Result.Err("byte 300 at index 0 is outside 0..=255")
+
+verify doubled
+    doubled([], []) => []
+    doubled([1, 2, 3], []) => [2, 4, 6]
+
+verify byteCount
+    byteCount([1, 2, 3]) => 3
+    byteCount([200]) => 0
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(byteCount([1, 2, 3, 4])))

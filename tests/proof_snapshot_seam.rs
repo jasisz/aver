@@ -57,6 +57,11 @@ const CHARS: &str = include_str!("fixtures/proof_seam_chars.av");
 /// reverses on the way out, the shape `list_build` turns into a builder.
 const COLLECT: &str = include_str!("fixtures/proof_seam_collect.av");
 
+/// The same loop with a word-for-word copy of the standard library's
+/// `fromList` as its only reader — the shape the list-build pass's
+/// byte-sink stage retargets to the byte builder.
+const BYTES: &str = include_str!("fixtures/proof_seam_bytes.av");
+
 /// What a caller asks the pipeline for. Named rather than inlined so a
 /// test reads as the claim it makes.
 #[derive(Clone, Copy)]
@@ -98,6 +103,9 @@ struct Run {
     list_rewrites: usize,
     /// Same question again for the synthesized `__collected` loop.
     runtime_carries_collected: bool,
+    /// `fromList` call sites the byte-sink retarget deleted in the
+    /// runtime half.
+    byte_retargets: usize,
     /// `escape` call sites rewritten in the runtime half.
     escape_rewrites: usize,
 }
@@ -135,6 +143,7 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
         })
     };
     let list_rewrites = result.list_build.as_ref().map_or(0, |r| r.rewrites);
+    let byte_retargets = result.list_build.as_ref().map_or(0, |r| r.byte_retargets);
     let runtime_carries_buffered = carries("__buffered");
     let runtime_carries_cursor = carries("__cursor");
     let runtime_carries_collected = carries("__collected");
@@ -183,6 +192,7 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
         runtime_carries_cursor,
         list_rewrites,
         runtime_carries_collected,
+        byte_retargets,
         escape_rewrites,
     }
 }
@@ -517,4 +527,76 @@ fn proof_view_under_list_build_is_the_unfused_program() {
         "ProofSeamCollect",
         /* fabricating */ true,
     );
+}
+
+/// The byte-sink half of the same invariant. The retarget deletes a
+/// `fromList` call the user wrote and rewrites the collected variant to
+/// answer `Result<Bytes, String>` through the `__byt_*` builder — a
+/// theorem about that program is a theorem about one the user never
+/// wrote, and a certificate whose model lost a call its bytes still
+/// carry (or the reverse) describes the wrong program. Registered below
+/// the snapshot, so none of it can reach an exporter.
+#[test]
+fn the_byte_sink_cannot_change_what_gets_proven() {
+    let pristine = run(
+        BYTES,
+        "ProofSeamBytes",
+        Flags {
+            fabricating: false,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+    let fused = run(
+        BYTES,
+        "ProofSeamBytes",
+        Flags {
+            fabricating: true,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+
+    // Non-vacuity: the retarget has to have fired in the same run that
+    // produced the proof export.
+    assert!(
+        fused.byte_retargets > 0,
+        "fixture must retarget its collected loop to the byte builder with \
+         the fabricating passes on — otherwise this test proves nothing"
+    );
+    assert!(
+        pristine.byte_retargets == 0 && !pristine.runtime_carries_collected,
+        "the pristine run must not fuse — otherwise the two sides agree trivially"
+    );
+    assert!(
+        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        "the export must be non-empty — an empty one satisfies every equality here"
+    );
+
+    assert_eq!(
+        pristine.lean, fused.lean,
+        "emitted Lean must not depend on whether the fabricating passes ran"
+    );
+    assert_eq!(
+        pristine.dafny, fused.dafny,
+        "emitted Dafny must not depend on whether the fabricating passes ran"
+    );
+    for (label, emitted) in [("Lean", &fused.lean), ("Dafny", &fused.dafny)] {
+        assert!(
+            !emitted.contains("__collected") && !emitted.contains("__byt_"),
+            "the byte builder shape leaked into the emitted {label}"
+        );
+        assert!(
+            emitted.contains("fromList"),
+            "the fromList call the user wrote must stay in the emitted {label}"
+        );
+    }
+}
+
+/// The AST invariant on the same fixture, separate from the emitted
+/// text so a regression reports both facts rather than the first to
+/// trip.
+#[test]
+fn proof_view_under_the_byte_sink_is_the_unfused_program() {
+    assert_proof_view_is_the_unfabricated_program(BYTES, "ProofSeamBytes", /* fabricating */ true);
 }
