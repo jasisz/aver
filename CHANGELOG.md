@@ -26,6 +26,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **`aver run --wasm-gc` and `aver run --wasip2` run allocation-heavy programs about four times faster.** The embedded WebAssembly engine is upgraded from wasmtime 44 to 46 and now uses its copying garbage collector — the same collector the standalone `wasmtime` CLI defaults to — instead of the reference-counting one. Decoding 1 MiB of hexadecimal with `Bytes.fromHex` drops from about 1.7 s to about 0.42 s, within a few percent of running the same emitted component under the external CLI.
+
 - **Building a string out of a list loop is recognised in more shapes, and `aver run` optimises it the same way `aver compile` does.** When a program builds up a list of pieces with a tail-recursive loop and hands the result to `String.join`, Aver skips the list entirely and writes the pieces straight into the finished string. Two spellings of that loop were recognised. The one most Aver code actually writes was not — the loop that walks the input list and reverses in its own empty-list case:
 
   ```aver
