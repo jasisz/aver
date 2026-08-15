@@ -6302,6 +6302,9 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::StrCode1
             | BuiltinIntrinsic::StrCode1Lower
             | BuiltinIntrinsic::StrCode1Upper
+            | BuiltinIntrinsic::StrCursorCode
+            | BuiltinIntrinsic::StrFoldLower
+            | BuiltinIntrinsic::StrFoldUpper
             | BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush
             | BuiltinIntrinsic::LstFinalize => false,
