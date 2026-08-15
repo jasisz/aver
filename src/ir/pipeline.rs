@@ -24,7 +24,7 @@
 //! The pipeline carries one more invariant, cutting ACROSS the order:
 //! the **proof line**. A pass that puts entities in the AST which the
 //! source does not contain (`interp_lower`'s `__buf_*` chain,
-//! `buffer_build`'s `<sink>__buffered` sink, the planned chars-fusion)
+//! `buffer_build`'s `<sink>__buffered` sink, `chars_fusion`'s cursor loops)
 //! sits below it and must never be visible to Lean / Dafny; every other
 //! pass sits above it and the proof exporters read its output. `run`
 //! serves both halves from one run: it snapshots the AST before the
@@ -36,6 +36,7 @@
 
 use crate::ast::TopLevel;
 use crate::ir::buffer_build::BufferBuildPassReport;
+use crate::ir::chars_fusion::CharsFusionPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
@@ -50,6 +51,13 @@ pub enum PipelineStage {
     Typecheck,
     InterpLower,
     BufferBuild,
+    /// Chars fusion — `String.chars(s)` consumed linearly by a
+    /// self-recursive loop becomes a cursor over `s`, and a match over
+    /// single-character string literals becomes a codepoint comparison.
+    /// Fabricating (a `<fn>__cursor` variant, six `__str_*`
+    /// intrinsics), so it sits BELOW the proof line next to
+    /// `buffer_build` — see [`AstView`].
+    CharsFusion,
     Resolve,
     LastUse,
     Analyze,
@@ -111,6 +119,7 @@ impl PipelineStage {
             Self::Typecheck => "typecheck",
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
+            Self::CharsFusion => "chars_fusion",
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
@@ -166,6 +175,15 @@ pub struct PipelineConfig<'a> {
     /// contain belongs here, below the line, and is proof-invisible for
     /// free.
     pub run_buffer_build: bool,
+    /// Whether to run the chars-fusion pass. Same target matrix as
+    /// `run_buffer_build`, and for the same reason: the intrinsics it
+    /// introduces are lowered by the VM and by the Rust backend, and by
+    /// nothing else — the wasm-gc family has no representation for them
+    /// and leaves this off.
+    ///
+    /// Also below the proof line, so — like `run_buffer_build` — what
+    /// you pass here cannot change what gets proven (see [`AstView`]).
+    pub run_chars_fusion: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
     /// `resolve`. Annotates each `Expr::Resolved` slot reference with
@@ -263,6 +281,7 @@ impl<'a> Default for PipelineConfig<'a> {
             typecheck: None,
             run_interp_lower: true,
             run_buffer_build: true,
+            run_chars_fusion: true,
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
@@ -310,6 +329,7 @@ pub enum PassReport {
         fns_changed: Vec<FnCountChange>,
     },
     BufferBuild(BufferBuildPassReport),
+    CharsFusion(CharsFusionPassReport),
     Resolve {
         slots_resolved: usize,
         fns_with_slots: usize,
@@ -475,6 +495,11 @@ pub struct PipelineResult {
     /// Buffer-build pass report — sinks fired, synthesized fns,
     /// per-sink rewrite counts. `None` when the pass was disabled.
     pub buffer_build: Option<BufferBuildPassReport>,
+    /// Chars-fusion pass report — cursor variants synthesized, producer
+    /// call sites moved, codepoint matches rewritten, and every loop the
+    /// recogniser turned down with its reason. `None` when the pass was
+    /// disabled.
+    pub chars_fusion: Option<CharsFusionPassReport>,
     /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
     /// when `run_analyze` was on. `None` when the stage was disabled.
     pub analysis: Option<AnalysisResult>,
@@ -561,7 +586,7 @@ impl PipelineResult {
 /// `buffer_build` replaces a `String.join(<builder>(…), sep)` pipeline
 /// with a buffer loop and synthesizes a `<sink>__buffered` fn;
 /// `interp_lower` replaces an interpolation with a `__buf_*` chain; the
-/// planned chars-fusion pass will do the same to traversals. Those
+/// chars_fusion pass does the same to character traversals. Those
 /// FABRICATING passes are below the proof line. Keeping them off a
 /// proof used to be a convention — every proof-facing caller passing
 /// `run_buffer_build: false` — and one forgotten `true` silently
@@ -645,6 +670,15 @@ pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResul
 /// Skipped by proof exporters (Lean/Dafny) which want the source-level form.
 pub fn interp_lower(items: &mut [TopLevel]) {
     crate::ir::lower_interpolation_pass(items);
+}
+
+/// Chars-fusion pass — turns a `String.chars(s)` list consumed linearly
+/// by a self-recursive loop into a cursor over `s`, and a match over
+/// single-character string literals into a codepoint comparison.
+/// Appends the synthesized `<fn>__cursor` variants to `items`. See
+/// [`crate::ir::chars_fusion`].
+pub fn chars_fusion(items: &mut Vec<TopLevel>) -> CharsFusionPassReport {
+    crate::ir::run_chars_fusion_pass(items)
 }
 
 /// Buffer-build deforestation pass — detects `String.join(<builder>(args, []), sep)`
@@ -740,6 +774,13 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         result.pass_diagnostics.push(diag_for_buffer_build(&report));
         result.buffer_build = Some(report);
         fire(&mut cfg, PipelineStage::BufferBuild, items);
+    }
+
+    if cfg.run_chars_fusion {
+        let report = chars_fusion(items);
+        result.pass_diagnostics.push(diag_for_chars_fusion(&report));
+        result.chars_fusion = Some(report);
+        fire(&mut cfg, PipelineStage::CharsFusion, items);
     }
 
     if cfg.run_resolve {
@@ -1075,6 +1116,13 @@ fn diag_for_buffer_build(report: &BufferBuildPassReport) -> PassDiagnostic {
     }
 }
 
+fn diag_for_chars_fusion(report: &CharsFusionPassReport) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::CharsFusion,
+        report: PassReport::CharsFusion(report.clone()),
+    }
+}
+
 fn diag_for_resolve(post: &CountsByFn, items: &[TopLevel]) -> PassDiagnostic {
     let slots_resolved = pass_diag::total(post).resolved;
     let fns_with_slots = post.values().filter(|c| c.resolved > 0).count();
@@ -1300,6 +1348,7 @@ fn id(n: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
+                PipelineStage::CharsFusion,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
@@ -1331,6 +1380,7 @@ fn id(n: Int) -> Int
                 typecheck: None,
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_chars_fusion: false,
                 run_last_use: false,
                 run_analyze: false,
                 run_escape: false,
@@ -1547,6 +1597,7 @@ fn id(n: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
+                PipelineStage::CharsFusion,
                 PipelineStage::Escape,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
                 // NameResolve runs unconditionally after
@@ -1585,6 +1636,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
+                PipelineStage::CharsFusion,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,

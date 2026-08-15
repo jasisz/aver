@@ -1,0 +1,26 @@
+module StdlibBytesDehexApp
+    intent =
+        "Decodes hexadecimal with the standard library's own character loop, which the chars-fusion pass walks with a cursor."
+    depends [Bytes]
+    exposes [decode]
+    effects [Console.print]
+
+fn decode(text: String) -> String
+    ? "Decode hexadecimal and render the octets, or report why not."
+    match Bytes.fromHex(text)
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(message) -> message
+
+verify decode
+    decode("") => ""
+    decode("00ff10") => "00ff10"
+    decode("AbCdEf") => "abcdef"
+    decode("0") => "Bytes.fromHex: expected an even number of hex characters"
+    decode("zz") => "Bytes.fromHex: invalid hexadecimal character 'z'"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(decode("00ff10AbCdEf"))
+    Console.print(decode("0"))
+    Console.print(decode("0z"))
+    Console.print(decode(""))

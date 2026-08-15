@@ -428,6 +428,36 @@ pub const BITS_SHIFT_RIGHT: u8 = 0x97;
 /// guarantees `w >= 0`.
 pub const BITS_LOW: u8 = 0x98;
 
+// --- Codepoint cursor (chars fusion) -----------------------------------
+//
+// Emitted by the chars-fusion pass in place of a `String.chars(s)` list
+// and the string comparisons a character match compiles to. The cursor
+// is a byte offset that only ever lands on a character boundary,
+// because `STR_CURSOR_NEXT` steps by the UTF-8 width of the character
+// it reads — `String.chars` iterates Unicode scalar values, so a
+// byte-at-a-time cursor would visit a different list. Every one of
+// these delegates to `aver_rt::strcursor`, the same code compiled Rust
+// calls, so the two backends cannot answer differently.
+
+/// Pop i, pop s → push `Bool` (the cursor has reached the end of `s`).
+pub const STR_CURSOR_END: u8 = 0x99;
+
+/// Pop i, pop s → push the one-character `String` at byte offset `i`.
+pub const STR_CURSOR_HEAD: u8 = 0x9A;
+
+/// Pop i, pop s → push the byte offset one CODEPOINT past `i` (Int).
+pub const STR_CURSOR_NEXT: u8 = 0x9B;
+
+/// Pop s → push its single codepoint (Int), or `-1` when `s` is not
+/// exactly one character long.
+pub const STR_CODE1: u8 = 0x9C;
+
+/// Pop s → push [`STR_CODE1`] of `String.toLower(s)`.
+pub const STR_CODE1_LOWER: u8 = 0x9D;
+
+/// Pop s → push [`STR_CODE1`] of `String.toUpper(s)`.
+pub const STR_CODE1_UPPER: u8 = 0x9E;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -522,6 +552,12 @@ pub fn opcode_name(op: u8) -> &'static str {
         BITS_SHIFT_LEFT => "BITS_SHIFT_LEFT",
         BITS_SHIFT_RIGHT => "BITS_SHIFT_RIGHT",
         BITS_LOW => "BITS_LOW",
+        STR_CURSOR_END => "STR_CURSOR_END",
+        STR_CURSOR_HEAD => "STR_CURSOR_HEAD",
+        STR_CURSOR_NEXT => "STR_CURSOR_NEXT",
+        STR_CODE1 => "STR_CODE1",
+        STR_CODE1_LOWER => "STR_CODE1_LOWER",
+        STR_CODE1_UPPER => "STR_CODE1_UPPER",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -583,6 +619,12 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | BITS_SHIFT_LEFT
         | BITS_SHIFT_RIGHT
         | BITS_LOW
+        | STR_CURSOR_END
+        | STR_CURSOR_HEAD
+        | STR_CURSOR_NEXT
+        | STR_CODE1
+        | STR_CODE1_LOWER
+        | STR_CODE1_UPPER
         | NOP => 0,
 
         // 1-byte

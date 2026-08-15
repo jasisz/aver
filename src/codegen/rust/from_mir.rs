@@ -4613,6 +4613,42 @@ fn emit_mir_intrinsic_call(
             let n = emit_mir_expr(&args[1], ctx)?;
             Some(format!("({}).{}(&({})).unwrap()", x, method, n))
         }
+        // Codepoint cursor (chars fusion). Each one is a call into
+        // `aver_rt::strcursor` — the VM executes the same routines, so
+        // a fused loop cannot answer differently on the two backends.
+        // A negative or out-of-`usize` offset is past the end of every
+        // string, which is exactly where the end test stops the loop,
+        // so `unwrap_or(usize::MAX)` is a saturation and not a silent
+        // wrong index.
+        BuiltinIntrinsic::StrCursorEnd
+        | BuiltinIntrinsic::StrCursorHead
+        | BuiltinIntrinsic::StrCursorNext => {
+            let s = emit_mir_expr(&args[0], ctx)?;
+            let i = emit_mir_expr(&args[1], ctx)?;
+            let call =
+                |f: &str| format!("aver_rt::{f}(&{s}, ({i}).to_usize().unwrap_or(usize::MAX))");
+            Some(match intrinsic {
+                BuiltinIntrinsic::StrCursorEnd => call("str_cursor_end"),
+                BuiltinIntrinsic::StrCursorHead => {
+                    format!("aver_rt::AverStr::from({})", call("str_cursor_head"))
+                }
+                _ => format!(
+                    "aver_rt::AverInt::from_i64({} as i64)",
+                    call("str_cursor_next")
+                ),
+            })
+        }
+        BuiltinIntrinsic::StrCode1
+        | BuiltinIntrinsic::StrCode1Lower
+        | BuiltinIntrinsic::StrCode1Upper => {
+            let f = match intrinsic {
+                BuiltinIntrinsic::StrCode1 => "str_code1",
+                BuiltinIntrinsic::StrCode1Lower => "str_code1_lower",
+                _ => "str_code1_upper",
+            };
+            let s = emit_mir_expr(&args[0], ctx)?;
+            Some(format!("aver_rt::AverInt::from_i64(aver_rt::{f}(&{s}))"))
+        }
     }
 }
 

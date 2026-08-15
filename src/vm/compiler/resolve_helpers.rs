@@ -10,7 +10,8 @@ use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::{
     BITS_LOW, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR,
-    BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID, INT_MOD_EUCLID,
+    BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID, INT_MOD_EUCLID, STR_CODE1, STR_CODE1_LOWER,
+    STR_CODE1_UPPER, STR_CURSOR_END, STR_CURSOR_HEAD, STR_CURSOR_NEXT,
 };
 use std::str::FromStr;
 
@@ -36,6 +37,12 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::BitsShiftLeft => Some((BITS_SHIFT_LEFT, 2)),
         BuiltinIntrinsic::BitsShiftRight => Some((BITS_SHIFT_RIGHT, 2)),
         BuiltinIntrinsic::BitsLow => Some((BITS_LOW, 2)),
+        BuiltinIntrinsic::StrCursorEnd => Some((STR_CURSOR_END, 2)),
+        BuiltinIntrinsic::StrCursorHead => Some((STR_CURSOR_HEAD, 2)),
+        BuiltinIntrinsic::StrCursorNext => Some((STR_CURSOR_NEXT, 2)),
+        BuiltinIntrinsic::StrCode1 => Some((STR_CODE1, 1)),
+        BuiltinIntrinsic::StrCode1Lower => Some((STR_CODE1_LOWER, 1)),
+        BuiltinIntrinsic::StrCode1Upper => Some((STR_CODE1_UPPER, 1)),
         BuiltinIntrinsic::ToStr => None,
     }
 }

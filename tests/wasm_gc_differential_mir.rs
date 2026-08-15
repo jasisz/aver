@@ -86,6 +86,7 @@ fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
             typecheck: Some(ir::TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );

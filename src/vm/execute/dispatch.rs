@@ -2022,6 +2022,75 @@ impl VM {
                     self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
 
+                // Codepoint cursor (chars fusion). Every arm delegates
+                // to `aver_rt::strcursor` — the same routines compiled
+                // Rust calls — so the fused loop cannot answer
+                // differently on the two backends. An offset that is
+                // not a character boundary cannot arise: the pass only
+                // ever produces one by stepping from zero.
+                //
+                // The subject string is only ever BORROWED out of the
+                // arena. Copying it would make each step cost the whole
+                // string and the walk quadratic — measured at 122 s for
+                // a 1 MiB input against 1.0 s for the list it replaces.
+                // The `NanValue` producers need `&mut arena`, so each
+                // arm takes what it needs out of the borrow (a bool, an
+                // offset, at most four bytes of one character) and lets
+                // the borrow end before it builds its result.
+                STR_CURSOR_END => {
+                    let i = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let offset = cursor_offset(i, &self.arena);
+                    let at_end = aver_rt::str_cursor_end(&self.arena.get_string_value(s), offset);
+                    self.stack.push(if at_end {
+                        NanValue::TRUE
+                    } else {
+                        NanValue::FALSE
+                    });
+                }
+
+                STR_CURSOR_NEXT => {
+                    let i = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let offset = cursor_offset(i, &self.arena);
+                    let next = aver_rt::str_cursor_next(&self.arena.get_string_value(s), offset);
+                    let pushed = NanValue::new_int(next as i64, &mut self.arena);
+                    self.stack.push(pushed);
+                }
+
+                STR_CURSOR_HEAD => {
+                    let i = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let offset = cursor_offset(i, &self.arena);
+                    // One character is at most four bytes, so the head
+                    // leaves the borrow on the stack rather than the heap.
+                    let mut buf = [0u8; 4];
+                    let len = {
+                        let text = self.arena.get_string_value(s);
+                        let head = aver_rt::str_cursor_head(&text, offset);
+                        buf[..head.len()].copy_from_slice(head.as_bytes());
+                        head.len()
+                    };
+                    let head = std::str::from_utf8(&buf[..len])
+                        .expect("one character sliced on its own boundaries is valid UTF-8");
+                    let pushed = NanValue::new_string_value(head, &mut self.arena);
+                    self.stack.push(pushed);
+                }
+
+                STR_CODE1 | STR_CODE1_LOWER | STR_CODE1_UPPER => {
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let code = {
+                        let text = self.arena.get_string_value(s);
+                        match op {
+                            STR_CODE1 => aver_rt::str_code1(&text),
+                            STR_CODE1_LOWER => aver_rt::str_code1_lower(&text),
+                            _ => aver_rt::str_code1_upper(&text),
+                        }
+                    };
+                    let pushed = NanValue::new_int(code, &mut self.arena);
+                    self.stack.push(pushed);
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -2231,4 +2300,12 @@ impl VM {
             }
         }
     }
+}
+
+/// The byte offset a cursor opcode was handed. A negative or
+/// unrepresentable value is past the end of every string, which is
+/// exactly where the end test stops the loop — so saturating is a
+/// termination guarantee, not a silent wrong index.
+fn cursor_offset(value: NanValue, arena: &Arena) -> usize {
+    value.as_aver_int(arena).to_usize().unwrap_or(usize::MAX)
 }

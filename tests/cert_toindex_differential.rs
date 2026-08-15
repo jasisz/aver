@@ -88,6 +88,7 @@ fn compile_bytes(source: &str) -> Vec<u8> {
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
