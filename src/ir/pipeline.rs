@@ -35,7 +35,7 @@
 //! is a soundness-grade edit.
 
 use crate::ast::TopLevel;
-use crate::ir::buffer_build::BufferBuildPassReport;
+use crate::ir::buffer_build::{BufferBuildPassReport, ListBuildPassReport};
 use crate::ir::chars_fusion::CharsFusionPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
@@ -58,6 +58,12 @@ pub enum PipelineStage {
     /// intrinsics), so it sits BELOW the proof line next to
     /// `buffer_build` — see [`AstView`].
     CharsFusion,
+    /// List build — a loop that collects with `List.prepend` and
+    /// reverses on the way out appends to a builder instead.
+    /// Fabricating (a `<fn>__collected` variant, three `__lst_*`
+    /// intrinsics), so it sits BELOW the proof line next to
+    /// `buffer_build` and `chars_fusion` — see [`AstView`].
+    ListBuild,
     Resolve,
     LastUse,
     Analyze,
@@ -120,6 +126,7 @@ impl PipelineStage {
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
             Self::CharsFusion => "chars_fusion",
+            Self::ListBuild => "list_build",
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
@@ -184,6 +191,14 @@ pub struct PipelineConfig<'a> {
     /// Also below the proof line, so — like `run_buffer_build` — what
     /// you pass here cannot change what gets proven (see [`AstView`]).
     pub run_chars_fusion: bool,
+    /// Whether to run the list-build pass. Same target matrix as
+    /// `run_buffer_build` and `run_chars_fusion`, and for the same
+    /// reason: the `__lst_*` intrinsics are lowered by the VM and by the
+    /// Rust backend, and by nothing else.
+    ///
+    /// Also below the proof line, so what you pass here cannot change
+    /// what gets proven (see [`AstView`]).
+    pub run_list_build: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
     /// `resolve`. Annotates each `Expr::Resolved` slot reference with
@@ -282,6 +297,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_interp_lower: true,
             run_buffer_build: true,
             run_chars_fusion: true,
+            run_list_build: true,
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
@@ -330,6 +346,7 @@ pub enum PassReport {
     },
     BufferBuild(BufferBuildPassReport),
     CharsFusion(CharsFusionPassReport),
+    ListBuild(ListBuildPassReport),
     Resolve {
         slots_resolved: usize,
         fns_with_slots: usize,
@@ -500,6 +517,10 @@ pub struct PipelineResult {
     /// recogniser turned down with its reason. `None` when the pass was
     /// disabled.
     pub chars_fusion: Option<CharsFusionPassReport>,
+    /// List-build pass report — collected variants synthesized, call
+    /// sites moved, and every collecting loop the recogniser turned down
+    /// with its reason. `None` when the pass was disabled.
+    pub list_build: Option<ListBuildPassReport>,
     /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
     /// when `run_analyze` was on. `None` when the stage was disabled.
     pub analysis: Option<AnalysisResult>,
@@ -681,6 +702,15 @@ pub fn chars_fusion(items: &mut Vec<TopLevel>) -> CharsFusionPassReport {
     crate::ir::run_chars_fusion_pass(items)
 }
 
+/// List-build pass — turns a loop that collects with `List.prepend` and
+/// reverses on the way out into one that appends to a builder. Appends
+/// the synthesized `<fn>__collected` variants to `items`. See
+/// [`crate::ir::buffer_build`], where it lives beside the joined
+/// builders it shares a recogniser with.
+pub fn list_build(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
+    crate::ir::run_list_build_pass(items)
+}
+
 /// Buffer-build deforestation pass — detects `String.join(<builder>(args, []), sep)`
 /// shapes, rewrites them to `__buf_finalize(<builder>__buffered(...))`, and
 /// appends the synthesized buffered variants to `items`. Returns a
@@ -781,6 +811,19 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         result.pass_diagnostics.push(diag_for_chars_fusion(&report));
         result.chars_fusion = Some(report);
         fire(&mut cfg, PipelineStage::CharsFusion, items);
+    }
+
+    // After chars fusion, so a loop that has been given a cursor is
+    // recognised in the shape it will be compiled in. The two rewrites
+    // meet on the same function in `Bytes.fromHex`: chars fusion
+    // replaces the character list it reads, this replaces the list it
+    // writes, and the order is what lets the second see the first's
+    // work rather than a loop that no longer exists.
+    if cfg.run_list_build {
+        let report = list_build(items);
+        result.pass_diagnostics.push(diag_for_list_build(&report));
+        result.list_build = Some(report);
+        fire(&mut cfg, PipelineStage::ListBuild, items);
     }
 
     if cfg.run_resolve {
@@ -1123,6 +1166,13 @@ fn diag_for_chars_fusion(report: &CharsFusionPassReport) -> PassDiagnostic {
     }
 }
 
+fn diag_for_list_build(report: &ListBuildPassReport) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::ListBuild,
+        report: PassReport::ListBuild(report.clone()),
+    }
+}
+
 fn diag_for_resolve(post: &CountsByFn, items: &[TopLevel]) -> PassDiagnostic {
     let slots_resolved = pass_diag::total(post).resolved;
     let fns_with_slots = post.values().filter(|c| c.resolved > 0).count();
@@ -1349,6 +1399,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::CharsFusion,
+                PipelineStage::ListBuild,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
@@ -1381,6 +1432,7 @@ fn id(n: Int) -> Int
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_list_build: false,
                 run_last_use: false,
                 run_analyze: false,
                 run_escape: false,
@@ -1598,6 +1650,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::CharsFusion,
+                PipelineStage::ListBuild,
                 PipelineStage::Escape,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
                 // NameResolve runs unconditionally after
@@ -1637,6 +1690,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::CharsFusion,
+                PipelineStage::ListBuild,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,

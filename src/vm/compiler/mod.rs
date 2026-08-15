@@ -131,10 +131,10 @@ fn build_optimized_mir(
     crate::ir::mir::optimize(lowered)
 }
 
-/// Run the two fabricating string passes — buffer-build deforestation
-/// and chars fusion — over a freshly-parsed dependency module, and keep
-/// the result only when the entry's symbol table already knows every
-/// variant they synthesized.
+/// Run the three fabricating passes — buffer-build deforestation,
+/// chars fusion and list build — over a freshly-parsed dependency
+/// module, and keep the result only when the entry's symbol table
+/// already knows every variant they synthesized.
 ///
 /// The VM re-parses every dep off disk (`load_module_tree`), so the
 /// passes the caller ran over ITS copy of the module — the copy
@@ -146,10 +146,11 @@ fn build_optimized_mir(
 ///
 /// The symbol-table check is what makes running them here safe for every
 /// caller at once. A caller that loaded its deps pristine
-/// (`run_buffer_build` / `run_chars_fusion: false` — the proof exporters
-/// and the wasm-gc paths, which can lower neither the `Buffer` nor the
-/// `__str_*` cursor) never registered a `<dep>.<fn>__buffered` or
-/// `<dep>.<fn>__cursor` name, and compiling a call to a fn the symbol
+/// (`run_buffer_build` / `run_chars_fusion` / `run_list_build: false` —
+/// the proof exporters and the wasm-gc paths, which can lower none of
+/// the `Buffer`, the `__str_*` cursor or the `__lst_*` builder) never
+/// registered a `<dep>.<fn>__buffered`, `<dep>.<fn>__cursor` or
+/// `<dep>.<fn>__collected` name, and compiling a call to a fn the symbol
 /// table has never heard of would resolve to nothing. So: fuse when the
 /// caller fused, stay pristine when it didn't. Both shapes compute the
 /// same result; only the allocation count differs.
@@ -170,15 +171,20 @@ fn adopt_deforestation_if_symbols_agree(
         .collect();
     let has_sink = !crate::ir::compute_buffer_build_sinks(&candidates).is_empty();
     drop(candidates);
-    if !has_sink && !crate::ir::has_fusable_shape(&pristine) {
+    if !has_sink
+        && !crate::ir::has_fusable_shape(&pristine)
+        && !crate::ir::has_list_build_shape(&pristine)
+    {
         return pristine;
     }
 
     let mut fused = pristine.clone();
     let buffered = crate::ir::pipeline::buffer_build(&mut fused);
     let cursors = crate::ir::pipeline::chars_fusion(&mut fused);
+    let collected = crate::ir::pipeline::list_build(&mut fused);
     let mut synthesized = buffered.synthesized;
     synthesized.extend(cursors.synthesized);
+    synthesized.extend(collected.synthesized);
     if synthesized.is_empty() {
         // Nothing named was invented. The codepoint-match rewrite may
         // still have fired, and it introduces no name for the symbol

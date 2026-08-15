@@ -45,6 +45,26 @@ pub struct VM {
     /// slots before extending. The pool lives on the host heap, opaque to
     /// the arena GC — buffer handles travel as `Int(idx)` NanValues.
     buffer_pool: Vec<Option<String>>,
+    /// Element vectors for the list-build lowering's `__lst_*`
+    /// intrinsics. Slots are `Option<Vec<NanValue>>` so finalize can take
+    /// ownership and leave a tombstone; `LIST_BUILDER_NEW` reuses freed
+    /// slots before extending.
+    ///
+    /// Like the buffer pool this lives on the host heap, opaque to the
+    /// arena collector — which is exactly why nothing with an arena index
+    /// may be stored here. `LIST_BUILDER_PUSH` checks every element and
+    /// hands the builder back as an ordinary cons chain the moment one is
+    /// not immediate, so a value the collector would move is never held
+    /// anywhere the collector cannot see.
+    ///
+    /// A builder whose loop exits without finalizing (the error arm of a
+    /// parser, say) leaves its slot behind. [`LIST_BUILDER_POOL_SLOTS`]
+    /// caps how many can accumulate; past the cap a new builder starts
+    /// as the cons chain instead, which needs no slot at all.
+    list_builder_pool: Vec<Option<Vec<NanValue>>>,
+    /// Slots [`Self::list_builder_pool`] has handed back, so allocating
+    /// one is a pop rather than a scan for the first hole.
+    list_builder_free: Vec<usize>,
     /// How the compiler's static owned mask and the operand stack's own view of
     /// who holds a slot compared, over this VM's lifetime. Maintained where the
     /// answer has a reader — a debug build, where the same comparison is also an
@@ -96,6 +116,8 @@ impl VM {
             error_ip: 0,
             cancelled: None,
             buffer_pool: Vec::new(),
+            list_builder_pool: Vec::new(),
+            list_builder_free: Vec::new(),
             step_limit: None,
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),

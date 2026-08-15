@@ -1265,6 +1265,13 @@ fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_
                 is_pure: true,
             })
         }
+        // The list-build builder intrinsics (`__lst_new` / `__lst_push`
+        // / `__lst_finalize`) are deliberately absent. Their return type
+        // is the accumulator's own `List<T>`, and T is a fact about the
+        // call site, not about the name — an answer this oracle cannot
+        // give without inventing one. Saying nothing is the truthful
+        // answer, and the same one it gives for every other name it does
+        // not know.
         _ => None,
     }
 }

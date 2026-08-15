@@ -156,6 +156,7 @@ fn main() -> Int
             "interp_lower",
             "buffer_build",
             "chars_fusion",
+            "list_build",
             "resolve",
             "analyze",
             "escape",
@@ -678,4 +679,106 @@ fn add(a: Natural, b: Natural) -> Result<Natural, String>
         data["raw_i64_eligible"], 0,
         "Natural's open upper bound makes it NOT raw-i64-eligible"
     );
+}
+
+/// The list-build stage is dumpable like its siblings, and it runs
+/// AFTER chars fusion — which is the order the two rewrites need to
+/// compose on one function, so the dump is where a reader can see that
+/// the second one is looking at the first one's output.
+#[test]
+fn the_list_build_stage_can_be_dumped_after_chars_fusion() {
+    let source = r#"
+module Dumpable
+    intent = "a character loop that collects what it decodes"
+    effects []
+
+fn value(character: String) -> Int
+    match character
+        "0" -> 0
+        "1" -> 1
+        _ -> -1
+
+fn digits(chars: List<String>, acc: List<Int>) -> List<Int>
+    match chars
+        [] -> List.reverse(acc)
+        [head, ..tail] -> digits(tail, List.prepend(value(head), acc))
+
+fn main() -> Int
+    List.len(digits(String.chars("101"), []))
+"#;
+
+    let before = run_emit_ir_after(source, "chars_fusion");
+    assert!(
+        before.contains("digits__cursor"),
+        "chars fusion must have fired first:\n{before}"
+    );
+    assert!(
+        !before.contains("__collected") && !before.contains("__lst_"),
+        "the stage before list_build must not carry its output:\n{before}"
+    );
+
+    let after = run_emit_ir_after(source, "list_build");
+    assert!(
+        after.contains("digits__cursor__collected")
+            && after.contains("__lst_push")
+            && after.contains("__lst_finalize")
+            && after.contains("__lst_new"),
+        "the dump must show the collected variant built from the cursor \
+         variant, and the builder it threads:\n{after}"
+    );
+}
+
+/// The list-build report says what fired and what it turned down. A
+/// silent decline is how a fusion quietly stops firing, so the reason
+/// is a field rather than prose.
+#[test]
+fn list_build_pass_exposes_loop_data_and_declines() {
+    let json = run_explain_passes(
+        r#"
+module Collecting
+    intent = "loops that collect, read back, and bail out with a list of their own"
+    depends []
+
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn widths(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> widths(n - 1, List.prepend(List.len(acc), acc))
+
+fn bails(values: List<Int>, acc: List<Int>) -> List<Int>
+    match values
+        [] -> acc
+        [head, ..tail] -> match head == 0
+            true -> [7, 8]
+            false -> bails(tail, List.prepend(head, acc))
+
+fn main() -> Int
+    List.len(collect(3, [])) + List.len(widths(3, [])) + List.len(List.reverse(bails([1, 0, 2], [])))
+"#,
+    );
+    let data = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "list_build")
+        .expect("list_build stage is reported")["data"]
+        .clone();
+    assert_eq!(data["rewrites"], 1);
+    assert_eq!(data["synthesized"][0], "collect__collected");
+    assert_eq!(data["loop_fns"][0], "collect");
+    assert_eq!(data["rewrites_by_fn"]["collect"], 1);
+    assert_eq!(
+        data["declined"]["widths"],
+        "the accumulator is read somewhere a builder cannot stand in for"
+    );
+    assert_eq!(
+        data["declined"]["bails"],
+        "an exit does not come from the accumulator, and the caller's reverse pays for the rewrite"
+    );
+    assert_eq!(data["targets"][0], "rust");
+    assert_eq!(data["targets"][1], "vm");
 }

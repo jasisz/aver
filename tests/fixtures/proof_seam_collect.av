@@ -1,0 +1,30 @@
+module ProofSeamCollect
+    intent =
+        "A loop that collects with `List.prepend` and reverses on the way out, called"
+        "with an empty accumulator, so the list-build pass fires. Fixture for the proof"
+        "snapshot seam: the emitted proof must describe THIS source — no collected"
+        "variant, no builder intrinsics — whether or not the optimising passes rewrote"
+        "the program for a runtime backend."
+    effects [Console]
+
+fn doubled(values: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Double every element, left to right, collecting into the accumulator."
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> doubled(tail, List.prepend(head * 2, acc))
+
+fn widths(values: List<Int>) -> Int
+    ? "How many elements the doubling produced."
+    List.len(doubled(values, []))
+
+verify doubled
+    doubled([], []) => []
+    doubled([1, 2, 3], []) => [2, 4, 6]
+
+verify widths
+    widths([]) => 0
+    widths([1, 2, 3]) => 3
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(widths([1, 2, 3, 4])))

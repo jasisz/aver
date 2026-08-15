@@ -242,6 +242,59 @@ fn stdlib_from_hex_walks_a_cursor_and_the_vm_runs_the_fused_shape() {
     );
 }
 
+/// The two rewrites meet on one function. `Bytes.parseHexChars` reads a
+/// list `String.chars` builds and writes a list it prepends into and
+/// reverses; chars fusion replaces the first, list build replaces the
+/// second, and what comes out is a loop with a cursor on one side and a
+/// builder on the other — the shape the fusion-ceiling probe measured by
+/// hand.
+///
+/// The composition is what is pinned here: the collected variant is
+/// built FROM the cursor variant (its name carries both suffixes), and
+/// the answers are the ones `Bytes.fromHex` has always given, error arms
+/// included.
+#[test]
+fn stdlib_from_hex_walks_a_cursor_and_collects_into_a_builder() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/stdlib_bytes_dehex_app.av")
+        .to_string_lossy()
+        .into_owned();
+
+    let explained = run_aver(&["compile", &fixture, "--explain-passes", "--json"]);
+    assert_success("aver compile --explain-passes", &explained);
+    let report = String::from_utf8_lossy(&explained.stdout);
+    assert!(
+        report.contains("Bytes.parseHexChars__cursor__collected"),
+        "the two passes must compose on the standard library's own decoding \
+         loop — a cursor in, a builder out: {report}"
+    );
+
+    let verify = run_aver(&["verify", &fixture]);
+    assert_success("aver verify", &verify);
+
+    let run = run_aver(&["run", &fixture, "--profile"]);
+    assert_success("aver run --profile", &run);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.starts_with("00ff10abcdef"),
+        "hex round-trip changed: {stdout}"
+    );
+    assert!(
+        stdout.contains("expected an even number of hex characters")
+            && stdout.contains("invalid hexadecimal character 'z'"),
+        "the error arms still report what they always did: {stdout}"
+    );
+    let profile = format!("{stdout}{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        profile.contains("Bytes.parseHexChars__cursor__collected"),
+        "the VM must execute the doubly-fused variant: {profile}"
+    );
+    assert!(
+        !profile.contains("List.reverse"),
+        "the accumulator is built in order, so nothing is left to reverse: {profile}"
+    );
+}
+
 #[cfg(feature = "wasm")]
 #[test]
 fn embedded_crypto_sha256_matches_fips_vectors_on_wasm_gc() {

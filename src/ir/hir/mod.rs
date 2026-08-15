@@ -435,6 +435,23 @@ pub enum BuiltinIntrinsic {
     /// `__str_code1_upper(<s>)` — the `String.toUpper` mirror of
     /// [`Self::StrCode1Lower`].
     StrCode1Upper,
+    /// `__lst_new(<capacity>)` — `Int -> List<T>`, a fresh builder for a
+    /// loop that collected with `List.prepend` and reversed on the way
+    /// out. The list-build pass emits it where the call site wrote `[]`.
+    /// The capacity is a hint with no effect on the answer.
+    LstNew,
+    /// `__lst_push(<builder>, <elem>)` — `(List<T>, T) -> List<T>`, the
+    /// builder with `elem` appended. Takes the accumulator's place in
+    /// the recursive call, where the loop wrote
+    /// `List.prepend(<elem>, acc)`; the arguments swap because the
+    /// builder is the thing being consumed, not the thing being added.
+    LstPush,
+    /// `__lst_finalize(<builder>)` — `List<T> -> List<T>`, the list the
+    /// builder collected, in append order. Stands where the loop wrote
+    /// `List.reverse(acc)`, which is why nothing has to be reversed:
+    /// appending in traversal order already produces the order
+    /// prepend-then-reverse was reaching for.
+    LstFinalize,
 }
 
 impl BuiltinIntrinsic {
@@ -458,6 +475,9 @@ impl BuiltinIntrinsic {
             Self::StrCode1 => "__str_code1",
             Self::StrCode1Lower => "__str_code1_lower",
             Self::StrCode1Upper => "__str_code1_upper",
+            Self::LstNew => "__lst_new",
+            Self::LstPush => "__lst_push",
+            Self::LstFinalize => "__lst_finalize",
         }
     }
 
@@ -484,6 +504,9 @@ impl BuiltinIntrinsic {
             "__str_code1" => Some(Self::StrCode1),
             "__str_code1_lower" => Some(Self::StrCode1Lower),
             "__str_code1_upper" => Some(Self::StrCode1Upper),
+            "__lst_new" => Some(Self::LstNew),
+            "__lst_push" => Some(Self::LstPush),
+            "__lst_finalize" => Some(Self::LstFinalize),
             _ => None,
         }
     }

@@ -458,6 +458,45 @@ pub const STR_CODE1_LOWER: u8 = 0x9D;
 /// Pop s → push [`STR_CODE1`] of `String.toUpper(s)`.
 pub const STR_CODE1_UPPER: u8 = 0x9E;
 
+// --- List builder (list-build fusion) ----------------------------------
+//
+// Emitted by the list-build pass in place of the `List.prepend` cons
+// chain a collecting loop threads and the single `List.reverse` that
+// straightens it out. Appending in traversal order reaches the same
+// list without either.
+//
+// A builder travels in ONE of two shapes, and every opcode below reads
+// which from the value it is handed.
+//
+// A handle — `Int(slot)` into `vm.list_builder_pool` — while every
+// element pushed so far is an IMMEDIATE (a small integer, a boolean,
+// the unit). Those carry no arena index, so a pool the collector cannot
+// see holds nothing the collector could move, and the walk costs one
+// vector push per element with no arena traffic at all.
+//
+// A LIST, exactly the reversed cons chain the source wrote, from the
+// first element that is a heap value onward. A growing arena object
+// cannot be the accumulator of a tail-recursive loop for free: the
+// frame boundary rewrites everything a root reaches, so an N-element
+// vector threaded through N iterations is rewritten N times. The cons
+// chain is what the loop already paid for and what the boundary already
+// handles in constant time per step, so that is what a heap-valued
+// builder falls back to — same allocations as before this pass, same
+// answer, and the pool half keeps the win where the elements are
+// numbers.
+
+/// Pop capacity hint → push a fresh builder: `Int(slot)` when the pool
+/// has room, otherwise the empty list (the fallback shape, which needs
+/// no slot).
+pub const LIST_BUILDER_NEW: u8 = 0x9F;
+
+/// Pop elem, pop builder → push the builder with `elem` appended.
+pub const LIST_BUILDER_PUSH: u8 = 0xA0;
+
+/// Pop builder → push the `List` it collected, in append order. Frees
+/// the pool slot when the builder held one.
+pub const LIST_BUILDER_FINALIZE: u8 = 0xA1;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -558,6 +597,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         STR_CODE1 => "STR_CODE1",
         STR_CODE1_LOWER => "STR_CODE1_LOWER",
         STR_CODE1_UPPER => "STR_CODE1_UPPER",
+        LIST_BUILDER_NEW => "LIST_BUILDER_NEW",
+        LIST_BUILDER_PUSH => "LIST_BUILDER_PUSH",
+        LIST_BUILDER_FINALIZE => "LIST_BUILDER_FINALIZE",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -625,6 +667,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | STR_CODE1
         | STR_CODE1_LOWER
         | STR_CODE1_UPPER
+        | LIST_BUILDER_NEW
+        | LIST_BUILDER_PUSH
+        | LIST_BUILDER_FINALIZE
         | NOP => 0,
 
         // 1-byte

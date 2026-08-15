@@ -1031,27 +1031,27 @@ fn single_char_arm_codes(arms: &[MatchArm]) -> Option<Vec<Option<i64>>> {
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
-fn fn_defs(items: &[TopLevel]) -> impl Iterator<Item = &FnDef> {
+pub(super) fn fn_defs(items: &[TopLevel]) -> impl Iterator<Item = &FnDef> {
     items.iter().filter_map(|it| match it {
         TopLevel::FnDef(fd) => Some(fd),
         _ => None,
     })
 }
 
-fn fn_defs_mut(items: &mut [TopLevel]) -> impl Iterator<Item = &mut FnDef> {
+pub(super) fn fn_defs_mut(items: &mut [TopLevel]) -> impl Iterator<Item = &mut FnDef> {
     items.iter_mut().filter_map(|it| match it {
         TopLevel::FnDef(fd) => Some(fd),
         _ => None,
     })
 }
 
-fn stmt_expr(stmt: &Stmt) -> &Spanned<Expr> {
+pub(super) fn stmt_expr(stmt: &Stmt) -> &Spanned<Expr> {
     match stmt {
         Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
     }
 }
 
-fn stmt_expr_mut(stmt: &mut Stmt) -> &mut Spanned<Expr> {
+pub(super) fn stmt_expr_mut(stmt: &mut Stmt) -> &mut Spanned<Expr> {
     match stmt {
         Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
     }
@@ -1066,7 +1066,7 @@ fn stmt_expr_mut(stmt: &mut Stmt) -> &mut Spanned<Expr> {
 /// instead of the loop. Collecting locals program-wide rather than
 /// per-body keeps one answer to "is this name free?", which is what the
 /// synthesized name has to be.
-fn taken_names(items: &[TopLevel]) -> HashSet<String> {
+pub(super) fn taken_names(items: &[TopLevel]) -> HashSet<String> {
     let mut out: HashSet<String> = items
         .iter()
         .filter_map(|it| match it {
@@ -1146,7 +1146,7 @@ fn mentions_prefix(expr: &Spanned<Expr>, prefix: &str) -> bool {
 
 /// Visit every direct sub-expression. Exhaustive so a new `Expr`
 /// variant has to be classified before this compiles.
-fn walk_children(expr: &Spanned<Expr>, f: &mut impl FnMut(&Spanned<Expr>)) {
+pub(super) fn walk_children(expr: &Spanned<Expr>, f: &mut impl FnMut(&Spanned<Expr>)) {
     match &expr.node {
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
         Expr::Attr(base, _) | Expr::Neg(base) | Expr::ErrorProp(base) => f(base),
@@ -1188,7 +1188,7 @@ fn walk_children(expr: &Spanned<Expr>, f: &mut impl FnMut(&Spanned<Expr>)) {
 }
 
 /// Mutable mirror of [`walk_children`].
-fn walk_children_mut(expr: &mut Spanned<Expr>, f: &mut impl FnMut(&mut Spanned<Expr>)) {
+pub(super) fn walk_children_mut(expr: &mut Spanned<Expr>, f: &mut impl FnMut(&mut Spanned<Expr>)) {
     match &mut expr.node {
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
         Expr::Attr(base, _) | Expr::Neg(base) | Expr::ErrorProp(base) => f(base),

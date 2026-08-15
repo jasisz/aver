@@ -467,6 +467,162 @@ fn main() -> Unit
     assert_eq!(rust, expected, "Rust chars fusion diverged from the VM");
 }
 
+/// List build, on the shapes where the two backends could disagree.
+///
+/// ORDER is the claim: `prepend` then `reverse` yields traversal order,
+/// so appending in loop order has to reproduce it — asserted here as a
+/// running program rather than argued, and asserted against the SAME
+/// program's unfused answer, which `pairs` supplies by collecting the
+/// identical run without an accumulator the pass can recognise.
+///
+/// The element types are the other half. The Rust builder is the
+/// `AverList` the accumulator always was, written in place; the VM keeps
+/// immediates in a pool it owns and hands the builder back as the cons
+/// chain the moment a heap value arrives, because a pool the collector
+/// cannot see must not hold anything the collector could move. `mixed`
+/// crosses that line MID-BUILD — three small integers, then integers too
+/// wide to travel inline — so the elements collected before the crossing
+/// and after it have to come back in one order.
+#[test]
+fn rust_list_build_matches_vm() {
+    let src = r#"module ListBuildDifferential
+    intent = "Every list-build shape in one program, for cross-backend agreement"
+    effects [Console.print]
+
+fn collect(n: Int, limit: Int, acc: List<Int>) -> List<Int>
+    ? "Count up, collect, reverse on the way out — the canonical shape."
+    match n > limit
+        true -> List.reverse(acc)
+        false -> collect(n + 1, limit, List.prepend(n, acc))
+
+fn upTo(n: Int) -> List<Int>
+    ? "The same run with no accumulator to recognise: the unfused oracle."
+    match n <= 0
+        true -> []
+        false -> List.concat(upTo(n - 1), [n])
+
+fn wide(n: Int) -> Int
+    ? "Small below three, past the inline integer range above it."
+    match n < 3
+        true -> n
+        false -> n * 100000000000000
+
+fn mixed(n: Int, limit: Int, acc: List<Int>) -> List<Int>
+    ? "Crosses from inline elements to heap ones halfway through."
+    match n > limit
+        true -> List.reverse(acc)
+        false -> mixed(n + 1, limit, List.prepend(wide(n), acc))
+
+fn tagsInto(values: List<Int>, acc: List<String>) -> List<String>
+    ? "Heap elements from the first step, and the caller does the reversing."
+    match values
+        [] -> acc
+        [head, ..tail] -> tagsInto(tail, List.prepend("t{head}", acc))
+
+fn parse(chars: List<String>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "The parser shape: nested arms, error exits, the list inside a constructor."
+    match chars
+        [] -> Result.Ok(List.reverse(acc))
+        [high, ..afterHigh] -> match afterHigh
+            [] -> Result.Err("odd")
+            [low, ..rest] -> match String.len(high) == 1
+                true -> parse(rest, List.prepend(String.len(low), acc))
+                false -> Result.Err("wide '{high}'")
+
+fn render(values: List<Int>) -> String
+    ? "Print a list with no accumulator of its own."
+    match values
+        [] -> ""
+        [head, ..tail] -> "{head}/{render(tail)}"
+
+fn decoded(chars: List<String>) -> String
+    ? "Either the parsed list or the message that says why not."
+    match parse(chars, [])
+        Result.Ok(values) -> render(values)
+        Result.Err(message) -> message
+
+fn main() -> Unit
+    ? "Print every shape so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print("{render(collect(1, 5, []))} {render(upTo(5))}")
+    Console.print("{render(mixed(1, 6, []))}")
+    Console.print("{String.join(List.reverse(tagsInto([1, 2, 3], [])), "-")} {String.join(tagsInto([1, 2, 3], []), "-")}")
+    Console.print("{decoded(["a", "b", "c", "d"])} {decoded(["a"])} {decoded(["ab", "c"])}")
+"#;
+    // collect and upTo are the same run, written once with the
+    // accumulator the pass recognises and once without it: the builder
+    // answers what the oracle answers. mixed keeps 1, 2 inline and
+    // widens from 3 on.
+    // tagsInto reversed by its caller is forwards; bare is backwards.
+    // parse reads a length per pair, and its error arms carry the
+    // character that failed.
+    let expected = "1/2/3/4/5/ 1/2/3/4/5/\n\
+                    1/2/300000000000000/400000000000000/500000000000000/600000000000000/\n\
+                    t1-t2-t3 t3-t2-t1\n\
+                    1/1/ odd wide 'ab'";
+    let vm = run_vm_inline("list_build", src).expect("vm run");
+    let rust = build_run_rust_inline("list_build", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM list-build contract changed");
+    assert_eq!(rust, expected, "Rust list build diverged from the VM");
+}
+
+/// The shapes list build must NOT touch, run on both backends.
+///
+/// They live here rather than beside the other decline witnesses
+/// because the VM alone cannot see this class of mistake. A VM builder
+/// that is handed something other than a fresh builder falls back to the
+/// cons chain, which prepends and reverses — the very thing the rewrite
+/// replaces — so a wrong fusion answers correctly there by accident.
+/// Compiled Rust appends and does not reverse, and says so.
+///
+/// `bail` is the loop whose exits disagree about the reverse; `into` is
+/// the one that leaves the reversing to its caller, read once each way.
+#[test]
+fn rust_list_build_declines_match_vm() {
+    let src = r#"module ListBuildDeclinesDifferential
+    intent = "Collecting loops the rewrite must leave alone, on both backends"
+    effects [Console.print]
+
+fn into(values: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Hands the accumulator back bare, so only a reversing caller may be moved."
+    match values
+        [] -> acc
+        [head, ..tail] -> into(tail, List.prepend(head, acc))
+
+fn bail(n: Int, acc: List<Int>) -> List<Int>
+    ? "Collects forwards, except on the value that hands the raw accumulator back."
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> match n == 2
+            true -> acc
+            false -> bail(n - 1, List.prepend(n, acc))
+
+fn render(values: List<Int>) -> String
+    ? "Print a list with no accumulator of its own."
+    match values
+        [] -> ""
+        [head, ..tail] -> "{head}/{render(tail)}"
+
+fn main() -> Unit
+    ? "Print each so a backend that fuses one of them shows a diff."
+    ! [Console.print]
+    Console.print("{render(bail(4, []))} {render(bail(1, []))} {render(List.reverse(into([1, 2, 3], [])))} {render(into([1, 2, 3], []))}")
+"#;
+    // bail(4) collects 4 and 3 and then bails with the raw accumulator,
+    // which reads 3, 4; bail(1) never reaches the bail-out. `into` read
+    // through its caller's reverse is forwards and read bare is
+    // backwards, and only the first of those may be moved.
+    let expected = "3/4/ 1/ 1/2/3/ 3/2/1/";
+    let vm = run_vm_inline("list_build_declines", src).expect("vm run");
+    let rust = build_run_rust_inline("list_build_declines", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM answer for an unfusable loop changed");
+    assert_eq!(
+        rust, expected,
+        "Rust fused a loop the recogniser must decline"
+    );
+}
+
 // ─── own_param ownership: build+run rust vs VM + emitted-shape guard ─────
 
 /// Build+run an inline Aver program through the Rust backend and return

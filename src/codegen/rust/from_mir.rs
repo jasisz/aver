@@ -4649,6 +4649,28 @@ fn emit_mir_intrinsic_call(
             let s = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::AverInt::from_i64(aver_rt::{f}(&{s}))"))
         }
+        // List builder (list-build fusion). The builder IS the
+        // `AverList<T>` the accumulator always was, so the synthesized
+        // variant keeps the signature it was built from and nothing here
+        // has a type to invent. The capacity is a hint; a value too big
+        // for `usize` just means "no hint", the same reading `__buf_new`
+        // gives it.
+        BuiltinIntrinsic::LstNew => {
+            let capacity = emit_mir_expr(&args[0], ctx)?;
+            Some(format!(
+                "aver_rt::list_builder_new(({}).to_usize().unwrap_or(0))",
+                capacity
+            ))
+        }
+        BuiltinIntrinsic::LstPush => {
+            let builder = emit_mir_expr(&args[0], ctx)?;
+            let item = emit_mir_expr(&args[1], ctx)?;
+            Some(format!("aver_rt::list_builder_push({}, {})", builder, item))
+        }
+        BuiltinIntrinsic::LstFinalize => {
+            let builder = emit_mir_expr(&args[0], ctx)?;
+            Some(format!("aver_rt::list_builder_finalize({})", builder))
+        }
     }
 }
 

@@ -32,6 +32,7 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -78,6 +79,7 @@ pub fn compile_project_to_wasm(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -142,6 +144,7 @@ pub fn compile_project_to_wasm_with_entry(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -303,6 +306,7 @@ fn build_ctx(
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_list_build: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
             run_law_lower: proof_target,
@@ -405,6 +409,7 @@ fn build_project_ctx(
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_list_build: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
             run_law_lower: proof_target,
@@ -514,6 +519,7 @@ fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> cod
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_list_build: apply_traversal_lowering,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
