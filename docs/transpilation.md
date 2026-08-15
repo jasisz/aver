@@ -23,7 +23,7 @@ Options:
       --policy <POLICY>            Runtime policy mode: embed | runtime
       --with-self-host-support     Emit extra self-host-only runtime support (requires --guest-entry and runtime policy)
       --emit-ir-after <PASS>       Print IR after the named pipeline stage and exit before codegen.
-                                   PASS ∈ { parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze }.
+                                   PASS ∈ { parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, resolve, last_use, analyze }.
                                    Use diff -u between two stages to see exactly which expressions a pass rewrote.
       --explain-passes             Run the full pipeline (no codegen) and print a per-pass diagnostic report.
                                    Reports tail-call conversions, interpolations lowered, fusion sites + sinks,
@@ -43,6 +43,7 @@ The compiler runs IR transforms in a fixed seven-stage pipeline (see `src/ir/pip
 | `typecheck`    | Read-only — IR identical to `tco`, errors land in stdout                    |
 | `interp_lower` | `"a${x}b"` desugars to `__buf_finalize(__buf_append(... __to_str(x) ...))` |
 | `buffer_build` | `String.join(<builder>(args, []), sep)` rewrites to `__buf_finalize(<builder>__buffered(...))` and synthesizes the buffered variant |
+| `chars_fusion` | `String.chars(s)` consumed linearly by a self-recursive loop becomes a `__str_cursor_*` walk over `s` with a synthesized `<loop>__cursor` variant, and a match over single-character literals becomes a `__str_code1*` codepoint comparison |
 | `resolve`      | `Expr::Ident` → `<name>` (resolved slot), `<resolved>` collapse for unknown |
 | `last_use`     | Final references annotated as `<name:last>` so backends MOVE instead of COPY |
 | `analyze`      | FnDef headers gain fact tags `[no_alloc, locals=N, recursive×N, body=…]`    |
@@ -89,7 +90,7 @@ Options:
       --verify-mode <VERIFY_MODE>  Lean only: auto | sorry | theorem-skeleton
 ```
 
-The export never describes a program that does not exist in your source. Passes that synthesize code of their own — `interp_lower`'s string-buffer chain, `buffer_build`'s fused sink, the traversal fusion that follows them — are invisible to a proof by construction: the pipeline snapshots the AST before the first of them and the proof stages read that copy, so no flag on any caller can put an entity you never wrote into a theorem. A pass that only rewrites code you did write runs on the copy too — today that is `escape`, which replaces a record you build at a call site and the callee only reads with the callee's own body — because a certificate has to state its theorems about the same program its certified bytes were compiled from. So an exported proof describes your source as your artifact was built from it, and `aver compile --target wasm-gc --certify` produces a model and a binary that are two renderings of one program. `--emit-ir-after=buffer_build` shows what the runtime backends compile, fused sinks and all; that dump is not what the export reads.
+The export never describes a program that does not exist in your source. Passes that synthesize code of their own — `interp_lower`'s string-buffer chain, `buffer_build`'s fused sink, the traversal fusion that follows them — are invisible to a proof by construction: the pipeline snapshots the AST before the first of them and the proof stages read that copy, so no flag on any caller can put an entity you never wrote into a theorem. A pass that only rewrites code you did write runs on the copy too — today that is `escape`, which replaces a record you build at a call site and the callee only reads with the callee's own body — because a certificate has to state its theorems about the same program its certified bytes were compiled from. So an exported proof describes your source as your artifact was built from it, and `aver compile --target wasm-gc --certify` produces a model and a binary that are two renderings of one program. `--emit-ir-after=chars_fusion` shows what the runtime backends compile, fused sinks and character cursors and all; that dump is not what the export reads.
 
 ### Debugging a law that didn't auto-prove
 
@@ -156,8 +157,8 @@ To add a new generated backend such as `js`, `go`, or `python`:
 
 The seven-stage pipeline (`src/ir/pipeline.rs`) commits to a specific IR shape per stage. Where you wire your backend in determines which AST nodes you handle and which intrinsics you emit:
 
-- **Runtime backends** (VM, WASM, Rust today) run with the full pipeline. They never see `Expr::InterpolatedStr` (`interp_lower` desugars it to `__buf_*` + `__to_str` intrinsics) or the canonical `String.join(<builder>(args, []), sep)` shape (`buffer_build` rewrites it to `__buf_finalize(<builder>__buffered(...))` and synthesizes the buffered variant). Implement the four `__buf_*` intrinsics + `__to_str`; you get O(N) string ops and deforestation for free.
-- **Proof backends** (Lean, Dafny) skip `interp_lower` and `buffer_build` because they consume source-level IR. They handle `Expr::InterpolatedStr` and `String.join` natively. Pass `apply_traversal_lowering: false` to `build_codegen_context`.
+- **Runtime backends** (VM, WASM, Rust today) run with the full pipeline. They never see `Expr::InterpolatedStr` (`interp_lower` desugars it to `__buf_*` + `__to_str` intrinsics) or the canonical `String.join(<builder>(args, []), sep)` shape (`buffer_build` rewrites it to `__buf_finalize(<builder>__buffered(...))` and synthesizes the buffered variant). Implement the four `__buf_*` intrinsics + `__to_str`; you get O(N) string ops and deforestation for free. A backend that also implements the six `__str_*` intrinsics gets `chars_fusion` on top — a character loop that walks the string instead of the list of its characters; a backend that cannot represent them turns the pass off (`run_chars_fusion: false`) rather than emitting a call it will not lower, which is what `--target wasm-gc` and `--target wasip2` do.
+- **Proof backends** (Lean, Dafny) skip `interp_lower`, `buffer_build` and `chars_fusion` because they consume source-level IR. They handle `Expr::InterpolatedStr`, `String.join` and `String.chars` natively. Pass `apply_traversal_lowering: false` to `build_codegen_context`.
 - **REPL** is the only legitimate consumer of pre-resolve IR (single-statement evaluation, throwaway). VM keeps its `compile_interpolated_str` for this path.
 
 A new backend chooses where on this spectrum it sits. Default: full pipeline (cheapest backend code, free deforestation).

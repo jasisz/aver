@@ -27,6 +27,72 @@ fn tempfile(prefix: &str, suffix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{prefix}-{pid}-{nanos}-{seq}{suffix}"))
 }
 
+/// `aver compile FILE --emit-ir-after=STAGE`, returning the dump.
+fn run_emit_ir_after(source: &str, stage: &str) -> String {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = tempfile("emit-ir-after", ".av");
+    fs::write(&path, source).expect("write tempfile");
+    let output = Command::new(aver_bin)
+        .arg("compile")
+        .arg(&path)
+        .arg(format!("--emit-ir-after={stage}"))
+        .output()
+        .expect("invoke aver");
+    fs::remove_file(&path).ok();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !stderr.contains("unknown --emit-ir-after stage"),
+        "{stage} is not an --emit-ir-after stage: {stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "aver compile failed: stdout={stdout} stderr={stderr}"
+    );
+    stdout
+}
+
+/// Every AST stage that rewrites the program is dumpable, so a fusion can
+/// be read rather than inferred from a count. `chars_fusion` runs AFTER
+/// `buffer_build`, so without it the last dumpable AST stage is no longer
+/// the program the runtime backends compile.
+#[test]
+fn the_chars_fusion_stage_can_be_dumped_like_its_sibling() {
+    let source = r#"
+module Dumpable
+    intent = "a character loop and the match it calls"
+    effects []
+
+fn value(character: String) -> Int
+    match character
+        "0" -> 0
+        "1" -> 1
+        _ -> -1
+
+fn total(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> total(tail, acc + value(head))
+
+fn main() -> Int
+    total(String.chars("101"), 0)
+"#;
+
+    let before = run_emit_ir_after(source, "buffer_build");
+    assert!(
+        !before.contains("total__cursor") && !before.contains("__str_cursor"),
+        "the stage before chars_fusion must not carry its output:\n{before}"
+    );
+
+    let after = run_emit_ir_after(source, "chars_fusion");
+    assert!(
+        after.contains("total__cursor")
+            && after.contains("__str_cursor_end")
+            && after.contains("__str_code1"),
+        "the dump must show the cursor variant and the codepoint match:\n{after}"
+    );
+}
+
 fn run_explain_passes(source: &str) -> serde_json::Value {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let path = tempfile("explain-passes", ".av");

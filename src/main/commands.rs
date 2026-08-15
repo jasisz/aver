@@ -3471,6 +3471,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "typecheck" => Some(PipelineStage::Typecheck),
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
+        "chars_fusion" => Some(PipelineStage::CharsFusion),
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
@@ -3485,7 +3486,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()
