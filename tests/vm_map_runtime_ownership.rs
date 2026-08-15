@@ -692,12 +692,14 @@ fn a_branch_of_an_independent_product_cannot_take_a_map_its_sibling_holds() {
     // `held_elsewhere` had never been told — so the grant went through and the
     // second branch read a table that had been emptied out from under it.
     //
-    // Each program answers the value Aver's immutable model mandates: the
-    // writer's result is three entries and the reader's map is still the two it
-    // was handed. A grant that came back shows up as a different number.
-    // The two shapes where a sibling is still holding the map at the write:
-    // its bundle has not been dispatched yet, so refusing is the only right
-    // answer and the write has to duplicate what it was handed.
+    // Every program here answers the value Aver's immutable model mandates —
+    // the writer's result is three entries and the reader's map is still the
+    // two it was handed — so a grant that came back shows up as a different
+    // number rather than as a slower program.
+    //
+    // First the two shapes where a sibling is still holding the map at the
+    // write: its bundle has not been dispatched yet, so refusing is the only
+    // right answer and the write has to duplicate what it was handed.
     for (name, src) in [
         ("writer first", PARALLEL_BRANCH_SIBLING),
         ("nested in a record", PARALLEL_BRANCH_NESTED),
