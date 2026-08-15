@@ -1,0 +1,29 @@
+module RefinedSum
+    intent =
+        "A refined record (single Int field plus a validating smart"
+        "constructor) carried by the FIRST constructor of a sum whose LAST"
+        "constructor is nullary. The refined record emits as a Subtype with"
+        "no Inhabited instance, so the certificate model must seed the sum's"
+        "Inhabited witness from the nullary constructor."
+    exposes [Natural, Payload, fromInt, bump]
+
+record Natural
+  value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? "Smart constructor - admits non-negative ints."
+    match n >= 0
+        true  -> Result.Ok(Natural(value = n))
+        false -> Result.Err("must be non-negative")
+
+type Payload
+  Raw(Natural)
+  Empty
+
+fn bump(n: Int) -> Int
+    ? "Add one. Never mentions Payload; the model still carries it."
+    n + 1
+
+verify bump
+    bump(1) => 2
+    bump(41) => 42

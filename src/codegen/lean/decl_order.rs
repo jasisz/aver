@@ -157,7 +157,7 @@ fn collect_type_def_refs(td: &TypeDef, out: &mut HashSet<String>) {
     }
 }
 
-fn collect_annotation_type_refs(annotation: &str, out: &mut HashSet<String>) {
+pub(super) fn collect_annotation_type_refs(annotation: &str, out: &mut HashSet<String>) {
     collect_type_refs(&crate::types::parse_type_str(annotation), out);
 }
 

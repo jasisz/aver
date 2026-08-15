@@ -36,10 +36,28 @@ pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<
 /// Peano — lifted to `Nat`; an `Int`-carrier refined record — emitted as a
 /// `Subtype`), so callers can invoke it uniformly.
 ///
-/// The witness is the first nullary variant when one exists (always inhabited,
-/// and self-recursion-safe), otherwise the first variant with `default` fields
-/// (matching what `deriving Inhabited` would pick for the base-case-first user
-/// ADTs in scope).
+/// A sum's witness is the first constructor in declaration order whose
+/// arguments can all be defaulted (base case: a nullary constructor) — the
+/// same constructor `deriving Inhabited` tries first, and like `deriving`,
+/// a constructor that cannot be defaulted is SKIPPED, never committed to.
+/// An argument cannot be defaulted when `default` on it would ask for an
+/// `Inhabited` instance this pass never states: a mention of the type itself
+/// (the very instance being stated), a refined type (emitted as a `Subtype`
+/// abbrev with deliberately no instance), or another sum none of whose own
+/// constructors bottoms out — each of those declines the certificate with
+/// "failed to synthesize instance of type class Inhabited". The exception is
+/// a mention beneath a top-level `List`/`Option`/`Map`, whose Lean defaults
+/// (`[]`, `none`; a Map renders as `List (K × V)`) need no argument
+/// instance. When no constructor bottoms out, no instance is emitted — the
+/// conservative no-instance shape the other underivable types above already
+/// take; a model that actually demands the instance then declines at the
+/// Lean build. Cross-type references need no ordering care: declarations are
+/// emitted in dependency order (`decl_order`) with each instance directly
+/// after its own type and module files before the entry, so a referenced
+/// type's instance — whenever one is emitted at all — always precedes the
+/// instance referencing it, and the scan is a plain recursive descent, not a
+/// fixpoint. A cycle through several sums (each reachable only through the
+/// others) is refused conservatively: it is the same self-ask one level up.
 ///
 /// A record's witness NAMES its fields — `⟨{ f := default }⟩`, never
 /// `⟨default⟩` — because the outer brackets are already the `Inhabited`
@@ -56,19 +74,20 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
     }
     match td {
         TypeDef::Sum { name, variants, .. } => {
-            let Some(first) = variants.first() else {
+            let mut seeding = vec![canonical_type_name(name, scope)];
+            let Some(seed) = variants.iter().find(|v| {
+                v.fields
+                    .iter()
+                    .all(|field| field_defaults_without(field, name, ctx, scope, &mut seeding))
+            }) else {
                 return String::new();
             };
             let lean_name = aver_name_to_lean(name);
-            let nullary = variants.iter().find(|v| v.fields.is_empty());
-            let witness = match nullary {
-                Some(v) => format!("{}.{}", lean_name, lean_ctor_name(&v.name)),
-                None => {
-                    let args = " default".repeat(first.fields.len());
-                    format!("{}.{}{}", lean_name, lean_ctor_name(&first.name), args)
-                }
-            };
-            format!("instance : Inhabited {lean_name} := ⟨{witness}⟩")
+            let args = " default".repeat(seed.fields.len());
+            format!(
+                "instance : Inhabited {lean_name} := ⟨{lean_name}.{}{args}⟩",
+                lean_ctor_name(&seed.name)
+            )
         }
         TypeDef::Product { name, fields, .. } => {
             // Every decl admitted to ProofIR emits as a Subtype rather than a
@@ -92,6 +111,135 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             )
         }
     }
+}
+
+/// `default` for this constructor argument elaborates using only `Inhabited`
+/// instances that exist by the time the seeded sum's instance is stated:
+/// either the annotation sits beneath a top-level `List`/`Option`/`Map`,
+/// which Lean inhabits with no argument instance (`[]`, `none`; a Map renders
+/// as `List (K × V)`), or it neither mentions the sum type currently being
+/// seeded nor names a user type whose own instance this pass never emits
+/// ([`named_type_defaults`]). `seeding` carries the canonical names of every
+/// sum on the current seeding path (outermost first); re-entering one of them
+/// is a cycle — the same self-ask as a direct self-mention — and refuses the
+/// argument.
+fn field_defaults_without(
+    field: &str,
+    type_name: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seeding: &mut Vec<String>,
+) -> bool {
+    let trimmed = field.trim();
+    if trimmed.ends_with('>')
+        && ["List<", "Option<", "Map<"]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+    {
+        return true;
+    }
+    if crate::codegen::common::type_ref_contains(trimmed, type_name) {
+        return false;
+    }
+    let mut named = HashSet::new();
+    crate::codegen::lean::decl_order::collect_annotation_type_refs(trimmed, &mut named);
+    named
+        .iter()
+        .all(|name| named_type_defaults(name, ctx, scope, seeding))
+}
+
+/// Does `default` on a value of the named type elaborate inside this same
+/// emission pass? Builtins and unresolved names keep the prior behavior —
+/// defaultable (their instances come from Lean itself or the prelude). A
+/// canonical Peano sum lifts to builtin `Nat`. A refined type is emitted as a
+/// `Subtype` abbrev with deliberately NO instance — never defaultable. A
+/// plain record always gets an emitted instance. A sum gets one exactly when
+/// one of its constructors bottoms out, decided by the same scan that decides
+/// the sum being seeded — resolved against the named type's OWN scope, since
+/// its variants' bare field names mean that module's types.
+fn named_type_defaults(
+    name: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seeding: &mut Vec<String>,
+) -> bool {
+    if crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some() {
+        return false;
+    }
+    let Some((td, td_scope)) = find_type_def_scoped(ctx, name, scope) else {
+        return true;
+    };
+    if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
+        return true;
+    }
+    match td {
+        TypeDef::Product { .. } => true,
+        TypeDef::Sum {
+            name: sum_name,
+            variants,
+            ..
+        } => {
+            let canonical = canonical_type_name(sum_name, td_scope);
+            if seeding.contains(&canonical) {
+                return false;
+            }
+            seeding.push(canonical);
+            let defaults = variants.iter().any(|v| {
+                v.fields
+                    .iter()
+                    .all(|field| field_defaults_without(field, sum_name, ctx, td_scope, seeding))
+            });
+            seeding.pop();
+            defaults
+        }
+    }
+}
+
+/// The scope-qualified spelling used for cycle detection on the seeding path:
+/// `Module.Name` for a module's type, the bare name for an entry type.
+fn canonical_type_name(name: &str, scope: Option<&str>) -> String {
+    match scope {
+        Some(prefix) => format!("{prefix}.{name}"),
+        None => name.to_string(),
+    }
+}
+
+/// Resolve a type annotation's named reference to its `TypeDef` and owning
+/// scope, mirroring [`find_refined_type_with_key_scoped`]'s order: a bare
+/// name tries the current scope's module first, then the entry, then walks
+/// the modules; a dotted name goes straight to its module.
+///
+/// [`find_refined_type_with_key_scoped`]: crate::codegen::common::find_refined_type_with_key_scoped
+fn find_type_def_scoped<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> Option<(&'a TypeDef, Option<&'a str>)> {
+    fn type_def_named<'a>(defs: &'a [TypeDef], bare: &str) -> Option<&'a TypeDef> {
+        defs.iter().find(|td| match td {
+            TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name == bare,
+        })
+    }
+    if let Some((prefix, bare)) = name.rsplit_once('.') {
+        let module = ctx.modules.iter().find(|m| m.prefix == prefix)?;
+        return type_def_named(&module.type_defs, bare)
+            .map(|td| (td, Some(module.prefix.as_str())));
+    }
+    if let Some(prefix) = scope
+        && let Some(module) = ctx.modules.iter().find(|m| m.prefix == prefix)
+        && let Some(td) = type_def_named(&module.type_defs, name)
+    {
+        return Some((td, Some(module.prefix.as_str())));
+    }
+    if let Some(td) = type_def_named(&ctx.type_defs, name) {
+        return Some((td, None));
+    }
+    for module in &ctx.modules {
+        if let Some(td) = type_def_named(&module.type_defs, name) {
+            return Some((td, Some(module.prefix.as_str())));
+        }
+    }
+    None
 }
 
 fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {

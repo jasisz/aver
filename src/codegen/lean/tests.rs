@@ -3529,6 +3529,156 @@ fn proof_mode_allows_recursive_types() {
     );
 }
 
+/// The certificate model's `Inhabited` witness for a sum type seeds the first
+/// constructor in declaration order whose arguments can all be defaulted; a
+/// constructor carrying the type itself cannot seed, a self-mention beneath a
+/// top-level `List`/`Option`/`Map` can (their Lean defaults need no argument
+/// instance), and a type where no constructor bottoms out gets no instance.
+#[test]
+fn inhabited_witness_seeds_first_constructor_that_bottoms_out() {
+    let ctx = empty_ctx();
+    let sum = |name: &str, variants: Vec<(&str, Vec<&str>)>| TypeDef::Sum {
+        name: name.to_string(),
+        variants: variants
+            .into_iter()
+            .map(|(variant_name, fields)| TypeVariant {
+                name: variant_name.to_string(),
+                fields: fields.into_iter().map(str::to_string).collect(),
+            })
+            .collect(),
+        line: 1,
+    };
+
+    // Declaration order: the first defaultable constructor wins, even when a
+    // nullary one follows — the constructor `deriving Inhabited` tries first.
+    let ordered = sum("Op", vec![("Add", vec!["Int"]), ("Zero", vec![])]);
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&ordered, &ctx, None),
+        "instance : Inhabited Op := ⟨Op.add default⟩"
+    );
+
+    // A constructor whose argument is the type itself cannot seed the
+    // instance; the scan moves on to the base case.
+    let recursive = sum(
+        "Chain",
+        vec![("More", vec!["Chain"]), ("Stop", vec!["Int"])],
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&recursive, &ctx, None),
+        "instance : Inhabited Chain := ⟨Chain.stop default⟩"
+    );
+
+    // A self-mention beneath a top-level List defaults fine: `[]` needs no
+    // `Inhabited` on the element type.
+    let wrapped = sum(
+        "Forest",
+        vec![("Grow", vec!["Forest"]), ("Pack", vec!["List<Forest>"])],
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&wrapped, &ctx, None),
+        "instance : Inhabited Forest := ⟨Forest.pack default⟩"
+    );
+
+    // No constructor bottoms out (a tuple's default needs both components):
+    // no instance, the same conservative shape as the other underivable
+    // types.
+    let hopeless = sum(
+        "Loop",
+        vec![("Step", vec!["Loop"]), ("Pair", vec!["Tuple<Loop, Int>"])],
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&hopeless, &ctx, None),
+        ""
+    );
+}
+
+/// A constructor argument naming ANOTHER sum is defaultable exactly when that
+/// sum states an `Inhabited` instance of its own (declarations are emitted in
+/// dependency order, so the referenced instance always precedes the one being
+/// stated); a family of sums reachable only through one another is the same
+/// self-ask one level up, and none of them states an instance.
+#[test]
+fn inhabited_witness_follows_cross_sum_references() {
+    let mut ctx = empty_ctx();
+    let sum = |name: &str, variants: Vec<(&str, Vec<&str>)>| TypeDef::Sum {
+        name: name.to_string(),
+        variants: variants
+            .into_iter()
+            .map(|(variant_name, fields)| TypeVariant {
+                name: variant_name.to_string(),
+                fields: fields.into_iter().map(str::to_string).collect(),
+            })
+            .collect(),
+        line: 1,
+    };
+    ctx.type_defs = vec![
+        sum(
+            "Chain",
+            vec![("More", vec!["Chain"]), ("Stop", vec!["Int"])],
+        ),
+        sum("Carrier", vec![("Hold", vec!["Chain"]), ("Empty", vec![])]),
+        sum("Ping", vec![("ToPong", vec!["Pong"])]),
+        sum("Pong", vec![("ToPing", vec!["Ping"])]),
+    ];
+
+    // `Chain` states its own instance (seeded from `Stop`), so `Hold(Chain)`
+    // bottoms out and seeds first.
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&ctx.type_defs[1], &ctx, None),
+        "instance : Inhabited Carrier := ⟨Carrier.hold default⟩"
+    );
+
+    // The mutual family: neither sum can state an instance, so neither gets
+    // one — the conservative no-instance shape, declined at the Lean build
+    // only when a model actually demands it.
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&ctx.type_defs[2], &ctx, None),
+        ""
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&ctx.type_defs[3], &ctx, None),
+        ""
+    );
+}
+
+/// A constructor whose argument names a refined type cannot seed the witness
+/// either: the refined record emits as a `Subtype` abbrev with NO `Inhabited`
+/// instance, so `default` on that argument fails to synthesize
+/// `Inhabited Natural` and declines the whole certificate. The scan must skip
+/// it — as Lean's own `deriving Inhabited` skips uninhabitable constructors —
+/// and seed the later nullary constructor instead.
+#[test]
+fn inhabited_witness_skips_constructor_with_refined_argument() {
+    let ctx = ctx_from_source(
+        r#"
+module RefinedSum
+    intent = "t"
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    match n >= 0
+        true  -> Result.Ok(Natural(value = n))
+        false -> Result.Err("must be non-negative")
+
+type Payload
+  Raw(Natural)
+  Empty
+"#,
+        "refinedsum",
+    );
+    let payload = ctx
+        .type_defs
+        .iter()
+        .find(|td| matches!(td, TypeDef::Sum { name, .. } if name == "Payload"))
+        .expect("Payload sum should be among the entry type defs");
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(payload, &ctx, None),
+        "instance : Inhabited Payload := ⟨Payload.empty⟩"
+    );
+}
+
 #[test]
 fn law_auto_example_exports_real_proof_artifacts() {
     let mut ctx = ctx_from_source(

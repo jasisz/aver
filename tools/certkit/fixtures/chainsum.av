@@ -1,0 +1,20 @@
+module ChainSum
+    intent =
+        "A sum type with no nullary constructor whose first constructor"
+        "carries the type itself. The certificate model must seed Inhabited"
+        "from the later constructor that bottoms out."
+    exposes [Chain, weight]
+
+type Chain
+  More(Chain)
+  Stop(Int)
+
+fn weight(c: Chain) -> Int
+    ? "Read the payload of a Stop, 0 otherwise."
+    match c
+        Chain.Stop(n) -> n
+        _ -> 0
+
+verify weight
+    weight(Chain.Stop(5)) => 5
+    weight(Chain.More(Chain.Stop(1))) => 0

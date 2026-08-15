@@ -580,6 +580,99 @@ fn cert_verify_accepts_record_carrying_model() {
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
 }
 
+/// A model carrying a recursive sum type with no nullary constructor builds
+/// and its certificate verifies end to end.
+///
+/// The model states each sum type's `Inhabited` witness itself (the checker
+/// wall strips `deriving`). The witness used to default the FIRST
+/// constructor's arguments whenever no nullary constructor existed — for
+/// `Chain = More(Chain) | Stop(Int)` that stated `⟨Chain.more default⟩`,
+/// whose `default` asks for the very instance being stated, so the model
+/// never built and the certificate was DECLINED. The witness now seeds the
+/// first constructor in declaration order whose arguments all bottom out:
+/// `⟨Chain.stop default⟩`.
+#[test]
+fn cert_verify_accepts_recursive_sum_carrying_model() {
+    if !tripwire_lake_available() {
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-sum-model");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/chainsum.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify chainsum failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("chainsum.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify_clean_cache(&wasm, &cert);
+    assert!(
+        ok,
+        "expected the sum-carrying certificate to verify, got:\n{report}"
+    );
+    assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
+}
+
+/// A model carrying a sum type whose FIRST constructor holds a refined record
+/// builds and its certificate verifies end to end.
+///
+/// The refined record (`Natural` — single `Int` field plus a validating smart
+/// constructor) emits as a `Subtype` abbrev with deliberately NO `Inhabited`
+/// instance. The sum's witness scan must therefore skip `Payload.raw` — its
+/// `default` argument would ask for `Inhabited Natural`, which does not exist —
+/// and seed the nullary `Payload.empty` instead, exactly as Lean's own
+/// `deriving Inhabited` skips constructors it cannot inhabit. The certified
+/// export `bump` never mentions `Payload`; the model still carries the type and
+/// its instance, so a failing instance would decline the whole certificate with
+/// "failed to synthesize Inhabited Natural".
+#[test]
+fn cert_verify_accepts_refined_argument_sum_carrying_model() {
+    if !tripwire_lake_available() {
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-refined-sum-model");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/refinedsum.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify refinedsum failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("refinedsum.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify_clean_cache(&wasm, &cert);
+    assert!(
+        ok,
+        "expected the refined-argument-sum certificate to verify, got:\n{report}"
+    );
+    assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
+}
+
 /// A nested `.lean` file that no staged `Manifest.lean`/`Certificate.lean`
 /// import admits is ignored outright: it never reaches the build tree, so a
 /// planted file that would poison the build (a Lean type error and a banned

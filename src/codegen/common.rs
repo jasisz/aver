@@ -2867,7 +2867,7 @@ pub fn is_recursive_product(name: &str, fields: &[(String, String)]) -> bool {
     fields.iter().any(|(_, ty)| type_ref_contains(ty, name))
 }
 
-fn type_ref_contains(annotation: &str, type_name: &str) -> bool {
+pub(crate) fn type_ref_contains(annotation: &str, type_name: &str) -> bool {
     // Direct match or any generic position: List<Foo>, Option<Foo>,
     // Map<K, Foo>, (Foo, Bar), etc.
     annotation == type_name
