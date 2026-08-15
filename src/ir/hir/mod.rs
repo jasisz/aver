@@ -435,6 +435,22 @@ pub enum BuiltinIntrinsic {
     /// `__str_code1_upper(<s>)` — the `String.toUpper` mirror of
     /// [`Self::StrCode1Lower`].
     StrCode1Upper,
+    /// `__str_cursor_code(<s>, <i>)` — `(String, Int) -> Int`, the
+    /// codepoint of exactly the character `__str_cursor_head` would
+    /// return at byte offset `i` (`-1` past the end, where the head is
+    /// empty). Emitted where every use of the head either crosses into
+    /// a `<fn>__code` classifier variant or re-materialises the head
+    /// itself, so nothing needs the one-character string bound.
+    StrCursorCode,
+    /// `__str_fold_lower(<c>)` — `Int -> Int`, `__str_code1_lower` of
+    /// the one-character string of codepoint `c`, without building it:
+    /// the same full-Unicode `to_lowercase`, `-1` when the result is
+    /// not exactly one character. Subject of a `<fn>__code` variant
+    /// built from a classifier that matched on `__str_code1_lower`.
+    StrFoldLower,
+    /// `__str_fold_upper(<c>)` — the `__str_code1_upper` mirror of
+    /// [`Self::StrFoldLower`].
+    StrFoldUpper,
     /// `__lst_new(<capacity>)` — `Int -> List<T>`, a fresh builder for a
     /// loop that collected with `List.prepend` and reversed on the way
     /// out. The list-build pass emits it where the call site wrote `[]`.
@@ -475,6 +491,9 @@ impl BuiltinIntrinsic {
             Self::StrCode1 => "__str_code1",
             Self::StrCode1Lower => "__str_code1_lower",
             Self::StrCode1Upper => "__str_code1_upper",
+            Self::StrCursorCode => "__str_cursor_code",
+            Self::StrFoldLower => "__str_fold_lower",
+            Self::StrFoldUpper => "__str_fold_upper",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
             Self::LstFinalize => "__lst_finalize",
@@ -504,6 +523,9 @@ impl BuiltinIntrinsic {
             "__str_code1" => Some(Self::StrCode1),
             "__str_code1_lower" => Some(Self::StrCode1Lower),
             "__str_code1_upper" => Some(Self::StrCode1Upper),
+            "__str_cursor_code" => Some(Self::StrCursorCode),
+            "__str_fold_lower" => Some(Self::StrFoldLower),
+            "__str_fold_upper" => Some(Self::StrFoldUpper),
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),
             "__lst_finalize" => Some(Self::LstFinalize),

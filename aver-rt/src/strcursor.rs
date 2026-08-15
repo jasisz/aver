@@ -43,6 +43,61 @@ pub fn str_cursor_next(s: &str, i: usize) -> usize {
     }
 }
 
+/// The codepoint of exactly the character [`str_cursor_head`] would
+/// return at byte offset `i`, or `-1` past the end (where the head is
+/// the empty string, whose [`str_code1`] is `-1`). One read instead of
+/// building the one-character string and decoding it again.
+#[inline]
+pub fn str_cursor_code(s: &str, i: usize) -> i64 {
+    match char_at(s, i) {
+        Some((c, _)) => i64::from(u32::from(c)),
+        None => -1,
+    }
+}
+
+/// [`str_code1_lower`] of the one-character string of codepoint `c`,
+/// without building the string: the full Unicode lowercase of the
+/// character, or `-1` when `c` is not a Unicode scalar value or its
+/// lowercase is not exactly one character (`U+0130` expands to two).
+///
+/// The general arm iterates `char::to_lowercase` — for a
+/// single-character string that is the same answer `str::to_lowercase`
+/// gives, which the exhaustive test below checks over every scalar, so
+/// the codepoint route cannot drift from the string route it stands in
+/// for.
+#[inline]
+pub fn str_fold_lower(c: i64) -> i64 {
+    let Some(ch) = u32::try_from(c).ok().and_then(char::from_u32) else {
+        return -1;
+    };
+    if ch.is_ascii() {
+        return i64::from((ch as u8).to_ascii_lowercase());
+    }
+    let mut it = ch.to_lowercase();
+    match (it.next(), it.next()) {
+        (Some(l), None) => i64::from(u32::from(l)),
+        _ => -1,
+    }
+}
+
+/// [`str_code1_upper`] of the one-character string of codepoint `c` —
+/// mirror of [`str_fold_lower`] (`U+00DF` uppercases to `"SS"`, two
+/// characters, so `-1`).
+#[inline]
+pub fn str_fold_upper(c: i64) -> i64 {
+    let Some(ch) = u32::try_from(c).ok().and_then(char::from_u32) else {
+        return -1;
+    };
+    if ch.is_ascii() {
+        return i64::from((ch as u8).to_ascii_uppercase());
+    }
+    let mut it = ch.to_uppercase();
+    match (it.next(), it.next()) {
+        (Some(u), None) => i64::from(u32::from(u)),
+        _ => -1,
+    }
+}
+
 /// The single codepoint of `s`, or `-1` when `s` is not exactly one
 /// character long.
 ///
@@ -172,6 +227,47 @@ mod tests {
                 "upper {cp:#x}"
             );
         }
+    }
+
+    /// The cursor's code read answers what decoding the head would
+    /// answer, at every position including past the end — the whole
+    /// license for binding the code instead of the head.
+    #[test]
+    fn the_code_at_the_cursor_is_the_code_of_the_head() {
+        for s in ["", "abc", "é7", "🦀x🦀", "İi", "aé🦀z"] {
+            let mut i = 0;
+            while !str_cursor_end(s, i) {
+                assert_eq!(
+                    str_cursor_code(s, i),
+                    str_code1(str_cursor_head(s, i)),
+                    "cursor over {s:?} at {i}"
+                );
+                i = str_cursor_next(s, i);
+            }
+            assert_eq!(str_cursor_code(s, s.len()), -1, "past the end of {s:?}");
+        }
+    }
+
+    /// The codepoint-level folds answer what the string-level folds
+    /// answer, for every Unicode scalar value — the soundness receipt
+    /// for handing a classifier the code instead of the string. Runs in
+    /// seconds; do not sample it down.
+    #[test]
+    fn codepoint_folding_agrees_with_the_string_folding_on_every_scalar() {
+        for cp in 0u32..=0x10_FFFF {
+            let Some(c) = char::from_u32(cp) else {
+                continue;
+            };
+            let s = c.to_string();
+            let code = i64::from(cp);
+            assert_eq!(str_fold_lower(code), str_code1_lower(&s), "lower {cp:#x}");
+            assert_eq!(str_fold_upper(code), str_code1_upper(&s), "upper {cp:#x}");
+        }
+        // And off the scalar range there is no character to fold.
+        assert_eq!(str_fold_lower(-1), -1);
+        assert_eq!(str_fold_upper(-1), -1);
+        assert_eq!(str_fold_lower(0xD800), -1, "surrogates are not scalars");
+        assert_eq!(str_fold_lower(0x11_0000), -1, "past the last scalar");
     }
 
     /// `U+212A KELVIN SIGN` lowercases to `"k"`. A rewrite that folded
