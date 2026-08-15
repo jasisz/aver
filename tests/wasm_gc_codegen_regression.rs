@@ -106,6 +106,7 @@ fn parse_pipeline_with_module_root(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -588,6 +589,7 @@ fn parse_pipeline_ignoring_type_errors(source: &str) -> Vec<TopLevel> {
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );

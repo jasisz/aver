@@ -2091,6 +2091,55 @@ impl VM {
                     self.stack.push(pushed);
                 }
 
+                // List builder (list-build fusion). A builder is either
+                // a pool handle holding immediates or the cons chain the
+                // loop wrote before this pass existed; see the opcode
+                // block in `vm::opcode` for why both shapes are needed.
+                LIST_BUILDER_NEW => {
+                    // The capacity is advisory in exactly the sense
+                    // `BUFFER_NEW`'s is: a `Vec::with_capacity` hint that
+                    // cannot change the answer, so a negative or
+                    // unrepresentable one means "no hint" rather than an
+                    // error.
+                    let hint = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let capacity = hint
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .unwrap_or(0)
+                        .min(LIST_BUILDER_CAPACITY_HINT_CAP);
+                    let builder = match self.list_builder_free.pop() {
+                        Some(slot) => {
+                            self.list_builder_pool[slot] = Some(Vec::with_capacity(capacity));
+                            NanValue::new_int(slot as i64, &mut self.arena)
+                        }
+                        None if self.list_builder_pool.len() < LIST_BUILDER_POOL_SLOTS => {
+                            self.list_builder_pool
+                                .push(Some(Vec::with_capacity(capacity)));
+                            let slot = self.list_builder_pool.len() - 1;
+                            NanValue::new_int(slot as i64, &mut self.arena)
+                        }
+                        // Out of slots. The cons chain needs none, and a
+                        // builder that falls back to it is the program
+                        // this pass replaced — slower than the pool, never
+                        // wrong.
+                        None => NanValue::EMPTY_LIST,
+                    };
+                    self.stack.push(builder);
+                }
+
+                LIST_BUILDER_PUSH => {
+                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let builder = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let pushed = self.list_builder_push(builder, value, code, ip)?;
+                    self.stack.push(pushed);
+                }
+
+                LIST_BUILDER_FINALIZE => {
+                    let builder = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let list = self.list_builder_finalize(builder)?;
+                    self.stack.push(list);
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -2308,4 +2357,108 @@ impl VM {
 /// termination guarantee, not a silent wrong index.
 fn cursor_offset(value: NanValue, arena: &Arena) -> usize {
     value.as_aver_int(arena).to_usize().unwrap_or(usize::MAX)
+}
+
+/// How many pooled builders may exist at once.
+///
+/// The pool is a fast path, not a resource: builders nest only as deeply
+/// as collecting loops call one another, so a few is already generous,
+/// and the cap is what turns "a loop that exits without finalizing leaks
+/// its slot" from unbounded into a number. Past it, builders fall back to
+/// the cons chain, which is the program this pass replaced.
+const LIST_BUILDER_POOL_SLOTS: usize = 4096;
+
+/// Ceiling on the capacity hint a builder will pre-allocate for.
+///
+/// The hint comes from the rewritten call site and is a guess about the
+/// answer's length, never a promise; clamping it means a wrong guess
+/// costs some growth rather than an allocation the program never needed.
+const LIST_BUILDER_CAPACITY_HINT_CAP: usize = 1 << 16;
+
+impl VM {
+    /// Append `value` to `builder`, returning the builder that holds it.
+    ///
+    /// Pooled while the elements stay immediate. The first element with
+    /// an arena index turns the builder into the cons chain the source
+    /// wrote — everything collected so far, prepended in order, so the
+    /// chain reads reversed exactly as [`Self::list_builder_finalize`]
+    /// expects. That conversion happens at most once per builder and
+    /// costs one pass over what it had.
+    fn list_builder_push(
+        &mut self,
+        builder: NanValue,
+        value: NanValue,
+        code: &[u8],
+        ip: usize,
+    ) -> Result<NanValue, VmError> {
+        if builder.is_list() {
+            return Ok(self.list_builder_prepend(builder, value, code, ip));
+        }
+        let slot = self.list_builder_slot(builder)?;
+        if value.heap_index().is_none() {
+            self.list_builder_pool[slot]
+                .as_mut()
+                .expect("slot checked live")
+                .push(value);
+            return Ok(builder);
+        }
+        let collected = self.free_list_builder_slot(slot);
+        let mut chain = NanValue::EMPTY_LIST;
+        for item in collected {
+            chain = self.list_builder_prepend(chain, item, code, ip);
+        }
+        Ok(self.list_builder_prepend(chain, value, code, ip))
+    }
+
+    /// The list a builder collected, in append order, and the slot back
+    /// in the free list if it held one.
+    fn list_builder_finalize(&mut self, builder: NanValue) -> Result<NanValue, VmError> {
+        if builder.is_list() {
+            // The chain was built by prepending in append order, so it
+            // reads backwards — the same list, and the same single
+            // reversal, the unfused loop ended with.
+            let mut items = self.arena.list_to_vec_value(builder);
+            items.reverse();
+            let idx = self.arena.push_list(items);
+            return Ok(NanValue::new_list(idx));
+        }
+        let slot = self.list_builder_slot(builder)?;
+        let items = self.free_list_builder_slot(slot);
+        let idx = self.arena.push_list(items);
+        Ok(NanValue::new_list(idx))
+    }
+
+    /// One cons cell, allocated where the surrounding instruction says
+    /// values belong — the same call `LIST_PREPEND` makes.
+    fn list_builder_prepend(
+        &mut self,
+        list: NanValue,
+        value: NanValue,
+        code: &[u8],
+        ip: usize,
+    ) -> NanValue {
+        let idx = self
+            .arena
+            .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                arena.push_list_prepend(value, list)
+            });
+        NanValue::new_list(idx)
+    }
+
+    /// The live pool slot a builder handle names.
+    fn list_builder_slot(&self, builder: NanValue) -> Result<usize, VmError> {
+        let slot = builder
+            .as_aver_int(&self.arena)
+            .to_usize()
+            .filter(|slot| matches!(self.list_builder_pool.get(*slot), Some(Some(_))))
+            .ok_or_else(|| VmError::runtime("list builder: invalid builder handle"))?;
+        Ok(slot)
+    }
+
+    /// Take a slot's elements and hand the slot back for reuse.
+    fn free_list_builder_slot(&mut self, slot: usize) -> Vec<NanValue> {
+        let items = self.list_builder_pool[slot].take().unwrap_or_default();
+        self.list_builder_free.push(slot);
+        items
+    }
 }

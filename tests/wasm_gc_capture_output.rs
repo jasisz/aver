@@ -122,6 +122,7 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -207,6 +208,7 @@ fn wasm_gc_bits_namespace_matches_vm() {
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -254,6 +256,7 @@ fn vm_and_wasm_gc_stdout(src: &str) -> (String, String) {
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_list_build: false,
                 ..Default::default()
             },
         );

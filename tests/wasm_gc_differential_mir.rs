@@ -87,6 +87,7 @@ fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );

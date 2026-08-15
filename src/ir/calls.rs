@@ -281,8 +281,9 @@ fn classify_named_callee(
         // classification, route to the WASM builtin dispatch which
         // lowers each to a `Call(rt_buffer_*)` instruction.
         //
-        // The chars-fusion cursor / codepoint intrinsics ride the same
-        // route for the same reason.
+        // The chars-fusion cursor / codepoint intrinsics and the
+        // list-build builder intrinsics ride the same route for the same
+        // reason.
         if matches!(
             bare,
             "__buf_new"
@@ -296,6 +297,9 @@ fn classify_named_callee(
                 | "__str_code1"
                 | "__str_code1_lower"
                 | "__str_code1_upper"
+                | "__lst_new"
+                | "__lst_push"
+                | "__lst_finalize"
         ) {
             return CallPlan::Builtin(bare.to_string());
         }

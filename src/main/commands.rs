@@ -1585,6 +1585,7 @@ pub(super) fn cmd_run_self_hosted(
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_list_build: false,
                 run_resolve: false,
                 ..Default::default()
             },
@@ -2882,6 +2883,7 @@ fn build_codegen_context(
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_list_build: apply_traversal_lowering,
             run_refinement_lower,
             run_contract_lower,
             run_law_lower,
@@ -3472,6 +3474,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
         "chars_fusion" => Some(PipelineStage::CharsFusion),
+        "list_build" => Some(PipelineStage::ListBuild),
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
@@ -3486,7 +3489,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, list_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()
@@ -3905,6 +3908,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     }
     merge_dep_buffer_build(&mut result.pass_diagnostics, &dep_fusion);
     merge_dep_chars_fusion(&mut result.pass_diagnostics, &dep_fusion);
+    merge_dep_list_build(&mut result.pass_diagnostics, &dep_fusion);
 
     if json {
         print!("{}", render_pass_diagnostics_json(&result.pass_diagnostics));
@@ -3978,22 +3982,30 @@ fn dep_fusion_reports(items: &[TopLevel], module_root: &str) -> Vec<DepFusion> {
         );
         let buffer_build = result.buffer_build.unwrap_or_default();
         let chars_fusion = result.chars_fusion.unwrap_or_default();
-        if buffer_build.rewrites > 0 || chars_fusion.fired() || !chars_fusion.declined.is_empty() {
+        let list_build = result.list_build.unwrap_or_default();
+        if buffer_build.rewrites > 0
+            || chars_fusion.fired()
+            || !chars_fusion.declined.is_empty()
+            || list_build.rewrites > 0
+            || !list_build.declined.is_empty()
+        {
             out.push(DepFusion {
                 prefix: m.dep_name,
                 buffer_build,
                 chars_fusion,
+                list_build,
             });
         }
     }
     out
 }
 
-/// One dependency's share of the two fabricating string passes.
+/// One dependency's share of the fabricating passes.
 struct DepFusion {
     prefix: String,
     buffer_build: aver::ir::BufferBuildPassReport,
     chars_fusion: aver::ir::CharsFusionPassReport,
+    list_build: aver::ir::ListBuildPassReport,
 }
 
 /// Fold per-dependency fusion into the entry's `buffer_build` pass
@@ -4069,6 +4081,45 @@ fn merge_dep_chars_fusion(diagnostics: &mut [aver::ir::PassDiagnostic], dep_repo
         }
         entry.synthesized.sort();
         entry.loop_fns.sort();
+    }
+}
+
+/// The list-build half of the same fold: a collecting loop fused inside
+/// a dependency is a rewrite the artifact carries, and one a dependency
+/// DECLINED is the fact this diagnostic exists to surface.
+fn merge_dep_list_build(diagnostics: &mut [aver::ir::PassDiagnostic], dep_reports: &[DepFusion]) {
+    if dep_reports.is_empty() {
+        return;
+    }
+    for diagnostic in diagnostics.iter_mut() {
+        let aver::ir::PassReport::ListBuild(entry) = &mut diagnostic.report else {
+            continue;
+        };
+        for DepFusion {
+            prefix,
+            list_build: dep,
+            ..
+        } in dep_reports
+        {
+            entry.rewrites += dep.rewrites;
+            entry
+                .synthesized
+                .extend(dep.synthesized.iter().map(|n| format!("{prefix}.{n}")));
+            entry
+                .builder_fns
+                .extend(dep.builder_fns.iter().map(|n| format!("{prefix}.{n}")));
+            for (fn_name, count) in &dep.rewrites_by_fn {
+                *entry
+                    .rewrites_by_fn
+                    .entry(format!("{prefix}.{fn_name}"))
+                    .or_default() += count;
+            }
+            for (fn_name, reason) in &dep.declined {
+                entry.declined.insert(format!("{prefix}.{fn_name}"), reason);
+            }
+        }
+        entry.synthesized.sort();
+        entry.builder_fns.sort();
     }
 }
 
@@ -4441,6 +4492,33 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     out.push_str(&format!("  • declined {fn_name}: {reason}\n"));
                 }
             }
+            PassReport::ListBuild(r) => {
+                if r.rewrites == 0 {
+                    out.push_str(&format!(
+                        "{label} no collecting loop rewritten to a list builder\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {} call site(s) moved onto a list builder, \
+                         {} collected variant(s) synthesized\n",
+                        r.rewrites,
+                        r.synthesized.len()
+                    ));
+                    for (fn_name, count) in &r.rewrites_by_fn {
+                        out.push_str(&format!("  • loop {fn_name}: {count} call site(s)\n"));
+                    }
+                    for fn_name in &r.synthesized {
+                        out.push_str(&format!("  • synthesized {fn_name}\n"));
+                    }
+                    out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
+                }
+                // Same reason the chars-fusion declines are unconditional:
+                // a loop the recogniser stopped seeing is what this
+                // diagnostic exists to surface.
+                for (fn_name, reason) in &r.declined {
+                    out.push_str(&format!("  • declined {fn_name}: {reason}\n"));
+                }
+            }
             PassReport::Resolve {
                 slots_resolved,
                 fns_with_slots,
@@ -4701,6 +4779,34 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     json_str_array(&r.synthesized),
                     json_str_array(&r.loop_fns),
                     r.codepoint_matches,
+                    by_fn,
+                    declined,
+                    DEFORESTING_TARGETS_JSON
+                ));
+            }
+            PassReport::ListBuild(r) => {
+                let mut by_fn = String::from("{");
+                for (j, (k, v)) in r.rewrites_by_fn.iter().enumerate() {
+                    if j > 0 {
+                        by_fn.push(',');
+                    }
+                    by_fn.push_str(&format!("{}:{}", json_str(k), v));
+                }
+                by_fn.push('}');
+                let mut declined = String::from("{");
+                for (j, (k, v)) in r.declined.iter().enumerate() {
+                    if j > 0 {
+                        declined.push(',');
+                    }
+                    declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
+                }
+                declined.push('}');
+                out.push_str(&format!(
+                    "{{\"rewrites\":{},\"synthesized\":{},\"loop_fns\":{},\
+                     \"rewrites_by_fn\":{},\"declined\":{},\"targets\":{}}}",
+                    r.rewrites,
+                    json_str_array(&r.synthesized),
+                    json_str_array(&r.builder_fns),
                     by_fn,
                     declined,
                     DEFORESTING_TARGETS_JSON
@@ -5027,6 +5133,7 @@ fn cmd_compile_wasm_gc(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_list_build: false,
             ..Default::default()
         },
     );
@@ -5284,6 +5391,7 @@ fn cmd_compile_wasip2(
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_list_build: false,
                 ..Default::default()
             },
         );
@@ -9890,6 +9998,7 @@ pub(super) struct DepLowering {
     pub interp_lower: bool,
     pub buffer_build: bool,
     pub chars_fusion: bool,
+    pub list_build: bool,
     /// Self-host typecheck driver — bypasses the opaque-type checks so
     /// `domain/builtins.av` can round-trip host types.
     pub self_host: bool,
@@ -9901,17 +10010,19 @@ impl DepLowering {
         interp_lower: false,
         buffer_build: false,
         chars_fusion: false,
+        list_build: false,
         self_host: false,
     };
 
-    /// Both fabricating string passes on or off together — they share a
+    /// Every fabricating pass on or off together — they share a
     /// lowering matrix (VM + Rust), so no caller has ever wanted one
-    /// without the other.
+    /// without the others.
     pub(super) const fn deforesting(on: bool, self_host: bool) -> Self {
         Self {
             interp_lower: false,
             buffer_build: on,
             chars_fusion: on,
+            list_build: on,
             self_host,
         }
     }
@@ -10059,6 +10170,7 @@ fn load_module_recursive(
             run_interp_lower: lowering.interp_lower,
             run_buffer_build: lowering.buffer_build,
             run_chars_fusion: lowering.chars_fusion,
+            run_list_build: lowering.list_build,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
