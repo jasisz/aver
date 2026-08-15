@@ -1328,6 +1328,6 @@ mod list_build;
 mod tests;
 
 pub use list_build::{
-    ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape, has_list_build_shape,
-    run_list_build_pass,
+    ByteSinkDecline, ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape,
+    has_list_build_shape, run_list_build_pass,
 };

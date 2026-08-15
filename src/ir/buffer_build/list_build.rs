@@ -138,7 +138,9 @@ impl ListBuildDecline {
                 "an exit does not come from the accumulator, and the caller's \
                  reverse pays for the rewrite"
             }
-            Self::NameTaken => "the __collected variant name or the __lst_ namespace is taken",
+            Self::NameTaken => {
+                "the __collected variant name or the __lst_ or __byt_ namespace is taken"
+            }
         }
     }
 }
@@ -160,17 +162,35 @@ pub struct ListBuildPassReport {
     /// Collecting loops the recogniser looked at and turned down, with
     /// the reason. Alphabetised by fn name.
     pub declined: std::collections::BTreeMap<String, &'static str>,
+    /// `fromList` call sites deleted by retargeting a collected
+    /// variant's builder to bytes.
+    pub byte_retargets: usize,
+    /// Collected variants whose builder was retargeted to bytes.
+    /// Sorted.
+    pub byte_fns: Vec<String>,
+    /// Collected variants that had a `fromList`-shaped consumer the
+    /// byte retarget turned down, with the reason. Alphabetised by
+    /// variant name. A variant with no such consumer was never a
+    /// candidate and is not listed.
+    pub byte_declined: std::collections::BTreeMap<String, &'static str>,
 }
 
 /// Suffix distinguishing the synthesized variant from the loop it was
 /// built from.
 const COLLECTED_SUFFIX: &str = "__collected";
 
-/// Prefix of every intrinsic this pass emits. A leading `__` is not
-/// reserved — a program can bind `__lst_push` and a binder is exactly
-/// what would shadow the intrinsic for the code underneath it — so the
-/// pass steps aside rather than risk emitting a call to the user's name.
-const BUILDER_PREFIX: &str = "__lst_";
+/// Prefixes of every intrinsic and binder this pass emits — the list
+/// builder's, and the byte builder's the byte-sink retarget below
+/// rewrites it into. A leading `__` is not reserved — a program can
+/// bind `__lst_push` and a binder is exactly what would shadow the
+/// intrinsic for the code underneath it — so the pass steps aside
+/// rather than risk emitting a call to the user's name. One list for
+/// both namespaces on purpose: the retarget is a stage of this pass,
+/// and a program that binds into either namespace takes the whole pass
+/// away at once. (The guard family is slated for retirement when the
+/// language reserves `__` outright — extend this list, do not grow a
+/// second mechanism around it.)
+const BUILDER_PREFIXES: [&str; 2] = ["__lst_", "__byt_"];
 
 /// The three intrinsics, in the order they appear in a rewritten loop.
 const BUILDER_INTRINSICS: [&str; 3] = ["__lst_new", "__lst_push", "__lst_finalize"];
@@ -198,7 +218,8 @@ pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
     // by name, and a name that means something else anywhere it is in
     // scope is a name this pass cannot spell.
     let namespace_taken = taken.iter().any(|name| {
-        name.starts_with(BUILDER_PREFIX) || BUILDER_INTRINSICS.contains(&name.as_str())
+        BUILDER_PREFIXES.iter().any(|p| name.starts_with(p))
+            || BUILDER_INTRINSICS.contains(&name.as_str())
     });
 
     let mut accepted: HashMap<String, (String, ListBuildShape)> = HashMap::new();
@@ -257,6 +278,8 @@ pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
                 .to_string()
         })
         .collect();
+    run_byte_sink_retarget(items, &accepted, &mut variants, &mut report);
+
     items.reserve(variants.len());
     for variant in variants {
         items.push(TopLevel::FnDef(variant));
@@ -635,6 +658,1006 @@ fn rewrite_acc_to_builder(
         }
     });
     outcome
+}
+
+// === The byte sink =====================================================
+//
+// The third consumer a collected loop can have, after "the list is the
+// answer" and "String.join eats it": the standard library's
+// `Bytes.fromList`, which walks the collected list a second time to
+// check every element against `0..=255` and wrap it in the `Bytes`
+// record. When that call is the ONLY reader of a collected result, the
+// list between the loop and the record is scaffolding: the range check
+// can ride every push, and the loop's own exit can answer the
+// `Result<Bytes, String>` the pair used to compute. So the retarget
+// below rewrites the collected variant's `__lst_*` builder to the
+// `__byt_*` one and deletes the `fromList` call.
+//
+// What makes this sound is that the retarget bakes `fromList`'s
+// semantics — the range, the first-offender rule, the message, the
+// record — into the byte builder. That is only true of THE `fromList`
+// in the standard library, so the consumer is verified structurally:
+// the module's `fromList`, the three helpers it reads, and the `Bytes`
+// record must be AST-equal to the embedded standard library's own
+// (spanned equality ignores lines, so the check is about shape, not
+// position). A vendored copy that drifted by a word declines; an exact
+// copy fuses, because an exact copy means exactly what the original
+// means. Only the bare in-module spelling is recognised — a dotted
+// `Bytes.fromList` from another module would need the dep's items to
+// verify against, and no workload has brought that shape yet.
+
+/// Why the byte-sink retarget turned a collected variant down.
+///
+/// Reported per variant so `--explain-passes` can say which loop kept
+/// its list and what about its consumer stopped the retarget. Every
+/// reason below has a program in `tests/list_build_declines.rs` that
+/// answered correctly before this stage existed and still does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ByteSinkDecline {
+    /// A call site of the variant is not a `fromList` consumer — some
+    /// caller wants the list itself, and one variant cannot hand back
+    /// two different answers.
+    MixedConsumers,
+    /// The bound collected result is read again outside the `fromList`
+    /// call, or something re-binds its name between the two — the
+    /// occurs-check of the family, on the consumer side.
+    SecondReader,
+    /// The `fromList` call is not the consumer fn's own answer. The
+    /// `?` on the collected call returns parse errors from the fn
+    /// early; fused, they become the call's value — the two agree only
+    /// where that value IS the fn's answer.
+    NotTheAnswer,
+    /// The consumer named `fromList` is not the standard library's:
+    /// its shape (or a helper's, or the record's) differs from the
+    /// embedded `Bytes` module, or a local binder shadows the name.
+    ConsumerShape,
+    /// An exit of the variant answers something besides the collected
+    /// list, so a path exists on which `fromList` would have validated
+    /// elements the byte builder never saw.
+    ExitShape,
+    /// The accumulator is not a `List<Int>`, so its elements are not
+    /// candidate octets. Unreachable through a type-checked consumer,
+    /// kept so the decision never rests on the typechecker having run.
+    ElemShape,
+}
+
+impl ByteSinkDecline {
+    /// One-line explanation, rendered by `--explain-passes`.
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::MixedConsumers => "another caller reads the collected list itself",
+            Self::SecondReader => "the collected result is read outside the fromList call",
+            Self::NotTheAnswer => "the fromList call is not the consumer's own answer",
+            Self::ConsumerShape => "fromList here is not the standard library's Bytes.fromList",
+            Self::ExitShape => "an exit answers something besides the collected list",
+            Self::ElemShape => "the accumulator does not collect List<Int>",
+        }
+    }
+}
+
+/// The consumer fn name this stage recognises, in its bare in-module
+/// spelling.
+const FROM_LIST: &str = "fromList";
+
+/// The four standard-library fns whose exact shapes the retarget
+/// replaces, and the record their answer wraps. `fromList` is the
+/// consumer; the other three are what its arms read, so a module that
+/// edited any of them edited what `fromList` means.
+const FROM_LIST_FAMILY: [&str; 4] = [
+    FROM_LIST,
+    "allInRange",
+    "firstOutOfRange",
+    "firstOutOfRangeIndex",
+];
+
+/// The record `fromList` wraps its answer in.
+const BYTES_RECORD: &str = "Bytes";
+
+/// What a collected variant looks like to the byte-sink stage.
+struct ByteSinkMeta {
+    /// Index of the variant in the pass's owned `variants` vec.
+    variant_idx: usize,
+    /// The accumulator parameter's index and name.
+    acc_idx: usize,
+    acc_name: String,
+    /// `true` when the variant answers `Result<List<Int>, String>`
+    /// (exits are `Result.Ok(finalize)` / `Result.Err(…)`, consumers
+    /// go through `?`); `false` when it answers `List<Int>` bare
+    /// (exits are the finalize itself, consumers apply `fromList`
+    /// directly). `None` when it answers neither, which no `fromList`
+    /// consumer can be feeding legally.
+    result_kind: Option<bool>,
+    /// Does the accumulator collect `List<Int>`?
+    elem_ok: bool,
+}
+
+/// What scanning the consumers found about one variant.
+#[derive(Default)]
+struct ConsumerFacts {
+    /// Reads of the variant's name anywhere in the module's fns.
+    occurrences: usize,
+    /// Recognised consumer sites (each consumes exactly one read).
+    sites: usize,
+    /// The first consumer-shaped interaction that could not fuse.
+    flaw: Option<ByteSinkDecline>,
+}
+
+/// One reference form of the standard library's `fromList` family.
+/// Two are kept because this pass meets the module in two states:
+/// after `interp_lower` (the compile pipelines) and before it (the
+/// VM's dependency re-run and the unit harness). Both are the same
+/// program; the retarget must decide identically on both.
+struct FromListReference {
+    fns: Vec<FnDef>,
+    record_fields: Vec<(String, String)>,
+}
+
+/// The embedded standard library's `fromList` family, in both forms,
+/// built once per process. Empty when the embedded module is missing
+/// or has lost one of the shapes — every candidate then declines,
+/// which is the safe reading of "the thing I bake in does not exist".
+fn from_list_references() -> &'static [FromListReference] {
+    static REFS: std::sync::OnceLock<Vec<FromListReference>> = std::sync::OnceLock::new();
+    REFS.get_or_init(|| {
+        let Some(module) = crate::stdlib::find(BYTES_RECORD) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for lower_interpolation in [false, true] {
+            let Ok(mut items) = crate::source::parse_source(module.source) else {
+                continue;
+            };
+            crate::tco::transform_program(&mut items);
+            if lower_interpolation {
+                crate::ir::lower_interpolation_pass(&mut items);
+            }
+            let mut fns = Vec::new();
+            for name in FROM_LIST_FAMILY {
+                if let Some(fd) = crate::ir::chars_fusion::fn_defs(&items).find(|fd| fd.name == name)
+                {
+                    fns.push(fd.clone());
+                }
+            }
+            let record_fields = items.iter().find_map(|it| match it {
+                TopLevel::TypeDef(crate::ast::TypeDef::Product { name, fields, .. })
+                    if name == BYTES_RECORD =>
+                {
+                    Some(fields.clone())
+                }
+                _ => None,
+            });
+            if let (4, Some(record_fields)) = (fns.len(), record_fields) {
+                out.push(FromListReference { fns, record_fields });
+            }
+        }
+        out
+    })
+}
+
+/// Is this module's `fromList` family the standard library's, shape
+/// for shape? Params, return type, effects and body of all four fns,
+/// and the `Bytes` record's fields, against either reference form.
+/// Lines and type stamps do not participate (spanned equality ignores
+/// both), so an exact copy at other line numbers passes and a copy
+/// that changed a word does not.
+fn from_list_is_the_stdlib_one(items: &[TopLevel]) -> bool {
+    from_list_references().iter().any(|reference| {
+        reference.fns.iter().all(|ref_fd| {
+            crate::ir::chars_fusion::fn_defs(items)
+                .find(|fd| fd.name == ref_fd.name)
+                .is_some_and(|fd| {
+                    fd.params == ref_fd.params
+                        && fd.return_type == ref_fd.return_type
+                        && fd.effects.is_empty()
+                        && ref_fd.effects.is_empty()
+                        && *fd.body == *ref_fd.body
+                })
+        }) && items.iter().any(|it| {
+            matches!(
+                it,
+                TopLevel::TypeDef(crate::ast::TypeDef::Product { name, fields, .. })
+                    if name == BYTES_RECORD && *fields == reference.record_fields
+            )
+        })
+    })
+}
+
+/// Does `fd` bind `name` anywhere — a parameter, a statement binding,
+/// or a pattern binder? A binder is what shadows the module-level
+/// `fromList` for the code underneath it, and a shadowed consumer is
+/// not the consumer this stage verified.
+fn fn_binds_name(fd: &FnDef, name: &str) -> bool {
+    fn walk(expr: &Spanned<Expr>, name: &str) -> bool {
+        if let Expr::Match { arms, .. } = &expr.node
+            && arms.iter().any(|arm| pattern_binds_name(&arm.pattern, name))
+        {
+            return true;
+        }
+        let mut found = false;
+        crate::ir::chars_fusion::walk_children(expr, &mut |child| {
+            found = found || walk(child, name);
+        });
+        found
+    }
+    fd.params.iter().any(|(n, _)| n == name)
+        || fd.body.stmts().iter().any(|stmt| match stmt {
+            Stmt::Binding(n, _, expr) => n == name || walk(expr, name),
+            Stmt::Expr(expr) => walk(expr, name),
+        })
+}
+
+/// Does any identifier under `expr` live in a builder namespace this
+/// pass emits into?
+fn mentions_builder_namespace(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => {
+            if BUILDER_PREFIXES.iter().any(|p| n.starts_with(p)) {
+                return true;
+            }
+        }
+        _ => {}
+    }
+    let mut found = false;
+    crate::ir::chars_fusion::walk_children(expr, &mut |child| {
+        found = found || mentions_builder_namespace(child);
+    });
+    found
+}
+
+/// Is `expr` a call to `name` — the bare-identifier callee shape every
+/// site this pass synthesizes uses?
+fn call_to<'e>(expr: &'e Expr, name: &str) -> Option<&'e Vec<Spanned<Expr>>> {
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    matches!(&callee.node, Expr::Ident(n) if n == name).then_some(args)
+}
+
+/// Is `expr` the `__lst_finalize(<acc>)` call the retarget replaces?
+fn is_lst_finalize_of(expr: &Expr, acc_name: &str) -> bool {
+    call_to(expr, "__lst_finalize").is_some_and(|args| {
+        args.len() == 1 && matches!(&args[0].node, Expr::Ident(n) if n == acc_name)
+    })
+}
+
+/// The payload of a `Result.<variant>(…)` wrapper in its pre-resolve
+/// call shape.
+fn result_wrapper_payload<'e>(expr: &'e Expr, variant: &str) -> Option<&'e Vec<Spanned<Expr>>> {
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    is_dotted_ident(&callee.node, "Result", variant).then_some(args)
+}
+
+/// Build `Result.<variant>(payload)` in the same pre-resolve call
+/// shape the parser builds, stamped with the retargeted answer type.
+fn result_wrapper(line: usize, variant: &str, payload: Spanned<Expr>) -> Spanned<Expr> {
+    let base = sp_at(line, Expr::Ident("Result".to_string()));
+    let callee = sp_at(line, Expr::Attr(Box::new(base), variant.to_string()));
+    sp_at_typed(
+        line,
+        Expr::FnCall(Box::new(callee), vec![payload]),
+        bytes_result_type(),
+    )
+}
+
+/// A recognised variant call at a consumer site: the callee is a
+/// retarget candidate (`acc_idx_of` knows its accumulator position)
+/// and the accumulator argument is the `__lst_new` the list rewrite
+/// put there. Returns the variant's name.
+fn consumer_variant_call(
+    expr: &Expr,
+    acc_idx_of: &impl Fn(&str) -> Option<usize>,
+) -> Option<String> {
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    let Expr::Ident(name) = &callee.node else {
+        return None;
+    };
+    let acc_idx = acc_idx_of(name)?;
+    let acc = args.get(acc_idx)?;
+    call_to(&acc.node, "__lst_new")?;
+    Some(name.clone())
+}
+
+/// Run the byte-sink stage: find every collected variant whose only
+/// readers hand the result straight to the verified `fromList`,
+/// retarget those variants' builders to bytes, and delete the
+/// `fromList` calls. Declines are recorded per variant; a variant with
+/// no `fromList`-shaped consumer is not a candidate and stays silent.
+fn run_byte_sink_retarget(
+    items: &mut Vec<TopLevel>,
+    accepted: &HashMap<String, (String, ListBuildShape)>,
+    variants: &mut [FnDef],
+    report: &mut ListBuildPassReport,
+) {
+    if variants.is_empty() {
+        return;
+    }
+
+    // What each variant looks like from the outside. Built from the
+    // pass's own `accepted` map, so the accumulator identity is the
+    // one the list rewrite actually used.
+    let mut metas: HashMap<String, ByteSinkMeta> = HashMap::new();
+    for (idx, variant) in variants.iter().enumerate() {
+        let Some((_, shape)) = accepted.values().find(|(name, _)| *name == variant.name) else {
+            continue;
+        };
+        let elem_ok = crate::types::parse_type_str(&shape.acc.ty)
+            == crate::types::Type::List(Box::new(crate::types::Type::Int));
+        // The KIND is about shape (a list, bare or behind a String-erring
+        // Result); whether the elements are octet candidates is
+        // `elem_ok`'s question, so a `List<String>` loop is recognised
+        // as a candidate and declined with the element reason rather
+        // than skipped in silence.
+        let result_kind = match crate::types::parse_type_str(&variant.return_type) {
+            crate::types::Type::Result(ok, err)
+                if matches!(*ok, crate::types::Type::List(_))
+                    && *err == crate::types::Type::Str =>
+            {
+                Some(true)
+            }
+            crate::types::Type::List(_) => Some(false),
+            _ => None,
+        };
+        metas.insert(
+            variant.name.clone(),
+            ByteSinkMeta {
+                variant_idx: idx,
+                acc_idx: shape.acc.idx,
+                acc_name: shape.acc.name.clone(),
+                result_kind,
+                elem_ok,
+            },
+        );
+    }
+    if metas.is_empty() {
+        return;
+    }
+
+    // Sweep one: read-only. Count every read of every variant's name,
+    // recognise the consumer sites, and remember the first
+    // consumer-shaped interaction that cannot fuse.
+    let mut facts: HashMap<String, ConsumerFacts> = HashMap::new();
+    for fd in crate::ir::chars_fusion::fn_defs(items) {
+        for name in metas.keys() {
+            let reads: usize = fd
+                .body
+                .stmts()
+                .iter()
+                .map(|stmt| count_ident_reads(&crate::ir::chars_fusion::stmt_expr(stmt).node, name))
+                .sum();
+            facts.entry(name.clone()).or_default().occurrences += reads;
+        }
+        scan_consumer_fn(fd, &metas, &mut facts);
+    }
+    if facts
+        .values()
+        .all(|f| f.sites == 0 && f.flaw.is_none())
+    {
+        return;
+    }
+
+    // The identity the whole stage rests on, asked once per module and
+    // only when a candidate exists: parsing the embedded module is not
+    // free, and a module with no consumer shape owes nothing for it.
+    let stdlib_ok = from_list_is_the_stdlib_one(items);
+
+    // Sweep two: decide per variant, retarget the accepted ones.
+    let mut retargeted: Vec<String> = Vec::new();
+    let mut decided: Vec<(String, &'static str)> = Vec::new();
+    for (name, fact) in &facts {
+        if fact.sites == 0 && fact.flaw.is_none() {
+            continue;
+        }
+        let meta = &metas[name];
+        let decline = if !stdlib_ok {
+            Some(ByteSinkDecline::ConsumerShape)
+        } else if let Some(flaw) = fact.flaw {
+            Some(flaw)
+        } else if fact.occurrences != fact.sites {
+            Some(ByteSinkDecline::MixedConsumers)
+        } else if !meta.elem_ok {
+            Some(ByteSinkDecline::ElemShape)
+        } else {
+            let result_kind = meta.result_kind.ok_or(ByteSinkDecline::ExitShape);
+            result_kind
+                .and_then(|rk| retarget_variant_to_bytes(&mut variants[meta.variant_idx], meta, rk))
+                .err()
+        };
+        match decline {
+            Some(reason) => decided.push((name.clone(), reason.reason())),
+            None => retargeted.push(name.clone()),
+        }
+    }
+    report.byte_declined.extend(decided);
+
+    if retargeted.is_empty() {
+        return;
+    }
+
+    // Sweep three: move every consumer site of a retargeted variant
+    // onto the byte builder and delete its `fromList` call.
+    let retargeted_metas: HashMap<String, &ByteSinkMeta> = retargeted
+        .iter()
+        .map(|name| (name.clone(), &metas[name]))
+        .collect();
+    let mut deleted = 0usize;
+    for fd in crate::ir::chars_fusion::fn_defs_mut(items) {
+        deleted += rewrite_consumer_fn(fd, &retargeted_metas);
+    }
+    report.byte_retargets = deleted;
+    report.byte_fns = retargeted;
+    report.byte_fns.sort();
+}
+
+/// Recognise the consumer shapes inside one fn, crediting each
+/// variant's facts. Three spellings, one meaning:
+///
+/// - `v = <variant>(…, __lst_new(0))?` immediately before a final
+///   `fromList(v)` (the standard library's own `fromHex`);
+/// - a final `fromList(<variant>(…, __lst_new(0))?)`, the same thing
+///   without the binding;
+/// - `fromList(<variant>(…, __lst_new(0)))` anywhere, for a variant
+///   that answers the bare list — a pure value rewrite, so position
+///   does not matter.
+///
+/// The `?` spellings are position-bound: the `?` returns the loop's
+/// parse errors from the CONSUMER early, and after fusion they become
+/// the call's value — identical only where that value is the fn's
+/// answer. A `?` spelling anywhere else is recorded as the flaw it is.
+fn scan_consumer_fn(
+    fd: &FnDef,
+    metas: &HashMap<String, ByteSinkMeta>,
+    facts: &mut HashMap<String, ConsumerFacts>,
+) {
+    // A local binder wearing the consumer's name makes every
+    // recognition in this fn about the binder, not the verified
+    // module fn — so every consumer-shaped site here is a flaw.
+    let shadowed = fn_binds_name(fd, FROM_LIST);
+    let mut credit = |name: &str, outcome: Result<(), ByteSinkDecline>| {
+        let entry = facts.entry(name.to_string()).or_default();
+        match outcome {
+            Ok(()) if shadowed => {
+                entry.flaw.get_or_insert(ByteSinkDecline::ConsumerShape);
+            }
+            Ok(()) => entry.sites += 1,
+            Err(flaw) => {
+                entry.flaw.get_or_insert(flaw);
+            }
+        }
+    };
+    let acc_idx_of = |name: &str| metas.get(name).map(|m| m.acc_idx);
+
+    let stmts = fd.body.stmts();
+    let tail_from_list: Option<&Vec<Spanned<Expr>>> = match stmts.last() {
+        Some(Stmt::Expr(expr)) => call_to(&expr.node, FROM_LIST).filter(|args| args.len() == 1),
+        _ => None,
+    };
+
+    // The binding spelling. Adjacency is part of the shape: the `?`
+    // must fire exactly where the answer is produced.
+    let mut tail_credited = false;
+    if let Some(args) = tail_from_list
+        && let Expr::Ident(bound) = &args[0].node
+    {
+        let adjacent = stmts.len().checked_sub(2).map(|i| &stmts[i]);
+        if let Some(Stmt::Binding(name, _, value)) = adjacent
+            && name == bound
+            && let Expr::ErrorProp(inner) = &value.node
+            && let Some(variant) = consumer_variant_call(&inner.node, &acc_idx_of)
+        {
+            if metas[&variant].result_kind != Some(true) {
+                // A `?` on a variant that does not answer a Result is
+                // not a program the typechecker passes; leave the read
+                // uncredited and let the occurs accounting decline it.
+            } else {
+                let reads: usize = stmts
+                    .iter()
+                    .map(|stmt| {
+                        count_ident_reads(&crate::ir::chars_fusion::stmt_expr(stmt).node, bound)
+                    })
+                    .sum();
+                let bindings = stmts
+                    .iter()
+                    .filter(|stmt| matches!(stmt, Stmt::Binding(n, _, _) if n == bound))
+                    .count();
+                let pattern_shadow = fn_binds_name_in_patterns(fd, bound);
+                if reads == 1 && bindings == 1 && !pattern_shadow {
+                    tail_credited = true;
+                    credit(&variant, Ok(()));
+                } else {
+                    credit(&variant, Err(ByteSinkDecline::SecondReader));
+                }
+            }
+        } else {
+            // `fromList(v)` is the answer but `v` is not the adjacent
+            // collected binding. If some earlier binding collected into
+            // `v`, this is the consumer we cannot move.
+            for stmt in stmts {
+                if let Stmt::Binding(name, _, value) = stmt
+                    && name == bound
+                    && let Expr::ErrorProp(inner) = &value.node
+                    && let Some(variant) = consumer_variant_call(&inner.node, &acc_idx_of)
+                {
+                    credit(&variant, Err(ByteSinkDecline::NotTheAnswer));
+                }
+            }
+        }
+    }
+
+    // The inline-`?` spelling at the answer.
+    if let Some(args) = tail_from_list
+        && let Expr::ErrorProp(inner) = &args[0].node
+        && let Some(variant) = consumer_variant_call(&inner.node, &acc_idx_of)
+        && metas[&variant].result_kind == Some(true)
+    {
+        tail_credited = true;
+        credit(&variant, Ok(()));
+    }
+
+    // The direct spelling, anywhere — and any inline-`?` spelling that
+    // is NOT at the answer, which is the flaw the walk reports.
+    let tail_expr: Option<*const Expr> = match stmts.last() {
+        Some(Stmt::Expr(expr)) => Some(&expr.node as *const Expr),
+        _ => None,
+    };
+    for stmt in stmts {
+        scan_direct_sites(
+            crate::ir::chars_fusion::stmt_expr(stmt),
+            metas,
+            &mut credit,
+            tail_expr,
+            tail_credited,
+        );
+    }
+}
+
+/// Pattern binders only — the statement-binding half is counted by the
+/// caller, which needs the two separately.
+fn fn_binds_name_in_patterns(fd: &FnDef, name: &str) -> bool {
+    fn walk(expr: &Spanned<Expr>, name: &str) -> bool {
+        if let Expr::Match { arms, .. } = &expr.node
+            && arms.iter().any(|arm| pattern_binds_name(&arm.pattern, name))
+        {
+            return true;
+        }
+        let mut found = false;
+        crate::ir::chars_fusion::walk_children(expr, &mut |child| {
+            found = found || walk(child, name);
+        });
+        found
+    }
+    fd.body
+        .stmts()
+        .iter()
+        .any(|stmt| walk(crate::ir::chars_fusion::stmt_expr(stmt), name))
+}
+
+/// Walk one statement's tree for `fromList(<variant call>)` and
+/// misplaced `fromList(<variant call>?)` spellings.
+fn scan_direct_sites(
+    expr: &Spanned<Expr>,
+    metas: &HashMap<String, ByteSinkMeta>,
+    credit: &mut impl FnMut(&str, Result<(), ByteSinkDecline>),
+    tail_expr: Option<*const Expr>,
+    tail_already_credited: bool,
+) {
+    let acc_idx_of = |name: &str| metas.get(name).map(|m| m.acc_idx);
+    if let Some(args) = call_to(&expr.node, FROM_LIST)
+        && args.len() == 1
+    {
+        let is_tail = tail_expr == Some(&expr.node as *const Expr);
+        match &args[0].node {
+            Expr::FnCall(_, _) => {
+                if let Some(variant) = consumer_variant_call(&args[0].node, &acc_idx_of) {
+                    if metas[&variant].result_kind == Some(false) {
+                        credit(&variant, Ok(()));
+                    }
+                    // A direct application to a Result-answering
+                    // variant never typechecks; the read stays
+                    // uncredited and the occurs accounting declines.
+                }
+            }
+            Expr::ErrorProp(inner) => {
+                if let Some(variant) = consumer_variant_call(&inner.node, &acc_idx_of)
+                    && !(is_tail && tail_already_credited)
+                {
+                    credit(&variant, Err(ByteSinkDecline::NotTheAnswer));
+                }
+            }
+            _ => {}
+        }
+    }
+    crate::ir::chars_fusion::walk_children(expr, &mut |child| {
+        scan_direct_sites(child, metas, credit, tail_expr, tail_already_credited);
+    });
+}
+
+/// Rewrite every consumer site of the retargeted variants inside one
+/// fn, returning how many `fromList` calls were deleted. Mirrors the
+/// recognition above exactly — recognition already proved each shape,
+/// so this is application, not a second opinion.
+fn rewrite_consumer_fn(fd: &mut FnDef, metas: &HashMap<String, &ByteSinkMeta>) -> usize {
+    let mut deleted = 0usize;
+    let body = Arc::make_mut(&mut fd.body);
+    let stmts = body.stmts_mut();
+    let acc_idx_of = |name: &str| metas.get(name).map(|m| m.acc_idx);
+
+    // The binding spelling: drop the binding, make the retargeted call
+    // the answer the `fromList` call was.
+    let tail_is_from_list_of = |stmts: &[Stmt]| -> Option<String> {
+        match stmts.last() {
+            Some(Stmt::Expr(expr)) => {
+                let args = call_to(&expr.node, FROM_LIST).filter(|a| a.len() == 1)?;
+                match &args[0].node {
+                    Expr::Ident(bound) => Some(bound.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    };
+    if let Some(bound) = tail_is_from_list_of(stmts)
+        && stmts.len() >= 2
+    {
+        let binding_idx = stmts.len() - 2;
+        let matches_shape = matches!(
+            &stmts[binding_idx],
+            Stmt::Binding(name, _, value)
+                if *name == bound
+                    && matches!(&value.node, Expr::ErrorProp(inner)
+                        if consumer_variant_call(&inner.node, &acc_idx_of).is_some())
+        );
+        if matches_shape {
+            let Stmt::Binding(_, _, value) = stmts.remove(binding_idx) else {
+                unreachable!("matched a binding one line above");
+            };
+            let Expr::ErrorProp(inner) = value.node else {
+                unreachable!("matched an error propagation one line above");
+            };
+            let Some(Stmt::Expr(tail)) = stmts.last_mut() else {
+                unreachable!("the tail was matched as the fromList call");
+            };
+            *tail = retargeted_call(*inner, tail, metas);
+            deleted += 1;
+        }
+    }
+
+    // The inline-`?` spelling at the answer.
+    if let Some(Stmt::Expr(tail)) = stmts.last_mut()
+        && call_to(&tail.node, FROM_LIST)
+            .filter(|a| a.len() == 1)
+            .is_some_and(|args| {
+                matches!(&args[0].node, Expr::ErrorProp(inner)
+                    if consumer_variant_call(&inner.node, &acc_idx_of).is_some())
+            })
+    {
+        let Expr::FnCall(_, mut args) =
+            std::mem::replace(&mut tail.node, Expr::Ident(String::new()))
+        else {
+            unreachable!("matched a call one line above");
+        };
+        let Expr::ErrorProp(inner) = args.remove(0).node else {
+            unreachable!("matched an error propagation one line above");
+        };
+        *tail = retargeted_call(*inner, tail, metas);
+        deleted += 1;
+    }
+
+    // The direct spelling, anywhere.
+    for stmt in stmts.iter_mut() {
+        rewrite_direct_sites(
+            crate::ir::chars_fusion::stmt_expr_mut(stmt),
+            metas,
+            &mut deleted,
+        );
+    }
+    deleted
+}
+
+/// Walk one statement's tree rewriting `fromList(<variant call>)` in
+/// place. The rewritten call's arguments are walked too — a nested
+/// consumer site inside them was recognised by the scan and owes the
+/// same rewrite.
+fn rewrite_direct_sites(
+    expr: &mut Spanned<Expr>,
+    metas: &HashMap<String, &ByteSinkMeta>,
+    deleted: &mut usize,
+) {
+    let acc_idx_of = |name: &str| metas.get(name).map(|m| m.acc_idx);
+    let is_site = call_to(&expr.node, FROM_LIST)
+        .filter(|args| args.len() == 1)
+        .is_some_and(|args| {
+            matches!(&args[0].node, Expr::FnCall(_, _))
+                && consumer_variant_call(&args[0].node, &acc_idx_of).is_some()
+        });
+    if is_site {
+        let Expr::FnCall(_, mut args) =
+            std::mem::replace(&mut expr.node, Expr::Ident(String::new()))
+        else {
+            unreachable!("matched a call one line above");
+        };
+        let inner = args.remove(0);
+        *expr = retargeted_call(inner, expr, metas);
+        *deleted += 1;
+    }
+    crate::ir::chars_fusion::walk_children_mut(expr, &mut |child| {
+        rewrite_direct_sites(child, metas, deleted);
+    });
+}
+
+/// The retargeted call a consumer site becomes: the variant call with
+/// its `__lst_new` swapped for `__byt_new`, carrying the type the
+/// `fromList` call it replaces was stamped with — the value is the
+/// same `Result<Bytes, String>`, produced one walk earlier.
+fn retargeted_call(
+    mut call: Spanned<Expr>,
+    replaced: &Spanned<Expr>,
+    metas: &HashMap<String, &ByteSinkMeta>,
+) -> Spanned<Expr> {
+    let line = call.line;
+    let Expr::FnCall(callee, args) = &mut call.node else {
+        unreachable!("consumer sites are calls by construction");
+    };
+    let Expr::Ident(name) = &callee.node else {
+        unreachable!("consumer sites call the variant by bare name");
+    };
+    let meta = &metas[name];
+    args[meta.acc_idx] = byte_intrinsic_call(
+        line,
+        "__byt_new",
+        vec![sp_at_typed(
+            line,
+            Expr::Literal(Literal::Int(0)),
+            crate::types::Type::Int,
+        )],
+    );
+    let fresh = sp_at(line, call.node);
+    if let Some(ty) = replaced.ty() {
+        fresh.set_ty(ty.clone());
+    }
+    fresh
+}
+
+/// Build `<intrinsic>(args…)` stamped `ByteBuilder` — what every
+/// `__byt_new` / `__byt_push` answers with.
+fn byte_intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
+    let call = intrinsic_call(line, name, args);
+    call.set_ty(crate::types::Type::named("ByteBuilder"));
+    call
+}
+
+/// The type `__byt_finalize` answers with.
+fn byte_finalize_type() -> crate::types::Type {
+    crate::types::Type::Result(
+        Box::new(crate::types::Type::List(Box::new(crate::types::Type::Int))),
+        Box::new(crate::types::Type::Str),
+    )
+}
+
+/// The type the retargeted variant answers with.
+fn bytes_result_type() -> crate::types::Type {
+    crate::types::Type::Result(
+        Box::new(crate::types::Type::named(BYTES_RECORD)),
+        Box::new(crate::types::Type::Str),
+    )
+}
+
+/// The exit the retarget writes where `Result.Ok(__lst_finalize(acc))`
+/// (or the bare finalize) stood:
+///
+/// ```aver
+/// match __byt_finalize(acc)
+///     Result.Ok(__byt_vals) -> Result.Ok(Bytes(values = __byt_vals))
+///     Result.Err(__byt_msg) -> Result.Err(__byt_msg)
+/// ```
+///
+/// The finalizer answers what `fromList` would have; the match wraps
+/// its `Ok` into the record IN SYNTHESIZED AST, so the record's
+/// identity is resolved by the same machinery that resolved it inside
+/// `fromList` — no backend learns the record's shape from an
+/// intrinsic. The binders live in the guarded `__byt_` namespace, so a
+/// program that could capture them was declined before this runs.
+fn byte_finalize_exit(line: usize, acc_name: &str) -> Spanned<Expr> {
+    let subject = intrinsic_call(
+        line,
+        "__byt_finalize",
+        vec![sp_at_typed(
+            line,
+            Expr::Ident(acc_name.to_string()),
+            crate::types::Type::named("ByteBuilder"),
+        )],
+    );
+    subject.set_ty(byte_finalize_type());
+
+    let vals = sp_at_typed(
+        line,
+        Expr::Ident("__byt_vals".to_string()),
+        crate::types::Type::List(Box::new(crate::types::Type::Int)),
+    );
+    let record = sp_at_typed(
+        line,
+        Expr::RecordCreate {
+            type_name: BYTES_RECORD.to_string(),
+            fields: vec![("values".to_string(), vals)],
+        },
+        crate::types::Type::named(BYTES_RECORD),
+    );
+    let ok_body = result_wrapper(line, "Ok", record);
+
+    let msg = sp_at_typed(
+        line,
+        Expr::Ident("__byt_msg".to_string()),
+        crate::types::Type::Str,
+    );
+    let err_body = result_wrapper(line, "Err", msg);
+
+    sp_at_typed(
+        line,
+        Expr::Match {
+            subject: Box::new(subject),
+            arms: vec![
+                MatchArm::new(
+                    Pattern::Constructor("Result.Ok".to_string(), vec!["__byt_vals".to_string()]),
+                    ok_body,
+                ),
+                MatchArm::new(
+                    Pattern::Constructor("Result.Err".to_string(), vec!["__byt_msg".to_string()]),
+                    err_body,
+                ),
+            ],
+        },
+        bytes_result_type(),
+    )
+}
+
+/// Turn one collected variant's list builder into the byte builder, or
+/// say why it cannot be done. Check and rewrite are ONE traversal over
+/// a copy of the body, exactly like the list rewrite above: the walk
+/// either accounts for every `__lst_` occurrence — the push in each
+/// self-call, the finalize at each exit — or the copy is thrown away
+/// and the variant keeps its list.
+fn retarget_variant_to_bytes(
+    variant: &mut FnDef,
+    meta: &ByteSinkMeta,
+    result_kind: bool,
+) -> Result<(), ByteSinkDecline> {
+    let FnBody::Block(stmts) = variant.body.as_ref();
+    let mut stmts = stmts.clone();
+    let Some((last, leading)) = stmts.split_last_mut() else {
+        return Err(ByteSinkDecline::ExitShape);
+    };
+    // The list rewrite put builder calls only where the accumulator
+    // was read, and it allowed no reads outside the answer — so a
+    // builder mention in a leading statement is a shape this stage
+    // does not know, not a shape to improvise over.
+    for stmt in leading.iter() {
+        if mentions_builder_namespace(crate::ir::chars_fusion::stmt_expr(stmt)) {
+            return Err(ByteSinkDecline::ExitShape);
+        }
+    }
+    let Stmt::Expr(result) = last else {
+        return Err(ByteSinkDecline::ExitShape);
+    };
+    let mut exits = 0usize;
+    retarget_exit_expr(result, &variant.name, meta, result_kind, &mut exits)?;
+    if exits == 0 {
+        return Err(ByteSinkDecline::ExitShape);
+    }
+
+    variant.body = Arc::new(FnBody::Block(stmts));
+    variant.params[meta.acc_idx].1 = "ByteBuilder".to_string();
+    variant.return_type = "Result<Bytes, String>".to_string();
+    variant.desc = Some(format!(
+        "{} Its only reader handed the collected list straight to the \
+         standard library's `fromList`, so the builder collects bytes: \
+         the range check rides every push, and the exits answer the \
+         `Result<Bytes, String>` the pair used to compute.",
+        variant.desc.as_deref().unwrap_or_default()
+    ));
+    Ok(())
+}
+
+/// Rewrite one result-position expression of a collected variant to
+/// the byte builder, counting the exits it retargets. Every leaf must
+/// be a shape this stage knows:
+///
+/// - a match — the branching, walked arm by arm;
+/// - the self tail-call, whose accumulator argument is the push;
+/// - the finalize exit (`Result.Ok(__lst_finalize(acc))` when the
+///   variant answers a Result, the bare finalize when it answers the
+///   list) — replaced by [`byte_finalize_exit`];
+/// - for a Result variant, a `Result.Err(…)` exit that never touches
+///   the builder — the parse errors, which pass through the consumer's
+///   `?` and the fused answer identically.
+///
+/// Anything else is an exit `fromList` would have validated and the
+/// byte builder never saw — the loop keeps its list.
+fn retarget_exit_expr(
+    expr: &mut Spanned<Expr>,
+    variant_name: &str,
+    meta: &ByteSinkMeta,
+    result_kind: bool,
+    exits: &mut usize,
+) -> Result<(), ByteSinkDecline> {
+    let line = expr.line;
+
+    if let Expr::Match { subject, arms } = &mut expr.node {
+        if mentions_builder_namespace(subject) {
+            return Err(ByteSinkDecline::ExitShape);
+        }
+        for arm in arms.iter_mut() {
+            retarget_exit_expr(&mut arm.body, variant_name, meta, result_kind, exits)?;
+        }
+        return Ok(());
+    }
+
+    if let Expr::TailCall(data) = &mut expr.node {
+        if data.target != variant_name {
+            return Err(ByteSinkDecline::ExitShape);
+        }
+        for (idx, arg) in data.args.iter_mut().enumerate() {
+            if idx == meta.acc_idx {
+                let push_args = match call_to(&arg.node, "__lst_push") {
+                    Some(args)
+                        if args.len() == 2
+                            && matches!(&args[0].node, Expr::Ident(n) if *n == meta.acc_name)
+                            && !mentions_builder_namespace(&args[1]) =>
+                    {
+                        args.clone()
+                    }
+                    _ => return Err(ByteSinkDecline::ExitShape),
+                };
+                let elem = push_args.into_iter().nth(1).expect("two args matched");
+                *arg = byte_intrinsic_call(
+                    line,
+                    "__byt_push",
+                    vec![
+                        sp_at_typed(
+                            line,
+                            Expr::Ident(meta.acc_name.clone()),
+                            crate::types::Type::named("ByteBuilder"),
+                        ),
+                        elem,
+                    ],
+                );
+            } else if mentions_builder_namespace(arg) {
+                return Err(ByteSinkDecline::ExitShape);
+            }
+        }
+        return Ok(());
+    }
+
+    // At this stage of the pipeline `Result.Ok(x)` is still the call
+    // shape the parser built — the resolver classifies constructors
+    // later — so the wrapper is matched the way `List.reverse` is
+    // matched everywhere else in this pass.
+    if result_kind {
+        if let Some(args) = result_wrapper_payload(&expr.node, "Ok") {
+            if args.len() == 1 && is_lst_finalize_of(&args[0].node, &meta.acc_name) {
+                *expr = byte_finalize_exit(line, &meta.acc_name);
+                *exits += 1;
+                return Ok(());
+            }
+            return Err(ByteSinkDecline::ExitShape);
+        }
+        if let Some(args) = result_wrapper_payload(&expr.node, "Err") {
+            if args.len() == 1 && !mentions_builder_namespace(&args[0]) {
+                return Ok(());
+            }
+            return Err(ByteSinkDecline::ExitShape);
+        }
+        return Err(ByteSinkDecline::ExitShape);
+    }
+
+    if is_lst_finalize_of(&expr.node, &meta.acc_name) {
+        *expr = byte_finalize_exit(line, &meta.acc_name);
+        *exits += 1;
+        return Ok(());
+    }
+    Err(ByteSinkDecline::ExitShape)
 }
 
 /// Build `<intrinsic>(args…)` carrying `ty`. The builder intrinsics all

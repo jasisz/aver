@@ -1409,3 +1409,391 @@ fn render(values: List<Int>) -> String
         "no `parts(values, [])` call site is left to move: {collected:?}"
     );
 }
+
+// === The byte sink ====================================================
+
+/// The standard library's `fromList` family, copied word for word. The
+/// byte-sink retarget verifies its consumer STRUCTURALLY against the
+/// embedded module — spanned equality ignores lines — so an exact copy
+/// is the way a self-contained test earns the retarget, and a copy
+/// that changes a word is the way it earns the decline.
+const FROM_LIST_COPY: &str = r#"
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+"#;
+
+fn list_build_with_copy(src: &str) -> (Vec<crate::ast::TopLevel>, ListBuildPassReport) {
+    let source = format!("{FROM_LIST_COPY}\n{src}");
+    let mut items = parse_and_tco(&source);
+    let report = run_list_build_pass(&mut items);
+    (items, report)
+}
+
+/// The direct spelling: a bare-list loop applied straight to
+/// `fromList`. The builder becomes the byte builder, the exits answer
+/// what the pair answered, and the `fromList` call is gone.
+#[test]
+fn a_collected_list_consumed_only_by_from_list_collects_bytes() {
+    let (items, report) = list_build_with_copy(
+        r#"
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(collect(5, []))
+"#,
+    );
+    assert_eq!(report.byte_retargets, 1, "{report:?}");
+    assert_eq!(report.byte_fns, vec!["collect__collected".to_string()]);
+    assert_eq!(report.byte_declined, Default::default(), "{report:?}");
+    let body = body_source(&items, "collect__collected");
+    assert!(
+        body.contains("__byt_push(acc, n)")
+            && body.contains("__byt_finalize(acc)")
+            && body.contains("Bytes(values = __byt_vals)"),
+        "the variant pushes bytes and wraps the record itself: {body}"
+    );
+    assert!(
+        !body.contains("__lst_"),
+        "no list builder is left in the variant: {body}"
+    );
+    let main = body_source(&items, "main");
+    assert!(
+        main.contains("collect__collected(5, __byt_new(0))") && !main.contains("fromList"),
+        "the caller starts the byte builder and the second walk is gone: {main}"
+    );
+}
+
+/// The binding spelling — the standard library's own `fromHex` shape:
+/// the loop answers a `Result`, the consumer unwraps it with `?` and
+/// hands the list to `fromList` as its answer. Both statements fuse
+/// into the one retargeted call.
+#[test]
+fn a_bound_collected_result_consumed_only_by_from_list_collects_bytes() {
+    let (items, report) = list_build_with_copy(
+        r#"
+fn tripled(values: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    match values
+        [] -> Result.Ok(List.reverse(acc))
+        [head, ..tail] -> match head == 0
+            true -> Result.Err("zero is not a sample")
+            false -> tripled(tail, List.prepend(head * 3, acc))
+
+fn toBytes(values: List<Int>) -> Result<Bytes, String>
+    collected = tripled(values, [])?
+    fromList(collected)
+"#,
+    );
+    assert_eq!(report.byte_retargets, 1, "{report:?}");
+    assert_eq!(report.byte_fns, vec!["tripled__collected".to_string()]);
+    let variant = body_source(&items, "tripled__collected");
+    assert!(
+        variant.contains("__byt_push(acc, head * 3)")
+            && variant.contains("Result.Err(\"zero is not a sample\")"),
+        "the pushes retarget and the parse error keeps its exit: {variant}"
+    );
+    let consumer = body_source(&items, "toBytes");
+    assert!(
+        consumer.contains("tripled__collected(values, __byt_new(0))")
+            && !consumer.contains("fromList")
+            && !consumer.contains("collected ="),
+        "the binding and the fromList call fuse into the one answer: {consumer}"
+    );
+}
+
+/// The collected result is read once more on the way to `fromList` —
+/// the consumer-side occurs-check of the family.
+#[test]
+fn a_collected_result_read_twice_declines_the_byte_retarget() {
+    let (items, report) = list_build_with_copy(
+        r#"
+fn tripled(values: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    match values
+        [] -> Result.Ok(List.reverse(acc))
+        [head, ..tail] -> tripled(tail, List.prepend(head * 3, acc))
+
+fn toBytes(values: List<Int>) -> Result<Bytes, String>
+    collected = tripled(values, [])?
+    total = List.len(collected)
+    fromList(collected)
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("tripled__collected").copied(),
+        Some(ByteSinkDecline::NotTheAnswer.reason()),
+        "{report:?}"
+    );
+    let variant = body_source(&items, "tripled__collected");
+    assert!(
+        variant.contains("__lst_push") && !variant.contains("__byt_"),
+        "the variant keeps its list: {variant}"
+    );
+}
+
+/// A binder arm re-uses the collected result's name, so the reads the
+/// occurs-check counts are not all the same value.
+#[test]
+fn a_pattern_that_shadows_the_collected_result_declines_the_byte_retarget() {
+    let (_, report) = list_build_with_copy(
+        r#"
+fn tripled(values: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    match values
+        [] -> Result.Ok(List.reverse(acc))
+        [head, ..tail] -> tripled(tail, List.prepend(head * 3, acc))
+
+fn toBytes(values: List<Int>, n: Int) -> Result<Bytes, String>
+    probe = match n
+        collected -> collected
+    collected = tripled(values, [])?
+    fromList(collected)
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("tripled__collected").copied(),
+        Some(ByteSinkDecline::SecondReader.reason()),
+        "{report:?}"
+    );
+}
+
+/// `fromList` fed through a `?` somewhere other than the consumer's
+/// answer: the `?` returns parse errors from the fn early, and fused
+/// they would become the call's value — so the position is the shape.
+#[test]
+fn a_from_list_away_from_the_answer_declines_the_byte_retarget() {
+    let (_, report) = list_build_with_copy(
+        r#"
+fn tripled(values: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    match values
+        [] -> Result.Ok(List.reverse(acc))
+        [head, ..tail] -> tripled(tail, List.prepend(head * 3, acc))
+
+fn toBytes(values: List<Int>) -> Result<Int, String>
+    packed = fromList(tripled(values, [])?)
+    match packed
+        Result.Ok(bytes) -> Result.Ok(List.len(bytes.values))
+        Result.Err(message) -> Result.Err(message)
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("tripled__collected").copied(),
+        Some(ByteSinkDecline::NotTheAnswer.reason()),
+        "{report:?}"
+    );
+}
+
+/// The consumer is a `fromList` in name only — one word of the message
+/// differs from the standard library's. The retarget bakes in the
+/// library's semantics, so anything else keeps its second walk.
+#[test]
+fn a_from_list_that_is_not_the_stdlib_one_declines_the_byte_retarget() {
+    let source = r#"
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("value {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(collect(5, []))
+"#;
+    let mut items = parse_and_tco(source);
+    let report = run_list_build_pass(&mut items);
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("collect__collected").copied(),
+        Some(ByteSinkDecline::ConsumerShape.reason()),
+        "{report:?}"
+    );
+}
+
+/// The consumer binds `fromList` itself, so the call underneath reads
+/// the binder, not the verified module fn.
+#[test]
+fn a_shadowed_from_list_declines_the_byte_retarget() {
+    let (_, report) = list_build_with_copy(
+        r#"
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList = 3
+    fromList(collect(5, []))
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("collect__collected").copied(),
+        Some(ByteSinkDecline::ConsumerShape.reason()),
+        "{report:?}"
+    );
+}
+
+/// An exit the accumulator never reaches hands back a list of its own.
+/// `fromList` would have validated those elements too, and the byte
+/// builder never saw them — the kind decision declines.
+#[test]
+fn an_exit_the_accumulator_never_reaches_declines_the_byte_retarget() {
+    let (items, report) = list_build_with_copy(
+        r#"
+fn collect(values: List<Int>, acc: List<Int>) -> List<Int>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> match head == 0
+            true -> [7, 999]
+            false -> collect(tail, List.prepend(head, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(collect([1, 2], []))
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("collect__collected").copied(),
+        Some(ByteSinkDecline::ExitShape.reason()),
+        "{report:?}"
+    );
+    let main = body_source(&items, "main");
+    assert!(
+        main.contains("fromList(collect__collected("),
+        "the consumer keeps its validation walk: {main}"
+    );
+}
+
+/// One caller feeds `fromList`, another wants the list itself — a
+/// single variant cannot answer both.
+#[test]
+fn a_second_caller_that_wants_the_list_declines_the_byte_retarget() {
+    let (_, report) = list_build_with_copy(
+        r#"
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Result<Bytes, String>
+    total = List.len(collect(3, []))
+    fromList(collect(total, []))
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("collect__collected").copied(),
+        Some(ByteSinkDecline::MixedConsumers.reason()),
+        "{report:?}"
+    );
+}
+
+/// A loop that collects something other than `List<Int>` cannot be
+/// collecting octets. Unreachable through a type-checked consumer;
+/// pinned so the decision never rests on the typechecker having run.
+#[test]
+fn a_loop_that_does_not_collect_ints_declines_the_byte_retarget() {
+    let (_, report) = list_build_with_copy(
+        r#"
+fn names(n: Int, acc: List<String>) -> List<String>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> names(n - 1, List.prepend("x", acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(names(3, []))
+"#,
+    );
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.byte_declined.get("names__collected").copied(),
+        Some(ByteSinkDecline::ElemShape.reason()),
+        "{report:?}"
+    );
+}
+
+/// A program that binds into the `__byt_` namespace takes the whole
+/// pass away, exactly as a `__lst_` binder always has: the retarget is
+/// a stage of this pass and both namespaces are emitted by name.
+#[test]
+fn a_program_that_binds_a_byte_builder_name_declines_the_whole_pass() {
+    let (_, report) = list_build_with_copy(
+        r#"
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    __byt_probe = 3
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n + __byt_probe, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(collect(5, []))
+"#,
+    );
+    assert_eq!(report.rewrites, 0, "{report:?}");
+    assert_eq!(report.byte_retargets, 0, "{report:?}");
+    assert_eq!(
+        report.declined.get("collect").copied(),
+        Some(ListBuildDecline::NameTaken.reason()),
+        "{report:?}"
+    );
+}

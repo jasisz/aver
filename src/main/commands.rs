@@ -4123,12 +4123,16 @@ fn merge_dep_list_build(diagnostics: &mut [aver::ir::PassDiagnostic], dep_report
         } in dep_reports
         {
             entry.rewrites += dep.rewrites;
+            entry.byte_retargets += dep.byte_retargets;
             entry
                 .synthesized
                 .extend(dep.synthesized.iter().map(|n| format!("{prefix}.{n}")));
             entry
                 .builder_fns
                 .extend(dep.builder_fns.iter().map(|n| format!("{prefix}.{n}")));
+            entry
+                .byte_fns
+                .extend(dep.byte_fns.iter().map(|n| format!("{prefix}.{n}")));
             for (fn_name, count) in &dep.rewrites_by_fn {
                 *entry
                     .rewrites_by_fn
@@ -4138,9 +4142,15 @@ fn merge_dep_list_build(diagnostics: &mut [aver::ir::PassDiagnostic], dep_report
             for (fn_name, reason) in &dep.declined {
                 entry.declined.insert(format!("{prefix}.{fn_name}"), reason);
             }
+            for (fn_name, reason) in &dep.byte_declined {
+                entry
+                    .byte_declined
+                    .insert(format!("{prefix}.{fn_name}"), reason);
+            }
         }
         entry.synthesized.sort();
         entry.builder_fns.sort();
+        entry.byte_fns.sort();
     }
 }
 
@@ -4538,6 +4548,11 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     for fn_name in &r.synthesized {
                         out.push_str(&format!("  • synthesized {fn_name}\n"));
                     }
+                    for fn_name in &r.byte_fns {
+                        out.push_str(&format!(
+                            "  • {fn_name} collects bytes; its fromList call is gone\n"
+                        ));
+                    }
                     out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
                 }
                 // Same reason the chars-fusion declines are unconditional:
@@ -4545,6 +4560,11 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                 // diagnostic exists to surface.
                 for (fn_name, reason) in &r.declined {
                     out.push_str(&format!("  • declined {fn_name}: {reason}\n"));
+                }
+                for (fn_name, reason) in &r.byte_declined {
+                    out.push_str(&format!(
+                        "  • declined the byte retarget of {fn_name}: {reason}\n"
+                    ));
                 }
             }
             PassReport::Resolve {
@@ -4830,14 +4850,26 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
                 }
                 declined.push('}');
+                let mut byte_declined = String::from("{");
+                for (j, (k, v)) in r.byte_declined.iter().enumerate() {
+                    if j > 0 {
+                        byte_declined.push(',');
+                    }
+                    byte_declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
+                }
+                byte_declined.push('}');
                 out.push_str(&format!(
                     "{{\"rewrites\":{},\"synthesized\":{},\"loop_fns\":{},\
-                     \"rewrites_by_fn\":{},\"declined\":{},\"targets\":{}}}",
+                     \"rewrites_by_fn\":{},\"declined\":{},\"byte_retargets\":{},\
+                     \"byte_fns\":{},\"byte_declined\":{},\"targets\":{}}}",
                     r.rewrites,
                     json_str_array(&r.synthesized),
                     json_str_array(&r.builder_fns),
                     by_fn,
                     declined,
+                    r.byte_retargets,
+                    json_str_array(&r.byte_fns),
+                    byte_declined,
                     DEFORESTING_TARGETS_JSON
                 ));
             }
