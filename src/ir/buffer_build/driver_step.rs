@@ -29,7 +29,9 @@
 //!
 //! - it has EXACTLY ONE call site in the whole module, the tail call in
 //!   the driver — a step called from anywhere else is shared code, not
-//!   the idiom;
+//!   the idiom. The census walks every expression-bearing top-level
+//!   item, verify blocks and top-level statements included, so the
+//!   condition means what it says;
 //! - the module cannot be called around: the step must not be visible
 //!   outside the module (`exposes` list, or the `_` convention). The
 //!   pass sees one module at a time, so a step some other module could
@@ -48,8 +50,12 @@
 //! identifier or a literal — anything else is bound first, in argument
 //! order, so evaluation order is the call's — and a step whose body
 //! reads a name the driver re-binds anywhere is declined outright.
-//! This family has already shipped binder-capture bugs; the rules here
-//! prefer a lost fusion over a wrong answer, every time.
+//! Substitution is SIMULTANEOUS: one walk, from a complete
+//! param-to-argument map, never descending into what it inserts — an
+//! argument identifier spelled like another parameter of the step must
+//! not be captured by that parameter's substitution. This family has
+//! already shipped binder-capture bugs; the rules here prefer a lost
+//! fusion over a wrong answer, every time.
 //!
 //! The inline happens on a COPY of the driver's body, and the copy is
 //! committed only when the merged loop then actually fuses — the same
@@ -291,8 +297,10 @@ fn check_step_conditions(step: &FnDef, facts: &StepFacts) -> Result<(), PairDecl
     if references_in_fn(step, &step.name) > 0 {
         return Err(PairDecline::StepSelfRecursive);
     }
-    let refs: usize = crate::ir::chars_fusion::fn_defs(&facts.items)
-        .map(|fd| references_in_fn(fd, &step.name))
+    let refs: usize = facts
+        .items
+        .iter()
+        .map(|item| references_in_top_level(item, &step.name))
         .sum();
     if refs != 1 {
         return Err(PairDecline::StepShared);
@@ -408,11 +416,64 @@ fn references_in_fn(fd: &FnDef, name: &str) -> usize {
     fd.body
         .stmts()
         .iter()
-        .map(|stmt| {
-            let expr = crate::ir::chars_fusion::stmt_expr(stmt);
-            count_ident_reads(&expr.node, name) + count_tail_targets(expr, name)
-        })
+        .map(|stmt| references_in_expr(crate::ir::chars_fusion::stmt_expr(stmt), name))
         .sum()
+}
+
+fn references_in_expr(expr: &Spanned<Expr>, name: &str) -> usize {
+    count_ident_reads(&expr.node, name) + count_tail_targets(expr, name)
+}
+
+/// How many times any top-level item references `name` — the
+/// module-wide census behind the one-call-site condition. The claim is
+/// "exactly one call site in the whole module", so the census walks
+/// every place an expression can live, not just fn bodies: verify
+/// blocks (cases, per-case givens, and the law form's template,
+/// `when`, sample guards, and explicit given domains) and top-level
+/// statements. Decision blocks carry no expressions — their impacts
+/// are documentation strings (`DecisionImpact`), so a call cannot be
+/// spelled there — and the module header, type defs, and capability
+/// declarations have no expression positions at all.
+fn references_in_top_level(item: &TopLevel, name: &str) -> usize {
+    match item {
+        TopLevel::FnDef(fd) => references_in_fn(fd, name),
+        TopLevel::Verify(vb) => {
+            let in_domain = |given: &crate::ast::VerifyGiven| match &given.domain {
+                crate::ast::VerifyGivenDomain::Explicit(values) => values
+                    .iter()
+                    .map(|v| references_in_expr(v, name))
+                    .sum::<usize>(),
+                crate::ast::VerifyGivenDomain::IntRange { .. } => 0,
+            };
+            let mut refs: usize = vb
+                .cases
+                .iter()
+                .flat_map(|(lhs, rhs)| [lhs, rhs])
+                .chain(vb.case_givens.iter().flatten().map(|(_, value)| value))
+                .map(|e| references_in_expr(e, name))
+                .sum();
+            refs += vb.cases_givens.iter().map(in_domain).sum::<usize>();
+            if let crate::ast::VerifyKind::Law(law) = &vb.kind {
+                refs += references_in_expr(&law.lhs, name) + references_in_expr(&law.rhs, name);
+                refs += law
+                    .when
+                    .as_ref()
+                    .map_or(0, |when| references_in_expr(when, name));
+                refs += law
+                    .sample_guards
+                    .iter()
+                    .map(|g| references_in_expr(g, name))
+                    .sum::<usize>();
+                refs += law.givens.iter().map(in_domain).sum::<usize>();
+            }
+            refs
+        }
+        TopLevel::Stmt(stmt) => references_in_expr(crate::ir::chars_fusion::stmt_expr(stmt), name),
+        TopLevel::Module(_)
+        | TopLevel::Decision(_)
+        | TopLevel::TypeDef(_)
+        | TopLevel::Capability(_) => 0,
+    }
 }
 
 /// How many `TailCall` nodes under `expr` target `name`.
@@ -626,27 +687,35 @@ fn encode_step_body(
     // its reads are pure and cannot change between the call and the
     // read. Anything else is bound first, in argument order, so
     // whatever the argument computes happens exactly once and exactly
-    // where the call evaluated it.
+    // where the call evaluated it. The map is built COMPLETE before any
+    // rewriting and applied in ONE walk — substitution must be
+    // SIMULTANEOUS, because a call-site argument may itself be spelled
+    // like another parameter of the step. Substituting one parameter at
+    // a time re-visited the identifiers just inserted for the earlier
+    // parameters, so an argument spelled like a LATER parameter was
+    // rewritten again by that parameter's pass: `step(b, c, t2, acc)`
+    // against params `(a, b, st, sacc)` turned `a*10 + b` into
+    // `c*10 + c` — the same wrong answer on both backends, invisible to
+    // the cross-backend differential.
     let mut bound_args: Vec<(String, Spanned<Expr>)> = Vec::new();
+    let mut subst: HashMap<String, Spanned<Expr>> = HashMap::new();
     for (idx, ((param, _), arg)) in step.params.iter().zip(args.iter()).enumerate() {
-        match &arg.node {
-            Expr::Ident(_) | Expr::Literal(_) => {
-                for stmt in stmts.iter_mut() {
-                    substitute_reads(crate::ir::chars_fusion::stmt_expr_mut(stmt), param, arg);
-                }
-            }
+        let replacement = match &arg.node {
+            Expr::Ident(_) | Expr::Literal(_) => arg.clone(),
             _ => {
                 let fresh = format!("{STEP_PREFIX}{round}_p{idx}");
                 let read = sp_at(arg.line, Expr::Ident(fresh.clone()));
                 if let Some(ty) = arg.ty() {
                     read.set_ty(ty.clone());
                 }
-                for stmt in stmts.iter_mut() {
-                    substitute_reads(crate::ir::chars_fusion::stmt_expr_mut(stmt), param, &read);
-                }
                 bound_args.push((fresh, arg.clone()));
+                read
             }
-        }
+        };
+        subst.insert(param.clone(), replacement);
+    }
+    for stmt in stmts.iter_mut() {
+        substitute_reads(crate::ir::chars_fusion::stmt_expr_mut(stmt), &subst);
     }
 
     // Fold the statements into one expression, back to front: each
@@ -761,18 +830,23 @@ fn rename_pattern(pattern: &mut Pattern, rename: &HashMap<String, String>) {
     }
 }
 
-/// Replace every read of `param` with the argument expression. Patterns
-/// never bind `param` here — a step whose body shadows a parameter was
-/// declined before this runs — so every `Ident(param)` is the read.
-fn substitute_reads(expr: &mut Spanned<Expr>, param: &str, arg: &Spanned<Expr>) {
+/// Replace every parameter read with its argument expression — all
+/// parameters SIMULTANEOUSLY, from one complete map. A replacement is
+/// inserted and never descended into, so an argument identifier
+/// spelled like another parameter of the step cannot be rewritten by
+/// that parameter's substitution — the capture the sequential
+/// per-parameter walk this replaced committed. Patterns never bind a
+/// parameter here — a step whose body shadows a parameter was declined
+/// before this runs — so every `Ident(param)` is the read.
+fn substitute_reads(expr: &mut Spanned<Expr>, subst: &HashMap<String, Spanned<Expr>>) {
     if let Expr::Ident(n) = &expr.node
-        && n == param
+        && let Some(arg) = subst.get(n)
     {
         *expr = arg.clone();
         return;
     }
     crate::ir::chars_fusion::walk_children_mut(expr, &mut |child| {
-        substitute_reads(child, param, arg);
+        substitute_reads(child, subst);
     });
 }
 
@@ -877,6 +951,84 @@ fn entry(xs: List<Int>) -> List<Int>
         }
     }
 
+    /// One cell of the ARGUMENT-SPELLING matrix: the driver peels two
+    /// elements per round, so its call site has two value arguments to
+    /// dress in another parameter's name. The bound flags wrap an
+    /// argument in `+ 0`, pushing it off the substituted path onto the
+    /// bound-args path.
+    fn argument_program(first: &str, second: &str, bound: (bool, bool)) -> String {
+        let arg1 = if bound.0 {
+            format!("{first} + 0")
+        } else {
+            first.to_string()
+        };
+        let arg2 = if bound.1 {
+            format!("{second} + 0")
+        } else {
+            second.to_string()
+        };
+        format!(
+            r#"module ArgMatrix
+    intent = "Argument-spelling fixture."
+    exposes [entry]
+
+fn drive(xs: List<Int>, acc: List<Int>) -> List<Int>
+    match xs
+        [] -> List.reverse(acc)
+        [{first}, ..t] -> match t
+            [] -> List.reverse(acc)
+            [{second}, ..t2] -> step({arg1}, {arg2}, t2, acc)
+
+fn step(sa: Int, sb: Int, st: List<Int>, sacc: List<Int>) -> List<Int>
+    v = sa * 10 + sb
+    drive(st, List.prepend(v, sacc))
+
+fn entry(xs: List<Int>) -> List<Int>
+    drive(xs, [])
+"#
+        )
+    }
+
+    /// The ARGUMENT/PARAMETER axis, order-controlled like the binder
+    /// matrix: a call-site argument spelled like an earlier parameter,
+    /// a later one, the same one, and a step binder — each on the
+    /// substituted path and on the bound-args path. Substitution is
+    /// simultaneous, so every cell fuses; the later-param spelling is
+    /// the cell sequential substitution silently got wrong (the
+    /// end-to-end answers for all cells are pinned in
+    /// `tests/driver_step_pairs.rs`).
+    #[test]
+    fn call_site_arguments_spelled_like_step_names_fuse_in_every_cell() {
+        let cells: &[(&str, &str, (bool, bool))] = &[
+            // Like a LATER param: sb (the step's second) worn by arg 1.
+            ("sb", "y", (false, false)),
+            ("sb", "y", (true, false)),
+            // Like an EARLIER param: sa worn by arg 2.
+            ("x", "sa", (false, false)),
+            ("x", "sa", (false, true)),
+            // Like the SAME param: sa worn by its own argument.
+            ("sa", "y", (false, false)),
+            ("sa", "y", (true, false)),
+            // Like a STEP BINDER: v is the step's own binding.
+            ("v", "y", (false, false)),
+            ("v", "y", (true, false)),
+        ];
+        for (first, second, bound) in cells {
+            let report = pass_on(&argument_program(first, second, *bound));
+            assert_eq!(
+                report.pair_inlined_by_fn.get("drive"),
+                Some(&vec!["step".to_string()]),
+                "arguments ({first:?}, {second:?}) (bound: {bound:?}) must not block \
+                 the inline: {report:?}"
+            );
+            assert_eq!(
+                report.builder_fns,
+                vec!["drive".to_string()],
+                "arguments ({first:?}, {second:?}) (bound: {bound:?}) must fuse"
+            );
+        }
+    }
+
     /// A step binder that shadows one of the step's own parameters:
     /// substitution would rewrite the shadow's reads, so the pair is
     /// declined — in both binder positions.
@@ -975,6 +1127,51 @@ fn entry(xs: List<Int>) -> List<Int>
         let report = pass_on(source);
         assert!(
             report.pair_inlined_by_fn.contains_key("drive"),
+            "{report:?}"
+        );
+    }
+
+    /// The one-call-site condition claims the WHOLE MODULE, so a
+    /// second call in a verify block counts: the census walks every
+    /// expression-bearing top-level item, not just fn bodies.
+    #[test]
+    fn a_step_called_again_from_a_verify_block_declines() {
+        let source = format!(
+            "{}\nverify step\n    step(2, [1], []) => [4, 2]\n",
+            pair_program("v", false)
+        );
+        let report = pass_on(&source);
+        assert_eq!(
+            report.pair_declined.get("drive").copied(),
+            Some(PairDecline::StepShared.reason()),
+            "{report:?}"
+        );
+        assert!(report.pair_inlined_by_fn.is_empty());
+    }
+
+    /// The control for the verify-block census: a verify block on the
+    /// DRIVER references only the driver, so the pair still fuses.
+    #[test]
+    fn a_verify_block_on_the_driver_does_not_block_the_inline() {
+        let source = format!(
+            "{}\nverify drive\n    drive([3], []) => [6]\n",
+            pair_program("v", false)
+        );
+        let report = pass_on(&source);
+        assert!(
+            report.pair_inlined_by_fn.contains_key("drive"),
+            "{report:?}"
+        );
+    }
+
+    /// A top-level statement calling the step is a call site too.
+    #[test]
+    fn a_step_called_again_from_a_top_level_statement_declines() {
+        let source = format!("{}\nwarm = step(2, [1], [])\n", pair_program("v", false));
+        let report = pass_on(&source);
+        assert_eq!(
+            report.pair_declined.get("drive").copied(),
+            Some(PairDecline::StepShared.reason()),
             "{report:?}"
         );
     }

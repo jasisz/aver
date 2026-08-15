@@ -661,12 +661,17 @@ fn main() -> Unit
 /// read of an integer — declined, answer pinned. `trimAll`/
 /// `keepUnlessLast` is the exact two-match nesting depth of the code
 /// that motivated the stage: the step carries its own exit arm beside
-/// the arm that recurses back into the driver.
+/// the arm that recurses back into the driver. `pairAll`/`pairOne` is
+/// the argument-spelling witness: the driver's first cons binder wears
+/// the step's SECOND parameter's name, so a substitution that walks
+/// one parameter at a time rewrites the identifiers it just inserted —
+/// both backends then agree on the wrong answer, which is why this
+/// case pins the exact answer and not just backend parity.
 #[test]
 fn rust_driver_step_pairs_match_vm() {
     let src = r#"module DriverStepDifferential
     intent = "Every driver-and-step shape in one program, for cross-backend agreement"
-    exposes [decoded, gatherAll, sharedEntry, sharedOther, entryCaptured, trimAll]
+    exposes [decoded, gatherAll, sharedEntry, sharedOther, entryCaptured, trimAll, pairAll]
     effects [Console.print]
 
 fn readAll(bytes: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
@@ -755,6 +760,18 @@ fn keepUnlessLast(head: String, tail: List<String>, acc: List<String>) -> List<S
         [] -> List.reverse(acc)
         [next, ..rest] -> trimAll(tail, List.prepend(head, acc))
 
+fn pairAll(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Driver of the pairwise pair: peels two, the first binder wears the step's second param name."
+    match xs
+        [] -> List.reverse(acc)
+        [b, ..t] -> match t
+            [] -> List.reverse(acc)
+            [c, ..t2] -> pairOne(b, c, t2, acc)
+
+fn pairOne(a: Int, b: Int, st: List<Int>, sacc: List<Int>) -> List<Int>
+    ? "Step of the pairwise pair: combine the pair as a*10 + b."
+    pairAll(st, List.prepend(a * 10 + b, sacc))
+
 fn render(values: List<Int>) -> String
     ? "Print a list with no accumulator of its own."
     match values
@@ -770,6 +787,7 @@ fn main() -> Unit
     Console.print("{render(sharedEntry([1, 2]))} {render(sharedOther(5))}")
     Console.print("{render(entryCaptured([1, 2]))}")
     Console.print("[{String.join(trimAll(["a", "b", "c"], []), "-")}] [{String.join(trimAll(["x"], []), "-")}]")
+    Console.print("{render(pairAll([1, 2, 3, 4], []))}")
 "#;
     // The fallible pair doubles until it meets a nine, whose error is
     // the whole answer. The record pair adds the running count to each
@@ -777,12 +795,15 @@ fn main() -> Unit
     // ways it is entered — through the driver, and mid-flight through
     // the step with a seeded accumulator. The captured pair scales by
     // ten, which only the TOP-LEVEL scale does. The two-match pair
-    // drops the last element, and a lone element leaves nothing.
+    // drops the last element, and a lone element leaves nothing. The
+    // pairwise pair combines each pair as tens-digit/units-digit — the
+    // answer sequential substitution turned into 22/44.
     let expected = "2/4/6/ nine\n\
                     5/7/9/ 3\n\
                     3/6/ 4/15/6/\n\
                     10/20/\n\
-                    [a-b] []";
+                    [a-b] []\n\
+                    12/34/";
     let vm = run_vm_inline("driver_step", src).expect("vm run");
     let rust = build_run_rust_inline("driver_step", src).expect("rust compile + cargo build + run");
     assert_eq!(vm, expected, "VM driver-and-step contract changed");
