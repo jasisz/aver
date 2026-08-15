@@ -149,6 +149,13 @@ impl ListBuildDecline {
 /// assert on without parsing prose.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ListBuildPassReport {
+    /// Drivers whose step companions were inlined ahead of candidacy —
+    /// the driver-and-step normalization — with the steps in inline
+    /// order. Alphabetised by driver. See [`super::driver_step`].
+    pub pair_inlined_by_fn: std::collections::BTreeMap<String, Vec<String>>,
+    /// Driver-and-step pairs the normalization looked at and turned
+    /// down, with the reason. Alphabetised by driver.
+    pub pair_declined: std::collections::BTreeMap<String, &'static str>,
     /// Call sites moved from `<fn>(…, [])` onto a collected variant.
     pub rewrites: usize,
     /// Names of the synthesized `<fn>__collected` variants appended to
@@ -177,7 +184,7 @@ pub struct ListBuildPassReport {
 
 /// Suffix distinguishing the synthesized variant from the loop it was
 /// built from.
-const COLLECTED_SUFFIX: &str = "__collected";
+pub(super) const COLLECTED_SUFFIX: &str = "__collected";
 
 /// Prefixes of every intrinsic and binder this pass emits — the list
 /// builder's, and the byte builder's the byte-sink retarget below
@@ -207,20 +214,19 @@ const BUILDER_INTRINSICS: [&str; 3] = ["__lst_new", "__lst_push", "__lst_finaliz
 /// on one function, and this is the order that lets them.
 pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
     let mut report = ListBuildPassReport::default();
+    // The driver-and-step normalization first: a loop written as a pair
+    // becomes the single fn the candidacy walk below knows how to read.
+    // It commits only bodies whose merged loop it has already proven
+    // will fuse, so everything after this line treats them like any
+    // other candidate.
+    super::driver_step::run_driver_step_normalize(items, &mut report);
     let candidates: Vec<(String, ListBuildAcc)> = list_build_candidates(items);
     if candidates.is_empty() {
         return report;
     }
 
     let taken = crate::ir::chars_fusion::taken_names(items);
-    // One name in the program's own binders is enough to take the
-    // namespace away from every loop at once: the intrinsics are emitted
-    // by name, and a name that means something else anywhere it is in
-    // scope is a name this pass cannot spell.
-    let namespace_taken = taken.iter().any(|name| {
-        BUILDER_PREFIXES.iter().any(|p| name.starts_with(p))
-            || BUILDER_INTRINSICS.contains(&name.as_str())
-    });
+    let namespace_taken = builder_namespace_taken(&taken);
 
     let mut accepted: HashMap<String, (String, ListBuildShape)> = HashMap::new();
     let mut variants: Vec<FnDef> = Vec::new();
@@ -287,12 +293,27 @@ pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
     report
 }
 
+/// One name in the program's own binders is enough to take the builder
+/// namespace away from every loop at once: the intrinsics are emitted
+/// by name, and a name that means something else anywhere it is in
+/// scope is a name this pass cannot spell. Shared with the
+/// driver-and-step normalization, which must decline a pair the main
+/// pass would then refuse to fuse.
+pub(super) fn builder_namespace_taken(taken: &std::collections::HashSet<String>) -> bool {
+    taken.iter().any(|name| {
+        BUILDER_PREFIXES.iter().any(|p| name.starts_with(p))
+            || BUILDER_INTRINSICS.contains(&name.as_str())
+    })
+}
+
 /// Is there a collecting loop here at all? Read-only, so a caller that
 /// has to decide whether to COPY a module before running the pass can
 /// ask first — the VM re-parses every dependency and re-runs the pass on
-/// its own copy.
+/// its own copy. A driver-and-step pair counts: the normalization would
+/// merge it into exactly such a loop.
 pub fn has_list_build_shape(items: &[TopLevel]) -> bool {
     crate::ir::chars_fusion::fn_defs(items).any(|fd| list_build_acc_of(fd).is_some())
+        || super::driver_step::has_driver_step_shape(items)
 }
 
 /// Every fn that looks like a collecting loop, paired with the
@@ -319,7 +340,7 @@ fn list_build_candidates(items: &[TopLevel]) -> Vec<(String, ListBuildAcc)> {
 /// The accumulator is the RIGHTMOST `List<…>` parameter, the same rule
 /// the joined builders use above and for the same reason: a list-driven
 /// loop takes its input first and threads its answer last.
-fn list_build_acc_of(fd: &FnDef) -> Option<ListBuildAcc> {
+pub(super) fn list_build_acc_of(fd: &FnDef) -> Option<ListBuildAcc> {
     let (idx, name, ty) = fd
         .params
         .iter()
@@ -374,7 +395,7 @@ struct AccUses {
 /// conclusion than the rewrite it is supposed to be guarding: the walk
 /// either replaces every read of the accumulator with the builder form
 /// that stands for it, or it stops and the copy is thrown away.
-fn build_collected_variant(
+pub(super) fn build_collected_variant(
     fd: &FnDef,
     acc: &ListBuildAcc,
     new_name: &str,
@@ -1701,7 +1722,7 @@ fn rewrite_list_build_sites(
 /// reverses; the builder produces the forward list, so only a call site
 /// wearing that reverse can be moved — a bare one asked for the elements
 /// backwards and still gets them.
-fn try_rewrite_list_build_site(
+pub(super) fn try_rewrite_list_build_site(
     expr: &Spanned<Expr>,
     accepted: &HashMap<String, (String, ListBuildShape)>,
 ) -> Option<(String, Spanned<Expr>)> {
