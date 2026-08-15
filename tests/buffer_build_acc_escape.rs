@@ -1,5 +1,8 @@
 //! Deforestation must decline a loop that reads its own accumulator for
-//! anything beyond the prepend the rewrite replaces.
+//! anything beyond the prepend the rewrite replaces — and step aside
+//! whole when the program binds any name the rewrite would spell into
+//! its output (the `__buf_*` intrinsics, the variant's `__buf` and
+//! `__sep`).
 //!
 //! The buffered variant has no accumulator parameter. Every surviving
 //! mention of it — inside the element expression, inside a sibling
@@ -191,4 +194,94 @@ fn main() -> Unit
 "#,
     );
     assert_eq!(out, "x,x,x");
+}
+
+/// The names this pass spells into rewritten bodies: the four `__buf_*`
+/// intrinsics it emits calls to, and the `__buf` / `__sep` binders the
+/// buffered variant introduces. Plus one ordinary name as the control.
+/// A leading `__` is not reserved, so a program can bind any of these —
+/// and a binder is exactly what captures the emitted call, or hands the
+/// variant's separator read whatever the user's binder holds.
+const BUFFER_NAMES: [&str; 7] = [
+    "__buf_new",
+    "__buf_append",
+    "__buf_append_sep_unless_first",
+    "__buf_finalize",
+    "__buf",
+    "__sep",
+    "suffix",
+];
+
+/// The caller position: the join site's own function binds a probed
+/// name, and the rewrite would put `__buf_new` / `__buf_finalize` calls
+/// exactly there. Every reserved name declines the pass whole; the
+/// ordinary control fuses; both answer alike.
+#[test]
+fn a_caller_binding_a_buffer_name_keeps_its_unfused_answer() {
+    for binder in BUFFER_NAMES {
+        let out = run_program(
+            "caller_buffer_name",
+            &r#"module BufName
+    intent =
+        "Binds a probed name in the function whose join site would be rewritten."
+    exposes [render]
+    effects [Console.print]
+
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(head, acc))
+
+fn render(values: List<String>) -> String
+    BINDER = "x"
+    String.join(parts(values, []), ",") + BINDER
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(render(["a", "b"]))
+"#
+            .replace("BINDER", binder),
+        );
+        assert_eq!(
+            out, "a,bx",
+            "a caller binding named {binder} changed the join's answer"
+        );
+    }
+}
+
+/// The sink position: the collecting loop's own element binder carries
+/// a probed name. The buffered variant reuses the loop's cons binders
+/// AND appends its own `__sep` parameter read inside that arm — so an
+/// element binder spelled `__sep` silently became the separator, and
+/// every name the variant spells has to decline the same way.
+#[test]
+fn a_sink_element_binder_with_a_buffer_name_keeps_its_separator() {
+    for binder in BUFFER_NAMES {
+        let out = run_program(
+            "sink_buffer_name",
+            &r#"module SepName
+    intent =
+        "Binds a probed name as the collecting loop's own element binder."
+    exposes [render]
+    effects [Console.print]
+
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [BINDER, ..tail] -> parts(tail, List.prepend(BINDER, acc))
+
+fn render(values: List<String>) -> String
+    String.join(parts(values, []), ",")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(render(["a", "b", "c"]))
+"#
+            .replace("BINDER", binder),
+        );
+        assert_eq!(
+            out, "a,b,c",
+            "a sink element binder named {binder} changed the join's answer"
+        );
+    }
 }

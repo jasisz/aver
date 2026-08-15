@@ -4083,6 +4083,7 @@ fn merge_dep_chars_fusion(diagnostics: &mut [aver::ir::PassDiagnostic], dep_repo
         {
             entry.cursor_rewrites += dep.cursor_rewrites;
             entry.codepoint_matches += dep.codepoint_matches;
+            entry.codepoint_calls += dep.codepoint_calls;
             entry
                 .synthesized
                 .extend(dep.synthesized.iter().map(|n| format!("{prefix}.{n}")));
@@ -4503,6 +4504,13 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     for (fn_name, count) in &r.codepoint_matches_by_fn {
                         out.push_str(&format!("  • {fn_name}: {count} codepoint match(es)\n"));
                     }
+                    if r.codepoint_calls > 0 {
+                        out.push_str(&format!(
+                            "  • {} classifier call(s) receive the codepoint instead of a \
+                             one-character string\n",
+                            r.codepoint_calls
+                        ));
+                    }
                     out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
                 }
                 // Declines are reported whether or not anything fired:
@@ -4794,12 +4802,13 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                 out.push_str(&format!(
                     "{{\"cursor_rewrites\":{},\"synthesized\":{},\"loop_fns\":{},\
                      \"codepoint_matches\":{},\"codepoint_matches_by_fn\":{},\
-                     \"declined\":{},\"targets\":{}}}",
+                     \"codepoint_calls\":{},\"declined\":{},\"targets\":{}}}",
                     r.cursor_rewrites,
                     json_str_array(&r.synthesized),
                     json_str_array(&r.loop_fns),
                     r.codepoint_matches,
                     by_fn,
+                    r.codepoint_calls,
                     declined,
                     DEFORESTING_TARGETS_JSON
                 ));

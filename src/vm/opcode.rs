@@ -458,6 +458,21 @@ pub const STR_CODE1_LOWER: u8 = 0x9D;
 /// Pop s → push [`STR_CODE1`] of `String.toUpper(s)`.
 pub const STR_CODE1_UPPER: u8 = 0x9E;
 
+/// Pop i, pop s → push the codepoint (Int) of exactly the character
+/// [`STR_CURSOR_HEAD`] would read at byte offset `i`, `-1` past the
+/// end. One decode instead of an arena string plus [`STR_CODE1`].
+pub const STR_CURSOR_CODE: u8 = 0xA2;
+
+/// Pop c → push [`STR_CODE1_LOWER`] of the one-character string of
+/// codepoint `c`, without building it: full Unicode lowercase of the
+/// character, `-1` when `c` is not a scalar or the result is not
+/// exactly one character.
+pub const STR_FOLD_LOWER: u8 = 0xA3;
+
+/// Pop c → push [`STR_CODE1_UPPER`] of the one-character string of
+/// codepoint `c`; mirror of [`STR_FOLD_LOWER`].
+pub const STR_FOLD_UPPER: u8 = 0xA4;
+
 // --- List builder (list-build fusion) ----------------------------------
 //
 // Emitted by the list-build pass in place of the `List.prepend` cons
@@ -597,6 +612,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         STR_CODE1 => "STR_CODE1",
         STR_CODE1_LOWER => "STR_CODE1_LOWER",
         STR_CODE1_UPPER => "STR_CODE1_UPPER",
+        STR_CURSOR_CODE => "STR_CURSOR_CODE",
+        STR_FOLD_LOWER => "STR_FOLD_LOWER",
+        STR_FOLD_UPPER => "STR_FOLD_UPPER",
         LIST_BUILDER_NEW => "LIST_BUILDER_NEW",
         LIST_BUILDER_PUSH => "LIST_BUILDER_PUSH",
         LIST_BUILDER_FINALIZE => "LIST_BUILDER_FINALIZE",
@@ -667,6 +685,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | STR_CODE1
         | STR_CODE1_LOWER
         | STR_CODE1_UPPER
+        | STR_CURSOR_CODE
+        | STR_FOLD_LOWER
+        | STR_FOLD_UPPER
         | LIST_BUILDER_NEW
         | LIST_BUILDER_PUSH
         | LIST_BUILDER_FINALIZE

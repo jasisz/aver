@@ -80,6 +80,44 @@ fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
         output.status.success(),
         "honest Certificate target must build before the hostile edit ({case}):\n{combined}"
     );
+    trim_lean_build_tree(cert_dir);
+}
+
+/// Removes the `.lake` build tree from an emitted certificate package once a
+/// `lake` step there has succeeded.
+///
+/// The build tree is ~117 MB of the ~119 MB a certificate test writes, and it
+/// is dead weight as soon as the build's output has been captured: every later
+/// step reads emitted package files or stages verification in a fresh
+/// directory. `ScratchDir` already removes everything on drop; this early trim
+/// is for the run that never reaches a drop — a killed process then strands
+/// the ~2 MB package instead of the whole build tree — and it keeps
+/// `copy_dir_all` from duplicating the build tree into each tampered copy.
+fn trim_lean_build_tree(cert_dir: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(cert_dir.join(".lake"));
+}
+
+/// Runs `lake build` in an emitted certificate package, asserts it succeeded,
+/// and hands back the combined build output for the caller's kernel-audit
+/// assertions. The successful build's `.lake` tree is trimmed straight away;
+/// see `trim_lean_build_tree`.
+fn lake_build_package(cert_dir: &std::path::Path, case: &str) -> String {
+    let build = Command::new("lake")
+        .current_dir(cert_dir)
+        .arg("build")
+        .output()
+        .expect("expected `lake build` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "lake build of {case} failed:\n{combined}"
+    );
+    trim_lean_build_tree(cert_dir);
+    combined
 }
 
 fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
@@ -191,6 +229,30 @@ fn a_scratch_directory_is_removed_when_its_test_panics() {
         !scratch.exists(),
         "a panicking certificate test must not leave {} behind",
         scratch.display()
+    );
+}
+
+/// The trim after a successful Lean build must delete exactly the build tree:
+/// `.lake` gone so a killed run strands ~2 MB instead of ~119 MB, and the
+/// certificate package files still in place.
+#[test]
+fn trimming_the_lean_build_tree_keeps_the_certificate_package() {
+    let out_dir = temp_dir("certify-lake-trim");
+    let cert_dir = out_dir.join("cert");
+    let build_tree = cert_dir.join(".lake").join("build");
+    std::fs::create_dir_all(&build_tree).unwrap();
+    std::fs::write(build_tree.join("stand-in.olean"), "build output\n").unwrap();
+    std::fs::write(cert_dir.join("cert-manifest.json"), "{}\n").unwrap();
+
+    trim_lean_build_tree(&cert_dir);
+
+    assert!(
+        !cert_dir.join(".lake").exists(),
+        "a successful build's .lake tree must be removed early, so a killed run strands the certificate package and not the Lean build tree"
+    );
+    assert!(
+        cert_dir.join("cert-manifest.json").is_file(),
+        "trimming the build tree must leave the certificate package intact"
     );
 }
 
@@ -1393,6 +1455,9 @@ example :
         typecheck_output.status.success(),
         "ArtifactSoundness Schema.Holds typecheck failed:\n{typecheck_combined}"
     );
+    // The typecheck was the last `lake` step; the remaining assertions read
+    // output already captured above, so the build tree is dead weight now.
+    trim_lean_build_tree(&cert_dir);
     assert!(
         typecheck_combined.contains(
             "'AverCert.ArtifactSoundness.accept_sound_holds' depends on axioms: [propext, Classical.choice, Quot.sound]"
@@ -1841,20 +1906,7 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
     );
 
     materialize_wall(&cert_dir);
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of emitted cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "emitted cert");
     // Kernel-clean: the certificate theorem's `#print axioms` must show the
     // core whitelist and never `sorryAx`.
     assert!(
@@ -2040,20 +2092,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         "mul holdsTotal branch must carry the premise it consumes"
     );
 
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of emitted recursion cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "emitted recursion cert");
     // Every supported recursion family emits only its small source-model
     // bridge. The evaluator, lowering, and totality proofs stay in the audited
     // wall.
@@ -2242,20 +2281,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
         }
 
         materialize_wall(&cert_dir);
-        let build = Command::new("lake")
-            .current_dir(&cert_dir)
-            .arg("build")
-            .output()
-            .expect("expected `lake build` to run");
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        assert!(
-            build.status.success(),
-            "lake build of emitted mutual cert {fixture} failed:\n{combined}"
-        );
+        let combined = lake_build_package(&cert_dir, &format!("emitted mutual cert {fixture}"));
         let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
         let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean")).unwrap();
         for name in exports {
@@ -2363,20 +2389,7 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
     );
 
     materialize_wall(&cert_dir);
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of emitted verbatim-variant-dispatch cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "emitted verbatim-variant-dispatch cert");
     assert!(
         combined.contains(
             "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
@@ -2537,20 +2550,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
     );
 
     materialize_wall(&cert_dir);
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of emitted String.eq host-contract cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "emitted String.eq host-contract cert");
     assert!(
         combined.contains(
             "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
@@ -2707,20 +2707,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     );
 
     materialize_wall(&cert_dir);
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of emitted String.concat host-contract cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "emitted String.concat host-contract cert");
     assert!(
         combined.contains(
             "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
@@ -2794,20 +2781,7 @@ fn certify_composition_fixture_lake_builds_kernel_clean() {
         .unwrap_or("");
     assert_eq!(class, "cross-function-composition", "wrong class for quad");
     materialize_wall(&cert_dir);
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of emitted composition cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "emitted composition cert");
     // Kernel-clean: the caller theorem cites its callee's simulation lemma and
     // stays on the core whitelist; no `sorryAx` leaks through the composition.
     assert!(
@@ -3040,20 +3014,7 @@ fn assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(shard: usize) 
             }
         }
         materialize_wall(&cert_dir);
-        let build = Command::new("lake")
-            .current_dir(&cert_dir)
-            .arg("build")
-            .output()
-            .expect("expected `lake build` to run");
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        assert!(
-            build.status.success(),
-            "lake build of emitted ADT cert failed for {input}:\n{combined}"
-        );
+        let combined = lake_build_package(&cert_dir, &format!("emitted ADT cert for {input}"));
         assert!(
             !combined.contains("sorryAx"),
             "ADT certificate leaked sorryAx for {input}:\n{combined}"
@@ -3322,20 +3283,7 @@ fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
         "AcceptanceSoundness.recursion_claim_discharges"
     );
     materialize_wall(&cert_dir);
-    let build = Command::new("lake")
-        .current_dir(&cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of the s33 boundary cert failed:\n{combined}"
-    );
+    let combined = lake_build_package(&cert_dir, "the s33 boundary cert");
     assert!(
         combined.contains(
             "'CertProofs.sumBig_recursionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"

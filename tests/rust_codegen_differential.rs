@@ -445,11 +445,24 @@ fn shape(text: String) -> String
     n = count(String.chars(text), 0)
     "{n}:{Int.mod(n, 2)}:{String.join(pairs(String.chars(text), []), "-")}"
 
+fn decode(chars: List<String>, acc: Int) -> String
+    ? "The codepoint-call shape: the classifier takes the character's code, and the error arm still prints the character it read."
+    match chars
+        [] -> "ok:{acc}"
+        [head, ..tail] -> match value(head) < 0
+            true -> "bad '{head}' after {acc}"
+            false -> decode(tail, acc + value(head))
+
+fn total(text: String) -> String
+    ? "Decode a whole string, or point at the first bad character."
+    decode(String.chars(text), 0)
+
 fn main() -> Unit
     ? "Print every shape so a backend that drifts shows a diff, not a pass."
     ! [Console.print]
     Console.print("{shape("")} {shape("abc")} {shape("\u{e9}x")} {shape("\u{1F980}ab")}")
     Console.print("{value("0")}{value("9")}/{value("A")}{value("f")}/{value("\u{212A}")}/{value("\u{130}")}/{value("ab")}/{value("")}")
+    Console.print("{total("09af")}|{total("")}|{total("0x9")}|{total("\u{e9}0")}|{total("9\u{1F980}")}|{total("\u{212A}")}")
 "#
     .replace("\\u{e9}", "\u{e9}")
     .replace("\\u{1F980}", "\u{1F980}")
@@ -458,8 +471,12 @@ fn main() -> Unit
     // "éx" is two codepoints in three bytes; "🦀ab" is three in six.
     // The Kelvin sign lowercases to "k"; U+0130 lowercases to two
     // characters and so matches nothing; "" and "ab" are not one
-    // character either.
-    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1";
+    // character either. The decode line exercises the codepoint-call
+    // shape: the classifier consumes each character's code, and the
+    // error message still prints the character the loop was on —
+    // multibyte characters included — so a cursor that re-read the
+    // wrong offset shows up as a changed message.
+    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20";
     let vm = run_vm_inline("chars_fusion", &src).expect("vm run");
     let rust =
         build_run_rust_inline("chars_fusion", &src).expect("rust compile + cargo build + run");
@@ -710,6 +727,89 @@ fn main() -> Unit
         build_run_rust_inline("bits_namespace", src).expect("rust compile + cargo build + run");
     assert_eq!(vm, expected, "VM Bits contract changed");
     assert_eq!(rust, expected, "Rust Bits semantics diverged from the VM");
+}
+
+#[test]
+fn rust_map_iteration_order_matches_vm() {
+    // A map iterates sorted by key on every read: `Map.keys`, `Map.values`
+    // and `Map.entries` must agree with each other and with the VM. The
+    // compiled backend used to walk `HashMap::values()` bare while `keys`
+    // and `entries` beside it sorted, so the value order changed per process
+    // and `zip(keys, values)` stopped matching `entries` — inside ONE
+    // backend, on one run. Six string keys make an accidental agreement a
+    // 1-in-720 event, and the zip-vs-entries line catches it without any
+    // cross-run comparison. The integer-keyed map pins the comparator:
+    // numeric order, not the printed digits that would put 10 before 2.
+    let src = r#"module MapOrderDifferential
+    intent = "Every map iteration read in one program, for cross-backend agreement"
+    effects [Console.print]
+
+fn stringKeyed() -> Map<String, Int>
+    ? "Six keys inserted deliberately out of key order."
+    m0 = Map.set({}, "z", 1)
+    m1 = Map.set(m0, "a", 2)
+    m2 = Map.set(m1, "m", 3)
+    m3 = Map.set(m2, "k", 4)
+    m4 = Map.set(m3, "e", 5)
+    Map.set(m4, "t", 6)
+
+fn intKeyed() -> Map<Int, String>
+    ? "Keys whose numeric order differs from their printed order."
+    m0 = Map.set({}, 10, "ten")
+    m1 = Map.set(m0, 2, "two")
+    Map.set(m1, 33, "lot")
+
+fn joinStrings(xs: List<String>) -> String
+    ? "Joins strings with a comma separator."
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> x
+            _ -> "{x},{joinStrings(rest)}"
+
+fn joinInts(xs: List<Int>) -> String
+    ? "Joins integers with a comma separator."
+    match xs
+        [] -> ""
+        [x, ..rest] -> match rest
+            [] -> "{x}"
+            _ -> "{x},{joinInts(rest)}"
+
+fn pairText(p: Tuple<String, Int>) -> String
+    ? "Renders one key-value pair."
+    match p
+        (k, v) -> "{k}={v}"
+
+fn joinPairs(xs: List<Tuple<String, Int>>) -> String
+    ? "Joins key-value pairs with a comma separator."
+    match xs
+        [] -> ""
+        [p, ..rest] -> match rest
+            [] -> pairText(p)
+            _ -> "{pairText(p)},{joinPairs(rest)}"
+
+fn main() -> Unit
+    ? "Print every read so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print(joinStrings(Map.keys(stringKeyed())))
+    Console.print(joinInts(Map.values(stringKeyed())))
+    Console.print(joinPairs(Map.entries(stringKeyed())))
+    Console.print(joinPairs(List.zip(Map.keys(stringKeyed()), Map.values(stringKeyed()))))
+    Console.print(joinInts(Map.keys(intKeyed())))
+    Console.print(joinStrings(Map.values(intKeyed())))
+"#;
+    // Lines 3 and 4 are the correspondence check: zip(keys, values) must BE
+    // entries, or `keys[i]` no longer names the key of `values[i]`.
+    let expected = "a,e,k,m,t,z\n2,5,4,3,6,1\na=2,e=5,k=4,m=3,t=6,z=1\na=2,e=5,k=4,m=3,t=6,z=1\n2,10,33\ntwo,ten,lot";
+
+    let vm = run_vm_inline("map_iteration_order", src).expect("vm run");
+    let rust = build_run_rust_inline("map_iteration_order", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM map iteration order changed");
+    assert_eq!(
+        rust, expected,
+        "Rust map iteration diverged from the VM — a map read stopped sorting by key"
+    );
 }
 
 #[test]

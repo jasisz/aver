@@ -426,7 +426,10 @@ fn main() -> Int
     assert_eq!(data["cursor_rewrites"], 1, "one traversal fuses: {data}");
     assert_eq!(
         data["synthesized"].as_array().unwrap(),
-        &vec![serde_json::json!("total__cursor")],
+        &vec![
+            serde_json::json!("total__cursor"),
+            serde_json::json!("value__code")
+        ],
         "{data}"
     );
     assert_eq!(
@@ -434,6 +437,10 @@ fn main() -> Int
         "the character match fuses too: {data}"
     );
     assert_eq!(data["codepoint_matches_by_fn"]["value"], 1);
+    assert_eq!(
+        data["codepoint_calls"], 1,
+        "the classifier call in the fused loop takes the code: {data}"
+    );
     assert!(
         data["declined"]["sized"]
             .as_str()
