@@ -68,6 +68,7 @@ const S1_FIXTURES: &[&str] = &[
     "meter",
     "mutual",
     "mutual3",
+    "offsetrec",
     "opteval",
     "person",
     "rangepred",

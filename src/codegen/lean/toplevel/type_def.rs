@@ -39,7 +39,17 @@ pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<
 /// The witness is the first nullary variant when one exists (always inhabited,
 /// and self-recursion-safe), otherwise the first variant with `default` fields
 /// (matching what `deriving Inhabited` would pick for the base-case-first user
-/// ADTs in scope); for a record it is the all-`default` structure value.
+/// ADTs in scope).
+///
+/// A record's witness NAMES its fields — `⟨{ f := default }⟩`, never
+/// `⟨default⟩` — because the outer brackets are already the `Inhabited`
+/// constructor: a bare `default` between them asks for the very instance being
+/// stated, and Lean answers "failed to synthesize instance of type class
+/// Inhabited", which declines the whole certificate. A record whose field is
+/// another record needs no extra ordering care: type defs are emitted in
+/// dependency order (the inner record's structure has to precede the outer
+/// one's field anyway) and each instance follows its own structure, so the
+/// inner witness is always already in scope.
 pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option<&str>) -> String {
     if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
         return String::new();
@@ -66,11 +76,18 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             if crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some() {
                 return String::new();
             }
-            let args = std::iter::repeat_n("default", fields.len())
+            let assignments = fields
+                .iter()
+                .map(|(field_name, _)| format!("{} := default", aver_name_to_lean(field_name)))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let value = if assignments.is_empty() {
+                "{}".to_string()
+            } else {
+                format!("{{ {assignments} }}")
+            };
             format!(
-                "instance : Inhabited {} := ⟨{args}⟩",
+                "instance : Inhabited {} := ⟨{value}⟩",
                 aver_name_to_lean(name)
             )
         }

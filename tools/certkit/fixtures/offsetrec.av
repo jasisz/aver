@@ -1,0 +1,27 @@
+module OffsetRecord
+    intent =
+        "Single-field record plus a record whose field is that record. The"
+        "certificate model needs a witness for both, and the inner one must"
+        "come first."
+    exposes [Window, Offset, readCount, readBy]
+
+record Window
+  inner: Offset
+  count: Int
+
+record Offset
+  by: Int
+
+fn readCount(w: Window) -> Int
+    ? "Read the count field of a Window."
+    w.count
+
+fn readBy(o: Offset) -> Int
+    ? "Read the by field of an Offset."
+    o.by
+
+verify readCount
+    readCount(Window(inner = Offset(by = 1), count = 42)) => 42
+
+verify readBy
+    readBy(Offset(by = 7)) => 7
