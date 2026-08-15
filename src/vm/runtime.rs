@@ -392,9 +392,16 @@ impl VmRuntime {
     ) -> Result<NanValue, VmError> {
         // Fast path: if arg 0 is owned and this is a collection mutator,
         // call the owned variant that takes instead of cloning.
+        //
+        // `Map.remove` is here for the same reason the other two are: the mask
+        // reaches it, and the persistent map has an owned removal that leaves
+        // the table it was handed alone. It used to fall through to the copying
+        // call, which meant a mask bit on a `Map.remove` was a claim nobody
+        // read.
         if owned_mask & 1 != 0 {
             let owned_result = match builtin {
                 VmBuiltin::MapSet => Some(crate::types::map::set_nv_owned(args, arena)),
+                VmBuiltin::MapRemove => Some(crate::types::map::remove_nv_owned(args, arena)),
                 VmBuiltin::VectorSet => Some(crate::types::vector::vec_set_nv_owned(args, arena)),
                 _ => None,
             };

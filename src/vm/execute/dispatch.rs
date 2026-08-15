@@ -1,5 +1,6 @@
 use super::{ReturnControl, VM};
 use crate::nan_value::{Arena, NanIntExt, NanValue};
+use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 use crate::vm::types::{CallFrame, VmError};
 
@@ -265,6 +266,9 @@ impl VM {
                     {
                         frame.globals_dirty = true;
                     }
+                    // The globals table outlives every frame, so from here on it
+                    // is a holder no walk of the operand stack can see.
+                    self.arena.note_held_elsewhere(val);
                     if idx >= self.globals.len() {
                         self.globals.resize(idx + 1, NanValue::UNIT);
                     }
@@ -767,7 +771,7 @@ impl VM {
                 CALL_BUILTIN | CALL_BUILTIN_OWNED => {
                     let symbol_id = read_u32!(code, ip);
                     let argc = read_u8!(code, ip) as usize;
-                    let owned_mask = if op == CALL_BUILTIN_OWNED {
+                    let mut owned_mask = if op == CALL_BUILTIN_OWNED {
                         read_u8!(code, ip)
                     } else {
                         0
@@ -795,10 +799,25 @@ impl VM {
                     self.stack.truncate(args_start);
                     // AFTER the truncate, deliberately: with the argument list
                     // off the stack, "no cell holds this slot" and "the argument
-                    // cell was the only holder" are the same statement, so the
-                    // cross-check needs no correction for the argument's own
-                    // reference.
+                    // cell was the only holder" are the same statement, so
+                    // neither the cross-check nor the decision below needs a
+                    // correction for the argument's own reference.
                     self.cross_check_owned_mask(builtin, &args, owned_mask);
+
+                    // The static mask keeps everything it granted; the runtime
+                    // only ever adds. A map write the compiler declined asks the
+                    // running program whether anything still holds the target,
+                    // and takes the owned path when the answer is nothing at
+                    // all. Restricted to the two builtins
+                    // `invoke_builtin_with_owned` actually hands their target
+                    // to: a bit set on anything else would be read by nobody.
+                    if owned_mask & 1 == 0
+                        && matches!(builtin, VmBuiltin::MapSet | VmBuiltin::MapRemove)
+                        && let Some(target) = args.first().copied()
+                        && self.runtime_owns_map_target(target)
+                    {
+                        owned_mask |= 1;
+                    }
 
                     if builtin.is_http_server() {
                         self.runtime.ensure_builtin_effects_allowed(
@@ -1176,11 +1195,24 @@ impl VM {
                         descs.push(argc);
                     }
 
-                    // Pop callable values plus args from stack.
+                    // Copy the callable values plus args out of the stack, and
+                    // LEAVE THE CELLS WHERE THEY ARE until the product is done.
+                    //
+                    // The copy is what the branches are dispatched from; the
+                    // cells are what says the copies exist. A branch that runs
+                    // on this VM — the sequential arm below — writes against
+                    // this arena while its siblings' bundles are still in
+                    // flight, and `slot_is_unheld` answers by walking exactly
+                    // this vector. Truncating here would take those references
+                    // out of the only place the decision can see them, and a
+                    // sibling's map would read as held by nobody one statement
+                    // before that sibling reads it. Keeping them costs
+                    // `total_items` cells for the length of the product and
+                    // nothing else: every branch frame is pushed above this
+                    // point and truncates back to its own base on the way out.
                     let total_items: usize = descs.iter().map(|argc| argc + 1).sum();
                     let items_start = self.stack.len() - total_items;
                     let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
-                    self.stack.truncate(items_start);
 
                     // Save caller IP — drop code borrow before call_function.
                     // The branches themselves are entered with `caller_fn_id` /
@@ -1203,16 +1235,21 @@ impl VM {
                     // Enter replay group
                     self.runtime.replay_enter_group();
 
-                    // Build per-element callable + arg bundles in source order.
+                    // Build per-element callable + arg bundles in source order,
+                    // remembering where each one sits in the cells left standing
+                    // above.
                     let mut element_calls: Vec<(NanValue, Vec<NanValue>)> =
                         Vec::with_capacity(count);
+                    let mut bundle_spans: Vec<(usize, usize)> = Vec::with_capacity(count);
                     let mut item_offset = 0;
                     for argc in &descs {
+                        let bundle_start = items_start + item_offset;
                         let callable = flat_items[item_offset];
                         item_offset += 1;
                         let args = flat_items[item_offset..item_offset + *argc].to_vec();
                         item_offset += *argc;
                         element_calls.push((callable, args));
+                        bundle_spans.push((bundle_start, items_start + item_offset));
                     }
 
                     // Check if recording/replaying — if so, run sequentially
@@ -1241,6 +1278,16 @@ impl VM {
                         }
                         for i in order {
                             let (callable, args) = &element_calls[i];
+                            // This branch's OWN bundle stops being a holder the
+                            // moment the branch is entered: the callee takes the
+                            // arguments as locals of its own frame, which is
+                            // where every other call in the VM leaves them, and
+                            // a cell here as well would make the branch's own
+                            // argument look like somebody else's reference. Its
+                            // SIBLINGS' bundles stay standing — they are the
+                            // references that have not been handed anywhere yet.
+                            let (bundle_start, bundle_end) = bundle_spans[i];
+                            self.stack[bundle_start..bundle_end].fill(NanValue::UNIT);
                             self.runtime.replay_set_branch(i as u32);
                             let result = self.invoke_callable_value(
                                 *callable,
@@ -1249,6 +1296,16 @@ impl VM {
                                 caller_ip,
                             )?;
                             results[i] = result;
+                            // A finished branch's answer is in flight for as
+                            // long as the ones after it run. Nothing in the
+                            // corpus can name it — a branch can only reach a
+                            // sibling's result through a root that is already
+                            // covered — so this buys no refusal today; it is
+                            // what makes "every value this product is holding
+                            // is an operand-stack cell" a property of the loop
+                            // rather than of a case analysis, which is what the
+                            // decision and its mirror both read.
+                            self.stack.push(result);
                         }
                         results
                     } else {
@@ -1419,6 +1476,13 @@ impl VM {
                             results
                         }
                     };
+
+                    // The product is joined: the bundles and the anchored
+                    // results are references nobody holds any more, and `results`
+                    // carries everything that survives. This is the truncation
+                    // the pop above used to do, moved to where the branches have
+                    // stopped needing to be visible.
+                    self.stack.truncate(items_start);
 
                     // Exit replay group
                     self.runtime.replay_exit_group();
@@ -1861,6 +1925,12 @@ impl VM {
                                     )
                                 })
                             });
+                        // The one place in the VM where a value enters an arena
+                        // entry without going through `Arena::push`, so it is
+                        // the one place the choke point does not cover: after
+                        // this store the vector holds `value`, and if that is a
+                        // map, the vector is a holder of its slot.
+                        self.arena.note_held_elsewhere(value);
                         let items = self.arena.get_vector_mut(vec.arena_index());
                         if i < items.len() {
                             items[i] = value;

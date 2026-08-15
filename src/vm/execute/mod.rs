@@ -7,7 +7,9 @@ mod slots;
 #[cfg(test)]
 mod tests;
 
-pub use slots::VmSlotUniquenessStats;
+pub use slots::{
+    VmRuntimeOwnershipStats, VmSlotUniquenessStats, grants_the_mirror_could_not_afford,
+};
 
 use super::runtime::VmRuntime;
 use super::types::{CallFrame, CodeStore, VmError};
@@ -50,6 +52,10 @@ pub struct VM {
     /// default release path, where computing it would mean walking the stack
     /// once per collection write for nobody.
     slot_uniqueness: VmSlotUniquenessStats,
+    /// What the runtime decided about the map writes the compiler declined.
+    /// Maintained everywhere, release included: it is the receipt for a decision
+    /// this VM took, not an observation somebody asked for.
+    runtime_ownership: VmRuntimeOwnershipStats,
 }
 
 enum ReturnControl {
@@ -63,7 +69,21 @@ enum ReturnControl {
 }
 
 impl VM {
-    pub fn new(code: CodeStore, globals: Vec<NanValue>, arena: Arena) -> Self {
+    pub fn new(code: CodeStore, globals: Vec<NanValue>, mut arena: Arena) -> Self {
+        // Two root sets the arena has no way to learn about on its own, both
+        // fixed before the first instruction runs. A global and a chunk
+        // constant hold their map for as long as the program does, so a map
+        // reachable from either must never be taken in place — and a constant
+        // is the sharper of the two, because every re-evaluation of the literal
+        // that produced it gets the same slot back.
+        for value in &globals {
+            arena.note_held_elsewhere(*value);
+        }
+        for chunk in &code.functions {
+            for value in &chunk.constants {
+                arena.note_held_elsewhere(*value);
+            }
+        }
         VM {
             stack: Vec::with_capacity(1024),
             frames: Vec::with_capacity(64),
@@ -78,6 +98,7 @@ impl VM {
             buffer_pool: Vec::new(),
             step_limit: None,
             slot_uniqueness: VmSlotUniquenessStats::default(),
+            runtime_ownership: VmRuntimeOwnershipStats::default(),
         }
     }
 
@@ -100,9 +121,10 @@ impl VM {
 
     pub fn profile_report(&self) -> Option<VmProfileReport> {
         let slot_uniqueness = self.slot_uniqueness;
+        let runtime_ownership = self.runtime_ownership;
         self.profile
             .as_ref()
-            .map(|profile| profile.report(&self.code, slot_uniqueness))
+            .map(|profile| profile.report(&self.code, slot_uniqueness, runtime_ownership))
     }
 
     pub fn profile_top_bigrams(&self, n: usize) -> Vec<((u8, u8), u64)> {

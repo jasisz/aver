@@ -18,6 +18,7 @@ impl<T: ArenaTypes> Arena<T> {
             map_entries_copied: 0,
             map_entries_scanned: 0,
             rewrite_out_of_region_roots: false,
+            holds_any_map: false,
             inplace_visit_stamps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             inplace_visit_epoch: 0,
             type_keys: Vec::new(),
@@ -61,6 +62,9 @@ impl<T: ArenaTypes> Arena<T> {
             map_entries_copied: 0,
             map_entries_scanned: 0,
             rewrite_out_of_region_roots: false,
+            // The stable entries come across whole, and a map among them is
+            // still a map here.
+            holds_any_map: self.holds_any_map,
             inplace_visit_stamps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             inplace_visit_epoch: 0,
             type_keys: self.type_keys.clone(),
@@ -190,40 +194,184 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
+    /// Record that something other than the caller's own handle now holds
+    /// `value`'s slot.
+    ///
+    /// A no-op for anything but a heap-backed map, which is the only entry that
+    /// carries the flag, and the only one anything ever empties in place. The
+    /// consumer calls this for the roots the arena cannot see for itself — a
+    /// global it stores into, a constant table it hands the program, a value it
+    /// writes into an entry that already exists. `ArenaEntry::Map`'s
+    /// `held_elsewhere` carries the full list of marking sites.
+    #[inline(always)]
+    pub fn note_held_elsewhere(&mut self, value: NanValue) {
+        if value.is_heap_map() {
+            self.mark_held_elsewhere(value.arena_index());
+        }
+    }
+
+    /// The write behind [`Arena::note_held_elsewhere`], kept out of it.
+    ///
+    /// Indexing a space can panic, and a caller that inlines the panic path
+    /// stops being inlined itself — the lesson the incremental counter cost the
+    /// last time. The test is what belongs at the call site; the write is rare
+    /// enough to reach through a call.
+    #[inline(never)]
+    fn mark_held_elsewhere(&mut self, index: u32) {
+        if let ArenaEntry::Map { held_elsewhere, .. } = self.get_mut(index) {
+            *held_elsewhere = true;
+        }
+    }
+
+    /// Mark every map `entry` holds DIRECTLY, so the entry counts as a holder
+    /// of those slots from here on.
+    ///
+    /// Direct is enough: a map reachable from the arena at all is a direct
+    /// child of SOME entry, and that entry came through here. What it does not
+    /// do is walk a map's own table — that would put an `O(size)` pass in front
+    /// of the one insert that is `O(1)`. The two builders of a map entry mark
+    /// its keys and values themselves: [`Arena::push_map`] in the pass it
+    /// already makes over the table, and the owned insert for the one pair it
+    /// adds.
+    ///
+    /// Reached only when the arena has stored a map at all — [`Arena::push`]
+    /// reads that flag off the same discriminant it was already reading — and
+    /// deliberately not inlined into it, so a program that never builds a map
+    /// carries none of this in its allocation path.
+    #[inline(never)]
+    fn note_entry_holds_maps(&mut self, entry: &ArenaEntry<T>) {
+        match entry {
+            ArenaEntry::Boxed(value) => self.note_held_elsewhere(*value),
+            ArenaEntry::Tuple(items) | ArenaEntry::Vector(items) => {
+                for value in items {
+                    self.note_held_elsewhere(*value);
+                }
+            }
+            ArenaEntry::Record { fields, .. } | ArenaEntry::Variant { fields, .. } => {
+                for value in fields {
+                    self.note_held_elsewhere(*value);
+                }
+            }
+            ArenaEntry::List(list) => match list {
+                ArenaList::Flat { items, start } => {
+                    if items.holds_map() {
+                        for value in &items[(*start).min(items.len())..] {
+                            self.note_held_elsewhere(*value);
+                        }
+                    }
+                }
+                ArenaList::Prepend { head, tail, .. } => {
+                    self.note_held_elsewhere(*head);
+                    self.note_held_elsewhere(*tail);
+                }
+                ArenaList::Concat { left, right, .. } => {
+                    self.note_held_elsewhere(*left);
+                    self.note_held_elsewhere(*right);
+                }
+                ArenaList::Segments {
+                    current,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    self.note_held_elsewhere(*current);
+                    if rest.holds_map() {
+                        for value in &rest[(*start).min(rest.len())..] {
+                            self.note_held_elsewhere(*value);
+                        }
+                    }
+                }
+            },
+            // A map's own table is marked by whoever built it; see the doc
+            // above. Everything else holds no `NanValue` at all.
+            ArenaEntry::Map { .. }
+            | ArenaEntry::Int(_)
+            | ArenaEntry::BigInt(_)
+            | ArenaEntry::String(_)
+            | ArenaEntry::Fn(_)
+            | ArenaEntry::Builtin(_) => {}
+            ArenaEntry::Namespace { members, .. } => {
+                for (_, value) in members {
+                    self.note_held_elsewhere(*value);
+                }
+            }
+        }
+    }
+
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry<T>) -> u32 {
+        // The map bookkeeping rides on the discriminant read this match was
+        // already doing, so an allocation that has nothing to do with maps pays
+        // one bool for it.
+        //
+        // A map entry is where the flag comes from: nothing else in this arena
+        // can carry a map's index until one exists, and the only way one comes
+        // to exist is this arm. Everything else asks the flag first and walks
+        // its children only if the answer could be yes.
         match &entry {
             ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => {}
+            ArenaEntry::Map { .. } => {
+                // Read before writing: a map fold comes through here once per
+                // step and the flag is already set on all but the first, so a
+                // predictable branch is cheaper than a store into the arena
+                // header every time.
+                if !self.holds_any_map {
+                    self.holds_any_map = true;
+                }
+                return self.push_heap(entry);
+            }
+            // Nothing here holds a `NanValue`, so there is nothing to mark and
+            // no reason to leave the match to find that out. A map fold
+            // allocates one of these per step for its keys.
+            ArenaEntry::Int(_) | ArenaEntry::BigInt(_) | ArenaEntry::String(_) => {
+                return self.push_heap(entry);
+            }
             _ => {
-                return match self.alloc_space {
-                    AllocSpace::Young => {
-                        let idx = self.young_entries.len() as u32;
-                        self.young_entries.push(entry);
-                        self.note_peak_usage();
-                        Self::encode_index(HeapSpace::Young, idx)
-                    }
-                    AllocSpace::Yard => {
-                        let idx = self.yard_entries.len() as u32;
-                        self.yard_entries.push(entry);
-                        self.note_peak_usage();
-                        Self::encode_index(HeapSpace::Yard, idx)
-                    }
-                    AllocSpace::Handoff => {
-                        let idx = self.handoff_entries.len() as u32;
-                        self.handoff_entries.push(entry);
-                        self.note_peak_usage();
-                        Self::encode_index(HeapSpace::Handoff, idx)
-                    }
-                };
+                if self.holds_any_map {
+                    self.note_entry_holds_maps(&entry);
+                }
+                return self.push_heap(entry);
             }
         }
         match entry {
             ArenaEntry::Fn(f) => self.push_symbol(ArenaSymbol::Fn(f)),
             ArenaEntry::Builtin(name) => self.push_symbol(ArenaSymbol::Builtin(name)),
             ArenaEntry::Namespace { name, members } => {
+                // A namespace's members are values the symbol table holds for
+                // the life of the program, which is exactly what the flag means.
+                // Registered once at start-up, so the walk costs nothing worth
+                // guarding.
+                for (_, value) in &members {
+                    self.note_held_elsewhere(*value);
+                }
                 self.push_symbol(ArenaSymbol::Namespace { name, members })
             }
             _ => unreachable!("non-symbol entry already returned above"),
+        }
+    }
+
+    /// Put an entry in the space the arena is currently allocating into.
+    #[inline]
+    fn push_heap(&mut self, entry: ArenaEntry<T>) -> u32 {
+        match self.alloc_space {
+            AllocSpace::Young => {
+                let idx = self.young_entries.len() as u32;
+                self.young_entries.push(entry);
+                self.note_peak_usage();
+                Self::encode_index(HeapSpace::Young, idx)
+            }
+            AllocSpace::Yard => {
+                let idx = self.yard_entries.len() as u32;
+                self.yard_entries.push(entry);
+                self.note_peak_usage();
+                Self::encode_index(HeapSpace::Yard, idx)
+            }
+            AllocSpace::Handoff => {
+                let idx = self.handoff_entries.len() as u32;
+                self.handoff_entries.push(entry);
+                self.note_peak_usage();
+                Self::encode_index(HeapSpace::Handoff, idx)
+            }
         }
     }
 
@@ -597,17 +745,35 @@ impl<T: ArenaTypes> Arena<T> {
             start: 0,
         }))
     }
-    /// Store a map, proving its `all_immediate` flag from the table itself.
+    /// Store a map, proving its `all_immediate` flag from the table itself and
+    /// marking every map it holds as held by this entry.
     ///
     /// This reads every entry, which is why it is the entry point for builders
     /// that already pay for the whole table anyway — `Map.set` on a target it
     /// has to preserve, `Map.remove`, `Map.fromList`, `deep_import`, value
-    /// conversion. The one caller that must not come through here is the owned
-    /// `Map.set`, which is O(1) per insert and derives the flag from the map it
-    /// consumed instead; see `set_nv_owned`.
+    /// conversion. Both jobs come out of that one pass. The one caller that must
+    /// not come through here is the owned `Map.set`, which is O(1) per insert
+    /// and derives the flag from the map it consumed and marks the single pair
+    /// it added; see `set_nv_owned`.
     pub fn push_map(&mut self, map: T::Map) -> u32 {
-        let all_immediate = crate::map_all_immediate(&map);
-        self.push(ArenaEntry::Map { map, all_immediate })
+        let mut all_immediate = true;
+        let mut held: Option<Vec<NanValue>> = None;
+        for (key, value) in map.values() {
+            all_immediate &= key.is_immediate() && value.is_immediate();
+            for child in [*key, *value] {
+                if child.is_heap_map() {
+                    held.get_or_insert_default().push(child);
+                }
+            }
+        }
+        for child in held.into_iter().flatten() {
+            self.note_held_elsewhere(child);
+        }
+        self.push(ArenaEntry::Map {
+            map,
+            all_immediate,
+            held_elsewhere: false,
+        })
     }
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::Tuple(items))
@@ -783,6 +949,78 @@ impl<T: ArenaTypes> Arena<T> {
             _ => panic!("Arena: expected Map at {}", map.arena_index()),
         }
     }
+    /// Whether any entry directly holds `index`, searched rather than recorded.
+    ///
+    /// The from-scratch counterpart to `held_elsewhere`: that flag is written
+    /// where a reference is made, this reads every entry in every space and asks
+    /// the question outright. Nothing in the interpreter's hot path may call
+    /// this — it is `O(live heap)` — and its whole value is that it shares no
+    /// bookkeeping with the flag it is there to check.
+    ///
+    /// The entry AT `index` is skipped: a map is not a holder of itself, and
+    /// Aver values are acyclic, so no entry can reach `index` except by holding
+    /// it directly or by holding something that does — and that something is
+    /// itself an entry this search visits.
+    ///
+    /// The symbol table is searched too. Nothing puts a map in a namespace
+    /// today, so that loop finds nothing — but [`Arena::push`] marks namespace
+    /// members all the same, and a check that covered fewer roots than the
+    /// marking would be agreeing with the marking by construction over the
+    /// difference.
+    pub fn any_entry_holds_slot(&self, index: u32) -> bool {
+        for space in [
+            HeapSpace::Young,
+            HeapSpace::Yard,
+            HeapSpace::Handoff,
+            HeapSpace::Stable,
+        ] {
+            let entries = match space {
+                HeapSpace::Young => &self.young_entries,
+                HeapSpace::Yard => &self.yard_entries,
+                HeapSpace::Handoff => &self.handoff_entries,
+                HeapSpace::Stable => &self.stable_entries,
+            };
+            for (raw, entry) in entries.iter().enumerate() {
+                if Self::encode_index(space, raw as u32) == index {
+                    continue;
+                }
+                if entry_holds_slot(entry, index) {
+                    return true;
+                }
+            }
+        }
+        self.symbol_entries.iter().any(|symbol| match symbol {
+            ArenaSymbol::Namespace { members, .. } => members
+                .iter()
+                .any(|(_, value)| value.heap_index() == Some(index)),
+            ArenaSymbol::Fn(_) | ArenaSymbol::Builtin(_) | ArenaSymbol::NullaryVariant { .. } => {
+                false
+            }
+        })
+    }
+
+    /// Everything a caller deciding whether to empty this map's slot needs from
+    /// the arena, out of one lookup.
+    ///
+    /// `None` for anything that is not a heap-backed map — the empty map among
+    /// them, which is an immediate with no slot to empty and nothing to copy.
+    #[inline]
+    pub fn map_slot(&self, map: NanValue) -> Option<MapSlot> {
+        if !map.is_heap_map() {
+            return None;
+        }
+        match self.get(map.arena_index()) {
+            ArenaEntry::Map {
+                map,
+                held_elsewhere,
+                ..
+            } => Some(MapSlot {
+                held_elsewhere: *held_elsewhere,
+                entries: map.len(),
+            }),
+            _ => panic!("Arena: expected Map at {}", map.arena_index()),
+        }
+    }
     /// Take ownership of a map value, replacing it with an empty map in the arena.
     /// Use when the caller is the sole owner (reuse analysis says `owned = true`).
     /// Avoids the O(n) clone — the original slot becomes empty.
@@ -790,13 +1028,21 @@ impl<T: ArenaTypes> Arena<T> {
     /// Read [`Arena::map_all_immediate_value`] before this if the caller needs
     /// the taken map's flag: the emptied slot is left claiming immediacy, which
     /// is the truth about an empty table and not about what came out of it.
+    ///
+    /// `held_elsewhere` is deliberately left alone. Emptying the table does not
+    /// discharge a holder — whoever held the slot still holds it, and now reads
+    /// an empty map through it. The flag stays true so that a second take over
+    /// the same slot is refused for the same reason the first one should have
+    /// been.
     pub fn take_map_value(&mut self, map: NanValue) -> T::Map {
         if map.is_empty_map_immediate() {
             T::Map::new()
         } else {
             let index = map.arena_index();
             match self.get_mut(index) {
-                ArenaEntry::Map { map, all_immediate } => {
+                ArenaEntry::Map {
+                    map, all_immediate, ..
+                } => {
                     *all_immediate = true;
                     core::mem::replace(map, T::Map::new())
                 }
