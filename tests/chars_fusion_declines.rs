@@ -175,9 +175,15 @@ fn main() -> Unit
     assert_eq!(out, "3");
 }
 
-/// Two `String.chars` producers, two parameters. One cursor variant
-/// cannot stand in for both lists, and stepping either one for the other
-/// walks the wrong string.
+/// Two `String.chars` producers, two parameters. A cursor variant
+/// carries ONE cursor, so it cannot stand in for both lists — this loop
+/// keeps both, and its answer.
+///
+/// Conservatism, not a wrong-fuse guard: fusing whichever list came
+/// first would leave the other materialised and still answer correctly.
+/// The rule is here because "one cursor variant, one list" is what the
+/// rewrite can say it does, and picking a winner by argument order is
+/// not.
 #[test]
 fn two_producers_into_one_loop_keep_their_unfused_answer() {
     let out = run_program(

@@ -122,8 +122,18 @@ pub enum CharsFusionDecline {
     /// The parameter fed by `String.chars` is not a plain `List<String>`
     /// binding.
     ParamShape,
-    /// Two call sites hand `String.chars(…)` to different parameters of
-    /// the same function; one cursor variant cannot serve both.
+    /// `String.chars(…)` reaches two different parameters of the same
+    /// function; a cursor variant carries one cursor, so it cannot
+    /// stand in for both lists.
+    ///
+    /// Conservatism rather than safety: fusing whichever list came
+    /// first would leave the other materialised and still answer
+    /// correctly, because a call site is only rewritten when the
+    /// producer sits in the position the variant was built for. The
+    /// rule is here because "one cursor variant, one list" is what this
+    /// rewrite can say it does, and picking a winner by argument order
+    /// is not. Two cursors is a separate shape, and it can have its own
+    /// recogniser when a workload asks for it.
     ConflictingProducers,
     /// A `<fn>__cursor` name is already taken, or the body already uses
     /// the `__cur_` namespace.
