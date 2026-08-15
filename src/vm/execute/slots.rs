@@ -95,7 +95,7 @@
 //! length, and above that the write copies without looking. The measurements
 //! behind the number are on the constant.
 //!
-//! ## The one root set that is neither walked nor marked
+//! ## The root set that was neither walked nor marked
 //!
 //! An independent product does NOT always give each branch a VM of its own.
 //! `CALL_PAR` takes that arm only when it can: recording or replaying effects,
@@ -119,7 +119,7 @@
 //! argument read as somebody else's reference. What is left standing is exactly
 //! the handles that have not been handed anywhere yet, plus the results of the
 //! branches that have already finished. Both instruments see them, because both
-//! read the operand stack, and neither needed a special case to.
+//! read the operand stack, and neither needed a special case.
 //!
 //! `a_branch_of_an_independent_product_cannot_take_a_map_its_sibling_holds` in
 //! `tests/vm_map_runtime_ownership.rs` is the shape, and the same file's
