@@ -1492,10 +1492,10 @@ pub enum ArenaEntry<T: ArenaTypes> {
         /// that the list above is a full list of what IS covered:
         ///
         /// - the interpreter's symbol table: a `Constant` symbol, and a
-        ///   namespace's members. Every caller that interns a constant passes an
-        ///   immediate, and a namespace's members go through [`Arena::push`]'s
-        ///   namespace arm when the arena stores them, so both arms are empty
-        ///   rather than unchecked;
+        ///   namespace's members. The compiler interns two constants, an
+        ///   immediate and a record whose one field is a string, and a
+        ///   namespace's members go through [`Arena::push`]'s namespace arm when
+        ///   the arena stores them, so neither arm holds a map;
         /// - the eight-byte literals a match-dispatch opcode carries inside the
         ///   bytecode. The emitter restricts them to Int, Bool, Unit, Float bits
         ///   and strings.

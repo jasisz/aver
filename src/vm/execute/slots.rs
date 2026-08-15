@@ -581,10 +581,12 @@ impl VM {
     /// can sit, and neither is searched here or marked there:
     ///
     /// - `VmSymbolTable`'s own cells — `VmSymbolKind::Constant` and a
-    ///   namespace's `members`. Every `intern_constant` caller in the compiler
-    ///   passes an immediate (`NanValue::NONE`), and a namespace's members are
-    ///   re-marked through `ArenaEntry::Namespace` when the arena stores them,
-    ///   so the arm is honestly empty rather than unchecked;
+    ///   namespace's `members`. The compiler interns exactly two constants:
+    ///   `Option.None`, which is an immediate, and `BranchPath.Root`, which is a
+    ///   record whose one field is a string. A namespace's members go through
+    ///   `Arena::push`'s namespace arm when the arena stores them. So the arm
+    ///   holds no map today, and it says which values it does hold rather than
+    ///   claiming they are all immediates;
     /// - the eight-byte literals `MATCH_DISPATCH` and `MATCH_DISPATCH_CONST`
     ///   carry inside the bytecode. The MIR emitter restricts them to Int, Bool,
     ///   Unit and Float bits and the HIR path adds strings, so no map reaches
