@@ -215,6 +215,11 @@ fn stdlib_from_hex_walks_a_cursor_and_the_vm_runs_the_fused_shape() {
         report.contains("Bytes.hexDigitValue"),
         "and the sixteen-arm character match it calls: {report}"
     );
+    assert!(
+        report.contains("Bytes.hexDigitValue__code"),
+        "and the classifier variant that takes the codepoint across the \
+         call, so the loop binds no one-character string for it: {report}"
+    );
 
     let verify = run_aver(&["verify", &fixture]);
     assert_success("aver verify", &verify);
@@ -239,6 +244,112 @@ fn stdlib_from_hex_walks_a_cursor_and_the_vm_runs_the_fused_shape() {
     assert!(
         !profile.contains("String.chars"),
         "the list of one-character strings must be gone: {profile}"
+    );
+}
+
+/// The VM's own copy of the rewrite, pinned at the bytecode level. The
+/// VM re-parses every dependency off disk and re-runs the fusing passes
+/// on its copy, adopting the result only when the entry's symbol table
+/// knows every synthesized name — `Bytes.hexDigitValue__code` included.
+/// A silent fall-back to the pristine dependency would still answer
+/// correctly, so output parity cannot catch it; what proves adoption is
+/// the compiled artifact itself: the decoding loop reads the codepoint
+/// at the cursor, and the classifier variant folds it.
+#[test]
+fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
+    use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = manifest_dir.join("tests/fixtures/stdlib_bytes_dehex_app.av");
+    let module_root = entry
+        .parent()
+        .expect("fixture dir")
+        .to_string_lossy()
+        .into_owned();
+    let source = std::fs::read_to_string(&entry).expect("read fixture");
+
+    // Load the Bytes dependency the way the compile drivers do for the
+    // VM and Rust targets: the dep's own pipeline runs the fabricating
+    // passes, so the entry's symbol table learns every synthesized name
+    // and `adopt_deforestation_if_symbols_agree` can adopt the fused
+    // copy the VM re-parses off disk.
+    let bytes_source = std::fs::read_to_string(manifest_dir.join("stdlib/bytes.av"))
+        .expect("read the standard library's Bytes module");
+    let mut dep_items = aver::source::parse_source(&bytes_source).expect("Bytes parses");
+    let stdlib_root = manifest_dir.join("stdlib").to_string_lossy().into_owned();
+    let dep_result = aver::ir::pipeline::run(
+        &mut dep_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&stdlib_root),
+            }),
+            ..Default::default()
+        },
+    );
+    let dep_modules = vec![aver::codegen::ModuleInfo {
+        prefix: "Bytes".to_string(),
+        depends: vec![],
+        type_defs: dep_items
+            .iter()
+            .filter_map(|i| match i {
+                aver::ast::TopLevel::TypeDef(td) => Some(td.clone()),
+                _ => None,
+            })
+            .collect(),
+        fn_defs: dep_items
+            .iter()
+            .filter_map(|i| match i {
+                aver::ast::TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                _ => None,
+            })
+            .collect(),
+        verify_laws: aver::codegen::collect_verify_laws(&dep_items),
+        analysis: dep_result.analysis,
+    }];
+
+    let mut items = aver::source::parse_source(&source).expect("fixture parses");
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            dep_modules: &dep_modules,
+            ..Default::default()
+        },
+    );
+    let tc = pipeline_result.typecheck.expect("typecheck was requested");
+    assert!(tc.errors.is_empty(), "fixture typechecks: {:?}", tc.errors);
+
+    let mut arena = aver::nan_value::Arena::new();
+    aver::vm::register_service_types(&mut arena);
+    let (code, _globals) = aver::vm::compile_program_with_modules(
+        &pipeline_result.resolved_items,
+        &pipeline_result.symbol_table,
+        &mut arena,
+        Some(&module_root),
+        &entry.to_string_lossy(),
+        pipeline_result.analysis.as_ref(),
+    )
+    .expect("VM compile");
+
+    let loop_id = code
+        .find("Bytes.parseHexChars__cursor__collected")
+        .expect("the VM adopted the fused decoding loop");
+    assert!(
+        code.get(loop_id)
+            .code
+            .contains(&aver::vm::opcode::STR_CURSOR_CODE),
+        "the adopted loop binds the codepoint at the cursor"
+    );
+    let classifier_id = code
+        .find("Bytes.hexDigitValue__code")
+        .expect("the VM adopted the classifier's codepoint variant");
+    assert!(
+        code.get(classifier_id)
+            .code
+            .contains(&aver::vm::opcode::STR_FOLD_LOWER),
+        "the classifier variant folds case on the codepoint"
     );
 }
 

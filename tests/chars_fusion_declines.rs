@@ -547,3 +547,82 @@ fn main() -> Unit
     );
     assert_eq!(out, "120");
 }
+
+/// A classifier that reads its parameter OUTSIDE the codepoint match's
+/// subject — the wildcard arm falls back to the character itself. The
+/// codepoint-call stage must leave it on strings: its `__code` variant
+/// would keep a read of a parameter that no longer exists, and this
+/// module binds the parameter's name at top level, which is what turns
+/// that dropped read from a compile error into a quietly wrong answer.
+#[test]
+fn a_classifier_that_reads_its_parameter_keeps_its_unfused_answer() {
+    let out = run_program(
+        "callee_param_read",
+        r#"module CalleeParamRead
+    intent =
+        "Falls back to the character itself, under a top-level binding that shares the parameter's name."
+    exposes [run]
+    effects [Console.print]
+
+c = "zzz"
+
+fn classify(c: String) -> String
+    match c
+        "a" -> "letter"
+        _ -> c
+
+fn walk(chars: List<String>, acc: String) -> String
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + classify(head))
+
+fn run(text: String) -> String
+    walk(String.chars(text), "")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run("aq"))
+"#,
+    );
+    assert_eq!(out, "letterq");
+}
+
+/// The same loop with a qualifying classifier, as the control: the
+/// codepoint crosses the call, the error text still prints the exact
+/// character — multibyte included — and every answer is the one the
+/// string version gave.
+#[test]
+fn a_qualifying_classifier_keeps_every_answer_across_the_code_call() {
+    let out = run_program(
+        "code_call_control",
+        r#"module CodeCallControl
+    intent =
+        "Decodes characters through a classifier and reports the first bad one."
+    exposes [run]
+    effects [Console.print]
+
+fn value(digit: String) -> Int
+    match String.toLower(digit)
+        "0" -> 0
+        "9" -> 9
+        "a" -> 10
+        "f" -> 15
+        _ -> 0 - 1
+
+fn walk(chars: List<String>, acc: Int) -> String
+    match chars
+        [] -> "ok:{acc}"
+        [head, ..tail] -> match value(head) < 0
+            true -> "bad '{head}' after {acc}"
+            false -> walk(tail, acc + value(head))
+
+fn run(text: String) -> String
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{run("09aF")}|{run("9x")}|{run("é")}|{run("")}")
+"#,
+    );
+    assert_eq!(out, "ok:34|bad 'x' after 9|bad 'é' after 0|ok:0");
+}
