@@ -56,6 +56,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Certifying a program whose module carries a record no longer fails to build its model.** `aver compile --target wasm-gc --certify` emitted a Lean model that gave a record's default value as that record's own default value — circular, so the model did not build and `aver cert verify` answered `DECLINED certificate data did not build`, naming a missing `Inhabited` instance rather than anything about your program. Any record with exactly one field hit this, as did any record carrying one as a field, so a single `record Offset` with a single `by: Int` was enough to make a whole artifact unverifiable. The model now gives a record's default by naming its fields, and such a program certifies and verifies end to end. Records were the only shape affected; every certificate that verified before verifies unchanged.
+
 - **An error propagated with `?` from inside an argument now returns from the function that wrote it.** `Disk.readText(Disk.readText(path)?)` — read a file name out of one file, then read that file — handed `Result.Err` back to the caller in compiled code, but under `aver run` the error came out of the wrong function. Binding the inner call to a name first (`name = Disk.readText(path)?`) always behaved correctly, which is what made the difference read as a quirk of nesting.
 
   What you saw depended on who called the function containing the `?`, and only the first of the three said anything at all:

@@ -536,6 +536,50 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
 }
 
+/// A module carrying records verifies end to end.
+///
+/// The model has to state each record's default value itself, because the
+/// checker wall strips `deriving` from the staged model. Stating that value as
+/// the record's own default made the instance its own premise, so a model
+/// carrying a one-field record never built and its certificate was DECLINED.
+/// The fixture pairs a one-field record with a record whose field is that
+/// record: the witness has to name fields, AND the inner record's witness has
+/// to be stated before the outer one uses it.
+#[test]
+fn cert_verify_accepts_record_carrying_model() {
+    if !tripwire_lake_available() {
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-record-model");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/offsetrec.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify offsetrec failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("offsetrec.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_verify_clean_cache(&wasm, &cert);
+    assert!(
+        ok,
+        "expected the record-carrying certificate to verify, got:\n{report}"
+    );
+    assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
+}
+
 /// A nested `.lean` file that no staged `Manifest.lean`/`Certificate.lean`
 /// import admits is ignored outright: it never reaches the build tree, so a
 /// planted file that would poison the build (a Lean type error and a banned
