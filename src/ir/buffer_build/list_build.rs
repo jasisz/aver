@@ -1,42 +1,35 @@
-//! The collecting loop whose accumulator IS the answer.
+//! The same loop, kept as a list.
 //!
-//! Built on the recognisers next door: the occurs-check, the shadowing
-//! guard and the prepend / reverse matchers are the joined builders',
-//! reused rather than copied, because it is the same loop. What differs
-//! is stated where the pass begins.
+//! Its neighbour in [`super`] fuses a collecting loop into the
+//! `String.join` that consumes it. This one fuses the loop whose
+//! accumulator IS the answer: nobody joins it, the caller wanted the
+//! list, and the cost removed is the cons cell per element plus the
+//! single reverse that straightens them out.
+//!
+//! The loop is the same loop, which is why this is a sibling module and
+//! reuses its neighbour's occurs-check, shadowing guard and prepend /
+//! reverse recognisers rather than growing a fourth walker beside them.
+//! Two things differ.
+//!
+//! The CONSUMER. `String.join(<sink>(xs, []), sep)` is a shape; "the
+//! result" is not. So there is no call-site anchor to match: every call
+//! that starts the accumulator at `[]` is a call this rewrite can move,
+//! and the fn's own exits are what say whether the caller wanted the
+//! list forwards.
+//!
+//! The BODY. A joined builder is two arms; a parser is a tree of them,
+//! with exits that never touch the accumulator at all (`Result.Err` on
+//! a character it cannot read). What is checked is therefore not the
+//! shape of the match but the shape of every READ: the accumulator may
+//! be appended to in the recursive call, may be handed back at an exit,
+//! and may appear nowhere else — a discipline that accepts one flat
+//! loop and one four-deep parser for the same reason.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::*;
 use crate::ast::TopLevel;
-
-// ── The same loop, kept as a list ───────────────────────────────────
-//
-// Everything above fuses a collecting loop into the `String.join` that
-// consumes it. What follows fuses the loop whose accumulator IS the
-// answer: nobody joins it, the caller wanted the list, and the cost the
-// pass removes is the cons cell per element plus the single reverse that
-// straightens them out.
-//
-// The loop is the same loop, which is why this lives here and reuses
-// the occurs-check, the shadowing guard and the prepend / reverse
-// recognisers above rather than growing a fourth walker beside them.
-// Two things differ.
-//
-// The CONSUMER. `String.join(<sink>(xs, []), sep)` is a shape; "the
-// result" is not. So there is no call-site anchor to match: every call
-// that starts the accumulator at `[]` is a call this rewrite can move,
-// and the fn's own exits are what say whether the caller wanted the
-// list forwards.
-//
-// The BODY. A joined builder is two arms; a parser is a tree of them,
-// with exits that never touch the accumulator at all (`Result.Err` on a
-// character it cannot read). What is checked is therefore not the shape
-// of the match but the shape of every READ: the accumulator may be
-// appended to in the recursive call, may be handed back at an exit, and
-// may appear nowhere else — a discipline that accepts one flat loop and
-// one four-deep parser for the same reason.
 
 /// Where the single reverse lives in a collecting loop whose result is
 /// the list itself — the same axis [`BufferBuildKind`] carries, and the

@@ -1302,6 +1302,10 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
     })
 }
 
+/// The same loop, kept as a list — the collecting loop whose
+/// accumulator is the answer rather than something `String.join`
+/// consumes. Built on the recognisers above, which is why it is a
+/// sibling rather than a module of its own.
 mod list_build;
 
 #[cfg(test)]
