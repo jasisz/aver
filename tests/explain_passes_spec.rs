@@ -790,6 +790,73 @@ fn main() -> Int
     assert_eq!(data["targets"][1], "vm");
 }
 
+/// The driver-and-step half of the same report: a pair whose step was
+/// inlined ahead of candidacy is listed with its steps, and a pair the
+/// normalization turned down carries the reason as a field. Both facts
+/// exist so a pair that quietly stops fusing is a diff in CI, not a
+/// silence.
+#[test]
+fn list_build_pass_reports_the_driver_step_pairs() {
+    let json = run_explain_passes(
+        r#"
+module Pairs
+    intent = "one pair that fuses and one whose step is shared"
+    exposes [entry, sharedEntry, sharedOther]
+    depends []
+
+fn drive(xs: List<Int>, acc: List<Int>) -> List<Int>
+    match xs
+        [] -> List.reverse(acc)
+        [h, ..t] -> step(h, t, acc)
+
+fn step(h: Int, t: List<Int>, acc: List<Int>) -> List<Int>
+    v = h * 2
+    drive(t, List.prepend(v, acc))
+
+fn entry(xs: List<Int>) -> List<Int>
+    drive(xs, [])
+
+fn sharedAll(xs: List<Int>, acc: List<Int>) -> List<Int>
+    match xs
+        [] -> List.reverse(acc)
+        [h, ..t] -> sharedOne(h, t, acc)
+
+fn sharedOne(h: Int, t: List<Int>, acc: List<Int>) -> List<Int>
+    sharedAll(t, List.prepend(h * 3, acc))
+
+fn sharedEntry(xs: List<Int>) -> List<Int>
+    sharedAll(xs, [])
+
+fn sharedOther(h: Int) -> List<Int>
+    sharedOne(h, [], [])
+
+fn main() -> Int
+    List.len(entry([1, 2])) + List.len(sharedEntry([3])) + List.len(sharedOther(4))
+"#,
+    );
+    let data = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "list_build")
+        .expect("list_build stage is reported")["data"]
+        .clone();
+    assert_eq!(data["pair_inlined_by_fn"]["drive"][0], "step");
+    assert_eq!(data["loop_fns"][0], "drive");
+    assert_eq!(
+        data["pair_declined"]["sharedAll"],
+        "the step fn has more than one call site"
+    );
+    assert!(
+        data["synthesized"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s != "sharedAll__collected"),
+        "a declined pair must not fuse: {data}"
+    );
+}
+
 /// The byte-sink half of the same report. A collected loop whose only
 /// reader is the standard library's `fromList` is retargeted to the
 /// byte builder — and one whose result is read twice is turned down,

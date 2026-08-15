@@ -640,6 +640,179 @@ fn main() -> Unit
     );
 }
 
+/// The driver-and-step normalization, on the shapes where the two
+/// backends could disagree — every fused pair here goes through the
+/// inline (renamed binders, substituted arguments, a statement folded
+/// into the driver's branch structure) and then through the same
+/// builder rewrite the single-fn loops take, so a hygiene slip shows up
+/// as a wrong list rather than a missed optimization. One test, one
+/// build: the five shapes the mechanism is specified against, in one
+/// program.
+///
+/// `readAll`/`readNext` is the fallible reader — the step's `?` moves
+/// into the driver's arm and the error exits must keep their meaning.
+/// `gatherAll`/`gatherOne` terminates inside a record constructor, so
+/// the finalize lands in a field while the other fields stay ordinary
+/// reads. `sharedAll`/`sharedOne` must DECLINE — the step has a second
+/// caller that enters the loop mid-flight, and both callers' answers
+/// are pinned. `capturedAll`/`capturedOne` is the hygiene witness: the
+/// step reads the top-level `scale` and the driver re-binds that name
+/// around the call site, so an inline would turn the helper call into a
+/// read of an integer — declined, answer pinned. `trimAll`/
+/// `keepUnlessLast` is the exact two-match nesting depth of the code
+/// that motivated the stage: the step carries its own exit arm beside
+/// the arm that recurses back into the driver. `pairAll`/`pairOne` is
+/// the argument-spelling witness: the driver's first cons binder wears
+/// the step's SECOND parameter's name, so a substitution that walks
+/// one parameter at a time rewrites the identifiers it just inserted —
+/// both backends then agree on the wrong answer, which is why this
+/// case pins the exact answer and not just backend parity.
+#[test]
+fn rust_driver_step_pairs_match_vm() {
+    let src = r#"module DriverStepDifferential
+    intent = "Every driver-and-step shape in one program, for cross-backend agreement"
+    exposes [decoded, gatherAll, sharedEntry, sharedOther, entryCaptured, trimAll, pairAll]
+    effects [Console.print]
+
+fn readAll(bytes: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Driver of the fallible pair: matches and terminates with a Result."
+    match bytes
+        [] -> Result.Ok(List.reverse(acc))
+        [h, ..t] -> readNext(h, t, acc)
+
+fn readNext(h: Int, t: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Step of the fallible pair: one checked unit, then back into the driver."
+    v = checked(h)?
+    readAll(t, List.prepend(v, acc))
+
+fn checked(h: Int) -> Result<Int, String>
+    ? "Reject nines, double the rest."
+    match h == 9
+        true -> Result.Err("nine")
+        false -> Result.Ok(h * 2)
+
+fn decoded(bytes: List<Int>) -> String
+    ? "Either the parsed list or the message that says why not."
+    match readAll(bytes, [])
+        Result.Ok(values) -> render(values)
+        Result.Err(message) -> message
+
+record Gathered
+    items: List<Int>
+    seen: Int
+
+fn gatherAll(xs: List<Int>, seen: Int, acc: List<Int>) -> Gathered
+    ? "Driver of the record pair: the exit wraps the reverse in a field."
+    match xs
+        [] -> Gathered(items = List.reverse(acc), seen = seen)
+        [h, ..t] -> gatherOne(h, t, seen, acc)
+
+fn gatherOne(h: Int, t: List<Int>, seen: Int, acc: List<Int>) -> Gathered
+    ? "Step of the record pair: one summed element, then back into the driver."
+    g = h + seen
+    gatherAll(t, seen + 1, List.prepend(g, acc))
+
+fn sharedAll(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Driver whose step is shared — this pair must keep both functions."
+    match xs
+        [] -> List.reverse(acc)
+        [h, ..t] -> sharedOne(h, t, acc)
+
+fn sharedOne(h: Int, t: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Step with a second caller, so it is shared code rather than the idiom."
+    sharedAll(t, List.prepend(h * 3, acc))
+
+fn sharedEntry(xs: List<Int>) -> List<Int>
+    ? "The driver's own caller."
+    sharedAll(xs, [])
+
+fn sharedOther(h: Int) -> List<Int>
+    ? "The second caller, entering the loop through the step mid-flight."
+    sharedOne(h, [2], [4])
+
+fn scale(n: Int) -> Int
+    ? "The function the captured step means when it says scale."
+    n * 10
+
+fn capturedAll(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Driver whose cons pattern re-binds the helper's name around the call."
+    match xs
+        [] -> List.reverse(acc)
+        [scale, ..t] -> capturedOne(scale, t, acc)
+
+fn capturedOne(h: Int, t: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Step that reads the top-level scale — the capture witness."
+    capturedAll(t, List.prepend(scale(h), acc))
+
+fn entryCaptured(xs: List<Int>) -> List<Int>
+    ? "Start the captured pair with an empty accumulator."
+    capturedAll(xs, [])
+
+fn trimAll(parts: List<String>, acc: List<String>) -> List<String>
+    ? "Driver of the two-match pair: everything but the final element."
+    match parts
+        [] -> List.reverse(acc)
+        [head, ..tail] -> keepUnlessLast(head, tail, acc)
+
+fn keepUnlessLast(head: String, tail: List<String>, acc: List<String>) -> List<String>
+    ? "Step with its own exit arm beside the arm that recurses back."
+    match tail
+        [] -> List.reverse(acc)
+        [next, ..rest] -> trimAll(tail, List.prepend(head, acc))
+
+fn pairAll(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Driver of the pairwise pair: peels two, the first binder wears the step's second param name."
+    match xs
+        [] -> List.reverse(acc)
+        [b, ..t] -> match t
+            [] -> List.reverse(acc)
+            [c, ..t2] -> pairOne(b, c, t2, acc)
+
+fn pairOne(a: Int, b: Int, st: List<Int>, sacc: List<Int>) -> List<Int>
+    ? "Step of the pairwise pair: combine the pair as a*10 + b."
+    pairAll(st, List.prepend(a * 10 + b, sacc))
+
+fn render(values: List<Int>) -> String
+    ? "Print a list with no accumulator of its own."
+    match values
+        [] -> ""
+        [head, ..tail] -> "{head}/{render(tail)}"
+
+fn main() -> Unit
+    ? "Print every shape so a backend that drifts shows a diff, not a pass."
+    ! [Console.print]
+    Console.print("{decoded([1, 2, 3])} {decoded([1, 9, 3])}")
+    g = gatherAll([5, 6, 7], 0, [])
+    Console.print("{render(g.items)} {g.seen}")
+    Console.print("{render(sharedEntry([1, 2]))} {render(sharedOther(5))}")
+    Console.print("{render(entryCaptured([1, 2]))}")
+    Console.print("[{String.join(trimAll(["a", "b", "c"], []), "-")}] [{String.join(trimAll(["x"], []), "-")}]")
+    Console.print("{render(pairAll([1, 2, 3, 4], []))}")
+"#;
+    // The fallible pair doubles until it meets a nine, whose error is
+    // the whole answer. The record pair adds the running count to each
+    // element and reports how many it saw. The shared pair answers both
+    // ways it is entered — through the driver, and mid-flight through
+    // the step with a seeded accumulator. The captured pair scales by
+    // ten, which only the TOP-LEVEL scale does. The two-match pair
+    // drops the last element, and a lone element leaves nothing. The
+    // pairwise pair combines each pair as tens-digit/units-digit — the
+    // answer sequential substitution turned into 22/44.
+    let expected = "2/4/6/ nine\n\
+                    5/7/9/ 3\n\
+                    3/6/ 4/15/6/\n\
+                    10/20/\n\
+                    [a-b] []\n\
+                    12/34/";
+    let vm = run_vm_inline("driver_step", src).expect("vm run");
+    let rust = build_run_rust_inline("driver_step", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM driver-and-step contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust driver-and-step fusion diverged from the VM"
+    );
+}
+
 /// The byte sink, on the shapes where the two backends could disagree —
 /// and against the answers the UNFUSED pair gives, since the whole
 /// program carries a word-for-word copy of the standard library's

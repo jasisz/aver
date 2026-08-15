@@ -4008,6 +4008,7 @@ fn dep_fusion_reports(items: &[TopLevel], module_root: &str) -> Vec<DepFusion> {
             || !chars_fusion.declined.is_empty()
             || list_build.rewrites > 0
             || !list_build.declined.is_empty()
+            || !list_build.pair_declined.is_empty()
         {
             out.push(DepFusion {
                 prefix: m.dep_name,
@@ -4141,6 +4142,17 @@ fn merge_dep_list_build(diagnostics: &mut [aver::ir::PassDiagnostic], dep_report
             }
             for (fn_name, reason) in &dep.declined {
                 entry.declined.insert(format!("{prefix}.{fn_name}"), reason);
+            }
+            for (driver, steps) in &dep.pair_inlined_by_fn {
+                entry.pair_inlined_by_fn.insert(
+                    format!("{prefix}.{driver}"),
+                    steps.iter().map(|s| format!("{prefix}.{s}")).collect(),
+                );
+            }
+            for (fn_name, reason) in &dep.pair_declined {
+                entry
+                    .pair_declined
+                    .insert(format!("{prefix}.{fn_name}"), reason);
             }
             for (fn_name, reason) in &dep.byte_declined {
                 entry
@@ -4555,11 +4567,22 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     }
                     out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
                 }
+                for (driver, steps) in &r.pair_inlined_by_fn {
+                    out.push_str(&format!(
+                        "  • {driver} absorbed its step fn(s) {} before candidacy\n",
+                        steps.join(", ")
+                    ));
+                }
                 // Same reason the chars-fusion declines are unconditional:
                 // a loop the recogniser stopped seeing is what this
                 // diagnostic exists to surface.
                 for (fn_name, reason) in &r.declined {
                     out.push_str(&format!("  • declined {fn_name}: {reason}\n"));
+                }
+                for (fn_name, reason) in &r.pair_declined {
+                    out.push_str(&format!(
+                        "  • declined the step inline for {fn_name}: {reason}\n"
+                    ));
                 }
                 for (fn_name, reason) in &r.byte_declined {
                     out.push_str(&format!(
@@ -4858,15 +4881,35 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     byte_declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
                 }
                 byte_declined.push('}');
+                let mut pair_inlined = String::from("{");
+                for (j, (k, v)) in r.pair_inlined_by_fn.iter().enumerate() {
+                    if j > 0 {
+                        pair_inlined.push(',');
+                    }
+                    pair_inlined.push_str(&format!("{}:{}", json_str(k), json_str_array(v)));
+                }
+                pair_inlined.push('}');
+                let mut pair_declined = String::from("{");
+                for (j, (k, v)) in r.pair_declined.iter().enumerate() {
+                    if j > 0 {
+                        pair_declined.push(',');
+                    }
+                    pair_declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
+                }
+                pair_declined.push('}');
                 out.push_str(&format!(
                     "{{\"rewrites\":{},\"synthesized\":{},\"loop_fns\":{},\
-                     \"rewrites_by_fn\":{},\"declined\":{},\"byte_retargets\":{},\
+                     \"rewrites_by_fn\":{},\"declined\":{},\
+                     \"pair_inlined_by_fn\":{},\"pair_declined\":{},\
+                     \"byte_retargets\":{},\
                      \"byte_fns\":{},\"byte_declined\":{},\"targets\":{}}}",
                     r.rewrites,
                     json_str_array(&r.synthesized),
                     json_str_array(&r.builder_fns),
                     by_fn,
                     declined,
+                    pair_inlined,
+                    pair_declined,
                     r.byte_retargets,
                     json_str_array(&r.byte_fns),
                     byte_declined,
