@@ -121,6 +121,23 @@ const CURSOR_IDX_PARAM: &str = "__cur_i";
 /// built from.
 const CURSOR_SUFFIX: &str = "__cursor";
 
+/// Suffix of the classifier variant that takes the character's
+/// codepoint instead of its one-character string.
+const CODE_SUFFIX: &str = "__code";
+
+/// The classifier variant's one parameter. Chosen once and checked
+/// against the callee's body: a body that reads or binds this name
+/// could capture it, so such a callee simply grows no variant.
+const CODE_PARAM: &str = "code";
+
+/// Prefix of the fresh binder that holds the head's codepoint in a
+/// rewritten peel. Under `CURSOR_PREFIX`, so a loop body that could
+/// collide was already declined when its cursor variant was built, and
+/// the per-variant counter keeps the pass's own binders apart — nested
+/// peels each bind their own code, and a shared name would hand an
+/// outer classifier the INNER character's code.
+const CODE_BIND_PREFIX: &str = "__cur_c";
+
 /// The builtin namespace this pass reads `chars` / `toLower` /
 /// `toUpper` off. A local binding cannot shadow it: `String.x(…)`
 /// resolves to the builtin whatever else carries the name, so there is
@@ -160,6 +177,14 @@ pub enum CharsFusionDecline {
     MatchShape,
     /// The self-call does not pass a tracked list in the list position.
     RecursiveCallShape,
+    /// A binder between a head binding and one of its reads shadows a
+    /// name the codepoint-call rewrite would have to read there — the
+    /// cursor string, the binding's offset, or the fresh code binder.
+    /// Unreachable through the shapes this pass itself emits (its own
+    /// binders are fresh, and a body spelling `__cur_` was declined
+    /// before its variant was built), so this is the belt-and-braces
+    /// answer should either invariant ever loosen.
+    CodeBindShadowed,
 }
 
 impl CharsFusionDecline {
@@ -174,6 +199,9 @@ impl CharsFusionDecline {
             Self::ListEscapes => "the list is read somewhere a cursor cannot stand in for",
             Self::MatchShape => "the match over the list is not the [] / [head, ..tail] pair",
             Self::RecursiveCallShape => "the recursive call does not step the list it was given",
+            Self::CodeBindShadowed => {
+                "a binder between the head binding and a read shadows a cursor name"
+            }
         }
     }
 }
@@ -194,6 +222,10 @@ pub struct CharsFusionPassReport {
     /// Matches over single-character string literals rewritten to a
     /// codepoint comparison.
     pub codepoint_matches: usize,
+    /// Classifier calls inside synthesized cursor variants rewritten
+    /// from `f(<head>)` to `f__code(<code>)` — the head's codepoint
+    /// crosses the call boundary instead of a one-character string.
+    pub codepoint_calls: usize,
     /// Per-fn codepoint-match counts, alphabetised.
     pub codepoint_matches_by_fn: BTreeMap<String, usize>,
     /// Loops the cursor recogniser looked at and turned down, with the
@@ -316,6 +348,13 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
             report.codepoint_matches += count;
         }
     }
+
+    // And after it, the call boundary: a classifier the codepoint
+    // rewrite just reduced to one `__str_code1*` match can take the
+    // code itself, so a cursor loop that only ever hands its head to
+    // such classifiers binds the head's codepoint instead of the
+    // one-character string.
+    rewrite_codepoint_calls(items, &taken, &mut report);
 
     report
 }
@@ -1029,6 +1068,455 @@ fn single_char_arm_codes(arms: &[MatchArm]) -> Option<Vec<Option<i64>>> {
     (literals > 0 && codes.last().is_some_and(Option::is_none)).then_some(codes)
 }
 
+// ── Codepoint across the call boundary ──────────────────────────────
+//
+// The cursor stage binds each character as a one-character string so a
+// String-typed classifier can consume it — which is exactly one arena
+// string per character on the VM and one `AverStr` per character in
+// compiled Rust, twice over in a loop that peels pairs. When the
+// classifier's whole body is the `match __str_code1*(param)` the
+// codepoint rewrite just produced, the string is a detour: the
+// classifier can take the code. This stage synthesizes that variant
+// (`<fn>__code(code: Int)`) and rebinds the peel to
+// `__str_cursor_code` wherever every read of the head either crosses
+// into such a classifier or can re-materialise the head on the spot.
+// The String classifier stays in the program for every other caller.
+
+/// Which case fold a qualifying classifier's subject applies — the
+/// `__str_code1` family member it matched on, and therefore the
+/// codepoint-level fold its variant's subject needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodeFold {
+    Bare,
+    Lower,
+    Upper,
+}
+
+/// Detect qualifying classifiers, rewrite the peels of this run's
+/// cursor variants to bind the codepoint, and append a `<fn>__code`
+/// variant for every classifier a rewrite actually reached.
+fn rewrite_codepoint_calls(
+    items: &mut Vec<TopLevel>,
+    taken: &HashSet<String>,
+    report: &mut CharsFusionPassReport,
+) {
+    // The peel shape this stage rewrites exists only inside cursor
+    // variants synthesized by this same run.
+    if report.synthesized.is_empty() {
+        return;
+    }
+    // Opportunity detection, not judgement: a callee that almost
+    // qualifies is a classifier this stage cannot serve yet, and says
+    // nothing — the loop it sits in keeps the head binding it has.
+    let mut callees: BTreeMap<String, CodeFold> = BTreeMap::new();
+    for fd in fn_defs(items) {
+        if let Some(fold) = qualifies_as_code_callee(fd)
+            && !taken.contains(&format!("{}{CODE_SUFFIX}", fd.name))
+        {
+            callees.insert(fd.name.clone(), fold);
+        }
+    }
+    if callees.is_empty() {
+        return;
+    }
+
+    let callee_names: HashSet<String> = callees.keys().cloned().collect();
+    let cursor_names: HashSet<String> = report.synthesized.iter().cloned().collect();
+    let mut used: HashSet<String> = HashSet::new();
+    for fd in fn_defs_mut(items) {
+        if !cursor_names.contains(&fd.name) {
+            continue;
+        }
+        match rewrite_code_binds(fd, &callee_names, &mut used) {
+            Ok(calls) => report.codepoint_calls += calls,
+            Err(decline) => {
+                let loop_name = fd
+                    .name
+                    .strip_suffix(CURSOR_SUFFIX)
+                    .unwrap_or(&fd.name)
+                    .to_string();
+                report.declined.insert(loop_name, decline.reason());
+            }
+        }
+    }
+    if used.is_empty() {
+        return;
+    }
+
+    // Variants only for the classifiers a rewrite reached — the same
+    // rule that drops a cursor variant whose call sites never moved.
+    let mut variants: Vec<FnDef> = Vec::new();
+    for (name, fold) in &callees {
+        let variant_name = format!("{name}{CODE_SUFFIX}");
+        if !used.contains(&variant_name) {
+            continue;
+        }
+        let fd = fn_defs(items)
+            .find(|fd| &fd.name == name)
+            .expect("collected from these items above");
+        variants.push(build_code_variant(fd, *fold, &variant_name));
+        report.synthesized.push(variant_name);
+    }
+    report.synthesized.sort();
+    items.reserve(variants.len());
+    for variant in variants {
+        items.push(TopLevel::FnDef(variant));
+    }
+}
+
+/// Is this the classifier shape whose parameter can cross as a code?
+///
+/// Everything is required, or no variant: one `String` parameter, no
+/// effects, a body that is EXACTLY the `match __str_code1*(param)` with
+/// integer-literal arms and a trailing bare wildcard (the shape the
+/// codepoint-match rewrite just produced), no self-mention, and the
+/// parameter read nowhere but the subject — a read anywhere else would
+/// be left with no string to read. The variant's own parameter name
+/// must also be absent from the body, or an arm could capture it.
+fn qualifies_as_code_callee(fd: &FnDef) -> Option<CodeFold> {
+    let [(param, ty)] = fd.params.as_slice() else {
+        return None;
+    };
+    if ty.replace(char::is_whitespace, "") != "String" || param == "_" {
+        return None;
+    }
+    if !fd.effects.is_empty() {
+        return None;
+    }
+    let [stmt] = fd.body.stmts() else {
+        return None;
+    };
+    let Stmt::Expr(expr) = stmt else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &expr.node else {
+        return None;
+    };
+    let Expr::FnCall(callee, args) = &subject.node else {
+        return None;
+    };
+    let Expr::Ident(intrinsic) = &callee.node else {
+        return None;
+    };
+    let fold = match intrinsic.as_str() {
+        "__str_code1" => CodeFold::Bare,
+        "__str_code1_lower" => CodeFold::Lower,
+        "__str_code1_upper" => CodeFold::Upper,
+        _ => return None,
+    };
+    if args.len() != 1 || !matches!(&args[0].node, Expr::Ident(n) if n == param) {
+        return None;
+    }
+    if arms.len() < 2 {
+        return None;
+    }
+    let (default, literals) = arms.split_last().expect("two arms or more");
+    if !matches!(default.pattern, Pattern::Wildcard)
+        || !literals
+            .iter()
+            .all(|arm| matches!(arm.pattern, Pattern::Literal(Literal::Int(_))))
+    {
+        return None;
+    }
+    for arm in arms {
+        if mentions_name(&arm.body, param)
+            || mentions_name(&arm.body, CODE_PARAM)
+            || mentions_name(&arm.body, &fd.name)
+        {
+            return None;
+        }
+    }
+    let mut bound = HashSet::new();
+    collect_bound_names(fd, &mut bound);
+    bound.remove(param);
+    if bound.contains(CODE_PARAM) {
+        return None;
+    }
+    Some(fold)
+}
+
+/// Build `<fn>__code(code: Int)` from a qualifying classifier: the same
+/// arms over a subject that folds the codepoint instead of decoding a
+/// one-character string.
+fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
+    let [Stmt::Expr(expr)] = fd.body.stmts() else {
+        unreachable!("qualified as exactly one expression statement")
+    };
+    let Expr::Match { subject, arms } = &expr.node else {
+        unreachable!("qualified as exactly one match")
+    };
+    let line = subject.line;
+    let code_read = sp(Expr::Ident(CODE_PARAM.to_string()), line);
+    let new_subject = match fold {
+        CodeFold::Bare => code_read,
+        CodeFold::Lower | CodeFold::Upper => {
+            let intrinsic = if fold == CodeFold::Lower {
+                "__str_fold_lower"
+            } else {
+                "__str_fold_upper"
+            };
+            sp(
+                Expr::FnCall(
+                    Box::new(sp(Expr::Ident(intrinsic.to_string()), line)),
+                    vec![code_read],
+                ),
+                line,
+            )
+        }
+    };
+    let new_match = sp(
+        Expr::Match {
+            subject: Box::new(new_subject),
+            arms: arms
+                .iter()
+                .map(|arm| MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: arm.body.clone(),
+                    binding_slots: std::sync::OnceLock::new(),
+                })
+                .collect(),
+        },
+        expr.line,
+    );
+    FnDef {
+        name: new_name.to_string(),
+        line: fd.line,
+        params: vec![(CODE_PARAM.to_string(), "Int".to_string())],
+        return_type: fd.return_type.clone(),
+        effects: fd.effects.clone(),
+        desc: Some(format!(
+            "Synthesized codepoint variant of `{}`. A cursor loop whose \
+             head only ever reaches this classifier hands over the \
+             character's code instead of materialising a one-character \
+             string.",
+            fd.name
+        )),
+        body: Arc::new(FnBody::Block(vec![Stmt::Expr(new_match)])),
+        resolution: None,
+    }
+}
+
+/// Rewrite the peels of one cursor variant. `Ok(n)` with the number of
+/// classifier calls moved onto the code; `Err` — and an untouched body —
+/// when a shadow makes a read unanswerable, which the pass's own fresh
+/// names make unreachable today (see
+/// [`CharsFusionDecline::CodeBindShadowed`]).
+fn rewrite_code_binds(
+    fd: &mut FnDef,
+    callees: &HashSet<String>,
+    used: &mut HashSet<String>,
+) -> Result<usize, CharsFusionDecline> {
+    let mut bound = HashSet::new();
+    collect_bound_names(fd, &mut bound);
+    let mut cx = CodeCaller {
+        callees,
+        bound,
+        fresh: 0,
+        used_local: HashSet::new(),
+        calls: 0,
+    };
+    // Work on a copy, so declining leaves the variant exactly as the
+    // cursor stage emitted it.
+    let mut stmts: Vec<Stmt> = fd.body.stmts().to_vec();
+    for stmt in &mut stmts {
+        cx.transform(stmt_expr_mut(stmt))?;
+    }
+    if cx.calls > 0 {
+        fd.body = Arc::new(FnBody::Block(stmts));
+        used.extend(cx.used_local);
+    }
+    Ok(cx.calls)
+}
+
+/// The traversal that rebinds a peel from the head to its codepoint.
+struct CodeCaller<'a> {
+    callees: &'a HashSet<String>,
+    /// Every name the variant's body binds anywhere. Coarse on purpose,
+    /// like `CallScope`: a classifier name bound ANYWHERE in this body
+    /// makes every bare call of it suspect, and the cost of the coarse
+    /// answer is one head that stays materialised.
+    bound: HashSet<String>,
+    fresh: usize,
+    /// `<fn>__code` names the committed rewrites call.
+    used_local: HashSet<String>,
+    /// Classifier calls moved onto the code.
+    calls: usize,
+}
+
+/// The offset a peel's head binding reads, when `subject` is exactly
+/// the emitted `__str_cursor_head(__cur_s, <idx>)`.
+fn head_bind_offset(subject: &Spanned<Expr>) -> Option<String> {
+    let Expr::FnCall(callee, args) = &subject.node else {
+        return None;
+    };
+    if !matches!(&callee.node, Expr::Ident(n) if n == "__str_cursor_head") || args.len() != 2 {
+        return None;
+    }
+    let (Expr::Ident(s), Expr::Ident(i)) = (&args[0].node, &args[1].node) else {
+        return None;
+    };
+    (s == CURSOR_STR_PARAM && i.starts_with(CURSOR_IDX_PARAM)).then(|| i.clone())
+}
+
+impl CodeCaller<'_> {
+    /// The name of the qualifying classifier this call hands the head
+    /// to, alone — or `None` for every other expression.
+    fn hot_callee(&self, expr: &Expr, h: &str) -> Option<String> {
+        let Expr::FnCall(callee, args) = expr else {
+            return None;
+        };
+        let Expr::Ident(f) = &callee.node else {
+            return None;
+        };
+        if !self.callees.contains(f) || self.bound.contains(f) || args.len() != 1 {
+            return None;
+        }
+        matches!(&args[0].node, Expr::Ident(x) if x == h).then(|| f.clone())
+    }
+
+    /// Bottom-up over the variant body: inner peels commit first, so an
+    /// outer peel's read analysis sees exactly the reads that survive.
+    fn transform(&mut self, expr: &mut Spanned<Expr>) -> Result<(), CharsFusionDecline> {
+        let mut result: Result<(), CharsFusionDecline> = Ok(());
+        walk_children_mut(expr, &mut |child| {
+            if result.is_ok() {
+                result = self.transform(child);
+            }
+        });
+        result?;
+
+        let line = expr.line;
+        let Expr::Match { subject, arms } = &mut expr.node else {
+            return Ok(());
+        };
+        if arms.len() != 1 {
+            return Ok(());
+        }
+        let Some(idx) = head_bind_offset(subject) else {
+            return Ok(());
+        };
+        let Pattern::Ident(h) = arms[0].pattern.clone() else {
+            return Ok(());
+        };
+        // Fresh per peel — nested peels each bind their own code, and a
+        // shared name would hand an outer classifier the INNER
+        // character's code.
+        self.fresh += 1;
+        let code_name = format!("{CODE_BIND_PREFIX}{}", self.fresh);
+
+        // Analyze and rewrite one clone of the arm body; commit only
+        // when at least one read actually crossed a call boundary —
+        // otherwise binding the code buys nothing and the head binding
+        // stays.
+        let mut body = (*arms[0].body).clone();
+        let mut hot = 0usize;
+        let mut shadows: Vec<String> = Vec::new();
+        let mut pending: HashSet<String> = HashSet::new();
+        self.rewrite_reads(
+            &mut body,
+            &h,
+            &idx,
+            &code_name,
+            &mut shadows,
+            &mut hot,
+            &mut pending,
+        )?;
+        if hot == 0 {
+            return Ok(());
+        }
+        **subject = cursor_call("__str_cursor_code", &idx, line);
+        arms[0].pattern = Pattern::Ident(code_name);
+        *arms[0].body = body;
+        self.calls += hot;
+        self.used_local.extend(pending);
+        Ok(())
+    }
+
+    /// Every read of `h` under one peel: the sole argument of a
+    /// qualifying classifier moves onto the code; anything else
+    /// re-materialises the head at `idx` — the offset the BINDING read,
+    /// which later peels' stepped offsets do not change.
+    #[allow(clippy::too_many_arguments)]
+    fn rewrite_reads(
+        &mut self,
+        expr: &mut Spanned<Expr>,
+        h: &str,
+        idx: &str,
+        code_name: &str,
+        shadows: &mut Vec<String>,
+        hot: &mut usize,
+        pending: &mut HashSet<String>,
+    ) -> Result<(), CharsFusionDecline> {
+        let line = expr.line;
+        if let Some(f) = self.hot_callee(&expr.node, h) {
+            if shadows.iter().any(|n| n == code_name) {
+                return Err(CharsFusionDecline::CodeBindShadowed);
+            }
+            let Expr::FnCall(callee, args) = &mut expr.node else {
+                unreachable!("hot_callee only answers for calls")
+            };
+            let variant = format!("{f}{CODE_SUFFIX}");
+            callee.node = Expr::Ident(variant.clone());
+            args[0].node = Expr::Ident(code_name.to_string());
+            pending.insert(variant);
+            *hot += 1;
+            return Ok(());
+        }
+        if matches!(&expr.node, Expr::Ident(x) if x == h) {
+            if shadows.iter().any(|n| n == CURSOR_STR_PARAM || n == idx) {
+                return Err(CharsFusionDecline::CodeBindShadowed);
+            }
+            *expr = cursor_call("__str_cursor_head", idx, line);
+            return Ok(());
+        }
+        if let Expr::Match { subject, arms } = &mut expr.node {
+            self.rewrite_reads(subject, h, idx, code_name, shadows, hot, pending)?;
+            for arm in arms {
+                let binders = pattern_bindings(&arm.pattern);
+                // Reads under a binder that reuses the head's name are
+                // reads of that binder, not of the head.
+                if binders.iter().any(|b| b == h) {
+                    continue;
+                }
+                let depth = shadows.len();
+                shadows.extend(binders);
+                let walked =
+                    self.rewrite_reads(&mut arm.body, h, idx, code_name, shadows, hot, pending);
+                shadows.truncate(depth);
+                walked?;
+            }
+            return Ok(());
+        }
+        let mut result: Result<(), CharsFusionDecline> = Ok(());
+        walk_children_mut(expr, &mut |child| {
+            if result.is_ok() {
+                result = self.rewrite_reads(child, h, idx, code_name, shadows, hot, pending);
+            }
+        });
+        result
+    }
+}
+
+/// Does any identifier read or tail-call target under `expr` carry
+/// exactly this name? A tail call keeps its target as data rather than
+/// an identifier, so the prefix walk above cannot see one — and a
+/// classifier that tail-calls itself is still recursive.
+fn mentions_name(expr: &Spanned<Expr>, name: &str) -> bool {
+    let hit = match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
+        Expr::TailCall(data) => data.target == name,
+        _ => false,
+    };
+    if hit {
+        return true;
+    }
+    let mut found = false;
+    walk_children(expr, &mut |child| {
+        found = found || mentions_name(child, name);
+    });
+    found
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────
 
 pub(super) fn fn_defs(items: &[TopLevel]) -> impl Iterator<Item = &FnDef> {
@@ -1736,6 +2224,258 @@ fn value(c: String) -> Int
 "#,
         );
         assert_eq!(report.codepoint_matches, 0);
+    }
+
+    /// A cursor loop whose every read of the head is the argument of a
+    /// small String classifier. The classifier grows a `__code` variant
+    /// that takes the codepoint, and the loop binds the code instead of
+    /// materialising a one-character string per step.
+    const CLASSIFIED: &str = r#"module Classified
+    intent =
+        "Sums hex digit values through a single-character classifier."
+    exposes [run]
+    effects []
+
+fn value(digit: String) -> Int
+    match String.toLower(digit)
+        "0" -> 0
+        "1" -> 1
+        "a" -> 10
+        _ -> 0 - 1
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + value(head))
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+"#;
+
+    #[test]
+    fn a_classifier_call_in_a_cursor_loop_moves_to_the_codepoint() {
+        let (items, report) = fused(CLASSIFIED);
+        assert!(
+            report.synthesized.contains(&"value__code".to_string()),
+            "the classifier grows a codepoint variant: {report:?}"
+        );
+        assert_eq!(report.codepoint_calls, 1, "{report:?}");
+
+        let variant = rendered_fn(&items, "walk__cursor");
+        assert!(
+            variant.contains("__str_cursor_code") && variant.contains("value__code"),
+            "the loop binds the code and hands it across the call:\n{variant}"
+        );
+        assert!(
+            !variant.contains("__str_cursor_head"),
+            "no read is left that needs the one-character string:\n{variant}"
+        );
+
+        let code = rendered_fn(&items, "value__code");
+        assert!(
+            code.contains("__str_fold_lower") && code.contains("Int(48)"),
+            "the variant folds case on the codepoint:\n{code}"
+        );
+        assert!(
+            rendered_fn(&items, "value").contains("__str_code1_lower"),
+            "the String classifier the user wrote is still there"
+        );
+    }
+
+    /// The parseHexChars shape: the classifier consumes the character,
+    /// and an error arm still prints it — from inside a LATER peel's
+    /// scope, where the cursor has already stepped twice. The
+    /// re-materialised head must read the offset the binding had, not
+    /// the offset the loop has moved on to.
+    const REPORTING: &str = r#"module Reporting
+    intent =
+        "Decides pairs of characters and reports the first bad one."
+    exposes [run]
+    effects []
+
+fn value(digit: String) -> Int
+    match digit
+        "0" -> 0
+        _ -> 0 - 1
+
+fn pairs(chars: List<String>, acc: Int) -> String
+    match chars
+        [] -> "{acc}"
+        [high, ..afterHigh] -> match afterHigh
+            [] -> "odd"
+            [low, ..rest] -> match value(high) < 0
+                true -> "bad '{high}'"
+                false -> pairs(rest, acc + value(low))
+
+fn run(text: String) -> String
+    pairs(String.chars(text), 0)
+"#;
+
+    #[test]
+    fn a_cold_read_rematerialises_the_head_at_the_binds_own_offset() {
+        let (items, report) = fused(REPORTING);
+        assert_eq!(report.codepoint_calls, 2, "{report:?}");
+        let variant = rendered_fn(&items, "pairs__cursor");
+        assert!(
+            variant.contains("__str_cursor_code") && variant.contains("value__code"),
+            "both classifier calls take the code:\n{variant}"
+        );
+        // Exactly one head read survives: the interpolation in the
+        // error arm.
+        let head_at = variant
+            .find("__str_cursor_head")
+            .expect("the cold read re-materialises the head");
+        assert!(
+            !variant[head_at + 1..].contains("__str_cursor_head"),
+            "only the cold read keeps a head:\n{variant}"
+        );
+        // The order pin. The read sits under the inner peel, where
+        // `__cur_i1` and `__cur_i2` are in scope, and it must still ask
+        // for the character at `__cur_i` — the offset its binding read.
+        let window = &variant[head_at..variant.len().min(head_at + 220)];
+        assert!(
+            window.contains(r#"Ident("__cur_i")"#),
+            "the re-materialised head reads the bind-time offset:\n{window}"
+        );
+    }
+
+    /// The classifier's parameter is read in an arm body, so passing
+    /// only the code would leave that read with nothing to read. No
+    /// variant, no report — an almost-qualifying callee is a missed
+    /// opportunity, not a decline.
+    #[test]
+    fn a_classifier_that_reads_its_parameter_elsewhere_keeps_the_string_call() {
+        let (items, report) = fused(
+            r#"module CalleeReads
+    intent =
+        "Falls back to the character it was handed."
+    exposes [run]
+    effects []
+
+fn classify(c: String) -> String
+    match c
+        "a" -> "letter"
+        _ -> c
+
+fn walk(chars: List<String>, acc: String) -> String
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + classify(head))
+
+fn run(text: String) -> String
+    walk(String.chars(text), "")
+"#,
+        );
+        assert!(
+            !report.synthesized.iter().any(|n| n.ends_with("__code")),
+            "{report:?}"
+        );
+        assert_eq!(report.codepoint_calls, 0);
+        assert!(report.declined.is_empty(), "{:?}", report.declined);
+        let variant = rendered_fn(&items, "walk__cursor");
+        assert!(
+            variant.contains("__str_cursor_head") && !variant.contains("__str_cursor_code"),
+            "the loop still hands the classifier its string:\n{variant}"
+        );
+    }
+
+    /// A self-call inside the classifier body means the variant would
+    /// have to rewrite recursion it has no cursor for. No variant.
+    #[test]
+    fn a_recursive_classifier_keeps_the_string_call() {
+        let (_, report) = fused(
+            r#"module RecursiveCallee
+    intent =
+        "Retries itself on the wildcard arm."
+    exposes [run]
+    effects []
+
+fn value(digit: String) -> Int
+    match digit
+        "0" -> 0
+        _ -> value("0")
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + value(head))
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+"#,
+        );
+        assert!(
+            !report.synthesized.iter().any(|n| n.ends_with("__code")),
+            "{report:?}"
+        );
+        assert_eq!(report.codepoint_calls, 0);
+    }
+
+    /// The name the variant would take is already a local somewhere, so
+    /// a rewritten call could be captured. No variant.
+    #[test]
+    fn a_taken_code_name_blocks_the_variant() {
+        let (_, report) = fused(
+            r#"module TakenCode
+    intent =
+        "Binds the name the pass would synthesize for the classifier."
+    exposes [run]
+    effects []
+
+fn value(digit: String) -> Int
+    match digit
+        "0" -> 0
+        _ -> 0 - 1
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + value(head))
+
+fn run(text: String) -> Int
+    value__code = 42
+    walk(String.chars(text), 0) + value__code
+"#,
+        );
+        assert!(
+            !report.synthesized.iter().any(|n| n.ends_with("__code")),
+            "{report:?}"
+        );
+        assert_eq!(report.codepoint_calls, 0);
+    }
+
+    /// Only the call that receives the head moves to the code; a call
+    /// with any other argument keeps the String classifier, which stays
+    /// in the program precisely for that.
+    #[test]
+    fn a_classifier_argument_that_is_not_the_head_keeps_the_string_call() {
+        let (items, report) = fused(
+            r#"module MixedArgs
+    intent =
+        "Classifies the head and a constant in the same step."
+    exposes [run]
+    effects []
+
+fn value(digit: String) -> Int
+    match digit
+        "0" -> 0
+        _ -> 0 - 1
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + value(head) + value("0"))
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+"#,
+        );
+        assert_eq!(report.codepoint_calls, 1, "{report:?}");
+        let variant = rendered_fn(&items, "walk__cursor");
+        assert!(
+            variant.contains("value__code") && variant.contains("Ident(\"value\")"),
+            "one call moves, the other stays:\n{variant}"
+        );
     }
 
     #[test]
