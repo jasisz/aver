@@ -98,9 +98,17 @@ use crate::ast::{
 };
 
 /// Prefix for every name this pass invents inside a function body. A
-/// loop that already contains one declines rather than risk capturing
-/// it — no Aver source can spell a leading `__`, so in practice this
-/// only fires if some other pass got there first.
+/// loop that already uses one — reads it OR binds it — declines rather
+/// than risk capturing it.
+///
+/// A leading `__` is not reserved: `__cur_i = 3` parses, type-checks and
+/// runs, so this is a shape a program can reach and not a guard against
+/// other passes. Binding matters more than reading, and in the more
+/// dangerous direction: a binder spelled `__cur_i` shadows the cursor
+/// parameter for everything underneath it, so the emitted end test and
+/// step would read the user's number instead of the offset — an answer
+/// off the end of the string, or an infinite loop when the number is
+/// inside it.
 const CURSOR_PREFIX: &str = "__cur_";
 
 /// The synthesized cursor variant's string parameter.
@@ -217,7 +225,7 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
             _ => None,
         })
         .collect();
-    let taken = top_level_names(items);
+    let taken = taken_names(items);
 
     // Which functions are handed a fresh `String.chars(…)`, and in
     // which parameter position. Collected first so the shape check runs
@@ -383,10 +391,12 @@ struct CallScope<'a> {
 
 impl<'a> CallScope<'a> {
     fn of(fd: &FnDef, fn_names: &'a HashSet<String>) -> Self {
+        let mut bound = HashSet::new();
+        collect_bound_names(fd, &mut bound);
         Self {
             callable: fn_names
                 .iter()
-                .filter(|name| !binds_name(fd, name))
+                .filter(|name| !bound.contains(*name))
                 .map(String::as_str)
                 .collect(),
         }
@@ -518,15 +528,21 @@ fn build_cursor_variant(
         return Err(CharsFusionDecline::ParamShape);
     }
     // A body that already spells `__cur_` could have one of the
-    // generated binders captured out from under it, and one that binds
-    // its OWN name makes the self-call recognition below a lie.
-    if fd.params.iter().any(|(n, _)| n.starts_with(CURSOR_PREFIX))
+    // generated binders captured out from under it — or, the other way
+    // round, could shadow one of them and send the cursor somewhere the
+    // rewrite never put it. Reads and binders are asked separately
+    // because they are different traversals, not because one implies the
+    // other. And a body that binds its OWN name makes the self-call
+    // recognition below a lie.
+    let mut bound = HashSet::new();
+    collect_bound_names(fd, &mut bound);
+    if bound.iter().any(|n| n.starts_with(CURSOR_PREFIX))
         || fd
             .body
             .stmts()
             .iter()
             .any(|s| mentions_prefix(stmt_expr(s), CURSOR_PREFIX))
-        || binds_name(fd, &fd.name)
+        || bound.contains(&fd.name)
     {
         return Err(CharsFusionDecline::NameTaken);
     }
@@ -1041,10 +1057,17 @@ fn stmt_expr_mut(stmt: &mut Stmt) -> &mut Spanned<Expr> {
     }
 }
 
-/// Every name a top-level item introduces — what a synthesized name
-/// must not collide with.
-fn top_level_names(items: &[TopLevel]) -> HashSet<String> {
-    items
+/// Every name a synthesized `<fn>__cursor` must not collide with:
+/// top-level items, and every name any function in the program binds.
+///
+/// The local half is not belt-and-braces. A call site is rewritten to
+/// `<fn>__cursor` in the body it was found in, so a LOCAL of that name
+/// in that body captures the call — the rewritten call reads the local
+/// instead of the loop. Collecting locals program-wide rather than
+/// per-body keeps one answer to "is this name free?", which is what the
+/// synthesized name has to be.
+fn taken_names(items: &[TopLevel]) -> HashSet<String> {
+    let mut out: HashSet<String> = items
         .iter()
         .filter_map(|it| match it {
             TopLevel::FnDef(fd) => Some(fd.name.clone()),
@@ -1054,39 +1077,44 @@ fn top_level_names(items: &[TopLevel]) -> HashSet<String> {
             TopLevel::Stmt(Stmt::Binding(name, _, _)) => Some(name.clone()),
             _ => None,
         })
-        .collect()
+        .collect();
+    for fd in fn_defs(items) {
+        collect_bound_names(fd, &mut out);
+    }
+    out
+}
+
+/// Every name `fd` introduces: parameters, statement bindings, and
+/// pattern binders.
+///
+/// A binder is not a read, so no traversal that looks at identifiers can
+/// see one — and a binder is exactly what shadows a name for the code
+/// underneath it. Both questions this pass asks about names ("is the
+/// `__cur_` namespace free in this loop?", "is `<fn>__cursor` free in
+/// this program?") are questions about binders, so they share one
+/// collector.
+fn collect_bound_names(fd: &FnDef, out: &mut HashSet<String>) {
+    out.extend(fd.params.iter().map(|(n, _)| n.clone()));
+    for stmt in fd.body.stmts() {
+        if let Stmt::Binding(name, _, _) = stmt {
+            out.insert(name.clone());
+        }
+        collect_pattern_binders(stmt_expr(stmt), out);
+    }
+}
+
+/// Every name a pattern under `expr` binds.
+fn collect_pattern_binders(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
+    if let Expr::Match { arms, .. } = &expr.node {
+        for arm in arms {
+            out.extend(pattern_bindings(&arm.pattern));
+        }
+    }
+    walk_children(expr, &mut |child| collect_pattern_binders(child, out));
 }
 
 fn is_list_of_string(ty: &str) -> bool {
     ty.replace(char::is_whitespace, "") == "List<String>"
-}
-
-/// Does `fd` bind `name` anywhere — as a parameter, a statement
-/// binding, or a pattern binder?
-fn binds_name(fd: &FnDef, name: &str) -> bool {
-    if fd.params.iter().any(|(n, _)| n == name) {
-        return true;
-    }
-    fd.body.stmts().iter().any(|stmt| match stmt {
-        Stmt::Binding(bound, _, e) => bound == name || expr_binds_name(e, name),
-        Stmt::Expr(e) => expr_binds_name(e, name),
-    })
-}
-
-/// Does any pattern under `expr` bind `name`?
-fn expr_binds_name(expr: &Spanned<Expr>, name: &str) -> bool {
-    if let Expr::Match { arms, .. } = &expr.node
-        && arms
-            .iter()
-            .any(|arm| pattern_bindings(&arm.pattern).iter().any(|b| b == name))
-    {
-        return true;
-    }
-    let mut found = false;
-    walk_children(expr, &mut |child| {
-        found = found || expr_binds_name(child, name);
-    });
-    found
 }
 
 /// Names a pattern binds — the shadowing set for its arm.
@@ -1526,6 +1554,111 @@ fn run(text: String) -> Int
             "walk",
         );
         assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
+    }
+
+    /// A statement binding spelled like the cursor parameter. It shadows
+    /// that parameter for the whole body underneath, so the emitted end
+    /// test would read the user's number — 99 is past the end of any
+    /// short string, and a number inside the string is an infinite loop.
+    #[test]
+    fn a_binding_in_the_cursor_namespace_declines() {
+        let reason = decline_reason(
+            r#"module CursorBinding
+    intent =
+        "Binds the cursor parameter's own name."
+    exposes [run]
+    effects []
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    __cur_i = 99
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+"#,
+            "walk",
+        );
+        assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
+    }
+
+    /// The same capture through a pattern binder. A binder is not a
+    /// read, so the identifier traversal cannot see it.
+    #[test]
+    fn a_pattern_binder_in_the_cursor_namespace_declines() {
+        let reason = decline_reason(
+            r#"module CursorPattern
+    intent =
+        "Binds the cursor parameter's own name in a pattern."
+    exposes [run]
+    effects []
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match acc + 3
+        __cur_i -> match chars
+            [] -> acc
+            [head, ..tail] -> walk(tail, acc + 1)
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+"#,
+            "walk",
+        );
+        assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
+    }
+
+    /// The synthesized name is free at top level and bound as a LOCAL in
+    /// the body whose call site would be rewritten to it. The rewritten
+    /// call would read the local.
+    #[test]
+    fn a_local_holding_the_synthesized_name_declines() {
+        let reason = decline_reason(
+            r#"module CallerBinds
+    intent =
+        "The caller binds the name the pass would synthesize."
+    exposes [run]
+    effects []
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn run(text: String) -> Int
+    walk__cursor = 42
+    walk(String.chars(text), 0) + walk__cursor
+"#,
+            "walk",
+        );
+        assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
+    }
+
+    /// The control for the three above: ordinary names in the same three
+    /// places still fuse, so what those pin is the name and not the shape.
+    #[test]
+    fn the_same_three_places_under_ordinary_names_still_fuse() {
+        let (_, report) = fused(
+            r#"module OrdinaryNames
+    intent =
+        "A statement binding, a pattern binder and a caller local, none reserved."
+    exposes [run]
+    effects []
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    unrelated = 99
+    match acc + 3
+        alsoUnrelated -> match chars
+            [] -> acc + unrelated - alsoUnrelated
+            [head, ..tail] -> walk(tail, acc + 1)
+
+fn run(text: String) -> Int
+    spare = 42
+    walk(String.chars(text), 0) + spare
+"#,
+        );
+        assert_eq!(report.cursor_rewrites, 1, "{report:?}");
+        assert!(report.declined.is_empty(), "{:?}", report.declined);
     }
 
     #[test]

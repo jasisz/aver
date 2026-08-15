@@ -246,6 +246,173 @@ fn main() -> Unit
     assert_eq!(out, "3/-100");
 }
 
+/// A leading `__` is not reserved: `__cur_i = 3` parses, type-checks and
+/// runs. So a statement binding can carry the exact name of the cursor
+/// parameter the rewrite introduces, and it shadows that parameter for
+/// the whole body underneath — including the end test, the head read and
+/// the step the rewrite emits. The loop would then restart from the
+/// user's number on every call rather than from the offset it was handed.
+///
+/// The number here is past the end of the input, so the miss is a wrong
+/// answer that arrives. Bind a number INSIDE the string instead and the
+/// same miss is an infinite loop, because every call resets the cursor to
+/// it — which is why this shape is a decline and not a repair.
+#[test]
+fn a_binding_named_like_the_cursor_keeps_its_unfused_answer() {
+    let out = run_program(
+        "cursor_binding",
+        r#"module CursorBinding
+    intent =
+        "Binds the cursor parameter's own name as a statement binding of its own."
+    exposes [count]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    __cur_i = 99
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn count(text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(count("abcde")))
+"#,
+    );
+    // Five characters. A cursor starting at the user's 99 is past the end
+    // of the string on the first test and answers 0.
+    assert_eq!(out, "5");
+}
+
+/// The same capture through a pattern binder rather than a statement
+/// binding. `mentions_prefix` reads identifiers, and a binder is not a
+/// read — so the name has to be checked where it is INTRODUCED.
+#[test]
+fn a_pattern_binder_named_like_the_cursor_keeps_its_unfused_answer() {
+    let out = run_program(
+        "cursor_pattern",
+        r#"module CursorPattern
+    intent =
+        "Binds the cursor parameter's own name in a pattern wrapped around the list match."
+    exposes [count]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match acc + 3
+        __cur_i -> match chars
+            [] -> acc
+            [head, ..tail] -> walk(tail, acc + 1)
+
+fn count(text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(count("abcde")))
+"#,
+    );
+    // Five characters. A cursor that read the bound `acc + 3` would start
+    // three bytes in and answer 2.
+    assert_eq!(out, "5");
+}
+
+/// The synthesized name is free at top level but BOUND inside the very
+/// function whose call site would be rewritten to it. Rewriting there
+/// makes the call read the local, not the loop.
+#[test]
+fn a_caller_that_binds_the_synthesized_name_keeps_its_own_call() {
+    let out = run_program(
+        "caller_binds",
+        r#"module CallerBinds
+    intent =
+        "Binds the name the pass would synthesize, in the function that calls the loop."
+    exposes [count]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn count(text: String) -> Int
+    walk__cursor = 42
+    walk(String.chars(text), 0) + walk__cursor
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(count("abcde")))
+"#,
+    );
+    assert_eq!(out, "47");
+}
+
+/// The control for the three above: the same shapes with ordinary names
+/// fuse and answer correctly, so what those tests pin is the name and not
+/// the shape.
+#[test]
+fn the_same_shapes_under_ordinary_names_still_fuse() {
+    let out = run_program(
+        "ordinary_names",
+        r#"module OrdinaryNames
+    intent =
+        "A statement binding, a pattern binder and a caller local, none of them reserved."
+    exposes [count]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    unrelated = 99
+    match acc + 3
+        alsoUnrelated -> match chars
+            [] -> acc + unrelated - alsoUnrelated + acc
+            [head, ..tail] -> walk(tail, acc + 1)
+
+fn count(text: String) -> Int
+    spare = 42
+    walk(String.chars(text), 0) + spare
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(count("abcde")))
+"#,
+    );
+    // walk answers 5 + 99 - 8 + 5 = 101, plus the caller's 42.
+    assert_eq!(out, "143");
+}
+
+/// The `String` namespace cannot be shadowed, so the pass is right not to
+/// check it: `String.chars(text)` reaches the builtin even where `String`
+/// is the name of a parameter in scope. Pinned because the ABSENCE of a
+/// rule is as load-bearing as its presence — if this ever stops being
+/// true, the pass needs the scope check it deliberately does not have.
+#[test]
+fn a_parameter_named_string_does_not_shadow_the_builtin_namespace() {
+    let out = run_program(
+        "string_ns",
+        r#"module StringNs
+    intent =
+        "Takes a parameter called String and still reads characters off the builtin."
+    exposes [count]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn count(String: String, text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(count("ignored", "abcde")))
+"#,
+    );
+    // Five, not the seven characters of the parameter's value.
+    assert_eq!(out, "5");
+}
+
 /// The call is to a PARAMETER that happens to carry a top-level
 /// function's name. Rewriting it to `walk__cursor` would call a
 /// different function than the program does.
