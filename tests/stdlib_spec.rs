@@ -406,6 +406,63 @@ fn stdlib_from_hex_walks_a_cursor_and_collects_into_a_builder() {
     );
 }
 
+/// The third rewrite on the same function. After chars fusion and list
+/// build, `Bytes.fromHex` still built a `List<Int>` only so `fromList`
+/// could walk it a second time and wrap it in `Bytes`. The byte sink
+/// retargets the collected variant's builder to bytes and deletes the
+/// `fromList` call: the validation rides every push, and the loop's
+/// answer IS the `Result<Bytes, String>` the pair used to compute.
+///
+/// Pinned the same way the first two rewrites are: the pass reports the
+/// retarget, the VM executes the retargeted variant, and the answers —
+/// error arms included — are the ones `Bytes.fromHex` has always given.
+#[test]
+fn stdlib_from_hex_collects_bytes_without_an_intermediate_list() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/stdlib_bytes_dehex_app.av")
+        .to_string_lossy()
+        .into_owned();
+
+    let explained = run_aver(&["compile", &fixture, "--explain-passes", "--json"]);
+    assert_success("aver compile --explain-passes", &explained);
+    let report = String::from_utf8_lossy(&explained.stdout);
+    assert!(
+        report.contains("\"byte_fns\":[\"Bytes.parseHexChars__cursor__collected\"]"),
+        "the pass must report the standard library's decoding loop as \
+         retargeted to the byte builder: {report}"
+    );
+    assert!(
+        report.contains("\"byte_retargets\":1"),
+        "one fromList call site deleted: {report}"
+    );
+
+    let run = run_aver(&["run", &fixture, "--profile"]);
+    assert_success("aver run --profile", &run);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.starts_with("00ff10abcdef"),
+        "hex round-trip changed: {stdout}"
+    );
+    assert!(
+        stdout.contains("expected an even number of hex characters")
+            && stdout.contains("invalid hexadecimal character 'z'"),
+        "the error arms still report what they always did: {stdout}"
+    );
+    let profile = format!("{stdout}{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        profile.contains("Bytes.parseHexChars__cursor__collected"),
+        "the VM must execute the retargeted variant: {profile}"
+    );
+    assert!(
+        !profile.contains("Bytes.fromList"),
+        "the second pass over the collected list must be gone: {profile}"
+    );
+    assert!(
+        !profile.contains("Bytes.allInRange"),
+        "and the per-element validation walk with it: {profile}"
+    );
+}
+
 #[cfg(feature = "wasm")]
 #[test]
 fn embedded_crypto_sha256_matches_fips_vectors_on_wasm_gc() {

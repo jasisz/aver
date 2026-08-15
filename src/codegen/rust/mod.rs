@@ -281,6 +281,7 @@ fn render_root_main(
         "pub use ::aver_rt::AverMap as HashMap;".to_string(),
         "pub use ::aver_rt::AverStr;".to_string(),
         "pub use ::aver_rt::Buffer;".to_string(),
+        "pub use ::aver_rt::ByteBuilder;".to_string(),
         String::new(),
         "mod runtime_support;".to_string(),
         "pub use runtime_support::*;".to_string(),

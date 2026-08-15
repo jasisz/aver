@@ -512,6 +512,41 @@ pub const LIST_BUILDER_PUSH: u8 = 0xA0;
 /// the pool slot when the builder held one.
 pub const LIST_BUILDER_FINALIZE: u8 = 0xA1;
 
+// --- Byte builder (list-build fusion, byte-sink retarget) --------------
+//
+// Emitted where a collected loop's only reader was the standard
+// library's `Bytes.fromList`: the elements are octets, the validation
+// rides every push, and the finalizer answers what `fromList` would
+// have — `Ok` of the collected list or `Err` naming the first element
+// outside `0..=255`, in push order, which is the walk order `fromList`
+// validates in.
+//
+// The pool-and-handle shape is the list builder's, for the list
+// builder's reason: a growing arena object threaded through a
+// tail-recursive loop is a live root the frame boundary rewrites every
+// iteration — O(n²) for an O(n) loop — so the bytes live host-side and
+// the loop threads an immediate `Int(slot)` the collector never sees.
+// One thing is SIMPLER here: every payload is a `u8` and the recorded
+// offender is a host value, so the pool never holds anything the
+// collector could move and there is no cons-chain transition on a heap
+// element. The only fallback is pool exhaustion, where the builder
+// travels as the reversed cons chain the source wrote and the
+// finalizer validates it natively — the unfused cost, the same answer.
+
+/// Pop capacity hint → push a fresh byte builder: `Int(slot)` when the
+/// pool has room, otherwise the empty list (the fallback shape).
+pub const BYTE_BUILDER_NEW: u8 = 0xA5;
+
+/// Pop elem, pop builder → push the builder with `elem` recorded: the
+/// byte appended when `elem` is in `0..=255`, the first out-of-range
+/// element remembered otherwise.
+pub const BYTE_BUILDER_PUSH: u8 = 0xA6;
+
+/// Pop builder → push what `Bytes.fromList` would answer for the
+/// pushed elements: `Result.Ok(<list>)` or `Result.Err(<message>)`.
+/// Frees the pool slot when the builder held one.
+pub const BYTE_BUILDER_FINALIZE: u8 = 0xA7;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -618,6 +653,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         LIST_BUILDER_NEW => "LIST_BUILDER_NEW",
         LIST_BUILDER_PUSH => "LIST_BUILDER_PUSH",
         LIST_BUILDER_FINALIZE => "LIST_BUILDER_FINALIZE",
+        BYTE_BUILDER_NEW => "BYTE_BUILDER_NEW",
+        BYTE_BUILDER_PUSH => "BYTE_BUILDER_PUSH",
+        BYTE_BUILDER_FINALIZE => "BYTE_BUILDER_FINALIZE",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -691,6 +729,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | LIST_BUILDER_NEW
         | LIST_BUILDER_PUSH
         | LIST_BUILDER_FINALIZE
+        | BYTE_BUILDER_NEW
+        | BYTE_BUILDER_PUSH
+        | BYTE_BUILDER_FINALIZE
         | NOP => 0,
 
         // 1-byte

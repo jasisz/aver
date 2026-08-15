@@ -303,6 +303,9 @@ fn classify_named_callee(
                 | "__lst_new"
                 | "__lst_push"
                 | "__lst_finalize"
+                | "__byt_new"
+                | "__byt_push"
+                | "__byt_finalize"
         ) {
             return CallPlan::Builtin(bare.to_string());
         }

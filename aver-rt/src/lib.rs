@@ -6,6 +6,7 @@ mod display;
 pub mod http;
 pub mod http_server;
 pub mod int;
+pub mod bytebuilder;
 pub mod listbuilder;
 #[cfg(feature = "random")]
 pub mod random;
@@ -18,6 +19,7 @@ pub mod terminal;
 
 pub use display::{AverDisplay, aver_display};
 pub use int::{AverInt, ShiftCountError};
+pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};
 pub use runtime::{
     append_text, cli_args, console_error, console_print, console_warn, delete_dir, delete_file,

@@ -2241,6 +2241,53 @@ impl VM {
                     self.stack.push(list);
                 }
 
+                // Byte builder (byte-sink retarget). A builder is a
+                // pool handle, or the cons chain the source wrote when
+                // the pool is out of slots; see the opcode block in
+                // `vm::opcode` for the shape and the frame-boundary
+                // reason it exists.
+                BYTE_BUILDER_NEW => {
+                    let hint = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let capacity = hint
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .unwrap_or(0)
+                        .min(LIST_BUILDER_CAPACITY_HINT_CAP);
+                    let fresh = super::VmByteBuilder {
+                        bytes: Vec::with_capacity(capacity),
+                        bad: None,
+                    };
+                    let builder = match self.byte_builder_free.pop() {
+                        Some(slot) => {
+                            self.byte_builder_pool[slot] = Some(fresh);
+                            NanValue::new_int(slot as i64, &mut self.arena)
+                        }
+                        None if self.byte_builder_pool.len() < BYTE_BUILDER_POOL_SLOTS => {
+                            self.byte_builder_pool.push(Some(fresh));
+                            let slot = self.byte_builder_pool.len() - 1;
+                            NanValue::new_int(slot as i64, &mut self.arena)
+                        }
+                        // Out of slots. The cons chain needs none; the
+                        // finalizer validates it natively — the unfused
+                        // cost, the same answer.
+                        None => NanValue::EMPTY_LIST,
+                    };
+                    self.stack.push(builder);
+                }
+
+                BYTE_BUILDER_PUSH => {
+                    let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let builder = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let pushed = self.byte_builder_push(builder, value, code, ip)?;
+                    self.stack.push(pushed);
+                }
+
+                BYTE_BUILDER_FINALIZE => {
+                    let builder = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let result = self.byte_builder_finalize(builder, code, ip)?;
+                    self.stack.push(result);
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -2469,6 +2516,10 @@ fn cursor_offset(value: NanValue, arena: &Arena) -> usize {
 /// the cons chain, which is the program this pass replaced.
 const LIST_BUILDER_POOL_SLOTS: usize = 4096;
 
+/// How many pooled byte builders may exist at once — the list pool's
+/// number, for the list pool's reason.
+const BYTE_BUILDER_POOL_SLOTS: usize = LIST_BUILDER_POOL_SLOTS;
+
 /// Ceiling on the capacity hint a builder will pre-allocate for.
 ///
 /// The hint comes from the rewritten call site and is a guess about the
@@ -2561,5 +2612,116 @@ impl VM {
         let items = self.list_builder_pool[slot].take().unwrap_or_default();
         self.list_builder_free.push(slot);
         items
+    }
+
+    /// Record `value` on a byte builder, returning the builder that
+    /// holds it. On the pool path the range check rides the push: an
+    /// in-range element appends its byte, the first out-of-range one is
+    /// remembered as a HOST value (never an arena reference), and later
+    /// pushes change nothing because `Bytes.fromList` reports the FIRST
+    /// offender. On the fallback path the raw element is prepended,
+    /// exactly as the source loop wrote, and the finalizer does the
+    /// deciding.
+    fn byte_builder_push(
+        &mut self,
+        builder: NanValue,
+        value: NanValue,
+        code: &[u8],
+        ip: usize,
+    ) -> Result<NanValue, VmError> {
+        if builder.is_list() {
+            return Ok(self.list_builder_prepend(builder, value, code, ip));
+        }
+        let slot = self.byte_builder_slot(builder)?;
+        let state = self.byte_builder_pool[slot]
+            .as_mut()
+            .expect("slot checked live");
+        if state.bad.is_none() {
+            let elem = value.as_aver_int(&self.arena);
+            match elem.to_i64() {
+                Some(byte) if (0..=255).contains(&byte) => state.bytes.push(byte as u8),
+                // Too big for i64 is certainly too big for a byte, so
+                // the unrepresentable case is the same case.
+                _ => state.bad = Some((elem, state.bytes.len())),
+            }
+        }
+        Ok(builder)
+    }
+
+    /// What `Bytes.fromList` would answer for the pushed elements —
+    /// `Result.Ok(<list>)` in push order, or `Result.Err(<message>)`
+    /// naming the first element outside `0..=255` and its index. The
+    /// message is the standard library's own spelling, with the value
+    /// rendered the way Aver renders any `Int`.
+    fn byte_builder_finalize(
+        &mut self,
+        builder: NanValue,
+        code: &[u8],
+        ip: usize,
+    ) -> Result<NanValue, VmError> {
+        let (bytes, bad) = if builder.is_list() {
+            // The chain was built by prepending in push order, so it
+            // reads backwards; straightened out, it is the list the
+            // unfused loop handed to `fromList`, and this walk is that
+            // validation done natively.
+            let mut items = self.arena.list_to_vec_value(builder);
+            items.reverse();
+            let mut bytes = Vec::with_capacity(items.len());
+            let mut bad = None;
+            for (index, item) in items.iter().enumerate() {
+                let elem = item.as_aver_int(&self.arena);
+                match elem.to_i64() {
+                    Some(byte) if (0..=255).contains(&byte) => bytes.push(byte as u8),
+                    _ => {
+                        bad = Some((elem, index));
+                        break;
+                    }
+                }
+            }
+            (bytes, bad)
+        } else {
+            let slot = self.byte_builder_slot(builder)?;
+            let state = self.byte_builder_pool[slot]
+                .take()
+                .expect("slot checked live");
+            self.byte_builder_free.push(slot);
+            (state.bytes, state.bad)
+        };
+        match bad {
+            Some((value, index)) => {
+                let message = format!("byte {value} at index {index} is outside 0..=255");
+                let text = NanValue::new_string_value(&message, &mut self.arena);
+                let wrapped = self
+                    .arena
+                    .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                        NanValue::new_err_value(text, arena)
+                    });
+                Ok(wrapped)
+            }
+            None => {
+                let items: Vec<NanValue> = bytes
+                    .into_iter()
+                    .map(|b| NanValue::new_int(b as i64, &mut self.arena))
+                    .collect();
+                let idx = self.arena.push_list(items);
+                let list = NanValue::new_list(idx);
+                let wrapped = self
+                    .arena
+                    .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                        NanValue::new_ok_value(list, arena)
+                    });
+                Ok(wrapped)
+            }
+        }
+    }
+
+    /// The live pool slot a byte builder handle names.
+    fn byte_builder_slot(&self, builder: NanValue) -> Result<usize, VmError> {
+        let slot = builder
+            .as_aver_int(&self.arena)
+            .to_usize()
+            .filter(|slot| matches!(self.byte_builder_pool.get(*slot), Some(Some(_))))
+            .ok_or_else(|| VmError::runtime("byte builder: invalid builder handle"))?;
+        Ok(slot)
     }
 }
