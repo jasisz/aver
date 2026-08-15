@@ -18,14 +18,16 @@
 //!   map somebody else still holds coming back empty.
 //!
 //! Each refusal was watched to fail against the instrument it belongs to being
-//! removed, and each removal reddens the shapes it should:
+//! removed. Counts are over the 72 tests of this file plus `vm_slot_uniqueness`,
+//! `own_param_soundness`, `own_param_graduation`, `alias_soundness` and
+//! `frame_boundary_inplace_write`:
 //!
-//! | removed                                              | shapes that go red |
+//! | removed                                               | red |
 //! |---|---|
-//! | one holder skipped in `VM::slot_is_unheld`            | the rename, and seven in `own_param_soundness` / `alias_soundness` |
-//! | the `held_elsewhere` test in `runtime_owns_map_target`| all four off-stack shapes, and ten more across the corpus |
-//! | `note_held_elsewhere` at `STORE_GLOBAL`               | the global, and nothing else |
-//! | the constant-table loop in `VM::new`                  | the literal seed, the rename, and twenty more |
+//! | one holder skipped in `VM::slot_is_unheld`             | 16 — the rename here, 5 in `own_param_soundness`, 3 in `alias_soundness`, 5 tallies in `vm_slot_uniqueness` |
+//! | the `held_elsewhere` test in `runtime_owns_map_target` | 24 — all four off-stack shapes here, and 18 across the other four files |
+//! | `note_held_elsewhere` at `STORE_GLOBAL`                | 3 — the global shape here, and nothing anywhere else |
+//! | the constant-table loop in `VM::new`                   | 24 — the literal seed and the rename here, and 19 elsewhere |
 //!
 //! In every case the mirror assertion fires first and names the slot, which is
 //! what it is for: the wrong answer is a map coming back empty three statements
