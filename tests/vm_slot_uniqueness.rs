@@ -38,7 +38,25 @@
 //! compiler declined, it moves the write between two tallies this file spells
 //! out in full. Both are red, and both say which slot.
 //!
-//! Nothing here decides anything. The count is observed, not consulted.
+//! The count is consulted now, and every number in this file was written when it
+//! was not, so read them with that in mind. The VALUES are unchanged — the
+//! cross-check runs before the decision does, on the same popped argument list —
+//! but two of them have changed what they are about:
+//!
+//! - `unique_slot_without_owned_grant` used to be a preview: writes a runtime
+//!   decision COULD see through. It is now a receipt: writes one DID, give or
+//!   take the roots the operand stack cannot see. `tests/vm_map_runtime_ownership.rs`
+//!   is where the difference between the two is pinned, by the shapes whose
+//!   holder lives off the stack and which this tally therefore over-counts;
+//! - `declined_with_slot_still_held` used to be the residue. It is now the set of
+//!   writes that still copy, which is the thing the aliasing corpus is about.
+//!
+//! `owned_grants` and `owned_grants_without_unique_slot` are untouched in both
+//! senses: the static mask is still consulted first and still grants exactly what
+//! it granted, and the soundness direction is still asserted over it. The
+//! assertion grew a second half, though — the static mask is now checked against
+//! the off-stack roots as well, which is the half the walk could never reach, and
+//! `tests/vm_map_runtime_ownership.rs` is where the shape that trips it lives.
 
 use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
 use aver::nan_value::Arena;
@@ -505,19 +523,20 @@ fn the_runtime_sees_unique_slots_the_static_mask_declined() {
     // literal lowers to a `LOAD_CONST` of an empty map plus one PLAIN
     // `CALL_BUILTIN` per entry, never an owned one — the static analysis
     // declines every insert the literal itself makes, and
-    // `a_non_empty_map_literal_seed_pays_for_its_own_entries_and_nothing_more`
-    // in the VM's own tests measures what that costs: 0+1+..+(k-1) duplicated
-    // entries per evaluation. The count sees straight through it: one
+    // `a_non_empty_map_literal_seed_costs_nothing_the_fold_after_it_does_not`
+    // in the VM's own tests measures what that used to cost: 0+1+..+(k-1)
+    // duplicated entries per evaluation. The count sees straight through it: one
     // declined-but-unique write per entry, and the difference between three
     // entries and four is exactly one.
     //
-    // One of those writes is NOT a slot a decision could take. The literal's
+    // One of those writes is NOT a slot a decision may take, which is why this
+    // tally is an over-count of the grants and not a list of them. The literal's
     // first insert targets the empty map the chunk holds as a CONSTANT, and a
     // constant is exactly the kind of holder this count cannot see — it counts
-    // operand-stack cells, and the constant table is not one. That is the number
-    // being honest about its own definition rather than a flaw in it: a preview
-    // of where to look, not a list of grants, and whoever turns it into a
-    // decision owes the other root sets an argument of their own.
+    // operand-stack cells, and the constant table is not one. The decision
+    // refuses that one on a separate instrument and says so in its own tally;
+    // see `each_refusal_is_made_by_the_instrument_that_can_see_that_holder` in
+    // `tests/vm_map_runtime_ownership.rs`.
     let (three, grants) = literal_seed_tallies(&[("a", "1"), ("b", "2"), ("c", "3")]);
     let (four, _) = literal_seed_tallies(&[("a", "1"), ("b", "2"), ("c", "3"), ("d", "4")]);
 
@@ -576,7 +595,10 @@ fn a_helper_seeded_fold_declines_every_write_the_runtime_can_see_through() {
     // step taken.
     //
     // Nothing here is out of reach of the runtime. The seed is a fresh map, it is
-    // threaded linearly, and the count says so at every step.
+    // threaded linearly, and the count says so at every step — and since the
+    // decision reads it, every one of these is now a write that took the owned
+    // path. What that is worth in seconds is measured in
+    // `tests/vm_map_runtime_ownership.rs` as entries not duplicated.
     let small = tallies(&helper_seeded_fold(40));
     let large = tallies(&helper_seeded_fold(80));
 

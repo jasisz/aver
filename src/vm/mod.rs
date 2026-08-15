@@ -24,7 +24,7 @@ pub mod mir_vm {
         MirVmCoverage, MirVmUnsupported, classify_mir_program_coverage,
     };
 }
-pub use execute::{VM, VmSlotUniquenessStats};
+pub use execute::{VM, VmRuntimeOwnershipStats, VmSlotUniquenessStats};
 pub use opcode::opcode_name;
 pub use profile::{
     VmBuiltinProfile, VmFunctionProfile, VmOpcodeProfile, VmProfileReport, VmReturnStats,

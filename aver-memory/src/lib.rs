@@ -108,6 +108,65 @@ pub fn map_all_immediate<M: MapLike>(map: &M) -> bool {
         .all(|(key, value)| key.is_immediate() && value.is_immediate())
 }
 
+/// What a caller deciding whether to empty a map's arena slot needs to know
+/// about it.
+///
+/// The two answers come out of the same lookup because they are asked together
+/// and neither is worth a second one: whether anything else holds the slot
+/// settles whether the caller MAY empty it, and how big the table is settles
+/// how much emptying it is worth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapSlot {
+    /// Whether anything but the handle in the caller's hand holds this slot —
+    /// another arena entry, or a root the consumer registered through
+    /// [`Arena::note_held_elsewhere`].
+    pub held_elsewhere: bool,
+    /// How many entries a copy of the table would move.
+    pub entries: usize,
+}
+
+/// Whether `entry` holds `index` directly, read out of the entry itself.
+///
+/// The searched answer behind [`Arena::any_entry_holds_slot`], and deliberately
+/// exhaustive over the variants rather than short-circuited by a flag: it is
+/// the check on the flags, so a flag it agreed with would prove nothing. Every
+/// place a `NanValue` can sit inside an entry appears here, a map's own table
+/// included, with one variant this crate cannot open: `ArenaEntry::Fn` carries
+/// a `T::Fn`, and whether that type holds values is the consumer's business.
+/// The interpreter's does not — nothing constructs one — so the arm is `false`
+/// rather than a trait method nobody would implement. A consumer that gives its
+/// function values a captured environment owes this arm a way to read it.
+pub fn entry_holds_slot<T: ArenaTypes>(entry: &ArenaEntry<T>, index: u32) -> bool {
+    let holds = |value: &NanValue| value.heap_index() == Some(index);
+    match entry {
+        ArenaEntry::Boxed(value) => holds(value),
+        ArenaEntry::Tuple(items) | ArenaEntry::Vector(items) => items.iter().any(holds),
+        ArenaEntry::Record { fields, .. } | ArenaEntry::Variant { fields, .. } => {
+            fields.iter().any(holds)
+        }
+        ArenaEntry::Map { map, .. } => map.values().any(|(key, value)| holds(key) || holds(value)),
+        ArenaEntry::List(list) => match list {
+            ArenaList::Flat { items, start } => {
+                items[(*start).min(items.len())..].iter().any(holds)
+            }
+            ArenaList::Prepend { head, tail, .. } => holds(head) || holds(tail),
+            ArenaList::Concat { left, right, .. } => holds(left) || holds(right),
+            ArenaList::Segments {
+                current,
+                rest,
+                start,
+                ..
+            } => holds(current) || rest[(*start).min(rest.len())..].iter().any(holds),
+        },
+        ArenaEntry::Namespace { members, .. } => members.iter().any(|(_, value)| holds(value)),
+        ArenaEntry::Int(_)
+        | ArenaEntry::BigInt(_)
+        | ArenaEntry::String(_)
+        | ArenaEntry::Fn(_)
+        | ArenaEntry::Builtin(_) => false,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Bit layout constants
 // ---------------------------------------------------------------------------
@@ -820,6 +879,22 @@ impl NanValue {
         (self.0 & (QNAN_MASK | ARENA_REF_BIT)) == (QNAN | ARENA_REF_BIT)
     }
 
+    /// Whether this is a map with an arena slot behind it — one mask and one
+    /// compare, no tag dispatch.
+    ///
+    /// The same shape as [`NanValue::may_hold_heap_index`] with the tag folded
+    /// into the mask, and for the same reason: it is asked of every value that
+    /// goes into an arena entry, so it has to cost about as much as reading the
+    /// value. Unlike that one it SETTLES the question in both directions — the
+    /// empty map, which is an immediate and owns no slot, fails the arena-ref
+    /// bit and comes back `false`.
+    #[inline]
+    pub fn is_heap_map(self) -> bool {
+        const MASK: u64 = QNAN_MASK | (TAG_MASK << TAG_SHIFT) | ARENA_REF_BIT;
+        const WANT: u64 = QNAN | (TAG_MAP << TAG_SHIFT) | ARENA_REF_BIT;
+        (self.0 & MASK) == WANT
+    }
+
     #[inline]
     pub fn heap_index(self) -> Option<u32> {
         if !self.is_nan_boxed() {
@@ -1311,6 +1386,14 @@ pub struct Arena<T: ArenaTypes> {
     /// [`Arena::evacuate_frame_to_handoff`]. Set only for the span of one
     /// `evacuate_frame_locals` call and cleared when it returns.
     rewrite_out_of_region_roots: bool,
+    /// Whether this arena has ever stored a map.
+    ///
+    /// The escape in front of the per-push pass that marks the maps an entry
+    /// holds: no map entry means no value here can carry a map's index, so
+    /// there is nothing for that pass to find. Monotone — it is never cleared,
+    /// because an index that stopped being reachable does not make the question
+    /// cheaper to answer, and a stale `true` only costs the pass.
+    holds_any_map: bool,
     /// Which out-of-region slots the descent above has already rewritten, one
     /// stamp array per heap space, indexed by raw arena index.
     ///
@@ -1378,6 +1461,27 @@ pub enum ArenaEntry<T: ArenaTypes> {
     Map {
         map: T::Map,
         all_immediate: bool,
+        /// Whether anything OTHER than a handle in the consumer's own working
+        /// set holds this slot: another arena entry, or a root the consumer
+        /// registered through [`Arena::note_held_elsewhere`] — a global, a
+        /// chunk constant.
+        ///
+        /// It exists for one caller, [`Arena::take_map_value`], which empties
+        /// the slot it takes from. That is only safe when nobody is left to
+        /// read it, and a consumer that can enumerate its own handles still
+        /// cannot see a holder that lives INSIDE the arena. This flag is that
+        /// half of the answer, and it is maintained where the reference is
+        /// made: [`Arena::push`] marks every direct map child of the entry it
+        /// is given, and [`Arena::push_map`] marks the table's own keys and
+        /// values in the pass it already makes.
+        ///
+        /// `true` is always safe: it only costs the in-place path. `false` when
+        /// something does hold the slot is not, and does not fail loudly on its
+        /// own — the other holder reads an empty map. So the direction that
+        /// needs proof is `false`, which is why nothing sets it back to `false`
+        /// once set and why entries born `false` are exactly the ones this
+        /// arena has just built and not yet handed to anybody.
+        held_elsewhere: bool,
     },
     Vector(Vec<NanValue>),
     Record {
@@ -1432,14 +1536,21 @@ pub enum ArenaSymbol<T: ArenaTypes> {
 pub struct ListBody {
     items: Vec<NanValue>,
     all_immediate: bool,
+    holds_map: bool,
 }
 
 impl ListBody {
     pub fn new(items: Vec<NanValue>) -> Self {
-        let all_immediate = items.iter().all(|value| value.is_immediate());
+        let mut all_immediate = true;
+        let mut holds_map = false;
+        for value in &items {
+            all_immediate &= value.is_immediate();
+            holds_map |= value.is_map() && !value.is_immediate();
+        }
         Self {
             items,
             all_immediate,
+            holds_map,
         }
     }
 
@@ -1448,6 +1559,19 @@ impl ListBody {
     #[inline]
     pub fn all_immediate(&self) -> bool {
         self.all_immediate
+    }
+
+    /// Whether any element is a heap-backed map, so pushing an entry over this
+    /// body puts a second holder on a map slot.
+    ///
+    /// Decided in the same pass as `all_immediate` and for the same reason: a
+    /// body is immutable once built, and a body a collection views at an
+    /// advanced offset is the SAME body — `List.drop` re-pushes the `Rc` rather
+    /// than copying it. Reading the flag is what keeps that push `O(1)` instead
+    /// of a walk over elements that are never maps.
+    #[inline]
+    pub fn holds_map(&self) -> bool {
+        self.holds_map
     }
 }
 

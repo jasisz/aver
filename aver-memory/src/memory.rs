@@ -339,9 +339,11 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Vector(items)
             }
-            ArenaEntry::Map { map, all_immediate } => {
-                self.rewrite_map_with(map, all_immediate, rewrite)
-            }
+            ArenaEntry::Map {
+                map,
+                all_immediate,
+                held_elsewhere,
+            } => self.rewrite_map_with(map, all_immediate, held_elsewhere, rewrite),
             ArenaEntry::Record {
                 type_id,
                 mut fields,
@@ -404,10 +406,15 @@ impl<T: ArenaTypes> Arena<T> {
     /// equivalent list program is unchanged to the millisecond. It looks like
     /// code layout in the collector's hot loop, which is the cost of admission
     /// for taking a `Map<Int, Int>` fold from 12.2 s to 0.03 s at 64,000 keys.
+    ///
+    /// `held_elsewhere` travels with the entry untouched. A rewrite renames
+    /// indices; it neither creates a reference nor discharges one, so whoever
+    /// held this slot before holds it after.
     fn rewrite_map_with<F>(
         &mut self,
         mut map: T::Map,
         all_immediate: bool,
+        held_elsewhere: bool,
         rewrite: &mut F,
     ) -> ArenaEntry<T>
     where
@@ -422,6 +429,7 @@ impl<T: ArenaTypes> Arena<T> {
             return ArenaEntry::Map {
                 map,
                 all_immediate: true,
+                held_elsewhere,
             };
         }
         self.note_map_entries_scanned(map.len());
@@ -435,6 +443,7 @@ impl<T: ArenaTypes> Arena<T> {
         ArenaEntry::Map {
             map,
             all_immediate: false,
+            held_elsewhere,
         }
     }
 
@@ -1892,6 +1901,7 @@ impl<T: ArenaTypes> Arena<T> {
             ArenaEntry::Map {
                 map,
                 all_immediate: true,
+                ..
             } => {
                 debug_assert!(
                     crate::map_all_immediate(map),

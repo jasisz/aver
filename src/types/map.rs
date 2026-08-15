@@ -385,6 +385,12 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
     // the two arguments decide the new flag between them.
     let all_immediate =
         arena.map_all_immediate_value(source) && args[1].is_immediate() && args[2].is_immediate();
+    // The one pair `push_map`'s pass would have marked, marked here instead:
+    // the new entry holds this key and this value, and if either is a map, this
+    // entry is a holder of its slot from now on. Everything else in the table
+    // was marked when it went in.
+    arena.note_held_elsewhere(args[1]);
+    arena.note_held_elsewhere(args[2]);
     let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
@@ -392,6 +398,49 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
         aver_memory::ArenaEntry::Map {
             map: new_map,
             all_immediate,
+            // A fresh entry nobody has been handed. The table it carries came
+            // out of a slot the caller proved nothing else reaches, so nothing
+            // reaches this one either until somebody stores it.
+            held_elsewhere: false,
+        },
+        source,
+    );
+    Ok(NanValue::new_map(map_idx))
+}
+
+/// Map.remove with sole-owned first argument — takes instead of cloning.
+///
+/// The mirror of [`set_nv_owned`], and the same three moves: derive the flag
+/// from the map being consumed rather than by reading the table, take the table
+/// out of its slot, and put the result back in the space the source came from.
+/// A removal adds nothing, so there is no pair to mark and the `all_immediate`
+/// claim can only get truer than the one it inherits.
+pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "Map.remove() takes 2 arguments, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_map() {
+        return Err(RuntimeError::Error(
+            "Map.remove() first argument must be a Map".to_string(),
+        ));
+    }
+    ensure_hashable_nv("Map.remove", args[1])?;
+    let source = args[0];
+    let all_immediate = arena.map_all_immediate_value(source);
+    let old_map = arena.take_map_value(source);
+    let key_hash = nv_key_bits(args[1], arena);
+    let new_map = old_map.remove_owned(&key_hash);
+    if new_map.is_empty() {
+        return Ok(NanValue::EMPTY_MAP);
+    }
+    let map_idx = arena.push_inheriting_source_space(
+        aver_memory::ArenaEntry::Map {
+            map: new_map,
+            all_immediate,
+            held_elsewhere: false,
         },
         source,
     );

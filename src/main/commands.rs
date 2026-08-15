@@ -1433,6 +1433,16 @@ pub(super) fn cmd_run_vm(
             "  not owned by the compiler, uniquely held at run time:{} still held:{}",
             slots.unique_slot_without_owned_grant, slots.declined_with_slot_still_held
         );
+        let owned = &report.runtime_ownership;
+        eprintln!("\nMap writes the compiler declined, decided at run time:");
+        eprintln!(
+            "  taken in place:{} refused, a stack cell holds it:{}",
+            owned.grants, owned.refused_stack_holder
+        );
+        eprintln!(
+            "  refused, something off the stack holds it:{} not examined, walk dearer than the copy:{}",
+            owned.refused_off_stack_holder, owned.unexamined_walk_too_costly
+        );
         eprintln!("────────────────────────────────────────────────\n");
     }
 

@@ -853,30 +853,33 @@ fn growing_a_map_seeded_from_a_literal_consumes_it_instead_of_copying_it() {
 }
 
 #[test]
-fn a_non_empty_map_literal_seed_pays_for_its_own_entries_and_nothing_more() {
+fn a_non_empty_map_literal_seed_costs_nothing_the_fold_after_it_does_not() {
     // `{}` is the cheapest possible control, because a literal with no entries
-    // does no work at all. A literal with entries does: it lowers to a
-    // `LOAD_CONST` of the empty map plus one plain `CALL_BUILTIN` MapSet per
-    // entry (`vm/compiler/mir.rs`, the `MirExpr::MapLiteral` arm), and those
-    // inserts are not owned — the target is a stack temporary, and the first one
-    // is a constant that every re-evaluation of the literal shares, so neither
-    // can be consumed. Writing k entries therefore duplicates 0+1+...+(k-1)
-    // entries.
+    // does no work at all. A literal with entries used to be the opposite: it
+    // lowers to a `LOAD_CONST` of the empty map plus one plain `CALL_BUILTIN`
+    // MapSet per entry (`vm/compiler/mir.rs`, the `MirExpr::MapLiteral` arm),
+    // the compiler declines every one of them, and writing k entries therefore
+    // duplicated 0+1+...+(k-1) entries.
     //
-    // That cost is real but it is bounded by what the source says, not by what
-    // the program computes: three entries here cost three copies at n=400 and
-    // three at n=800. The fold itself still copies nothing, which is what makes
-    // this a control rather than a second bug — an unowned insert *inside* the
-    // fold would grow with n.
+    // The runtime decision sees through all of them. The first insert targets
+    // the empty map the chunk holds as a constant, which every re-evaluation of
+    // the literal shares — that one is refused, and duplicating an empty table
+    // costs nothing anyway. The two after it target entries this evaluation has
+    // just built and handed to nobody, so they are consumed, and the three
+    // copies the seed used to cost are gone.
+    //
+    // The n=400 / n=800 pair is still what makes this a statement about the seed
+    // rather than about the fold: an unowned insert INSIDE the fold would grow
+    // with n and show up as a difference between the two.
     let seed = "{\"a\" => \"1\", \"b\" => \"2\", \"c\" => \"3\"}";
     let small = map_build_copies(400, seed, 3);
     let large = map_build_copies(800, seed, 3);
 
     assert_eq!(
         (small, large),
-        (3, 3),
-        "a three-entry literal seed must cost 0+1+2 copies and the fold after \
-         it must cost none: n=400 copied {small} entries, n=800 copied {large}",
+        (0, 0),
+        "a three-entry literal seed must cost nothing and the fold after it \
+         must cost nothing: n=400 copied {small} entries, n=800 copied {large}",
     );
 }
 

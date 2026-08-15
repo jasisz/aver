@@ -56,6 +56,11 @@ pub struct VmProfileReport {
     /// else holds this slot?" costs a walk of the stack and nothing else would
     /// read the answer.
     pub slot_uniqueness: super::VmSlotUniquenessStats,
+    /// What the runtime decided about the map writes the compiler declined.
+    ///
+    /// Unlike the tallies above, these are maintained by every build and every
+    /// run — the profile is where they are READ, not where they are kept.
+    pub runtime_ownership: super::VmRuntimeOwnershipStats,
 }
 
 impl VmProfileReport {
@@ -103,6 +108,7 @@ impl VmProfileReport {
         self.returns.parent_thin_slow_returns += other.returns.parent_thin_slow_returns;
         self.returns.regular_slow_returns += other.returns.regular_slow_returns;
         self.slot_uniqueness.merge(&other.slot_uniqueness);
+        self.runtime_ownership.merge(&other.runtime_ownership);
     }
 }
 
@@ -206,6 +212,7 @@ impl VmProfileState {
         &self,
         code: &CodeStore,
         slot_uniqueness: super::VmSlotUniquenessStats,
+        runtime_ownership: super::VmRuntimeOwnershipStats,
     ) -> VmProfileReport {
         let total_opcodes = self.opcode_counts.iter().sum();
         let mut opcodes = self
@@ -265,6 +272,7 @@ impl VmProfileState {
             builtins,
             returns: self.return_stats.clone(),
             slot_uniqueness,
+            runtime_ownership,
         }
     }
 }

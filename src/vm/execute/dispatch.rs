@@ -1,5 +1,6 @@
 use super::{ReturnControl, VM};
 use crate::nan_value::{Arena, NanIntExt, NanValue};
+use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 use crate::vm::types::{CallFrame, VmError};
 
@@ -265,6 +266,9 @@ impl VM {
                     {
                         frame.globals_dirty = true;
                     }
+                    // The globals table outlives every frame, so from here on it
+                    // is a holder no walk of the operand stack can see.
+                    self.arena.note_held_elsewhere(val);
                     if idx >= self.globals.len() {
                         self.globals.resize(idx + 1, NanValue::UNIT);
                     }
@@ -767,7 +771,7 @@ impl VM {
                 CALL_BUILTIN | CALL_BUILTIN_OWNED => {
                     let symbol_id = read_u32!(code, ip);
                     let argc = read_u8!(code, ip) as usize;
-                    let owned_mask = if op == CALL_BUILTIN_OWNED {
+                    let mut owned_mask = if op == CALL_BUILTIN_OWNED {
                         read_u8!(code, ip)
                     } else {
                         0
@@ -795,10 +799,25 @@ impl VM {
                     self.stack.truncate(args_start);
                     // AFTER the truncate, deliberately: with the argument list
                     // off the stack, "no cell holds this slot" and "the argument
-                    // cell was the only holder" are the same statement, so the
-                    // cross-check needs no correction for the argument's own
-                    // reference.
+                    // cell was the only holder" are the same statement, so
+                    // neither the cross-check nor the decision below needs a
+                    // correction for the argument's own reference.
                     self.cross_check_owned_mask(builtin, &args, owned_mask);
+
+                    // The static mask keeps everything it granted; the runtime
+                    // only ever adds. A map write the compiler declined asks the
+                    // running program whether anything still holds the target,
+                    // and takes the owned path when the answer is nothing at
+                    // all. Restricted to the two builtins
+                    // `invoke_builtin_with_owned` actually hands their target
+                    // to: a bit set on anything else would be read by nobody.
+                    if owned_mask & 1 == 0
+                        && matches!(builtin, VmBuiltin::MapSet | VmBuiltin::MapRemove)
+                        && let Some(target) = args.first().copied()
+                        && self.runtime_owns_map_target(target)
+                    {
+                        owned_mask |= 1;
+                    }
 
                     if builtin.is_http_server() {
                         self.runtime.ensure_builtin_effects_allowed(
@@ -1861,6 +1880,12 @@ impl VM {
                                     )
                                 })
                             });
+                        // The one place in the VM where a value enters an arena
+                        // entry without going through `Arena::push`, so it is
+                        // the one place the choke point does not cover: after
+                        // this store the vector holds `value`, and if that is a
+                        // map, the vector is a holder of its slot.
+                        self.arena.note_held_elsewhere(value);
                         let items = self.arena.get_vector_mut(vec.arena_index());
                         if i < items.len() {
                             items[i] = value;
