@@ -24,7 +24,7 @@
 //! The pipeline carries one more invariant, cutting ACROSS the order:
 //! the **proof line**. A pass that puts entities in the AST which the
 //! source does not contain (`interp_lower`'s `__buf_*` chain,
-//! `buffer_build`'s `<sink>__buffered` sink, the planned chars-fusion)
+//! `buffer_build`'s `<sink>__buffered` sink, `chars_fusion`'s cursor loops)
 //! sits below it and must never be visible to Lean / Dafny; every other
 //! pass sits above it and the proof exporters read its output. `run`
 //! serves both halves from one run: it snapshots the AST before the
@@ -586,7 +586,7 @@ impl PipelineResult {
 /// `buffer_build` replaces a `String.join(<builder>(…), sep)` pipeline
 /// with a buffer loop and synthesizes a `<sink>__buffered` fn;
 /// `interp_lower` replaces an interpolation with a `__buf_*` chain; the
-/// planned chars-fusion pass will do the same to traversals. Those
+/// chars_fusion pass does the same to character traversals. Those
 /// FABRICATING passes are below the proof line. Keeping them off a
 /// proof used to be a convention — every proof-facing caller passing
 /// `run_buffer_build: false` — and one forgotten `true` silently
