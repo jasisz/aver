@@ -31,7 +31,10 @@
 //!   the driver — a step called from anywhere else is shared code, not
 //!   the idiom. The census walks every expression-bearing top-level
 //!   item, verify blocks and top-level statements included, so the
-//!   condition means what it says;
+//!   condition means what it says. The one carve-out is the step's own
+//!   verify block: the step is never edited or removed, so its spec
+//!   keeps the exact function it names — those calls are not a second
+//!   consumer;
 //! - the module cannot be called around: the step must not be visible
 //!   outside the module (`exposes` list, or the `_` convention). The
 //!   pass sees one module at a time, so a step some other module could
@@ -434,9 +437,17 @@ fn references_in_expr(expr: &Spanned<Expr>, name: &str) -> usize {
 /// are documentation strings (`DecisionImpact`), so a call cannot be
 /// spelled there — and the module header, type defs, and capability
 /// declarations have no expression positions at all.
+///
+/// One carve-out, from this stage's own contract: the step is never
+/// edited or removed, so a verify block ON THE STEP ITSELF keeps the
+/// exact function it specifies — its calls are the spec's, not a
+/// second consumer's, and real corpora verify their step fns directly.
+/// A step called from any OTHER verify block is shared code and
+/// declines like any other extra call site.
 fn references_in_top_level(item: &TopLevel, name: &str) -> usize {
     match item {
         TopLevel::FnDef(fd) => references_in_fn(fd, name),
+        TopLevel::Verify(vb) if vb.fn_name == name => 0,
         TopLevel::Verify(vb) => {
             let in_domain = |given: &crate::ast::VerifyGiven| match &given.domain {
                 crate::ast::VerifyGivenDomain::Explicit(values) => values
@@ -1133,11 +1144,13 @@ fn entry(xs: List<Int>) -> List<Int>
 
     /// The one-call-site condition claims the WHOLE MODULE, so a
     /// second call in a verify block counts: the census walks every
-    /// expression-bearing top-level item, not just fn bodies.
+    /// expression-bearing top-level item, not just fn bodies. Here the
+    /// extra call lives in ANOTHER fn's verify block — a second
+    /// consumer of the step, spelled in spec position.
     #[test]
     fn a_step_called_again_from_a_verify_block_declines() {
         let source = format!(
-            "{}\nverify step\n    step(2, [1], []) => [4, 2]\n",
+            "{}\nverify entry\n    entry([2]) => step(2, [], [])\n",
             pair_program("v", false)
         );
         let report = pass_on(&source);
@@ -1147,6 +1160,24 @@ fn entry(xs: List<Int>) -> List<Int>
             "{report:?}"
         );
         assert!(report.pair_inlined_by_fn.is_empty());
+    }
+
+    /// The carve-out: a verify block ON THE STEP ITSELF is the step's
+    /// spec, and the step it names is never edited or removed — so the
+    /// pair still fuses. Real corpora verify their step fns directly;
+    /// counting the spec as a second consumer would turn this stage
+    /// off exactly where it was built to fire.
+    #[test]
+    fn a_verify_block_on_the_step_itself_does_not_block_the_inline() {
+        let source = format!(
+            "{}\nverify step\n    step(2, [1], []) => [4, 2]\n",
+            pair_program("v", false)
+        );
+        let report = pass_on(&source);
+        assert!(
+            report.pair_inlined_by_fn.contains_key("drive"),
+            "{report:?}"
+        );
     }
 
     /// The control for the verify-block census: a verify block on the
