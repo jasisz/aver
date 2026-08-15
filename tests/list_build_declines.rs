@@ -449,3 +449,47 @@ fn main() -> Unit
     // `dropFirst` the list forwards and answer 2, 1.
     assert_eq!(out, "[3, 2]");
 }
+
+/// One exit hands the accumulator back bare — so the caller reverses —
+/// and another exit answers with a list the accumulator never reached.
+/// Taking the reverse off the call site pays for the bare exit, but the
+/// bail-out exit never owed one, and any path that takes it would lose
+/// a reversal the program wrote.
+#[test]
+fn a_loop_with_an_exit_the_accumulator_never_reaches_keeps_its_unfused_answer() {
+    let out = run_program(
+        "bails_out",
+        r#"module BailsOut
+    intent =
+        "Collects a run, except on the value that answers with a list of its own."
+    exposes [collect]
+    effects [Console.print]
+
+fn collect(values: List<Int>, acc: List<Int>) -> List<Int>
+    match values
+        [] -> acc
+        [head, ..tail] -> match head == 0
+            true -> [7, 8]
+            false -> collect(tail, List.prepend(head, acc))
+
+fn render(values: List<Int>) -> String
+    ? "Print a list without collecting anything, so the printer is not the subject."
+    "[{renderItems(values)}]"
+
+fn renderItems(values: List<Int>) -> String
+    ? "The elements, comma-separated, built without an accumulator."
+    match values
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            [next, ..rest] -> "{head}, {renderItems(tail)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{render(List.reverse(collect([1, 0, 2], [])))}")
+"#,
+    );
+    // 1 is collected, then 0 bails out with [7, 8] — dropping the
+    // accumulator — and the caller reverses whatever came back.
+    assert_eq!(out, "[8, 7]");
+}

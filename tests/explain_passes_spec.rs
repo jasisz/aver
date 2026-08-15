@@ -736,7 +736,7 @@ fn list_build_pass_exposes_loop_data_and_declines() {
     let json = run_explain_passes(
         r#"
 module Collecting
-    intent = "one loop that collects and one that reads what it collected"
+    intent = "loops that collect, read back, and bail out with a list of their own"
     depends []
 
 fn collect(n: Int, acc: List<Int>) -> List<Int>
@@ -749,8 +749,15 @@ fn widths(n: Int, acc: List<Int>) -> List<Int>
         true -> List.reverse(acc)
         false -> widths(n - 1, List.prepend(List.len(acc), acc))
 
+fn bails(values: List<Int>, acc: List<Int>) -> List<Int>
+    match values
+        [] -> acc
+        [head, ..tail] -> match head == 0
+            true -> [7, 8]
+            false -> bails(tail, List.prepend(head, acc))
+
 fn main() -> Int
-    List.len(collect(3, [])) + List.len(widths(3, []))
+    List.len(collect(3, [])) + List.len(widths(3, [])) + List.len(List.reverse(bails([1, 0, 2], [])))
 "#,
     );
     let data = json["passes"]
@@ -767,6 +774,10 @@ fn main() -> Int
     assert_eq!(
         data["declined"]["widths"],
         "the accumulator is read somewhere a builder cannot stand in for"
+    );
+    assert_eq!(
+        data["declined"]["bails"],
+        "an exit does not come from the accumulator, and the caller's reverse pays for the rewrite"
     );
     assert_eq!(data["targets"][0], "rust");
     assert_eq!(data["targets"][1], "vm");

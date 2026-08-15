@@ -24,6 +24,14 @@
 //! be appended to in the recursive call, may be handed back at an exit,
 //! and may appear nowhere else — a discipline that accepts one flat
 //! loop and one four-deep parser for the same reason.
+//!
+//! An exit the accumulator never reaches splits on where the reverse
+//! lives. When the loop reverses in its own exits, the compensation
+//! sits inside exactly the exits that need it, and an untouched exit
+//! keeps meaning what it meant — that parser fuses. When the exits
+//! hand the accumulator back bare, the CALL SITE pays by giving up its
+//! reverse, and a path through an untouched exit would come back
+//! un-reversed — that loop is declined.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,10 +50,13 @@ pub enum ListBuildKind {
     /// `List.reverse(acc)`. The caller writes `<fn>(xs, [])` and gets
     /// the list forwards.
     FinalizeInBase,
-    /// Every exit that returns the accumulator returns it bare, and the
-    /// caller writes `List.reverse(<fn>(xs, []))`. Only a call site
-    /// wearing that reverse is rewritten: without it the caller asked
-    /// for the elements backwards, which is not what a builder produces.
+    /// Every exit returns the accumulator bare, and the caller writes
+    /// `List.reverse(<fn>(xs, []))`. Only a call site wearing that
+    /// reverse is rewritten: without it the caller asked for the
+    /// elements backwards, which is not what a builder produces. EVERY
+    /// exit, not just every exit that returns the accumulator: the
+    /// caller's reverse pays for all paths at once, so a loop with an
+    /// exit the accumulator never reaches is declined instead.
     BareAccBase,
 }
 
@@ -103,6 +114,12 @@ pub enum ListBuildDecline {
     /// Some exits reverse the accumulator and others hand it back bare.
     /// One call-site spelling cannot be right for both.
     MixedFinish,
+    /// The exits that return the accumulator hand it back bare — the
+    /// caller reverses — and some other exit returns a value the
+    /// accumulator never reached. The rewrite pays for the bare exits
+    /// by taking the reverse off the call site, and any path through
+    /// the untouched exit would lose a reversal the program wrote.
+    UntouchedExit,
     /// The `<fn>__collected` name is already taken, or the program
     /// already uses the `__lst_` namespace.
     NameTaken,
@@ -117,6 +134,10 @@ impl ListBuildDecline {
             Self::SelfCallShape => "a self-call does not append to the accumulator it was given",
             Self::NoFinish => "no exit returns the accumulator",
             Self::MixedFinish => "some exits reverse the accumulator and others do not",
+            Self::UntouchedExit => {
+                "an exit does not come from the accumulator, and the caller's \
+                 reverse pays for the rewrite"
+            }
             Self::NameTaken => "the __collected variant name or the __lst_ namespace is taken",
         }
     }
@@ -318,6 +339,8 @@ struct AccUses {
     bare: usize,
     /// the recognised append in a self tail-call.
     append: usize,
+    /// an exit whose value never reads the accumulator at all.
+    untouched: usize,
 }
 
 /// Build `<fn>__collected` — the same fn with its accumulator turned
@@ -385,6 +408,14 @@ fn build_collected_variant(
     let kind = match (uses.finalize, uses.bare) {
         (0, 0) => return Err(ListBuildDecline::NoFinish),
         (_, 0) => ListBuildKind::FinalizeInBase,
+        // The bare-accumulator loop is paid for at the CALL SITE: the
+        // rewrite takes the caller's reverse off. An exit the
+        // accumulator never reaches never owed that reverse, so any
+        // path that takes it would come back un-reversed. The
+        // finalize-in-base kinds are immune — their compensation sits
+        // inside the exits that need it, and an untouched exit keeps
+        // meaning what it meant.
+        (0, _) if uses.untouched > 0 => return Err(ListBuildDecline::UntouchedExit),
         (0, _) => ListBuildKind::BareAccBase,
         _ => return Err(ListBuildDecline::MixedFinish),
     };
@@ -511,6 +542,13 @@ fn rewrite_acc_to_builder(
     }
 
     if count_ident_reads(&expr.node, acc) == 0 {
+        // An exit the accumulator never reaches. It rides through
+        // unchanged, but it is still counted: whether that is sound
+        // depends on where the reverse lives, and only the kind decision
+        // knows that.
+        if is_result {
+            uses.untouched += 1;
+        }
         return Ok(());
     }
 
