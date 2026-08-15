@@ -410,6 +410,31 @@ pub enum BuiltinIntrinsic {
     /// `__bits_low(<x>, <w>)` — unchecked `x mod 2^w` for a non-negative
     /// `w`; the non-negative value of the lowest `w` bits.
     BitsLow,
+    /// `__str_cursor_end(<s>, <i>)` — `(String, Int) -> Bool`, true when
+    /// the byte offset `i` has reached the end of `s`. The chars-fusion
+    /// pass emits it where the loop matched `[]`.
+    StrCursorEnd,
+    /// `__str_cursor_head(<s>, <i>)` — `(String, Int) -> String`, the
+    /// one-character string at byte offset `i`. The head binding of the
+    /// `[head, ..tail]` the cursor replaced.
+    StrCursorHead,
+    /// `__str_cursor_next(<s>, <i>)` — `(String, Int) -> Int`, the byte
+    /// offset one CODEPOINT on. `String.chars` iterates Unicode scalar
+    /// values, so a byte-at-a-time step would visit a different list.
+    StrCursorNext,
+    /// `__str_code1(<s>)` — `String -> Int`, the codepoint of a
+    /// one-character string, `-1` for anything else. Emitted for the
+    /// subject of a match whose arms are single-character literals; the
+    /// `-1` is what makes the rewrite exact, since it equals no
+    /// rewritten literal and so falls through to the same default arm.
+    StrCode1,
+    /// `__str_code1_lower(<s>)` — `__str_code1` of `String.toLower(s)`,
+    /// without building the lowered string. Same `to_lowercase` the
+    /// builtin uses, so the two cannot drift.
+    StrCode1Lower,
+    /// `__str_code1_upper(<s>)` — the `String.toUpper` mirror of
+    /// [`Self::StrCode1Lower`].
+    StrCode1Upper,
 }
 
 impl BuiltinIntrinsic {
@@ -427,6 +452,12 @@ impl BuiltinIntrinsic {
             Self::BitsShiftLeft => "__bits_shl",
             Self::BitsShiftRight => "__bits_shr",
             Self::BitsLow => "__bits_low",
+            Self::StrCursorEnd => "__str_cursor_end",
+            Self::StrCursorHead => "__str_cursor_head",
+            Self::StrCursorNext => "__str_cursor_next",
+            Self::StrCode1 => "__str_code1",
+            Self::StrCode1Lower => "__str_code1_lower",
+            Self::StrCode1Upper => "__str_code1_upper",
         }
     }
 
@@ -447,6 +478,12 @@ impl BuiltinIntrinsic {
             "__buf_append_sep_unless_first" => Some(Self::BufAppendSepUnlessFirst),
             "__buf_finalize" => Some(Self::BufFinalize),
             "__to_str" => Some(Self::ToStr),
+            "__str_cursor_end" => Some(Self::StrCursorEnd),
+            "__str_cursor_head" => Some(Self::StrCursorHead),
+            "__str_cursor_next" => Some(Self::StrCursorNext),
+            "__str_code1" => Some(Self::StrCode1),
+            "__str_code1_lower" => Some(Self::StrCode1Lower),
+            "__str_code1_upper" => Some(Self::StrCode1Upper),
             _ => None,
         }
     }

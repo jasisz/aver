@@ -1,0 +1,41 @@
+module ProofSeamChars
+    intent =
+        "A `String.chars` traversal consumed linearly by a self-recursive loop, plus a"
+        "match over single-character literals, so the chars-fusion pass fires on both"
+        "halves. Fixture for the proof snapshot seam: the emitted proof must describe"
+        "THIS source — no cursor variant, no codepoint arithmetic — whether or not the"
+        "optimising passes rewrote the program for a runtime backend."
+    effects [Console]
+
+fn digitValue(character: String) -> Int
+    ? "Decode one decimal digit, or -1 for anything else."
+    match character
+        "0" -> 0
+        "1" -> 1
+        "2" -> 2
+        _ -> -1
+
+fn digitSum(characters: List<String>, acc: Int) -> Int
+    ? "Add up the decodable digits, left to right."
+    match characters
+        [] -> acc
+        [head, ..tail] -> match digitValue(head) >= 0
+            true -> digitSum(tail, acc + digitValue(head))
+            false -> digitSum(tail, acc)
+
+fn total(text: String) -> Int
+    ? "Sum the decimal digits of a string."
+    digitSum(String.chars(text), 0)
+
+verify digitValue
+    digitValue("1") => 1
+    digitValue("x") => -1
+
+verify total
+    total("") => 0
+    total("120") => 3
+    total("1x2") => 3
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(total("1202")))

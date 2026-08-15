@@ -280,6 +280,9 @@ fn classify_named_callee(
         // (no entry in builtins table). Once they reach call-plan
         // classification, route to the WASM builtin dispatch which
         // lowers each to a `Call(rt_buffer_*)` instruction.
+        //
+        // The chars-fusion cursor / codepoint intrinsics ride the same
+        // route for the same reason.
         if matches!(
             bare,
             "__buf_new"
@@ -287,6 +290,12 @@ fn classify_named_callee(
                 | "__buf_append_sep_unless_first"
                 | "__buf_finalize"
                 | "__to_str"
+                | "__str_cursor_end"
+                | "__str_cursor_head"
+                | "__str_cursor_next"
+                | "__str_code1"
+                | "__str_code1_lower"
+                | "__str_code1_upper"
         ) {
             return CallPlan::Builtin(bare.to_string());
         }

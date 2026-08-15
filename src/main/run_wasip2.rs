@@ -105,6 +105,7 @@ fn build_component_bytes(
             // buffer, run the pass — see `cmd_run_vm`.
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             ..Default::default()
         },
     );
@@ -114,7 +115,11 @@ fn build_component_bytes(
         return Err(super::shared::format_type_errors(&tc.errors));
     }
 
-    let dep_modules = super::commands::load_compile_deps(&items, &module_root, false, false, false);
+    let dep_modules = super::commands::load_compile_deps(
+        &items,
+        &module_root,
+        super::commands::DepLowering::PRISTINE,
+    );
     let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     aver::ir::pipeline::resolve(&mut items);
 

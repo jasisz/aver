@@ -49,13 +49,18 @@ const FUSABLE: &str = include_str!("fixtures/proof_seam_fusable.av");
 /// scalar-replaces into the caller.
 const ESCAPABLE: &str = include_str!("fixtures/proof_seam_escapable.av");
 
+/// `digitSum(String.chars(text), 0)` plus a match over single-character
+/// literals — the two shapes `chars_fusion` rewrites.
+const CHARS: &str = include_str!("fixtures/proof_seam_chars.av");
+
 /// What a caller asks the pipeline for. Named rather than inlined so a
 /// test reads as the claim it makes.
 #[derive(Clone, Copy)]
 struct Flags {
     /// The passes that introduce entities the source does not contain:
-    /// `interp_lower` (`__buf_*`, `__to_str`) and `buffer_build`
-    /// (`<sink>__buffered`, `Buffer`). Below the proof line.
+    /// `interp_lower` (`__buf_*`, `__to_str`), `buffer_build`
+    /// (`<sink>__buffered`, `Buffer`) and `chars_fusion`
+    /// (`<loop>__cursor`, `__str_*`). Below the proof line.
     fabricating: bool,
     /// The scalar-replace pass. Above the proof line — see the module
     /// doc.
@@ -76,9 +81,14 @@ struct Run {
     dafny: String,
     /// `buffer_build` fusion sites rewritten in the runtime half.
     fusion_rewrites: usize,
+    /// `chars_fusion` producer sites moved onto a cursor, plus the
+    /// single-character matches it turned into codepoint comparisons.
+    chars_rewrites: usize,
     /// Did the runtime-facing AST end up carrying a synthesized
     /// `__buffered` sink? Read off the items a backend gets.
     runtime_carries_buffered: bool,
+    /// Same question for the synthesized `__cursor` loop.
+    runtime_carries_cursor: bool,
     /// `escape` call sites rewritten in the runtime half.
     escape_rewrites: usize,
 }
@@ -91,6 +101,7 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             run_interp_lower: flags.fabricating,
             run_buffer_build: flags.fabricating,
+            run_chars_fusion: flags.fabricating,
             run_escape: flags.escape,
             run_refinement_lower: flags.proof_stages,
             run_contract_lower: flags.proof_stages,
@@ -103,10 +114,18 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
     assert!(tc.errors.is_empty(), "fixture typechecks: {:?}", tc.errors);
 
     let fusion_rewrites = result.buffer_build.as_ref().map_or(0, |r| r.rewrites);
-    let runtime_carries_buffered = items.iter().any(|item| match item {
-        TopLevel::FnDef(fd) => fd.name.contains("__buffered"),
-        _ => false,
-    });
+    let chars_rewrites = result
+        .chars_fusion
+        .as_ref()
+        .map_or(0, |r| r.cursor_rewrites + r.codepoint_matches);
+    let carries = |suffix: &str| {
+        items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd.name.contains(suffix),
+            _ => false,
+        })
+    };
+    let runtime_carries_buffered = carries("__buffered");
+    let runtime_carries_cursor = carries("__cursor");
     let escape_rewrites = escape_rewrites(&result);
     let proof_ir = result.proof_ir.take();
     let runtime_items = items.clone();
@@ -147,7 +166,9 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
         lean,
         dafny,
         fusion_rewrites,
+        chars_rewrites,
         runtime_carries_buffered,
+        runtime_carries_cursor,
         escape_rewrites,
     }
 }
@@ -340,6 +361,76 @@ fn proof_view_under_fusion_is_the_unfused_program() {
     assert_proof_view_is_the_unfabricated_program(
         FUSABLE,
         "ProofSeamFusable",
+        /* fabricating */ true,
+    );
+}
+
+/// The chars-fusion half of the same invariant. A cursor loop and a
+/// codepoint comparison are entities the source does not contain — a
+/// theorem about `parseHexChars__cursor` is a theorem about a function
+/// nobody wrote, and `48` is not the character `"0"` the user matched
+/// on. Registered below the snapshot, so neither can reach an exporter.
+#[test]
+fn chars_fusion_cannot_change_what_gets_proven() {
+    let pristine = run(
+        CHARS,
+        "ProofSeamChars",
+        Flags {
+            fabricating: false,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+    let fused = run(
+        CHARS,
+        "ProofSeamChars",
+        Flags {
+            fabricating: true,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+
+    // Non-vacuity: BOTH halves of the pass have to have fired in the
+    // same run that produced the proof export.
+    assert!(
+        fused.chars_rewrites > 1 && fused.runtime_carries_cursor,
+        "fixture must fuse its traversal AND its character match with the \
+         fabricating passes on — otherwise this test proves nothing"
+    );
+    assert!(
+        pristine.chars_rewrites == 0 && !pristine.runtime_carries_cursor,
+        "the pristine run must not fuse — otherwise the two sides agree trivially"
+    );
+    assert!(
+        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        "the export must be non-empty — an empty one satisfies every equality here"
+    );
+
+    assert_eq!(
+        pristine.lean, fused.lean,
+        "emitted Lean must not depend on whether the fabricating passes ran"
+    );
+    assert_eq!(
+        pristine.dafny, fused.dafny,
+        "emitted Dafny must not depend on whether the fabricating passes ran"
+    );
+    for (label, emitted) in [("Lean", &fused.lean), ("Dafny", &fused.dafny)] {
+        assert!(
+            !emitted.contains("__cursor") && !emitted.contains("__str_"),
+            "the cursor shape leaked into the emitted {label}"
+        );
+    }
+}
+
+/// The AST invariant on the same fixture, separate from the emitted
+/// text so a regression reports both facts rather than the first to
+/// trip.
+#[test]
+fn proof_view_under_chars_fusion_is_the_unfused_program() {
+    assert_proof_view_is_the_unfabricated_program(
+        CHARS,
+        "ProofSeamChars",
         /* fabricating */ true,
     );
 }

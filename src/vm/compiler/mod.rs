@@ -131,30 +131,35 @@ fn build_optimized_mir(
     crate::ir::mir::optimize(lowered)
 }
 
-/// Run the buffer-build deforestation pass over a freshly-parsed
-/// dependency module, and keep the result only when the entry's symbol
-/// table already knows the `<fn>__buffered` variants it synthesized.
+/// Run the two fabricating string passes — buffer-build deforestation
+/// and chars fusion — over a freshly-parsed dependency module, and keep
+/// the result only when the entry's symbol table already knows every
+/// variant they synthesized.
 ///
-/// The VM re-parses every dep off disk (`load_module_tree`), so the pass
-/// the caller ran over ITS copy of the module — the copy `SymbolTable`
-/// was built from — has to run again here or the VM executes the
-/// unfused spelling of code the Rust compile path fuses.
+/// The VM re-parses every dep off disk (`load_module_tree`), so the
+/// passes the caller ran over ITS copy of the module — the copy
+/// `SymbolTable` was built from — have to run again here or the VM
+/// executes the unfused spelling of code the Rust compile path fuses.
+/// They run in the pipeline's own order, because that is the order the
+/// caller's copy saw and the two copies have to end up the same
+/// program.
 ///
-/// The symbol-table check is what makes running it here safe for every
+/// The symbol-table check is what makes running them here safe for every
 /// caller at once. A caller that loaded its deps pristine
-/// (`run_buffer_build: false` — the proof exporters and the wasm-gc
-/// paths, which have no `Buffer` lowering) never registered a
-/// `<dep>.<fn>__buffered` name, and compiling a call to a fn the symbol
+/// (`run_buffer_build` / `run_chars_fusion: false` — the proof exporters
+/// and the wasm-gc paths, which can lower neither the `Buffer` nor the
+/// `__str_*` cursor) never registered a `<dep>.<fn>__buffered` or
+/// `<dep>.<fn>__cursor` name, and compiling a call to a fn the symbol
 /// table has never heard of would resolve to nothing. So: fuse when the
 /// caller fused, stay pristine when it didn't. Both shapes compute the
 /// same result; only the allocation count differs.
-fn adopt_buffer_build_if_symbols_agree(
+fn adopt_deforestation_if_symbols_agree(
     dep_name: &str,
     pristine: Vec<TopLevel>,
     entry_symbols: &SymbolTable,
 ) -> Vec<TopLevel> {
-    // Detection is read-only, so ask it first: most dep modules hold no
-    // builder at all, and this keeps the common case from copying a
+    // Detection is read-only, so ask it first: most dep modules hold
+    // neither shape, and this keeps the common case from copying a
     // module's verify blocks just to throw the copy away.
     let candidates: Vec<&crate::ast::FnDef> = pristine
         .iter()
@@ -165,16 +170,27 @@ fn adopt_buffer_build_if_symbols_agree(
         .collect();
     let has_sink = !crate::ir::compute_buffer_build_sinks(&candidates).is_empty();
     drop(candidates);
-    if !has_sink {
+    if !has_sink && !crate::ir::has_fusable_shape(&pristine) {
         return pristine;
     }
 
     let mut fused = pristine.clone();
-    let report = crate::ir::pipeline::buffer_build(&mut fused);
-    if report.synthesized.is_empty() {
-        return pristine;
+    let buffered = crate::ir::pipeline::buffer_build(&mut fused);
+    let cursors = crate::ir::pipeline::chars_fusion(&mut fused);
+    let mut synthesized = buffered.synthesized;
+    synthesized.extend(cursors.synthesized);
+    if synthesized.is_empty() {
+        // Nothing named was invented. The codepoint-match rewrite may
+        // still have fired, and it introduces no name for the symbol
+        // table to disagree about — it is a local rewrite of a match
+        // this module already contained.
+        return if cursors.codepoint_matches > 0 {
+            fused
+        } else {
+            pristine
+        };
     }
-    let every_variant_known = report.synthesized.iter().all(|name| {
+    let every_variant_known = synthesized.iter().all(|name| {
         entry_symbols
             .fn_id_of(&crate::ir::FnKey::in_module(dep_name, name.clone()))
             .is_some()
@@ -476,7 +492,7 @@ impl ProgramCompiler {
         // saw (TCO rewrites tail calls; the slot resolver allocates
         // local slots both passes rely on).
         crate::ir::pipeline::tco(&mut mod_items);
-        mod_items = adopt_buffer_build_if_symbols_agree(dep_name, mod_items, entry_symbols);
+        mod_items = adopt_deforestation_if_symbols_agree(dep_name, mod_items, entry_symbols);
         crate::ir::pipeline::resolve(&mut mod_items);
 
         // Dependency types use qualified canonical keys. Their bare display

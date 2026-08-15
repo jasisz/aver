@@ -489,6 +489,7 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                     typecheck: Some(crate::ir::TypecheckMode::WithLoaded(loaded)),
                     run_interp_lower: false,
                     run_buffer_build: false,
+                    run_chars_fusion: false,
                     alloc_policy: Some(&neutral_policy),
                     ..Default::default()
                 },
@@ -579,6 +580,7 @@ fn load_module_recursive_for_compile(
             }),
             run_interp_lower: false,
             run_buffer_build: false,
+            run_chars_fusion: false,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
