@@ -1471,9 +1471,24 @@ pub enum ArenaEntry<T: ArenaTypes> {
         /// read it, and a consumer that can enumerate its own handles still
         /// cannot see a holder that lives INSIDE the arena. This flag is that
         /// half of the answer, and it is maintained where the reference is
-        /// made: [`Arena::push`] marks every direct map child of the entry it
-        /// is given, and [`Arena::push_map`] marks the table's own keys and
-        /// values in the pass it already makes.
+        /// MADE. A site that forgets to mark is the way this goes wrong, so the
+        /// list is here in full and nothing else may add one silently:
+        ///
+        /// - [`Arena::push`] — every map the entry it is given holds directly,
+        ///   the namespace arm included. Every entry in every space comes
+        ///   through it, so an entry that holds a map transitively is covered by
+        ///   whichever entry holds it directly having come through here too;
+        /// - [`Arena::push_map`] — a table's own keys and values, in the pass it
+        ///   already makes over them;
+        /// - the owned insert (`map::set_nv_owned`) — the one pair it adds, which
+        ///   is what it skips `push_map` to avoid re-reading the table for;
+        /// - the consumer, for the roots the arena cannot see: the globals it
+        ///   stores into, the constants it starts with, and the one opcode that
+        ///   writes a value into an existing entry rather than pushing a new one.
+        ///
+        /// The from-scratch counterpart is [`Arena::any_entry_holds_slot`],
+        /// which searches instead of trusting the record; the interpreter checks
+        /// one against the other at every grant under debug assertions.
         ///
         /// `true` is always safe: it only costs the in-place path. `false` when
         /// something does hold the slot is not, and does not fail loudly on its

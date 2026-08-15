@@ -200,7 +200,9 @@ impl<T: ArenaTypes> Arena<T> {
     /// A no-op for anything but a heap-backed map, which is the only entry that
     /// carries the flag, and the only one anything ever empties in place. The
     /// consumer calls this for the roots the arena cannot see for itself — a
-    /// global it stores into, a constant table it hands the program.
+    /// global it stores into, a constant table it hands the program, a value it
+    /// writes into an entry that already exists. `ArenaEntry::Map`'s
+    /// `held_elsewhere` carries the full list of marking sites.
     #[inline(always)]
     pub fn note_held_elsewhere(&mut self, value: NanValue) {
         if value.is_heap_map() {
