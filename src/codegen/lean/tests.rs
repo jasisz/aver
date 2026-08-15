@@ -3529,6 +3529,69 @@ fn proof_mode_allows_recursive_types() {
     );
 }
 
+/// The certificate model's `Inhabited` witness for a sum type seeds the first
+/// constructor in declaration order whose arguments can all be defaulted; a
+/// constructor carrying the type itself cannot seed, a self-mention beneath a
+/// top-level `List`/`Option`/`Map` can (their Lean defaults need no argument
+/// instance), and a type where no constructor bottoms out gets no instance.
+#[test]
+fn inhabited_witness_seeds_first_constructor_that_bottoms_out() {
+    let ctx = empty_ctx();
+    let sum = |name: &str, variants: Vec<(&str, Vec<&str>)>| TypeDef::Sum {
+        name: name.to_string(),
+        variants: variants
+            .into_iter()
+            .map(|(variant_name, fields)| TypeVariant {
+                name: variant_name.to_string(),
+                fields: fields.into_iter().map(str::to_string).collect(),
+            })
+            .collect(),
+        line: 1,
+    };
+
+    // Declaration order: the first defaultable constructor wins, even when a
+    // nullary one follows — the constructor `deriving Inhabited` tries first.
+    let ordered = sum("Op", vec![("Add", vec!["Int"]), ("Zero", vec![])]);
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&ordered, &ctx, None),
+        "instance : Inhabited Op := ⟨Op.add default⟩"
+    );
+
+    // A constructor whose argument is the type itself cannot seed the
+    // instance; the scan moves on to the base case.
+    let recursive = sum(
+        "Chain",
+        vec![("More", vec!["Chain"]), ("Stop", vec!["Int"])],
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&recursive, &ctx, None),
+        "instance : Inhabited Chain := ⟨Chain.stop default⟩"
+    );
+
+    // A self-mention beneath a top-level List defaults fine: `[]` needs no
+    // `Inhabited` on the element type.
+    let wrapped = sum(
+        "Forest",
+        vec![("Grow", vec!["Forest"]), ("Pack", vec!["List<Forest>"])],
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&wrapped, &ctx, None),
+        "instance : Inhabited Forest := ⟨Forest.pack default⟩"
+    );
+
+    // No constructor bottoms out (a tuple's default needs both components):
+    // no instance, the same conservative shape as the other underivable
+    // types.
+    let hopeless = sum(
+        "Loop",
+        vec![("Step", vec!["Loop"]), ("Pair", vec!["Tuple<Loop, Int>"])],
+    );
+    assert_eq!(
+        super::toplevel::emit_inhabited_instance(&hopeless, &ctx, None),
+        ""
+    );
+}
+
 #[test]
 fn law_auto_example_exports_real_proof_artifacts() {
     let mut ctx = ctx_from_source(

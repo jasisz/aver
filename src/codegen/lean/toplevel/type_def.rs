@@ -36,10 +36,19 @@ pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<
 /// Peano — lifted to `Nat`; an `Int`-carrier refined record — emitted as a
 /// `Subtype`), so callers can invoke it uniformly.
 ///
-/// The witness is the first nullary variant when one exists (always inhabited,
-/// and self-recursion-safe), otherwise the first variant with `default` fields
-/// (matching what `deriving Inhabited` would pick for the base-case-first user
-/// ADTs in scope).
+/// A sum's witness is the first constructor in declaration order whose
+/// arguments can all be defaulted (base case: a nullary constructor) — the
+/// same constructor `deriving Inhabited` tries first. An argument that
+/// mentions the type itself cannot be defaulted: `default` on it asks for the
+/// very instance being stated, and the certificate declines with "failed to
+/// synthesize instance of type class Inhabited". The exception is a mention
+/// beneath a top-level `List`/`Option`/`Map`, whose Lean defaults (`[]`,
+/// `none`; a Map renders as `List (K × V)`) need no argument instance. When
+/// no constructor bottoms out, no instance is emitted — the conservative
+/// no-instance shape the other underivable types above already take; a model
+/// that actually demands the instance then declines at the Lean build. The
+/// scan is one syntactic pass: a mutually recursive type family is not
+/// detected here and still declines at the Lean build as before.
 ///
 /// A record's witness NAMES its fields — `⟨{ f := default }⟩`, never
 /// `⟨default⟩` — because the outer brackets are already the `Inhabited`
@@ -56,19 +65,19 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
     }
     match td {
         TypeDef::Sum { name, variants, .. } => {
-            let Some(first) = variants.first() else {
+            let Some(seed) = variants.iter().find(|v| {
+                v.fields
+                    .iter()
+                    .all(|field| field_defaults_without(field, name))
+            }) else {
                 return String::new();
             };
             let lean_name = aver_name_to_lean(name);
-            let nullary = variants.iter().find(|v| v.fields.is_empty());
-            let witness = match nullary {
-                Some(v) => format!("{}.{}", lean_name, lean_ctor_name(&v.name)),
-                None => {
-                    let args = " default".repeat(first.fields.len());
-                    format!("{}.{}{}", lean_name, lean_ctor_name(&first.name), args)
-                }
-            };
-            format!("instance : Inhabited {lean_name} := ⟨{witness}⟩")
+            let args = " default".repeat(seed.fields.len());
+            format!(
+                "instance : Inhabited {lean_name} := ⟨{lean_name}.{}{args}⟩",
+                lean_ctor_name(&seed.name)
+            )
         }
         TypeDef::Product { name, fields, .. } => {
             // Every decl admitted to ProofIR emits as a Subtype rather than a
@@ -92,6 +101,23 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             )
         }
     }
+}
+
+/// `default` for this constructor argument elaborates without `Inhabited` on
+/// the sum type currently being seeded: either the annotation never mentions
+/// that type, or the mention sits beneath a top-level `List`/`Option`/`Map`,
+/// which Lean inhabits with no argument instance (`[]`, `none`; a Map renders
+/// as `List (K × V)`).
+fn field_defaults_without(field: &str, type_name: &str) -> bool {
+    let trimmed = field.trim();
+    if trimmed.ends_with('>')
+        && ["List<", "Option<", "Map<"]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+    {
+        return true;
+    }
+    !crate::codegen::common::type_ref_contains(trimmed, type_name)
 }
 
 fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
