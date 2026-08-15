@@ -280,7 +280,11 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     report.loop_fns = report
         .synthesized
         .iter()
-        .map(|n| n.trim_end_matches(CURSOR_SUFFIX).to_string())
+        .map(|n| {
+            n.strip_suffix(CURSOR_SUFFIX)
+                .expect("every synthesized name carries the suffix")
+                .to_string()
+        })
         .collect();
     items.reserve(variants.len());
     for variant in variants {
