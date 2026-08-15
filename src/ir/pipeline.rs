@@ -1348,6 +1348,7 @@ fn id(n: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
+                PipelineStage::CharsFusion,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
@@ -1379,6 +1380,7 @@ fn id(n: Int) -> Int
                 typecheck: None,
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_chars_fusion: false,
                 run_last_use: false,
                 run_analyze: false,
                 run_escape: false,
@@ -1595,6 +1597,7 @@ fn id(n: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
+                PipelineStage::CharsFusion,
                 PipelineStage::Escape,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
                 // NameResolve runs unconditionally after
@@ -1633,6 +1636,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
+                PipelineStage::CharsFusion,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
