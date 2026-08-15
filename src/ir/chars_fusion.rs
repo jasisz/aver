@@ -113,6 +113,12 @@ const CURSOR_IDX_PARAM: &str = "__cur_i";
 /// built from.
 const CURSOR_SUFFIX: &str = "__cursor";
 
+/// The builtin namespace this pass reads `chars` / `toLower` /
+/// `toUpper` off. A local binding cannot shadow it: `String.x(…)`
+/// resolves to the builtin whatever else carries the name, so there is
+/// nothing here to check against the enclosing scope.
+const STRING_NAMESPACE: &str = "String";
+
 /// Why the cursor recogniser turned a loop down. Carried into the pass
 /// report so `--explain-passes` can say which loop stayed on the list
 /// and what about it stopped the rewrite — a silent decline is how a
@@ -218,8 +224,9 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     // once per function rather than once per call site.
     let mut producers: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
     for fd in fn_defs(items) {
+        let scope = CallScope::of(fd, &fn_names);
         for stmt in fd.body.stmts() {
-            collect_producer_sites(stmt_expr(stmt), &fn_names, &mut producers);
+            collect_producer_sites(stmt_expr(stmt), &scope, &mut producers);
         }
     }
 
@@ -260,10 +267,11 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     // than left in the program as dead synthesized code.
     let mut fired: HashSet<String> = HashSet::new();
     for fd in fn_defs_mut(items) {
+        let scope = CallScope::of(fd, &fn_names);
         let body = Arc::make_mut(&mut fd.body);
         for stmt in body.stmts_mut() {
             report.cursor_rewrites +=
-                rewrite_producer_calls(stmt_expr_mut(stmt), &accepted, &mut fired);
+                rewrite_producer_calls(stmt_expr_mut(stmt), &scope, &accepted, &mut fired);
         }
     }
     variants.retain(|v| fired.contains(&v.name));
@@ -321,8 +329,9 @@ pub fn has_fusable_shape(items: &[TopLevel]) -> bool {
     let mut producers = BTreeMap::new();
     let mut codepoint_match = false;
     for fd in fn_defs(items) {
+        let scope = CallScope::of(fd, &fn_names);
         for stmt in fd.body.stmts() {
-            collect_producer_sites(stmt_expr(stmt), &fn_names, &mut producers);
+            collect_producer_sites(stmt_expr(stmt), &scope, &mut producers);
             codepoint_match = codepoint_match || has_single_char_match(stmt_expr(stmt));
         }
     }
@@ -351,17 +360,46 @@ struct AcceptedLoop {
 
 // ── Producer detection ──────────────────────────────────────────────
 
+/// Which top-level function names one body may call by bare name.
+///
+/// A name is a top-level function only if the body does not bind it
+/// first: `fn go(walk: Fn(List<String>, Int) -> Int, text: String)`
+/// calling `walk(String.chars(text), 0)` is calling its own parameter,
+/// and rewriting that call to `walk__cursor` would call a different
+/// function than the program does.
+///
+/// Deliberately coarse: a binder anywhere in the body hides the name for
+/// the WHOLE body, not just its own scope. Costing a fusion we could
+/// have kept is the safe direction, and the shape that would need the
+/// finer answer — a local shadowing a same-named top-level function in
+/// one branch only — has never appeared.
+struct CallScope<'a> {
+    callable: HashSet<&'a str>,
+}
+
+impl<'a> CallScope<'a> {
+    fn of(fd: &FnDef, fn_names: &'a HashSet<String>) -> Self {
+        Self {
+            callable: fn_names
+                .iter()
+                .filter(|name| !binds_name(fd, name))
+                .map(String::as_str)
+                .collect(),
+        }
+    }
+}
+
 /// Record every `f(…, String.chars(x), …)` where `f` is a function in
 /// this module, keyed by `f` with the argument positions the producer
 /// appeared in.
 fn collect_producer_sites(
     expr: &Spanned<Expr>,
-    fn_names: &HashSet<String>,
+    scope: &CallScope<'_>,
     out: &mut BTreeMap<String, BTreeSet<usize>>,
 ) {
     if let Expr::FnCall(callee, args) = &expr.node
         && let Expr::Ident(name) = &callee.node
-        && fn_names.contains(name)
+        && scope.callable.contains(name.as_str())
     {
         for (i, arg) in args.iter().enumerate() {
             if is_string_chars_call(&arg.node) {
@@ -369,15 +407,13 @@ fn collect_producer_sites(
             }
         }
     }
-    walk_children(expr, &mut |child| {
-        collect_producer_sites(child, fn_names, out)
-    });
+    walk_children(expr, &mut |child| collect_producer_sites(child, scope, out));
 }
 
 /// `String.chars(<one arg>)`.
 fn is_string_chars_call(expr: &Expr) -> bool {
     matches!(expr, Expr::FnCall(callee, args)
-        if args.len() == 1 && is_dotted(&callee.node, "String", "chars"))
+        if args.len() == 1 && is_dotted(&callee.node, STRING_NAMESPACE, "chars"))
 }
 
 /// `<Module>.<member>` — the uncalled callee shape of a builtin call.
@@ -390,12 +426,13 @@ fn is_dotted(expr: &Expr, module: &str, member: &str) -> bool {
 /// every accepted loop. Returns how many call sites moved.
 fn rewrite_producer_calls(
     expr: &mut Spanned<Expr>,
+    scope: &CallScope<'_>,
     accepted: &HashMap<String, AcceptedLoop>,
     fired: &mut HashSet<String>,
 ) -> usize {
     let mut count = 0;
     walk_children_mut(expr, &mut |child| {
-        count += rewrite_producer_calls(child, accepted, fired);
+        count += rewrite_producer_calls(child, scope, accepted, fired);
     });
 
     let line = expr.line;
@@ -405,6 +442,9 @@ fn rewrite_producer_calls(
     let Expr::Ident(name) = &callee.node else {
         return count;
     };
+    if !scope.callable.contains(name.as_str()) {
+        return count;
+    }
     let Some(loop_info) = accepted.get(name) else {
         return count;
     };
@@ -473,12 +513,16 @@ fn build_cursor_variant(
     if !is_list_of_string(list_ty) || list_name == "_" {
         return Err(CharsFusionDecline::ParamShape);
     }
+    // A body that already spells `__cur_` could have one of the
+    // generated binders captured out from under it, and one that binds
+    // its OWN name makes the self-call recognition below a lie.
     if fd.params.iter().any(|(n, _)| n.starts_with(CURSOR_PREFIX))
         || fd
             .body
             .stmts()
             .iter()
             .any(|s| mentions_prefix(stmt_expr(s), CURSOR_PREFIX))
+        || binds_name(fd, &fd.name)
     {
         return Err(CharsFusionDecline::NameTaken);
     }
@@ -894,14 +938,17 @@ fn rewrite_codepoint_matches(expr: &mut Spanned<Expr>) -> usize {
     let Some(codes) = single_char_arm_codes(arms) else {
         return count;
     };
+    // Folding the case into the intrinsic is the only part that
+    // assumes anything about the subject; `__str_code1(E)` is exact for
+    // whatever `E` turns out to be.
     let (intrinsic, inner) = match &subject.node {
         Expr::FnCall(callee, args)
-            if args.len() == 1 && is_dotted(&callee.node, "String", "toLower") =>
+            if args.len() == 1 && is_dotted(&callee.node, STRING_NAMESPACE, "toLower") =>
         {
             ("__str_code1_lower", args[0].clone())
         }
         Expr::FnCall(callee, args)
-            if args.len() == 1 && is_dotted(&callee.node, "String", "toUpper") =>
+            if args.len() == 1 && is_dotted(&callee.node, STRING_NAMESPACE, "toUpper") =>
         {
             ("__str_code1_upper", args[0].clone())
         }
@@ -1008,6 +1055,34 @@ fn top_level_names(items: &[TopLevel]) -> HashSet<String> {
 
 fn is_list_of_string(ty: &str) -> bool {
     ty.replace(char::is_whitespace, "") == "List<String>"
+}
+
+/// Does `fd` bind `name` anywhere — as a parameter, a statement
+/// binding, or a pattern binder?
+fn binds_name(fd: &FnDef, name: &str) -> bool {
+    if fd.params.iter().any(|(n, _)| n == name) {
+        return true;
+    }
+    fd.body.stmts().iter().any(|stmt| match stmt {
+        Stmt::Binding(bound, _, e) => bound == name || expr_binds_name(e, name),
+        Stmt::Expr(e) => expr_binds_name(e, name),
+    })
+}
+
+/// Does any pattern under `expr` bind `name`?
+fn expr_binds_name(expr: &Spanned<Expr>, name: &str) -> bool {
+    if let Expr::Match { arms, .. } = &expr.node
+        && arms
+            .iter()
+            .any(|arm| pattern_bindings(&arm.pattern).iter().any(|b| b == name))
+    {
+        return true;
+    }
+    let mut found = false;
+    walk_children(expr, &mut |child| {
+        found = found || expr_binds_name(child, name);
+    });
+    found
 }
 
 /// Names a pattern binds — the shadowing set for its arm.

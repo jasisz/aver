@@ -246,6 +246,51 @@ fn main() -> Unit
     assert_eq!(out, "3/-100");
 }
 
+/// The call is to a PARAMETER that happens to carry a top-level
+/// function's name. Rewriting it to `walk__cursor` would call a
+/// different function than the program does.
+#[test]
+fn a_call_through_a_parameter_is_not_a_call_to_the_function_it_shadows() {
+    let out = run_program(
+        "callee_shadow",
+        r#"module CalleeShadow
+    intent =
+        "Takes the loop it runs as a parameter, under the name of another loop."
+    exposes [report]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    ? "Counts every character."
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn half(chars: List<String>, acc: Int) -> Int
+    ? "Counts every other character."
+    match chars
+        [] -> acc
+        [first, ..afterFirst] -> match afterFirst
+            [] -> acc + 1
+            [second, ..rest] -> half(rest, acc + 1)
+
+fn go(walk: Fn(List<String>, Int) -> Int, text: String) -> Int
+    ? "Runs whichever loop it was handed."
+    walk(String.chars(text), 0)
+
+fn report(text: String) -> String
+    "{go(half, text)}/{walk(String.chars(text), 0)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(report("abcde"))
+"#,
+    );
+    // `go` runs `half` (three of five), and the real `walk` still
+    // counts all five — and still fuses, because nothing shadows it
+    // where it is actually called.
+    assert_eq!(out, "3/5");
+}
+
 /// The default arm BINDS the subject. Rewriting the subject to a
 /// codepoint would hand that binding an integer where the program put a
 /// string.
