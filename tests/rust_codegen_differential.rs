@@ -445,11 +445,24 @@ fn shape(text: String) -> String
     n = count(String.chars(text), 0)
     "{n}:{Int.mod(n, 2)}:{String.join(pairs(String.chars(text), []), "-")}"
 
+fn decode(chars: List<String>, acc: Int) -> String
+    ? "The codepoint-call shape: the classifier takes the character's code, and the error arm still prints the character it read."
+    match chars
+        [] -> "ok:{acc}"
+        [head, ..tail] -> match value(head) < 0
+            true -> "bad '{head}' after {acc}"
+            false -> decode(tail, acc + value(head))
+
+fn total(text: String) -> String
+    ? "Decode a whole string, or point at the first bad character."
+    decode(String.chars(text), 0)
+
 fn main() -> Unit
     ? "Print every shape so a backend that drifts shows a diff, not a pass."
     ! [Console.print]
     Console.print("{shape("")} {shape("abc")} {shape("\u{e9}x")} {shape("\u{1F980}ab")}")
     Console.print("{value("0")}{value("9")}/{value("A")}{value("f")}/{value("\u{212A}")}/{value("\u{130}")}/{value("ab")}/{value("")}")
+    Console.print("{total("09af")}|{total("")}|{total("0x9")}|{total("\u{e9}0")}|{total("9\u{1F980}")}|{total("\u{212A}")}")
 "#
     .replace("\\u{e9}", "\u{e9}")
     .replace("\\u{1F980}", "\u{1F980}")
@@ -458,8 +471,12 @@ fn main() -> Unit
     // "éx" is two codepoints in three bytes; "🦀ab" is three in six.
     // The Kelvin sign lowercases to "k"; U+0130 lowercases to two
     // characters and so matches nothing; "" and "ab" are not one
-    // character either.
-    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1";
+    // character either. The decode line exercises the codepoint-call
+    // shape: the classifier consumes each character's code, and the
+    // error message still prints the character the loop was on —
+    // multibyte characters included — so a cursor that re-read the
+    // wrong offset shows up as a changed message.
+    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20";
     let vm = run_vm_inline("chars_fusion", &src).expect("vm run");
     let rust =
         build_run_rust_inline("chars_fusion", &src).expect("rust compile + cargo build + run");

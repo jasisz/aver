@@ -547,3 +547,296 @@ fn main() -> Unit
     );
     assert_eq!(out, "120");
 }
+
+/// A classifier that reads its parameter OUTSIDE the codepoint match's
+/// subject — the wildcard arm falls back to the character itself. The
+/// codepoint-call stage must leave it on strings: its `__code` variant
+/// would keep a read of a parameter that no longer exists, and this
+/// module binds the parameter's name at top level, which is what turns
+/// that dropped read from a compile error into a quietly wrong answer.
+#[test]
+fn a_classifier_that_reads_its_parameter_keeps_its_unfused_answer() {
+    let out = run_program(
+        "callee_param_read",
+        r#"module CalleeParamRead
+    intent =
+        "Falls back to the character itself, under a top-level binding that shares the parameter's name."
+    exposes [run]
+    effects [Console.print]
+
+c = "zzz"
+
+fn classify(c: String) -> String
+    match c
+        "a" -> "letter"
+        _ -> c
+
+fn walk(chars: List<String>, acc: String) -> String
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + classify(head))
+
+fn run(text: String) -> String
+    walk(String.chars(text), "")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run("aq"))
+"#,
+    );
+    assert_eq!(out, "letterq");
+}
+
+/// The same loop with a qualifying classifier, as the control: the
+/// codepoint crosses the call, the error text still prints the exact
+/// character — multibyte included — and every answer is the one the
+/// string version gave.
+#[test]
+fn a_qualifying_classifier_keeps_every_answer_across_the_code_call() {
+    let out = run_program(
+        "code_call_control",
+        r#"module CodeCallControl
+    intent =
+        "Decodes characters through a classifier and reports the first bad one."
+    exposes [run]
+    effects [Console.print]
+
+fn value(digit: String) -> Int
+    match String.toLower(digit)
+        "0" -> 0
+        "9" -> 9
+        "a" -> 10
+        "f" -> 15
+        _ -> 0 - 1
+
+fn walk(chars: List<String>, acc: Int) -> String
+    match chars
+        [] -> "ok:{acc}"
+        [head, ..tail] -> match value(head) < 0
+            true -> "bad '{head}' after {acc}"
+            false -> walk(tail, acc + value(head))
+
+fn run(text: String) -> String
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{run("09aF")}|{run("9x")}|{run("é")}|{run("")}")
+"#,
+    );
+    assert_eq!(out, "ok:34|bad 'x' after 9|bad 'é' after 0|ok:0");
+}
+
+/// A loop that never reads its head still gets a peel that BINDS it,
+/// so the emitted head read is in the variant whether the source reads
+/// the head or not — which is why a parameter spelled like the head
+/// intrinsic captured it even here, with no head read anywhere in the
+/// body. This is the smallest program that reached the hole, kept in
+/// its original shape beside the namespace walk below.
+#[test]
+fn a_parameter_spelled_like_the_head_intrinsic_keeps_its_unfused_answer() {
+    let out = run_program(
+        "param_head",
+        r#"module ParamName
+    intent =
+        "Names a loop parameter after the intrinsic that reads the head."
+    exposes [run]
+    effects [Console.print]
+
+fn walk(chars: List<String>, __str_cursor_head: Int) -> Int
+    match chars
+        [] -> __str_cursor_head
+        [head, ..tail] -> walk(tail, __str_cursor_head + 1)
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("done {run("abc")}")
+"#,
+    );
+    assert_eq!(out, "done 3");
+}
+
+/// The names the pass emits calls to, plus one ordinary name as the
+/// control. Every rewrite stage spells these as bare identifiers and
+/// leaves them for the resolver, so a user binder carrying one of them
+/// anywhere in the loop captures the emitted call — which is why the
+/// recogniser declines the whole namespace, and why this list walks it
+/// whole instead of pinning the one name a bug was first seen under.
+const EMITTED_NAMES: [&str; 10] = [
+    "__str_cursor_head",
+    "__str_cursor_code",
+    "__str_cursor_next",
+    "__str_cursor_end",
+    "__str_code1",
+    "__str_code1_lower",
+    "__str_code1_upper",
+    "__str_fold_lower",
+    "__str_fold_upper",
+    "spare",
+];
+
+/// One template per binder position, `BINDER` standing in for the
+/// probed name. Each run asserts the same answer for every emitted name
+/// AND for the ordinary control, so what is pinned is that a binder's
+/// NAME never changes a loop's meaning — reserved names decline, the
+/// control fuses, both answer alike.
+fn run_binder_template(name: &str, position: &str, template: &str, expected: &str) {
+    for binder in EMITTED_NAMES {
+        let source = template.replace("BINDER", binder);
+        let out = run_program(name, &source);
+        assert_eq!(
+            out, expected,
+            "a {position} binder named {binder} changed the loop's answer"
+        );
+    }
+}
+
+/// A loop parameter spelled like the intrinsic that reads the head. The
+/// peel the cursor stage emits calls that intrinsic by bare name inside
+/// the variant's body, where the parameter is in scope — so the call
+/// would resolve to the user's number, not the reader. Walked across
+/// the whole emitted namespace: the head reader is merely the name this
+/// hole was first seen under.
+#[test]
+fn a_parameter_in_the_emitted_namespace_keeps_its_unfused_answer() {
+    run_binder_template(
+        "param_binder",
+        "parameter",
+        r#"module ParamBinder
+    intent =
+        "Counts marks in a string while carrying a spare number under a probed name."
+    exposes [run]
+    effects [Console.print]
+
+fn walk(chars: List<String>, BINDER: Int, acc: Int) -> Int
+    match chars
+        [] -> acc + BINDER
+        [head, ..tail] -> match head
+            "x" -> walk(tail, BINDER, acc + 10)
+            _ -> walk(tail, BINDER, acc + 1)
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 100, 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run("axé")))
+"#,
+        "112",
+    );
+}
+
+/// The same namespace bound as a statement binding above the list
+/// match. The single-character match inside the loop is also the shape
+/// the codepoint rewrite emits `__str_code1*` calls into, so this
+/// position reaches both stages that spell intrinsic names into this
+/// body.
+#[test]
+fn a_statement_binding_in_the_emitted_namespace_keeps_its_unfused_answer() {
+    run_binder_template(
+        "stmt_binder",
+        "statement",
+        r#"module StmtBinder
+    intent =
+        "Counts marks in a string with a spare number bound under a probed name."
+    exposes [run]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    BINDER = 100
+    match chars
+        [] -> acc + BINDER
+        [head, ..tail] -> match head
+            "x" -> walk(tail, acc + 10)
+            _ -> walk(tail, acc + 1)
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run("axé")))
+"#,
+        "112",
+    );
+}
+
+/// The same namespace introduced by a match-pattern binder wrapped
+/// around the list match. A binder is not a read, so no identifier
+/// traversal can see it — the name has to be checked where it is
+/// INTRODUCED.
+#[test]
+fn a_pattern_binder_in_the_emitted_namespace_keeps_its_unfused_answer() {
+    run_binder_template(
+        "pattern_binder",
+        "pattern",
+        r#"module PatternBinder
+    intent =
+        "Counts marks in a string under a pattern binder carrying a probed name."
+    exposes [run]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match acc + 100
+        BINDER -> match chars
+            [] -> BINDER
+            [head, ..tail] -> match head
+                "x" -> walk(tail, acc + 10)
+                _ -> walk(tail, acc + 1)
+
+fn run(text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run("axé")))
+"#,
+        "112",
+    );
+}
+
+/// The between-bind-and-read position: a single-arm match binds the
+/// probed name between the head's binding and a read of the head. The
+/// codepoint-call stage re-materialises that cold read as an intrinsic
+/// call placed exactly there — inside the user's binder scope — so this
+/// is the position where the emitted name is captured the moment it is
+/// spelled. The multibyte character keeps the re-materialised read
+/// honest, and the whole namespace walks through the same arm.
+#[test]
+fn a_single_arm_bind_between_head_and_read_keeps_its_unfused_answer() {
+    run_binder_template(
+        "arm_binder",
+        "single-arm match",
+        r#"module ArmBinder
+    intent =
+        "Reports the first bad character, binding a probed name between the head's binding and its read."
+    exposes [run]
+    effects [Console.print]
+
+fn value(digit: String) -> Int
+    match String.toLower(digit)
+        "0" -> 0
+        "1" -> 1
+        _ -> 0 - 1
+
+fn walk(chars: List<String>, acc: Int) -> String
+    match chars
+        [] -> "done {acc}"
+        [head, ..tail] -> match value(head) < 0
+            true -> match acc
+                BINDER -> "bad {head} at {BINDER}"
+            false -> walk(tail, acc + 1)
+
+fn run(text: String) -> String
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{run("0x1")} / {run("é")} / {run("01")}")
+"#,
+        "bad x at 1 / bad é at 0 / done 2",
+    );
+}

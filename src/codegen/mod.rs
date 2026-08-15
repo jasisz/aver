@@ -1259,12 +1259,11 @@ fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_
             return_type: crate::types::Type::Bool,
             is_pure: true,
         }),
-        "__str_cursor_next" | "__str_code1" | "__str_code1_lower" | "__str_code1_upper" => {
-            Some(FnSigInfo {
-                return_type: crate::types::Type::Int,
-                is_pure: true,
-            })
-        }
+        "__str_cursor_next" | "__str_code1" | "__str_code1_lower" | "__str_code1_upper"
+        | "__str_cursor_code" | "__str_fold_lower" | "__str_fold_upper" => Some(FnSigInfo {
+            return_type: crate::types::Type::Int,
+            is_pure: true,
+        }),
         // The list-build builder intrinsics (`__lst_new` / `__lst_push`
         // / `__lst_finalize`) are deliberately absent. Their return type
         // is the accumulator's own `List<T>`, and T is a fact about the

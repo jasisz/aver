@@ -24,3 +24,6 @@ fn main() -> Unit
     Console.print(decode("0"))
     Console.print(decode("0z"))
     Console.print(decode(""))
+    Console.print(decode("é0"))
+    Console.print(decode("0é"))
+    Console.print(decode("00abc"))

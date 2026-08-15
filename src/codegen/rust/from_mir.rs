@@ -4638,6 +4638,26 @@ fn emit_mir_intrinsic_call(
                 ),
             })
         }
+        BuiltinIntrinsic::StrCursorCode => {
+            let s = emit_mir_expr(&args[0], ctx)?;
+            let i = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "aver_rt::AverInt::from_i64(aver_rt::str_cursor_code(&{s}, ({i}).to_usize().unwrap_or(usize::MAX)))"
+            ))
+        }
+        // Codepoint-level case fold. A code outside i64 is outside the
+        // scalar range, and the fold answers -1 for every non-scalar —
+        // the same wildcard arm the string route would take.
+        BuiltinIntrinsic::StrFoldLower | BuiltinIntrinsic::StrFoldUpper => {
+            let f = match intrinsic {
+                BuiltinIntrinsic::StrFoldLower => "str_fold_lower",
+                _ => "str_fold_upper",
+            };
+            let c = emit_mir_expr(&args[0], ctx)?;
+            Some(format!(
+                "aver_rt::AverInt::from_i64(aver_rt::{f}(({c}).to_i64().unwrap_or(-1)))"
+            ))
+        }
         BuiltinIntrinsic::StrCode1
         | BuiltinIntrinsic::StrCode1Lower
         | BuiltinIntrinsic::StrCode1Upper => {

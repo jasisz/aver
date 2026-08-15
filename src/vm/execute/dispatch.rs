@@ -2147,6 +2147,37 @@ impl VM {
                     self.stack.push(pushed);
                 }
 
+                STR_CURSOR_CODE => {
+                    let i = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let offset = cursor_offset(i, &self.arena);
+                    // The codepoint is decoded straight off the borrow —
+                    // no arena string exists for the character, which is
+                    // the entire point of this opcode over
+                    // `STR_CURSOR_HEAD` + `STR_CODE1`.
+                    let code = {
+                        let text = self.arena.get_string_value(s);
+                        aver_rt::str_cursor_code(&text, offset)
+                    };
+                    let pushed = NanValue::new_int(code, &mut self.arena);
+                    self.stack.push(pushed);
+                }
+
+                STR_FOLD_LOWER | STR_FOLD_UPPER => {
+                    let c = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    // A code outside i64 is outside the scalar range,
+                    // and the fold answers -1 for every non-scalar — the
+                    // same wildcard the string route would take.
+                    let code = c.as_aver_int(&self.arena).to_i64().unwrap_or(-1);
+                    let folded = if op == STR_FOLD_LOWER {
+                        aver_rt::str_fold_lower(code)
+                    } else {
+                        aver_rt::str_fold_upper(code)
+                    };
+                    let pushed = NanValue::new_int(folded, &mut self.arena);
+                    self.stack.push(pushed);
+                }
+
                 STR_CODE1 | STR_CODE1_LOWER | STR_CODE1_UPPER => {
                     let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let code = {
