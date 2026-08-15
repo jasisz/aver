@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+pub mod bytebuilder;
 pub mod crypto;
 mod display;
 #[cfg(feature = "http")]
@@ -16,6 +17,7 @@ pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
 
+pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
 pub use display::{AverDisplay, aver_display};
 pub use int::{AverInt, ShiftCountError};
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};

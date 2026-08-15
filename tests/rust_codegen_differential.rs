@@ -640,6 +640,139 @@ fn main() -> Unit
     );
 }
 
+/// The byte sink, on the shapes where the two backends could disagree —
+/// and against the answers the UNFUSED pair gives, since the whole
+/// program carries a word-for-word copy of the standard library's
+/// `fromList` family and both loops' only readers hand it their lists.
+///
+/// ORDER is the first claim: bytes come out in loop order, pinned as
+/// the exact sequence and not a length. The ERROR PATH is the second:
+/// the first out-of-range element wins, its index counts the elements
+/// before it, a negative and a wider-than-`i64` value are reported in
+/// the library's exact words, and a parse error beats a later range
+/// error because the loop stopped first. The second round replays it
+/// all after four thousand one hundred builders were abandoned
+/// mid-build — past the VM's pool cap — so the cons-chain fallback
+/// answers the same matrix the pooled path did. Compiled Rust has no
+/// pool and no fallback, which is exactly why only running both
+/// settles it.
+#[test]
+fn rust_byte_sink_matches_vm() {
+    let src = r#"module ByteSinkDifferential
+    intent = "Every byte-sink shape in one program, for cross-backend agreement"
+    effects [Console.print]
+
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+
+fn ramp(n: Int, limit: Int, step: Int, acc: List<Int>) -> List<Int>
+    ? "Collect limit values stepping by step, in ascending loop order."
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> ramp(n - 1, limit, step, List.prepend((limit - n) * step, acc))
+
+fn parseTriples(values: List<Int>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Triple every sample from left to right; a zero is a parse error."
+    match values
+        [] -> Result.Ok(List.reverse(acc))
+        [head, ..tail] -> match head == 0
+            true -> Result.Err("zero is not a sample")
+            false -> parseTriples(tail, List.prepend(head * 3, acc))
+
+fn toBytes(values: List<Int>) -> Result<Bytes, String>
+    ? "Parse the samples, then hand the octets over as bytes."
+    collected = parseTriples(values, [])?
+    fromList(collected)
+
+fn renderItems(values: List<Int>) -> String
+    ? "The elements, comma-separated."
+    match values
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            [next, ..rest] -> "{head}, {renderItems(tail)}"
+
+fn describe(outcome: Result<Bytes, String>) -> String
+    ? "Render either side of a fromList answer."
+    match outcome
+        Result.Ok(bytes) -> "ok:{renderItems(bytes.values)}"
+        Result.Err(message) -> "err:{message}"
+
+fn leak(n: Int) -> Int
+    ? "Run a parse error n times, abandoning a builder mid-build each time."
+    match n <= 0
+        true -> 0
+        false -> match toBytes([1, 0])
+            Result.Ok(bytes) -> leak(n - 1)
+            Result.Err(message) -> leak(n - 1)
+
+fn round() -> Unit
+    ? "Every shape once: order, first offender, sign, magnitude, parse precedence."
+    ! [Console.print]
+    Console.print(describe(fromList(ramp(4, 4, 1, []))))
+    Console.print(describe(fromList(ramp(4, 4, 100, []))))
+    Console.print(describe(fromList(ramp(4, 4, 0 - 1, []))))
+    Console.print(describe(fromList(ramp(6, 6, 100, []))))
+    Console.print(describe(toBytes([5, 6])))
+    Console.print(describe(toBytes([5, 90])))
+    Console.print(describe(toBytes([5, 0, 999])))
+    Console.print(describe(toBytes([5, 100000000000000000000, 7])))
+    Console.print(describe(fromList(ramp(0, 0, 1, []))))
+
+fn main() -> Unit
+    ! [Console.print]
+    round()
+    Console.print("leaked:{leak(4100)}")
+    round()
+"#;
+    // Verified against the unfused answers of the same program with the
+    // pass off: the retarget must be invisible in every byte of output.
+    let round = "ok:0, 1, 2, 3\n\
+                 err:byte 300 at index 3 is outside 0..=255\n\
+                 err:byte -1 at index 1 is outside 0..=255\n\
+                 err:byte 300 at index 3 is outside 0..=255\n\
+                 ok:15, 18\n\
+                 err:byte 270 at index 1 is outside 0..=255\n\
+                 err:zero is not a sample\n\
+                 err:byte 300000000000000000000 at index 1 is outside 0..=255\n\
+                 ok:";
+    let expected = format!("{round}\nleaked:0\n{round}");
+    let vm = run_vm_inline("byte_sink", src).expect("vm run");
+    let rust = build_run_rust_inline("byte_sink", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM byte-sink contract changed");
+    assert_eq!(rust, expected, "Rust byte sink diverged from the VM");
+}
+
 // ─── own_param ownership: build+run rust vs VM + emitted-shape guard ─────
 
 /// Build+run an inline Aver program through the Rust backend and return

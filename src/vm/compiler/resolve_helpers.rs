@@ -10,10 +10,10 @@ use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::{
     BITS_LOW, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR,
-    BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID, INT_MOD_EUCLID, LIST_BUILDER_FINALIZE,
-    LIST_BUILDER_NEW, LIST_BUILDER_PUSH, STR_CODE1, STR_CODE1_LOWER, STR_CODE1_UPPER,
-    STR_CURSOR_CODE, STR_CURSOR_END, STR_CURSOR_HEAD, STR_CURSOR_NEXT, STR_FOLD_LOWER,
-    STR_FOLD_UPPER,
+    BUFFER_FINALIZE, BUFFER_NEW, BYTE_BUILDER_FINALIZE, BYTE_BUILDER_NEW, BYTE_BUILDER_PUSH,
+    INT_DIV_EUCLID, INT_MOD_EUCLID, LIST_BUILDER_FINALIZE, LIST_BUILDER_NEW, LIST_BUILDER_PUSH,
+    STR_CODE1, STR_CODE1_LOWER, STR_CODE1_UPPER, STR_CURSOR_CODE, STR_CURSOR_END, STR_CURSOR_HEAD,
+    STR_CURSOR_NEXT, STR_FOLD_LOWER, STR_FOLD_UPPER,
 };
 use std::str::FromStr;
 
@@ -51,6 +51,9 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::LstNew => Some((LIST_BUILDER_NEW, 1)),
         BuiltinIntrinsic::LstPush => Some((LIST_BUILDER_PUSH, 2)),
         BuiltinIntrinsic::LstFinalize => Some((LIST_BUILDER_FINALIZE, 1)),
+        BuiltinIntrinsic::BytNew => Some((BYTE_BUILDER_NEW, 1)),
+        BuiltinIntrinsic::BytPush => Some((BYTE_BUILDER_PUSH, 2)),
+        BuiltinIntrinsic::BytFinalize => Some((BYTE_BUILDER_FINALIZE, 1)),
         BuiltinIntrinsic::ToStr => None,
     }
 }

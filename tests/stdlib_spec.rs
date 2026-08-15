@@ -353,6 +353,111 @@ fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
     );
 }
 
+/// The byte sink, pinned at the bytecode level the same way the cursor
+/// is. The VM re-parses the dependency and re-runs the fusing passes on
+/// its copy; a silent fall-back to the list spelling would still answer
+/// correctly, so output parity cannot catch it. What proves adoption is
+/// the compiled artifact: the decoding loop pushes bytes and finalizes
+/// them, and the caller allocates the byte builder where the list
+/// builder used to start.
+#[test]
+fn the_vm_bytecode_collects_bytes_at_the_cursor() {
+    use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = manifest_dir.join("tests/fixtures/stdlib_bytes_dehex_app.av");
+    let module_root = entry
+        .parent()
+        .expect("fixture dir")
+        .to_string_lossy()
+        .into_owned();
+    let source = std::fs::read_to_string(&entry).expect("read fixture");
+
+    let bytes_source = std::fs::read_to_string(manifest_dir.join("stdlib/bytes.av"))
+        .expect("read the standard library's Bytes module");
+    let mut dep_items = aver::source::parse_source(&bytes_source).expect("Bytes parses");
+    let stdlib_root = manifest_dir.join("stdlib").to_string_lossy().into_owned();
+    let dep_result = aver::ir::pipeline::run(
+        &mut dep_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&stdlib_root),
+            }),
+            ..Default::default()
+        },
+    );
+    let dep_modules = vec![aver::codegen::ModuleInfo {
+        prefix: "Bytes".to_string(),
+        depends: vec![],
+        type_defs: dep_items
+            .iter()
+            .filter_map(|i| match i {
+                aver::ast::TopLevel::TypeDef(td) => Some(td.clone()),
+                _ => None,
+            })
+            .collect(),
+        fn_defs: dep_items
+            .iter()
+            .filter_map(|i| match i {
+                aver::ast::TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                _ => None,
+            })
+            .collect(),
+        verify_laws: aver::codegen::collect_verify_laws(&dep_items),
+        analysis: dep_result.analysis,
+    }];
+
+    let mut items = aver::source::parse_source(&source).expect("fixture parses");
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            dep_modules: &dep_modules,
+            ..Default::default()
+        },
+    );
+    let tc = pipeline_result.typecheck.expect("typecheck was requested");
+    assert!(tc.errors.is_empty(), "fixture typechecks: {:?}", tc.errors);
+
+    let mut arena = aver::nan_value::Arena::new();
+    aver::vm::register_service_types(&mut arena);
+    let (code, _globals) = aver::vm::compile_program_with_modules(
+        &pipeline_result.resolved_items,
+        &pipeline_result.symbol_table,
+        &mut arena,
+        Some(&module_root),
+        &entry.to_string_lossy(),
+        pipeline_result.analysis.as_ref(),
+    )
+    .expect("VM compile");
+
+    let loop_id = code
+        .find("Bytes.parseHexChars__cursor__collected")
+        .expect("the VM adopted the retargeted decoding loop");
+    let loop_code = &code.get(loop_id).code;
+    assert!(
+        loop_code.contains(&aver::vm::opcode::BYTE_BUILDER_PUSH)
+            && loop_code.contains(&aver::vm::opcode::BYTE_BUILDER_FINALIZE),
+        "the adopted loop pushes bytes and finalizes them"
+    );
+    assert!(
+        !loop_code.contains(&aver::vm::opcode::LIST_BUILDER_PUSH)
+            && !loop_code.contains(&aver::vm::opcode::LIST_BUILDER_FINALIZE),
+        "and the list builder is gone from it"
+    );
+    let caller_id = code
+        .find("Bytes.fromHex")
+        .expect("the VM compiled the caller");
+    assert!(
+        code.get(caller_id)
+            .code
+            .contains(&aver::vm::opcode::BYTE_BUILDER_NEW),
+        "the caller starts the byte builder where the list builder began"
+    );
+}
+
 /// The two rewrites meet on one function. `Bytes.parseHexChars` reads a
 /// list `String.chars` builds and writes a list it prepends into and
 /// reverses; chars fusion replaces the first, list build replaces the
@@ -403,6 +508,63 @@ fn stdlib_from_hex_walks_a_cursor_and_collects_into_a_builder() {
     assert!(
         !profile.contains("List.reverse"),
         "the accumulator is built in order, so nothing is left to reverse: {profile}"
+    );
+}
+
+/// The third rewrite on the same function. After chars fusion and list
+/// build, `Bytes.fromHex` still built a `List<Int>` only so `fromList`
+/// could walk it a second time and wrap it in `Bytes`. The byte sink
+/// retargets the collected variant's builder to bytes and deletes the
+/// `fromList` call: the validation rides every push, and the loop's
+/// answer IS the `Result<Bytes, String>` the pair used to compute.
+///
+/// Pinned the same way the first two rewrites are: the pass reports the
+/// retarget, the VM executes the retargeted variant, and the answers —
+/// error arms included — are the ones `Bytes.fromHex` has always given.
+#[test]
+fn stdlib_from_hex_collects_bytes_without_an_intermediate_list() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/stdlib_bytes_dehex_app.av")
+        .to_string_lossy()
+        .into_owned();
+
+    let explained = run_aver(&["compile", &fixture, "--explain-passes", "--json"]);
+    assert_success("aver compile --explain-passes", &explained);
+    let report = String::from_utf8_lossy(&explained.stdout);
+    assert!(
+        report.contains("\"byte_fns\":[\"Bytes.parseHexChars__cursor__collected\"]"),
+        "the pass must report the standard library's decoding loop as \
+         retargeted to the byte builder: {report}"
+    );
+    assert!(
+        report.contains("\"byte_retargets\":1"),
+        "one fromList call site deleted: {report}"
+    );
+
+    let run = run_aver(&["run", &fixture, "--profile"]);
+    assert_success("aver run --profile", &run);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.starts_with("00ff10abcdef"),
+        "hex round-trip changed: {stdout}"
+    );
+    assert!(
+        stdout.contains("expected an even number of hex characters")
+            && stdout.contains("invalid hexadecimal character 'z'"),
+        "the error arms still report what they always did: {stdout}"
+    );
+    let profile = format!("{stdout}{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        profile.contains("Bytes.parseHexChars__cursor__collected"),
+        "the VM must execute the retargeted variant: {profile}"
+    );
+    assert!(
+        !profile.contains("Bytes.fromList"),
+        "the second pass over the collected list must be gone: {profile}"
+    );
+    assert!(
+        !profile.contains("Bytes.allInRange"),
+        "and the per-element validation walk with it: {profile}"
     );
 }
 

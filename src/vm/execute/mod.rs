@@ -65,6 +65,19 @@ pub struct VM {
     /// Slots [`Self::list_builder_pool`] has handed back, so allocating
     /// one is a pop rather than a scan for the first hole.
     list_builder_free: Vec<usize>,
+    /// Byte vectors for the byte-sink lowering's `__byt_*` intrinsics,
+    /// pooled exactly like [`Self::list_builder_pool`] and for the same
+    /// reason — a growing arena object threaded through a tail-recursive
+    /// loop is rewritten at every frame boundary. Simpler than the list
+    /// pool in one way: every payload is a `u8` and the recorded
+    /// offender is a host value, so nothing here ever carries an arena
+    /// index and there is no mid-build transition to the cons chain.
+    /// Pool exhaustion is the only fallback (the builder then travels
+    /// as the reversed cons chain and the finalizer validates it
+    /// natively).
+    byte_builder_pool: Vec<Option<VmByteBuilder>>,
+    /// Slots [`Self::byte_builder_pool`] has handed back.
+    byte_builder_free: Vec<usize>,
     /// How the compiler's static owned mask and the operand stack's own view of
     /// who holds a slot compared, over this VM's lifetime. Maintained where the
     /// answer has a reader — a debug build, where the same comparison is also an
@@ -76,6 +89,17 @@ pub struct VM {
     /// Maintained everywhere, release included: it is the receipt for a decision
     /// this VM took, not an observation somebody asked for.
     runtime_ownership: VmRuntimeOwnershipStats,
+}
+
+/// One pooled byte builder: the octets collected so far, and the first
+/// pushed element that was not one. `bad` is sticky — `Bytes.fromList`
+/// reports the FIRST offender, so once it is set the later pushes have
+/// nothing left to decide. The offender travels as a host
+/// [`aver_rt::AverInt`] copy, never an arena reference, which is what
+/// keeps this pool invisible to the collector by construction.
+struct VmByteBuilder {
+    bytes: Vec<u8>,
+    bad: Option<(aver_rt::AverInt, usize)>,
 }
 
 enum ReturnControl {
@@ -118,6 +142,8 @@ impl VM {
             buffer_pool: Vec::new(),
             list_builder_pool: Vec::new(),
             list_builder_free: Vec::new(),
+            byte_builder_pool: Vec::new(),
+            byte_builder_free: Vec::new(),
             step_limit: None,
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),

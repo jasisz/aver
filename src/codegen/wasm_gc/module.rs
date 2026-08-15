@@ -6307,7 +6307,10 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::StrFoldUpper
             | BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush
-            | BuiltinIntrinsic::LstFinalize => false,
+            | BuiltinIntrinsic::LstFinalize
+            | BuiltinIntrinsic::BytNew
+            | BuiltinIntrinsic::BytPush
+            | BuiltinIntrinsic::BytFinalize => false,
         }
     }
 

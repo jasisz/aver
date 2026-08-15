@@ -4691,6 +4691,27 @@ fn emit_mir_intrinsic_call(
             let builder = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::list_builder_finalize({})", builder))
         }
+        // Byte builder (byte-sink retarget). Same aver-rt routines the
+        // VM's opcodes mirror, so the two backends cannot answer
+        // differently — the finalizer IS `Bytes.fromList` over the
+        // pushed elements, error message included, and the synthesized
+        // AST around the call wraps its `Ok` into the `Bytes` record.
+        BuiltinIntrinsic::BytNew => {
+            let capacity = emit_mir_expr(&args[0], ctx)?;
+            Some(format!(
+                "aver_rt::byte_builder_new(({}).to_usize().unwrap_or(0))",
+                capacity
+            ))
+        }
+        BuiltinIntrinsic::BytPush => {
+            let builder = emit_mir_expr(&args[0], ctx)?;
+            let item = emit_mir_expr(&args[1], ctx)?;
+            Some(format!("aver_rt::byte_builder_push({}, {})", builder, item))
+        }
+        BuiltinIntrinsic::BytFinalize => {
+            let builder = emit_mir_expr(&args[0], ctx)?;
+            Some(format!("aver_rt::byte_builder_finalize({})", builder))
+        }
     }
 }
 

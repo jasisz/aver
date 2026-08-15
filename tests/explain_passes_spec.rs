@@ -789,3 +789,81 @@ fn main() -> Int
     assert_eq!(data["targets"][0], "rust");
     assert_eq!(data["targets"][1], "vm");
 }
+
+/// The byte-sink half of the same report. A collected loop whose only
+/// reader is the standard library's `fromList` is retargeted to the
+/// byte builder — and one whose result is read twice is turned down,
+/// with the reason a field rather than prose.
+#[test]
+fn list_build_pass_reports_the_byte_sink() {
+    let json = run_explain_passes(
+        r#"
+module ByteSink
+    intent = "one loop feeds fromList alone, another is also read directly"
+    depends []
+
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn both(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> both(n - 1, List.prepend(n, acc))
+
+fn main() -> Int
+    match fromList(collect(3, []))
+        Result.Ok(bytes) -> List.len(bytes.values)
+        Result.Err(message) -> 0 - List.len(both(3, [])) - match fromList(both(2, []))
+            Result.Ok(more) -> List.len(more.values)
+            Result.Err(other) -> 0
+"#,
+    );
+    let data = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "list_build")
+        .expect("list_build stage is reported")["data"]
+        .clone();
+    assert_eq!(data["byte_retargets"], 1);
+    assert_eq!(data["byte_fns"][0], "collect__collected");
+    assert_eq!(
+        data["byte_declined"]["both__collected"],
+        "another caller reads the collected list itself"
+    );
+}

@@ -468,6 +468,25 @@ pub enum BuiltinIntrinsic {
     /// appending in traversal order already produces the order
     /// prepend-then-reverse was reaching for.
     LstFinalize,
+    /// `__byt_new(<capacity>)` — `Int -> ByteBuilder`, a fresh byte
+    /// builder for a collected loop whose only reader is the standard
+    /// library's `Bytes.fromList`. The list-build pass's byte-sink
+    /// retarget emits it in place of `__lst_new` at the call site. The
+    /// capacity is a hint with no effect on the answer.
+    BytNew,
+    /// `__byt_push(<builder>, <elem>)` — `(ByteBuilder, Int) ->
+    /// ByteBuilder`, the builder with `elem` appended when it is in
+    /// `0..=255`, or with the first out-of-range element recorded so
+    /// the finalizer can report exactly what `Bytes.fromList` would
+    /// have: push order is the walk order `fromList` validates in.
+    BytPush,
+    /// `__byt_finalize(<builder>)` — `ByteBuilder -> Result<List<Int>,
+    /// String>`, what `Bytes.fromList` would answer for the pushed
+    /// elements: `Ok` of the collected list, or `Err` of the standard
+    /// library's own message about the first non-octet. The retarget
+    /// wraps the `Ok` list into the `Bytes` record in synthesized AST,
+    /// so no backend has to know the record's shape here.
+    BytFinalize,
 }
 
 impl BuiltinIntrinsic {
@@ -497,6 +516,9 @@ impl BuiltinIntrinsic {
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
             Self::LstFinalize => "__lst_finalize",
+            Self::BytNew => "__byt_new",
+            Self::BytPush => "__byt_push",
+            Self::BytFinalize => "__byt_finalize",
         }
     }
 
@@ -529,6 +551,9 @@ impl BuiltinIntrinsic {
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),
             "__lst_finalize" => Some(Self::LstFinalize),
+            "__byt_new" => Some(Self::BytNew),
+            "__byt_push" => Some(Self::BytPush),
+            "__byt_finalize" => Some(Self::BytFinalize),
             _ => None,
         }
     }
