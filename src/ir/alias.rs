@@ -26,9 +26,15 @@
 //! - **No escape (source half, `flag_escaping_collection_locals`).** Its
 //!   handle is not RETAINED by any other binding — not stored into an
 //!   aggregate (record / tuple / list / map value), not passed as a builtin
-//!   value-arg, not passed to a user fn that might return it, not renamed. The
+//!   value-arg, not passed to a user fn that might return it, not renamed, and
+//!   not put inside the subject of a match one of whose arms BINDS. The
 //!   receiver (arg 0) of a `Vector` / `Map` builtin and the self-keep fallback
 //!   are consuming moves, not escapes.
+//!
+//! Freshness is a claim about an AGGREGATE, never about its contents, so the
+//! two halves are asymmetric on purpose: the escape half runs over every
+//! value-producing position whether or not the value is fresh, and only the
+//! DESTINATION half is gated on freshness.
 //!
 //! Vector / Map PARAMS are always flagged here (a caller may hold the same
 //! entry); the MIR `own_param` pass later clears that bit interprocedurally
@@ -142,6 +148,22 @@ fn annotate_fn(fd: &mut FnDef) {
              resolver's per-statement slot table are misaligned",
             fd.name
         );
+    }
+
+    // Match-pattern binders. A binder slot is a container read spelled as a
+    // pattern: `Option.Some(v)`, `[h, ..t]`, `(a, b)`, or the bare-ident
+    // rename `v ->` all hand the arm body a handle INTO the subject's value.
+    // The two statement passes above never see those slots — they iterate
+    // `Stmt::Binding` only — so a binder used to read as "never shared" and
+    // the in-place fast path wrote through the stored entry (issue #953
+    // follow-up). Symmetric with the statement rule: a binder is judged by
+    // its subject, exactly as a binding is judged by its RHS — and by BOTH
+    // halves of it, the subject's freshness and what the subject retains.
+    for stmt in stmts {
+        let expr = match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+        };
+        flag_match_binder_slots(expr, &res.local_slot_types, &mut aliased);
     }
 
     // Re-stamp the resolution. `Arc` swap keeps the rest of the
@@ -316,7 +338,15 @@ fn flag_escaping_collection_locals(expr: &Expr, slot_types: &[Type], aliased: &m
             flag_escaping_collection_locals(&lhs.node, slot_types, aliased);
             flag_escaping_collection_locals(&rhs.node, slot_types, aliased);
         }
-        // The scrutinee is read/consumed; each arm tail becomes the value.
+        // The scrutinee is read/consumed and each arm tail becomes the value,
+        // so nothing of the subject escapes through the match's own VALUE —
+        // which is all this half is asked about here. What the subject
+        // RETAINS is the separate question a BINDER asks, because a binder is
+        // the only thing that hands the arm body a handle into the subject;
+        // [`flag_match_binder_slots`] runs this same walk over the subject
+        // exactly when an arm binds. Skipping the subject here and asking
+        // there is what keeps `keeper = match Map.get(m, k) { … }` from
+        // costing `m` anything the read never took.
         Expr::Match { subject: _, arms } => {
             for a in arms {
                 flag_escaping_collection_locals(&a.body.node, slot_types, aliased);
@@ -360,7 +390,166 @@ fn flag_escaping_collection_locals(expr: &Expr, slot_types: &[Type], aliased: &m
     }
 }
 
-fn type_is_compound(ty: &str) -> bool {
+/// Flag every binder slot a match pattern introduces, wherever the match sits
+/// in `expr`, unless the SUBJECT is provably fresh AND retains nothing.
+///
+/// A pattern binder is an extraction: `Option.Some(v)` hands the arm body the
+/// payload, `[h, ..t]` the head, `(a, b)` the components, and the bare-ident
+/// arm `v ->` the whole subject — every one of them a handle that may share an
+/// arena entry with whatever the subject was read out of. The same freshness
+/// judgment the statement pass applies to a binding RHS
+/// ([`rhs_is_fresh_collection`]) applies to the subject here; when it cannot
+/// prove the subject fresh, every binder slot in every arm is flagged. The
+/// slots come from `MatchArm::binding_slots` — the resolver's positional
+/// stamp (#949) — never from a name lookup; wildcard positions (`u16::MAX`)
+/// bind nothing and are skipped.
+///
+/// Every binder slot is flagged, not only the collection-typed ones: the
+/// consumers gate on collection receivers anyway, so a flag on an `Int`
+/// binder is inert, while skipping a slot whose type stamp is missing would
+/// be unsound.
+///
+/// ## The subject's RETENTION, and why it is two separate obligations
+///
+/// A binder is the only construct that hands the arm body a handle INTO the
+/// subject, so whenever an arm binds anything, the subject's retention has to
+/// be settled. It is settled once, by running the escape half
+/// ([`flag_escaping_collection_locals`]) over the subject into a scratch
+/// buffer, and the answer discharges two different duties:
+///
+/// - **What the subject retains is shared.** Every local in the buffer is
+///   merged into the table. A fresh aggregate still RETAINS what was put in
+///   it — `match {"k" => held} { mm -> mm }` hands `mm` a map that holds
+///   `held`, so an owned `Vector.set(held, …)` later in the fn would rewrite
+///   what `mm` reads back. The escape half used to run only when the subject
+///   was NOT provably fresh, which is exactly backwards: freshness is a claim
+///   about the aggregate, never about its contents (#953 round 3, probes
+///   b/c/d/e). This is the same asymmetry the statement pass already has —
+///   for `x = <rhs>` the escape half runs ALWAYS and only the DESTINATION
+///   half is gated on freshness.
+/// - **The binder itself is exempt only if there is nothing to share.** The
+///   exemption's argument is that a fresh subject cannot be reached from
+///   anywhere else — which covers the AGGREGATE and says nothing about what is
+///   inside it, so it is safe only for a binder that IS the whole aggregate.
+///   A destructuring binder over a fresh subject DOES occur — `Vector.set`
+///   counts as fresh and returns `Option<Vector<T>>`, which `Option.Some(w)`
+///   takes apart — and there the payload is the freshly built collection
+///   itself, so the exemption still holds for the shapes that exist today.
+///   It holds by what the whitelisted builders happen to return, though, not
+///   by the argument above: a future fresh builder whose payload is a handle
+///   into something older would break it. The condition below therefore has
+///   no runtime witness today and is a fence rather than a bug fix; it is
+///   here because the exemption is new in this change and the
+///   module's rule is that a slot clears only on positive proof of
+///   fresh-AND-non-escaping; a binder resting on freshness alone is the one
+///   place that rule was not being applied, and the day a pattern reaches
+///   inside a collection the exemption would be wrong rather than merely
+///   unproven.
+///
+/// `match Map.get(m, k) { … }` still costs `m` nothing: the escape half skips
+/// arg 0 of a `Vector` / `Map` builtin (a receiver is read, not retained), so
+/// the buffer is empty and only the binder — a genuine container read — is
+/// flagged, by the not-fresh half of the rule.
+fn flag_match_binder_slots(expr: &Spanned<Expr>, slot_types: &[Type], aliased: &mut [bool]) {
+    match &expr.node {
+        Expr::Match { subject, arms } => {
+            flag_match_binder_slots(subject, slot_types, aliased);
+            // Only a BINDER makes the subject's retention anyone's business,
+            // so a match that binds nothing pays for none of this.
+            let binds_anywhere = arms.iter().any(|a| {
+                a.binding_slots
+                    .get()
+                    .is_some_and(|slots| slots.iter().any(|&s| s != u16::MAX))
+            });
+            if binds_anywhere {
+                // What the subject's value still holds onto, computed into a
+                // scratch buffer so the same walk answers both duties above.
+                let mut retained = vec![false; aliased.len()];
+                flag_escaping_collection_locals(&subject.node, slot_types, &mut retained);
+                let retains_nothing = !retained.iter().any(|&r| r);
+                for (i, _) in retained.iter().enumerate().filter(|&(_, &r)| r) {
+                    if let Some(s) = aliased.get_mut(i) {
+                        *s = true;
+                    }
+                }
+                if !(retains_nothing && rhs_is_fresh_collection(subject)) {
+                    for slot in arms
+                        .iter()
+                        .filter_map(|a| a.binding_slots.get())
+                        .flatten()
+                        .copied()
+                        .filter(|&s| s != u16::MAX)
+                    {
+                        if let Some(s) = aliased.get_mut(slot as usize) {
+                            *s = true;
+                        }
+                    }
+                }
+            }
+            for arm in arms {
+                flag_match_binder_slots(&arm.body, slot_types, aliased);
+            }
+        }
+        Expr::FnCall(callee, args) => {
+            flag_match_binder_slots(callee, slot_types, aliased);
+            for a in args {
+                flag_match_binder_slots(a, slot_types, aliased);
+            }
+        }
+        Expr::TailCall(tc) => {
+            for a in &tc.args {
+                flag_match_binder_slots(a, slot_types, aliased);
+            }
+        }
+        Expr::Attr(inner, _) | Expr::Neg(inner) | Expr::ErrorProp(inner) => {
+            flag_match_binder_slots(inner, slot_types, aliased);
+        }
+        Expr::BinOp(_, lhs, rhs) => {
+            flag_match_binder_slots(lhs, slot_types, aliased);
+            flag_match_binder_slots(rhs, slot_types, aliased);
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload {
+                flag_match_binder_slots(p, slot_types, aliased);
+            }
+        }
+        Expr::Tuple(items) | Expr::List(items) | Expr::IndependentProduct(items, _) => {
+            for i in items {
+                flag_match_binder_slots(i, slot_types, aliased);
+            }
+        }
+        Expr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                flag_match_binder_slots(k, slot_types, aliased);
+                flag_match_binder_slots(v, slot_types, aliased);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                flag_match_binder_slots(e, slot_types, aliased);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            flag_match_binder_slots(base, slot_types, aliased);
+            for (_, e) in updates {
+                flag_match_binder_slots(e, slot_types, aliased);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let StrPart::Parsed(e) = p {
+                    flag_match_binder_slots(e, slot_types, aliased);
+                }
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
+}
+
+/// Shared with the wasm-gc MIR emitter's `mir_expr_is_fresh_collection`,
+/// which mirrors [`rhs_is_fresh_collection`]'s `Vector.new` rule for
+/// receiver positions — keep the two freshness tests deciding alike.
+pub(crate) fn type_is_compound(ty: &str) -> bool {
     let trimmed = ty.trim();
     trimmed.starts_with("Vector<")
         || trimmed.starts_with("Map<")
@@ -547,6 +736,112 @@ fn main() -> Int
             local_is_flagged(src, "main", "held"),
             "a fresh map whose handle was stored into a live tuple must stay \
              flagged — freshness does not survive an escape"
+        );
+    }
+
+    /// A fresh AGGREGATE spelled as a match subject still RETAINS what was put
+    /// in it.
+    ///
+    /// The escape half is deliberately not run on a match subject from the
+    /// statement pass — the arm tails become the value, so nothing of the
+    /// subject escapes through it — and the binder pass used to run it only
+    /// when the subject was NOT provably fresh. Between the two, `held` was
+    /// never asked about at all, and the `Vector.set` after it took the owned
+    /// in-place path straight through the map the binder is holding.
+    ///
+    /// Freshness answers for the map literal, never for `held` inside it, so
+    /// the retention walk runs whenever an arm BINDS, whatever the subject's
+    /// freshness says.
+    #[test]
+    fn a_fresh_match_subject_still_retains_the_local_it_holds() {
+        let src = r#"
+fn main() -> Int
+    held = Vector.fromList([1, 2])
+    keeper = match {"k" => held}
+        mm -> mm
+    Vector.len(Option.withDefault(Vector.set(held, 0, 5), Vector.fromList([]))) + Map.len(keeper)
+"#;
+        assert!(
+            local_is_flagged(src, "main", "held"),
+            "a local retained by a fresh match subject must be flagged — the \
+             binder hands the arm body a container that still holds it"
+        );
+    }
+
+    /// The binder's own exemption, which is the other half of the same
+    /// question.
+    ///
+    /// A binder over a provably-fresh subject is owned-eligible — nothing else
+    /// can reach a value nothing else has seen. But that argument only covers
+    /// the aggregate: a fresh subject that RETAINS a non-fresh local can hand a
+    /// binder that local itself, and then the arm writes through it. So the
+    /// exemption is `fresh AND retains nothing`.
+    ///
+    /// `mm` is read only in receiver position here (`Map.len`), which the
+    /// escape half treats as a consuming read — so the flag under test comes
+    /// from the binder rule alone and from nowhere else.
+    #[test]
+    fn a_binder_over_a_retaining_fresh_subject_is_not_exempt() {
+        let src = r#"
+fn main() -> Int
+    held = Vector.fromList([1, 2])
+    n = match {"k" => held}
+        mm -> Map.len(mm)
+    n + Vector.len(held)
+"#;
+        assert!(
+            local_is_flagged(src, "main", "mm"),
+            "a binder over a fresh subject that retains a local must stay \
+             flagged — the subject can hand the binder the retained local"
+        );
+    }
+
+    /// The same rule's other direction: a fresh subject that retains NOTHING
+    /// keeps its binders owned-eligible. This is what stops the retention walk
+    /// from being a blanket "every binder is aliased" and taking the in-place
+    /// path away from the shapes it was built for.
+    #[test]
+    fn a_binder_over_a_fresh_subject_that_retains_nothing_stays_owned() {
+        let src = r#"
+fn main() -> Int
+    n = match Vector.new(4, 0)
+        vv -> Vector.len(vv)
+    n
+"#;
+        assert!(
+            !local_is_flagged(src, "main", "vv"),
+            "a binder over a fresh subject holding nothing was flagged, so the \
+             owned fast path is gone from every match on a freshly built \
+             collection"
+        );
+    }
+
+    /// A container READ as a subject costs the container nothing.
+    ///
+    /// `Map.get(m, k)` reads `m` in receiver position, which is a consuming
+    /// read and not a retention, so the walk over the subject leaves `m`
+    /// owned-eligible. The BINDER is a different matter — it is a handle into
+    /// what the map holds — and it is flagged by the not-fresh half of the
+    /// rule, as it was before.
+    #[test]
+    fn a_match_on_a_container_read_costs_the_receiver_nothing() {
+        let src = r#"
+fn main() -> Int
+    m = Map.set({}, "k", 1)
+    n = match Map.get(m, "k")
+        Option.Some(v) -> v
+        Option.None -> 0
+    Map.len(Map.set(m, "z", 9)) + n
+"#;
+        assert!(
+            !local_is_flagged(src, "main", "m"),
+            "matching on `Map.get(m, k)` flagged `m`, so every read-then-write \
+             on a map now copies the whole map first"
+        );
+        assert!(
+            local_is_flagged(src, "main", "v"),
+            "the binder of a container read must stay flagged — it is a handle \
+             into what the map holds"
         );
     }
 }

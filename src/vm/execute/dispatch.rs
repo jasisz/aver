@@ -819,6 +819,22 @@ impl VM {
                         owned_mask |= 1;
                     }
 
+                    // The reverse direction, for vectors: a static grant on
+                    // `Vector.set` is a proposal the running program confirms
+                    // or revokes. The owned path would `mem::take` the
+                    // target's arena entry, and a container that still holds
+                    // that slot would read back an empty vector with nothing
+                    // failing loudly — so the fence declines in place and the
+                    // write copies whenever anything else holds the slot or
+                    // the walk is dearer than the copy.
+                    if owned_mask & 1 != 0
+                        && builtin == VmBuiltin::VectorSet
+                        && let Some(target) = args.first().copied()
+                        && !self.runtime_confirms_vector_grant(target)
+                    {
+                        owned_mask &= !1;
+                    }
+
                     if builtin.is_http_server() {
                         self.runtime.ensure_builtin_effects_allowed(
                             &self.code.symbols,
@@ -1872,7 +1888,8 @@ impl VM {
                 }
 
                 VECTOR_SET_OR_KEEP => {
-                    let vec_owned = read_u8!(code, ip) != 0;
+                    let static_grant = read_u8!(code, ip) != 0;
+                    let target_slot = read_u8!(code, ip) as usize;
                     let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -1883,6 +1900,20 @@ impl VM {
                         self.stack.push(vec);
                         continue;
                     };
+                    // The static bit is a PROPOSAL, exactly as it is on the
+                    // `CALL_BUILTIN_OWNED` spelling of the same write: the
+                    // owned branch below is the VM's only true in-place arena
+                    // write, and a container that still held this slot would
+                    // read the mutation back with nothing failing loudly. Ask
+                    // once the three operands are off the stack, so "no cell
+                    // holds this" and "the operand cell was the only holder"
+                    // are the same statement — the target's own local cell is
+                    // the single exception, and it is named rather than
+                    // guessed (`bp + target_slot`, the slot the opcode
+                    // carries). A revoked grant costs exactly the copy the
+                    // program made before the fusion existed.
+                    let vec_owned = static_grant
+                        && self.runtime_confirms_fused_vector_grant(vec, bp + target_slot);
                     if vec_owned && !vec.is_empty_vector_immediate() {
                         // Owned path: modify vector in-place at the same arena slot.
                         // No new allocation, no promotion needed.

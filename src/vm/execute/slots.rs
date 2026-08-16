@@ -129,9 +129,9 @@
 //!
 //! ## What the decision never sees
 //!
-//! Four blind spots, all of them shared with the cross-check, and every one
+//! Three blind spots, all of them shared with the cross-check, and every one
 //! still UNDERCOUNTS — a write the decision cannot see is a write that copies,
-//! which is what the program did before any of this existed. None of the four
+//! which is what the program did before any of this existed. None of the three
 //! can produce a wrong grant, and the one that could is the section above.
 //! What each one owes a later phase:
 //!
@@ -147,29 +147,37 @@
 //!   `CALL_VALUE` pops its arguments in the same place, so it is a call site to
 //!   add, not a predicate to design.
 //! - A DECLINED `Vector.set` never reaches this code at all. `mir` lowers it to
-//!   the dedicated `VECTOR_SET` opcode and only routes the owned spelling
-//!   through `CALL_BUILTIN_OWNED`. So this decision is a MAP decision, and the
-//!   vector half of the same payoff is untouched. P3 owes this the opcode's own
-//!   dispatch point, and owes it the `held_elsewhere` equivalent for vectors
-//!   first: nothing marks a vector today, because nothing takes one in place
-//!   through this route.
-//! - `VECTOR_SET_OR_KEEP`'s owned branch is not audited here, and the predicate
-//!   does not extend to it — which is why P2 does not touch it. That branch is
-//!   the VM's only true in-place arena write, and its grant is `vec_last_use ||
-//!   def_last_use`. In the fused shape the inner vector read compiles to
-//!   `LOAD_LOCAL` rather than `MOVE_LOCAL`, because `last_use` annotates the
-//!   textually-last read, which the fusion deletes. So the target's own local
-//!   cell is STILL LIVE at the write, and [`VM::slot_is_unheld`] would answer
-//!   HELD at the strongest grant in the VM. The trick that makes the builtin
-//!   check work — ask once the argument list has been popped — has no analogue
-//!   at a fused opcode that never builds one. P3 owes this a predicate of its
-//!   own that excludes the target's own cell, not another call site.
+//!   the dedicated `VECTOR_SET` opcode (which always copies) and only routes
+//!   the owned spelling through `CALL_BUILTIN_OWNED`. So the upgrade decision
+//!   is a MAP decision, and the vector half of that payoff is still owed to
+//!   P3. What the vector route DOES have now is the reverse direction:
+//!   [`VM::runtime_confirms_vector_grant`] verifies every STATIC vector grant
+//!   against the same two holder sets before `vec_set_nv_owned` is allowed to
+//!   `mem::take` the slot, because the match-binder hole showed a static grant
+//!   reaching a container-held vector and draining it silently. Vectors carry
+//!   the `held_elsewhere` record now (`ArenaEntry::Vector`), marked through
+//!   the same choke points as maps.
 //!
-//! The two vector items are pinned rather than asserted in prose:
+//! `VECTOR_SET_OR_KEEP`'s owned branch — the VM's only true in-place arena
+//! write — used to be the fourth item on that list, and it is not a blind spot
+//! any more. Its grant is `vec_last_use || def_last_use`, and the fusion
+//! deletes the textually-last read, so the target arrives through `LOAD_LOCAL`
+//! and its own local cell is still live at the write: [`VM::slot_is_unheld`]
+//! would answer HELD at the strongest grant in the VM, and the trick that makes
+//! the builtin check work — ask once the argument list has been popped — needs
+//! a correction rather than a call site. The correction is the target's slot,
+//! which the opcode now carries as a second operand, so
+//! [`VM::runtime_confirms_fused_vector_grant`] can exempt that one cell and
+//! nothing else. It shares the whole rest of the fence with the plain
+//! spelling: `held_elsewhere` first, then the [`WALK_SLACK`]-bounded walk, the
+//! same four counters, the same from-scratch re-derivation under debug
+//! assertions.
+//!
 //! `a_vector_fold_writes_nothing_the_cross_check_can_see` in
-//! `tests/vm_slot_uniqueness.rs` runs both vector spellings and expects all four
-//! tallies to stay at zero, so the day either one starts being observed, that
-//! test is what says the list above needs rewriting.
+//! `tests/vm_slot_uniqueness.rs` runs both vector spellings and reads the
+//! tallies back: the CROSS-CHECK still sees neither (it is a builtin-call
+//! instrument, and a declined `Vector.set` lowers to `VECTOR_SET`), while the
+//! vector ownership tallies now record the fused fold's grants.
 //!
 //! ## The way out
 //!
@@ -343,9 +351,20 @@ impl VM {
     /// built argument list — which is the point: an argument of an enclosing
     /// call is exactly the holder a per-frame view would miss.
     pub fn live_refs_to_slot(&self, index: u32) -> u32 {
+        self.stack_holders_excluding(index, None)
+    }
+
+    /// [`VM::live_refs_to_slot`] with at most one cell not counted — the
+    /// target's own local cell at a fused in-place write, see
+    /// [`VM::runtime_confirms_fused_vector_grant`]. `None` counts every cell,
+    /// which is what every other caller wants.
+    pub(super) fn stack_holders_excluding(&self, index: u32, exempt: Option<usize>) -> u32 {
         self.stack
             .iter()
-            .filter(|cell| cell.may_hold_heap_index() && cell.heap_index() == Some(index))
+            .enumerate()
+            .filter(|&(i, cell)| {
+                Some(i) != exempt && cell.may_hold_heap_index() && cell.heap_index() == Some(index)
+            })
             .count() as u32
     }
 
@@ -361,14 +380,19 @@ impl VM {
     /// An immediate answers `false`: it names no slot, so there is nothing to
     /// hold uniquely and nothing to mutate in place.
     pub fn slot_is_unheld(&self, value: NanValue) -> bool {
+        self.slot_is_unheld_excluding(value, None)
+    }
+
+    /// [`VM::slot_is_unheld`] with at most one cell not counted — see
+    /// [`VM::stack_holders_excluding`]. Still walks from the top down and
+    /// stops at the first holder that is not the exempt one.
+    pub(super) fn slot_is_unheld_excluding(&self, value: NanValue, exempt: Option<usize>) -> bool {
         let Some(index) = value.heap_index() else {
             return false;
         };
-        !self
-            .stack
-            .iter()
-            .rev()
-            .any(|cell| cell.may_hold_heap_index() && cell.heap_index() == Some(index))
+        !self.stack.iter().enumerate().rev().any(|(i, cell)| {
+            Some(i) != exempt && cell.may_hold_heap_index() && cell.heap_index() == Some(index)
+        })
     }
 
     /// Total live references the operand stack holds across every arena slot.
@@ -501,6 +525,18 @@ impl VM {
         self.runtime_ownership
     }
 
+    /// What the runtime decided about the vector writes the compiler GRANTED.
+    ///
+    /// The same four buckets as [`VM::runtime_ownership_stats`], read in the
+    /// opposite direction: `grants` is a static grant the fence confirmed, the
+    /// two `refused_*` buckets are static grants it revoked (the write copied
+    /// instead), and `unexamined_walk_too_costly` is a grant revoked without
+    /// looking because the walk would have cost more than the copy. Maintained
+    /// on every path, release included.
+    pub fn vector_ownership_stats(&self) -> VmRuntimeOwnershipStats {
+        self.vector_ownership
+    }
+
     /// Whether the owned path may have `target`, at a `Map.set` / `Map.remove`
     /// the compiler declined and whose arguments have just been popped.
     ///
@@ -548,13 +584,127 @@ impl VM {
             // `None` is the budget being spent, not an answer: the assert is
             // skipped explicitly and counted, rather than reading an audit
             // nobody performed as a clean bill.
-            self.nothing_else_holds_slot(target.arena_index()) != Some(false),
+            self.nothing_else_holds_slot(target.arena_index(), None) != Some(false),
             "Map builtin took its target in place on the runtime's word, but \
              slot {} is reachable from somewhere the decision did not look — \
              {} operand stack cell(s) hold it, and the search over globals, \
              chunk constants and arena entries found another holder",
             target.arena_index(),
             self.live_refs_to_slot(target.arena_index()),
+        );
+        true
+    }
+
+    /// Whether the owned path may KEEP `target`, at a `Vector.set` the
+    /// compiler granted statically and whose arguments have just been popped.
+    ///
+    /// The map decision above runs in the trusting direction: a static map
+    /// grant is a claim the compiler must get right, and the runtime only ever
+    /// ADDS grants to the declines. The vector route runs the other way. The
+    /// owned `Vector.set` (`vec_set_nv_owned`) empties the target's arena slot
+    /// with `mem::take`, and the match-binder hole showed a static grant
+    /// reaching a vector a container still held — the container read back an
+    /// empty vector and nothing failed loudly. So a static vector grant is a
+    /// PROPOSAL: it is confirmed against the same two holder sets the map
+    /// decision asks, in the same cost order — `held_elsewhere` first (one
+    /// arena read, answering for every holder the stack walk cannot see), then
+    /// the walk, bounded by [`WALK_SLACK`] over the vector's own length — and
+    /// revoked when either answers "held" or the walk would cost more than the
+    /// copy it was avoiding. A revoked grant costs exactly the copy the program
+    /// made before the grant existed; a wrong confirmation would be the silent
+    /// corruption this exists to stop, which is why the confirmed case is
+    /// re-derived from scratch under debug assertions, same as the map grant.
+    ///
+    /// Deliberately NOT behind the `AVER_NO_RUNTIME_MAP_OWNERSHIP` switch: that
+    /// switch turns an optimization off (declines stay declines, everything
+    /// copies — always safe). Turning THIS off would mean trusting the static
+    /// grant again, which is the unsound direction, and a safety switch must
+    /// not have an unsafe setting.
+    ///
+    /// ## The wrapper toll on non-fused chains — a decision, not an accident
+    ///
+    /// `Vector.set` returns `Option<Vector>`, and a `Some` over a heap value
+    /// allocates an `ArenaEntry::Boxed` holding it — so the owned set's OWN
+    /// return wrapper marks the fresh result `held_elsewhere` the moment it is
+    /// built. The box usually dies at the very next `UNWRAP_OR`, but the flag
+    /// is monotone and neither instrument can see that the box is dead, so
+    /// from the SECOND write of a chain spelled through the plain builtin the
+    /// fence revokes and the write copies. This is the conservative side of
+    /// the bargain and it is measured: the fused self-keep spelling
+    /// (`VECTOR_SET_OR_KEEP`) never comes through here and keeps its in-place
+    /// grant — that is the accumulator shape every measured workload uses —
+    /// and `a_second_owned_set_in_a_non_fused_chain_pays_the_wrapper_toll`
+    /// pins the revocation so a change in either direction is a recorded
+    /// decision. Buying the non-fused chain back needs a way to say "this
+    /// box's payload has exactly one live reader", which is the same
+    /// still-owed predicate the module doc records for the fused opcode.
+    #[inline]
+    pub(super) fn runtime_confirms_vector_grant(&mut self, target: NanValue) -> bool {
+        self.confirm_vector_grant(target, None)
+    }
+
+    /// The same fence for the FUSED spelling (`VECTOR_SET_OR_KEEP`'s owned
+    /// branch), which is the VM's only true in-place arena write.
+    ///
+    /// One difference, and it is the reason this needed a predicate of its own
+    /// rather than another call site. The fusion deletes the textually-last
+    /// read of the target — the `withDefault` default — so `last_use` lands on
+    /// an occurrence that is never compiled, the surviving read comes in
+    /// through `LOAD_LOCAL`, and the target's OWN local cell is therefore
+    /// still live when the write happens. Asking [`VM::slot_is_unheld`] here
+    /// would answer HELD at the strongest grant in the VM and revoke every
+    /// accumulator fold. `own_cell` — the operand-stack index `bp + slot` of
+    /// that cell, from the slot the opcode now carries — is excluded from both
+    /// the walk and the debug re-derivation, and NOTHING else is: a second
+    /// binding, a half-built argument, a container, a global and a chunk
+    /// constant all still revoke.
+    ///
+    /// What the exclusion costs the claim, stated plainly: the fence adds the
+    /// holder check the static grant never had, and it does NOT re-derive
+    /// `last_use`. Excluding the target's own cell is sound exactly because
+    /// the grant already says the slot is dead after the op — with the
+    /// destination being that same slot in the shape this exists for, so the
+    /// cell is overwritten by the op's own result. A wrong `last_use` is a
+    /// different bug in a different pass, and this fence does not claim it.
+    #[inline]
+    pub(super) fn runtime_confirms_fused_vector_grant(
+        &mut self,
+        target: NanValue,
+        own_cell: usize,
+    ) -> bool {
+        self.confirm_vector_grant(target, Some(own_cell))
+    }
+
+    /// Shared body of the two vector fences. `exempt` is the one operand-stack
+    /// cell that does not count as a holder, or `None` when every cell does.
+    fn confirm_vector_grant(&mut self, target: NanValue, exempt: Option<usize>) -> bool {
+        // An immediate (the empty vector) owns no slot: nothing to empty,
+        // nothing to corrupt, and the copying path is O(1) on it. Decline —
+        // the copying `Vector.set` answers identically.
+        let Some(slot) = self.arena.vector_slot(target) else {
+            return false;
+        };
+        if slot.held_elsewhere {
+            self.vector_ownership.refused_off_stack_holder += 1;
+            return false;
+        }
+        if self.stack.len() > slot.len + WALK_SLACK {
+            self.vector_ownership.unexamined_walk_too_costly += 1;
+            return false;
+        }
+        if !self.slot_is_unheld_excluding(target, exempt) {
+            self.vector_ownership.refused_stack_holder += 1;
+            return false;
+        }
+        self.vector_ownership.grants += 1;
+        debug_assert!(
+            self.nothing_else_holds_slot(target.arena_index(), exempt) != Some(false),
+            "Vector.set kept its static in-place grant on the runtime's word, \
+             but slot {} is reachable from somewhere the decision did not look \
+             — {} operand stack cell(s) hold it, and the search over globals, \
+             chunk constants and arena entries found another holder",
+            target.arena_index(),
+            self.stack_holders_excluding(target.arena_index(), exempt),
         );
         true
     }
@@ -608,8 +758,8 @@ impl VM {
     /// `tests/vm_map_runtime_ownership.rs` is what says the corpus is on the
     /// covered side of that line.
     #[cfg(debug_assertions)]
-    fn nothing_else_holds_slot(&self, index: u32) -> Option<bool> {
-        if self.live_refs_to_slot(index) > 0 {
+    fn nothing_else_holds_slot(&self, index: u32, exempt: Option<usize>) -> Option<bool> {
+        if self.stack_holders_excluding(index, exempt) > 0 {
             return Some(false);
         }
         if self.globals.iter().any(|v| v.heap_index() == Some(index)) {
@@ -638,7 +788,7 @@ impl VM {
     }
 
     #[cfg(not(debug_assertions))]
-    fn nothing_else_holds_slot(&self, _index: u32) -> Option<bool> {
+    fn nothing_else_holds_slot(&self, _index: u32, _exempt: Option<usize>) -> Option<bool> {
         None
     }
 }

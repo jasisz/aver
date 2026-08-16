@@ -333,11 +333,20 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Tuple(items)
             }
-            ArenaEntry::Vector(mut items) => {
+            ArenaEntry::Vector {
+                mut items,
+                held_elsewhere,
+            } => {
+                // `held_elsewhere` travels with the entry untouched — same
+                // argument as the map arm: a rewrite renames indices, it
+                // neither creates a reference nor discharges one.
                 for value in &mut items {
                     *value = rewrite(self, *value);
                 }
-                ArenaEntry::Vector(items)
+                ArenaEntry::Vector {
+                    items,
+                    held_elsewhere,
+                }
             }
             ArenaEntry::Map {
                 map,
@@ -1884,7 +1893,7 @@ impl<T: ArenaTypes> Arena<T> {
         // to young >= mark, skip the rewrite — move the entry as-is.
         // Only check types where the scan is cheap relative to the rewrite cost.
         match &entry {
-            ArenaEntry::Vector(items) | ArenaEntry::Tuple(items)
+            ArenaEntry::Vector { items, .. } | ArenaEntry::Tuple(items)
                 if !items.is_empty()
                     && !items
                         .iter()

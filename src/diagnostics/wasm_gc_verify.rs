@@ -175,7 +175,10 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     let mut type_aliases = std::collections::HashMap::new();
     if !dep_modules.is_empty() {
         type_aliases = crate::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
-        crate::ir::pipeline::resolve(&mut items);
+        // `_and_reannotate`: a bare post-flatten re-resolve wipes
+        // `aliased_slots` and the wasm-gc in-place fast path goes
+        // wrong (#950).
+        crate::ir::pipeline::resolve_and_reannotate(&mut items);
     }
 
     let bytes = crate::codegen::wasm_gc::compile_to_wasm_gc_flattened(

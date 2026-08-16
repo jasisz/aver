@@ -125,6 +125,19 @@ pub struct MapSlot {
     pub entries: usize,
 }
 
+/// What a caller deciding whether to mutate a vector's arena slot in place
+/// needs to know about it — the vector spelling of [`MapSlot`], for the
+/// vector spelling of the same decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VectorSlot {
+    /// Whether anything but the handle in the caller's hand holds this slot —
+    /// another arena entry, or a root the consumer registered through
+    /// [`Arena::note_held_elsewhere`].
+    pub held_elsewhere: bool,
+    /// How many elements a copy would move.
+    pub len: usize,
+}
+
 /// Whether `entry` holds `index` directly, read out of the entry itself.
 ///
 /// The searched answer behind [`Arena::any_entry_holds_slot`], and deliberately
@@ -140,7 +153,7 @@ pub fn entry_holds_slot<T: ArenaTypes>(entry: &ArenaEntry<T>, index: u32) -> boo
     let holds = |value: &NanValue| value.heap_index() == Some(index);
     match entry {
         ArenaEntry::Boxed(value) => holds(value),
-        ArenaEntry::Tuple(items) | ArenaEntry::Vector(items) => items.iter().any(holds),
+        ArenaEntry::Tuple(items) | ArenaEntry::Vector { items, .. } => items.iter().any(holds),
         ArenaEntry::Record { fields, .. } | ArenaEntry::Variant { fields, .. } => {
             fields.iter().any(holds)
         }
@@ -1394,6 +1407,11 @@ pub struct Arena<T: ArenaTypes> {
     /// because an index that stopped being reachable does not make the question
     /// cheaper to answer, and a stale `true` only costs the pass.
     holds_any_map: bool,
+    /// Whether this arena has ever stored a heap-backed vector — the vector
+    /// spelling of `holds_any_map`, with the same monotonicity and the same
+    /// job: no vector entry means no value here can carry a vector's index,
+    /// so the per-push marking pass has nothing to find.
+    holds_any_vector: bool,
     /// Which out-of-region slots the descent above has already rewritten, one
     /// stamp array per heap space, indexed by raw arena index.
     ///
@@ -1516,7 +1534,17 @@ pub enum ArenaEntry<T: ArenaTypes> {
         /// arena has just built and not yet handed to anybody.
         held_elsewhere: bool,
     },
-    Vector(Vec<NanValue>),
+    Vector {
+        items: Vec<NanValue>,
+        /// The vector spelling of [`ArenaEntry::Map::held_elsewhere`] — see
+        /// that field for the full contract; the marking choke points
+        /// ([`Arena::note_held_elsewhere`] and everything that funnels into
+        /// it) cover heap vectors and heap maps alike. It exists for the
+        /// interpreter's runtime fence on the owned `Vector.set`, which
+        /// empties the slot it takes from (`Arena::take_vector_value`) and
+        /// may only do so when no off-stack holder is left to read it.
+        held_elsewhere: bool,
+    },
     Record {
         type_id: u32,
         fields: Vec<NanValue>,
@@ -1569,21 +1597,21 @@ pub enum ArenaSymbol<T: ArenaTypes> {
 pub struct ListBody {
     items: Vec<NanValue>,
     all_immediate: bool,
-    holds_map: bool,
+    holds_collection: bool,
 }
 
 impl ListBody {
     pub fn new(items: Vec<NanValue>) -> Self {
         let mut all_immediate = true;
-        let mut holds_map = false;
+        let mut holds_collection = false;
         for value in &items {
             all_immediate &= value.is_immediate();
-            holds_map |= value.is_map() && !value.is_immediate();
+            holds_collection |= (value.is_map() || value.is_vector()) && !value.is_immediate();
         }
         Self {
             items,
             all_immediate,
-            holds_map,
+            holds_collection,
         }
     }
 
@@ -1594,17 +1622,19 @@ impl ListBody {
         self.all_immediate
     }
 
-    /// Whether any element is a heap-backed map, so pushing an entry over this
-    /// body puts a second holder on a map slot.
+    /// Whether any element is a heap-backed map or vector, so pushing an entry
+    /// over this body puts a second holder on a slot the owned in-place write
+    /// path could otherwise empty.
     ///
     /// Decided in the same pass as `all_immediate` and for the same reason: a
     /// body is immutable once built, and a body a collection views at an
     /// advanced offset is the SAME body — `List.drop` re-pushes the `Rc` rather
     /// than copying it. Reading the flag is what keeps that push `O(1)` instead
-    /// of a walk over elements that are never maps.
+    /// of a walk over elements that are never collections. Was `holds_map`
+    /// until the vector fence needed the same record for vector slots.
     #[inline]
-    pub fn holds_map(&self) -> bool {
-        self.holds_map
+    pub fn holds_collection(&self) -> bool {
+        self.holds_collection
     }
 }
 

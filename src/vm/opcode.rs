@@ -737,11 +737,18 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
         | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
-        | TAIL_CALL_SELF_THIN | VECTOR_SET_OR_KEEP => 1,
+        | TAIL_CALL_SELF_THIN => 1,
 
         // 2-byte (u16 or u8+u8)
         LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL
         | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR => 2,
+
+        // owned:u8 + target_slot:u8. The slot is the target's own local cell,
+        // which the runtime fence must exempt: the fusion deletes the
+        // textually-last read, so the target comes in through `LOAD_LOCAL` and
+        // its own cell is still live at the write. See
+        // `VM::runtime_confirms_fused_vector_grant`.
+        VECTOR_SET_OR_KEEP => 2,
 
         // 3-byte
         CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW

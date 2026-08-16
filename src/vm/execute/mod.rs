@@ -89,6 +89,11 @@ pub struct VM {
     /// Maintained everywhere, release included: it is the receipt for a decision
     /// this VM took, not an observation somebody asked for.
     runtime_ownership: VmRuntimeOwnershipStats,
+    /// What the runtime decided about the vector writes the compiler GRANTED —
+    /// the same buckets read in the revocation direction (see
+    /// [`VM::vector_ownership_stats`]). Maintained everywhere, release
+    /// included, for the same reason as `runtime_ownership`.
+    vector_ownership: VmRuntimeOwnershipStats,
 }
 
 /// One pooled byte builder: the octets collected so far, and the first
@@ -147,6 +152,7 @@ impl VM {
             step_limit: None,
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),
+            vector_ownership: VmRuntimeOwnershipStats::default(),
         }
     }
 
@@ -170,9 +176,15 @@ impl VM {
     pub fn profile_report(&self) -> Option<VmProfileReport> {
         let slot_uniqueness = self.slot_uniqueness;
         let runtime_ownership = self.runtime_ownership;
-        self.profile
-            .as_ref()
-            .map(|profile| profile.report(&self.code, slot_uniqueness, runtime_ownership))
+        let vector_ownership = self.vector_ownership;
+        self.profile.as_ref().map(|profile| {
+            profile.report(
+                &self.code,
+                slot_uniqueness,
+                runtime_ownership,
+                vector_ownership,
+            )
+        })
     }
 
     pub fn profile_top_bigrams(&self, n: usize) -> Vec<((u8, u8), u64)> {

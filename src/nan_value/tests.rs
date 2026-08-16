@@ -199,9 +199,10 @@ fn the_cheap_heap_reference_filter_turns_nothing_heap_backed_away() {
     cases.push(NanValue::new_tuple(
         arena.push_tuple(vec![NanValue::UNIT, NanValue::TRUE]),
     ));
-    cases.push(NanValue::new_vector(
-        arena.push(ArenaEntry::Vector(vec![NanValue::UNIT])),
-    ));
+    cases.push(NanValue::new_vector(arena.push(ArenaEntry::Vector {
+        items: vec![NanValue::UNIT],
+        held_elsewhere: false,
+    })));
     cases.push(NanValue::new_list(arena.push(ArenaEntry::List(
         ArenaList::Flat {
             items: std::sync::Arc::new(crate::nan_value::ListBody::new(vec![NanValue::TRUE])),

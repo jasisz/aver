@@ -1524,12 +1524,21 @@ fn try_emit_vector_compound(
             // owned-param refinement (`own_param.rs`) is what proves a
             // threaded `Vector`/`Map` param non-aliased, and only then
             // does the in-place set fire — keeping the guard load-bearing.
+            //
+            // Like the `CALL_BUILTIN_OWNED` spelling, the bit is a PROPOSAL
+            // the running program confirms or revokes
+            // (`VM::runtime_confirms_fused_vector_grant`), so the target's
+            // slot travels with it: the fusion deletes the textually-last
+            // read, the target therefore arrives through `LOAD_LOCAL`, and
+            // the fence has to know which cell is the target's own before it
+            // can tell that cell from a real alias.
             let owned = (vec_last_use || def_last_use) && !fc.is_aliased_slot(vec_slot as u16);
             compile_mir_expr(fc, &inner_args[0])?;
             compile_mir_expr(fc, &inner_args[1])?;
             compile_mir_expr(fc, &inner_args[2])?;
             fc.emit_op(VECTOR_SET_OR_KEEP);
             fc.emit_u8(u8::from(owned));
+            fc.emit_u8(vec_slot as u8);
             Ok(true)
         }
         Some(VmBuiltin::VectorGet) if inner_args.len() == 2 => {

@@ -94,7 +94,9 @@ pub fn compile_project_to_wasm(
         .collect();
 
     let type_aliases = codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
-    crate::ir::pipeline::resolve(&mut entry_items);
+    // `_and_reannotate`: a bare post-flatten re-resolve wipes
+    // `aliased_slots` and the wasm-gc in-place fast path goes wrong (#950).
+    crate::ir::pipeline::resolve_and_reannotate(&mut entry_items);
     codegen::wasm_gc::compile_to_wasm_gc_flattened(
         &entry_items,
         pipeline_result.analysis.as_ref(),
@@ -158,7 +160,8 @@ pub fn compile_project_to_wasm_with_entry(
         .map(|m| loaded_to_module_info(m, false))
         .collect();
     let type_aliases = codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
-    crate::ir::pipeline::resolve(&mut entry_items);
+    // `_and_reannotate`: same #950 wipe-guard as the compile path above.
+    crate::ir::pipeline::resolve_and_reannotate(&mut entry_items);
     let bytes = codegen::wasm_gc::compile_to_wasm_gc_flattened(
         &entry_items,
         pipeline_result.analysis.as_ref(),

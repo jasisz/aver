@@ -1444,6 +1444,16 @@ pub(super) fn cmd_run_vm(
             "  refused, something off the stack holds it:{} not examined, walk dearer than the copy:{}",
             owned.refused_off_stack_holder, owned.unexamined_walk_too_costly
         );
+        let fence = &report.vector_ownership;
+        eprintln!("\nVector writes the compiler granted, confirmed at run time:");
+        eprintln!(
+            "  kept in place:{} revoked, a stack cell holds it:{}",
+            fence.grants, fence.refused_stack_holder
+        );
+        eprintln!(
+            "  revoked, something off the stack holds it:{} revoked unexamined, walk dearer than the copy:{}",
+            fence.refused_off_stack_holder, fence.unexamined_walk_too_costly
+        );
         // The mirror that re-derives every grant from scratch is budgeted, and a
         // spent budget is a smaller claim, not a clean one — so it says so. Only
         // a build with debug assertions runs the mirror at all, which is why a
@@ -5262,8 +5272,11 @@ fn cmd_compile_wasm_gc(
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
-    // above; this picks up the newly appended dep FnDefs.
-    aver::ir::pipeline::resolve(&mut items);
+    // above; this picks up the newly appended dep FnDefs. The
+    // `_and_reannotate` half is load-bearing: a bare re-resolve wipes
+    // `aliased_slots` and the wasm-gc in-place fast path then mutates
+    // container-held collections through extracted locals (#950).
+    aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
     let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened(
         &items,
@@ -5512,7 +5525,9 @@ fn cmd_compile_wasip2(
         // directly — `wasip2` enables `wasm-compile` (which exposes
         // it) but does not pull `wasm`.
         let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
-        aver::ir::pipeline::resolve(&mut items);
+        // `_and_reannotate`: same #950 wipe-guard as the wasm-gc
+        // compile path — a bare re-resolve wipes `aliased_slots`.
+        aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
         // Phase 1.6 — static effect-set check. Catches every Aver
         // effect that `--target wasip2` cannot lower today, BEFORE

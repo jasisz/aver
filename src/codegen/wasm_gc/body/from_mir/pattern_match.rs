@@ -260,8 +260,38 @@ pub(crate) fn emit_mir_match(
                 Ok(None)
             }
         }
-        // Non-primitive subjects (sum/record/etc.) fall back.
-        _ => Ok(None),
+        // Non-primitive subjects. The irrefutable single-arm binder
+        // `match subj { v -> body }` is a rename: store the subject into
+        // the binder's slot and emit the body — no tag to test, no branch
+        // block, so the body inherits `result_raw` directly, like
+        // `emit_mir_tuple_match`. This shape used to fall through to the
+        // trap stub, which made a bare-ident binder over a `Vector` a
+        // trapping program (#953 follow-up). Scoped to non-primitive
+        // subjects: their locals are always refs, so the `LocalSet` type
+        // matches; a primitive binder would have to reckon with per-slot
+        // int unboxing and keeps its (loud) trap-stub fallback.
+        _ => {
+            if m.arms.len() == 1
+                && let MirPattern::Bind(slot, _) = &m.arms[0].pattern
+            {
+                if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                if slot.0 == u32::from(u16::MAX) {
+                    // A wildcard-position binder binds nothing; the
+                    // subject was emitted for its effects only.
+                    func.instruction(&Instruction::Drop);
+                } else {
+                    func.instruction(&Instruction::LocalSet(slot.0));
+                }
+                ctx.int_result_raw.set(result_raw);
+                let Some(body_produces) = emit_mir_expr(func, &m.arms[0].body, slots, ctx)? else {
+                    return Ok(None);
+                };
+                return Ok(Some(body_produces));
+            }
+            Ok(None)
+        }
     }
 }
 
