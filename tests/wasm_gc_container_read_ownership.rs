@@ -524,6 +524,326 @@ fn main() -> Unit
     );
 }
 
+// ── A FRESH subject still RETAINS what was put in it ──────────────
+//
+// The row above reads a value OUT of a container. This one puts a
+// value IN, spells the aggregate as a match subject, and pokes the
+// local afterwards. The escape half used to skip a match's subject
+// entirely — the arm tails become the value, so nothing of the subject
+// escapes through it — and the binder pass ran that half over the
+// subject only when the subject was NOT provably fresh. Both halves of
+// that were the same mistake: freshness is a claim about the
+// AGGREGATE, never about its contents, so `held` stayed owned-eligible
+// and the poke wrote into the map the binder was still holding. Every
+// cell here answered 10000 on wasm-gc (write-through: 5000 read back
+// where `x` was stored, plus the 5000 poked in), and the nested-map
+// cell tripped the VM's own debug audit.
+
+#[test]
+fn map_literal_match_subject_retains_the_local_it_holds() {
+    assert_cell(
+        "own-c17",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Fresh map-literal subject retains held; the binder keeps a handle, then held is poked."
+    held = Vector.fromList([x, x + 2])
+    keeper = match {"k" => held}
+        mm -> mm
+    poked = Option.withDefault(Vector.set(held, 0, 5000), Vector.fromList([0, 0]))
+    back = Option.withDefault(Map.get(keeper, "k"), Vector.fromList([]))
+    stored = Option.withDefault(Vector.get(back, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn from_list_match_subject_retains_its_element() {
+    assert_cell(
+        "own-c18",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Fresh Vector.fromList subject retains held through its element; held is then poked."
+    held = Vector.fromList([x, x + 2])
+    carrier = match Vector.fromList([held])
+        c -> c
+    poked = Option.withDefault(Vector.set(held, 0, 5000), Vector.fromList([0, 0]))
+    inner = Option.withDefault(Vector.get(carrier, 0), Vector.fromList([]))
+    stored = Option.withDefault(Vector.get(inner, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn map_set_match_subject_retains_its_value() {
+    assert_cell(
+        "own-c19",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Fresh Map.set subject retains held as its value; held is then poked."
+    held = Vector.fromList([x, x + 2])
+    keeper = match Map.set({}, "k", held)
+        mm -> mm
+    poked = Option.withDefault(Vector.set(held, 0, 5000), Vector.fromList([0, 0]))
+    back = Option.withDefault(Map.get(keeper, "k"), Vector.fromList([]))
+    stored = Option.withDefault(Vector.get(back, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn nested_map_literal_match_subject_retains_the_inner_map() {
+    assert_cell(
+        "own-c20",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Map spelling: fresh map-literal subject retains inner; inner is then Map.set."
+    inner = Map.set({}, "a", x)
+    keeper = match {"in" => inner}
+        mm -> mm
+    poked = Map.set(inner, "a", 5000)
+    back = Option.withDefault(Map.get(keeper, "in"), {})
+    stored = Option.withDefault(Map.get(back, "a"), 0 - 1)
+    fresh = Option.withDefault(Map.get(poked, "a"), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+/// The same retention, poked through the FUSED self-keep set — the
+/// `VECTOR_SET_OR_KEEP` opcode, which is the VM's only true in-place
+/// arena write. Its static grant used to reach the arena with neither
+/// the runtime fence nor the debug audit in front of it, so the VM
+/// printed 10000 here while wasm-gc printed the right answer: the one
+/// cell in this file whose original failure was the VM's alone.
+#[test]
+fn map_literal_match_subject_retention_survives_the_fused_self_keep_set() {
+    assert_cell(
+        "own-c21",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Fresh map-literal subject retains held; held is poked through the fused self-keep set."
+    held = Vector.fromList([x, x + 2])
+    keeper = match {"k" => held}
+        mm -> mm
+    poked = Option.withDefault(Vector.set(held, 0, 5000), held)
+    back = Option.withDefault(Map.get(keeper, "k"), Vector.fromList([]))
+    stored = Option.withDefault(Vector.get(back, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+// ── A fresh receiver is EARNED, not free ──────────────────────────
+//
+// The owned wasm-gc `Vector.set` emitted its receiver three times —
+// once for the bounds check, once as the `array.set` target, once as
+// the `Some` payload. Free for a local; for the other owned-eligible
+// receiver, a provably-fresh non-local, each emission BUILT ANOTHER
+// ARRAY, so the write landed on build #2 and the answer came back out
+// of the untouched build #3.
+
+/// `x + 5000` written into a fresh receiver, read straight back:
+/// 7011/7003 everywhere, and 2011/2003 on wasm-gc when the write goes
+/// to an array nobody reads.
+#[test]
+fn inline_fresh_receiver_set_is_read_back_from_the_array_it_wrote() {
+    assert_cell(
+        "own-c22",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Vector.set straight on an inline fresh Vector.fromList receiver."
+    poked = Option.withDefault(Vector.set(Vector.fromList([x, 9]), 0, x + 5000), Vector.fromList([]))
+    Option.withDefault(Vector.get(poked, 0), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+/// Chained: the receiver is itself an owned `Vector.set` result. Both
+/// writes have to land in the one array the result names — cell 1 keeps
+/// the 7 the inner set wrote, cell 0 the `x + 5000` the outer one did,
+/// so the sum moves if either build is duplicated.
+#[test]
+fn chained_fresh_receiver_sets_land_in_one_array() {
+    assert_cell(
+        "own-c23",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Chained fresh receiver: Vector.set of a Vector.set result, one build only."
+    poked = Option.withDefault(Vector.set(Option.withDefault(Vector.set(Vector.fromList([x, 9]), 1, 7), Vector.fromList([0, 0])), 0, x + 5000), Vector.fromList([0, 0]))
+    a = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    b = Option.withDefault(Vector.get(poked, 1), 0 - 1)
+    a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        "7018\n7010",
+    );
+}
+
+// ── One scratch local per Vector<T>, and a re-entrant emitter ─────
+//
+// Holding the receiver in the per-type scratch local is what stops the
+// rebuild above, and it puts the owned path on a local the emitter can
+// re-enter: every operand it re-emits may itself be a `Vector.set` of
+// the SAME `Vector<T>`, which stores into that same local. The three
+// emitters therefore share one rule — emit everything that can
+// re-enter, then store, then read — and these cells are the ones that
+// notice when a read drifts back behind a re-emission. Each index below
+// is written as `Vector.len(<a nested set of the same type>) - 2`, so
+// the nested set is emitted at every point the outer one re-emits its
+// index.
+
+/// Owned receiver, nested owned set in the index. Cell 0 carries the
+/// write and cell 1 the untouched 9; reading the nested set's array
+/// instead answers 2 for cell 1.
+#[test]
+fn owned_receiver_survives_a_nested_set_in_its_index() {
+    assert_cell(
+        "own-c24",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Owned fresh receiver whose index rebuilds a nested same-type set."
+    poked = Option.withDefault(Vector.set(Vector.fromList([x, 9]), Vector.len(Option.withDefault(Vector.set(Vector.fromList([1, 2]), 0, 7), Vector.fromList([]))) - 2, x + 5000), Vector.fromList([]))
+    a = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    b = Option.withDefault(Vector.get(poked, 1), 0 - 1)
+    a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        "7020\n7012",
+    );
+}
+
+/// The clone-on-write half of the same question: a shared receiver, so
+/// the set copies, and the nested set in the index lands in the local
+/// between the copy and the `Some` that has to wrap it.
+#[test]
+fn cloned_receiver_survives_a_nested_set_in_its_index() {
+    assert_cell(
+        "own-c25",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Clone-on-write set whose index rebuilds a nested same-type set."
+    stash = {"k" => Vector.fromList([x, 9])}
+    held = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    poked = Option.withDefault(Vector.set(held, Vector.len(Option.withDefault(Vector.set(Vector.fromList([1, 2]), 0, 7), Vector.fromList([]))) - 2, x + 5000), Vector.fromList([]))
+    a = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    b = Option.withDefault(Vector.get(poked, 1), 0 - 1)
+    a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        "7020\n7012",
+    );
+}
+
+/// And the FUSED self-keep spelling, which reaches the third emitter:
+/// its clone-on-write branch read the local back twice after the index
+/// had been re-emitted, once for the write target and once for the
+/// result.
+#[test]
+fn fused_self_keep_set_survives_a_nested_set_in_its_index() {
+    assert_cell(
+        "own-c26",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Fused self-keep set on a shared receiver whose index rebuilds a nested same-type set."
+    stash = {"k" => Vector.fromList([x, 9])}
+    held = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    poked = Option.withDefault(Vector.set(held, Vector.len(Option.withDefault(Vector.set(Vector.fromList([1, 2]), 0, 7), Vector.fromList([]))) - 2, x + 5000), held)
+    a = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    b = Option.withDefault(Vector.get(poked, 1), 0 - 1)
+    a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        "7020\n7012",
+    );
+}
+
+/// The fused self-keep set with the index OUT of bounds, which is the
+/// branch the restructure changed: it now hands back the receiver
+/// itself rather than an identical copy of it, and allocates nothing.
+/// The answer must not move — `poked` is `held`, unchanged.
+#[test]
+fn fused_self_keep_set_out_of_bounds_keeps_the_receiver() {
+    assert_cell(
+        "own-c27",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Fused self-keep set past the end keeps the receiver unchanged."
+    stash = {"k" => Vector.fromList([x, 9])}
+    held = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    poked = Option.withDefault(Vector.set(held, 7, 5000), held)
+    a = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    b = Option.withDefault(Vector.get(poked, 1), 0 - 1)
+    back = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    a + b + Option.withDefault(Vector.get(back, 0), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        "4031\n4015",
+    );
+}
+
 // ── Emitted-code pin: the conservative default did not swallow the
 //    fresh-local fast path ─────────────────────────────────────────
 

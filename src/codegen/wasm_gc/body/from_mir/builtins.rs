@@ -731,6 +731,13 @@ fn emit_mir_vector_set_or_default(
 
     // Fast path: dead, non-aliased binding → mutate the engine array in
     // place and return the same handle. No scratch, no allocation.
+    //
+    // Re-emitting `vector` three times is free HERE and nowhere else: the
+    // call-site guard above only reaches this emitter when the receiver and
+    // the `withDefault` default are the same `MirExpr::Local`, so every
+    // emission is one `local.get` of one cell. (The boxed spelling,
+    // `emit_mir_vector_set_boxed`, has no such guard — its receiver can be a
+    // provably-fresh non-local, and re-emitting THAT builds another array.)
     if mir_arg_uniquely_owned(vector, ctx) {
         idx_nonneg!();
         idx_i32!();
@@ -761,12 +768,38 @@ fn emit_mir_vector_set_or_default(
                  (slot-pre-pass missed this site)"
             ))
         })?;
+    let vec_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(vec_idx),
+    });
+
+    // The bounds test runs BEFORE the copy, and the whole clone lives inside
+    // the taken branch. Out of bounds this fusion's answer is the default,
+    // which the call-site guard proved is the receiver itself, so the else
+    // branch hands back the original instead of an identical copy of it —
+    // the same value, and no allocation at all on the miss.
+    //
+    // Scratch discipline, the same one `emit_mir_vector_set_boxed` states in
+    // full: there is ONE scratch local per `Vector<T>` per fn and this
+    // emitter is re-entrant, so every read of `scratch` happens before any
+    // operand that could contain another `Vector.set` of the same type is
+    // re-emitted. Both reads — the result and the `array.set` target — are
+    // therefore pushed before the index is re-emitted and before `value` is.
+    // The index used to be emitted between the store and the reads, so an
+    // index like `Vector.len(Option.withDefault(Vector.set(…), …))` handed
+    // back the array the NESTED set had left in the local.
+    idx_nonneg!();
+    idx_i32!();
+    e!(vector);
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::I32LtU);
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(vec_ref)));
 
     e!(vector);
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::ArrayNewDefault(vec_idx));
     func.instruction(&Instruction::LocalSet(scratch));
-
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::I32Const(0));
     e!(vector);
@@ -777,21 +810,15 @@ fn emit_mir_vector_set_or_default(
         array_type_index_dst: vec_idx,
         array_type_index_src: vec_idx,
     });
-
-    idx_nonneg!();
-    idx_i32!();
     func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::ArrayLen);
-    func.instruction(&Instruction::I32LtU);
-    func.instruction(&Instruction::I32And);
-    func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     func.instruction(&Instruction::LocalGet(scratch));
     idx_i32!();
     e!(value);
     func.instruction(&Instruction::ArraySet(vec_idx));
-    func.instruction(&Instruction::End);
 
-    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::Else);
+    e!(vector);
+    func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }
 
@@ -2078,31 +2105,6 @@ pub(crate) fn emit_mir_vector_set_boxed(
             }
         };
     }
-    if mir_arg_uniquely_owned(vector, ctx) {
-        idx_nonneg!();
-        idx_i32!();
-        e!(vector);
-        func.instruction(&Instruction::ArrayLen);
-        func.instruction(&Instruction::I32LtU);
-        func.instruction(&Instruction::I32And);
-        func.instruction(&Instruction::If(block_ty));
-        e!(vector);
-        idx_i32!();
-        e!(value);
-        func.instruction(&Instruction::ArraySet(vec_idx));
-        func.instruction(&Instruction::I32Const(1));
-        e!(vector);
-        func.instruction(&Instruction::StructNew(opt_idx));
-        func.instruction(&Instruction::Else);
-        func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-            vec_idx,
-        )));
-        func.instruction(&Instruction::StructNew(opt_idx));
-        func.instruction(&Instruction::End);
-        return Ok(MirBuiltinEmit::Produced(true));
-    }
-
     let scratch = slots
         .vector_set_scratch
         .get(&canonical)
@@ -2113,6 +2115,61 @@ pub(crate) fn emit_mir_vector_set_boxed(
                  (slot-pre-pass missed this site)"
             ))
         })?;
+    if mir_arg_uniquely_owned(vector, ctx) {
+        // The receiver is emitted ONCE, into the scratch local, and read back
+        // from there at all three sites. Re-emitting it is only free for a
+        // LOCAL; a non-local receiver is owned-eligible when it is a provably
+        // FRESH collection, and re-emitting a fresh collection BUILDS ANOTHER
+        // ONE. Three emissions then meant three different arrays: the bounds
+        // check measured the first, `array.set` wrote the second, and the
+        // `Some` wrapped the third — so
+        // `Vector.set(Vector.fromList([x, 9]), 0, x + 5000)` answered `x`
+        // where every other backend answered `x + 5000` (#953 round 3, probe
+        // h). Freshness earns the write, it does not make the value free.
+        //
+        // ## Scratch discipline: every read of it before any re-emission
+        //
+        // There is ONE scratch local per `Vector<T>` per fn, and the emitter
+        // is re-entrant: an operand re-emitted here can be another
+        // `Vector.set` of the same `Vector<T>`, which stores into that same
+        // local. So the whole body obeys one rule — emit everything that can
+        // re-enter, THEN store, THEN read, and let the tail re-emissions
+        // clobber a local nothing will read again:
+        //
+        // - the index goes first, before the store. It is emitted up to three
+        //   times (non-negative test, bounds test, `array.set` operand), and
+        //   a nested set inside it would otherwise overwrite the receiver
+        //   between the store and the first read;
+        // - the `Some` is built BEFORE the write, so both remaining reads of
+        //   `scratch` — the payload and the `array.set` target — happen
+        //   before the index is re-emitted and before `value` is. It still
+        //   observes the mutation: the struct holds the array by reference.
+        idx_nonneg!();
+        idx_i32!();
+        e!(vector);
+        func.instruction(&Instruction::LocalSet(scratch));
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::ArrayLen);
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(block_ty));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::StructNew(opt_idx));
+        func.instruction(&Instruction::LocalGet(scratch));
+        idx_i32!();
+        e!(value);
+        func.instruction(&Instruction::ArraySet(vec_idx));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            vec_idx,
+        )));
+        func.instruction(&Instruction::StructNew(opt_idx));
+        func.instruction(&Instruction::End);
+        return Ok(MirBuiltinEmit::Produced(true));
+    }
+
     idx_nonneg!();
     idx_i32!();
     e!(vector);
@@ -2134,13 +2191,20 @@ pub(crate) fn emit_mir_vector_set_boxed(
         array_type_index_dst: vec_idx,
         array_type_index_src: vec_idx,
     });
+    // Same scratch discipline as the owned path above: the `Some` wraps the
+    // copy BEFORE the copy is written, so both reads of `scratch` are done
+    // before the index is re-emitted and before `value` is. Without it a
+    // nested `Vector.set` of the same `Vector<T>` in either operand — an
+    // index like `Vector.len(Option.withDefault(Vector.set(…), …))` is enough
+    // — left the payload pointing at the nested set's array while the write
+    // landed correctly on this one.
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::LocalGet(scratch));
     idx_i32!();
     e!(value);
     func.instruction(&Instruction::ArraySet(vec_idx));
-    func.instruction(&Instruction::I32Const(1));
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::Else);
     func.instruction(&Instruction::I32Const(0));
     func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(

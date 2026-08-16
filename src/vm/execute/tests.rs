@@ -1193,6 +1193,9 @@ fn a_stable_vector_written_in_place_survives_the_depth_zero_return() {
             CONCAT,
             VECTOR_SET_OR_KEEP,
             1,
+            // Target slot: the fence exempts the target's own local cell and
+            // nothing else, so it has to be told which cell that is.
+            0,
             RETURN,
         ],
         constants: Vec::new(),

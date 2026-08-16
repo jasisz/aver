@@ -404,19 +404,22 @@ fn every_tail_call_window_hands_back_the_previous_iterations_cell() {
 
 #[test]
 fn a_vector_fold_writes_nothing_the_cross_check_can_see() {
-    // The module lists four blind spots; this pins the two on the vector side,
-    // because they are the ones that decide how the numbers should be READ. A
-    // declined `Vector.set` is lowered to its own `VECTOR_SET` opcode and never
-    // becomes a `CALL_BUILTIN` at all, and the fused `Vector.set(v, i, x)`
-    // kept-by-default spelling becomes `VECTOR_SET_OR_KEEP` — the VM's only true
-    // in-place arena write, and the one grant this predicate could not answer
-    // even if it were asked, since the fused shape reads the vector with
-    // `LOAD_LOCAL` and leaves the target's own cell live across the write.
+    // Why the vector side is invisible HERE, and where it is visible instead.
+    // The cross-check is a builtin-call instrument: a declined `Vector.set` is
+    // lowered to its own `VECTOR_SET` opcode and never becomes a
+    // `CALL_BUILTIN` at all, and the fused kept-by-default spelling becomes
+    // `VECTOR_SET_OR_KEEP` — the VM's only true in-place arena write, and not
+    // a call either. So `unique_slot_without_owned_grant` is a MAP number, and
+    // anyone sizing a P2 decision from it is reading a Map-shaped floor.
     //
-    // So `unique_slot_without_owned_grant` is a MAP number, and anyone sizing a
-    // P2 decision from it is reading a Map-shaped floor. The day the vector side
-    // is brought in, this test is what will say so.
-    let stats = tallies(
+    // The fused write is no longer unwatched, though: its static grant is a
+    // proposal the runtime confirms, and the confirmations land in the VECTOR
+    // ownership tallies, which the second half of this test reads back. The
+    // fence had to be given the target's slot to do it — the fusion deletes
+    // the textually-last read, so the vector arrives through `LOAD_LOCAL` and
+    // its own cell is still live across the write — and the day that exemption
+    // stops being enough, the fold below is what stops granting.
+    let mut machine = compiled_vm(
         r#"module SlotVectorFold
     intent = "a vector threaded through a fold, and a set that keeps a default"
     depends []
@@ -439,12 +442,21 @@ fn main() -> Int
     Option.withDefault(Vector.get(kept, 1), 0)
 "#,
     );
+    machine.run().expect("program should run");
     assert_eq!(
-        stats,
+        machine.slot_uniqueness_stats(),
         sorted_writes(0, 0, 0, 0),
         "a vector fold reached the cross-check, so the blind spots the module \
          enumerates are no longer the ones it has — re-read that list before \
          trusting either tally as a whole-VM number",
+    );
+    let vectors = machine.vector_ownership_stats();
+    assert!(
+        vectors.grants > 0,
+        "the fused self-keep fold took no in-place grant at all ({vectors:?}) \
+         — either the fence stopped exempting the target's own local cell, or \
+         the accumulator lost its static grant, and both cost every fold in \
+         the language its in-place write",
     );
 }
 
