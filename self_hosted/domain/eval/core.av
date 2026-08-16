@@ -741,14 +741,14 @@ fn evalStmtExpr(e: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Tuple<Va
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, env))
-        Result.Err(e) -> Result.Err(e)
+        Result.Err(msg) -> Result.Err(msg)
 
 fn evalStmtBind(name: String, e: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Tuple<Val, Map<String, Val>>, String>
     ? "Evaluate a binding statement."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, Map.set(env, name, v)))
-        Result.Err(e) -> Result.Err(e)
+        Result.Err(msg) -> Result.Err(msg)
 
 fn evalStmt(stmt: Stmt, env: Map<String, Val>, fns: FnStore) -> Result<Tuple<Val, Map<String, Val>>, String>
     ? "Evaluate a statement, returning the result and updated environment."

@@ -251,8 +251,17 @@ fn int_expr(max_depth: u32) -> BoxedStrategy<String> {
 /// differential still compares the Ok values, and both backends agree on
 /// the `0` fallback for `b == 0`). Wrapped in parens so it drops into any
 /// expression position.
+///
+/// The `Ok` binder is numbered per call: these expressions nest inside
+/// each other under `prop_recursive`, and a fixed spelling would make
+/// the inner binder shadow the outer one — a compile error since the
+/// shadowing ban (issue #954). The `Err` binder is `_` for the same
+/// reason (and it was never read).
 fn int_div_mod_expr(op: &str, a: &str, b: &str) -> String {
-    format!("(match Int.{op}({a}, {b})\n    Result.Ok(__q) -> __q\n    Result.Err(__e) -> 0)")
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static Q: AtomicU64 = AtomicU64::new(0);
+    let n = Q.fetch_add(1, Ordering::Relaxed);
+    format!("(match Int.{op}({a}, {b})\n    Result.Ok(__q{n}) -> __q{n}\n    Result.Err(_) -> 0)")
 }
 
 /// Depth-bounded Int expression whose LEAVES deliberately include the

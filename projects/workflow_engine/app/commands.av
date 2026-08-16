@@ -75,9 +75,9 @@ fn execute(command: Command) -> Result<CommandReport, String>
         Time.now,
     ]
     plan = decide(command)?
-    report = commit(plan)?
-    _sent = dispatch(report)?
-    Result.Ok(report)
+    committed = commit(plan)?
+    _sent = dispatch(committed)?
+    Result.Ok(committed)
 
 fn decide(command: Command) -> Result<CommandPlan, String>
     ? "Loads only the read-side context needed to turn a command into a write plan."
@@ -107,10 +107,10 @@ fn commit(plan: CommandPlan) -> Result<CommandReport, String>
         CommandPlan.SaveProjects(projectPlan) -> commitProjectPlan(projectPlan)
         CommandPlan.AppendEvents(eventPlan) -> commitEventPlan(eventPlan)
 
-fn dispatch(report: CommandReport) -> Result<Unit, String>
+fn dispatch(outcome: CommandReport) -> Result<Unit, String>
     ? "Sends already-decided side effects after commit succeeds."
     ! [Console.warn, Disk.appendText, Disk.readText]
-    Infra.Notify.emitNotifications(report.notifications)
+    Infra.Notify.emitNotifications(outcome.notifications)
 
 fn planCreateProject(projectId: String, name: String) -> Result<CommandPlan, String>
     ? "Decides a project creation as a state-write plan plus audit."

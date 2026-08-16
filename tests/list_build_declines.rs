@@ -41,6 +41,26 @@ fn run_program(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Run a program that must be REJECTED at the front door (the
+/// shadowing ban, issue #954); returns stderr for the message pin.
+fn run_rejected(name: &str, source: &str) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join(format!("{name}.av"));
+    std::fs::write(&entry, source).expect("write entry");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .output()
+        .expect("invoke aver");
+    assert!(
+        !output.status.success(),
+        "aver run {name} was expected to be rejected:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 /// The loop decides what to append by looking at what it has already
 /// appended. A builder read while it is being written to is a builder
 /// with two holders, and the in-place append has no answer for the
@@ -168,18 +188,13 @@ fn main() -> Unit
 /// was handed — and the base case returns the untouched parameter, so a
 /// rewrite that trusted the name would build the wrong list twice over.
 ///
-/// The answer below is the same either way, and both reasons are worth
-/// knowing. The virtual machine masks it: a builder handed something
-/// other than a fresh builder falls back to the cons chain, which
-/// prepends and reverses exactly as the loop did. Compiled Rust would
-/// tell them apart, but it cannot host the shape at all — a cons pattern
-/// that binds a name a tail-call loop assigns to does not compile there
-/// (`E0384`), which is a limitation of that backend and not of this
-/// pass. So this rule is insurance: the day either of those changes it
-/// is the only thing standing between the two meanings of the name.
+/// The shadowing ban (issue #954) refuses that spelling at the front
+/// door now, so the pass can no longer meet this shape in user code;
+/// its own guard stays as defense for compiler-synthesized shapes, and
+/// this pin says the refusal is what the user sees.
 #[test]
-fn a_pattern_that_shadows_the_accumulator_keeps_its_unfused_answer() {
-    let out = run_program(
+fn a_pattern_that_shadows_the_accumulator_is_rejected() {
+    let stderr = run_rejected(
         "shadowed",
         r#"module Shadowed
     intent =
@@ -209,15 +224,13 @@ fn main() -> Unit
     Console.print("{render(walk([[1, 2], [3, 4]], []))}")
 "#,
     );
-    // The `acc` inside the arm is the HEAD of the input, read exactly
-    // once — so the occurs-check is satisfied and the name is the only
-    // thing left that could tell the two apart. The step prepends 7 onto
-    // the head and passes THAT as the next accumulator; the base case
-    // reverses what the last step happened to hand it. The last head has
-    // two elements on purpose: appending to a one-element list and
-    // prepending to it then reversing agree, so a shorter one would let
-    // a rewrite that trusted the name pass.
-    assert_eq!(out, "[4, 3, 7]");
+    assert!(
+        stderr.contains(
+            "the pattern binding 'acc' shadows the parameter 'acc' defined at line 7; \
+             every name means one thing in its scope — rename one of them"
+        ),
+        "the refusal must be the standard shadow error:\n{stderr}"
+    );
 }
 
 /// A second self-call that restarts the fold with a fresh list, sitting

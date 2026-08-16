@@ -731,17 +731,17 @@ fn sharedOther(h: Int) -> List<Int>
     sharedOne(h, [2], [4])
 
 fn scale(n: Int) -> Int
-    ? "The function the captured step means when it says scale."
+    ? "The function the step calls across the pair boundary."
     n * 10
 
 fn capturedAll(xs: List<Int>, acc: List<Int>) -> List<Int>
-    ? "Driver whose cons pattern re-binds the helper's name around the call."
+    ? "Driver handing each element to a step that calls a module helper."
     match xs
         [] -> List.reverse(acc)
-        [scale, ..t] -> capturedOne(scale, t, acc)
+        [value, ..t] -> capturedOne(value, t, acc)
 
 fn capturedOne(h: Int, t: List<Int>, acc: List<Int>) -> List<Int>
-    ? "Step that reads the top-level scale — the capture witness."
+    ? "Step that reads the top-level scale."
     capturedAll(t, List.prepend(scale(h), acc))
 
 fn entryCaptured(xs: List<Int>) -> List<Int>
@@ -793,8 +793,12 @@ fn main() -> Unit
     // the whole answer. The record pair adds the running count to each
     // element and reports how many it saw. The shared pair answers both
     // ways it is entered — through the driver, and mid-flight through
-    // the step with a seeded accumulator. The captured pair scales by
-    // ten, which only the TOP-LEVEL scale does. The two-match pair
+    // the step with a seeded accumulator. The scaling pair scales by
+    // ten through a module helper the step calls across the pair
+    // boundary; its driver used to bind that helper's name in the cons
+    // pattern, which the shadowing ban (issue #954) refuses now — the
+    // refusal is pinned in `tests/driver_step_pairs.rs`, and this cell
+    // keeps the pair shape with a distinct binder. The two-match pair
     // drops the last element, and a lone element leaves nothing. The
     // pairwise pair combines each pair as tens-digit/units-digit — the
     // answer sequential substitution turned into 22/44.

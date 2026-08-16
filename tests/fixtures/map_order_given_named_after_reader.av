@@ -1,0 +1,16 @@
+module MapOrderGivenNamedAfterReader
+    intent =
+        "A true law whose given is named after an unrelated helper that reads a float-keyed map."
+        "Nothing in the claim touches a map, and the law holds on the VM — following a name into that helper just because the two share a spelling would refuse a law that is provable, which costs as much as exporting one that is not. The given may keep the shared spelling: verify-block binders are outside the shadowing ban's v1 scope."
+
+fn keys(m: Map<Float, Int>) -> List<Float>
+    ? "Reads a float-keyed map's keys. Nothing below calls it."
+    Map.keys(m)
+
+fn howMany(counted: List<Float>) -> Int
+    ? "Counts the values it was given."
+    List.len(counted)
+
+verify howMany law countsThem
+    given keys: List<Float> = [[1.0], [1.0, 2.0]]
+    howMany(keys) => List.len(keys)

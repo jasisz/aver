@@ -26,10 +26,10 @@ fn drawChar(x: Int, y: Int, ch: String, color: String) -> Unit
     Terminal.print(ch)
     Terminal.resetColor()
 
-fn renderTile(x: Int, y: Int, tile: Tile, isVisible: Bool, isRemembered: Bool) -> Unit
+fn renderTile(x: Int, y: Int, tile: Tile, visible: Bool, isRemembered: Bool) -> Unit
     ? "Render one tile based on visibility: visible in color, remembered dim, unseen blank"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match isVisible
+    match visible
         true -> drawChar(x, y, Types.tileGlyph(tile), tileColor(tile))
         false -> match isRemembered
             true -> match tile

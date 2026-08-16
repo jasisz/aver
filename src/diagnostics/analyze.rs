@@ -146,7 +146,11 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
             base_dir: options.module_base_dir.as_deref(),
         }
     };
-    let tc_result = crate::ir::pipeline::typecheck(&items, &mode);
+    // The same gate `pipeline::run` and both verify doors go through —
+    // type errors and the shadowing ban (#954) in one channel. Nothing
+    // is appended to `items` here, so the ban's scope is the whole
+    // program.
+    let tc_result = crate::ir::pipeline::typecheck_gate(&items, &mode, &items);
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
 

@@ -5,9 +5,9 @@ use colored::Colorize;
 
 use aver::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TopLevel, TypeDef};
 use aver::checker::{expr_to_str, merge_verify_blocks};
+use aver::ir::TypecheckMode;
 use aver::nan_value::{Arena, NanValueConvert};
 use aver::source::parse_source;
-use aver::types::checker::run_type_check_with_base;
 use aver::value::{Value, aver_repr};
 use aver::vm;
 
@@ -427,15 +427,48 @@ pub(super) fn cmd_repl() {
             continue;
         }
 
-        // Typecheck accumulated + new items together.
-        let all: Vec<TopLevel> = accumulated
+        // The typecheck GATE — the checker plus the shadowing ban
+        // (issue #954) — the same one `run`, `check`, `compile`,
+        // `proof` and the three `verify` entries go through. The REPL
+        // is a front door like any of them: it type-checks a program
+        // and then runs it, so a program the others refuse must not
+        // execute here.
+        //
+        // WHAT "the program the user wrote" MEANS ACROSS TURNS. A
+        // session is one module assembled a turn at a time —
+        // `accumulated` is everything entered so far, `new_items` is
+        // the entry being read now — and the ban reads both together.
+        // So a binder entered now may not spell a function defined
+        // three turns ago, exactly as it may not in a file where the
+        // two lines appear in that order; and the other way round, a
+        // definition entered now can collide with an earlier binder and
+        // is refused. That is liveable because a refused entry is never
+        // added to `accumulated`: the session stays as it was, and
+        // `:clear` starts a fresh scope. RE-ENTERING a name is a
+        // different question and not this rule's — `x = 1` then
+        // `x = 2`, or a second `fn f`, is already refused by the
+        // checker ("'x' is already defined"), and the ban never reads
+        // top-level items anyway, the same v1 scope it has in a file.
+        //
+        // The scope is passed explicitly, the way the verify doors pass
+        // theirs, because the REPL fabricates items of its own: the
+        // `__repl_eval_<n>` / `__repl_get_<n>` wrappers around an
+        // entered expression and the `__verify_*` helpers. Those are
+        // compiler-written, and built in `repl_execute` BELOW this
+        // point — passing the user slice keeps them out of the ban's
+        // reach even if that ever stops being true.
+        let user_program: Vec<TopLevel> = accumulated
             .iter()
             .chain(new_items.iter())
             .cloned()
             .collect();
-        let type_errors = run_type_check_with_base(&all, None);
-        if !type_errors.is_empty() {
-            print_type_errors(&type_errors);
+        let tc = aver::ir::pipeline::typecheck_gate(
+            &user_program,
+            &TypecheckMode::Full { base_dir: None },
+            &user_program,
+        );
+        if !tc.errors.is_empty() {
+            print_type_errors(&tc.errors);
             buffer.clear();
             continue;
         }

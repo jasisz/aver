@@ -883,14 +883,21 @@ fn a_tail_of_another_list_is_not_a_peel_of_this_one() {
     );
 }
 
+/// `Option.Some(rest)` rebinds `rest` to whatever `grow` returned — a list
+/// that is LONGER than `xs`, not a subterm of it. Dropping the shadowed
+/// name from the tracked set is only half the job: the name is still in a
+/// whole-body view of the tails, so a call site consulting that view reads
+/// the depth the OUTER `rest` had and classifies a recursion that grows
+/// its argument.
+///
+/// The shadowing ban (issue #954) refuses that spelling at the front door
+/// now, so this witness is no longer a program the classifier can be
+/// handed: it is pinned as a REJECTION here, at the place the guard was
+/// tested. The classifier's own guard stays — the pass has no say over
+/// what a later fabricating pass synthesizes — but nothing a user writes
+/// reaches it any more, which is the honest state of this coverage.
 #[test]
-fn a_binder_that_shadows_a_tail_is_not_that_tail() {
-    // `Option.Some(rest)` rebinds `rest` to whatever `grow` returned — a list
-    // that is LONGER than `xs`, not a subterm of it. Dropping the shadowed
-    // name from the tracked set is only half the job: the name is still in a
-    // whole-body view of the tails, so a call site consulting that view reads
-    // the depth the OUTER `rest` had and classifies a recursion that grows
-    // its argument.
+fn a_binder_that_shadows_a_tail_is_rejected_before_the_classifier() {
     let src = "module M\n\
          \x20   intent = \"t\"\n\
          \n\
@@ -903,22 +910,14 @@ fn a_binder_that_shadows_a_tail_is_not_that_tail() {
          \x20       [a, ..rest] -> match grow(a, rest)\n\
          \x20           Option.Some(rest) -> 1 + shadowed(rest)\n\
          \x20           Option.None -> 0\n";
-    let ctx = build_ctx(src);
-    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, issues) = analyze_plans_in_scope(&inputs, None, true);
-    assert_eq!(
-        plans.get("shadowed"),
-        None,
-        "the self-call argument is the shadowing binder, not the cons-tail it \
-         hides — got: {:?}",
-        plans.get("shadowed")
-    );
+    let items = parse_source(src).expect("parse");
+    let errors = aver::resolver::check_shadowing(&items);
+    let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
     assert!(
-        issues
-            .iter()
-            .any(|issue| format!("{issue:?}").contains("shadowed")),
-        "a recursion no whitelisted measure covers belongs outside the proof \
-         subset with a diagnostic, not silently unclassified: {issues:?}"
+        messages.iter().any(|m| *m
+            == "the pattern binding 'rest' shadows the pattern binding 'rest' defined \
+                at line 10; every name means one thing in its scope — rename one of them"),
+        "the inner binder must be refused, naming both sides: {messages:?}"
     );
 }
 
