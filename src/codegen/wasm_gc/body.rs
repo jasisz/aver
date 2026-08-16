@@ -265,8 +265,8 @@ pub(super) struct EmitCtx<'a> {
     /// on the MIR path it is sourced from `MirFn::aliased_slots`, so the
     /// owned-mutate fast path reads its gate off MIR rather than reaching
     /// back into the AST `FnResolution` side-channel. `is_aliased_slot`
-    /// reads this; an out-of-range slot is `false` (not aliased → fast
-    /// path sound).
+    /// reads this; an out-of-range slot is `true` (no verdict → treated
+    /// as aliased, so the mutation copies — see its doc, #950).
     pub(super) aliased_slots: &'a [bool],
     /// Per-slot / per-param Int representation for the current fn (ETAP-2
     /// SLICE 2a). Sourced from `MirFn::repr` (mirror of `aliased_slots`).
@@ -573,21 +573,23 @@ impl<'a> EmitCtx<'a> {
     }
 
     /// Whether `slot` is flagged as alias-prone by `ir::alias`. Backends
-    /// that want to skip clone-on-write must check this first; default
-    /// `false` for slots outside the table (empty table, scratch
-    /// slots) is the safe-but-fast answer (no aliasing suspicion →
-    /// in-place is sound). The alias pass always runs in real builds,
-    /// so an empty table only happens in test paths that pre-resolve
-    /// manually. Reads the `aliased_slots` field, which is
-    /// resolution-sourced on the HIR path and `MirFn`-sourced on the
-    /// MIR path — identical bits, different home. Read by the MIR
+    /// that want to skip clone-on-write must check this first. A slot
+    /// OUTSIDE the table (empty table, synthetic MIR temps past the
+    /// resolver's count) reads as ALIASED: no verdict is not the same
+    /// thing as "proven unshared", and treating it as clean is exactly
+    /// how #950 mutated a map-held vector in place — the post-flatten
+    /// re-resolve had re-stamped `aliased_slots` with a default table,
+    /// and every container-read local sailed through. Missing evidence
+    /// now costs the fast path, never soundness. Reads the
+    /// `aliased_slots` field, which is `MirFn`-sourced on the MIR path
+    /// (the resolver bits, cloned at lowering). Read by the MIR
     /// emitter's `mir_arg_uniquely_owned` (from_mir/builtins.rs), which
     /// is the only caller now that the `ResolvedExpr` walker is gone.
     pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
         self.aliased_slots
             .get(slot as usize)
             .copied()
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
 
     /// `fn_sig_key` for the `Fn(..)` param named `name`, used to look up

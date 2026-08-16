@@ -5262,8 +5262,11 @@ fn cmd_compile_wasm_gc(
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
-    // above; this picks up the newly appended dep FnDefs.
-    aver::ir::pipeline::resolve(&mut items);
+    // above; this picks up the newly appended dep FnDefs. The
+    // `_and_reannotate` half is load-bearing: a bare re-resolve wipes
+    // `aliased_slots` and the wasm-gc in-place fast path then mutates
+    // container-held collections through extracted locals (#950).
+    aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
     let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened(
         &items,
@@ -5512,7 +5515,9 @@ fn cmd_compile_wasip2(
         // directly — `wasip2` enables `wasm-compile` (which exposes
         // it) but does not pull `wasm`.
         let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
-        aver::ir::pipeline::resolve(&mut items);
+        // `_and_reannotate`: same #950 wipe-guard as the wasm-gc
+        // compile path — a bare re-resolve wipes `aliased_slots`.
+        aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
         // Phase 1.6 — static effect-set check. Catches every Aver
         // effect that `--target wasip2` cannot lower today, BEFORE

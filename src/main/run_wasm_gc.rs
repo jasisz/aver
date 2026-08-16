@@ -166,8 +166,11 @@ pub(super) fn try_run_wasm_gc(
     // The first `pipeline::run` only saw entry items; without this
     // pass, dep fn bodies fall back to the `slots::build_for_fn`
     // params-only path and any local beyond a param trips the wasm
-    // validator with a slot-type mismatch.
-    aver::ir::pipeline::resolve(&mut items);
+    // validator with a slot-type mismatch. The `_and_reannotate` half
+    // is load-bearing: a bare re-resolve wipes `aliased_slots` back to
+    // all-`false`, and the wasm-gc in-place fast path then mutated
+    // map-held vectors through extracted locals (#950).
+    aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
     let outcome = rt::run_in_process(
         &items,

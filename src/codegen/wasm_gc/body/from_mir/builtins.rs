@@ -1791,19 +1791,82 @@ pub(crate) fn emit_mir_list_builtin(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// MIR analogue of `EmitCtx::arg_uniquely_owned` (body.rs). The
-/// ownership fast-path key — `last_use` on a non-alias-prone local — is
-/// carried verbatim on `MirLocal` (the lowerer copies it from
-/// `ResolvedExpr::Resolved { last_use }`, see `crate::ir::mir::lower`), and
-/// `is_aliased_slot` reads the same resolver `aliased_slots` table, so
-/// this returns the identical verdict to the HIR oracle for the same
-/// source expression. Anonymous / transient args are uniquely owned.
+/// May the emitter mutate this receiver in place instead of copying it
+/// first? The ownership fast-path key for a LOCAL — `last_use` on a
+/// non-alias-prone slot — is carried verbatim on `MirLocal` (the lowerer
+/// copies it from `ResolvedExpr::Resolved { last_use }`, see
+/// `crate::ir::mir::lower`), and `is_aliased_slot` reads the resolver's
+/// `aliased_slots` table. A NON-local receiver earns the fast path only
+/// by being a provably-fresh collection ([`mir_expr_is_fresh_collection`]);
+/// anything else — a container read, a user-fn result — copies (#950).
 pub(crate) fn mir_arg_uniquely_owned(arg: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
     match &arg.node {
         MirExpr::Local(local) => {
             local.node.last_use && !ctx.is_aliased_slot(local.node.slot.0 as u16)
         }
-        _ => true,
+        other => mir_expr_is_fresh_collection(other, ctx),
+    }
+}
+
+/// Does this non-local receiver expression yield a PROVABLY-FRESH
+/// collection — one no other binding (a map entry, a list element, a
+/// caller's local) can still reach?
+///
+/// MIR mirror of `ir::alias::rhs_is_fresh_collection`, and the same
+/// burden of proof: in-place mutation is an optimizer privilege that
+/// has to be earned, so everything unrecognized is NOT fresh and the
+/// mutation copies first. Before this predicate the wildcard arm of
+/// [`mir_arg_uniquely_owned`] answered `true` for every anonymous
+/// receiver — which made `Vector.set(Option.withDefault(Map.get(m, k),
+/// d), i, x)` mutate the map-held array in place (#950). A container
+/// read is exactly the shape that must fail this test.
+fn mir_expr_is_fresh_collection(expr: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    match expr {
+        MirExpr::MapLiteral(_) => true,
+        // Fresh only if EVERY arm is fresh — one aliasing arm taints the
+        // value (same rule as the AST-side pass).
+        MirExpr::Match(m) => m
+            .node
+            .arms
+            .iter()
+            .all(|a| mir_expr_is_fresh_collection(&a.body.node, ctx)),
+        MirExpr::IfThenElse(ite) => {
+            mir_expr_is_fresh_collection(&ite.node.then_branch.node, ctx)
+                && mir_expr_is_fresh_collection(&ite.node.else_branch.node, ctx)
+        }
+        MirExpr::Call(call) => {
+            let MirCallee::Builtin(id) = &call.node.callee else {
+                // A user fn may return a handle it read out of a
+                // container (or one of its own arguments), so its result
+                // is not provably fresh.
+                return false;
+            };
+            let Some(dotted) = ctx.mir_builtins.and_then(|names| names.get(id.0 as usize)) else {
+                return false;
+            };
+            match dotted.as_str() {
+                // Allocating builtins — each returns a collection it just
+                // built, so nothing else holds the handle. Same list as
+                // `ir::alias::is_fresh_collection_builtin`.
+                "Vector.set" | "Vector.fromList" | "Map.set" | "Map.remove" | "Map.fromList" => {
+                    true
+                }
+                // `Vector.new` is fresh only for a non-compound fill —
+                // mirror of the AST-side rule.
+                "Vector.new" if call.node.args.len() == 2 => {
+                    !crate::ir::alias::type_is_compound(&aver_type_str_of(&call.node.args[1]))
+                }
+                // `Option.withDefault(a, b)` is fresh when both branches
+                // are. (`Vector.get` / `Map.get` inside makes it a
+                // container read, which correctly fails the branch test.)
+                "Option.withDefault" if call.node.args.len() == 2 => {
+                    mir_expr_is_fresh_collection(&call.node.args[0].node, ctx)
+                        && mir_expr_is_fresh_collection(&call.node.args[1].node, ctx)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
     }
 }
 

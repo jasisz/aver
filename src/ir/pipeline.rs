@@ -721,8 +721,33 @@ pub fn buffer_build(items: &mut Vec<TopLevel>) -> BufferBuildPassReport {
 
 /// Resolve local bindings — maps `Expr::Ident(name)` → `Expr::Resolved { slot, .. }`
 /// per fn. Does not annotate last-use; that's a separate stage.
+///
+/// CAUTION: re-resolving stamps every fn with a FRESH `FnResolution`
+/// whose `aliased_slots` is the all-`false` default (see
+/// `crate::resolver::resolve_fn`) — it silently withdraws every verdict
+/// `ir::alias` had recorded, while the `last_use` marks on the body
+/// survive. A consumer that reads `last_use` + `aliased_slots` as
+/// mutation-ownership evidence (the wasm-gc in-place fast path) then
+/// sees "dead and never shared" for a container-read local and mutates
+/// a stored value in place (#950). Any re-resolve whose output feeds
+/// such a consumer must go through [`resolve_and_reannotate`] instead.
 pub fn resolve(items: &mut [TopLevel]) {
     crate::resolver::resolve_program(items);
+}
+
+/// [`resolve`] followed by the ownership stages the canonical pipeline
+/// pairs it with: `last_use` re-marking and the `ir::alias` per-slot
+/// table. This is the entry point for every post-flatten / post-rewrite
+/// re-resolve that feeds a backend reading `aliased_slots` as mutation
+/// evidence — bare `resolve` leaves the fresh stamp's all-`false`
+/// default in place (#950, see [`resolve`]'s caution). It also gives
+/// the freshly appended dep-module fns real ownership facts (their
+/// Vector / Map params get flagged, their dead fresh locals keep the
+/// in-place fast path) instead of whatever their pristine load carried.
+pub fn resolve_and_reannotate(items: &mut [TopLevel]) {
+    resolve(items);
+    last_use(items);
+    crate::ir::alias::annotate_program_alias_slots(items);
 }
 
 /// Last-use ownership annotation. Walks each fn body backwards, sets

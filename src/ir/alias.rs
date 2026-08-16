@@ -328,7 +328,10 @@ fn flag_escaping_collection_locals(expr: &Expr, slot_types: &[Type], aliased: &m
     }
 }
 
-fn type_is_compound(ty: &str) -> bool {
+/// Shared with the wasm-gc MIR emitter's `mir_expr_is_fresh_collection`,
+/// which mirrors [`rhs_is_fresh_collection`]'s `Vector.new` rule for
+/// receiver positions — keep the two freshness tests deciding alike.
+pub(crate) fn type_is_compound(ty: &str) -> bool {
     let trimmed = ty.trim();
     trimmed.starts_with("Vector<")
         || trimmed.starts_with("Map<")

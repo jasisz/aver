@@ -122,7 +122,10 @@ fn build_component_bytes(
         super::commands::DepLowering::PRISTINE,
     );
     let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
-    aver::ir::pipeline::resolve(&mut items);
+    // `_and_reannotate`: a bare post-flatten re-resolve wipes
+    // `aliased_slots`, and the wasm-gc in-place fast path then mutates
+    // container-held collections through extracted locals (#950).
+    aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
     if let Err(unsupported) = wasip2_codegen::check_supported_effects(&items) {
         let mut out = format!(
