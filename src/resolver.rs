@@ -467,11 +467,11 @@ enum ModuleNameKind {
 /// way `resolve_program` leaves them alone: the issue's rule names
 /// enclosing locals, module `fn`s and the enclosing fn's own name.
 ///
-/// Every caller reaches this through [`crate::ir::pipeline::
-/// typecheck_gate`], which pairs it with the type checker and owns the
-/// suppression rule; see that function for why the ban rides the
-/// checker instead of `resolve_fn`, and for the one door whose scope
-/// is narrower than the item list it checks.
+/// Every caller reaches this through
+/// [`crate::ir::pipeline::typecheck_gate`], which pairs it with the
+/// type checker and owns the suppression rule; see that function for
+/// why the ban rides the checker instead of `resolve_fn`, and for the
+/// one door whose scope is narrower than the item list it checks.
 pub fn check_shadowing(items: &[TopLevel]) -> Vec<TypeError> {
     // Top-level fn / operation names of this module, first declaration
     // wins (a duplicate top-level name is its own diagnostic).
