@@ -33,6 +33,26 @@ fn run_program(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Run a program that must be REJECTED at the front door (the
+/// shadowing ban, issue #954); returns stderr for the message pin.
+fn run_rejected(name: &str, source: &str) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join(format!("{name}.av"));
+    std::fs::write(&entry, source).expect("write entry");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .output()
+        .expect("invoke aver");
+    assert!(
+        !output.status.success(),
+        "aver run {name} was expected to be rejected:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 /// The list-driven loop that reverses in its own base case, marking
 /// values it has already seen. The module also binds `acc` at top level,
 /// which is what turns the dropped parameter from a compile error into a
@@ -134,13 +154,16 @@ fn main() -> Unit
     assert_eq!(out, "0,1,2");
 }
 
-/// The one read the guard permits still has to be the accumulator. Here
-/// the cons pattern binds the head of the input under the accumulator's
-/// own name, so the prepend threads that head — a different loop, whose
-/// answer the buffer does not reproduce.
+/// The one read the guard permits still has to be the accumulator. This
+/// program bound the head of the input under the accumulator's own name
+/// — the loop the rewrite must not fuse, because the prepend threads
+/// that head. The shadowing ban (issue #954) now refuses the spelling
+/// at the front door, so the program never reaches the pass; the
+/// pass-side guard stays as defense for compiler-synthesized shapes,
+/// and this pin says the refusal is what the user sees.
 #[test]
-fn a_pattern_shadowing_the_accumulator_keeps_its_unfused_answer() {
-    let out = run_program(
+fn a_pattern_shadowing_the_accumulator_is_rejected() {
+    let stderr = run_rejected(
         "shadow_pattern",
         r#"module ShadowPattern
     intent =
@@ -161,9 +184,12 @@ fn main() -> Unit
     Console.print(render([["a"], ["b"]]))
 "#,
     );
-    assert_eq!(
-        out, "b,x",
-        "the prepend threads the last head, not the accumulator the loop was given"
+    assert!(
+        stderr.contains(
+            "the pattern binding 'acc' shadows the parameter 'acc' defined at line 7; \
+             every name means one thing in its scope — rename one of them"
+        ),
+        "the refusal must be the standard shadow error:\n{stderr}"
     );
 }
 

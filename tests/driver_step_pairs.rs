@@ -47,6 +47,26 @@ fn run_program(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Run a program that must be REJECTED at the front door (the
+/// shadowing ban, issue #954); returns stderr for the message pin.
+fn run_rejected(name: &str, source: &str) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join(format!("{name}.av"));
+    std::fs::write(&entry, source).expect("write entry");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .output()
+        .expect("invoke aver");
+    assert!(
+        !output.status.success(),
+        "aver run {name} was expected to be rejected:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 /// One cell of the hygiene matrix: the step's binder wears `binder`,
 /// either as a statement binding before the recursion or as a pattern
 /// binder around it.
@@ -511,11 +531,14 @@ fn main() -> Unit
 /// The capture witness: the step reads the top-level `scale`, and the
 /// driver's cons pattern re-binds that name around the call site.
 /// Inlined, the step's `scale(h)` would read the driver's binder — an
-/// integer — instead of the function. The pair must decline and keep
-/// its answer.
+/// integer — instead of the function. The shadowing ban (issue #954)
+/// refuses the re-binding spelling at the front door now, so the pair
+/// mechanism can no longer meet this capture in user code; its decline
+/// guard stays for compiler-synthesized shapes, and this pin says the
+/// refusal is what the user sees.
 #[test]
-fn a_step_reading_a_name_the_driver_binds_keeps_the_pairs_answer() {
-    let out = run_program(
+fn a_step_reading_a_name_the_driver_binds_is_rejected() {
+    let stderr = run_rejected(
         "capture_witness",
         r#"module CaptureWitness
     intent =
@@ -552,7 +575,13 @@ fn main() -> Unit
     Console.print("{render(entry([1, 2]))}")
 "#,
     );
-    assert_eq!(out, "10/20/");
+    assert!(
+        stderr.contains(
+            "the pattern binding 'scale' shadows the function 'scale' defined at line 7; \
+             every name means one thing in its scope — rename one of them"
+        ),
+        "the refusal must be the standard shadow error:\n{stderr}"
+    );
 }
 
 /// A step with a second call site is shared code; both callers must

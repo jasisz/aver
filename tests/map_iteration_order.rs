@@ -30,6 +30,7 @@ const COMPARISON_ORDER_DIR: &str = "tests/fixtures/map_equality_comparison_order
 const FIELD_COLLISION_DIR: &str = "tests/fixtures/map_equality_field_collision";
 const FN_PARAM_FIXTURE: &str = "tests/fixtures/map_order_fn_param.av";
 const SHADOWED_GIVEN_FIXTURE: &str = "tests/fixtures/map_order_shadowed_given.av";
+const READER_NAMED_GIVEN_FIXTURE: &str = "tests/fixtures/map_order_given_named_after_reader.av";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1263,12 +1264,18 @@ fn an_observer_passed_in_by_name_is_still_refused() {
 /// and an unprovable one exported both end with a green `--check` and a user
 /// believing something untrue. Which arguments are functions is the
 /// typechecker's answer, and the variable's stamp says `List<Float>`.
+///
+/// The given KEEPS the reader's spelling on purpose: verify-block binders
+/// are outside the shadowing ban's v1 scope (issue #954), so this shape
+/// stays writable and the cone walk still has to resist it. Only the
+/// fixture's fn parameter had to be renamed — the original spelling lives
+/// on as the ban's error witness in the test below.
 #[test]
 fn a_given_named_after_a_map_reader_is_not_refused() {
     let lean = emit_lean(
-        SHADOWED_GIVEN_FIXTURE,
-        "aver-map-order-shadowed-given",
-        "MapOrderShadowedGiven",
+        READER_NAMED_GIVEN_FIXTURE,
+        "aver-map-order-reader-named-given",
+        "MapOrderGivenNamedAfterReader",
     );
     assert!(
         lean.contains("theorem howMany_law_countsThem"),
@@ -1282,12 +1289,43 @@ fn a_given_named_after_a_map_reader_is_not_refused() {
     );
 
     // And the law holds, so refusing it would be a real loss.
-    let verify = run_aver(&["verify", SHADOWED_GIVEN_FIXTURE]);
+    let verify = run_aver(&["verify", READER_NAMED_GIVEN_FIXTURE]);
     let stdout = String::from_utf8_lossy(&verify.stdout);
     assert!(
         stdout.contains("0 failed"),
         "the control law must hold on the VM:\n{}",
         format_output(&verify)
+    );
+}
+
+/// The deliberate shadow fixture is now the ban's error witness: its
+/// `howMany` parameter spells the module fn `keys`, and the shadowing ban
+/// (issue #954) refuses that at the front door — `aver proof` never
+/// reaches the cone walk. The cone-walk control this fixture used to
+/// carry moved to `map_order_given_named_after_reader.av` above, given
+/// spelling intact.
+#[test]
+fn the_shadowed_given_fixture_is_rejected_by_the_shadowing_ban() {
+    let out_dir = temp_output_dir("aver-map-order-shadowed-reject");
+    let run = run_aver(&[
+        "proof",
+        SHADOWED_GIVEN_FIXTURE,
+        "-o",
+        out_dir.to_str().expect("utf-8 temp path"),
+    ]);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(
+        !run.status.success(),
+        "a parameter shadowing a module fn must be rejected before export:\n{}",
+        format_output(&run)
+    );
+    assert!(
+        String::from_utf8_lossy(&run.stderr).contains(
+            "the parameter 'keys' shadows the function 'keys' defined at line 6; \
+             every name means one thing in its scope — rename one of them"
+        ),
+        "the refusal must be the standard shadow error:\n{}",
+        format_output(&run)
     );
 }
 

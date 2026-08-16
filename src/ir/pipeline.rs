@@ -764,7 +764,20 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     if let Some(mode) = cfg.typecheck.as_ref() {
-        let tc = typecheck(items, mode);
+        let mut tc = typecheck(items, mode);
+        // The shadowing ban (issue #954) rides the typecheck gate: it
+        // reads the same pre-fabrication AST the typechecker just read,
+        // and its findings are ordinary compile errors in the same
+        // channel, so every caller that renders type errors reports
+        // them. It must stay ABOVE the fabricating passes below —
+        // compiler-synthesized helpers (`<fn>__cursor`, `__buf_*`) may
+        // legitimately reuse spellings, and the ban is about the
+        // program the user wrote. Suppressed when typecheck already
+        // failed, so a broken program gets its type errors without a
+        // cascade.
+        if tc.errors.is_empty() {
+            tc.errors.extend(crate::resolver::check_shadowing(items));
+        }
         let has_errors = !tc.errors.is_empty();
         result
             .pass_diagnostics
@@ -1881,7 +1894,7 @@ type Shape
 fn area(s: Shape) -> Float
     match s
         Shape.Circle(r) -> r * r
-        Shape.Square(s) -> s * s
+        Shape.Square(w) -> w * w
 
 fn main() -> Float
     area(Shape.Circle(3.0))

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
 use crate::ast::*;
+use crate::types::checker::TypeError;
 
 /// Cross-function type info gathered from the program's `TypeDef` items.
 /// Used by the slot-types pass to recover the field type list for a
@@ -414,6 +415,285 @@ impl<'a> ResolverState<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Shadowing ban (issue #954)
+// ---------------------------------------------------------------------------
+
+/// Where a banned binder sits.
+#[derive(Clone, Copy, PartialEq)]
+enum ShadowBinderKind {
+    Param,
+    StmtBinding,
+    PatternBinder,
+}
+
+impl ShadowBinderKind {
+    fn label(self) -> &'static str {
+        match self {
+            ShadowBinderKind::Param => "parameter",
+            ShadowBinderKind::StmtBinding => "binding",
+            ShadowBinderKind::PatternBinder => "pattern binding",
+        }
+    }
+}
+
+/// What a module-level name is, for the error message.
+#[derive(Clone, Copy)]
+enum ModuleNameKind {
+    Function,
+    Operation,
+}
+
+/// Reject every binder that reuses a name already visible at its
+/// declaration point (issue #954): an enclosing local (parameter,
+/// statement binding, or pattern binder along the lexical path), a
+/// top-level `fn` or capability `operation` of the same module, or the
+/// enclosing function's own name.
+///
+/// Runs over the same scope structure `resolve_fn` walks — params in
+/// the outermost frame, statement bindings in source order, one fresh
+/// frame per match arm — so what this refuses is exactly what the slot
+/// resolver would have made ambiguous-by-spelling. SIBLING match arms
+/// may still reuse a name between them: they are never in each other's
+/// scope, and the per-arm `binding_slots` machinery keeps them sound.
+/// Cross-module names are always `Module.fn`-qualified, so a bare
+/// binder cannot collide with anything outside its own file. `_` is a
+/// discard, not a name, and is never checked.
+///
+/// v1 scope note: this covers function bodies only. Binders inside
+/// `verify` blocks (givens, law binders) are deliberately left alone —
+/// extending the ban there gets its own census first. Top-level `Stmt`
+/// items (module-level bindings, REPL) are outside it too, the same
+/// way `resolve_program` leaves them alone: the issue's rule names
+/// enclosing locals, module `fn`s and the enclosing fn's own name.
+///
+/// Called from the pipeline's front door next to the typechecker
+/// rather than from `resolve_fn` itself, for two reasons the pass
+/// order makes concrete: `resolve` runs BELOW the fabricating passes,
+/// which put entities in the AST the source does not contain
+/// (`<fn>__cursor`, `__buf_*`) and may reuse spellings legitimately —
+/// the ban is about the program the user wrote; and `run_resolve` is
+/// off in front doors that still typecheck (the self-host preflight,
+/// the proof-facing configs), which would silently exempt them.
+pub fn check_shadowing(items: &[TopLevel]) -> Vec<TypeError> {
+    // Top-level fn / operation names of this module, first declaration
+    // wins (a duplicate top-level name is its own diagnostic).
+    let mut module_fns: HashMap<&str, (usize, ModuleNameKind)> = HashMap::new();
+    for item in items {
+        match item {
+            TopLevel::FnDef(fd) => {
+                module_fns
+                    .entry(fd.name.as_str())
+                    .or_insert((fd.line, ModuleNameKind::Function));
+            }
+            TopLevel::Capability(CapabilityItem::Operation(op)) => {
+                module_fns
+                    .entry(op.name.as_str())
+                    .or_insert((op.line, ModuleNameKind::Operation));
+            }
+            _ => {}
+        }
+    }
+
+    let mut errors = Vec::new();
+    for item in items {
+        if let TopLevel::FnDef(fd) = item {
+            let mut walker = ShadowWalker {
+                fn_name: &fd.name,
+                fn_line: fd.line,
+                module_fns: &module_fns,
+                frames: vec![Vec::new()],
+                errors: &mut errors,
+            };
+            for (param_name, _ty) in &fd.params {
+                walker.check_and_declare(param_name, ShadowBinderKind::Param, fd.line);
+            }
+            walker.walk_stmts(fd.body.stmts());
+        }
+    }
+    errors
+}
+
+/// The shadow-check walk. Mirrors `ResolverState`'s scope handling —
+/// one outer frame holding params and fn-body statement bindings, one
+/// fresh frame per match arm, popped on exit — but carries declaration
+/// lines instead of slots, because its output is an error message, not
+/// a resolution.
+struct ShadowWalker<'a> {
+    fn_name: &'a str,
+    fn_line: usize,
+    module_fns: &'a HashMap<&'a str, (usize, ModuleNameKind)>,
+    /// LIFO frames, innermost last: binder name → (kind, line).
+    frames: Vec<Vec<(String, ShadowBinderKind, usize)>>,
+    errors: &'a mut Vec<TypeError>,
+}
+
+impl ShadowWalker<'_> {
+    /// Innermost-first lookup, matching `ResolverState::lookup`. Within
+    /// a frame the LAST declaration wins, so a duplicate inside one
+    /// pattern reports against its own twin rather than something
+    /// further out.
+    fn lookup(&self, name: &str) -> Option<(ShadowBinderKind, usize)> {
+        for frame in self.frames.iter().rev() {
+            if let Some((_, kind, line)) = frame.iter().rev().find(|(n, _, _)| n == name) {
+                return Some((*kind, *line));
+            }
+        }
+        None
+    }
+
+    /// Check one binder against everything visible at its declaration
+    /// point, then declare it. `_` is a discard, not a name — never
+    /// checked, never declared.
+    fn check_and_declare(&mut self, name: &str, kind: ShadowBinderKind, line: usize) {
+        if name == "_" {
+            return;
+        }
+        let shadowed: Option<(String, usize)> = if let Some((skind, sline)) = self.lookup(name) {
+            Some((format!("{} '{}'", skind.label(), name), sline))
+        } else if name == self.fn_name {
+            Some((format!("enclosing function '{}'", name), self.fn_line))
+        } else if let Some(&(fline, fkind)) = self.module_fns.get(name) {
+            let what = match fkind {
+                ModuleNameKind::Function => "function",
+                ModuleNameKind::Operation => "operation",
+            };
+            Some((format!("{} '{}'", what, name), fline))
+        } else {
+            None
+        };
+        if let Some((what, sline)) = shadowed {
+            self.errors.push(TypeError {
+                message: format!(
+                    "the {} '{}' shadows the {} defined at line {}; every name means \
+                     one thing in its scope — rename one of them",
+                    kind.label(),
+                    name,
+                    what,
+                    sline
+                ),
+                line,
+                col: 0,
+                secondary: None,
+            });
+        }
+        self.frames
+            .last_mut()
+            .expect("shadow walk always holds the fn frame")
+            .push((name.to_string(), kind, line));
+    }
+
+    fn walk_stmts(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Binding(name, _annot, expr) => {
+                    // The RHS is evaluated before the name is in scope,
+                    // but check-then-declare in one step is equivalent
+                    // here: a same-named binder INSIDE the RHS would be
+                    // an arm binder in its own frame, reported against
+                    // this binding either way.
+                    self.check_and_declare(name, ShadowBinderKind::StmtBinding, expr.line);
+                    self.walk_expr(expr);
+                }
+                Stmt::Expr(expr) => self.walk_expr(expr),
+            }
+        }
+    }
+
+    /// Pattern binders in pattern-position order, mirroring
+    /// `ResolverState::allocate_pattern`.
+    fn pattern_binders(pattern: &Pattern, out: &mut Vec<String>) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+            Pattern::Ident(name) => out.push(name.clone()),
+            Pattern::Cons(head, tail) => {
+                out.push(head.clone());
+                out.push(tail.clone());
+            }
+            Pattern::Constructor(_, bindings) => out.extend(bindings.iter().cloned()),
+            Pattern::Tuple(items) => {
+                for item in items {
+                    Self::pattern_binders(item, out);
+                }
+            }
+        }
+    }
+
+    fn walk_expr(&mut self, expr: &Spanned<Expr>) {
+        match &expr.node {
+            Expr::Match { subject, arms } => {
+                self.walk_expr(subject);
+                for arm in arms {
+                    let mut binders = Vec::new();
+                    Self::pattern_binders(&arm.pattern, &mut binders);
+                    self.frames.push(Vec::new());
+                    for binder in &binders {
+                        // Patterns carry no span of their own; the arm
+                        // body's line is the closest carried position.
+                        self.check_and_declare(
+                            binder,
+                            ShadowBinderKind::PatternBinder,
+                            arm.body.line,
+                        );
+                    }
+                    self.walk_expr(&arm.body);
+                    self.frames.pop();
+                }
+            }
+            Expr::FnCall(func, args) => {
+                self.walk_expr(func);
+                for arg in args {
+                    self.walk_expr(arg);
+                }
+            }
+            Expr::BinOp(_, l, r) => {
+                self.walk_expr(l);
+                self.walk_expr(r);
+            }
+            Expr::Neg(inner) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
+                self.walk_expr(inner)
+            }
+            Expr::Constructor(_, Some(inner)) => self.walk_expr(inner),
+            Expr::Constructor(_, None) => {}
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                for item in items {
+                    self.walk_expr(item);
+                }
+            }
+            Expr::MapLiteral(entries) => {
+                for (k, v) in entries {
+                    self.walk_expr(k);
+                    self.walk_expr(v);
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    if let StrPart::Parsed(inner) = part {
+                        self.walk_expr(inner);
+                    }
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    self.walk_expr(e);
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                self.walk_expr(base);
+                for (_, e) in updates {
+                    self.walk_expr(e);
+                }
+            }
+            Expr::TailCall(tc) => {
+                for arg in &tc.args {
+                    self.walk_expr(arg);
+                }
+            }
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,6 +1043,192 @@ mod tests {
                 ..
             }) => {}
             other => panic!("unexpected stmt: {:?}", other),
+        }
+    }
+
+    // ── Shadowing ban (issue #954) ──────────────────────────────────
+    //
+    // The matrix below is mechanical: one row per reachable
+    // (binder position × shadowed-thing kind) cell, each row a
+    // complete program plus the exact error and the binder's line.
+    // Unreachable cells are absent by construction — a parameter
+    // cannot shadow a local (parameters come first), and a statement
+    // binding cannot shadow a pattern binder (statement bindings
+    // exist only at fn-body top level, outside every arm frame).
+
+    fn shadow_errors(src: &str) -> Vec<crate::types::checker::TypeError> {
+        let items = crate::source::parse_source(src).expect("ban-matrix program must parse");
+        check_shadowing(&items)
+    }
+
+    const S: &str = "every name means one thing in its scope — rename one of them";
+
+    #[test]
+    fn shadow_ban_matrix_rejects_every_banned_cell() {
+        let rows: &[(&str, String, usize, String)] = &[
+            (
+                "param-over-param",
+                "fn f(a: Int, a: Int) -> Int\n    a\n".into(),
+                1,
+                format!("the parameter 'a' shadows the parameter 'a' defined at line 1; {S}"),
+            ),
+            (
+                "param-over-own-fn-name",
+                "fn f(f: Int) -> Int\n    f\n".into(),
+                1,
+                format!("the parameter 'f' shadows the enclosing function 'f' defined at line 1; {S}"),
+            ),
+            (
+                "param-over-module-fn",
+                "fn g(x: Int) -> Int\n    x\n\nfn f(g: Int) -> Int\n    g\n".into(),
+                4,
+                format!("the parameter 'g' shadows the function 'g' defined at line 1; {S}"),
+            ),
+            (
+                "param-over-operation",
+                "operation size() -> Int\n\nfn f(size: Int) -> Int\n    size\n".into(),
+                3,
+                format!("the parameter 'size' shadows the operation 'size' defined at line 1; {S}"),
+            ),
+            (
+                "stmt-binding-over-param",
+                "fn f(a: Int) -> Int\n    a = 2\n    a\n".into(),
+                2,
+                format!("the binding 'a' shadows the parameter 'a' defined at line 1; {S}"),
+            ),
+            (
+                "stmt-binding-over-stmt-binding",
+                "fn f(x: Int) -> Int\n    a = x\n    a = 3\n    a\n".into(),
+                3,
+                format!("the binding 'a' shadows the binding 'a' defined at line 2; {S}"),
+            ),
+            (
+                "stmt-binding-over-module-fn",
+                "fn g(x: Int) -> Int\n    x\n\nfn f(x: Int) -> Int\n    g = x\n    g\n".into(),
+                5,
+                format!("the binding 'g' shadows the function 'g' defined at line 1; {S}"),
+            ),
+            (
+                "stmt-binding-over-own-fn-name",
+                "fn f(x: Int) -> Int\n    f = x\n    f\n".into(),
+                2,
+                format!("the binding 'f' shadows the enclosing function 'f' defined at line 1; {S}"),
+            ),
+            (
+                "stmt-binding-over-operation",
+                "operation size() -> Int\n\nfn f(x: Int) -> Int\n    size = x\n    size\n".into(),
+                4,
+                format!("the binding 'size' shadows the operation 'size' defined at line 1; {S}"),
+            ),
+            (
+                "pattern-binder-over-param",
+                "fn f(v: Int) -> Int\n    match Option.Some(v)\n        Option.Some(v) -> v\n        Option.None -> 0\n".into(),
+                3,
+                format!("the pattern binding 'v' shadows the parameter 'v' defined at line 1; {S}"),
+            ),
+            (
+                "pattern-binder-over-stmt-binding",
+                "fn f(x: Int) -> Int\n    v = x * 2\n    match Option.Some(v)\n        Option.Some(v) -> v\n        Option.None -> 0\n".into(),
+                4,
+                format!("the pattern binding 'v' shadows the binding 'v' defined at line 2; {S}"),
+            ),
+            (
+                "pattern-binder-over-enclosing-pattern-binder",
+                "fn f(x: Int) -> Int\n    match Option.Some(x)\n        Option.Some(v) -> match Option.Some(v)\n            Option.Some(v) -> v\n            Option.None -> 0\n        Option.None -> 0\n".into(),
+                4,
+                format!("the pattern binding 'v' shadows the pattern binding 'v' defined at line 3; {S}"),
+            ),
+            (
+                "pattern-binder-duplicated-inside-one-pattern",
+                "fn f(x: Int) -> Int\n    match (x, x)\n        (a, a) -> a\n".into(),
+                3,
+                format!("the pattern binding 'a' shadows the pattern binding 'a' defined at line 3; {S}"),
+            ),
+            (
+                "pattern-binder-over-module-fn",
+                "fn dbl(n: Int) -> Int\n    n * 2\n\nfn probe(x: Int) -> Int\n    match Option.Some(x)\n        Option.Some(dbl) -> dbl(3)\n        Option.None -> 0\n".into(),
+                6,
+                format!("the pattern binding 'dbl' shadows the function 'dbl' defined at line 1; {S}"),
+            ),
+            (
+                "pattern-binder-over-own-fn-name",
+                "fn f(x: Int) -> Int\n    match Option.Some(x)\n        Option.Some(f) -> f\n        Option.None -> 0\n".into(),
+                3,
+                format!("the pattern binding 'f' shadows the enclosing function 'f' defined at line 1; {S}"),
+            ),
+            (
+                "cons-head-over-stmt-binding",
+                "fn f(xs: List<Int>) -> Int\n    h = 1\n    match xs\n        [] -> h\n        [h, ..t] -> h\n".into(),
+                5,
+                format!("the pattern binding 'h' shadows the binding 'h' defined at line 2; {S}"),
+            ),
+            (
+                "cons-tail-over-param",
+                "fn f(t: Int, xs: List<Int>) -> Int\n    match xs\n        [] -> t\n        [h, ..t] -> h\n".into(),
+                4,
+                format!("the pattern binding 't' shadows the parameter 't' defined at line 1; {S}"),
+            ),
+            (
+                "pattern-binder-over-operation",
+                "operation size() -> Int\n\nfn f(x: Int) -> Int\n    match Option.Some(x)\n        Option.Some(size) -> size\n        Option.None -> 0\n".into(),
+                5,
+                format!("the pattern binding 'size' shadows the operation 'size' defined at line 1; {S}"),
+            ),
+        ];
+        for (label, src, line, want) in rows {
+            let errs = shadow_errors(src);
+            assert_eq!(
+                errs.len(),
+                1,
+                "{label}: expected exactly one error, got {:?}",
+                errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
+            assert_eq!(&errs[0].message, want, "{label}");
+            assert_eq!(
+                errs[0].line, *line,
+                "{label}: the error must point at the binder"
+            );
+        }
+    }
+
+    #[test]
+    fn shadow_ban_leaves_legal_reuse_alone() {
+        let controls: &[(&str, &str)] = &[
+            (
+                "sibling-arms-may-reuse-a-name",
+                "type Shape\n    Circle(Int)\n    Square(Int)\n\nfn eval(p: Shape) -> Int\n    match p\n        Shape.Circle(n) -> n + 1\n        Shape.Square(n) -> n * 10\n",
+            ),
+            (
+                "underscore-is-a-discard-not-a-name",
+                "fn f(_: Int, _: Int) -> Int\n    match (1, 2)\n        (_, _) -> 0\n",
+            ),
+            (
+                "two-fns-may-reuse-a-param-name",
+                "fn f(x: Int) -> Int\n    x\n\nfn g(x: Int) -> Int\n    x\n",
+            ),
+            (
+                "sequential-matches-may-reuse-a-binder",
+                "fn f(x: Int) -> Int\n    a = match Option.Some(x)\n        Option.Some(v) -> v\n        Option.None -> 0\n    b = match Option.Some(x)\n        Option.Some(v) -> v\n        Option.None -> 0\n    a + b\n",
+            ),
+            (
+                // Binders inside verify blocks are OUT of the v1 ban —
+                // a given may spell a module fn's name (extending the
+                // rule there gets its own census first, issue #954).
+                "verify-given-is-out-of-v1-scope",
+                "fn keys(m: Map<Float, Int>) -> List<Float>\n    Map.keys(m)\n\nfn howMany(counted: List<Float>) -> Int\n    List.len(counted)\n\nverify howMany law countsThem\n    given keys: List<Float> = [[1.0], [1.0, 2.0]]\n    howMany(keys) => List.len(keys)\n",
+            ),
+            (
+                "a-name-not-in-scope-is-free",
+                "fn f(x: Int) -> Int\n    keys = x\n    keys\n",
+            ),
+        ];
+        for (label, src) in controls {
+            let errs = shadow_errors(src);
+            assert!(
+                errs.is_empty(),
+                "{label}: expected no error, got {:?}",
+                errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }

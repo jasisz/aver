@@ -456,28 +456,32 @@ mod tests {
     }
 
     /// A statement binding that extracts a collection out of a map must
-    /// stay flagged even when a LATER pattern binder reuses its
-    /// spelling. The pass used to fetch the binding's slot by name from
-    /// `local_slots` (last allocation wins), judged the binder's Int
-    /// slot instead — never a collection, so no flag — and the
-    /// extracted vector stayed owned-eligible: the VM's in-place fast
-    /// path then mutated the arena entry the map still holds (the g6 /
-    /// g9 witnesses in `tests/vm_pattern_shadow_matrix.rs`).
+    /// stay flagged even with a LATER pattern binder in the fn. The
+    /// pass used to fetch the binding's slot by name from `local_slots`
+    /// (last allocation wins), so a later binder spelled the same
+    /// judged the binder's Int slot instead — never a collection, so no
+    /// flag — and the extracted vector stayed owned-eligible: the VM's
+    /// in-place fast path then mutated the arena entry the map still
+    /// holds. That same-spelling trigger is a compile error now (issue
+    /// #954, pinned in `tests/vm_pattern_shadow_matrix.rs` and the
+    /// resolver's ban matrix), but the positional `stmt_binding_slots`
+    /// read this pass consumes is still the contract — synthesized IR
+    /// reuses spellings freely — so the flag is asserted through it.
     #[test]
-    fn a_shadowed_statement_binding_of_an_extracted_collection_stays_flagged() {
+    fn a_statement_binding_of_an_extracted_collection_stays_flagged() {
         let src = r#"
 fn main() -> Int
     m = Map.set({}, 1, Vector.fromList([7]))
     v = Option.withDefault(Map.get(m, 1), Vector.new(1, 0))
     r = match Option.Some(1)
-        Option.Some(v) -> v + 1
+        Option.Some(w) -> w + 1
         Option.None -> 0
     Vector.len(v) + r
 "#;
         assert!(
             stmt_binding_is_flagged(src, "main", 1),
             "the statement binding `v` (an element extracted from `m`) lost its \
-             alias flag to the later Int pattern binder spelled `v`"
+             alias flag"
         );
     }
 

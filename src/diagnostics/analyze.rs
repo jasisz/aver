@@ -154,6 +154,16 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
         diagnostics.push(from_type_error(te, source, &options.file_label));
     }
 
+    // The shadowing ban (issue #954) rides beside typecheck here the
+    // same way it does in `pipeline::run`: same pre-fabrication AST,
+    // same error channel, suppressed when typecheck already failed so
+    // a broken program is not buried under a cascade.
+    if tc_result.errors.is_empty() {
+        for te in crate::resolver::check_shadowing(&items) {
+            diagnostics.push(from_type_error(&te, source, &options.file_label));
+        }
+    }
+
     let findings = if options.include_intent_warnings {
         Some(check_module_intent_with_sigs_in(
             &items,

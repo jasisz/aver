@@ -46,7 +46,7 @@ xs: List<Int> = []
 
 Optional type annotation provides a hint to the type checker; the annotation wins over inference when both are compatible. Binding to an empty list literal without a type annotation (`x = []`) is a type error.
 
-Duplicate binding of the same name in the same scope is a type error.
+Every name means one thing in its scope. Duplicate binding of the same name in the same scope is a type error, and so is shadowing: a binder — a function parameter, a statement binding, or a match-pattern binding — may not reuse any name already visible at that point, including a top-level function of its own module and the enclosing function's own name. The error names both sides and where the shadowed one is defined; the fix is one rename. Sibling match arms may bind the same name (neither is in the other's scope), and cross-module names are always `Module.fn`-qualified, so nothing outside the file can collide.
 
 ## Operators
 

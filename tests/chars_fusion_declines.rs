@@ -34,6 +34,26 @@ fn run_program(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Run a program that must be REJECTED at the front door (the
+/// shadowing ban, issue #954); returns stderr for the message pin.
+fn run_rejected(name: &str, source: &str) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join(format!("{name}.av"));
+    std::fs::write(&entry, source).expect("write entry");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .output()
+        .expect("invoke aver");
+    assert!(
+        !output.status.success(),
+        "aver run {name} was expected to be rejected:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 /// The loop measures the list it was handed to decide when to stop. The
 /// cursor variant has no list to measure, and the module binds `chars`
 /// at top level — which is what turns a dropped parameter from a compile
@@ -107,11 +127,14 @@ fn main() -> Unit
 }
 
 /// The recursive step is a DIFFERENT list that happens to carry the
-/// tail's name. Stepping the cursor on the strength of the name walks
-/// the whole string; the loop as written stops after one character.
+/// tail's name — the loop a cursor stepping on the strength of the name
+/// would walk wrong. The shadowing ban (issue #954) refuses the
+/// spelling at the front door now, so the pass never sees it; its
+/// guard stays for compiler-synthesized shapes, and this pin says the
+/// refusal is what the user sees.
 #[test]
-fn a_shadowed_tail_keeps_its_unfused_answer() {
-    let out = run_program(
+fn a_shadowed_tail_is_rejected() {
+    let stderr = run_rejected(
         "shadow",
         r#"module Shadow
     intent =
@@ -136,9 +159,13 @@ fn main() -> Unit
     Console.print(String.fromInt(count("abcde")))
 "#,
     );
-    // One step, then the shadowed (empty) tail ends the loop. A cursor
-    // that stepped for the name would answer 5.
-    assert_eq!(out, "1");
+    assert!(
+        stderr.contains(
+            "the pattern binding 'tail' shadows the pattern binding 'tail' defined at \
+             line 13; every name means one thing in its scope — rename one of them"
+        ),
+        "the refusal must be the standard shadow error:\n{stderr}"
+    );
 }
 
 /// The list match is not the `[] / [head, ..tail]` pair the cursor
@@ -414,11 +441,15 @@ fn main() -> Unit
 }
 
 /// The call is to a PARAMETER that happens to carry a top-level
-/// function's name. Rewriting it to `walk__cursor` would call a
-/// different function than the program does.
+/// function's name — rewriting it to `walk__cursor` would call a
+/// different function than the program does. The shadowing ban (issue
+/// #954) refuses the parameter spelling at the front door now, so the
+/// pass can no longer meet this shape in user code; its callee guard
+/// stays for compiler-synthesized shapes, and this pin says the
+/// refusal is what the user sees.
 #[test]
-fn a_call_through_a_parameter_is_not_a_call_to_the_function_it_shadows() {
-    let out = run_program(
+fn a_call_through_a_parameter_spelling_a_fn_is_rejected() {
+    let stderr = run_rejected(
         "callee_shadow",
         r#"module CalleeShadow
     intent =
@@ -452,10 +483,13 @@ fn main() -> Unit
     Console.print(report("abcde"))
 "#,
     );
-    // `go` runs `half` (three of five), and the real `walk` still
-    // counts all five — and still fuses, because nothing shadows it
-    // where it is actually called.
-    assert_eq!(out, "3/5");
+    assert!(
+        stderr.contains(
+            "the parameter 'walk' shadows the function 'walk' defined at line 7; \
+             every name means one thing in its scope — rename one of them"
+        ),
+        "the refusal must be the standard shadow error:\n{stderr}"
+    );
 }
 
 /// The default arm BINDS the subject. Rewriting the subject to a
