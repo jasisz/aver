@@ -454,7 +454,29 @@ pub struct FnResolution {
     /// Total number of local slots needed (params + bindings in body).
     pub local_count: u16,
     /// Map from local variable name → slot index in the local `Slots` frame.
+    ///
+    /// Last allocation per name wins on collision, so a pattern binder
+    /// that reuses a statement binding's spelling owns the entry.
+    /// Consumers that need a *specific* binding's slot must not go
+    /// through this map: pattern binders live in
+    /// `MatchArm::binding_slots`, statement bindings in
+    /// `stmt_binding_slots`.
     pub local_slots: std::sync::Arc<std::collections::HashMap<String, u16>>,
+    /// Slot of each fn-body statement binding, in source order —
+    /// one entry per `Stmt::Binding`, `u16::MAX` for a discarded
+    /// `_` binding (which claims no slot). This is the identity
+    /// the MIR statement-chain lowering and the alias pass read;
+    /// looking the slot up by name in `local_slots` instead
+    /// resolves to a later same-named pattern binder's slot
+    /// (issue #948).
+    ///
+    /// CONTRACT (consumer side): zip positionally against the
+    /// body's `Stmt::Binding`s and check the list drains exactly —
+    /// a leftover means statements were added, removed, or
+    /// reordered after resolution without rebuilding this table,
+    /// and every zip may have paired a binding with a neighbor's
+    /// slot.
+    pub stmt_binding_slots: std::sync::Arc<Vec<u16>>,
     /// Aver type per slot index. Length == `local_count`. Built post-
     /// typecheck so each entry pulls from the matching `Spanned::ty()`
     /// stamp on the producer expression, plus pattern-binding shape

@@ -571,19 +571,33 @@ fn collect_pattern_binders_into(expr: &Spanned<Expr>, out: &mut HashSet<String>)
 }
 
 fn collect_binders_of_pattern(pattern: &Pattern, out: &mut HashSet<String>) {
+    // `_` is spelled inside Cons/Constructor binding lists as a plain
+    // string, but it is not a name: it binds nothing and may appear
+    // several times in one pattern. Letting it into the binder set put
+    // it in the rename map, and the rename then rewrote every `_` of a
+    // pattern to the SAME fresh name — two discards became one
+    // identifier bound twice, which the Rust emitter rejects outright
+    // (E0416) and no backend should see.
+    fn insert_binder(name: &str, out: &mut HashSet<String>) {
+        if name != "_" {
+            out.insert(name.to_string());
+        }
+    }
     match pattern {
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
-        Pattern::Ident(n) => {
-            out.insert(n.clone());
-        }
+        Pattern::Ident(n) => insert_binder(n, out),
         Pattern::Cons(head, tail) => {
-            out.insert(head.clone());
-            out.insert(tail.clone());
+            insert_binder(head, out);
+            insert_binder(tail, out);
         }
         Pattern::Tuple(items) => items
             .iter()
             .for_each(|p| collect_binders_of_pattern(p, out)),
-        Pattern::Constructor(_, bindings) => out.extend(bindings.iter().cloned()),
+        Pattern::Constructor(_, bindings) => {
+            for b in bindings {
+                insert_binder(b, out);
+            }
+        }
     }
 }
 
@@ -667,7 +681,12 @@ fn encode_step_body(
     // namespace or constructor read the rename must not touch).
     let mut binders: HashSet<String> = HashSet::new();
     for stmt in step.body.stmts() {
-        if let Stmt::Binding(name, _, _) = stmt {
+        if let Stmt::Binding(name, _, _) = stmt
+            && name != "_"
+        {
+            // `_ = e` discards its value and binds nothing — it has no
+            // name to rename (and must not put `_` into the rename map,
+            // where it would rewrite pattern discards into binders).
             binders.insert(name.clone());
         }
         collect_pattern_binders_into(crate::ir::chars_fusion::stmt_expr(stmt), &mut binders);
@@ -776,6 +795,11 @@ fn encode_step_body(
     };
     for stmt in stmts.into_iter().rev() {
         expr = match stmt {
+            // A discard binding stays a discard: `_` is not a name and
+            // was deliberately left out of the rename map above.
+            Stmt::Binding(name, _, value) if name == "_" => {
+                bind_over(value, Pattern::Wildcard, expr)
+            }
             Stmt::Binding(name, _, value) => bind_over(value, Pattern::Ident(name), expr),
             Stmt::Expr(value) => bind_over(value, Pattern::Wildcard, expr),
         };
@@ -1239,6 +1263,97 @@ fn entry(xs: List<Int>) -> List<Int>
         assert!(
             report.pair_inlined_by_fn.contains_key("drive"),
             "{report:?}"
+        );
+    }
+
+    /// Two discards in one pattern of the step must stay discards
+    /// through the inline. The binder collection once treated `_` as a
+    /// name, so the rename map rewrote BOTH `_`s of a `Two(_, _)`
+    /// pattern to the SAME fresh `__stp<n>` — one identifier bound
+    /// twice in one pattern. The VM shrugged (nothing reads the name),
+    /// but the Rust emitter faithfully printed the duplicate and rustc
+    /// rejected it (E0416) — found when regenerating the self-host,
+    /// whose resolver matches `StmtBindSlot(_, _)`.
+    #[test]
+    fn wildcards_in_the_steps_patterns_survive_the_inline_unrenamed() {
+        let source = r#"module WildcardPair
+    intent = "Two discards in one step pattern."
+    exposes [entry]
+
+type Two
+  Pair(Int, Int)
+
+fn drive(xs: List<Int>, acc: List<Int>) -> List<Int>
+    match xs
+        [] -> List.reverse(acc)
+        [h, ..t] -> step(h, t, acc)
+
+fn step(sh: Int, st: List<Int>, sacc: List<Int>) -> List<Int>
+    keep = match Two.Pair(sh, sh)
+        Two.Pair(_, _) -> sh * 2
+    drive(st, List.prepend(keep, sacc))
+
+fn entry(xs: List<Int>) -> List<Int>
+    drive(xs, [])
+"#;
+        let mut items = crate::source::parse_source(source).expect("fixture parses");
+        crate::tco::transform_program(&mut items);
+        let report = super::super::list_build::run_list_build_pass(&mut items);
+        assert!(
+            report.pair_inlined_by_fn.contains_key("drive"),
+            "the pair must fuse for this test to witness anything: {report:?}"
+        );
+
+        fn check_pattern(pattern: &Pattern) {
+            if let Pattern::Constructor(name, bindings) = pattern {
+                let mut seen: HashSet<&String> = HashSet::new();
+                for b in bindings.iter().filter(|b| *b != "_") {
+                    assert!(
+                        seen.insert(b),
+                        "`{name}` binds `{b}` twice in one pattern: {bindings:?}"
+                    );
+                }
+            }
+            if let Pattern::Tuple(items) = pattern {
+                items.iter().for_each(check_pattern);
+            }
+        }
+        fn check_expr(expr: &Spanned<Expr>) {
+            if let Expr::Match { arms, .. } = &expr.node {
+                for arm in arms {
+                    check_pattern(&arm.pattern);
+                }
+            }
+            crate::ir::chars_fusion::walk_children(expr, &mut |child| check_expr(child));
+        }
+        let mut two_wildcard_patterns = 0;
+        for item in &items {
+            if let TopLevel::FnDef(fd) = item {
+                for stmt in fd.body.stmts() {
+                    let expr = crate::ir::chars_fusion::stmt_expr(stmt);
+                    check_expr(expr);
+                    fn count_two_wild(expr: &Spanned<Expr>, count: &mut usize) {
+                        if let Expr::Match { arms, .. } = &expr.node {
+                            for arm in arms {
+                                if let Pattern::Constructor(_, bindings) = &arm.pattern
+                                    && bindings.iter().all(|b| b == "_")
+                                    && bindings.len() == 2
+                                {
+                                    *count += 1;
+                                }
+                            }
+                        }
+                        crate::ir::chars_fusion::walk_children(expr, &mut |child| {
+                            count_two_wild(child, count)
+                        });
+                    }
+                    count_two_wild(expr, &mut two_wildcard_patterns);
+                }
+            }
+        }
+        assert!(
+            two_wildcard_patterns > 0,
+            "the fused module must still contain the `Two.Pair(_, _)` discard pattern"
         );
     }
 

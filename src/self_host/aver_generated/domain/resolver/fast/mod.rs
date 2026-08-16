@@ -896,9 +896,9 @@ pub fn classifyFastForwardCall(
     args: &aver_rt::AverList<Expr>,
 ) -> FnFastPath {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots(
+    match crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
         args.clone(),
-        aver_rt::AverList::empty(),
+        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     ) {
         Some(slotArgs) => {
             crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(fnId, slotArgs)
@@ -1144,5 +1144,30 @@ pub fn classifyFastLtScrutinee(
             _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         },
         _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
+    }
+}
+
+/// Synthesized collecting variant of `classifyFastForwardSlots`. Appends to a builder where `classifyFastForwardSlots` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn classifyFastForwardSlots__collected(
+    mut args: aver_rt::AverList<Expr>,
+    mut acc: aver_rt::AverList<aver_rt::AverInt>,
+) -> Option<aver_rt::AverList<aver_rt::AverInt>> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(args, [] => { return Some(aver_rt::list_builder_finalize(acc)); }, [arg, rest] => { match arg {
+        crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, slot);
+            args = __tco0;
+            acc = __tco1;
+            continue;
+        }
+        },
+        _ => {
+            return None;
+        }
+    } })
     }
 }

@@ -3,84 +3,6 @@ use crate::aver_generated::domain::value::*;
 #[allow(unused_imports)]
 use crate::*;
 
-#[allow(non_camel_case_types)]
-enum __MutualTco1 {
-    MergeRecordFieldsAcc(
-        aver_rt::AverList<(AverStr, Val)>,
-        aver_rt::AverList<(AverStr, Val)>,
-        aver_rt::AverList<(AverStr, Val)>,
-    ),
-    MergeOneField(
-        AverStr,
-        Val,
-        aver_rt::AverList<(AverStr, Val)>,
-        aver_rt::AverList<(AverStr, Val)>,
-        aver_rt::AverList<(AverStr, Val)>,
-    ),
-}
-
-fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverList<(AverStr, Val)> {
-    loop {
-        __state = match __state {
-            __MutualTco1::MergeRecordFieldsAcc(mut existing, mut overrides, mut acc) => {
-                crate::cancel_checkpoint();
-                aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&acc.reverse(), &overrides) }, [pair, rest] => { { let (k, v) = pair; __MutualTco1::MergeOneField(k, v, rest, overrides, acc) } })
-            }
-            __MutualTco1::MergeOneField(mut k, mut v, mut rest, mut overrides, mut acc) => {
-                crate::cancel_checkpoint();
-                match crate::aver_generated::domain::eval::records::findOverride(
-                    k.clone(),
-                    overrides.clone(),
-                ) {
-                    Some(newV) => __MutualTco1::MergeRecordFieldsAcc(
-                        rest,
-                        crate::aver_generated::domain::eval::records::removeOverride(
-                            k.clone(),
-                            &overrides,
-                        ),
-                        aver_rt::AverList::prepend((k, newV), &acc),
-                    ),
-                    None => __MutualTco1::MergeRecordFieldsAcc(
-                        rest,
-                        overrides,
-                        aver_rt::AverList::prepend((k, v), &acc),
-                    ),
-                }
-            }
-        };
-    }
-}
-
-/// Accumulate merged fields.
-pub fn mergeRecordFieldsAcc(
-    existing: &aver_rt::AverList<(AverStr, Val)>,
-    overrides: &aver_rt::AverList<(AverStr, Val)>,
-    acc: &aver_rt::AverList<(AverStr, Val)>,
-) -> aver_rt::AverList<(AverStr, Val)> {
-    __mutual_tco_trampoline_1(__MutualTco1::MergeRecordFieldsAcc(
-        existing.clone(),
-        overrides.clone(),
-        acc.clone(),
-    ))
-}
-
-/// Check if field k has an override.
-pub fn mergeOneField(
-    k: AverStr,
-    v: &Val,
-    rest: &aver_rt::AverList<(AverStr, Val)>,
-    overrides: &aver_rt::AverList<(AverStr, Val)>,
-    acc: &aver_rt::AverList<(AverStr, Val)>,
-) -> aver_rt::AverList<(AverStr, Val)> {
-    __mutual_tco_trampoline_1(__MutualTco1::MergeOneField(
-        k,
-        v.clone(),
-        rest.clone(),
-        overrides.clone(),
-        acc.clone(),
-    ))
-}
-
 /// Check if this is a Type.update(record, _named(...)) call.
 #[inline(always)]
 pub fn isRecordUpdate(name: AverStr, args: &aver_rt::AverList<Val>) -> bool {
@@ -183,11 +105,62 @@ pub fn mergeRecordFields(
     overrides: &aver_rt::AverList<(AverStr, Val)>,
 ) -> aver_rt::AverList<(AverStr, Val)> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
-        existing,
-        overrides,
-        &aver_rt::AverList::empty(),
+    crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc__collected(
+        existing.clone(),
+        overrides.clone(),
+        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     )
+}
+
+/// Accumulate merged fields.
+#[inline(always)]
+pub fn mergeRecordFieldsAcc(
+    mut existing: aver_rt::AverList<(AverStr, Val)>,
+    mut overrides: aver_rt::AverList<(AverStr, Val)>,
+    mut acc: aver_rt::AverList<(AverStr, Val)>,
+) -> aver_rt::AverList<(AverStr, Val)> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&acc.reverse(), &overrides); }, [pair, rest] => { { let (k, v) = pair; match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides.clone()) { Some(__stp0) => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::eval::records::removeOverride(k.clone(), &overrides);
+            let __tco2 = aver_rt::AverList::prepend((k, __stp0), &acc);
+            existing = __tco0;
+            overrides = __tco1;
+            acc = __tco2;
+            continue;
+        } }, None => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend((k, v), &acc);
+            existing = __tco0;
+            acc = __tco2;
+            continue;
+        } } } } })
+    }
+}
+
+/// Check if field k has an override.
+#[inline(always)]
+pub fn mergeOneField(
+    k: AverStr,
+    v: &Val,
+    rest: &aver_rt::AverList<(AverStr, Val)>,
+    overrides: &aver_rt::AverList<(AverStr, Val)>,
+    acc: &aver_rt::AverList<(AverStr, Val)>,
+) -> aver_rt::AverList<(AverStr, Val)> {
+    crate::cancel_checkpoint();
+    match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides.clone()) {
+        Some(newV) => crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
+            rest.clone(),
+            crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides),
+            aver_rt::AverList::prepend((k, newV), &acc.clone()),
+        ),
+        None => crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
+            rest.clone(),
+            overrides.clone(),
+            aver_rt::AverList::prepend((k, v.clone()), &acc.clone()),
+        ),
+    }
 }
 
 /// Find a field value in the overrides list.
@@ -237,5 +210,32 @@ pub fn removeOverrideAcc(
             acc = __tco2;
             continue;
         } } } })
+    }
+}
+
+/// Synthesized collecting variant of `mergeRecordFieldsAcc`. Appends to a builder where `mergeRecordFieldsAcc` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn mergeRecordFieldsAcc__collected(
+    mut existing: aver_rt::AverList<(AverStr, Val)>,
+    mut overrides: aver_rt::AverList<(AverStr, Val)>,
+    mut acc: aver_rt::AverList<(AverStr, Val)>,
+) -> aver_rt::AverList<(AverStr, Val)> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &overrides); }, [pair, rest] => { { let (k, v) = pair; match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides.clone()) { Some(__stp0) => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::eval::records::removeOverride(k.clone(), &overrides);
+            let __tco2 = aver_rt::list_builder_push(acc, (k, __stp0));
+            existing = __tco0;
+            overrides = __tco1;
+            acc = __tco2;
+            continue;
+        } }, None => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::list_builder_push(acc, (k, v));
+            existing = __tco0;
+            acc = __tco2;
+            continue;
+        } } } } })
     }
 }

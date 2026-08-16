@@ -338,13 +338,14 @@ pub(super) fn compile_mir_expr(
 
         // ── Phase 6: fn referenced as a value ───────────────────
         // `callWith(dbl)` passes `dbl` — a top-level fn / builtin in
-        // value position. Reuse the HIR walker's `compile_ident`
-        // verbatim: it tries local slot → global → module-scope fn
-        // (symbol_ref of the qualified name) → interned symbol with a
-        // kind. Sharing the path guarantees byte-identical emit with
-        // the HIR walker, and an unresolved name surfaces as the same
-        // `CompileError` (folded to `InnerError`, so a malformed input
-        // still drops to the HIR fallback rather than miscompiling).
+        // value position. `compile_ident` tries global → module-scope
+        // fn (symbol_ref of the qualified name) → interned symbol with
+        // a kind; its local-slot branch is inert for resolved fns
+        // (their `local_slots` table is deliberately empty — a
+        // `FnValue` name was left bare by the resolver, so a name-keyed
+        // local hit could only be an out-of-scope pattern binder
+        // sharing the spelling, issue #948). An unresolved name
+        // surfaces as a `CompileError` (folded to `InnerError`).
         MirExpr::FnValue(name) => {
             fc.compile_ident(name)?;
             Ok(())

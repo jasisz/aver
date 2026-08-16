@@ -79,9 +79,28 @@ fn annotate_fn(fd: &mut FnDef) {
     let body = fd.body.clone();
     let FnBody::Block(stmts) = body.as_ref();
     for _ in 0..2 {
+        // Per-statement positional identity — the same source the MIR
+        // statement-chain lowering consumes: `stmt_binding_slots` has
+        // exactly one entry per fn-body `Stmt::Binding` in source order
+        // (`u16::MAX` for `_`). Looking the slot up BY NAME in
+        // `local_slots` is the issue-#948 disease: last allocation wins
+        // in that map, so a later pattern binder spelled like the
+        // statement binding owns the entry, this pass then judges the
+        // BINDER's slot (usually a scalar → no flag) and the statement
+        // binding's own collection slot stays owned-eligible — the VM's
+        // in-place fast path then mutates an arena entry the map/vector
+        // it was extracted from still holds.
+        let mut stmt_slots = res.stmt_binding_slots.iter();
         for stmt in stmts {
-            if let Stmt::Binding(name, _, expr) = stmt {
-                let Some(&slot) = res.local_slots.get(name) else {
+            if let Stmt::Binding(_, _, expr) = stmt {
+                let slot = stmt_slots.next().copied();
+                // A discarded `_ = …` binding claims no slot and RETAINS
+                // nothing: its value is dropped on the spot, so a local
+                // flowing into it gains no second holder — skip both
+                // halves (this is also the pre-#948 behaviour, which the
+                // slot-uniqueness suite pins via its owned-grant
+                // tallies: `_ = f(m)` must not cost `m` its grant).
+                let Some(slot) = slot.filter(|&s| s != u16::MAX) else {
                     continue;
                 };
                 // Source half: flag every bare collection local whose handle
@@ -111,6 +130,18 @@ fn annotate_fn(fd: &mut FnDef) {
                 }
             }
         }
+        // Contract check (mirror of `lower_stmt_chain`): the resolver
+        // records one entry per `Stmt::Binding`, so the iterator must be
+        // drained exactly — a leftover means a pass added, removed, or
+        // reordered statement bindings without rebuilding the table,
+        // and the positional zip above stamped alias bits onto the
+        // wrong slots.
+        debug_assert!(
+            stmt_slots.next().is_none(),
+            "stmt_binding_slots not exhausted in `{}`: statement bindings and the \
+             resolver's per-statement slot table are misaligned",
+            fd.name
+        );
     }
 
     // Re-stamp the resolution. `Arc` swap keeps the rest of the
@@ -118,6 +149,7 @@ fn annotate_fn(fd: &mut FnDef) {
     let new_res = crate::ast::FnResolution {
         local_count: res.local_count,
         local_slots: res.local_slots.clone(),
+        stmt_binding_slots: res.stmt_binding_slots.clone(),
         local_slot_types: res.local_slot_types.clone(),
         aliased_slots: Arc::new(aliased),
     };
@@ -385,6 +417,68 @@ mod tests {
             .get(slot as usize)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// Read the alias bit of fn `f`'s `idx`-th statement binding via the
+    /// resolver's positional `stmt_binding_slots` — the identity this
+    /// pass itself consumes. The name-keyed helper above cannot address
+    /// a statement binding whose spelling a later pattern binder reuses
+    /// (`local_slots` is last-allocation-wins), which is exactly the
+    /// case the positional read exists for.
+    fn stmt_binding_is_flagged(source: &str, f: &str, idx: usize) -> bool {
+        let mut items = parse_source(source).unwrap_or_else(|e| panic!("parse: {e}"));
+        let result = pipeline::run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        let tc = result.typecheck.as_ref().expect("typecheck requested");
+        assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
+        let fd = items
+            .iter()
+            .find_map(|i| match i {
+                TopLevel::FnDef(fd) if fd.name == f => Some(fd),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("fn {f} not found"));
+        let res = fd.resolution.as_ref().expect("resolution stamped");
+        let slot = *res
+            .stmt_binding_slots
+            .get(idx)
+            .unwrap_or_else(|| panic!("fn {f} has no statement binding #{idx}"));
+        assert_ne!(slot, u16::MAX, "statement binding #{idx} is a discard");
+        res.aliased_slots
+            .get(slot as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// A statement binding that extracts a collection out of a map must
+    /// stay flagged even when a LATER pattern binder reuses its
+    /// spelling. The pass used to fetch the binding's slot by name from
+    /// `local_slots` (last allocation wins), judged the binder's Int
+    /// slot instead — never a collection, so no flag — and the
+    /// extracted vector stayed owned-eligible: the VM's in-place fast
+    /// path then mutated the arena entry the map still holds (the g6 /
+    /// g9 witnesses in `tests/vm_pattern_shadow_matrix.rs`).
+    #[test]
+    fn a_shadowed_statement_binding_of_an_extracted_collection_stays_flagged() {
+        let src = r#"
+fn main() -> Int
+    m = Map.set({}, 1, Vector.fromList([7]))
+    v = Option.withDefault(Map.get(m, 1), Vector.new(1, 0))
+    r = match Option.Some(1)
+        Option.Some(v) -> v + 1
+        Option.None -> 0
+    Vector.len(v) + r
+"#;
+        assert!(
+            stmt_binding_is_flagged(src, "main", 1),
+            "the statement binding `v` (an element extracted from `m`) lost its \
+             alias flag to the later Int pattern binder spelled `v`"
+        );
     }
 
     const FROM_LIST_BINDING: &str = r#"

@@ -45,6 +45,13 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
+    /// Resolve a fn-referenced-as-a-value name (`MirExpr::FnValue`, its
+    /// only caller). `self.local_slots` is EMPTY for resolved fns (see
+    /// the field doc): a `FnValue` name survived the resolver, so no
+    /// local with that spelling was in scope at the use site and the
+    /// honest answers are module fns / globals / builtin symbols. The
+    /// local branch fires only on the no-resolution fallback map
+    /// (params only), where a bare param read can reach `FnValue`.
     pub(super) fn compile_ident(&mut self, name: &str) -> Result<(), CompileError> {
         if let Some(&slot) = self.local_slots.get(name) {
             self.emit_op(LOAD_LOCAL);
