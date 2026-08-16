@@ -347,11 +347,15 @@ fn recognize(_vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option
         return None;
     }
     let (param_name, _) = subj_fd.params.first()?;
-    let param_slot = subj_fd
-        .resolution
-        .as_ref()
-        .and_then(|resolution| resolution.local_slots.get(param_name).copied())
-        .or(Some(0));
+    // Params own slots 0..N-1 in declaration order (resolver
+    // convention), so the first param is slot 0 by construction. A
+    // name lookup in `local_slots` is last-allocation-wins, so a
+    // pattern binder spelled like the param would steal the entry and
+    // the mention-check below would run against the binder's slot
+    // (issue #948's disease); the misclassification is fail-closed
+    // (the Lean kernel rejects a wrong lemma), but the check should
+    // still ask about the right slot.
+    let param_slot = Some(0u16);
 
     // Classify the subject's two arms; gate base = OP2.identity and step's head
     // operator = OP2 (the homomorphism algebra).

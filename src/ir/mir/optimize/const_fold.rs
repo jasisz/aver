@@ -639,10 +639,11 @@ fn arm_matches_ctor(pattern: &MirPattern, ctor: BuiltinCtor, arity: usize) -> bo
 /// `Let` binds the first field, so args evaluate left-to-right, once each.
 ///
 /// Each `Let` carries the pattern field's source binder name
-/// (`binding_names[i]`) — this is load-bearing: the wasm-gc / Rust
-/// backends resolve a `Let`'s slot by *name* (`self_local_slot`), and an
-/// empty name routes them down the synthetic-discard path that drops the
-/// value. The VM keys off `binding` (the `LocalId`). Each `Let` also
+/// (`binding_names[i]`) — this is load-bearing: the Rust backend emits
+/// `let {binding_name} = …` by source name, and the wasm-gc emitter
+/// (which keys the slot off `binding`, the `LocalId`, since #948)
+/// routes an EMPTY name down the synthetic-discard path that drops the
+/// value. The VM keys off `binding` too. Each `Let` also
 /// carries the body's value type (`match_ty`) so wasm-gc has a stamp on
 /// every node.
 fn wrap_in_lets(

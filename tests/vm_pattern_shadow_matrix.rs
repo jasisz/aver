@@ -42,6 +42,15 @@
 //! Every backend must print `EXPECTED` exactly; asserting each
 //! against the same literal is the three-way differential plus
 //! protection against all backends agreeing on a wrong value.
+//!
+//! The suite also carries the SAME-DISEASE witnesses the #948 review
+//! flushed out — three more consumers that resolved a specific
+//! binding's slot by name through the last-wins `local_slots` map:
+//! the alias pass (`ALIAS_VEC_SRC` / `ALIAS_MAP_SRC`), the escape
+//! pass's arm binders (`ESCAPE_SIBLING_ARMS_SRC`), and the VM's
+//! fn-as-value path (`FN_VALUE_SRC`). Each witness sits next to a
+//! renamed control that must answer identically. Recorded pre-fix
+//! reds live on each source constant.
 
 #![cfg(feature = "runtime")]
 
@@ -330,6 +339,311 @@ fn main()
 ///        cell5 = 11, cell6 = 304, cell7 = 5, cell8 = 32,
 ///        cell9 = 401, cell10 = 3009, cell11 = 7.
 const EXPECTED: &str = "11\n60\n120\n701\n51\n1112\n13\n76\n1605\n7021\n105\n3\n20\n32\n301\n11\n304\n5\n32\n401\n3009\n7";
+
+/// Same-disease witness in the ALIAS pass (`src/ir/alias.rs`): the
+/// statement binding `v = pick(outer)` extracts a Vector out of a Map,
+/// and a later Int pattern binder reuses the spelling `v`. The pass
+/// used to fetch the statement binding's slot BY NAME from the
+/// last-wins `local_slots` map, judged the binder's Int slot (never a
+/// collection → no flag), and left the extracted vector owned-eligible
+/// — the VM's in-place fast path then mutated the arena entry the map
+/// still holds.
+///
+/// Recorded pre-fix reds:
+///   VM: `-989 / -997` for corrupt(5)/corrupt(1) — `Vector.set`
+///       consumed (`mem::take`) the map's stored vector, so the
+///       re-read `at0(pick(outer))` saw a gutted entry (-1), while
+///       self-host and compiled Rust answered `7011 / 7003`.
+///   The `control` twin (binder renamed `y`) answered 7011/7003
+///   everywhere pre-fix — pinning the shadowing spelling as the
+///   trigger.
+const ALIAS_VEC_SRC: &str = r#"module Tmp
+
+fn build() -> Map<Int, Vector<Int>>
+    Map.set({}, 1, Vector.fromList([7, 7, 7]))
+
+fn pick(m: Map<Int, Vector<Int>>) -> Vector<Int>
+    match Map.get(m, 1)
+        Option.Some(inner) -> inner
+        Option.None -> Vector.new(1, 0)
+
+fn unwrapVec(o: Option<Vector<Int>>) -> Vector<Int>
+    match o
+        Option.Some(inner) -> inner
+        Option.None -> Vector.new(1, 0)
+
+fn at0(vec: Vector<Int>) -> Int
+    match Vector.get(vec, 0)
+        Option.Some(e) -> e
+        Option.None -> 0 - 1
+
+fn corrupt(x: Int) -> Int
+    outer = build()
+    v = pick(outer)
+    s = unwrapVec(Vector.set(v, 0, x))
+    r = match Option.Some(x)
+        Option.Some(v) -> v + 1
+        Option.None -> 0
+    at0(pick(outer)) * 1000 + at0(s) + r
+
+fn control(x: Int) -> Int
+    outer = build()
+    v = pick(outer)
+    s = unwrapVec(Vector.set(v, 0, x))
+    r = match Option.Some(x)
+        Option.Some(y) -> y + 1
+        Option.None -> 0
+    at0(pick(outer)) * 1000 + at0(s) + r
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(corrupt(5)))
+    Console.print(String.fromInt(corrupt(1)))
+    Console.print(String.fromInt(control(5)))
+    Console.print(String.fromInt(control(1)))
+"#;
+
+/// The Map-in-Map variant of the same alias-pass witness. Pre-fix the
+/// VM did not corrupt silently — it PANICKED at
+/// `src/vm/execute/slots.rs:482`: "Map.set was granted ownership of
+/// slot 4 statically, and something off the operand stack … still
+/// holds it" — the issue-#926 runtime fence falsifying the static
+/// grant the alias pass mis-stamped. Self-host and compiled Rust:
+/// `7011 / 7003 / 7011 / 7003`.
+const ALIAS_MAP_SRC: &str = r#"module Tmp
+
+fn build() -> Map<Int, Map<Int, Int>>
+    Map.set({}, 1, Map.set({}, 10, 7))
+
+fn pick(m: Map<Int, Map<Int, Int>>) -> Map<Int, Int>
+    match Map.get(m, 1)
+        Option.Some(inner) -> inner
+        Option.None -> {}
+
+fn at10(mm: Map<Int, Int>) -> Int
+    match Map.get(mm, 10)
+        Option.Some(e) -> e
+        Option.None -> 0 - 1
+
+fn corrupt(x: Int) -> Int
+    outer = build()
+    v = pick(outer)
+    s = Map.set(v, 10, x)
+    r = match Option.Some(x)
+        Option.Some(v) -> v + 1
+        Option.None -> 0
+    at10(pick(outer)) * 1000 + at10(s) + r
+
+fn control(x: Int) -> Int
+    outer = build()
+    v = pick(outer)
+    s = Map.set(v, 10, x)
+    r = match Option.Some(x)
+        Option.Some(y) -> y + 1
+        Option.None -> 0
+    at10(pick(outer)) * 1000 + at10(s) + r
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(corrupt(5)))
+    Console.print(String.fromInt(corrupt(1)))
+    Console.print(String.fromInt(control(5)))
+    Console.print(String.fromInt(control(1)))
+"#;
+
+/// corrupt(5), corrupt(1), control(5), control(1) — identical by
+/// design: the shadowing spelling must not change the answer.
+const ALIAS_EXPECTED: &str = "7011\n7003\n7011\n7003";
+
+/// Same-disease witness in the ESCAPE pass (`src/ir/escape.rs`): two
+/// SIBLING arms of an inline-eligible fn bind the same name. The pass
+/// used to resolve arm-binder slots by name through the fn-level
+/// last-wins map, handing BOTH arms the second arm's slot — the first
+/// arm's body then spliced into the caller with its binder
+/// unsubstituted, a dangling slot reference.
+///
+/// Recorded pre-fix reds:
+///   VM: panicked at `src/vm/execute/dispatch.rs:216` — "index out of
+///       bounds: the len is 1 but the index is 1".
+///   emitted Rust: rustc E0425 "cannot find value `n` in this scope".
+///   wasm-gc: validation error (pinned in
+///       `tests/wasm_gc_codegen_regression.rs`).
+///   self-host: `6 / 30` — correct (it does not run this pass).
+/// `evalRenamed` is the renamed control: distinct binder spellings,
+/// green everywhere pre-fix.
+const ESCAPE_SIBLING_ARMS_SRC: &str = r#"module Tmp
+
+type Shape
+    Circle(Int)
+    Square(Int)
+
+fn eval(p: Shape) -> Int
+    match p
+        Shape.Circle(n) -> n + 1
+        Shape.Square(n) -> n * 10
+
+fn evalRenamed(p: Shape) -> Int
+    match p
+        Shape.Circle(a) -> a + 1
+        Shape.Square(b) -> b * 10
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(eval(Shape.Circle(5))))
+    Console.print(String.fromInt(eval(Shape.Square(3))))
+    Console.print(String.fromInt(evalRenamed(Shape.Circle(5))))
+    Console.print(String.fromInt(evalRenamed(Shape.Square(3))))
+"#;
+
+const ESCAPE_EXPECTED: &str = "6\n30\n6\n30";
+
+/// Same-class witness on the VM's `MirExpr::FnValue` path
+/// (`src/vm/compiler/expr.rs`): a top-level fn referenced as a VALUE
+/// was hijacked by a same-spelled pattern binder in the enclosing fn —
+/// even though the binder is out of scope at the use site (the
+/// resolver left `dbl` bare precisely because no local was in scope
+/// there). The compiler's name-keyed local-slot check fired first and
+/// loaded the binder's (uninitialized) slot.
+///
+/// Recorded pre-fix reds:
+///   VM: "Type error [line 7]: cannot call non-function (got Unit =
+///       \"Unit\") in callWith at ip=6" (exit 1).
+///   compiled Rust: `26 / 6` — correct.
+/// `control` renames the binder to `y`, green everywhere pre-fix.
+/// No self-host executor here: the self-host parser does not accept
+/// `Fn(..)`-typed parameters yet.
+const FN_VALUE_SRC: &str = r#"module Tmp
+
+fn dbl(n: Int) -> Int
+    n * 2
+
+fn callWith(f: Fn(Int) -> Int, x: Int) -> Int
+    f(x)
+
+fn hijack(x: Int) -> Int
+    r = match Option.Some(x * 3)
+        Option.Some(dbl) -> dbl + 1
+        Option.None -> 0
+    callWith(dbl, x) + r
+
+fn control(x: Int) -> Int
+    r = match Option.Some(x * 3)
+        Option.Some(y) -> y + 1
+        Option.None -> 0
+    callWith(dbl, x) + r
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(hijack(5)))
+    Console.print(String.fromInt(hijack(1)))
+    Console.print(String.fromInt(control(5)))
+    Console.print(String.fromInt(control(1)))
+"#;
+
+const FN_VALUE_EXPECTED: &str = "26\n6\n26\n6";
+
+#[test]
+fn alias_shadowed_vector_in_map_vm() {
+    assert_eq!(
+        run_vm("alias-vec-vm", ALIAS_VEC_SRC),
+        ALIAS_EXPECTED,
+        "the VM mutated a map-held vector through a shadowed statement binding"
+    );
+}
+
+#[test]
+fn alias_shadowed_vector_in_map_compiled_rust() {
+    assert_eq!(
+        run_compiled_rust("aliasvec", ALIAS_VEC_SRC),
+        ALIAS_EXPECTED,
+        "compiled Rust diverged on the alias-vector witness"
+    );
+}
+
+#[test]
+fn alias_shadowed_vector_in_map_self_host() {
+    assert_eq!(
+        run_self_host("alias-vec-sh", ALIAS_VEC_SRC),
+        ALIAS_EXPECTED,
+        "self-host diverged on the alias-vector witness"
+    );
+}
+
+#[test]
+fn alias_shadowed_map_in_map_vm() {
+    assert_eq!(
+        run_vm("alias-map-vm", ALIAS_MAP_SRC),
+        ALIAS_EXPECTED,
+        "the VM must not trip the issue-#926 ownership fence on a shadowed \
+         statement binding (pre-fix: panic at slots.rs:482)"
+    );
+}
+
+#[test]
+fn alias_shadowed_map_in_map_compiled_rust() {
+    assert_eq!(
+        run_compiled_rust("aliasmap", ALIAS_MAP_SRC),
+        ALIAS_EXPECTED,
+        "compiled Rust diverged on the alias-map witness"
+    );
+}
+
+#[test]
+fn alias_shadowed_map_in_map_self_host() {
+    assert_eq!(
+        run_self_host("alias-map-sh", ALIAS_MAP_SRC),
+        ALIAS_EXPECTED,
+        "self-host diverged on the alias-map witness"
+    );
+}
+
+#[test]
+fn escape_sibling_arm_binders_vm() {
+    assert_eq!(
+        run_vm("esc-vm", ESCAPE_SIBLING_ARMS_SRC),
+        ESCAPE_EXPECTED,
+        "the escape pass spliced a sibling arm with the wrong binder slot \
+         (pre-fix: VM slot-index panic)"
+    );
+}
+
+#[test]
+fn escape_sibling_arm_binders_compiled_rust() {
+    assert_eq!(
+        run_compiled_rust("escarms", ESCAPE_SIBLING_ARMS_SRC),
+        ESCAPE_EXPECTED,
+        "emitted Rust must compile and answer (pre-fix: rustc E0425 on the \
+         unsubstituted binder)"
+    );
+}
+
+#[test]
+fn escape_sibling_arm_binders_self_host() {
+    assert_eq!(
+        run_self_host("esc-sh", ESCAPE_SIBLING_ARMS_SRC),
+        ESCAPE_EXPECTED,
+        "self-host diverged on the escape sibling-arms witness"
+    );
+}
+
+#[test]
+fn fn_value_shadowed_by_out_of_scope_binder_vm() {
+    assert_eq!(
+        run_vm("fnv-vm", FN_VALUE_SRC),
+        FN_VALUE_EXPECTED,
+        "a fn referenced as a value was hijacked by an out-of-scope pattern \
+         binder (pre-fix: 'cannot call non-function (got Unit)')"
+    );
+}
+
+#[test]
+fn fn_value_shadowed_by_out_of_scope_binder_compiled_rust() {
+    assert_eq!(
+        run_compiled_rust("fnv", FN_VALUE_SRC),
+        FN_VALUE_EXPECTED,
+        "compiled Rust diverged on the fn-value witness"
+    );
+}
 
 #[test]
 fn witness_shadowed_pattern_binder_on_the_vm() {

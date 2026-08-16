@@ -465,9 +465,17 @@ pub struct FnResolution {
     /// Slot of each fn-body statement binding, in source order —
     /// one entry per `Stmt::Binding`, `u16::MAX` for a discarded
     /// `_` binding (which claims no slot). This is the identity
-    /// the MIR statement-chain lowering reads; looking the slot up
-    /// by name in `local_slots` instead resolves to a later
-    /// same-named pattern binder's slot (issue #948).
+    /// the MIR statement-chain lowering and the alias pass read;
+    /// looking the slot up by name in `local_slots` instead
+    /// resolves to a later same-named pattern binder's slot
+    /// (issue #948).
+    ///
+    /// CONTRACT (consumer side): zip positionally against the
+    /// body's `Stmt::Binding`s and check the list drains exactly —
+    /// a leftover means statements were added, removed, or
+    /// reordered after resolution without rebuilding this table,
+    /// and every zip may have paired a binding with a neighbor's
+    /// slot.
     pub stmt_binding_slots: std::sync::Arc<Vec<u16>>,
     /// Aver type per slot index. Length == `local_count`. Built post-
     /// typecheck so each entry pulls from the matching `Spanned::ty()`

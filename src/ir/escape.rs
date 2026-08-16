@@ -72,8 +72,13 @@ enum InlineCandidate {
     },
     /// `f(s: Variant) -> T` whose body is `match s { Pat1(b1)->e1; … }`.
     /// At call site `f(Foo.PatN(args))` we splice arm `N`'s body with
-    /// the pattern bindings substituted. Each arm's binding slots
-    /// resolve via the resolver's `local_slots` map of `f`.
+    /// the pattern bindings substituted. Each arm's binding slots are
+    /// read from `MatchArm::binding_slots` — the per-arm table the
+    /// resolver fills in pattern order. NEVER from the name-keyed
+    /// `FnResolution.local_slots`: last allocation wins there, so two
+    /// sibling arms binding the same name would both get the last
+    /// arm's slot and the first arm's body would splice with its
+    /// binder unsubstituted (issue #948's disease).
     VariantMatch {
         /// One entry per arm. Arm pattern dotted name → (binding slots,
         /// arm body). Wildcard arms aren't included; if the dispatch
@@ -140,9 +145,17 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
         Stmt::Expr(spanned) => spanned,
         _ => return None,
     };
-    // Param's resolver slot.
-    let resolution = fd.resolution.as_ref()?;
-    let param_slot = resolution.local_slots.get(&fd.params[0].0).copied()?;
+    // A resolution must be stamped: an unresolved body still carries
+    // bare `Ident`s that the splice would copy into the caller verbatim.
+    fd.resolution.as_ref()?;
+    // Param's resolver slot. Params own slots `0..N-1` in declaration
+    // order (`ResolverState::declare_param`), so the single param sits
+    // in slot 0 by construction. Do NOT look it up by name in
+    // `local_slots`: that map is last-allocation-wins, so a pattern
+    // binder inside the body spelled like the param steals the entry
+    // and every param-slot comparison below runs against the binder's
+    // slot instead (issue #948's disease).
+    let param_slot: u16 = 0;
     // No tail-call in body — we'd be inlining recursive reference
     // into a different fn's body if so.
     if contains_tail_call(&body.node) {
@@ -169,17 +182,21 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
                 // Non-Constructor arm (Wildcard, Literal) — give up.
                 return None;
             };
-            // Resolve binding slots via the resolver's local_slots map.
-            // Each binding name was registered there during resolve.
-            let mut binding_slots = Vec::with_capacity(bindings.len());
-            for b in bindings {
-                if b == "_" {
-                    binding_slots.push(u16::MAX); // sentinel — discard
-                    continue;
-                }
-                let slot = resolution.local_slots.get(b).copied()?;
-                binding_slots.push(slot);
+            // Pattern binders live in `MatchArm::binding_slots` — the
+            // resolver's per-arm table, one entry per binding in
+            // pattern order, `u16::MAX` for `_`. A name lookup in
+            // `FnResolution.local_slots` here hands two sibling arms
+            // that bind the same name the LAST arm's slot (last
+            // allocation wins), so the earlier arm's body splices with
+            // its binder left unsubstituted — a dangling slot in the
+            // caller (VM slot-index panic, emitted-Rust E0425, wasm-gc
+            // validation error).
+            let slots = arm.binding_slots.get()?;
+            if slots.len() != bindings.len() {
+                // Resolver/pattern desync — refuse to classify.
+                return None;
             }
+            let binding_slots = slots.clone();
             // Arm body must not use `s` directly outside Match's
             // dispatch shape (we walk to verify).
             if !arm_body_safe(&arm.body.node, param_slot) {
@@ -712,6 +729,16 @@ mod tests {
         }
     }
 
+    /// `arm` with the resolver's per-arm `binding_slots` table filled —
+    /// what the real resolver always does. `classify_fn` reads slots
+    /// from here (never from the name-keyed fn-level map), so
+    /// VariantMatch-shape tests must populate it.
+    fn arm_with_slots(pattern: Pattern, body: Spanned<Expr>, slots: &[u16]) -> MatchArm {
+        let a = arm(pattern, body);
+        a.binding_slots.set(slots.to_vec()).expect("fresh OnceLock");
+        a
+    }
+
     /// Build a single-param fn whose body is `body_expr` (one Stmt::Expr).
     /// The single param `p` is registered at slot 0 in `local_slots`.
     fn fn_def_p(
@@ -892,13 +919,15 @@ mod tests {
         // fn unwrap(p: Option<Int>) -> Int =
         //   match p { Option.Some(v) -> v ; Option.None -> 0 }
         let arms = vec![
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.Some".to_string(), vec!["v".to_string()]),
                 resolved("v", 1),
+                &[1],
             ),
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.None".to_string(), vec![]),
                 lit_int(0),
+                &[],
             ),
         ];
         let body = match_expr(resolved("p", 0), arms);
@@ -914,14 +943,83 @@ mod tests {
         }
     }
 
+    /// Two SIBLING arms binding the same name must each keep their own
+    /// per-arm slot. The fn-level `local_slots` map is last-allocation-
+    /// wins, so a name lookup hands BOTH arms the second arm's slot —
+    /// the first arm's body then splices with its binder unsubstituted
+    /// and the dangling slot reaches the caller (VM slot-index panic,
+    /// emitted-Rust E0425, wasm-gc validation error). Slots must come
+    /// from `MatchArm::binding_slots`.
+    #[test]
+    fn classify_variant_match_sibling_arms_keep_their_own_slots() {
+        // fn eval(p: Shape) -> Int =
+        //   match p { Shape.Circle(n) -> n + 1 ; Shape.Square(n) -> n + 2 }
+        // Resolver: Circle's n → slot 1, Square's n → slot 2,
+        // local_slots["n"] = 2 (last allocation wins).
+        let arms = vec![
+            arm_with_slots(
+                Pattern::Constructor("Shape.Circle".to_string(), vec!["n".to_string()]),
+                add(resolved("n", 1), lit_int(1)),
+                &[1],
+            ),
+            arm_with_slots(
+                Pattern::Constructor("Shape.Square".to_string(), vec!["n".to_string()]),
+                add(resolved("n", 2), lit_int(2)),
+                &[2],
+            ),
+        ];
+        let body = match_expr(resolved("p", 0), arms);
+        let fd = fn_def_p_with_extra("eval", "Shape", "Int", body, &[("n", 2)]);
+        match classify_fn(&fd) {
+            Some(InlineCandidate::VariantMatch {
+                arms_by_constructor,
+            }) => {
+                assert_eq!(
+                    arms_by_constructor["Shape.Circle"].0,
+                    vec![1],
+                    "Circle's binder slot was resolved through the last-wins name map"
+                );
+                assert_eq!(arms_by_constructor["Shape.Square"].0, vec![2]);
+            }
+            other => panic!("expected VariantMatch, got {other:?}"),
+        }
+    }
+
+    /// The param's slot is positional (params own slots 0..N-1), not a
+    /// name lookup: a pattern binder inside the body spelled like the
+    /// param would otherwise steal the `local_slots` entry and every
+    /// param-slot comparison would run against the binder's slot.
+    #[test]
+    fn classify_record_access_param_slot_is_positional_not_name_keyed() {
+        // `extra` registers ("p", 3) — simulating a later binder named
+        // `p` owning the last-wins map entry.
+        let fd = fn_def_p_with_extra(
+            "getx",
+            "Point",
+            "Float",
+            attr(resolved("p", 0), "x"),
+            &[("p", 3)],
+        );
+        match classify_fn(&fd) {
+            Some(InlineCandidate::RecordAccess { param_slot, .. }) => {
+                assert_eq!(
+                    param_slot, 0,
+                    "param slot must be the positional slot 0, not the stolen map entry"
+                );
+            }
+            other => panic!("expected RecordAccess, got {other:?}"),
+        }
+    }
+
     #[test]
     fn classify_variant_match_disqualifies_wildcard_arm() {
         // Wildcard / Literal arms exit early — pass gives up to keep
         // dispatch shape uniform.
         let arms = vec![
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.Some".to_string(), vec!["v".to_string()]),
                 resolved("v", 1),
+                &[1],
             ),
             arm(Pattern::Wildcard, lit_int(0)),
         ];
@@ -935,13 +1033,15 @@ mod tests {
         // arm body refers to `p` directly (not just `v`) — bare subject
         // reference disqualifies (would mean the subject escapes).
         let arms = vec![
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.Some".to_string(), vec!["v".to_string()]),
                 resolved("p", 0),
+                &[1],
             ),
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.None".to_string(), vec![]),
                 lit_int(0),
+                &[],
             ),
         ];
         let body = match_expr(resolved("p", 0), arms);
@@ -1067,13 +1167,15 @@ mod tests {
         // After run(): main body should be `42` (the Some payload), no
         // FnCall, no Constructor wrapper.
         let arms = vec![
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.Some".to_string(), vec!["v".to_string()]),
                 resolved("v", 1),
+                &[1],
             ),
-            arm(
+            arm_with_slots(
                 Pattern::Constructor("Option.None".to_string(), vec![]),
                 lit_int(0),
+                &[],
             ),
         ];
         let unwrap = fn_def_p_with_extra(

@@ -723,6 +723,20 @@ fn lower_stmt_chain(
             ResolvedStmt::Expr(_) => None,
         })
         .collect();
+    // Contract: the resolver records exactly one entry per fn-body
+    // `Stmt::Binding` in source order, and this pass consumes them
+    // positionally — so after the forward pass the iterator must be
+    // drained EXACTLY. A shortfall already fails per-binding above
+    // (`BindingSlotLookupMissing`); a LEFTOVER means some pass added,
+    // removed, or reordered statement bindings without rebuilding the
+    // table, i.e. every zip above may have paired a binding with a
+    // NEIGHBOR's slot — silent cross-wiring, not a missing entry — so
+    // it must be caught here, not shrugged off.
+    debug_assert!(
+        binding_slot_iter.next().is_none(),
+        "stmt_binding_slots not exhausted: statement bindings and the resolver's \
+         per-statement slot table are misaligned"
+    );
 
     // Right-fold: walk earlier stmts in reverse, wrapping each
     // around the accumulating `body`.

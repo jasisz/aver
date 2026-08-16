@@ -154,8 +154,16 @@ struct ResolverState<'a> {
     last_alloc: HashMap<String, u16>,
     /// Slot of each fn-body statement binding in source order —
     /// `u16::MAX` for `_`. Becomes `FnResolution.stmt_binding_slots`,
-    /// the per-statement identity the MIR lowering consumes instead
-    /// of the name-keyed (last-wins) `last_alloc` (issue #948).
+    /// the per-statement identity the MIR lowering and the alias pass
+    /// consume instead of the name-keyed (last-wins) `last_alloc`
+    /// (issue #948).
+    ///
+    /// CONTRACT (producer side): exactly one entry per fn-body
+    /// `Stmt::Binding`, pushed in source order. Consumers zip this
+    /// positionally against the body's statements and assert the list
+    /// drains exactly — any pass that adds, removes, or reorders
+    /// statement bindings after resolution MUST rebuild this table, or
+    /// every later binding silently pairs with a neighbor's slot.
     stmt_binding_slots: Vec<u16>,
 }
 

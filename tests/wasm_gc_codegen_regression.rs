@@ -680,3 +680,35 @@ fn countMap(o: Option<Map<String, Int>>) -> Int
 "#,
     );
 }
+
+/// Two SIBLING match arms binding the same name in an inline-eligible
+/// fn (issue #948's disease, in the escape pass). `classify_fn` used
+/// to resolve arm-binder slots by name through the fn-level last-wins
+/// `local_slots` map, handing BOTH arms the second arm's slot — the
+/// first arm's body then spliced into `main` with its binder
+/// unsubstituted, a dangling local index the wasmparser validator
+/// rejected (recorded pre-fix red: this exact source failed
+/// validation). Slots now come from `MatchArm::binding_slots`. The
+/// behavioural half (all backends answering 6/30) lives in
+/// `tests/vm_pattern_shadow_matrix.rs`.
+#[test]
+fn sibling_arms_reusing_a_binder_name_compile_and_validate() {
+    assert_compiles_and_validates(
+        r#"module Tmp
+
+type Shape
+    Circle(Int)
+    Square(Int)
+
+fn eval(p: Shape) -> Int
+    match p
+        Shape.Circle(n) -> n + 1
+        Shape.Square(n) -> n * 10
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(eval(Shape.Circle(5))))
+    Console.print(String.fromInt(eval(Shape.Square(3))))
+"#,
+    );
+}

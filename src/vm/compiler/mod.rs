@@ -835,15 +835,29 @@ impl ProgramCompiler {
             .local_count
             .max(resolution.map_or(rfd.params.len() as u32, |r| u32::from(r.local_count)))
             as u16;
-        let local_slots: HashMap<String, u16> = resolution
-            .map(|r| r.local_slots.as_ref().clone())
-            .unwrap_or_else(|| {
-                rfd.params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (name, _))| (name.clone(), i as u16))
-                    .collect()
-            });
+        // `FnCompiler.local_slots` feeds exactly one consumer: the
+        // `MirExpr::FnValue` path (`compile_ident`). A `FnValue` name is
+        // an ident the resolver left bare — so when a resolution exists,
+        // NO local with that spelling was in scope at the use site, and
+        // any name-keyed hit would be an out-of-scope pattern binder
+        // that shares the spelling (`FnResolution.local_slots` is
+        // last-allocation-wins, issue #948). Loading that slot reads an
+        // unrelated — typically uninitialized — local ("cannot call
+        // non-function (got Unit)") and hijacks a module-fn reference.
+        // Hand the compiler an EMPTY local table so `FnValue` resolves
+        // through module fns / globals / builtin symbols only. The
+        // params-only fallback stays for bodies compiled WITHOUT a
+        // resolution, where idents were never rewritten and a bare
+        // param read can legitimately reach `FnValue`.
+        let local_slots: HashMap<String, u16> = match resolution {
+            Some(_) => HashMap::new(),
+            None => rfd
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, (name, _))| (name.clone(), i as u16))
+                .collect(),
+        };
 
         let mut fc = FnCompiler::new(
             &rfd.name,
@@ -1053,6 +1067,14 @@ pub(super) struct FnCompiler<'a> {
     arity: u8,
     local_count: u16,
     effects: Vec<u32>,
+    /// Name → slot table consulted ONLY by the `MirExpr::FnValue` path
+    /// (`compile_ident`). Deliberately EMPTY when the fn carries a
+    /// resolution: every in-scope local was already rewritten to
+    /// `Resolved` by the resolver, so a bare `FnValue` name can never
+    /// legitimately be a local, and a name-keyed hit would be an
+    /// out-of-scope pattern binder sharing the spelling (issue #948).
+    /// Holds the params-only fallback map when the fn has no
+    /// resolution (idents never rewritten).
     pub(super) local_slots: HashMap<String, u16>,
     global_names: &'a HashMap<String, u16>,
     /// Module-local function scope: simple_name → fn_id.
