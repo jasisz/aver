@@ -467,14 +467,11 @@ enum ModuleNameKind {
 /// way `resolve_program` leaves them alone: the issue's rule names
 /// enclosing locals, module `fn`s and the enclosing fn's own name.
 ///
-/// Called from the pipeline's front door next to the typechecker
-/// rather than from `resolve_fn` itself, for two reasons the pass
-/// order makes concrete: `resolve` runs BELOW the fabricating passes,
-/// which put entities in the AST the source does not contain
-/// (`<fn>__cursor`, `__buf_*`) and may reuse spellings legitimately —
-/// the ban is about the program the user wrote; and `run_resolve` is
-/// off in front doors that still typecheck (the self-host preflight,
-/// the proof-facing configs), which would silently exempt them.
+/// Every caller reaches this through [`crate::ir::pipeline::
+/// typecheck_gate`], which pairs it with the type checker and owns the
+/// suppression rule; see that function for why the ban rides the
+/// checker instead of `resolve_fn`, and for the one door whose scope
+/// is narrower than the item list it checks.
 pub fn check_shadowing(items: &[TopLevel]) -> Vec<TypeError> {
     // Top-level fn / operation names of this module, first declaration
     // wins (a duplicate top-level name is its own diagnostic).
