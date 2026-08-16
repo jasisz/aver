@@ -44,11 +44,14 @@
 //! protection against all backends agreeing on a wrong value.
 //!
 //! The suite also carries the SAME-DISEASE witnesses the #948 review
-//! flushed out — three more consumers that resolved a specific
-//! binding's slot by name through the last-wins `local_slots` map:
-//! the alias pass (`ALIAS_VEC_SRC` / `ALIAS_MAP_SRC`), the escape
-//! pass's arm binders (`ESCAPE_SIBLING_ARMS_SRC`), and the VM's
-//! fn-as-value path (`FN_VALUE_SRC`). Each witness sits next to a
+//! flushed out — more consumers that matched a specific binding by
+//! bare name: three resolved a binding's slot through the last-wins
+//! `local_slots` map — the alias pass (`ALIAS_VEC_SRC` /
+//! `ALIAS_MAP_SRC`), the escape pass's arm binders
+//! (`ESCAPE_SIBLING_ARMS_SRC`), and the VM's fn-as-value path
+//! (`FN_VALUE_SRC`) — and one matched a call site against a
+//! name-keyed CANDIDATE map even when the callee was a resolved
+//! local (`ESCAPE_SHADOWED_CALLEE_SRC`). Each witness sits next to a
 //! renamed control that must answer identically. Recorded pre-fix
 //! reds live on each source constant.
 
@@ -542,6 +545,65 @@ fn main()
 
 const FN_VALUE_EXPECTED: &str = "26\n6\n26\n6";
 
+/// Same-disease witness at the CANDIDATE-MAP door of the escape pass
+/// (`src/ir/escape.rs`, `rewrite_in_expr`): the inline-candidate map is
+/// keyed by fn NAME, and the call-site matcher accepted a callee that
+/// was `Expr::Resolved` — but a resolved callee is a LOCAL by
+/// construction of the resolver (only locals get slots). Here the
+/// param `area: Fn(Shape) -> Int` shadows the one-argument inlinable
+/// module fn `area`, so `area(Shape.Circle(5))` inside `apply` was
+/// spliced with the MODULE fn's arm body no matter which fn the caller
+/// actually passed.
+///
+/// Hand-computed truth: `apply(big)` = 100 (`big` ignores its arg),
+/// `apply(area)` = 10 (`area(Circle(5))` = 5 * 2), and the renamed
+/// control `applyRenamed` answers the same 100/10.
+///
+/// Recorded pre-fix red:
+///   VM: `10 / 10 / 100 / 10` — `apply(big)` answered with the spliced
+///       `area` body (10) instead of 100; the renamed control was
+///       correct, pinning the shadowing spelling as the trigger.
+/// No compiled-Rust column: the emitted Rust for this higher-order
+/// shape does not compile — pre-existing E0308, fn item
+/// `for<'a> fn(&'a Shape) -> AverInt {big}` vs expected fn pointer
+/// `fn(Shape) -> AverInt` (issue #952) — so the VM is pinned against
+/// the hand-computed truth above. No self-host column either: the
+/// self-host parser does not accept `Fn(..)`-typed parameters yet
+/// (same gap as `FN_VALUE_SRC`).
+/// On main (before this branch's per-arm `binding_slots` fix) the same
+/// program PANICKED the VM with a dangling-slot splice; the arm fix
+/// made the wrong splice SUCCEED, so this witness keeps the silent
+/// version red.
+const ESCAPE_SHADOWED_CALLEE_SRC: &str = r#"module Tmp
+
+type Shape
+    Circle(Int)
+    Square(Int)
+
+fn area(s: Shape) -> Int
+    match s
+        Shape.Circle(n) -> n * 2
+        Shape.Square(n) -> n * 3
+
+fn big(s: Shape) -> Int
+    100
+
+fn apply(area: Fn(Shape) -> Int) -> Int
+    area(Shape.Circle(5))
+
+fn applyRenamed(f: Fn(Shape) -> Int) -> Int
+    f(Shape.Circle(5))
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(apply(big)))
+    Console.print(String.fromInt(apply(area)))
+    Console.print(String.fromInt(applyRenamed(big)))
+    Console.print(String.fromInt(applyRenamed(area)))
+"#;
+
+const ESCAPE_SHADOWED_CALLEE_EXPECTED: &str = "100\n10\n100\n10";
+
 #[test]
 fn alias_shadowed_vector_in_map_vm() {
     assert_eq!(
@@ -642,6 +704,16 @@ fn fn_value_shadowed_by_out_of_scope_binder_compiled_rust() {
         run_compiled_rust("fnv", FN_VALUE_SRC),
         FN_VALUE_EXPECTED,
         "compiled Rust diverged on the fn-value witness"
+    );
+}
+
+#[test]
+fn escape_shadowed_callee_param_vm() {
+    assert_eq!(
+        run_vm("esc-callee-vm", ESCAPE_SHADOWED_CALLEE_SRC),
+        ESCAPE_SHADOWED_CALLEE_EXPECTED,
+        "a Fn-typed param shadowing an inlinable module fn must call the \
+         PASSED fn, not the spliced module-fn body (pre-fix: 10/10)"
     );
 }
 

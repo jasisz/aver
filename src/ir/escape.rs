@@ -355,8 +355,15 @@ fn rewrite_in_expr(
     // Now look at THIS node — is it an FnCall we can splice?
     if let Expr::FnCall(callee, args) = expr {
         let callee_name = match &callee.node {
+            // Only a BARE `Ident` can name an inline candidate. An
+            // `Expr::Resolved` callee is a LOCAL by construction of
+            // the resolver (only locals get slots) — a `Fn`-typed
+            // param or binder spelled like a candidate fn — so
+            // matching it against the name-keyed candidate map would
+            // splice the module fn's body over a call to whichever fn
+            // the caller actually passed (the shadowed-callee
+            // disease).
             Expr::Ident(n) => Some(n.as_str()),
-            Expr::Resolved { name, .. } => Some(name.as_str()),
             _ => None,
         };
         if let Some(name) = callee_name
@@ -1158,6 +1165,46 @@ mod tests {
         let escapes = fn_def_p("escapes", "Point", "Point", resolved("p", 0));
         let mut items = vec![TopLevel::FnDef(escapes)];
         assert_eq!(run(&mut items), 0);
+    }
+
+    /// A candidate may only match a callee that is a BARE `Ident`. An
+    /// `Expr::Resolved` callee is a LOCAL by construction of the
+    /// resolver (only locals get slots) — here a `Fn`-typed param
+    /// spelled like the candidate fn — so splicing the module fn's
+    /// body would ignore whichever fn the caller actually passed.
+    #[test]
+    fn run_skips_resolved_callee_shadowing_a_candidate() {
+        // area(p: Shape) -> Int = match p { Shape.Circle(n) -> n + 1 }
+        let arms = vec![arm_with_slots(
+            Pattern::Constructor("Shape.Circle".to_string(), vec!["n".to_string()]),
+            add(resolved("n", 1), lit_int(1)),
+            &[1],
+        )];
+        let area = fn_def_p_with_extra(
+            "area",
+            "Shape",
+            "Int",
+            match_expr(resolved("p", 0), arms),
+            &[("n", 1)],
+        );
+        // apply(p: Fn(Shape) -> Int) -> Int = p(Shape.Circle(5)) with
+        // the param RENAMED by the resolver stamp to `area` — the
+        // callee is Resolved{name: "area", slot: 0}, a local.
+        let apply = fn_def_p(
+            "apply",
+            "Fn(Shape) -> Int",
+            "Int",
+            fn_call(
+                resolved("area", 0),
+                vec![fn_call(attr(ident("Shape"), "Circle"), vec![lit_int(5)])],
+            ),
+        );
+        let mut items = vec![TopLevel::FnDef(area), TopLevel::FnDef(apply)];
+        assert_eq!(
+            run(&mut items),
+            0,
+            "a resolved (local) callee must never match the name-keyed candidate map"
+        );
     }
 
     #[test]
