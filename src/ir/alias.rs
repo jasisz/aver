@@ -398,11 +398,16 @@ fn flag_escaping_collection_locals(expr: &Expr, slot_types: &[Type], aliased: &m
 /// - **The binder itself is exempt only if there is nothing to share.** The
 ///   exemption's argument is that a fresh subject cannot be reached from
 ///   anywhere else — which covers the AGGREGATE and says nothing about what is
-///   inside it, so it only carries a binder that IS the whole aggregate. Today
-///   every binder over a fresh subject is exactly that: a fresh subject is a
-///   `Vector` or a `Map`, and neither has a destructuring pattern, so the
-///   condition below has no runtime witness and is a fence rather than a bug
-///   fix. It is here because the exemption is new in this change and the
+///   inside it, so it is safe only for a binder that IS the whole aggregate.
+///   A destructuring binder over a fresh subject DOES occur — `Vector.set`
+///   counts as fresh and returns `Option<Vector<T>>`, which `Option.Some(w)`
+///   takes apart — and there the payload is the freshly built collection
+///   itself, so the exemption still holds for the shapes that exist today.
+///   It holds by what the whitelisted builders happen to return, though, not
+///   by the argument above: a future fresh builder whose payload is a handle
+///   into something older would break it. The condition below therefore has
+///   no runtime witness today and is a fence rather than a bug fix; it is
+///   here because the exemption is new in this change and the
 ///   module's rule is that a slot clears only on positive proof of
 ///   fresh-AND-non-escaping; a binder resting on freshness alone is the one
 ///   place that rule was not being applied, and the day a pattern reaches
