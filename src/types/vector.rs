@@ -279,8 +279,19 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
         return Ok(NanValue::NONE);
     }
     items[uidx] = args[2];
-    let new_vec_idx =
-        arena.push_inheriting_source_space(aver_memory::ArenaEntry::Vector(items), source);
+    // The one element this write stores is the one child the O(1) path owes a
+    // held-elsewhere mark — every other element was marked when the source
+    // vector was built, and the flags live on the pointed-to entries, so they
+    // survive the take-and-repush. Mirror of the owned `Map.set`'s single-pair
+    // marking.
+    arena.note_held_elsewhere(args[2]);
+    let new_vec_idx = arena.push_inheriting_source_space(
+        aver_memory::ArenaEntry::Vector {
+            items,
+            held_elsewhere: false,
+        },
+        source,
+    );
     Ok(NanValue::new_some_value(
         NanValue::new_vector(new_vec_idx),
         arena,

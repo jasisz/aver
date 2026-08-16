@@ -383,6 +383,147 @@ fn main() -> Unit
     );
 }
 
+// ── Match-binder provenance (#953 follow-up) ──────────────────────
+//
+// A match arm's pattern binders are container reads too: the binder
+// aliases (part of) the subject, and the subject may be a stored
+// entry. The alias pass used to flag only `Stmt::Binding` slots, so
+// every binder slot read as "never shared" — wasm-gc mutated the
+// stored entry in place (10000/10000), and the VM's static owned
+// mask took the arena entry with `mem::take` while the container
+// still held it (4999/4999, silent). Each cell below is one binder
+// shape; all three backends must answer the hand-computed literal.
+
+#[test]
+fn bare_ident_binder_vector_set_does_not_write_through() {
+    // This shape used to TRAP on wasm-gc (`unreachable`): the MIR
+    // emitter had no arm for a single-Bind match over a collection
+    // subject, so `probe` compiled to a trap stub.
+    assert_cell(
+        "own-c12",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Launder a flagged container-read local through a bare Ident match binder, mutate the binder."
+    stash = {"k" => Vector.fromList([x, x + 2])}
+    held = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    poked = match held
+        v -> Option.withDefault(Vector.set(v, 0, 5000), Vector.fromList([0, 0]))
+    back = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    stored = Option.withDefault(Vector.get(back, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn some_binder_vector_set_does_not_write_through() {
+    assert_cell(
+        "own-c13",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Mutate the Some-binder of a map read inside the arm body."
+    stash = {"k" => Vector.fromList([x, x + 2])}
+    poked = match Map.get(stash, "k")
+        Option.None -> Vector.fromList([0, 0])
+        Option.Some(v) -> Option.withDefault(Vector.set(v, 0, 5000), Vector.fromList([0, 0]))
+    back = Option.withDefault(Map.get(stash, "k"), Vector.fromList([]))
+    stored = Option.withDefault(Vector.get(back, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn cons_head_binder_vector_set_does_not_write_through() {
+    assert_cell(
+        "own-c14",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Mutate the head binder of a list pattern inside the arm body."
+    lst = [Vector.fromList([x, 9])]
+    poked = match lst
+        [] -> Vector.fromList([0, 0])
+        [h, ..t] -> Option.withDefault(Vector.set(h, 0, 5000), Vector.fromList([0, 0]))
+    again = match lst
+        [] -> Vector.fromList([0, 0])
+        [h2, ..t2] -> h2
+    stored = Option.withDefault(Vector.get(again, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn tuple_binder_vector_set_does_not_write_through() {
+    assert_cell(
+        "own-c15",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Mutate a tuple-pattern binder that aliases the tuple's element."
+    pair = (Vector.fromList([x, 9]), 1)
+    poked = match pair
+        (v, n) -> Option.withDefault(Vector.set(v, 0, 5000), Vector.fromList([0, 0]))
+    kept = match pair
+        (v2, n2) -> v2
+    stored = Option.withDefault(Vector.get(kept, 0), 0 - 1)
+    fresh = Option.withDefault(Vector.get(poked, 0), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
+#[test]
+fn some_binder_map_set_does_not_write_through() {
+    assert_cell(
+        "own-c16",
+        r#"
+fn probe(x: Int) -> Int
+    ? "Map.set on the Some-binder of a nested-map read inside the arm."
+    outer = {"in" => {"a" => x}}
+    poked = match Map.get(outer, "in")
+        Option.None -> {"a" => 0 - 1}
+        Option.Some(m) -> Map.set(m, "a", 5000)
+    back = Option.withDefault(Map.get(outer, "in"), {"a" => 0 - 1})
+    stored = Option.withDefault(Map.get(back, "a"), 0 - 1)
+    fresh = Option.withDefault(Map.get(poked, "a"), 0 - 1)
+    stored + fresh
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(probe(2011)))
+    Console.print(String.fromInt(probe(2003)))
+"#,
+        POKED,
+    );
+}
+
 // ── Emitted-code pin: the conservative default did not swallow the
 //    fresh-local fast path ─────────────────────────────────────────
 

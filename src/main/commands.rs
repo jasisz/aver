@@ -1444,6 +1444,16 @@ pub(super) fn cmd_run_vm(
             "  refused, something off the stack holds it:{} not examined, walk dearer than the copy:{}",
             owned.refused_off_stack_holder, owned.unexamined_walk_too_costly
         );
+        let fence = &report.vector_ownership;
+        eprintln!("\nVector writes the compiler granted, confirmed at run time:");
+        eprintln!(
+            "  kept in place:{} revoked, a stack cell holds it:{}",
+            fence.grants, fence.refused_stack_holder
+        );
+        eprintln!(
+            "  revoked, something off the stack holds it:{} revoked unexamined, walk dearer than the copy:{}",
+            fence.refused_off_stack_holder, fence.unexamined_walk_too_costly
+        );
         // The mirror that re-derives every grant from scratch is budgeted, and a
         // spent budget is a smaller claim, not a clean one — so it says so. Only
         // a build with debug assertions runs the mirror at all, which is why a

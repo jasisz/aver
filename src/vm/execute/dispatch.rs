@@ -819,6 +819,22 @@ impl VM {
                         owned_mask |= 1;
                     }
 
+                    // The reverse direction, for vectors: a static grant on
+                    // `Vector.set` is a proposal the running program confirms
+                    // or revokes. The owned path would `mem::take` the
+                    // target's arena entry, and a container that still holds
+                    // that slot would read back an empty vector with nothing
+                    // failing loudly — so the fence declines in place and the
+                    // write copies whenever anything else holds the slot or
+                    // the walk is dearer than the copy.
+                    if owned_mask & 1 != 0
+                        && builtin == VmBuiltin::VectorSet
+                        && let Some(target) = args.first().copied()
+                        && !self.runtime_confirms_vector_grant(target)
+                    {
+                        owned_mask &= !1;
+                    }
+
                     if builtin.is_http_server() {
                         self.runtime.ensure_builtin_effects_allowed(
                             &self.code.symbols,

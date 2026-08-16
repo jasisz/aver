@@ -50,7 +50,7 @@ fn assert_no_young_refs(value: NanValue, arena: &Arena, context: &str) {
                     }
                 }
             },
-            ArenaEntry::Tuple(items) | ArenaEntry::Vector(items) => {
+            ArenaEntry::Tuple(items) | ArenaEntry::Vector { items, .. } => {
                 for item in items.iter().copied() {
                     assert_no_young_refs(item, arena, context);
                 }
@@ -1262,5 +1262,152 @@ fn a_stable_vector_written_in_place_survives_the_depth_zero_return() {
         vm.arena.get_string_value(element).to_string(),
         "PAYLOAD-MARKER",
         "the depth-0 return dropped the element written into a stable vector",
+    );
+}
+
+// ── The vector fence: a static `Vector.set` grant is confirmed or
+//    revoked at run time ─────────────────────────────────────────────
+//
+// The owned `Vector.set` empties its target's arena slot with
+// `mem::take`, and the match-binder hole showed a static grant reaching
+// a container-held vector — the container read back an empty vector,
+// silently. `runtime_confirms_vector_grant` is the fence in front of
+// that take; these pin its four answers, one bucket each, away from any
+// program so the states are exact.
+
+#[test]
+fn a_vector_grant_is_confirmed_when_nothing_else_holds_the_slot() {
+    let mut arena = Arena::new();
+    let idx = arena.push_vector(vec![NanValue::new_int_inline(1)]);
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), arena);
+
+    assert!(vm.runtime_confirms_vector_grant(NanValue::new_vector(idx)));
+    let stats = vm.vector_ownership_stats();
+    assert_eq!(
+        (stats.grants, stats.refused_stack_holder),
+        (1, 0),
+        "an unheld fresh vector is exactly what the static grant claimed"
+    );
+}
+
+#[test]
+fn a_vector_grant_is_revoked_when_a_container_holds_the_slot() {
+    let mut arena = Arena::new();
+    let idx = arena.push_vector(vec![NanValue::new_int_inline(1)]);
+    let handle = NanValue::new_vector(idx);
+    // A tuple pushed over the handle is an off-stack holder; `Arena::push`
+    // marks the vector `held_elsewhere` on the way in.
+    let _tuple = arena.push_tuple(vec![handle, NanValue::new_int_inline(2)]);
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), arena);
+
+    assert!(
+        !vm.runtime_confirms_vector_grant(handle),
+        "an arena entry still holds the slot the owned path would empty"
+    );
+    assert_eq!(vm.vector_ownership_stats().refused_off_stack_holder, 1);
+}
+
+#[test]
+fn a_vector_grant_is_revoked_while_a_stack_cell_still_holds_the_slot() {
+    let mut arena = Arena::new();
+    let idx = arena.push_vector(vec![NanValue::new_int_inline(1)]);
+    let handle = NanValue::new_vector(idx);
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), arena);
+
+    vm.stack.push(handle);
+    assert!(
+        !vm.runtime_confirms_vector_grant(handle),
+        "a live cell would observe the in-place mutation"
+    );
+    assert_eq!(vm.vector_ownership_stats().refused_stack_holder, 1);
+
+    vm.stack.pop();
+    assert!(
+        vm.runtime_confirms_vector_grant(handle),
+        "the same slot with the cell gone is uniquely held again"
+    );
+    assert_eq!(vm.vector_ownership_stats().grants, 1);
+}
+
+#[test]
+fn a_vector_grant_is_revoked_unexamined_when_the_walk_outcosts_the_copy() {
+    let mut arena = Arena::new();
+    let idx = arena.push_vector(vec![NanValue::new_int_inline(1)]);
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), arena);
+
+    // A one-element vector under a stack far past `len + WALK_SLACK`:
+    // the copy is cheaper than the walk, so the fence revokes without
+    // looking — and counts that it did not look, rather than reading an
+    // unasked question as a clean answer.
+    for _ in 0..512 {
+        vm.stack.push(NanValue::new_int_inline(0));
+    }
+    assert!(!vm.runtime_confirms_vector_grant(NanValue::new_vector(idx)));
+    assert_eq!(vm.vector_ownership_stats().unexamined_walk_too_costly, 1);
+}
+
+#[test]
+fn the_empty_vector_immediate_owns_no_slot_to_grant() {
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), Arena::new());
+    assert!(
+        !vm.runtime_confirms_vector_grant(NanValue::EMPTY_VECTOR),
+        "nothing to empty and nothing to keep: the copying path answers it"
+    );
+    let stats = vm.vector_ownership_stats();
+    assert_eq!(
+        (
+            stats.grants,
+            stats.refused_stack_holder
+                + stats.refused_off_stack_holder
+                + stats.unexamined_walk_too_costly
+        ),
+        (0, 0),
+        "an immediate is not a decision, so it lands in no bucket"
+    );
+}
+
+/// The dispatch wiring, end to end: a fresh last-use receiver earns the
+/// static grant, the fence confirms it, and the tally says the owned
+/// path really was reached — if the `CALL_BUILTIN_OWNED` route ever
+/// stops consulting the fence, `grants` stays zero and this fails.
+#[test]
+fn a_granted_vector_set_is_confirmed_through_the_dispatch_point() {
+    let mut vm = compile_vm_with_ownership(
+        "fn main() -> Int\n    v = Vector.fromList([1, 2])\n    w = Option.withDefault(Vector.set(v, 0, 9), Vector.fromList([0]))\n    Option.withDefault(Vector.get(w, 0), 0 - 1)\n",
+    );
+    let result = vm.run().expect("vector set program should run");
+    assert_eq!(result.as_int(&vm.arena), 9);
+    let stats = vm.vector_ownership_stats();
+    assert_eq!(
+        (
+            stats.grants,
+            stats.refused_stack_holder + stats.refused_off_stack_holder
+        ),
+        (1, 0),
+        "the static grant should reach the fence and be confirmed"
+    );
+}
+
+/// The wrapper toll, pinned: `Vector.set` wraps its result in `Some`,
+/// which boxes a heap vector, and the box marks its payload
+/// held-elsewhere on the way in — so in a chain spelled through the
+/// plain builtin only the FIRST granted write keeps its grant; the
+/// second is revoked by the first one's own dead wrapper and copies.
+/// The answer stays right either way. If this ever changes — the fence
+/// learning to see through dead boxes, or the marking getting wider —
+/// this test is the recorded decision that must be revisited.
+#[test]
+fn a_second_owned_set_in_a_non_fused_chain_pays_the_wrapper_toll() {
+    let mut vm = compile_vm_with_ownership(
+        "fn main() -> Int\n    v = Vector.fromList([1, 2])\n    w = Option.withDefault(Vector.set(v, 0, 9), Vector.fromList([0]))\n    u = Option.withDefault(Vector.set(w, 1, 7), Vector.fromList([0]))\n    a = Option.withDefault(Vector.get(u, 0), 0 - 1)\n    b = Option.withDefault(Vector.get(u, 1), 0 - 1)\n    a + b\n",
+    );
+    let result = vm.run().expect("chained vector set program should run");
+    assert_eq!(result.as_int(&vm.arena), 16);
+    let stats = vm.vector_ownership_stats();
+    assert_eq!(
+        (stats.grants, stats.refused_off_stack_holder),
+        (1, 1),
+        "expected the first grant confirmed and the second revoked by \
+         the first result's own Some-wrapper box"
     );
 }

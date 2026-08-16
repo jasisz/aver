@@ -61,6 +61,11 @@ pub struct VmProfileReport {
     /// Unlike the tallies above, these are maintained by every build and every
     /// run — the profile is where they are READ, not where they are kept.
     pub runtime_ownership: super::VmRuntimeOwnershipStats,
+    /// What the runtime decided about the vector writes the compiler granted —
+    /// the same buckets, read in the revocation direction (a `refused_*` here
+    /// is a static grant the fence took back). Maintained by every build and
+    /// every run, like `runtime_ownership`.
+    pub vector_ownership: super::VmRuntimeOwnershipStats,
 }
 
 impl VmProfileReport {
@@ -109,6 +114,7 @@ impl VmProfileReport {
         self.returns.regular_slow_returns += other.returns.regular_slow_returns;
         self.slot_uniqueness.merge(&other.slot_uniqueness);
         self.runtime_ownership.merge(&other.runtime_ownership);
+        self.vector_ownership.merge(&other.vector_ownership);
     }
 }
 
@@ -213,6 +219,7 @@ impl VmProfileState {
         code: &CodeStore,
         slot_uniqueness: super::VmSlotUniquenessStats,
         runtime_ownership: super::VmRuntimeOwnershipStats,
+        vector_ownership: super::VmRuntimeOwnershipStats,
     ) -> VmProfileReport {
         let total_opcodes = self.opcode_counts.iter().sum();
         let mut opcodes = self
@@ -273,6 +280,7 @@ impl VmProfileState {
             returns: self.return_stats.clone(),
             slot_uniqueness,
             runtime_ownership,
+            vector_ownership,
         }
     }
 }

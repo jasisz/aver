@@ -113,6 +113,21 @@ fn annotate_fn(fd: &mut FnDef) {
         }
     }
 
+    // Match-pattern binders. A binder slot is a container read spelled as a
+    // pattern: `Option.Some(v)`, `[h, ..t]`, `(a, b)`, or the bare-ident
+    // rename `v ->` all hand the arm body a handle INTO the subject's value.
+    // The two statement passes above never see those slots — they iterate
+    // `Stmt::Binding` only — so a binder used to read as "never shared" and
+    // the in-place fast path wrote through the stored entry (issue #953
+    // follow-up). Symmetric with the statement rule: a binder is judged by
+    // its subject's freshness, exactly as a binding is judged by its RHS.
+    for stmt in stmts {
+        let expr = match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+        };
+        flag_match_binder_slots(expr, &res.local_slot_types, &mut aliased);
+    }
+
     // Re-stamp the resolution. `Arc` swap keeps the rest of the
     // resolution shape unchanged.
     let new_res = crate::ast::FnResolution {
@@ -325,6 +340,107 @@ fn flag_escaping_collection_locals(expr: &Expr, slot_types: &[Type], aliased: &m
             }
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::TailCall(_) => {}
+    }
+}
+
+/// Flag every binder slot a match pattern introduces, wherever the match
+/// sits in `expr`, unless the SUBJECT's value is provably fresh.
+///
+/// A pattern binder is an extraction: `Option.Some(v)` hands the arm body the
+/// payload, `[h, ..t]` the head, `(a, b)` the components, and the bare-ident
+/// arm `v ->` the whole subject — every one of them a handle that may share an
+/// arena entry with whatever the subject was read out of. The same freshness
+/// judgment the statement pass applies to a binding RHS
+/// ([`rhs_is_fresh_collection`]) applies to the subject here; when it cannot
+/// prove the subject fresh, every binder slot in every arm is flagged. The
+/// slots come from `MatchArm::binding_slots` — the resolver's positional
+/// stamp (#949) — never from a name lookup; wildcard positions (`u16::MAX`)
+/// bind nothing and are skipped.
+///
+/// Every binder slot is flagged, not only the collection-typed ones: the
+/// consumers gate on collection receivers anyway, so a flag on an `Int`
+/// binder is inert, while skipping a slot whose type stamp is missing would
+/// be unsound. When the subject binds anything, the subject's own bare
+/// collection locals are flagged too, through the same escape half the
+/// statement pass uses — a bare-ident arm IS a rename (`b = a` spelled as a
+/// match), and an in-place write to the subject local inside the arm would be
+/// observed through the binder.
+fn flag_match_binder_slots(expr: &Spanned<Expr>, slot_types: &[Type], aliased: &mut [bool]) {
+    match &expr.node {
+        Expr::Match { subject, arms } => {
+            flag_match_binder_slots(subject, slot_types, aliased);
+            let subject_fresh = rhs_is_fresh_collection(subject);
+            for arm in arms {
+                if !subject_fresh && let Some(slots) = arm.binding_slots.get() {
+                    let mut binds_anything = false;
+                    for &slot in slots {
+                        if slot != u16::MAX {
+                            binds_anything = true;
+                            if let Some(s) = aliased.get_mut(slot as usize) {
+                                *s = true;
+                            }
+                        }
+                    }
+                    if binds_anything {
+                        flag_escaping_collection_locals(&subject.node, slot_types, aliased);
+                    }
+                }
+                flag_match_binder_slots(&arm.body, slot_types, aliased);
+            }
+        }
+        Expr::FnCall(callee, args) => {
+            flag_match_binder_slots(callee, slot_types, aliased);
+            for a in args {
+                flag_match_binder_slots(a, slot_types, aliased);
+            }
+        }
+        Expr::TailCall(tc) => {
+            for a in &tc.args {
+                flag_match_binder_slots(a, slot_types, aliased);
+            }
+        }
+        Expr::Attr(inner, _) | Expr::Neg(inner) | Expr::ErrorProp(inner) => {
+            flag_match_binder_slots(inner, slot_types, aliased);
+        }
+        Expr::BinOp(_, lhs, rhs) => {
+            flag_match_binder_slots(lhs, slot_types, aliased);
+            flag_match_binder_slots(rhs, slot_types, aliased);
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload {
+                flag_match_binder_slots(p, slot_types, aliased);
+            }
+        }
+        Expr::Tuple(items) | Expr::List(items) | Expr::IndependentProduct(items, _) => {
+            for i in items {
+                flag_match_binder_slots(i, slot_types, aliased);
+            }
+        }
+        Expr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                flag_match_binder_slots(k, slot_types, aliased);
+                flag_match_binder_slots(v, slot_types, aliased);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                flag_match_binder_slots(e, slot_types, aliased);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            flag_match_binder_slots(base, slot_types, aliased);
+            for (_, e) in updates {
+                flag_match_binder_slots(e, slot_types, aliased);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let StrPart::Parsed(e) = p {
+                    flag_match_binder_slots(e, slot_types, aliased);
+                }
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
 
