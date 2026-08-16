@@ -381,6 +381,103 @@ mod tests {
     use crate::ir::pipeline::{self, PipelineConfig, TypecheckMode};
     use crate::source::parse_source;
 
+    /// The positional read this pass makes, pinned on a program the
+    /// shadowing ban (#954) cannot take away.
+    ///
+    /// The ban runs at the pipeline's typecheck gate, so no
+    /// user-written source reaches this pass with two binders spelling
+    /// the same name any more — but compiler-synthesized code does
+    /// (driver-step inlining renames binders into a fresh namespace,
+    /// the fusion passes synthesize variants), and it never passes the
+    /// gate. So the fn here is BUILT, not parsed: `f(m) { v = m;
+    /// r = match m { Some(v) -> 1; _ -> 0 }; r }`, where `v` names both
+    /// the statement binding and, one statement later, an arm binder.
+    ///
+    /// Slots: m=0, v(stmt)=1, r=2, v(arm)=3. The statement binding is a
+    /// rename of a Map parameter — an aliasing handle, so its slot must
+    /// be flagged. A name-keyed `local_slots["v"]` lookup answers 3
+    /// (last allocation wins), so the flag would land on the arm
+    /// binder's scalar slot and slot 1 would stay owned-eligible: the
+    /// VM's in-place fast path then mutates an arena entry `m` still
+    /// holds. That is issue #948, and reading `stmt_binding_slots` by
+    /// position (issue #949) is what forbids it.
+    #[test]
+    fn a_synthesized_colliding_spelling_still_flags_the_positional_slot() {
+        use crate::ast::{
+            BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, Type,
+        };
+
+        let map_rhs = Spanned::bare(Expr::Ident("m".to_string()));
+        map_rhs
+            .ty
+            .set(Type::Map(Box::new(Type::Int), Box::new(Type::Int)))
+            .expect("fresh cell");
+
+        let mut items = vec![TopLevel::FnDef(FnDef {
+            name: "f".to_string(),
+            line: 1,
+            params: vec![("m".to_string(), "Map<Int, Int>".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: std::sync::Arc::new(FnBody::Block(vec![
+                Stmt::Binding("v".to_string(), None, map_rhs),
+                Stmt::Binding(
+                    "r".to_string(),
+                    None,
+                    Spanned::bare(Expr::Match {
+                        subject: Box::new(Spanned::bare(Expr::Ident("m".to_string()))),
+                        arms: vec![
+                            MatchArm {
+                                pattern: Pattern::Constructor(
+                                    "Option.Some".to_string(),
+                                    vec!["v".to_string()],
+                                ),
+                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                                binding_slots: std::sync::OnceLock::new(),
+                            },
+                            MatchArm {
+                                pattern: Pattern::Wildcard,
+                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                binding_slots: std::sync::OnceLock::new(),
+                            },
+                        ],
+                    }),
+                ),
+                Stmt::Expr(Spanned::bare(Expr::BinOp(
+                    BinOp::Add,
+                    Box::new(Spanned::bare(Expr::Ident("r".to_string()))),
+                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                ))),
+            ])),
+            resolution: None,
+        })];
+
+        crate::resolver::resolve_program(&mut items);
+        super::annotate_program_alias_slots(&mut items);
+
+        let TopLevel::FnDef(fd) = &items[0] else {
+            unreachable!("the item is the fn just built")
+        };
+        let res = fd.resolution.as_ref().expect("resolution stamped");
+        let stmt_slot = res.stmt_binding_slots[0];
+        let name_slot = res.local_slots["v"];
+        assert_ne!(
+            stmt_slot, name_slot,
+            "the positional and name-keyed identities must disagree here, or \
+             this test discriminates nothing"
+        );
+        assert!(
+            res.aliased_slots[stmt_slot as usize],
+            "the statement binding's OWN slot must carry the alias flag"
+        );
+        assert!(
+            !res.aliased_slots[name_slot as usize],
+            "the arm binder's slot is a scalar the name map merely happens to \
+             own — flagging it instead is the #948 misread"
+        );
+    }
+
     /// Read the alias bit of the local named `local` in fn `f`, after the whole
     /// pipeline.
     ///

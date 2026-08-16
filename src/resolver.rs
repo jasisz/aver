@@ -1046,6 +1046,113 @@ mod tests {
         }
     }
 
+    /// Issue #949's contract, kept discriminating after the shadowing
+    /// ban took the user-written trigger away.
+    ///
+    /// The ban runs at the pipeline's typecheck gate; `resolve_fn` does
+    /// not call it. So an AST BUILT here — not parsed — is in exactly
+    /// the position compiler-synthesized code is in, and compiler-
+    /// synthesized code still creates colliding spellings: driver-step
+    /// inlining renames binders into a fresh namespace, the fusion
+    /// passes synthesize variants. This is the shape the positional
+    /// table exists for.
+    ///
+    /// The fn is `f(x) { v = x + 1; r = match x { Some(v) -> v; _ -> 0 };
+    /// v }` — a statement binding `v` and, inside the next statement's
+    /// match, an arm binder spelled `v` too. Slots go x=0, v(stmt)=1,
+    /// r=2, v(arm)=3, and the two identities disagree: the name map
+    /// answers 3 (last allocation wins), the positional table answers
+    /// 1. Every consumer must read the second one — reading the first
+    /// is issue #948 exactly, the `let` writing the binder's slot while
+    /// every read of the statement binding hits an uninitialized one.
+    #[test]
+    fn a_statement_binding_keeps_its_slot_when_a_later_binder_reuses_the_spelling() {
+        let mut fd = FnDef {
+            name: "f".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Block(vec![
+                Stmt::Binding(
+                    "v".to_string(),
+                    None,
+                    Spanned::bare(Expr::BinOp(
+                        BinOp::Add,
+                        Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                    )),
+                ),
+                Stmt::Binding(
+                    "r".to_string(),
+                    None,
+                    Spanned::bare(Expr::Match {
+                        subject: Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        arms: vec![
+                            MatchArm {
+                                pattern: Pattern::Constructor(
+                                    "Option.Some".to_string(),
+                                    vec!["v".to_string()],
+                                ),
+                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                                binding_slots: std::sync::OnceLock::new(),
+                            },
+                            MatchArm {
+                                pattern: Pattern::Wildcard,
+                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                binding_slots: std::sync::OnceLock::new(),
+                            },
+                        ],
+                    }),
+                ),
+                Stmt::Expr(Spanned::bare(Expr::Ident("v".to_string()))),
+            ])),
+            resolution: None,
+        };
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
+        let res = fd.resolution.as_ref().expect("resolution stamped");
+
+        assert_eq!(
+            res.stmt_binding_slots.as_slice(),
+            &[1, 2],
+            "the positional table must carry each statement binding's OWN slot, \
+             in source order"
+        );
+        assert_eq!(
+            res.local_slots["v"], 3,
+            "the name map is last-allocation-wins: the ARM binder owns the \
+             spelling `v` there"
+        );
+        assert_ne!(
+            res.local_slots["v"], res.stmt_binding_slots[0],
+            "the two identities must actually disagree here, or this test is \
+             not testing anything"
+        );
+
+        // And the body agrees with the positional table, not the name
+        // map: the tail read of `v` is outside the arm frame, so it is
+        // the statement binding's slot 1.
+        match &fd.body.stmts()[2] {
+            Stmt::Expr(Spanned {
+                node: Expr::Resolved { slot, .. },
+                ..
+            }) => assert_eq!(
+                *slot, 1,
+                "the tail read of `v` must be the statement binding, not the \
+                 arm binder that took over its spelling in the name map"
+            ),
+            other => panic!("unexpected tail stmt: {:?}", other),
+        }
+    }
+
     // ── Shadowing ban (issue #954) ──────────────────────────────────
     //
     // The matrix below is mechanical: one row per reachable
@@ -1055,6 +1162,23 @@ mod tests {
     // cannot shadow a local (parameters come first), and a statement
     // binding cannot shadow a pattern binder (statement bindings
     // exist only at fn-body top level, outside every arm frame).
+    //
+    // Five present rows are honest about being UNIT-LEVEL ONLY — the
+    // walk answers for them, but no user sees this message through a
+    // front door today, because something else refuses the program
+    // first and the ban is suppressed once typecheck has failed:
+    //
+    // - `stmt-binding-over-param` and `stmt-binding-over-stmt-binding`
+    //   are pre-empted by the flow checker's "'x' is already defined
+    //   in 'f'" (`src/types/checker/flow.rs`, `check_stmts`).
+    // - the three `*-over-operation` rows need a capability
+    //   `operation` in the module, and any module carrying one is
+    //   refused outright with `capability-unsupported` (issue #893)
+    //   until capability support lands. They are FORWARD-LOOKING: they
+    //   pin what the walk must say the day operations register.
+    //
+    // They stay because the walk's answer is what the ban IS; when
+    // either pre-emption lifts, these rows are already the contract.
 
     fn shadow_errors(src: &str) -> Vec<crate::types::checker::TypeError> {
         let items = crate::source::parse_source(src).expect("ban-matrix program must parse");

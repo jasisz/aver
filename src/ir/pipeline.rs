@@ -687,6 +687,42 @@ pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResul
     }
 }
 
+/// The typecheck GATE: the type checker plus the shadowing ban
+/// (issue #954), paired once so no front door can accidentally take
+/// one without the other.
+///
+/// The ban rides here rather than inside `resolve_fn` for two reasons
+/// the pass order makes concrete: `resolve` runs BELOW the fabricating
+/// passes, which put entities in the AST the source does not contain
+/// (`<fn>__cursor`, `__buf_*`) and may reuse spellings legitimately —
+/// the ban is about the program the user wrote; and `run_resolve` is
+/// off in front doors that still typecheck (the self-host preflight,
+/// the proof-facing configs), which would silently exempt them.
+/// Riding the type checker means its findings are ordinary compile
+/// errors in the ordinary channel, so every caller that renders type
+/// errors reports them. It is suppressed when typecheck has already
+/// failed, so a broken program gets its type errors without a cascade.
+///
+/// `user_program` is the sub-slice of `items` the user actually wrote,
+/// and it is `items` itself at every door but one: `aver verify`
+/// APPENDS compiler-fabricated hostile effect stubs to `items` before
+/// this gate, because the checker has to see them. Those stub bodies
+/// carry parameters spelled `min`, `max`, `count`, `key`, `n`, `path`
+/// — names a user module is free to define as functions — so the ban
+/// reads the prefix that predates the injection.
+pub fn typecheck_gate(
+    items: &[TopLevel],
+    mode: &TypecheckMode<'_>,
+    user_program: &[TopLevel],
+) -> TypeCheckResult {
+    let mut tc = typecheck(items, mode);
+    if tc.errors.is_empty() {
+        tc.errors
+            .extend(crate::resolver::check_shadowing(user_program));
+    }
+    tc
+}
+
 /// Lower `"a${x}b"` interpolation literals into the buffer pipeline.
 /// Skipped by proof exporters (Lean/Dafny) which want the source-level form.
 pub fn interp_lower(items: &mut [TopLevel]) {
@@ -764,20 +800,11 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     if let Some(mode) = cfg.typecheck.as_ref() {
-        let mut tc = typecheck(items, mode);
-        // The shadowing ban (issue #954) rides the typecheck gate: it
-        // reads the same pre-fabrication AST the typechecker just read,
-        // and its findings are ordinary compile errors in the same
-        // channel, so every caller that renders type errors reports
-        // them. It must stay ABOVE the fabricating passes below —
-        // compiler-synthesized helpers (`<fn>__cursor`, `__buf_*`) may
-        // legitimately reuse spellings, and the ban is about the
-        // program the user wrote. Suppressed when typecheck already
-        // failed, so a broken program gets its type errors without a
-        // cascade.
-        if tc.errors.is_empty() {
-            tc.errors.extend(crate::resolver::check_shadowing(items));
-        }
+        // The gate — type checker plus the shadowing ban (#954) — reads
+        // the pre-fabrication AST, above the synthesizing passes below.
+        // Nothing has been appended to `items` here, so the ban's scope
+        // is the whole program. See [`typecheck_gate`].
+        let tc = typecheck_gate(items, mode, items);
         let has_errors = !tc.errors.is_empty();
         result
             .pass_diagnostics

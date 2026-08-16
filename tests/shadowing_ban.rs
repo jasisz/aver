@@ -6,14 +6,19 @@
 //! the enclosing function's own name. The resolver-side walk and the
 //! full (binder position × shadowed kind) matrix live in
 //! `src/resolver.rs` unit tests; this file pins that the refusal
-//! reaches the user through the real commands — `aver run` and
-//! `aver compile` — and that the program from issue #951, whose three
-//! executors disagreed about a call through a binder spelling a module
-//! fn's name, is now rejected before any executor sees it.
+//! reaches the user through the real commands — `aver run`,
+//! `aver compile` and `aver verify` (both its disk-loader entry and
+//! the pre-loaded virtual-filesystem entry the playground and the LSP
+//! use) — and that the program from issue #951, whose three executors
+//! disagreed about a call through a binder spelling a module fn's
+//! name, is now rejected before any executor sees it.
 //!
 //! Sibling match arms reusing a name stay LEGAL (they are never in
 //! each other's scope; the per-arm slot machinery from #949 keeps them
-//! sound) — the control below must keep running.
+//! sound) — the control below must keep running. So does a module that
+//! spells a function the way a hostile effect stub spells one of its
+//! parameters: those stubs are fabricated by the compiler, and the ban
+//! is about the program the user wrote.
 
 #![cfg(feature = "runtime")]
 
@@ -141,6 +146,77 @@ fn issue_951_divergence_program_is_rejected_by_compile() {
     );
 }
 
+/// The same program carrying a `verify` block instead of a `main`.
+/// `aver verify` compiles and RUNS the function under test, so it is a
+/// front door in exactly the sense that matters: before this, it ran
+/// the #951 program and reported the divergence as a runtime fault
+/// ("cannot call non-function (got Unit)") while `run` and `compile`
+/// refused the same file.
+const DIVERGENCE_951_VERIFY_SRC: &str = r#"module Tmp
+
+fn dbl(n: Int) -> Int
+    n * 2
+
+fn probe(x: Int) -> Int
+    match Option.Some(x)
+        Option.Some(dbl) -> dbl(3)
+        Option.None -> 0
+
+verify probe
+    probe(3) => 6
+"#;
+
+#[test]
+fn issue_951_divergence_program_is_rejected_by_verify() {
+    let path = temp_module("verify-951", DIVERGENCE_951_VERIFY_SRC);
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("verify")
+        .arg(&path)
+        .output()
+        .expect("expected `aver verify` to execute");
+    cleanup(&path);
+    assert!(
+        !out.status.success(),
+        "the #951 program must be rejected by verify, not executed:\n{}",
+        format_output(&out)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(DIVERGENCE_951_ERROR),
+        "verify must report the same refusal run and compile do:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        !stderr.contains("cannot call non-function"),
+        "verify must refuse the program instead of executing it into the \
+         divergence:\n{}",
+        format_output(&out)
+    );
+}
+
+/// The other verify entry point: pre-loaded modules instead of a disk
+/// loader. This is the one the playground and the LSP call, and it had
+/// its own `pipeline::typecheck` call, so routing only the disk path
+/// would have left the browser executing what the CLI refuses.
+#[test]
+fn issue_951_divergence_program_is_rejected_by_the_preloaded_verify_path() {
+    let items = aver::source::parse_source(DIVERGENCE_951_VERIFY_SRC)
+        .expect("the #951 program parses; it is the meaning that is banned");
+    let Err(err) = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_loaded(
+        items,
+        Vec::new(),
+        None,
+        "main.av",
+    ) else {
+        panic!("the pre-loaded verify path must reject the #951 program, not run it");
+    };
+    assert!(
+        err.contains(DIVERGENCE_951_ERROR),
+        "the pre-loaded path must carry the standard shadow error, got:\n{err}"
+    );
+}
+
 /// A parameter spelling a module fn's name is the same offence — this
 /// is the shape the rogue example's `renderTile(…, isVisible, …)`
 /// param had before its rename.
@@ -179,6 +255,71 @@ fn a_param_spelling_a_module_fn_is_rejected_by_run() {
         ),
         "the refusal must be the standard shadow error:\n{}",
         format_output(&out)
+    );
+}
+
+/// The third verify door: `aver verify --wasm-gc`, which had a
+/// `pipeline::typecheck` call of its own. Off the default lane (it
+/// needs wasmtime), on in the wasm job.
+#[cfg(feature = "wasm")]
+#[test]
+fn issue_951_divergence_program_is_rejected_by_wasm_gc_verify() {
+    let items = aver::source::parse_source(DIVERGENCE_951_VERIFY_SRC)
+        .expect("the #951 program parses; it is the meaning that is banned");
+    let Err(err) = aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc(
+        items, None, None, "main.av",
+    ) else {
+        panic!("the wasm-gc verify door must reject the #951 program, not run it");
+    };
+    assert!(
+        err.contains(DIVERGENCE_951_ERROR),
+        "the wasm-gc door must carry the standard shadow error, got:\n{err}"
+    );
+}
+
+/// The hostile verify path APPENDS compiler-fabricated effect stubs to
+/// the item list before the typecheck gate, because the checker has to
+/// see them. Their parameters are spelled `path`, `n`, `conn`, `count`
+/// (and `min` / `max` / `key` for the other effects) — ordinary names a
+/// user module is free to define as functions. The ban reads the
+/// program the user wrote, so a module defining `fn count` must still
+/// verify: run the ban over the post-injection list instead and this
+/// module is refused for a binder it never wrote.
+#[test]
+fn a_module_naming_a_fn_like_a_hostile_stub_param_still_verifies() {
+    let src = r#"module M
+    intent = "A module whose own fn is spelled like a hostile stub's parameter."
+    depends [Bytes]
+    effects [Tcp]
+
+fn count(n: Int) -> Int
+    ? "How many frames have been seen so far."
+    n + 1
+
+fn frameVerdict(conn: Tcp.Connection) -> String
+    ? "Classify one exact-frame read."
+    ! [Tcp.readBytes]
+    match Tcp.readBytes(conn, 4)
+        Result.Ok(_) -> String.fromInt(count(0))
+        Result.Err(_) -> "err"
+
+verify frameVerdict law neverReads
+    given conn: Tcp.Connection = [Tcp.Connection(id = "fake", host = "127.0.0.1", port = 1)]
+    frameVerdict(conn) => "err"
+"#;
+    let items = aver::source::parse_source(src).expect("the guard program must parse");
+    let results = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
+        items,
+        None,
+        Some(&repo_root().to_string_lossy().to_string()),
+        "hostile_stub_param_scope.av",
+        aver::verify_law::expand::ExpansionMode::Hostile,
+    )
+    .expect("a user fn spelled like a fabricated stub's parameter is not shadowing");
+    assert_eq!(
+        results.len(),
+        1,
+        "the hostile run must produce the block's results, not a refusal"
     );
 }
 

@@ -4289,7 +4289,7 @@ pub fn evalStmtExpr(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::core::evalExpr(e, env, fns) {
         Ok(v) => Ok((v, env.clone())),
-        Err(e) => Err(e.clone()),
+        Err(msg) => Err(msg),
     }
 }
 
@@ -4303,7 +4303,7 @@ pub fn evalStmtBind(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::core::evalExpr(e, env, fns) {
         Ok(v) => Ok((v.clone(), env.clone().insert_owned(name, v))),
-        Err(e) => Err(e.clone()),
+        Err(msg) => Err(msg),
     }
 }
 

@@ -102,12 +102,21 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
 
     crate::ir::pipeline::tco(&mut items);
 
+    // End of the program the user wrote — see `vm_verify`'s disk path.
+    let user_program_len = items.len();
+
     if mode == ExpansionMode::Hostile {
         let preview = merge_verify_blocks(&items);
         inject_hostile_effect_stubs_for_blocks(&mut items, &preview);
     }
 
-    let tc = crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::Full { base_dir });
+    // The same gate the VM verify door and every other front door use:
+    // type errors AND the shadowing ban (#954).
+    let tc = crate::ir::pipeline::typecheck_gate(
+        &items,
+        &crate::ir::TypecheckMode::Full { base_dir },
+        &items[..user_program_len],
+    );
     if !tc.errors.is_empty() {
         return Err(format_type_errors(&tc.errors));
     }

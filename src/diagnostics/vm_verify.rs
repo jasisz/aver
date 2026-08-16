@@ -594,6 +594,11 @@ pub fn run_verify_for_items_vm_with_mode(
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
+    // Everything appended below this line is compiler-fabricated, so
+    // this is where the program the user wrote ends — the scope the
+    // shadowing ban in `pipeline::typecheck_gate` is entitled to read.
+    let user_program_len = items.len();
+
     if mode == ExpansionMode::Hostile {
         // Inject hostile effect-profile stubs as `TopLevel::FnDef` before
         // type-check so they're visible to the verify pipeline as ordinary
@@ -622,8 +627,20 @@ pub fn run_verify_for_items_vm_with_mode(
         Vec::new()
     };
 
-    let tc_result =
-        crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::Full { base_dir });
+    // `pipeline::typecheck_gate`, not the bare `pipeline::typecheck`:
+    // verify cannot use `pipeline::run` (it has to merge verify blocks,
+    // expand hostile cases and build its VM plans BETWEEN typecheck and
+    // resolve, and the orchestrator has no seam there), but the gate it
+    // owes its users is the same one every other front door passes
+    // through — type errors AND the shadowing ban (#954). Without this
+    // the #951 program, whose three executors disagreed about a call
+    // through a binder spelling a module fn's name, was still EXECUTED
+    // by `aver verify` while `run` and `compile` refused it.
+    let tc_result = crate::ir::pipeline::typecheck_gate(
+        &items,
+        &crate::ir::TypecheckMode::Full { base_dir },
+        &items[..user_program_len],
+    );
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
@@ -644,8 +661,10 @@ pub fn run_verify_for_items_vm_with_mode(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    // verify path runs `pipeline::tco/typecheck/resolve` directly without
-    // the canonical `pipeline::run`, so no AnalysisResult is available
+    // verify path runs `pipeline::tco` / the typecheck gate / `resolve`
+    // directly without the canonical `pipeline::run` orchestrator (it
+    // has to interleave verify-block work between them), so no
+    // AnalysisResult is available
     // here — the VM compiler falls through to the conservative
     // "assume allocates" branch (no per-fn `no_alloc` promotion).
     // Build the resolved-identity table + lift the items to resolved
@@ -714,13 +733,21 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
+    // End of the program the user wrote — see the disk-loader path.
+    let user_program_len = items.len();
+
     if mode == ExpansionMode::Hostile {
         let preview_blocks = merge_verify_blocks(&items);
         inject_hostile_effect_stubs_for_blocks(&mut items, &preview_blocks);
     }
 
-    let tc_result =
-        crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::WithLoaded(&loaded));
+    // Same gate as the disk-loader path above, so the playground and
+    // the LSP refuse a shadowing program exactly as the CLI does.
+    let tc_result = crate::ir::pipeline::typecheck_gate(
+        &items,
+        &crate::ir::TypecheckMode::WithLoaded(&loaded),
+        &items[..user_program_len],
+    );
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
