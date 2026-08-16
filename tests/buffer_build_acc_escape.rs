@@ -154,13 +154,14 @@ fn main() -> Unit
     assert_eq!(out, "0,1,2");
 }
 
-/// The one read the guard permits still has to be the accumulator. This
-/// program bound the head of the input under the accumulator's own name
-/// — the loop the rewrite must not fuse, because the prepend threads
-/// that head. The shadowing ban (issue #954) now refuses the spelling
-/// at the front door, so the program never reaches the pass; the
-/// pass-side guard stays as defense for compiler-synthesized shapes,
-/// and this pin says the refusal is what the user sees.
+/// The one read the guard permits still has to be the accumulator, and
+/// this program binds the head of the input under the accumulator's own
+/// name. A REFUSAL pin and nothing else: the shadowing ban (issue #954)
+/// rejects the spelling at the front door, so the pass never meets this
+/// shape in user code. That a prepend threading something OTHER than
+/// the accumulator declines the rewrite is covered by
+/// `a_prepend_onto_the_input_keeps_its_unfused_answer` below, which
+/// names the binder distinctly and asserts the answer.
 #[test]
 fn a_pattern_shadowing_the_accumulator_is_rejected() {
     let stderr = run_rejected(
@@ -191,6 +192,40 @@ fn main() -> Unit
         ),
         "the refusal must be the standard shadow error:\n{stderr}"
     );
+}
+
+/// The pass-side half of the shape above, spelled legally. The prepend
+/// builds onto the HEAD of the input rather than onto the accumulator,
+/// so each step throws the collected list away — a buffer the rewrite
+/// appends to would keep everything instead. The accumulator is still
+/// reversed in the base case, so the loop looks like a collector right
+/// up to the list the prepend actually threads.
+#[test]
+fn a_prepend_onto_the_input_keeps_its_unfused_answer() {
+    let out = run_program(
+        "prepend_input",
+        r#"module PrependInput
+    intent =
+        "Prepends onto the row it is looking at instead of onto what it has collected."
+    exposes [render]
+    effects [Console.print]
+
+fn f(values: List<List<String>>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> f(tail, List.prepend("x", head))
+
+fn render(values: List<List<String>>) -> String
+    String.join(f(values, []), ",")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(render([["a"], ["b"]]))
+"#,
+    );
+    // Only the last row survives, reversed: "x" prepended onto ["b"].
+    // A buffered rewrite would have kept the earlier steps too.
+    assert_eq!(out, "b,x");
 }
 
 /// The match subject is copied onto the buffered variant unchanged, so a

@@ -127,11 +127,13 @@ fn main() -> Unit
 }
 
 /// The recursive step is a DIFFERENT list that happens to carry the
-/// tail's name — the loop a cursor stepping on the strength of the name
-/// would walk wrong. The shadowing ban (issue #954) refuses the
-/// spelling at the front door now, so the pass never sees it; its
-/// guard stays for compiler-synthesized shapes, and this pin says the
-/// refusal is what the user sees.
+/// tail's name. This program is a REFUSAL pin and nothing else: the
+/// shadowing ban (issue #954) rejects the spelling at the front door,
+/// so what it says about the pass is only that the pass never meets
+/// this shape in user code. The decline itself — a step on a list that
+/// is not the destructured tail — is covered by
+/// `a_step_on_a_different_list_keeps_its_unfused_answer` below, which
+/// spells the binder distinctly and asserts the answer.
 #[test]
 fn a_shadowed_tail_is_rejected() {
     let stderr = run_rejected(
@@ -166,6 +168,43 @@ fn main() -> Unit
         ),
         "the refusal must be the standard shadow error:\n{stderr}"
     );
+}
+
+/// The pass-side half of the shape above, spelled legally. The
+/// recursive step is a different list — the empty one the inner match
+/// binds — and a cursor stepping on the strength of the recursion alone
+/// would walk the input instead. The answer is what says which
+/// happened.
+#[test]
+fn a_step_on_a_different_list_keeps_its_unfused_answer() {
+    let out = run_program(
+        "other_list",
+        r#"module OtherList
+    intent =
+        "Recurses on an empty list bound under a name of its own."
+    exposes [count]
+    effects [Console.print]
+
+fn nothing() -> List<String>
+    []
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> match nothing()
+            other -> walk(other, acc + 1)
+
+fn count(text: String) -> Int
+    walk(String.chars(text), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(count("abcde")))
+"#,
+    );
+    // One step and done: the second call is handed the empty list, not
+    // the tail. A cursor stepping the input would answer 5.
+    assert_eq!(out, "1");
 }
 
 /// The list match is not the `[] / [head, ..tail]` pair the cursor
@@ -441,12 +480,12 @@ fn main() -> Unit
 }
 
 /// The call is to a PARAMETER that happens to carry a top-level
-/// function's name — rewriting it to `walk__cursor` would call a
-/// different function than the program does. The shadowing ban (issue
-/// #954) refuses the parameter spelling at the front door now, so the
-/// pass can no longer meet this shape in user code; its callee guard
-/// stays for compiler-synthesized shapes, and this pin says the
-/// refusal is what the user sees.
+/// function's name. A REFUSAL pin and nothing else: the shadowing ban
+/// (issue #954) rejects the parameter spelling at the front door, so
+/// the pass never meets this shape in user code. That a call through a
+/// function-valued parameter is not a fusion site is covered by
+/// `a_call_through_a_function_parameter_keeps_its_unfused_answer`
+/// below, which names the parameter distinctly and asserts the answer.
 #[test]
 fn a_call_through_a_parameter_spelling_a_fn_is_rejected() {
     let stderr = run_rejected(
@@ -490,6 +529,55 @@ fn main() -> Unit
         ),
         "the refusal must be the standard shadow error:\n{stderr}"
     );
+}
+
+/// The pass-side half of the shape above, spelled legally. The callee
+/// is a PARAMETER holding whichever loop it was handed, so the call
+/// site does not name the function it runs — a cursor rewrite that
+/// keyed on the call site's spelling would fuse the wrong loop, or a
+/// loop that is not there. Both loops are fusable on their own, which
+/// is what makes the call through the parameter the only thing under
+/// test.
+#[test]
+fn a_call_through_a_function_parameter_keeps_its_unfused_answer() {
+    let out = run_program(
+        "callee_param",
+        r#"module CalleeParam
+    intent =
+        "Takes the loop it runs as a parameter and reports it beside the direct call."
+    exposes [report]
+    effects [Console.print]
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    ? "Counts every character."
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + 1)
+
+fn half(chars: List<String>, acc: Int) -> Int
+    ? "Counts every other character."
+    match chars
+        [] -> acc
+        [first, ..afterFirst] -> match afterFirst
+            [] -> acc + 1
+            [second, ..rest] -> half(rest, acc + 1)
+
+fn go(step: Fn(List<String>, Int) -> Int, text: String) -> Int
+    ? "Runs whichever loop it was handed."
+    step(String.chars(text), 0)
+
+fn report(text: String) -> String
+    "{go(half, text)}/{walk(String.chars(text), 0)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(report("abcde"))
+"#,
+    );
+    // `half` counts every other character of five, `walk` counts all
+    // five. Fusing the call through `step` into either loop's cursor
+    // variant moves the first number.
+    assert_eq!(out, "3/5");
 }
 
 /// The default arm BINDS the subject. Rewriting the subject to a
