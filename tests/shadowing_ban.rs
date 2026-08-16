@@ -94,6 +94,66 @@ fn main()
 const DIVERGENCE_951_ERROR: &str = "the pattern binding 'dbl' shadows the function 'dbl' \
      defined at line 3; every name means one thing in its scope — rename one of them";
 
+/// The same program, spelled so that a recording of it can exist: `aver run
+/// --record` writes the recording from a LEGAL source, and the file behind the
+/// recorded path is then edited into the refused shape. Replay must ask the
+/// ban about the source it is about to hand to a runtime, because nothing
+/// binds the file to what was recorded.
+const REPLAY_LEGAL_SRC: &str = r#"module Tmp
+
+fn dbl(n: Int) -> Int
+    n * 2
+
+fn probe(x: Int) -> Int
+    match Option.Some(x)
+        Option.Some(v) -> dbl(v)
+        Option.None -> 0
+
+fn main()
+    ! [Console.print]
+    Console.print(String.fromInt(probe(3)))
+"#;
+
+#[test]
+fn the_replay_door_refuses_an_edited_source() {
+    let path = temp_module("replay-951", REPLAY_LEGAL_SRC);
+    let recording = path.with_file_name("session.json");
+    let record = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("run")
+        .arg(&path)
+        .arg("--record")
+        .arg(&recording)
+        .output()
+        .expect("expected `aver run --record` to execute");
+    assert!(
+        record.status.success(),
+        "the legal program must record cleanly:\n{}",
+        format_output(&record)
+    );
+    fs::write(&path, DIVERGENCE_951_SRC).expect("edit the recorded source");
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("replay")
+        .arg(&recording)
+        .arg("--self-host")
+        .output()
+        .expect("expected `aver replay` to execute");
+    cleanup(&path);
+    let combined = format_output(&out);
+    assert!(
+        !combined.contains("cannot call non-function"),
+        "replay must refuse the edited source instead of executing it:\n{combined}"
+    );
+    // `replay` reports an outcome rather than crashing — a mismatch is a
+    // `fail[...]` record and the process still exits 0 — so the contract this
+    // door owes is that the refusal is what the record carries.
+    assert!(
+        combined.contains(DIVERGENCE_951_ERROR),
+        "replay must report the ban's refusal for the edited source:\n{combined}"
+    );
+}
+
 #[test]
 fn issue_951_divergence_program_is_rejected_by_run() {
     let path = temp_module("run-951", DIVERGENCE_951_SRC);
@@ -592,10 +652,11 @@ const NOT_A_DOOR: &[(&str, &str)] = &[
     ),
     (
         "replay",
-        "executes through `pipeline::run`'s gated typecheck stage \
-         (main/replay_cmd/backends.rs), but it is driven by a recording rather than by a \
-         source path, and a recording of this program cannot exist: the only thing that \
-         writes one is `aver run --record`, which refuses it at that same gate",
+        "asks the ban about the source the recording names before any runtime sees it \
+         (main/replay_cmd/backends.rs). The earlier reasoning here — that a recording of \
+         a refused program cannot exist — was wrong: the recording stores a path, and the \
+         file behind it can be edited into anything after `aver run --record` wrote the \
+         recording. Pinned by `the_replay_door_refuses_an_edited_source`",
     ),
     (
         "cert",

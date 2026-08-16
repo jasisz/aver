@@ -308,6 +308,17 @@ pub(super) fn run_self_host_replay(
             &items,
             Some(replay_module_root),
         )?;
+        // The recording names a source path, and nothing binds that file to
+        // what was recorded — it can have been edited into a program no other
+        // door accepts. Ask the shadowing ban about it before handing the
+        // source to a runtime that will execute it.
+        let shadow = aver::resolver::check_shadowing(&items);
+        if let Some(first) = shadow.first() {
+            return Err(format!(
+                "error[{}:{}]: {}",
+                first.line, first.col, first.message
+            ));
+        }
     }
     let binary_path = find_self_host_binary()?;
     let guest_args = decode_self_host_guest_args(&recording.input)?;
