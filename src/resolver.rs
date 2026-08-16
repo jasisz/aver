@@ -121,11 +121,13 @@ fn resolve_fn(fd: &mut FnDef, type_info: &TypeInfo) {
     let next_slot = state.next_slot;
     let last_alloc = state.last_alloc;
     let slot_types = state.slot_types;
+    let stmt_binding_slots = state.stmt_binding_slots;
     state.scopes.pop();
 
     fd.resolution = Some(FnResolution {
         local_count: next_slot,
         local_slots: Rc::new(last_alloc),
+        stmt_binding_slots: Rc::new(stmt_binding_slots),
         local_slot_types: Rc::new(slot_types),
         aliased_slots: Rc::new(vec![false; next_slot as usize]),
     });
@@ -150,6 +152,11 @@ struct ResolverState<'a> {
     /// inside a match arm should prefer `MatchArm::binding_slots`
     /// (resolver writes the actual per-arm slot there).
     last_alloc: HashMap<String, u16>,
+    /// Slot of each fn-body statement binding in source order —
+    /// `u16::MAX` for `_`. Becomes `FnResolution.stmt_binding_slots`,
+    /// the per-statement identity the MIR lowering consumes instead
+    /// of the name-keyed (last-wins) `last_alloc` (issue #948).
+    stmt_binding_slots: Vec<u16>,
 }
 
 impl<'a> ResolverState<'a> {
@@ -160,6 +167,7 @@ impl<'a> ResolverState<'a> {
             slot_types: Vec::new(),
             scopes: Vec::new(),
             last_alloc: HashMap::new(),
+            stmt_binding_slots: Vec::new(),
         }
     }
 
@@ -236,7 +244,8 @@ impl<'a> ResolverState<'a> {
                     // local_slots` keeps params, then top-level let
                     // bindings, then pattern-introduced bindings).
                     let ty = expr.ty().cloned().unwrap_or(Type::Invalid);
-                    self.declare(name, ty);
+                    let slot = self.declare(name, ty);
+                    self.stmt_binding_slots.push(slot);
                     self.walk_expr(expr);
                 }
                 Stmt::Expr(expr) => self.walk_expr(expr),

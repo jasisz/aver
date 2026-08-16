@@ -722,20 +722,21 @@ pub(crate) fn emit_mir_expr(
                 ctx.int_result_raw.set(result_raw);
                 return emit_mir_expr(func, &l.body, slots, ctx);
             }
-            // Mirror of `emit_fn_body`'s `Binding` arm.
-            let slot = ctx
-                .self_local_slot(&l.binding_name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "binding `{}` has no resolver slot",
-                    l.binding_name
-                )))?;
+            // Mirror of `emit_fn_body`'s `Binding` arm. The slot is the
+            // `MirLet`'s own `LocalId` — seeded by the MIR lowering from
+            // the resolver's per-statement `stmt_binding_slots`. A
+            // name-keyed `self_local_slot(&l.binding_name)` lookup here
+            // would resolve to a later same-named pattern binder's slot
+            // (last allocation wins in `local_slots`), storing the value
+            // where the body never reads it (issue #948).
+            let slot = l.binding.0;
             // ETAP-2 SLICE 2b: a bare binding slot is a raw `i64` local, so
             // its VALUE must be emitted in raw context — a boxed-path emit
             // (e.g. an `Int` literal lowering to `__aint_from_i64`) would
             // push an `$AverInt` ref into an `i64` slot (validation error).
             // The rewrite already left the value raw-rendering for a bare
             // binding (`rewrite_let_value`).
-            let value_produces = if ctx.slot_is_bare(slot as u32) {
+            let value_produces = if ctx.slot_is_bare(slot) {
                 match emit_mir_int_raw(func, &l.value, slots, ctx)? {
                     Some(p) => p,
                     None => return Ok(None),

@@ -3221,9 +3221,9 @@ pub fn evalIndependentProduct(
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::eval::core::evalIndependentItems(exprs, env, fns)?;
     if unwrap {
-        crate::aver_generated::domain::eval::core::unwrapProductResults(
+        crate::aver_generated::domain::eval::core::unwrapProductResults__collected(
             items,
-            aver_rt::AverList::empty(),
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         )
     } else {
         Ok(crate::aver_generated::domain::value::Val::ValTuple(items))
@@ -4164,10 +4164,10 @@ pub fn fastForwardCall(
     fns: &FnStore,
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    let args = crate::aver_generated::domain::eval::core::collectFastForwardArgs(
+    let args = crate::aver_generated::domain::eval::core::collectFastForwardArgs__collected(
         slotArgs.clone(),
         calleeEnv.clone(),
-        aver_rt::AverList::empty(),
+        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     )?;
     let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     crate::aver_generated::domain::eval::core::callResolvedById(fnId, &fd, &args, fns)
@@ -5015,9 +5015,9 @@ pub fn evalIndependentProductSlot(
         exprs, env, slotMap, fns,
     )?;
     if unwrap {
-        crate::aver_generated::domain::eval::core::unwrapProductResults(
+        crate::aver_generated::domain::eval::core::unwrapProductResults__collected(
             items,
-            aver_rt::AverList::empty(),
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         )
     } else {
         Ok(crate::aver_generated::domain::value::Val::ValTuple(items))
@@ -5033,4 +5033,60 @@ pub fn evalIndependentItemsSlot(
 ) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(exprs.clone(), [] => Ok(aver_rt::AverList::empty()), [a, rest] => { aver_list_match!(rest, [] => match crate::aver_generated::domain::eval::core::evalExprSlot(&a, env, slotMap, fns) { Ok(va) => { Ok(aver_rt::AverList::from_vec(vec![va])) }, Err(e) => { Err(e) } }, [b, rest2] => { { let __list_subject = rest2; if __list_subject.is_empty() { { let (va, vb) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let _r0 = crate::aver_generated::domain::eval::core::evalExprSlot(&a, env, slotMap, fns); crate::aver_replay::set_effect_branch(1); let _r1 = crate::aver_generated::domain::eval::core::evalExprSlot(&b, env, slotMap, fns); crate::aver_replay::exit_effect_group(); match (_r0, _r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (_r0, _r1) => { if let Err(__err) = _r0 { Err(__err) } else if let Err(__err) = _r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|_s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let _h0 = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(&a, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })); let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let _h1 = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(&b, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })); let _b0 = _h0.join().unwrap(); let _b1 = _h1.join().unwrap(); match (_b0, _b1) { (crate::ParallelBranch::Completed(_r0), crate::ParallelBranch::Completed(_r1)) => match (_r0, _r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (_r0, _r1) => { if let Err(__err) = _r0 { Err(__err) } else if let Err(__err) = _r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (_b0, _b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = _b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = _b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(aver_rt::AverList::from_vec(vec![va, vb])) } } else { { let (leftExprs, rightExprs) = crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs.clone(), aver_rt::AverList::empty(), aver_rt::AverList::empty(), true); { let (leftVals, rightVals) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let _r0 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env, slotMap, fns); crate::aver_replay::set_effect_branch(1); let _r1 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); crate::aver_replay::exit_effect_group(); match (_r0, _r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (_r0, _r1) => { if let Err(__err) = _r0 { Err(__err) } else if let Err(__err) = _r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|_s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let _h0 = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })); let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let _h1 = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })); let _b0 = _h0.join().unwrap(); let _b1 = _h1.join().unwrap(); match (_b0, _b1) { (crate::ParallelBranch::Completed(_r0), crate::ParallelBranch::Completed(_r1)) => match (_r0, _r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (_r0, _r1) => { if let Err(__err) = _r0 { Err(__err) } else if let Err(__err) = _r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (_b0, _b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = _b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = _b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(crate::aver_generated::domain::eval::core::interleaveIndependentVals(leftVals, rightVals, true, aver_rt::AverList::empty())) } } } } }) })
+}
+
+/// Synthesized collecting variant of `unwrapProductResults`. Appends to a builder where `unwrapProductResults` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn unwrapProductResults__collected(
+    mut items: aver_rt::AverList<Val>,
+    mut acc: aver_rt::AverList<Val>,
+) -> Result<Val, AverStr> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(aver_rt::list_builder_finalize(acc))); }, [v, rest] => { match v {
+        crate::aver_generated::domain::value::Val::ValOk(x) => {
+            let x = (*x).clone();
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, x);
+            items = __tco0;
+            acc = __tco1;
+            continue;
+        }
+        },
+        crate::aver_generated::domain::value::Val::ValErr(e) => {
+            let e = (*e).clone();
+            match e {
+        crate::aver_generated::domain::value::Val::ValStr(msg) => {
+            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
+        },
+        _ => {
+            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(AverStr::from("propagated error")));
+        }
+    }
+        },
+        _ => {
+            return Err(AverStr::from("?! operator requires all elements to be Result values"));
+        }
+    } })
+    }
+}
+
+/// Synthesized collecting variant of `collectFastForwardArgs`. Appends to a builder where `collectFastForwardArgs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn collectFastForwardArgs__collected(
+    mut slotArgs: aver_rt::AverList<aver_rt::AverInt>,
+    mut calleeEnv: aver_rt::AverVector<Val>,
+    mut acc: aver_rt::AverList<Val>,
+) -> Result<aver_rt::AverList<Val>, AverStr> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(slotArgs, [] => { return Ok(aver_rt::list_builder_finalize(acc)); }, [slot, rest] => { match crate::aver_generated::domain::eval::slots::lookupSlot(&calleeEnv, slot) { Ok(v) => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::list_builder_push(acc, v);
+            slotArgs = __tco0;
+            acc = __tco2;
+            continue;
+        } }, Err(e) => { return Err(e); } } })
+    }
 }

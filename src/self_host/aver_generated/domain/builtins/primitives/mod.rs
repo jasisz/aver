@@ -370,9 +370,9 @@ pub fn builtinStringJoinInner(lstV: &Val, sepV: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let sep = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
-    let strs = crate::aver_generated::domain::builtins::primitives::extractStrings(
+    let strs = crate::aver_generated::domain::builtins::primitives::extractStrings__collected(
         items,
-        aver_rt::AverList::empty(),
+        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     )?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
         (aver_rt::string_join(&strs, &sep)).into_aver(),
@@ -986,9 +986,9 @@ pub fn builtinStringSplitInner(sV: &Val, sepV: &Val) -> Result<Val, AverStr> {
         (aver_rt::AverList::from_vec(s.split(&*sep).map(|s| s.to_string()).collect::<Vec<_>>()))
             .into_aver();
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        crate::aver_generated::domain::builtins::primitives::strPartsToVals(
+        crate::aver_generated::domain::builtins::primitives::strPartsToVals__collected(
             parts,
-            aver_rt::AverList::empty(),
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
     ))
 }
@@ -1079,4 +1079,47 @@ pub fn builtinStringReplaceAllDo(sV: &Val, fromV: &Val, toV: &Val) -> Result<Val
     Ok(crate::aver_generated::domain::value::Val::ValStr(
         (s.replace(&*from, &*to)).into_aver(),
     ))
+}
+
+/// Synthesized collecting variant of `extractStrings`. Appends to a builder where `extractStrings` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn extractStrings__collected(
+    mut items: aver_rt::AverList<Val>,
+    mut acc: aver_rt::AverList<AverStr>,
+) -> Result<aver_rt::AverList<AverStr>, AverStr> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(items, [] => { return Ok(aver_rt::list_builder_finalize(acc)); }, [v, rest] => { match v {
+        crate::aver_generated::domain::value::Val::ValStr(s) => {
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, s);
+            items = __tco0;
+            acc = __tco1;
+            continue;
+        }
+        },
+        _ => {
+            return Err(AverStr::from("String.join requires list of strings"));
+        }
+    } })
+    }
+}
+
+/// Synthesized collecting variant of `strPartsToVals`. Appends to a builder where `strPartsToVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn strPartsToVals__collected(
+    mut parts: aver_rt::AverList<AverStr>,
+    mut acc: aver_rt::AverList<Val>,
+) -> aver_rt::AverList<Val> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(parts, [] => { return aver_rt::list_builder_finalize(acc); }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(s));
+            parts = __tco0;
+            acc = __tco1;
+            continue;
+        } })
+    }
 }

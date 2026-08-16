@@ -479,9 +479,9 @@ verify resolveArms
     resolveArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})], {}, []) => ([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})], {})
 
 fn resolveOneArm(arm: MatchArm, rest: List<MatchArm>, slots: Map<String, Int>, acc: List<MatchArm>) -> Tuple<List<MatchArm>, Map<String, Int>>
-    ? "Resolve one match arm and continue."
+    ? "Resolve one match arm; continue with the ORIGINAL slots, since an arm's pattern binders are scoped to its own body. Threading the arm-extended map onward leaked binder slots into later arms and past the match, where a wrapping binding aliased them and shadowed names resolved wrong."
     match resolveArm(arm, slots)
-        (resolvedArm, mergedSlots) -> resolveArms(rest, mergedSlots, List.prepend(resolvedArm, acc))
+        (resolvedArm, _) -> resolveArms(rest, slots, List.prepend(resolvedArm, acc))
 
 verify resolveOneArm
     resolveOneArm(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {}), [], {}, []) => ([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})], {})

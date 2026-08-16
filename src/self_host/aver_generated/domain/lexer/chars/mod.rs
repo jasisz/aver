@@ -8,35 +8,36 @@ use crate::*;
 pub fn isDigit(c: AverStr) -> bool {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = c;
-        if &*__dispatch_subject == "0" {
+        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+        if __dispatch_subject == aver_rt::AverInt::from_i64(48) {
             true
         } else {
-            if &*__dispatch_subject == "1" {
+            if __dispatch_subject == aver_rt::AverInt::from_i64(49) {
                 true
             } else {
-                if &*__dispatch_subject == "2" {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(50) {
                     true
                 } else {
-                    if &*__dispatch_subject == "3" {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(51) {
                         true
                     } else {
-                        if &*__dispatch_subject == "4" {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(52) {
                             true
                         } else {
-                            if &*__dispatch_subject == "5" {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(53) {
                                 true
                             } else {
-                                if &*__dispatch_subject == "6" {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(54) {
                                     true
                                 } else {
-                                    if &*__dispatch_subject == "7" {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(55) {
                                         true
                                     } else {
-                                        if &*__dispatch_subject == "8" {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(56) {
                                             true
                                         } else {
-                                            if &*__dispatch_subject == "9" {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(57)
+                                            {
                                                 true
                                             } else {
                                                 false
@@ -117,35 +118,36 @@ pub fn isAlphaNum(c: AverStr) -> bool {
 pub fn digitVal(c: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = c;
-        if &*__dispatch_subject == "0" {
+        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+        if __dispatch_subject == aver_rt::AverInt::from_i64(48) {
             aver_rt::AverInt::from_i64(0)
         } else {
-            if &*__dispatch_subject == "1" {
+            if __dispatch_subject == aver_rt::AverInt::from_i64(49) {
                 aver_rt::AverInt::from_i64(1)
             } else {
-                if &*__dispatch_subject == "2" {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(50) {
                     aver_rt::AverInt::from_i64(2)
                 } else {
-                    if &*__dispatch_subject == "3" {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(51) {
                         aver_rt::AverInt::from_i64(3)
                     } else {
-                        if &*__dispatch_subject == "4" {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(52) {
                             aver_rt::AverInt::from_i64(4)
                         } else {
-                            if &*__dispatch_subject == "5" {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(53) {
                                 aver_rt::AverInt::from_i64(5)
                             } else {
-                                if &*__dispatch_subject == "6" {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(54) {
                                     aver_rt::AverInt::from_i64(6)
                                 } else {
-                                    if &*__dispatch_subject == "7" {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(55) {
                                         aver_rt::AverInt::from_i64(7)
                                     } else {
-                                        if &*__dispatch_subject == "8" {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(56) {
                                             aver_rt::AverInt::from_i64(8)
                                         } else {
-                                            if &*__dispatch_subject == "9" {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(57)
+                                            {
                                                 aver_rt::AverInt::from_i64(9)
                                             } else {
                                                 aver_rt::AverInt::from_i64(0)

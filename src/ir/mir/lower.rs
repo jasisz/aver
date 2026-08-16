@@ -21,7 +21,8 @@
 //! - `Stmt::Binding { name, value }` + `Stmt::Expr(value)` in
 //!   sequence ending in `Stmt::Expr` right-folds into nested
 //!   `MirExpr::Let { binding, value, body }` nodes.
-//! - Binding slot comes from `FnResolution.local_slots[name]`;
+//! - Binding slot comes from `FnResolution.stmt_binding_slots`
+//!   (per-statement, source order);
 //!   intermediate `Stmt::Expr` gets a fresh synthetic `LocalId`
 //!   drawn from a counter starting at `local_count`.
 //!
@@ -684,8 +685,13 @@ fn wrap<T, U>(node: T, source: &Spanned<U>) -> Spanned<T> {
 /// - The last stmt must be `Stmt::Expr`; it becomes the innermost
 ///   body of the resulting `Let` chain.
 /// - `Stmt::Binding { name, value }` uses the slot the resolver
-///   already assigned (`resolution.local_slots[name]`) as the
-///   binding's `LocalId`. Missing slot → the fn is skipped.
+///   recorded for THIS statement (`resolution.stmt_binding_slots`,
+///   source order). A name-keyed lookup in `local_slots` is wrong
+///   here: last allocation wins in that map, so a later pattern
+///   binder spelled like the statement binding would steal the
+///   slot and the `let` would write the binder's slot while every
+///   read of the statement binding hits an uninitialized one
+///   (issue #948). Missing slot entry → the fn is skipped.
 /// - `Stmt::Expr` at non-tail position is treated as a let
 ///   binding to a fresh synthetic `LocalId` so its (potentially
 ///   effectful) value still gets evaluated. The synthetic
@@ -704,15 +710,29 @@ fn lower_stmt_chain(
     };
     let mut body = lower_expr(tail_expr, program)?;
 
+    // Per-statement binding slots, aligned front-to-back with the
+    // `Binding` stmts in `stmts` (the resolver records one entry per
+    // fn-body `Stmt::Binding` in source order, `u16::MAX` for `_`).
+    // Assign each stmt its slot in a forward pass so the reverse
+    // right-fold below can consume them by position.
+    let mut binding_slot_iter = resolution.stmt_binding_slots.iter();
+    let stmt_slots: Vec<Option<u16>> = rest
+        .iter()
+        .map(|stmt| match stmt {
+            ResolvedStmt::Binding { .. } => binding_slot_iter.next().copied(),
+            ResolvedStmt::Expr(_) => None,
+        })
+        .collect();
+
     // Right-fold: walk earlier stmts in reverse, wrapping each
     // around the accumulating `body`.
-    for stmt in rest.iter().rev() {
+    for (stmt, stmt_slot) in rest.iter().zip(stmt_slots.iter()).rev() {
         let (binding, binding_name, value_expr) = match stmt {
             ResolvedStmt::Binding { name, value, .. } if name == "_" => {
                 // Discard binding `_ = effect()?` — the idiomatic "run an
                 // effect, drop the Ok, continue" form. The resolver
-                // assigns `_` no slot (it returns `u16::MAX` and never
-                // inserts it), so there's nothing to look up. Evaluate the
+                // records the `u16::MAX` sentinel for `_` (it claims no
+                // slot), so there's nothing to store into. Evaluate the
                 // value for its effects under a fresh synthetic slot the
                 // body never reads, exactly as a non-tail `Stmt::Expr`.
                 let fresh = LocalId(*next_synthetic_local);
@@ -720,9 +740,8 @@ fn lower_stmt_chain(
                 (fresh, String::new(), value)
             }
             ResolvedStmt::Binding { name, value, .. } => {
-                let slot = *resolution
-                    .local_slots
-                    .get(name)
+                let slot = stmt_slot
+                    .filter(|&s| s != u16::MAX)
                     .ok_or(SkipReason::BindingSlotLookupMissing)?;
                 (LocalId(u32::from(slot)), name.clone(), value)
             }

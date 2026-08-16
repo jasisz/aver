@@ -16,6 +16,7 @@ extern crate aver_rt;
 pub use ::aver_rt::AverMap as HashMap;
 pub use ::aver_rt::AverStr;
 pub use ::aver_rt::Buffer;
+pub use ::aver_rt::ByteBuilder;
 
 mod runtime_support;
 pub use runtime_support::*;

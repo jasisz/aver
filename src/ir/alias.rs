@@ -118,6 +118,7 @@ fn annotate_fn(fd: &mut FnDef) {
     let new_res = crate::ast::FnResolution {
         local_count: res.local_count,
         local_slots: res.local_slots.clone(),
+        stmt_binding_slots: res.stmt_binding_slots.clone(),
         local_slot_types: res.local_slot_types.clone(),
         aliased_slots: Arc::new(aliased),
     };

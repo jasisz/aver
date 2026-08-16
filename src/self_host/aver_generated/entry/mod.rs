@@ -69,10 +69,12 @@ fn __mutual_tco_trampoline_1(
                         moduleRoot,
                         aver_rt::AverList::concat(
                             &accWithInner.clone(),
-                            &shiftFnIdsInFns(
+                            &shiftFnIdsInFns__collected(
                                 moduleFns,
                                 aver_rt::AverInt::from_i64(accWithInner.len() as i64),
-                                aver_rt::AverList::empty(),
+                                aver_rt::list_builder_new(
+                                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                                ),
                             ),
                         ),
                         loaded3,
@@ -390,8 +392,16 @@ pub fn shiftFnIdsInProgram(prog: &Program, offset: aver_rt::AverInt) -> Program 
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
-        fns: shiftFnIdsInFns(prog.fns.clone(), offset.clone(), aver_rt::AverList::empty()),
-        stmts: shiftFnIdsInStmts(prog.stmts.clone(), offset, aver_rt::AverList::empty()),
+        fns: shiftFnIdsInFns__collected(
+            prog.fns.clone(),
+            offset.clone(),
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
+        ),
+        stmts: shiftFnIdsInStmts__collected(
+            prog.stmts.clone(),
+            offset,
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
+        ),
     }
 }
 
@@ -401,7 +411,11 @@ pub fn shiftFnIdsInFn(fd: &FnDef, offset: aver_rt::AverInt) -> FnDef {
     crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
-        body: shiftFnIdsInStmts(fd.body.clone(), offset.clone(), aver_rt::AverList::empty()),
+        body: shiftFnIdsInStmts__collected(
+            fd.body.clone(),
+            offset.clone(),
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
+        ),
         slotCount: fd.slotCount.clone(),
         slotMap: fd.slotMap.clone(),
         fastPath: shiftFnIdsInFastPath(&fd.fastPath, offset),
@@ -591,30 +605,36 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
             )
         }
         crate::aver_generated::domain::ast::Expr::ExprConcat(parts) => {
-            crate::aver_generated::domain::ast::Expr::ExprConcat(shiftFnIdsInExprs(
+            crate::aver_generated::domain::ast::Expr::ExprConcat(shiftFnIdsInExprs__collected(
                 parts,
                 offset,
-                aver_rt::AverList::empty(),
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
             ))
         }
         crate::aver_generated::domain::ast::Expr::ExprTuple(exprs) => {
-            crate::aver_generated::domain::ast::Expr::ExprTuple(shiftFnIdsInExprs(
+            crate::aver_generated::domain::ast::Expr::ExprTuple(shiftFnIdsInExprs__collected(
                 exprs,
                 offset,
-                aver_rt::AverList::empty(),
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
             ))
         }
         crate::aver_generated::domain::ast::Expr::ExprList(exprs) => {
-            crate::aver_generated::domain::ast::Expr::ExprList(shiftFnIdsInExprs(
+            crate::aver_generated::domain::ast::Expr::ExprList(shiftFnIdsInExprs__collected(
                 exprs,
                 offset,
-                aver_rt::AverList::empty(),
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
             ))
         }
         crate::aver_generated::domain::ast::Expr::ExprRecord(name, fields) => {
             crate::aver_generated::domain::ast::Expr::ExprRecord(
                 name,
-                shiftFnIdsInFields(fields, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInFields__collected(
+                    fields,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
             )
         }
         _ => shiftFnIdsInExprCalls(expr, offset),
@@ -635,32 +655,62 @@ pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
         crate::aver_generated::domain::ast::Expr::ExprCall(name, args) => {
             crate::aver_generated::domain::ast::Expr::ExprCall(
                 name,
-                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInExprs__collected(
+                    args,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
             )
         }
         crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, args) => {
             crate::aver_generated::domain::ast::Expr::ExprCallDirect(
                 fnId.add(&offset),
-                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInExprs__collected(
+                    args,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
             )
         }
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, args) => {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 name,
-                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInExprs__collected(
+                    args,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
             )
         }
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(id, args) => {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                 id,
-                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInExprs__collected(
+                    args,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
             )
         }
         crate::aver_generated::domain::ast::Expr::ExprMatch(scrutinee, arms) => {
             let scrutinee = (*scrutinee).clone();
             crate::aver_generated::domain::ast::Expr::ExprMatch(
                 std::sync::Arc::new(shiftFnIdsInExpr(&scrutinee, offset.clone())),
-                shiftFnIdsInArms(arms, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInArms__collected(
+                    arms,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
             )
         }
         crate::aver_generated::domain::ast::Expr::ExprPropagate(inner) => {
@@ -671,7 +721,13 @@ pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
         }
         crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(exprs, unwrap) => {
             crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
-                shiftFnIdsInExprs(exprs, offset, aver_rt::AverList::empty()),
+                shiftFnIdsInExprs__collected(
+                    exprs,
+                    offset,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
                 unwrap,
             )
         }
@@ -1006,6 +1062,111 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     Ok(())
+}
+
+/// Synthesized collecting variant of `shiftFnIdsInFns`. Appends to a builder where `shiftFnIdsInFns` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn shiftFnIdsInFns__collected(
+    mut fns: aver_rt::AverList<FnDef>,
+    mut offset: aver_rt::AverInt,
+    mut acc: aver_rt::AverList<FnDef>,
+) -> aver_rt::AverList<FnDef> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(fns, [] => { return aver_rt::list_builder_finalize(acc); }, [fd, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = offset.clone();
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInFn(&fd, offset));
+            fns = __tco0;
+            offset = __tco1;
+            acc = __tco2;
+            continue;
+        } })
+    }
+}
+
+/// Synthesized collecting variant of `shiftFnIdsInStmts`. Appends to a builder where `shiftFnIdsInStmts` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn shiftFnIdsInStmts__collected(
+    mut stmts: aver_rt::AverList<Stmt>,
+    mut offset: aver_rt::AverInt,
+    mut acc: aver_rt::AverList<Stmt>,
+) -> aver_rt::AverList<Stmt> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(stmts, [] => { return aver_rt::list_builder_finalize(acc); }, [stmt, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = offset.clone();
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInStmt(&stmt, offset));
+            stmts = __tco0;
+            offset = __tco1;
+            acc = __tco2;
+            continue;
+        } })
+    }
+}
+
+/// Synthesized collecting variant of `shiftFnIdsInExprs`. Appends to a builder where `shiftFnIdsInExprs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn shiftFnIdsInExprs__collected(
+    mut exprs: aver_rt::AverList<Expr>,
+    mut offset: aver_rt::AverInt,
+    mut acc: aver_rt::AverList<Expr>,
+) -> aver_rt::AverList<Expr> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [expr, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = offset.clone();
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInExpr(&expr, offset));
+            exprs = __tco0;
+            offset = __tco1;
+            acc = __tco2;
+            continue;
+        } })
+    }
+}
+
+/// Synthesized collecting variant of `shiftFnIdsInFields`. Appends to a builder where `shiftFnIdsInFields` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn shiftFnIdsInFields__collected(
+    mut fields: aver_rt::AverList<(AverStr, Expr)>,
+    mut offset: aver_rt::AverInt,
+    mut acc: aver_rt::AverList<(AverStr, Expr)>,
+) -> aver_rt::AverList<(AverStr, Expr)> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco1 = offset.clone();
+            let __tco2 = aver_rt::list_builder_push(acc, (name, shiftFnIdsInExpr(&expr, offset)));
+            fields = __tco0;
+            offset = __tco1;
+            acc = __tco2;
+            continue;
+        } } })
+    }
+}
+
+/// Synthesized collecting variant of `shiftFnIdsInArms`. Appends to a builder where `shiftFnIdsInArms` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn shiftFnIdsInArms__collected(
+    mut arms: aver_rt::AverList<MatchArm>,
+    mut offset: aver_rt::AverInt,
+    mut acc: aver_rt::AverList<MatchArm>,
+) -> aver_rt::AverList<MatchArm> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = offset.clone();
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset), bindingSlots: arm.bindingSlots.clone() });
+            arms = __tco0;
+            offset = __tco1;
+            acc = __tco2;
+            continue;
+        } })
+    }
 }
 
 pub fn main() -> Result<(), AverStr> {
