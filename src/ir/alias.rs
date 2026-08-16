@@ -656,14 +656,22 @@ mod tests {
             "the positional and name-keyed identities must disagree here, or \
              this test discriminates nothing"
         );
+        // This is the assertion that discriminates: a pass reading the name map
+        // would flag the arm binder's slot and leave this one clear, which is
+        // the #948 misread verbatim.
         assert!(
             res.aliased_slots[stmt_slot as usize],
             "the statement binding's OWN slot must carry the alias flag"
         );
+        // The arm binder is flagged too, for its own reason: the subject is a
+        // Map parameter, which is not provably fresh, so the binder is a handle
+        // into it (#953). Its state therefore says nothing about which identity
+        // the statement half read — the assertion above is what holds that
+        // contract.
         assert!(
-            !res.aliased_slots[name_slot as usize],
-            "the arm binder's slot is a scalar the name map merely happens to \
-             own — flagging it instead is the #948 misread"
+            res.aliased_slots[name_slot as usize],
+            "a binder over a subject that is not provably fresh is a handle \
+             into it and must carry the flag"
         );
     }
 
