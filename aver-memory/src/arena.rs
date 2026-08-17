@@ -13,10 +13,8 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
-            lane_epoch: 1,
-            lane_watermark: 0,
+            lane_serial: 1,
             lane_clock_exhausted: false,
-            active_lane_source_epoch: 0,
             active_lane_source_mark: INVALID_LANE_MARK,
             list_elements_copied: 0,
             list_elements_scanned: 0,
@@ -66,10 +64,8 @@ impl<T: ArenaTypes> Arena<T> {
             // Stable entries and their receipts are cloned by value, so the
             // child must continue the same authoritative clock. The mutable
             // list bodies themselves carry no arena-local state.
-            lane_epoch: self.lane_epoch,
-            lane_watermark: self.lane_watermark,
+            lane_serial: self.lane_serial,
             lane_clock_exhausted: self.lane_clock_exhausted,
-            active_lane_source_epoch: 0,
             active_lane_source_mark: INVALID_LANE_MARK,
             list_elements_copied: 0,
             list_elements_scanned: 0,
@@ -93,21 +89,6 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
-    #[inline]
-    fn pack_lane_mark(epoch: u32, watermark: u32) -> LaneMark {
-        ((epoch as LaneMark) << 32) | watermark as LaneMark
-    }
-
-    #[inline]
-    fn lane_mark_epoch(mark: LaneMark) -> u32 {
-        (mark >> 32) as u32
-    }
-
-    #[inline]
-    fn lane_mark_watermark(mark: LaneMark) -> u32 {
-        mark as u32
-    }
-
     /// Snapshot the authoritative allocation-lane clock for a frame or a new
     /// immutable collection entry. Zero means receipt skips have failed closed.
     #[inline]
@@ -115,38 +96,31 @@ impl<T: ArenaTypes> Arena<T> {
         if self.lane_clock_exhausted {
             INVALID_LANE_MARK
         } else {
-            Self::pack_lane_mark(self.lane_epoch, self.lane_watermark)
+            self.lane_serial
         }
     }
 
     #[inline]
-    pub fn lane_epoch(&self) -> u32 {
-        self.lane_epoch
+    pub fn lane_mark_is_valid(&self, mark: LaneMark) -> bool {
+        !self.lane_clock_exhausted && mark != INVALID_LANE_MARK && mark <= self.lane_serial
     }
 
     /// Start a boundary that can change arena indices.
     ///
-    /// The old epoch is retained only as the source side of the active rewrite;
-    /// all renewed receipts use the post-boundary epoch. Bumping before the
-    /// walk prevents index reuse (truncate then grow to the same raw length)
-    /// from looking like a clean lane.
+    /// Advancing before the walk makes the serial a logical history rather than
+    /// a raw allocation count: even a truncate with no surviving pushes cannot
+    /// disappear from the clock or reappear through index reuse.
     pub(crate) fn begin_lane_rewrite(&mut self, source_mark: LaneMark) {
-        let source_epoch = self.lane_epoch;
-        if self.lane_clock_exhausted || self.lane_epoch == u32::MAX {
-            self.lane_clock_exhausted = true;
-            self.active_lane_source_epoch = source_epoch;
-            self.active_lane_source_mark = INVALID_LANE_MARK;
-            return;
-        }
-        self.lane_epoch += 1;
-        self.lane_watermark = 0;
-        self.active_lane_source_epoch = source_epoch;
-        self.active_lane_source_mark = source_mark;
+        self.advance_lane_serial();
+        self.active_lane_source_mark = if self.lane_mark_is_valid(source_mark) {
+            source_mark
+        } else {
+            INVALID_LANE_MARK
+        };
     }
 
     #[inline]
     pub(crate) fn finish_lane_rewrite(&mut self) {
-        self.active_lane_source_epoch = 0;
         self.active_lane_source_mark = INVALID_LANE_MARK;
     }
 
@@ -163,30 +137,32 @@ impl<T: ArenaTypes> Arena<T> {
         {
             return false;
         }
-        let receipt_epoch = Self::lane_mark_epoch(receipt);
-        let mark_epoch = Self::lane_mark_epoch(self.active_lane_source_mark);
-        receipt_epoch == self.active_lane_source_epoch
-            && mark_epoch == self.active_lane_source_epoch
-            && Self::lane_mark_watermark(receipt)
-                <= Self::lane_mark_watermark(self.active_lane_source_mark)
+        self.lane_mark_is_valid(receipt) && receipt <= self.active_lane_source_mark
     }
 
-    /// Receipt written after either a full rewrite or a proved skip.
+    /// Receipt written after a full scan/rewrite. A proved skip keeps the older
+    /// receipt: no reference changed, so making the proof younger would only
+    /// lose information at a nested boundary.
     #[inline]
     pub(crate) fn renewed_lane_receipt(&self) -> LaneMark {
         self.lane_mark()
     }
 
     #[inline]
-    fn note_lane_push(&mut self) {
+    fn advance_lane_serial(&mut self) {
         if self.lane_clock_exhausted {
             return;
         }
-        if self.lane_watermark == u32::MAX {
+        if self.lane_serial == LaneMark::MAX {
             self.lane_clock_exhausted = true;
         } else {
-            self.lane_watermark += 1;
+            self.lane_serial += 1;
         }
+    }
+
+    #[inline]
+    fn note_lane_push(&mut self) {
+        self.advance_lane_serial();
     }
 
     /// Deep-import a NanValue from `source` arena into `self`.
@@ -1132,6 +1108,19 @@ impl<T: ArenaTypes> Arena<T> {
         match self.get(map.arena_index()) {
             ArenaEntry::Map { all_immediate, .. } => *all_immediate,
             _ => panic!("Arena: expected Map at {}", map.arena_index()),
+        }
+    }
+
+    /// Upper bound on the logical age of every reference stored in `map`.
+    /// Empty maps carry no references and therefore need no receipt.
+    pub fn map_scan_receipt_value(&self, map: NanValue) -> LaneMark {
+        if map.is_empty_map_immediate() {
+            INVALID_LANE_MARK
+        } else {
+            match self.get(map.arena_index()) {
+                ArenaEntry::Map { scan_receipt, .. } => *scan_receipt,
+                _ => panic!("Arena: expected Map at {}", map.arena_index()),
+            }
         }
     }
     /// Whether any entry directly holds `index`, searched rather than recorded.

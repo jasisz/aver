@@ -1354,22 +1354,20 @@ pub struct Arena<T: ArenaTypes> {
     scratch_stable: Vec<u32>,
     peak_usage: ArenaUsage,
     alloc_space: AllocSpace,
-    /// Monotone clock for the allocation lane. `lane_epoch` changes before a
-    /// destructive heap boundary and `lane_watermark` counts ordinary heap
-    /// pushes since that boundary. A frame snapshots both in a [`LaneMark`].
+    /// Monotone logical serial for the allocation lane. It advances after each
+    /// ordinary heap push and before every destructive boundary. A frame and an
+    /// immutable collection each snapshot it in a [`LaneMark`].
     ///
     /// Collection receipts never own a clock: they are only snapshots of this
     /// arena clock. That matters for cloned stable entries and shared list
     /// bodies, which may be visible from more than one execution lane.
-    lane_epoch: u32,
-    lane_watermark: u32,
-    /// Epoch or watermark exhaustion disables receipt skips permanently. GC
+    lane_serial: LaneMark,
+    /// Serial exhaustion disables receipt skips permanently. GC
     /// continues normally; only the optimization fails closed.
     lane_clock_exhausted: bool,
-    /// The pre-boundary epoch and frame mark used by the rewrite currently in
-    /// progress. `active_lane_source_mark == INVALID_LANE_MARK` means that the
+    /// The frame mark used by the rewrite currently in progress.
+    /// `active_lane_source_mark == INVALID_LANE_MARK` means that the
     /// operation has no frame watermark proof and must scan conservatively.
-    active_lane_source_epoch: u32,
     active_lane_source_mark: LaneMark,
     /// Total list elements the collector has written into a fresh shared body.
     /// A collector that keeps sharing intact leaves this proportional to the
@@ -1713,8 +1711,7 @@ pub enum AllocSpace {
     Handoff,
 }
 
-/// Snapshot of an arena lane clock: high 32 bits are the destructive epoch,
-/// low 32 bits are the number of ordinary heap pushes in that epoch.
+/// Snapshot of an arena's monotone logical allocation serial.
 pub type LaneMark = u64;
 
 /// No proof that a collection predates a frame boundary. Operations without a

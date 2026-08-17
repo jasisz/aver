@@ -499,7 +499,7 @@ impl ProgramCompiler {
         // local slots both passes rely on).
         crate::ir::pipeline::tco(&mut mod_items);
         mod_items = adopt_deforestation_if_symbols_agree(dep_name, mod_items, entry_symbols);
-        crate::ir::pipeline::resolve(&mut mod_items);
+        crate::ir::pipeline::resolve_and_reannotate(&mut mod_items);
 
         // Dependency types use qualified canonical keys. Their bare display
         // spellings remain fallback aliases for the Value/JSON boundary.

@@ -114,6 +114,123 @@ fn answer(src: &str) -> i64 {
     run(src).answer
 }
 
+/// Infra.Store's mutual-tail-call shape, loaded through `depends` so the test
+/// exercises the dep-module reparse in `VmCompiler::integrate_module`.
+const STORE_DEPENDENCY: &str = r#"module Store
+    intent = "the exact applyChanges/applyNext ownership shape"
+    exposes [run]
+    depends []
+    effects []
+
+record Entry
+    key: Int
+    value: Int
+
+type Change
+    Put(Entry)
+    Drop(Int)
+
+fn empty() -> Map<Int, Int>
+    Map.fromList([])
+
+fn changes(n: Int, acc: List<Change>) -> List<Change>
+    match n > 0
+        true -> changes(n - 1, List.prepend(Change.Put(Entry(key = n, value = n + 1)), acc))
+        false -> List.reverse(acc)
+
+fn applyChanges(changes: List<Change>, into: Map<Int, Int>) -> Map<Int, Int>
+    match changes
+        [] -> into
+        [head, ..tail] -> applyNext(head, tail, into)
+
+fn applyNext(head: Change, tail: List<Change>, into: Map<Int, Int>) -> Map<Int, Int>
+    match head
+        Change.Put(entry) -> applyChanges(tail, Map.set(into, entry.key, entry.value))
+        Change.Drop(key) -> applyChanges(tail, Map.remove(into, key))
+
+fn run(n: Int) -> Int
+    Map.len(applyChanges(changes(n, []), empty()))
+"#;
+
+fn compiled_store_dependency(steps: i64) -> VM {
+    use aver::codegen::ModuleInfo;
+
+    let dir = tempfile::tempdir().expect("module root");
+    std::fs::write(dir.path().join("Store.av"), STORE_DEPENDENCY).expect("write Store.av");
+    let entry = format!(
+        "module Main\n    intent = \"exercise Store through depends\"\n    depends [Store]\n    effects []\n\nfn main() -> Int\n    Store.run({steps})\n"
+    );
+    let mut items = aver::source::parse_source(&entry).expect("parse entry");
+    let root = dir.path().to_str().expect("UTF-8 module root");
+    let loaded = aver::source::load_module_tree(&["Store".to_string()], root)
+        .expect("load Store dependency");
+    let dep_modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(root),
+            }),
+            dep_modules: &dep_modules,
+            ..Default::default()
+        },
+    );
+    let tc = result.typecheck.as_ref().expect("typecheck requested");
+    assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program_with_modules(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        Some(root),
+        "<store-ownership-test>",
+        result.analysis.as_ref(),
+    )
+    .expect("compile dependency module");
+    VM::new(code, globals, arena)
+}
+
+#[test]
+fn store_dependency_keeps_last_use_on_apply_nexts_accumulator() {
+    let run = |steps| {
+        let mut machine = compiled_store_dependency(steps);
+        let value = machine.run().expect("Store dependency should run");
+        (
+            value.as_int(&machine.arena),
+            machine.arena.map_entries_copied(),
+            machine.arena.map_entries_scanned(),
+            machine.runtime_ownership_stats(),
+        )
+    };
+    let small = run(40);
+    let large = run(80);
+    assert_eq!((small.0, large.0), (40, 80));
+    assert_eq!(
+        (small.1, large.1),
+        (0, 0),
+        "Store's dead accumulator cell made Map.set preserve the table: \
+         n=40 copied {}, n=80 copied {}",
+        small.1,
+        large.1,
+    );
+    assert_eq!(
+        (small.2, large.2),
+        (0, 0),
+        "immediate entries should keep evacuation out of this ownership test",
+    );
+    assert_eq!((small.3.grants, large.3.grants), (39, 79));
+    assert_eq!(
+        (
+            large.3.refused_stack_holder,
+            large.3.refused_off_stack_holder,
+            large.3.unexamined_walk_too_costly,
+        ),
+        (0, 0, 0),
+        "the linearly-threaded accumulator has no real alias: {:?}",
+        large.3,
+    );
+}
+
 /// The same run with effect recording switched on.
 ///
 /// One shipped way of reaching `CALL_PAR`'s in-parent sequential path, and the

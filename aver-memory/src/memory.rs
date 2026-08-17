@@ -483,7 +483,7 @@ impl<T: ArenaTypes> Arena<T> {
             return ArenaEntry::Map {
                 map,
                 all_immediate: false,
-                scan_receipt: self.renewed_lane_receipt(),
+                scan_receipt,
                 held_elsewhere,
             };
         }
@@ -609,7 +609,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         if self.lane_receipt_can_skip(scan_receipt) {
-            return (body, start, self.renewed_lane_receipt());
+            return (body, start, scan_receipt);
         }
 
         self.list_elements_scanned += (body.len() - start) as u64;
@@ -1983,9 +1983,6 @@ impl<T: ArenaTypes> Arena<T> {
         if let ArenaEntry::Map { scan_receipt, .. } = &entry
             && self.lane_receipt_can_skip(*scan_receipt)
         {
-            if let ArenaEntry::Map { scan_receipt, .. } = &mut entry {
-                *scan_receipt = self.renewed_lane_receipt();
-            }
             return entry;
         }
         // Fast path for bulk-data types: if no NanValue in this entry points

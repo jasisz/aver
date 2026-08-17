@@ -895,6 +895,25 @@ impl VM {
                         continue;
                     }
 
+                    // A frameless CALL_LEAF deliberately borrows its caller's
+                    // frame and allocation lanes. In that case `frames.last()`
+                    // is therefore exactly the frame that owns the next
+                    // boundary, not an accidental outer proof. No frame means
+                    // no proof and the map update stamps current conservatively.
+                    let owned_map_frame_proof = (owned_mask & 1 != 0
+                        && builtin == VmBuiltin::MapSet)
+                        .then(|| {
+                            self.frames
+                                .last()
+                                .map(|frame| crate::types::map::OwnedMapFrameProof {
+                                    arena_mark: frame.arena_mark,
+                                    yard_mark: frame.yard_mark,
+                                    handoff_mark: frame.handoff_mark,
+                                    lane_mark: frame.lane_mark,
+                                    inplace_write_escaped: frame.inplace_write_escaped,
+                                })
+                        })
+                        .flatten();
                     let result = self.arena.with_alloc_space(alloc_space, |arena| {
                         self.runtime.invoke_builtin_with_owned(
                             &self.code.symbols,
@@ -903,6 +922,7 @@ impl VM {
                             &args,
                             arena,
                             owned_mask,
+                            owned_map_frame_proof,
                         )
                     })?;
                     self.stack.push(result);
