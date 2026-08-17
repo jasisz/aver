@@ -121,6 +121,18 @@ fn build_component_bytes(
         &module_root,
         super::commands::DepLowering::PRISTINE,
     );
+    if let Some(error) = super::commands::capability_provider_rejection(
+        &items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasip2 run pipeline requested typechecking")
+            .capabilities,
+        "wasip2",
+    ) {
+        return Err(error);
+    }
     let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     // `_and_reannotate`: a bare post-flatten re-resolve wipes
     // `aliased_slots`, and the wasm-gc in-place fast path then mutates

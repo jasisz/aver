@@ -60,6 +60,8 @@ pub struct TypeCheckResult {
     pub fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)>,
     /// Unused binding warnings: (binding_name, fn_name, line).
     pub unused_bindings: Vec<(String, String, usize)>,
+    /// Canonical externally-provided contracts visible to this program.
+    pub capabilities: crate::capability::CapabilityRegistry,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -110,29 +112,35 @@ fn symbols_dep_modules_from_loaded(
 ) -> Vec<crate::codegen::ModuleInfo> {
     loaded
         .iter()
-        .map(|m| crate::codegen::ModuleInfo {
-            prefix: m.dep_name.clone(),
-            depends: Vec::new(),
-            type_defs: m
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::TypeDef(td) => Some(td.clone()),
-                    _ => None,
-                })
-                .collect(),
-            fn_defs: m
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::FnDef(fd) => Some(fd.clone()),
-                    _ => None,
-                })
-                .collect(),
-            // Symbol-table build only — the typechecker never reads
-            // verify_laws (it is a proof-emit-only field).
-            verify_laws: Vec::new(),
-            analysis: None,
+        .map(|m| {
+            let (capability_items, capability_semantics) =
+                crate::codegen::capability_metadata(&m.items);
+            crate::codegen::ModuleInfo {
+                prefix: m.dep_name.clone(),
+                depends: Vec::new(),
+                type_defs: m
+                    .items
+                    .iter()
+                    .filter_map(|i| match i {
+                        TopLevel::TypeDef(td) => Some(td.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                fn_defs: m
+                    .items
+                    .iter()
+                    .filter_map(|i| match i {
+                        TopLevel::FnDef(fd) => Some(fd.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                capability_items,
+                capability_semantics,
+                // Symbol-table build only — the typechecker never reads
+                // verify_laws (it is a proof-emit-only field).
+                verify_laws: Vec::new(),
+                analysis: None,
+            }
         })
         .collect()
 }
@@ -273,66 +281,51 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
             .or_insert_with(|| (sig.params.clone(), sig.ret.clone(), sig.effects.clone()));
     }
 
+    check_capability_effect_shorthand(items, &checker.capabilities, &mut checker.errors);
     check_module_effect_boundary(items, &mut checker.errors);
-    reject_capability_items(items, &mut checker.errors);
 
     TypeCheckResult {
         errors: checker.errors,
         fn_sigs,
         unused_bindings: checker.unused_warnings,
+        capabilities: checker.capabilities,
     }
 }
 
-/// The message every capability refusal carries. Kept as one constant
-/// so the three entry points cannot drift apart, and so the diagnostic
-/// classifier can key on it.
-pub(crate) const CAPABILITY_UNSUPPORTED: &str =
-    "capability declarations are parsed but not yet supported";
-
-/// Refuse any file that declares a capability.
-///
-/// The grammar landed before the semantics, and the gap between them is
-/// exactly where a false guarantee would live: a capability module that
-/// type-checks as an ordinary module would register no operations,
-/// classify no effects and enforce no boundary, while reading — to
-/// whoever wrote it — as if it did. Refusing is the only honest state
-/// until the registration phase lands.
-///
-/// Runs for the entry file from `finalize_check_result` and for every
-/// dependency from `check_loaded_module_bodies`, so a capability in a
-/// `depends`-only module is refused too. A refusal that only the entry
-/// file enforces is the entry-scoped checking gap all over again.
-pub(crate) fn reject_capability_items(items: &[TopLevel], errors: &mut Vec<TypeError>) {
+fn check_capability_effect_shorthand(
+    items: &[TopLevel],
+    capabilities: &crate::capability::CapabilityRegistry,
+    errors: &mut Vec<TypeError>,
+) {
+    let capability_modules: HashSet<&str> = capabilities
+        .contracts()
+        .map(|contract| contract.module.as_str())
+        .collect();
+    let mut reject = |effect: &str, line: usize| {
+        if capability_modules.contains(effect) {
+            errors.push(TypeError {
+                message: format!(
+                    "Capability effect shorthand '{}' is not allowed; name the exact operation so adding a provider atom cannot silently widen this boundary",
+                    effect
+                ),
+                line,
+                col: 1,
+                secondary: None,
+            });
+        }
+    };
     for item in items {
         match item {
-            TopLevel::Capability(cap) => {
-                errors.push(TypeError {
-                    message: format!(
-                        "{}: `{} {}` is recognised by the parser, but nothing registers it yet, \
-                         so the boundary it declares would not be enforced. Remove it until \
-                         capability support lands.",
-                        CAPABILITY_UNSUPPORTED,
-                        cap.keyword(),
-                        cap.name()
-                    ),
-                    line: cap.line(),
-                    col: 1,
-                    secondary: None,
-                });
+            TopLevel::Module(module) => {
+                if let Some(effects) = &module.effects {
+                    for effect in effects {
+                        reject(effect, module.effects_line.unwrap_or(module.line));
+                    }
+                }
             }
-            TopLevel::Module(m) => {
-                if let Some(kind) = &m.kind {
-                    errors.push(TypeError {
-                        message: format!(
-                            "{}: module '{}' declares `kind = {}`, but nothing acts on it yet, \
-                             so the module is checked exactly like an ordinary one. Remove the \
-                             line until capability support lands.",
-                            CAPABILITY_UNSUPPORTED, m.name, kind
-                        ),
-                        line: m.kind_line.unwrap_or(m.line),
-                        col: 1,
-                        secondary: None,
-                    });
+            TopLevel::FnDef(fd) => {
+                for effect in &fd.effects {
+                    reject(&effect.node, effect.line);
                 }
             }
             _ => {}
@@ -621,6 +614,9 @@ struct TypeChecker {
     /// check time — otherwise user code would type-check then crash
     /// at runtime with "namespace has no member 'trace'".
     in_verify_trace_context: bool,
+    /// Program-defined capability contracts, built from the entry and
+    /// dependency closure before signatures or verify flow are checked.
+    capabilities: crate::capability::CapabilityRegistry,
 }
 
 impl TypeChecker {
@@ -660,6 +656,7 @@ impl TypeChecker {
             fn_bindings: Vec::new(),
             unused_warnings: Vec::new(),
             in_verify_trace_context: false,
+            capabilities: crate::capability::CapabilityRegistry::default(),
         };
         tc.register_builtins();
         tc.record_builtin_type_names();
@@ -1005,6 +1002,15 @@ impl TypeChecker {
                 self.reject_fn_in_type(err, false, line, source_ctx);
             }
             Type::Map(k, v) => {
+                if self.type_contains_capability_resource(k) {
+                    self.error_at_line(
+                        line,
+                        format!(
+                            "{source_ctx}: capability resource type `{}` cannot be used as a Map key; provider token identity has no equality or hash semantics",
+                            k.display()
+                        ),
+                    );
+                }
                 self.reject_fn_in_type(k, false, line, source_ctx);
                 self.reject_fn_in_type(v, false, line, source_ctx);
             }
@@ -1038,6 +1044,49 @@ impl TypeChecker {
             Type::Tuple(items) => items.iter().any(|i| self.type_contains_fn(i)),
             Type::Named { .. }
             | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => false,
+        }
+    }
+
+    /// Whether observing structural equality/hash of `ty` would expose a
+    /// provider-minted capability token. The registry precomputes represented
+    /// ADTs that transitively contain a resource, while this walk covers
+    /// generic containers assembled at the use site.
+    pub(crate) fn type_contains_capability_resource(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Named { id, name } => {
+                let typed = id.map(|id| self.symbol_table.type_entry(id).key.canonical());
+                typed
+                    .as_deref()
+                    .is_some_and(|name| self.capabilities.is_resource_tainted(name))
+                    || self.capabilities.is_resource_tainted(name)
+                    || self.current_module_prefix.as_deref().is_some_and(|scope| {
+                        self.capabilities
+                            .is_resource_tainted(&format!("{scope}.{name}"))
+                    })
+                    || self
+                        .capabilities
+                        .is_resource_tainted(&self.canonical_type_name(name))
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.type_contains_capability_resource(inner)
+            }
+            Type::Result(left, right) | Type::Map(left, right) => {
+                self.type_contains_capability_resource(left)
+                    || self.type_contains_capability_resource(right)
+            }
+            Type::Tuple(items) | Type::Fn(items, _, _) => {
+                items
+                    .iter()
+                    .any(|item| self.type_contains_capability_resource(item))
+                    || matches!(ty, Type::Fn(_, ret, _) if self.type_contains_capability_resource(ret))
+            }
+            Type::Int
             | Type::Float
             | Type::Str
             | Type::Bool

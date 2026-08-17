@@ -42,6 +42,7 @@ fn empty_ctx() -> CodegenContext {
         fn_defs: vec![],
         project_name: "verify_mode".to_string(),
         modules: vec![],
+        capabilities: Default::default(),
         module_prefixes: HashSet::new(),
         policy: None,
         emit_replay_runtime: false,

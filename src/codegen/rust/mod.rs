@@ -902,11 +902,15 @@ mod tests {
                         _ => None,
                     })
                     .collect();
+                let (capability_items, capability_semantics) =
+                    crate::codegen::capability_metadata(&lm.items);
                 crate::codegen::ModuleInfo {
                     prefix: lm.dep_name.clone(),
                     depends,
                     type_defs,
                     fn_defs,
+                    capability_items,
+                    capability_semantics,
                     verify_laws: crate::codegen::collect_verify_laws(&lm.items),
                     analysis: None,
                 }

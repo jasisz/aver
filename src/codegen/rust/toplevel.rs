@@ -1509,6 +1509,7 @@ mod tests {
             fn_defs: vec![],
             project_name: "test".to_string(),
             modules: vec![],
+            capabilities: Default::default(),
             module_prefixes: HashSet::new(),
             policy: None,
             emit_replay_runtime: false,

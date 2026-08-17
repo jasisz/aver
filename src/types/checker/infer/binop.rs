@@ -50,6 +50,19 @@ impl TypeChecker {
                 }
             }
             BinOp::Eq | BinOp::Neq => {
+                if self.type_contains_capability_resource(lt)
+                    || self.type_contains_capability_resource(rt)
+                {
+                    self.error_at_line(
+                        line,
+                        format!(
+                            "Equality is not defined for capability resource values (got {} and {}); provider token identity is deliberately unobservable",
+                            lt.display(),
+                            rt.display()
+                        ),
+                    );
+                    return;
+                }
                 if !self.compatible(lt, rt) && !self.compatible(rt, lt) {
                     let (left, right) = self.describe_type_pair(lt, rt);
                     self.error_at_line(

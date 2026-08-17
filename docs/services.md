@@ -261,6 +261,8 @@ fn doubleSha(bytes: Bytes) -> Digest32
 
 **Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` is equivalent to `! [Disk.readText, Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.deleteDir, Disk.listDir, Disk.makeDir]`. You can still use granular declarations like `! [Disk.readText]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.
 
+The namespaces below are supplied by Aver's standard host runtime. A project can describe an additional host boundary as a [capability module](language.md#capability-modules): its operations participate in the same effect, Oracle, hostile-testing, proof-trust, and replay machinery. Capability declarations currently have no provider-binding ABI, so live execution and compiled targets fail closed when an operation is needed; recorded or suppressed replay remains available from an existing trace.
+
 ### `Args` namespace — use `! [Args.get]`
 
 Source: `src/services/args.rs`

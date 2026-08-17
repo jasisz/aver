@@ -1,3 +1,4 @@
+use crate::ir::symbol_table::CapabilityOperationInfo;
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::replay::session::RecordedOutcome;
 use crate::replay::{
@@ -634,6 +635,42 @@ impl VmRuntime {
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         self.ensure_effects_allowed(symbols, builtin_name, required_effects)
+    }
+
+    /// Provider-bound calls have no host implementation in the first
+    /// capability slice. Replay may satisfy an already-recorded effect; every
+    /// other unstubbed path fails closed with a boundary-specific error.
+    pub(super) fn invoke_capability(
+        &mut self,
+        symbols: &VmSymbolTable,
+        symbol_id: u32,
+        capability: CapabilityOperationInfo,
+        args: &[NanValue],
+        arena: &mut Arena,
+    ) -> Result<NanValue, VmError> {
+        let info = symbols
+            .get(symbol_id)
+            .ok_or_else(|| VmError::runtime("unknown capability symbol"))?;
+        self.ensure_effects_allowed(symbols, &info.name, &info.required_effects)?;
+
+        if capability.effectful && self.execution_mode() == VmExecutionMode::Replay {
+            match capability.replay {
+                Some(crate::capability::ReplaySemantics::Recorded)
+                | Some(crate::capability::ReplaySemantics::Suppressed) => {
+                    return self.replay_builtin(&info.name, args, arena);
+                }
+                // Reissued output must cross the provider boundary again. The
+                // first capability slice deliberately has no provider ABI, so
+                // replay stays fail-closed instead of pretending suppression
+                // is equivalent to re-emission.
+                Some(crate::capability::ReplaySemantics::Reissued) | None => {}
+            }
+        }
+
+        Err(VmError::runtime(format!(
+            "capability provider missing for '{}'",
+            info.name
+        )))
     }
 
     fn check_runtime_policy(

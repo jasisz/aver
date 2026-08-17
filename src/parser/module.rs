@@ -21,6 +21,8 @@ impl Parser {
         let mut effects_line = None;
         let mut kind = None;
         let mut kind_line = None;
+        let mut semantics = None;
+        let mut semantics_line = None;
 
         if self.is_indent() {
             self.advance(); // consume INDENT
@@ -73,6 +75,19 @@ impl Parser {
                             _ => unreachable!(),
                         };
                     }
+                    TokenKind::Ident(s) if s == "semantics" => {
+                        semantics_line = Some(self.current().line);
+                        self.advance(); // consume 'semantics'
+                        self.expect_exact(&TokenKind::Assign)?;
+                        let value_tok = self.expect_kind(
+                            &TokenKind::Ident(String::new()),
+                            "Expected capability semantics after 'semantics =' (`pure` or `effectful`)",
+                        )?;
+                        semantics = match value_tok.kind {
+                            TokenKind::Ident(s) => Some(s),
+                            _ => unreachable!(),
+                        };
+                    }
                     // An unrecognised line that still has HEADER-FIELD
                     // SHAPE — an identifier followed by `=` or `[`, the
                     // two forms every real field takes. Breaking here
@@ -91,7 +106,7 @@ impl Parser {
                         ) =>
                     {
                         return Err(self.error(format!(
-                            "Unknown module header field, found {}. Allowed: intent, kind, depends, exposes, effects. \
+                            "Unknown module header field, found {}. Allowed: intent, kind, semantics, depends, exposes, effects. \
                              If you meant a top-level binding, unindent it — bindings live at column 0, outside the header.",
                             self.current().kind
                         )));
@@ -122,6 +137,8 @@ impl Parser {
             effects_line,
             kind,
             kind_line,
+            semantics,
+            semantics_line,
         })
     }
 

@@ -160,6 +160,18 @@ pub(super) fn try_run_wasm_gc(
     }
     let dep_modules =
         load_compile_deps(&items, &module_root, super::commands::DepLowering::PRISTINE);
+    if let Some(error) = super::commands::capability_provider_rejection(
+        &items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc run pipeline requested typechecking")
+            .capabilities,
+        "wasm-gc",
+    ) {
+        return Err(error);
+    }
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after multi-module flatten so the freshly
     // appended dep fns get a `FnResolution` (slot map + slot_types).

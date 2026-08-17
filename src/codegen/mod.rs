@@ -33,7 +33,7 @@ pub mod wasm_gc;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{FnDef, TopLevel, TypeDef};
+use crate::ast::{CapabilityItem, FnDef, TopLevel, TypeDef};
 use crate::source::LoadedModule;
 use crate::types::checker::TypeCheckResult;
 
@@ -47,6 +47,12 @@ pub struct ModuleInfo {
     pub type_defs: Vec<TypeDef>,
     /// Function definitions from the module (excluding `main`).
     pub fn_defs: Vec<FnDef>,
+    /// Provider-bound declarations retained for name resolution and VM
+    /// fail-closed dispatch. They have signatures but no Aver bodies.
+    pub capability_items: Vec<CapabilityItem>,
+    /// Raw module-header semantics (`pure` / `effectful`) for the retained
+    /// capability items. Validation belongs to `capability::CapabilityRegistry`.
+    pub capability_semantics: Option<String>,
     /// `verify … law` blocks of this dep module, in source order.
     ///
     /// Carried so the Lean proof backend can (a) emit each proven dep
@@ -101,15 +107,35 @@ impl ModuleInfo {
                 _ => None,
             })
             .collect();
+        let (capability_items, capability_semantics) = capability_metadata(&loaded.items);
         Self {
             prefix: loaded.dep_name.clone(),
             depends,
             type_defs,
             fn_defs,
+            capability_items,
+            capability_semantics,
             verify_laws: collect_verify_laws(&loaded.items),
             analysis: None,
         }
     }
+}
+
+/// Capability declarations and their homogeneous module semantics, retained
+/// anywhere a parsed dependency is projected into [`ModuleInfo`].
+pub fn capability_metadata(items: &[TopLevel]) -> (Vec<CapabilityItem>, Option<String>) {
+    let declarations = items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Capability(declaration) => Some(declaration.clone()),
+            _ => None,
+        })
+        .collect();
+    let semantics = items.iter().find_map(|item| match item {
+        TopLevel::Module(module) => module.semantics.clone(),
+        _ => None,
+    });
+    (declarations, semantics)
 }
 
 /// `verify … law` blocks from a module's top-level items, in source
@@ -244,6 +270,10 @@ pub struct CodegenContext {
     pub project_name: String,
     /// Dependent modules loaded for inlining.
     pub modules: Vec<ModuleInfo>,
+    /// Canonical capability contracts from the entry plus its transitive
+    /// dependency closure. Proof/runtime backends must classify against this
+    /// registry rather than the built-in effect table alone.
+    pub capabilities: crate::capability::CapabilityRegistry,
     /// Set of module prefixes for qualified name resolution (e.g. "Models.User").
     pub module_prefixes: HashSet<String>,
     /// Embedded runtime policy from `aver.toml` for generated code.
@@ -476,7 +506,7 @@ pub struct ProjectOutput {
 #[allow(clippy::too_many_arguments)]
 pub fn build_context(
     items: Vec<TopLevel>,
-    _tc_result: &TypeCheckResult,
+    tc_result: &TypeCheckResult,
     entry_analysis: Option<&crate::ir::AnalysisResult>,
     project_name: String,
     modules: Vec<ModuleInfo>,
@@ -724,6 +754,7 @@ pub fn build_context(
         fn_defs,
         project_name,
         modules,
+        capabilities: tc_result.capabilities.clone(),
         module_prefixes,
         #[cfg(feature = "runtime")]
         policy: None,
@@ -1072,7 +1103,7 @@ impl CodegenContext {
 
     /// Entry module's name from `items` (the `module X` declaration's
     /// X). `None` for ad-hoc test programs without a module decl.
-    fn entry_module_name(&self) -> Option<String> {
+    pub(crate) fn entry_module_name(&self) -> Option<String> {
         self.items.iter().find_map(|i| match i {
             TopLevel::Module(m) => Some(m.name.clone()),
             _ => None,

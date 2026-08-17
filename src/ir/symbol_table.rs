@@ -38,7 +38,8 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{FnDef, TopLevel, TypeDef, TypeVariant};
+use crate::ast::{CapabilityItem, FnDef, TopLevel, TypeDef, TypeVariant};
+use crate::capability::{OracleDimension, ReplaySemantics};
 use crate::codegen::ModuleInfo;
 use crate::ir::identity::{BuiltinId, CtorId, FnId, FnKey, ModuleId, TypeId, TypeKey};
 
@@ -69,6 +70,8 @@ pub struct TypeEntry {
     /// emit code uniformly route record creation through the
     /// constructor path.
     pub is_product: bool,
+    /// Representation-less type minted only by a capability provider.
+    pub is_capability_opaque: bool,
 }
 
 /// One entry in the constructor table. A constructor belongs to
@@ -91,6 +94,17 @@ pub struct CtorEntry {
 pub struct ModuleEntry {
     /// `None` for the entry scope; `Some(prefix)` for dep modules.
     pub prefix: Option<String>,
+}
+
+/// Runtime-relevant part of a provider-bound declaration. The canonical
+/// contract registry performs validation; this copy lets every backend route
+/// the already-validated operation without re-parsing source text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapabilityOperationInfo {
+    pub effectful: bool,
+    pub oracle: Option<OracleDimension>,
+    pub replay: Option<ReplaySemantics>,
+    pub mints_resource: bool,
 }
 
 /// Resolved-identity table for an Aver program. Built once after
@@ -120,6 +134,9 @@ pub struct SymbolTable {
     ctor_index: HashMap<(TypeId, String), CtorId>,
     /// Builtin canonical name → `BuiltinId` (Phase 6 wave 11).
     builtin_index: HashMap<String, BuiltinId>,
+    /// Canonical provider-bound operation name → whether the call establishes
+    /// an effect. These have no `FnId` because there is no Aver body.
+    capability_operations: HashMap<String, CapabilityOperationInfo>,
     /// Recognized literal-dischargeable smart constructors — see
     /// [`SymbolTable::literal_refinements`].
     literal_refinements: crate::analysis::literal_refinement::LiteralRefinementTable,
@@ -170,19 +187,59 @@ impl SymbolTable {
                 _ => None,
             })
             .collect();
+        let entry_capability_items: Vec<&CapabilityItem> = entry_items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::Capability(item) => Some(item),
+                _ => None,
+            })
+            .collect();
+        let entry_semantics = entry_items.iter().find_map(|i| match i {
+            TopLevel::Module(module) => module.semantics.as_deref(),
+            _ => None,
+        });
+        let entry_scope = entry_items.iter().find_map(|i| match i {
+            TopLevel::Module(module) => Some(module.name.as_str()),
+            _ => None,
+        });
 
-        type ScopeWalk<'a> = (ModuleId, Option<&'a str>, Vec<&'a FnDef>, Vec<&'a TypeDef>);
-        let scopes: Vec<ScopeWalk> =
-            std::iter::once((ModuleId::ENTRY, None, entry_fns, entry_types))
-                .chain(dep_modules.iter().enumerate().map(|(i, m)| {
-                    let module_id = ModuleId((i + 1) as u32);
-                    let fns: Vec<&FnDef> = m.fn_defs.iter().collect();
-                    let types: Vec<&TypeDef> = m.type_defs.iter().collect();
-                    (module_id, Some(m.prefix.as_str()), fns, types)
-                }))
-                .collect();
+        type ScopeWalk<'a> = (
+            ModuleId,
+            Option<&'a str>,
+            Vec<&'a FnDef>,
+            Vec<&'a TypeDef>,
+            Vec<&'a CapabilityItem>,
+            Option<&'a str>,
+            Option<&'a str>,
+        );
+        let scopes: Vec<ScopeWalk> = std::iter::once((
+            ModuleId::ENTRY,
+            None,
+            entry_fns,
+            entry_types,
+            entry_capability_items,
+            entry_semantics,
+            entry_scope,
+        ))
+        .chain(dep_modules.iter().enumerate().map(|(i, m)| {
+            let module_id = ModuleId((i + 1) as u32);
+            let fns: Vec<&FnDef> = m.fn_defs.iter().collect();
+            let types: Vec<&TypeDef> = m.type_defs.iter().collect();
+            let capability_items: Vec<&CapabilityItem> = m.capability_items.iter().collect();
+            (
+                module_id,
+                Some(m.prefix.as_str()),
+                fns,
+                types,
+                capability_items,
+                m.capability_semantics.as_deref(),
+                Some(m.prefix.as_str()),
+            )
+        }))
+        .collect();
 
-        for (module_id, prefix, fns, types) in scopes {
+        for (module_id, prefix, fns, types, capability_items, semantics, capability_scope) in scopes
+        {
             for (index_in_module, fd) in fns.into_iter().enumerate() {
                 let key = match prefix {
                     Some(p) => FnKey::in_module(p.to_string(), fd.name.clone()),
@@ -236,7 +293,85 @@ impl SymbolTable {
                     index_in_module: index_in_module as u32,
                     variants: ctor_ids,
                     is_product,
+                    is_capability_opaque: false,
                 });
+            }
+            let capability_opaque_names = capability_items
+                .iter()
+                .filter_map(|item| match item {
+                    CapabilityItem::Opaque { name, .. } => Some(name.as_str()),
+                    CapabilityItem::Operation(_) => None,
+                })
+                .collect::<std::collections::HashSet<_>>();
+            for item in capability_items {
+                match item {
+                    CapabilityItem::Opaque { name, .. } => {
+                        let key = match prefix {
+                            Some(p) => TypeKey::in_module(p.to_string(), name.clone()),
+                            None => TypeKey::entry(name.clone()),
+                        };
+                        if table.type_index.contains_key(&key) {
+                            continue;
+                        }
+                        let type_id = TypeId(table.types.len() as u32);
+                        table.type_index.insert(key.clone(), type_id);
+                        table.types.push(TypeEntry {
+                            key,
+                            module: module_id,
+                            index_in_module: table.types.len() as u32,
+                            variants: Vec::new(),
+                            is_product: false,
+                            is_capability_opaque: true,
+                        });
+                    }
+                    CapabilityItem::Operation(operation) => {
+                        if let Some(prefix) = capability_scope {
+                            let oracle = match operation.oracle.as_deref() {
+                                Some("snapshot") => Some(OracleDimension::Snapshot),
+                                Some("generative") => Some(OracleDimension::Generative),
+                                Some("output") => Some(OracleDimension::Output),
+                                Some("generativeOutput") => Some(OracleDimension::GenerativeOutput),
+                                _ => None,
+                            };
+                            let replay = match operation.replay.as_deref() {
+                                Some("recorded") => Some(ReplaySemantics::Recorded),
+                                Some("reissued") => Some(ReplaySemantics::Reissued),
+                                Some("suppressed") => Some(ReplaySemantics::Suppressed),
+                                _ => None,
+                            };
+                            let mints_resource =
+                                crate::types::parse_type_str_strict(&operation.return_type)
+                                    .is_ok_and(|ty| {
+                                        fn transparent_resource(
+                                            ty: &crate::types::Type,
+                                            opaque: &std::collections::HashSet<&str>,
+                                        ) -> bool {
+                                            match ty {
+                                                crate::types::Type::Result(ok, _)
+                                                | crate::types::Type::Option(ok) => {
+                                                    transparent_resource(ok, opaque)
+                                                }
+                                                crate::types::Type::Named { name, .. } => opaque
+                                                    .contains(
+                                                        name.rsplit('.').next().unwrap_or(name),
+                                                    ),
+                                                _ => false,
+                                            }
+                                        }
+                                        transparent_resource(&ty, &capability_opaque_names)
+                                    });
+                            table.capability_operations.insert(
+                                format!("{prefix}.{}", operation.name),
+                                CapabilityOperationInfo {
+                                    effectful: semantics == Some("effectful"),
+                                    oracle,
+                                    replay,
+                                    mints_resource,
+                                },
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -254,6 +389,16 @@ impl SymbolTable {
             );
 
         table
+    }
+
+    pub fn capability_operation(&self, canonical_name: &str) -> Option<CapabilityOperationInfo> {
+        self.capability_operations.get(canonical_name).copied()
+    }
+
+    pub fn capability_operations(&self) -> impl Iterator<Item = (&str, CapabilityOperationInfo)> {
+        self.capability_operations
+            .iter()
+            .map(|(name, info)| (name.as_str(), *info))
     }
 
     /// Derived gate for the literal smart-constructor discharge.
@@ -441,6 +586,8 @@ mod tests {
             depends: Vec::new(),
             type_defs: types,
             fn_defs: fns,
+            capability_items: Vec::new(),
+            capability_semantics: None,
             verify_laws: Vec::new(),
             analysis: None,
         }

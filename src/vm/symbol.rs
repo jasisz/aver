@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::ir::symbol_table::CapabilityOperationInfo;
 use crate::nan_value::NanValue;
 
 use super::builtin::VmBuiltin;
@@ -59,6 +60,9 @@ pub(crate) struct VmVariantCtor {
 pub(crate) enum VmSymbolKind {
     Function(u32),
     Builtin(VmBuiltin),
+    /// Declaration with no Aver implementation. Dispatch is permitted only
+    /// through an installed oracle stub/replay record until provider ABIs land.
+    Capability(CapabilityOperationInfo),
     Namespace,
     VariantCtor(VmVariantCtor),
     Wrapper(u8),
@@ -193,6 +197,32 @@ impl VmSymbolTable {
         Ok(symbol_id)
     }
 
+    pub(crate) fn intern_capability(
+        &mut self,
+        name: &str,
+        capability: CapabilityOperationInfo,
+    ) -> Result<u32, SymbolError> {
+        let symbol_id = self.intern_name(name);
+        let required_effects = if capability.effectful {
+            vec![self.intern_name(name)]
+        } else {
+            Vec::new()
+        };
+        let info = &mut self.symbols[symbol_id as usize];
+        match info.kind {
+            Some(VmSymbolKind::Capability(existing)) if existing == capability => {}
+            None => info.kind = Some(VmSymbolKind::Capability(capability)),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: name.to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
+        }
+        info.required_effects = required_effects;
+        Ok(symbol_id)
+    }
+
     pub(crate) fn intern_variant_ctor(
         &mut self,
         name: &str,
@@ -314,6 +344,13 @@ impl VmSymbolTable {
     pub(crate) fn resolve_builtin(&self, symbol_id: u32) -> Option<VmBuiltin> {
         match self.get(symbol_id)?.kind {
             Some(VmSymbolKind::Builtin(builtin)) => Some(builtin),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn resolve_capability(&self, symbol_id: u32) -> Option<CapabilityOperationInfo> {
+        match self.get(symbol_id)?.kind {
+            Some(VmSymbolKind::Capability(info)) => Some(info),
             _ => None,
         }
     }

@@ -44,7 +44,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::effect_classification::{EffectDimension, classify, oracle_signature};
+use super::effect_classification::{
+    EffectDimension, RegisteredEffectClassification, classify_with_registry,
+    oracle_signature_with_registry,
+};
 use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, SourceLine, Spanned, Stmt};
 use crate::types::Type;
 
@@ -57,6 +60,10 @@ pub struct LiftConfig {
     /// Map from effect method (`"Random.int"`) → local binding name
     /// (`"rnd"`) the lifted body should call in place of the effect.
     pub oracles: HashMap<String, String>,
+    /// Resource-minting capability operation → unconstrained opaque value
+    /// parameter supplied to its oracle. One value per operation is enough:
+    /// resource distinctness is deliberately unobservable.
+    pub fresh_resources: HashMap<String, String>,
     /// Oracle v1: effectful user-defined helpers visible from this
     /// body. Name → list of effect methods the helper declares. Call
     /// sites to these fns in the lifted body get `(path, oracle...)`
@@ -65,6 +72,12 @@ pub struct LiftConfig {
     /// on Lean / Dafny rejects it (arity mismatch). Empty for v0
     /// tests that don't have helpers.
     pub effectful_helpers: HashMap<String, Vec<String>>,
+    /// Program-defined capability effects in the dependency closure.
+    pub capabilities: crate::capability::CapabilityRegistry,
+}
+
+fn classify_effect(cfg: &LiftConfig, method: &str) -> Option<RegisteredEffectClassification> {
+    classify_with_registry(&cfg.capabilities, method)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -496,7 +509,7 @@ fn lift_expr(
                 let mut injected: Vec<Spanned<Expr>> = Vec::new();
                 let needs_path = helper_effects.iter().any(|e| {
                     matches!(
-                        classify(e).map(|c| c.dimension),
+                        classify_effect(cfg, e).map(|c| c.dimension),
                         Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
                     )
                 });
@@ -508,12 +521,22 @@ fn lift_expr(
                     if !seen.insert(e.clone()) {
                         continue;
                     }
-                    let Some(c) = classify(e) else { continue };
+                    let Some(c) = classify_effect(cfg, e) else {
+                        continue;
+                    };
                     if matches!(c.dimension, EffectDimension::Output) {
                         continue;
                     }
                     if let Some(oracle_name) = cfg.oracles.get(e) {
                         injected.push(spanned(Expr::Ident(oracle_name.clone()), expr.line));
+                    }
+                }
+                let mut seen = std::collections::HashSet::new();
+                for e in &helper_effects {
+                    if seen.insert(e.clone())
+                        && let Some(fresh_name) = cfg.fresh_resources.get(e)
+                    {
+                        injected.push(spanned(Expr::Ident(fresh_name.clone()), expr.line));
                     }
                 }
                 injected.extend(new_args);
@@ -660,7 +683,7 @@ fn lift_classified_call(
     path_expr: &Spanned<Expr>,
     counter: &mut u32,
 ) -> Result<Expr, LiftError> {
-    let classification = match classify(effect_name) {
+    let classification = match classify_effect(cfg, effect_name) {
         Some(c) => c,
         None => {
             // Not a classified effect — treat as a regular call. This
@@ -739,6 +762,9 @@ fn lift_classified_call(
                 original.line,
             );
             let mut new_args = vec![path_arg, counter_arg];
+            if let Some(fresh_name) = cfg.fresh_resources.get(effect_name) {
+                new_args.push(Spanned::new(Expr::Ident(fresh_name.clone()), original.line));
+            }
             new_args.extend(lifted_args);
             Ok(Expr::FnCall(
                 Box::new(Spanned::new(
@@ -775,6 +801,16 @@ fn effect_method_name(expr: &Expr) -> Option<String> {
 pub fn oracle_params_for_effects(
     effects: &[Spanned<String>],
 ) -> Result<Vec<(String, String)>, LiftError> {
+    oracle_params_for_effects_with_registry(
+        effects,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+}
+
+pub fn oracle_params_for_effects_with_registry(
+    effects: &[Spanned<String>],
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Result<Vec<(String, String)>, LiftError> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for e in effects {
@@ -782,7 +818,7 @@ pub fn oracle_params_for_effects(
         if !seen.insert(name.clone()) {
             continue;
         }
-        let Some(classification) = classify(name) else {
+        let Some(classification) = classify_with_registry(capabilities, name) else {
             return Err(LiftError::UnclassifiedEffect {
                 method: name.clone(),
             });
@@ -790,8 +826,8 @@ pub fn oracle_params_for_effects(
         match classification.dimension {
             EffectDimension::Output => continue,
             _ => {
-                let binding = oracle_binding_name_for(name);
-                let type_str = match oracle_signature(name) {
+                let binding = oracle_binding_name_for(name, capabilities);
+                let type_str = match oracle_signature_with_registry(capabilities, name) {
                     Some(t) => type_to_annotation(&t),
                     None => continue,
                 };
@@ -830,8 +866,11 @@ fn pick_unique_path_name(user_params: &[(String, String)]) -> String {
 /// `Random.int` → `rnd_Random_int`; `Args.get` → `cap_Args_get`.
 /// Callers that use `given name: E.m = [...]` override these by passing
 /// their own [`LiftConfig::oracles`] map.
-fn oracle_binding_name_for(effect: &str) -> String {
-    let prefix = match classify(effect).map(|c| c.dimension) {
+fn oracle_binding_name_for(
+    effect: &str,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> String {
+    let prefix = match classify_with_registry(capabilities, effect).map(|c| c.dimension) {
         Some(EffectDimension::Snapshot) => "cap",
         Some(EffectDimension::Generative | EffectDimension::GenerativeOutput) => "rnd",
         _ => "eff",
@@ -897,6 +936,13 @@ pub fn lift_fn_def(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
     lift_fn_def_with_helpers(fd, &HashMap::new())
 }
 
+pub fn lift_fn_def_with_registry(
+    fd: &FnDef,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Result<Option<FnDef>, LiftError> {
+    lift_fn_def_with_helpers_and_registry(fd, &HashMap::new(), capabilities)
+}
+
 /// Lower pure `?!` products to explicit Result matches for proof backends.
 ///
 /// Effectful functions use [`lift_fn_def_with_helpers`], which already does
@@ -912,7 +958,9 @@ pub fn lower_pure_question_bang_fn(fd: &FnDef) -> Result<Option<FnDef>, LiftErro
     let cfg = LiftConfig {
         path_name: "path".to_string(),
         oracles: HashMap::new(),
+        fresh_resources: HashMap::new(),
         effectful_helpers: HashMap::new(),
+        capabilities: Default::default(),
     };
     let lowered_body = lift_body(&fd.body, &cfg)?;
     let mut lowered = fd.clone();
@@ -978,17 +1026,29 @@ pub fn lift_fn_def_with_helpers(
     fd: &FnDef,
     helpers: &HashMap<String, Vec<String>>,
 ) -> Result<Option<FnDef>, LiftError> {
+    lift_fn_def_with_helpers_and_registry(
+        fd,
+        helpers,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+}
+
+pub fn lift_fn_def_with_helpers_and_registry(
+    fd: &FnDef,
+    helpers: &HashMap<String, Vec<String>>,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Result<Option<FnDef>, LiftError> {
     if fd.effects.is_empty() {
         return Ok(None);
     }
 
-    let oracle_params = oracle_params_for_effects(&fd.effects)?;
+    let oracle_params = oracle_params_for_effects_with_registry(&fd.effects, capabilities)?;
 
     // Decide whether we need the leading `path: BranchPath` parameter —
     // only generative / generative-output effects depend on it.
     let needs_path = fd.effects.iter().any(|e| {
         matches!(
-            classify(&e.node).map(|c| c.dimension),
+            classify_with_registry(capabilities, &e.node).map(|c| c.dimension),
             Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
         )
     });
@@ -1008,6 +1068,35 @@ pub fn lift_fn_def_with_helpers(
     for (name, ty) in &oracle_params {
         new_params.push((name.clone(), ty.clone()));
     }
+    let mut fresh_resources = HashMap::new();
+    let mut used_param_names: std::collections::HashSet<String> = fd
+        .params
+        .iter()
+        .map(|(name, _)| name.clone())
+        .chain(new_params.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let mut seen_fresh_effects = std::collections::HashSet::new();
+    for effect in &fd.effects {
+        if !seen_fresh_effects.insert(effect.node.clone()) {
+            continue;
+        }
+        let Some(operation) = capabilities.operation(&effect.node) else {
+            continue;
+        };
+        let Some(resource) = &operation.minted_resource else {
+            continue;
+        };
+        let base = format!("capFresh_{}", effect.node.replace('.', "_"));
+        let mut binding = base.clone();
+        let mut suffix = 0u32;
+        while used_param_names.contains(&binding) {
+            binding = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        used_param_names.insert(binding.clone());
+        new_params.push((binding.clone(), resource.clone()));
+        fresh_resources.insert(effect.node.clone(), binding);
+    }
     new_params.extend(fd.params.iter().cloned());
 
     // Build an oracles map keyed by effect method name → param
@@ -1022,7 +1111,7 @@ pub fn lift_fn_def_with_helpers(
     let mut seen = std::collections::HashSet::new();
     let mut idx = 0usize;
     for e in fd.effects.iter().filter(|e| {
-        classify(&e.node)
+        classify_with_registry(capabilities, &e.node)
             .map(|c| !matches!(c.dimension, EffectDimension::Output))
             .unwrap_or(false)
     }) {
@@ -1037,7 +1126,9 @@ pub fn lift_fn_def_with_helpers(
     let cfg = LiftConfig {
         path_name,
         oracles: oracles_map,
+        fresh_resources,
         effectful_helpers: helpers.clone(),
+        capabilities: capabilities.clone(),
     };
 
     let lifted_body = lift_body(&fd.body, &cfg)?;
@@ -1094,7 +1185,9 @@ mod tests {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            fresh_resources: HashMap::new(),
             effectful_helpers: HashMap::new(),
+            capabilities: Default::default(),
         }
     }
 

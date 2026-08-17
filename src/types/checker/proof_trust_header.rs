@@ -30,17 +30,43 @@ use super::effect_classification::EffectDimension;
 /// - `has_independent_products`: whether the source uses `!` / `?!`
 ///   anywhere; without that the schedule-invariance argument and
 ///   three-lemma block are irrelevant and skipped entirely.
+#[allow(dead_code)]
 pub(crate) fn generate_for_effects(
     declared_effects: &crate::codegen::common::DeclaredEffects,
     has_independent_products: bool,
 ) -> String {
-    use super::effect_classification::classifications_for_proof_subset;
+    generate_for_effects_with_registry(
+        declared_effects,
+        has_independent_products,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+}
 
-    let used: Vec<&'static super::effect_classification::EffectClassification> =
-        classifications_for_proof_subset()
+pub(crate) fn generate_for_effects_with_registry(
+    declared_effects: &crate::codegen::common::DeclaredEffects,
+    has_independent_products: bool,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> String {
+    let mut used: Vec<(String, EffectDimension)> =
+        super::effect_classification::classifications_for_proof_subset()
             .iter()
             .filter(|c| declared_effects.includes(c.method))
+            .map(|c| (c.method.to_string(), c.dimension))
             .collect();
+    used.extend(
+        capabilities
+            .operations()
+            .filter(|operation| declared_effects.includes(&operation.canonical_name))
+            .filter_map(|operation| {
+                super::effect_classification::classify_with_registry(
+                    capabilities,
+                    &operation.canonical_name,
+                )
+                .map(|classification| (classification.method, classification.dimension))
+            }),
+    );
+    used.sort_by(|left, right| left.0.cmp(&right.0));
+    used.dedup_by(|left, right| left.0 == right.0);
 
     let mut out = String::new();
     out.push_str("Trusted model assumptions for this Aver proof export:\n");
@@ -73,10 +99,66 @@ pub(crate) fn generate_for_effects(
     out.push_str("  (`Map.len`, `Map.get`, `Map.has`) are unaffected on every backend.\n");
     out.push('\n');
 
+    if capabilities.contracts().next().is_some() {
+        out.push_str("Provider-bound capability contracts:\n");
+        for contract in capabilities.contracts() {
+            out.push_str(&format!(
+                "  {} [{}]\n    contract_hash = {}\n    model_hash    = {}\n",
+                contract.module,
+                contract.semantics.as_str(),
+                contract.contract_hash,
+                contract.model_hash,
+            ));
+            let operations = capabilities
+                .operations()
+                .filter(|operation| operation.module == contract.module)
+                .collect::<Vec<_>>();
+            if contract.semantics == crate::capability::CapabilitySemantics::Effectful {
+                out.push_str(&format!(
+                    "    The boundary oracle is stateless and branch-indexed: no ordering\n    between {} is modelled.\n",
+                    operations
+                        .iter()
+                        .map(|operation| operation.canonical_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                ));
+                for operation in &operations {
+                    let (declared_profiles, user_profiles) =
+                        capabilities.profile_source_counts(&operation.canonical_name);
+                    out.push_str(&format!(
+                        "    Profile sources for {}: contract-declared = {}; user-provided = {}.\n",
+                        operation.canonical_name, declared_profiles, user_profiles
+                    ));
+                    if !operation.unmodelled.is_empty() {
+                        out.push_str(&format!(
+                            "    Author disclosure: {} may depend on whether {} occurred.\n",
+                            operation.canonical_name,
+                            operation
+                                .unmodelled
+                                .iter()
+                                .map(|name| format!("{}.{}", contract.module, name))
+                                .collect::<Vec<_>>()
+                                .join(" / ")
+                        ));
+                    }
+                }
+                out.push_str(
+                    "    Contract-declared hostile profiles are additive, never complete;\n    user-provided `given` profiles remain separate per law.\n",
+                );
+            }
+        }
+        out.push_str("  Provider implementations are outside the theorem. The theorem trusts\n");
+        out.push_str("  exactly the model descriptor identified by each model_hash; changing\n");
+        out.push_str("  a boundary type moves contract_hash and changing oracle/replay/hostile\n");
+        out.push_str("  semantics moves model_hash. Pure operations are represented as opaque,\n");
+        out.push_str("  total functions: determinism follows from function semantics, while\n");
+        out.push_str("  agreement of a concrete provider with that function remains trusted.\n\n");
+    }
+
     if !used.is_empty() {
         out.push_str("Effects and dimensions:\n");
-        for c in &used {
-            push_effect_row(&mut out, c.method, dimension_blurb(c.dimension));
+        for (method, dimension) in &used {
+            push_effect_row(&mut out, method, dimension_blurb(*dimension));
         }
         out.push('\n');
     }
@@ -156,9 +238,9 @@ pub(crate) fn generate_for_effects(
     out.push_str("  wall-clock and shared-channel adjacency are NOT expressible.\n");
     out.push('\n');
 
-    out.push_str("Effect classification (closed for Oracle v1):\n");
-    out.push_str("  Only the classified built-in effects listed above are in the\n");
-    out.push_str("  proof subset. Other built-in effects are rejected by `aver proof`:\n");
+    out.push_str("Effect classification (closed for Oracle v1 built-ins):\n");
+    out.push_str("  Declared program capabilities use the oracle dimension pinned above.\n");
+    out.push_str("  Other built-in effects remain outside Oracle v1 and are rejected:\n");
     out.push_str("  ambient process state (Env.set), persistent TCP sessions\n");
     out.push_str("  (Tcp.connect / .writeLine / .readLine / .close), server\n");
     out.push_str("  lifecycle callbacks (HttpServer.*), and terminal modal state\n");
@@ -214,6 +296,7 @@ pub(crate) fn generate_for_effects(
 
     out.push_str("Out of scope in this export:\n");
     out.push_str("  - Stateful effects (Store, DB, shared mutable state)\n");
+    out.push_str("  - Provider implementation correctness beyond the hashed capability model\n");
     out.push_str("  - Higher-order effectful callbacks\n");
     out.push_str("  - Long-running protocols and terminal modal state\n");
     out.push_str("  - ?! cancel mode\n");
@@ -225,12 +308,32 @@ pub(crate) fn generate_for_effects(
 /// marker (typically `"// "` for Dafny / `"-- "` for Lean 4). An empty /
 /// whitespace-only input line is still commented so the block reads as
 /// one consistent comment region in the generated file.
+#[allow(dead_code)]
 pub(crate) fn generate_commented(
     prefix: &str,
     declared_effects: &crate::codegen::common::DeclaredEffects,
     has_independent_products: bool,
 ) -> String {
     generate_for_effects(declared_effects, has_independent_products)
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                prefix.trim_end().to_string()
+            } else {
+                format!("{}{}", prefix, line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub(crate) fn generate_commented_with_registry(
+    prefix: &str,
+    declared_effects: &crate::codegen::common::DeclaredEffects,
+    has_independent_products: bool,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> String {
+    generate_for_effects_with_registry(declared_effects, has_independent_products, capabilities)
         .lines()
         .map(|line| {
             if line.is_empty() {

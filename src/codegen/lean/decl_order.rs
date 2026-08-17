@@ -16,6 +16,7 @@ use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ScopedDecl {
     Type(usize),
+    CapabilityOperation(usize),
     FnComponent(usize),
 }
 
@@ -36,8 +37,21 @@ pub(super) fn plan_scoped_declarations<'a>(
         .collect();
     let components = crate::call_graph::ordered_fn_components(&pure, &ctx.module_prefixes);
 
+    let entry_module = ctx.entry_module_name();
+    let capability_operations: Vec<&crate::capability::CapabilityOperation> = ctx
+        .capabilities
+        .operations()
+        .filter(|operation| !operation.is_effectful())
+        .filter(|operation| match scope {
+            Some(prefix) => operation.module == prefix,
+            None => entry_module.as_deref() == Some(operation.module.as_str()),
+        })
+        .collect();
+
     let type_count = type_defs.len();
-    let node_count = type_count + components.len();
+    let operation_count = capability_operations.len();
+    let fn_offset = type_count + operation_count;
+    let node_count = fn_offset + components.len();
     let mut dependencies = vec![HashSet::<usize>::new(); node_count];
 
     let type_nodes: HashMap<String, usize> = type_defs
@@ -48,8 +62,21 @@ pub(super) fn plan_scoped_declarations<'a>(
     let mut fn_nodes = HashMap::<String, usize>::new();
     for (component_index, component) in components.iter().enumerate() {
         for fd in component {
-            fn_nodes.insert(fd.name.clone(), type_count + component_index);
+            fn_nodes.insert(fd.name.clone(), fn_offset + component_index);
         }
+    }
+    let mut operation_nodes = HashMap::<String, usize>::new();
+    for (operation_index, operation) in capability_operations.iter().enumerate() {
+        let node = type_count + operation_index;
+        operation_nodes.insert(operation.name.clone(), node);
+        operation_nodes.insert(operation.canonical_name.clone(), node);
+
+        let mut type_refs = HashSet::new();
+        for (_, ty) in &operation.params {
+            collect_type_refs(ty, &mut type_refs);
+        }
+        collect_type_refs(&operation.return_type, &mut type_refs);
+        add_local_type_dependencies(node, &type_refs, &type_nodes, scope, &mut dependencies);
     }
 
     for (type_index, td) in type_defs.iter().enumerate() {
@@ -72,7 +99,7 @@ pub(super) fn plan_scoped_declarations<'a>(
     }
 
     for (component_index, component) in components.iter().enumerate() {
-        let node = type_count + component_index;
+        let node = fn_offset + component_index;
         let mut called = HashSet::new();
         let mut type_refs = HashSet::new();
         for fd in component {
@@ -87,6 +114,9 @@ pub(super) fn plan_scoped_declarations<'a>(
             if let Some(&dependency) = fn_nodes.get(&name)
                 && dependency != node
             {
+                dependencies[node].insert(dependency);
+            }
+            if let Some(&dependency) = operation_nodes.get(&name) {
                 dependencies[node].insert(dependency);
             }
         }
@@ -125,8 +155,10 @@ pub(super) fn plan_scoped_declarations<'a>(
         .map(|node| {
             if node < type_count {
                 ScopedDecl::Type(node)
+            } else if node < fn_offset {
+                ScopedDecl::CapabilityOperation(node - type_count)
             } else {
-                ScopedDecl::FnComponent(node - type_count)
+                ScopedDecl::FnComponent(node - fn_offset)
             }
         })
         .collect();
@@ -234,8 +266,8 @@ fn collect_called_idents_in_body(body: &FnBody, out: &mut HashSet<String>) {
 fn collect_called_idents(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
     match &expr.node {
         Expr::FnCall(callee, args) => {
-            if let Expr::Ident(name) | Expr::Resolved { name, .. } = &callee.node {
-                out.insert(name.clone());
+            if let Some(name) = crate::ir::expr_to_dotted_name(&callee.node) {
+                out.insert(name);
             } else {
                 collect_called_idents(callee, out);
             }

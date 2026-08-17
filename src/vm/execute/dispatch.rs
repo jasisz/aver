@@ -652,6 +652,17 @@ impl VM {
                             continue;
                         }
 
+                        if self.code.symbols.resolve_capability(symbol_id).is_some() {
+                            self.stack.remove(fn_pos);
+                            let args_start = self.stack.len() - argc;
+                            let args: Vec<NanValue> = self.stack[args_start..].to_vec();
+                            self.stack.truncate(args_start);
+                            let result =
+                                self.dispatch_capability_operation(symbol_id, &args, fn_id)?;
+                            self.stack.push(result);
+                            continue;
+                        }
+
                         if let Some(wrap_kind) = self.code.symbols.resolve_wrapper(symbol_id) {
                             if argc != 1 {
                                 let name = self
@@ -782,6 +793,14 @@ impl VM {
                     } else {
                         0
                     };
+                    if self.code.symbols.resolve_capability(symbol_id).is_some() {
+                        let args_start = self.stack.len() - argc;
+                        let args: Vec<NanValue> = self.stack[args_start..].to_vec();
+                        self.stack.truncate(args_start);
+                        let result = self.dispatch_capability_operation(symbol_id, &args, fn_id)?;
+                        self.stack.push(result);
+                        continue;
+                    }
                     let builtin =
                         self.code
                             .symbols
@@ -890,7 +909,7 @@ impl VM {
                     // helper-boundary emissions under verify-trace.
                     self.runtime.sync_caller_fn_id(fn_id);
                     if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
-                        let result = self.dispatch_oracle_stub(stub_fn_id, &args)?;
+                        let result = self.dispatch_oracle_stub(stub_fn_id, &args, false)?;
                         self.stack.push(result);
                         continue;
                     }

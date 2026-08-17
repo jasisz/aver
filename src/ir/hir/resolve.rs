@@ -638,7 +638,7 @@ pub(crate) fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> R
             // the source-shape classifier menu (`is_builtin_namespace`)
             // honoured for both AST shapes.
             if let Some((head, _)) = name.split_once('.')
-                && is_builtin_namespace(head)
+                && (is_builtin_namespace(head) || ctx.symbols.capability_operation(name).is_some())
             {
                 return ResolvedCallee::Builtin(name.clone());
             }
@@ -659,6 +659,9 @@ pub(crate) fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> R
             // `Pricing.Discount.percent` route here.
             if let Some(id) = ctx.resolve_fn_id(&dotted) {
                 return ResolvedCallee::Fn(id);
+            }
+            if ctx.symbols.capability_operation(&dotted).is_some() {
+                return ResolvedCallee::Builtin(dotted);
             }
             // Builtin namespace method (`Int.add`, `Console.print`).
             // Use the existing classifier knowledge.

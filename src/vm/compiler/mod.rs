@@ -232,6 +232,7 @@ fn compile_program_inner(
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
     compiler.sync_record_field_symbols(arena)?;
+    compiler.register_capability_symbols(symbols)?;
     // Oracle v1: `BranchPath.Root` is a nullary value constructor
     // (like `Option.None`). The VM symbol table needs it as a
     // constant pointing at a pre-allocated arena record; this
@@ -443,6 +444,37 @@ impl ProgramCompiler {
                 .map(|field_name| self.symbols.intern_name(field_name))
                 .collect();
             self.code.register_record_fields(type_id, &field_symbol_ids);
+        }
+        Ok(())
+    }
+
+    /// Register provider-bound operations as callable namespace members. They
+    /// deliberately have no function body; runtime dispatch remains fail-closed
+    /// unless an oracle/replay/provider supplies the boundary result.
+    fn register_capability_symbols(
+        &mut self,
+        source_symbols: &SymbolTable,
+    ) -> Result<(), CompileError> {
+        let mut operations: Vec<_> = source_symbols.capability_operations().collect();
+        operations.sort_by(|left, right| left.0.cmp(right.0));
+        for (canonical_name, info) in operations {
+            let symbol_id = self.symbols.intern_capability(canonical_name, info)?;
+            let (namespace, member) =
+                canonical_name
+                    .rsplit_once('.')
+                    .ok_or_else(|| CompileError {
+                        msg: format!(
+                            "capability operation '{}' must have a module-qualified name",
+                            canonical_name
+                        ),
+                    })?;
+            let namespace_id = self.symbols.intern_namespace_path(namespace)?;
+            let member_id = self.symbols.intern_name(member);
+            self.symbols.add_namespace_member_by_id(
+                namespace_id,
+                member_id,
+                VmSymbolTable::symbol_ref(symbol_id),
+            )?;
         }
         Ok(())
     }

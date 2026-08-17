@@ -20,8 +20,10 @@ use crate::checker::{
 };
 use crate::config::ProjectConfig;
 use crate::nan_value::{Arena, NanValueConvert};
-use crate::types::checker::effect_classification::{EffectDimension, classify, is_classified};
-use crate::types::checker::hostile_effects::{HostileProfile, hostile_profiles_for};
+use crate::types::checker::effect_classification::{
+    EffectDimension, classify, classify_with_registry, is_classified,
+};
+use crate::types::checker::hostile_effects::hostile_profiles_for;
 use crate::value::{Value, aver_repr, list_from_vec};
 use crate::verify_law::expand::{ExpandedCase, ExpansionMode, expand_law_cases};
 use crate::vm;
@@ -61,9 +63,22 @@ type HostileCaseTuple = (
     Option<Spanned<Expr>>,
 );
 
+#[allow(dead_code)]
 pub(crate) fn apply_hostile_expansion(
     block: &mut VerifyBlock,
     items: &[TopLevel],
+) -> Result<(), String> {
+    apply_hostile_expansion_with_registry(
+        block,
+        items,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+}
+
+pub(crate) fn apply_hostile_expansion_with_registry(
+    block: &mut VerifyBlock,
+    items: &[TopLevel],
+    capabilities: &crate::capability::CapabilityRegistry,
 ) -> Result<(), String> {
     let value_expanded: Vec<HostileCaseTuple> = match &block.kind {
         VerifyKind::Law(law) => expand_law_cases(law, ExpansionMode::Hostile)
@@ -90,7 +105,8 @@ pub(crate) fn apply_hostile_expansion(
             .collect(),
     };
 
-    let effect_combos = collect_effect_profile_combinations(block, items);
+    let effect_combos =
+        collect_effect_profile_combinations_with_registry(block, items, capabilities);
     let fn_uses_independent_product = fn_body_uses_independent_product(block, items);
 
     // Pre-flight cap check. The post-expansion length is
@@ -406,9 +422,22 @@ fn expr_contains_independent_product(expr: &Expr) -> bool {
 /// scenario with one chosen stub. Multiplying a fixture by the profile
 /// cartesian would change "this scenario" into "every scenario", which
 /// is not what the user wrote.
+#[allow(dead_code)]
 fn collect_effect_profile_combinations(
     block: &VerifyBlock,
     items: &[TopLevel],
+) -> Vec<Vec<(String, String)>> {
+    collect_effect_profile_combinations_with_registry(
+        block,
+        items,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+}
+
+fn collect_effect_profile_combinations_with_registry(
+    block: &VerifyBlock,
+    items: &[TopLevel],
+    capabilities: &crate::capability::CapabilityRegistry,
 ) -> Vec<Vec<(String, String)>> {
     let is_law = matches!(block.kind, VerifyKind::Law(_));
     if !is_law {
@@ -422,14 +451,27 @@ fn collect_effect_profile_combinations(
         return Vec::new();
     };
 
-    let mut per_method: Vec<(String, Vec<HostileProfile>)> = Vec::new();
+    let mut per_method: Vec<(String, Vec<String>)> = Vec::new();
     for eff in &fn_def.effects {
         let method = eff.node.as_str();
-        let Some(c) = classify(method) else { continue };
+        let Some(c) = classify_with_registry(capabilities, method) else {
+            continue;
+        };
         if matches!(c.dimension, EffectDimension::Output) {
             continue;
         }
-        let profiles = hostile_profiles_for(method);
+        let profiles: Vec<String> = if let Some(operation) = capabilities.operation(method) {
+            operation
+                .hostile
+                .iter()
+                .map(|profile| format!("{}.{}", operation.module, profile))
+                .collect()
+        } else {
+            hostile_profiles_for(method)
+                .into_iter()
+                .map(|profile| profile.name.to_string())
+                .collect()
+        };
         if profiles.is_empty() {
             continue;
         }
@@ -447,7 +489,7 @@ fn collect_effect_profile_combinations(
         for partial in &out {
             for profile in profiles {
                 let mut extended = partial.clone();
-                extended.push((method.clone(), profile.name.to_string()));
+                extended.push((method.clone(), profile.clone()));
                 next.push(extended);
             }
         }
@@ -652,7 +694,7 @@ pub fn run_verify_for_items_vm_with_mode(
 
     if mode == ExpansionMode::Hostile {
         for block in &mut verify_blocks {
-            apply_hostile_expansion(block, &items)?;
+            apply_hostile_expansion_with_registry(block, &items, &tc_result.capabilities)?;
         }
     }
 
@@ -688,7 +730,7 @@ pub fn run_verify_for_items_vm_with_mode(
 
     let mut results = Vec::new();
     for plan in &plans {
-        results.push(run_verify_vm(plan, &mut machine));
+        results.push(run_verify_vm(plan, &mut machine, &tc_result.capabilities));
     }
     Ok(results)
 }
@@ -759,7 +801,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 
     if mode == ExpansionMode::Hostile {
         for block in &mut verify_blocks {
-            apply_hostile_expansion(block, &items)?;
+            apply_hostile_expansion_with_registry(block, &items, &tc_result.capabilities)?;
         }
     }
 
@@ -794,7 +836,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 
     let mut results = Vec::new();
     for plan in &plans {
-        results.push(run_verify_vm(plan, &mut machine));
+        results.push(run_verify_vm(plan, &mut machine, &tc_result.capabilities));
     }
     Ok(results)
 }
@@ -867,11 +909,7 @@ pub(crate) fn guard_for_case(block: &VerifyBlock, case_idx: usize) -> Option<Spa
     // so by name it resolves to a real fn at VM compile time.
     for given in &law.givens {
         if let Some((_, profile)) = combo.iter().find(|(m, _)| m == &given.type_name) {
-            let stub_fn_name = format!(
-                "__hostile_{}_{}",
-                given.type_name.replace('.', "_"),
-                profile
-            );
+            let stub_fn_name = hostile_stub_name(&given.type_name, profile);
             bindings.insert(given.name.clone(), Spanned::bare(Expr::Ident(stub_fn_name)));
         }
     }
@@ -1407,10 +1445,19 @@ fn dotted_path_from_expr(expr: &Expr) -> Option<String> {
     }
 }
 
+fn hostile_stub_name(method: &str, profile: &str) -> String {
+    if profile.contains('.') {
+        profile.to_string()
+    } else {
+        format!("__hostile_{}_{}", method.replace('.', "_"), profile)
+    }
+}
+
 fn build_case_oracle_stubs(
     machine: &vm::VM,
     block: &VerifyBlock,
     case_idx: usize,
+    capabilities: &crate::capability::CapabilityRegistry,
 ) -> HashMap<String, u32> {
     let mut out = HashMap::new();
     let givens_source: &[VerifyGiven] = match &block.kind {
@@ -1422,7 +1469,8 @@ fn build_case_oracle_stubs(
         && let Some(case_bindings) = block.case_givens.get(case_idx)
     {
         for given in givens_source {
-            let Some(classification) = classify(&given.type_name) else {
+            let Some(classification) = classify_with_registry(capabilities, &given.type_name)
+            else {
                 continue;
             };
             if matches!(classification.dimension, EffectDimension::Output) {
@@ -1459,7 +1507,7 @@ fn build_case_oracle_stubs(
     // FnDef thanks to `inject_hostile_effect_stubs_for_blocks`.
     if let Some(combo) = block.case_hostile_profiles.get(case_idx) {
         for (method, profile) in combo {
-            let stub_fn_name = format!("__hostile_{}_{}", method.replace('.', "_"), profile);
+            let stub_fn_name = hostile_stub_name(method, profile);
             // `apply_hostile_expansion` only assigns profiles for the
             // classified non-Output effects of the fn under test, and
             // `inject_hostile_effect_stubs_for_blocks` injects a stub
@@ -1483,7 +1531,11 @@ fn build_case_oracle_stubs(
 
 // ─── Case runner ──────────────────────────────────────────────────────────────
 
-fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
+fn run_verify_vm(
+    plan: &VmVerifyPlan,
+    machine: &mut vm::VM,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> VerifyResult {
     let block = &plan.block;
     let mut passed = 0;
     let mut failed = 0;
@@ -1611,7 +1663,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         // monotonicity) see the same stub world the case body will
         // see. Without this, a guard like that would fire real-time
         // and either flap or fail the effect gate.
-        let oracle_stubs = build_case_oracle_stubs(machine, block, idx);
+        let oracle_stubs = build_case_oracle_stubs(machine, block, idx, capabilities);
         let has_stubs = !oracle_stubs.is_empty();
         if has_stubs {
             machine.install_oracle_stubs(oracle_stubs);
@@ -2313,6 +2365,11 @@ verify currentYear trace
             trace: false,
             cases_givens: vec![],
         };
-        let _ = build_case_oracle_stubs(&machine, &block, 0);
+        let _ = build_case_oracle_stubs(
+            &machine,
+            &block,
+            0,
+            &crate::capability::CapabilityRegistry::default(),
+        );
     }
 }

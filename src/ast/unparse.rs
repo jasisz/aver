@@ -145,6 +145,9 @@ fn write_module(out: &mut String, m: &Module) -> Result<()> {
     if let Some(kind) = &m.kind {
         writeln!(out, "{INDENT}kind = {kind}")?;
     }
+    if let Some(semantics) = &m.semantics {
+        writeln!(out, "{INDENT}semantics = {semantics}")?;
+    }
     if !m.depends.is_empty() {
         writeln!(out, "{INDENT}depends [{}]", m.depends.join(", "))?;
     }

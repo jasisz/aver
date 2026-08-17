@@ -127,6 +127,12 @@ fn parent_thin_builtin_is_allowed(
         chunk.code[ip + 2],
         chunk.code[ip + 3],
     ]);
+    // A provider call is never parent-thin: even a semantically pure
+    // capability may allocate or cross a host boundary. It is nevertheless
+    // a valid CALL_BUILTIN-shaped symbol, not a corrupt builtin id.
+    if code_store.symbols.resolve_capability(symbol_id).is_some() {
+        return Ok(false);
+    }
     let builtin = code_store
         .symbols
         .resolve_builtin(symbol_id)

@@ -495,11 +495,15 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                     ..Default::default()
                 },
             );
+            let (capability_items, capability_semantics) =
+                crate::codegen::capability_metadata(&m.items);
             crate::codegen::ModuleInfo {
                 prefix: m.dep_name.clone(),
                 depends,
                 type_defs,
                 fn_defs,
+                capability_items,
+                capability_semantics,
                 verify_laws: crate::codegen::collect_verify_laws(&m.items),
                 analysis: pipeline_result.analysis,
             }
@@ -634,11 +638,14 @@ fn load_module_recursive_for_compile(
             _ => None,
         })
         .collect();
+    let (capability_items, capability_semantics) = crate::codegen::capability_metadata(&items);
     result.push(crate::codegen::ModuleInfo {
         prefix: name.to_string(),
         depends,
         type_defs,
         fn_defs,
+        capability_items,
+        capability_semantics,
         verify_laws: crate::codegen::collect_verify_laws(&items),
         analysis: pipeline_result.analysis,
     });
