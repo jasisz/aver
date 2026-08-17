@@ -3,15 +3,29 @@ use crate::ast::{TypeDef, TypeVariant};
 use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust;
 
-pub fn generate_replay_runtime(
-    has_embedded_policy: bool,
-    has_runtime_policy: bool,
-    has_terminal_types: bool,
-    has_tcp_types: bool,
-    has_http_types: bool,
-    has_http_server_types: bool,
-    embedded_independence_cancel: bool,
-) -> String {
+#[derive(Default)]
+pub(super) struct ReplayRuntimeOptions {
+    pub has_embedded_policy: bool,
+    pub has_runtime_policy: bool,
+    pub has_terminal_types: bool,
+    pub has_tcp_types: bool,
+    pub has_http_types: bool,
+    pub has_http_server_types: bool,
+    pub embedded_independence_cancel: bool,
+    pub has_time_capability: bool,
+}
+
+pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
+    let ReplayRuntimeOptions {
+        has_embedded_policy,
+        has_runtime_policy,
+        has_terminal_types,
+        has_tcp_types,
+        has_http_types,
+        has_http_server_types,
+        embedded_independence_cancel,
+        has_time_capability,
+    } = options;
     let policy_check = if has_runtime_policy {
         RUNTIME_POLICY_CHECK_SNIPPET
     } else if has_embedded_policy {
@@ -20,9 +34,21 @@ pub fn generate_replay_runtime(
         "    #[derive(Clone, Debug, Default)]\n    struct RuntimePolicy {\n        independence_mode_cancel: bool,\n    }\n\n    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {\n        Ok(None)\n    }\n\n    fn check_policy(_effect_type: &str, _args: &[ReplayJson]) {}"
     };
 
+    let capability_provenance = if has_time_capability {
+        let time = crate::stdlib::standard_capability_registry();
+        let time = time.contract("Time").expect("standard Time contract");
+        format!(
+            "vec![CapabilityProvenance {{ capability: \"Time\".to_string(), contract_hash: {:?}.to_string(), model_hash: {:?}.to_string(), provider: \"aver.standard.Time/rust-static\".to_string(), fingerprint: aver_rt::provider::STANDARD_TIME_FINGERPRINT.to_string() }}]",
+            time.contract_hash, time.model_hash
+        )
+    } else {
+        "vec![]".to_string()
+    };
+
     let mut sections = vec![
         REPLAY_RUNTIME_TEMPLATE
             .replace("__POLICY_CHECK__", policy_check)
+            .replace("__CAPABILITY_PROVENANCE__", &capability_provenance)
             .replace(
                 "__EMBEDDED_INDEPENDENCE_MODE_CANCEL__",
                 if embedded_independence_cancel {
@@ -766,7 +792,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
 
 #[cfg(test)]
 mod policy_tests {
-    use super::RUNTIME_POLICY_CHECK_SNIPPET;
+    use super::{RUNTIME_POLICY_CHECK_SNIPPET, ReplayRuntimeOptions, generate_replay_runtime};
 
     #[test]
     fn runtime_policy_snippet_mirrors_project_root_semantics() {
@@ -780,11 +806,25 @@ mod policy_tests {
             RUNTIME_POLICY_CHECK_SNIPPET.contains("validate_env_key_pattern(name, index, key)")
         );
     }
+
+    #[test]
+    fn generated_replay_provenance_only_names_time_when_the_source_contract_is_present() {
+        let without_time = generate_replay_runtime(ReplayRuntimeOptions::default());
+        assert!(!without_time.contains("aver.standard.Time/rust-static"));
+
+        let with_time = generate_replay_runtime(ReplayRuntimeOptions {
+            has_time_capability: true,
+            ..ReplayRuntimeOptions::default()
+        });
+        assert!(with_time.contains("aver.standard.Time/rust-static"));
+        assert!(with_time.contains("contract_hash"));
+        assert!(with_time.contains("model_hash"));
+    }
 }
 
 const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::hash::Hash;
     use std::path::{Path, PathBuf};
 
@@ -816,6 +856,15 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         pub effect_occurrence: Option<u32>,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct CapabilityProvenance {
+        pub capability: String,
+        pub contract_hash: String,
+        pub model_hash: String,
+        pub provider: String,
+        pub fingerprint: String,
+    }
+
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     pub struct SessionRecording {
         pub schema_version: u32,
@@ -825,6 +874,8 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         pub module_root: String,
         pub entry_fn: String,
         pub input: ReplayJson,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub capabilities: Vec<CapabilityProvenance>,
         pub effects: Vec<EffectRecord>,
         pub output: RecordedOutcome,
     }
@@ -1522,6 +1573,7 @@ __POLICY_CHECK__
                     session.entry_fn, logical_entry_fn
                 );
             }
+            validate_capability_provenance(&session);
             return ScopeMode::Replay {
                 session,
                 position: 0,
@@ -1547,6 +1599,7 @@ __POLICY_CHECK__
                     module_root,
                     entry_fn: logical_entry_fn,
                     input,
+                    capabilities: standard_capability_provenance(),
                     effects: Vec::new(),
                     output: RecordedOutcome::Value {
                         value: ReplayJson::Null,
@@ -1556,6 +1609,44 @@ __POLICY_CHECK__
         }
 
         ScopeMode::Normal
+    }
+
+    fn standard_capability_provenance() -> Vec<CapabilityProvenance> {
+        __CAPABILITY_PROVENANCE__
+    }
+
+    fn validate_capability_provenance(session: &SessionRecording) {
+        let current = standard_capability_provenance();
+        let mut seen = BTreeSet::new();
+        for recorded in &session.capabilities {
+            if !seen.insert(recorded.capability.as_str()) {
+                panic!(
+                    "Replay contains duplicate capability provenance for '{}'",
+                    recorded.capability
+                );
+            }
+            let Some(expected) = current
+                .iter()
+                .find(|entry| entry.capability == recorded.capability)
+            else {
+                panic!(
+                    "Replay names capability '{}' which this Rust artifact does not provide",
+                    recorded.capability
+                );
+            };
+            if recorded.contract_hash != expected.contract_hash {
+                panic!(
+                    "Replay contract mismatch for '{}': recorded {}, current {}",
+                    recorded.capability, recorded.contract_hash, expected.contract_hash
+                );
+            }
+            if recorded.model_hash != expected.model_hash {
+                panic!(
+                    "Replay model mismatch for '{}': recorded {}, current {}",
+                    recorded.capability, recorded.model_hash, expected.model_hash
+                );
+            }
+        }
     }
 
     fn canonical_unit(value: ReplayJson) -> ReplayJson {

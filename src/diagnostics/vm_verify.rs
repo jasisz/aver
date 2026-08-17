@@ -1446,6 +1446,9 @@ fn dotted_path_from_expr(expr: &Expr) -> Option<String> {
 }
 
 fn hostile_stub_name(method: &str, profile: &str) -> String {
+    if let Some(label) = crate::stdlib::standard_hostile_profile_label(method, profile) {
+        return format!("__hostile_{}_{}", method.replace('.', "_"), label);
+    }
     if profile.contains('.') {
         profile.to_string()
     } else {

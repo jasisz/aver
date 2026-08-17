@@ -139,9 +139,6 @@ impl TypeChecker {
                 "HttpServer.listenWith".to_string(),
                 "Random.int".to_string(),
                 "Random.float".to_string(),
-                "Time.now".to_string(),
-                "Time.unixMs".to_string(),
-                "Time.sleep".to_string(),
             ]
         };
         let http_handler = || {
@@ -345,9 +342,6 @@ impl TypeChecker {
                 &["Random.int"],
             ),
             ("Random.float", &[], Type::Float, &["Random.float"]),
-            ("Time.now", &[], Type::Str, &["Time.now"]),
-            ("Time.unixMs", &[], Type::Int, &["Time.unixMs"]),
-            ("Time.sleep", &[Type::Int], Type::Unit, &["Time.sleep"]),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

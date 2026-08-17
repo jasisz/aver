@@ -377,6 +377,21 @@ fn compile_program_inner(
         }
     }
 
+    compiler.code.required_capability_operations =
+        std::mem::take(&mut compiler.required_capability_operations);
+    for operation in &compiler.code.required_capability_operations {
+        let module = operation
+            .rsplit_once('.')
+            .map(|(module, _)| module)
+            .unwrap_or(operation);
+        if let Some((contract_hash, model_hash)) = symbols.capability_contract_hashes(module) {
+            compiler.code.required_capability_contracts.insert(
+                module.to_string(),
+                (contract_hash.to_string(), model_hash.to_string()),
+            );
+        }
+    }
+
     Ok((compiler.code, compiler.globals))
 }
 
@@ -410,6 +425,7 @@ struct ProgramCompiler {
     global_names: HashMap<String, u16>,
     /// Source file path for the main program (propagated to FnChunks).
     source_file: String,
+    required_capability_operations: std::collections::BTreeSet<String>,
 }
 
 impl ProgramCompiler {
@@ -420,6 +436,7 @@ impl ProgramCompiler {
             globals: Vec::new(),
             global_names: HashMap::new(),
             source_file: String::new(),
+            required_capability_operations: std::collections::BTreeSet::new(),
         };
         // bootstrap into a fresh `VmSymbolTable` populates well-known
         // builtins / wrappers / namespaces; nothing it inserts can
@@ -907,6 +924,7 @@ impl ProgramCompiler {
             arena,
             symbols,
             Some(mir_program),
+            &mut self.required_capability_operations,
         );
         fc.source_file = self.source_file.clone();
         fc.note_line(rfd.line);
@@ -1014,6 +1032,7 @@ impl ProgramCompiler {
             arena,
             symbols,
             Some(&prog),
+            &mut self.required_capability_operations,
         );
 
         for (idx, low) in lowered.iter().enumerate() {
@@ -1132,6 +1151,7 @@ pub(super) struct FnCompiler<'a> {
     /// canonical name the VM builtin table keys on. `None` on the
     /// HIR-only path.
     pub(super) mir_program: Option<&'a crate::ir::mir::MirProgram>,
+    pub(super) required_capability_operations: &'a mut std::collections::BTreeSet<String>,
     code: Vec<u8>,
     constants: Vec<NanValue>,
     /// Byte offset of the last emitted opcode (for superinstruction fusion).
@@ -1168,6 +1188,7 @@ impl<'a> FnCompiler<'a> {
         arena: &'a mut Arena,
         symbol_table: &'a SymbolTable,
         mir_program: Option<&'a crate::ir::mir::MirProgram>,
+        required_capability_operations: &'a mut std::collections::BTreeSet<String>,
     ) -> Self {
         FnCompiler {
             name: name.to_string(),
@@ -1182,6 +1203,7 @@ impl<'a> FnCompiler<'a> {
             arena,
             symbol_table,
             mir_program,
+            required_capability_operations,
             code: Vec::new(),
             constants: Vec::new(),
             last_op_pos: usize::MAX,

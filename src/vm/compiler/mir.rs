@@ -199,6 +199,7 @@ pub(super) fn compile_mir_expr(
                 MirCallee::Builtin(id) => {
                     let name = fc.mir_program.map(|p| p.builtin_name(*id)).unwrap_or("");
                     if let Some(capability) = fc.symbol_table.capability_operation(name) {
+                        fc.required_capability_operations.insert(name.to_string());
                         for arg in args {
                             compile_mir_expr(fc, arg)?;
                         }
@@ -808,6 +809,9 @@ pub(super) fn compile_mir_expr(
                     }
                     MirCallee::Builtin(id) => {
                         let name = fc.mir_program.map(|p| p.builtin_name(*id)).unwrap_or("");
+                        if fc.symbol_table.capability_operation(name).is_some() {
+                            fc.required_capability_operations.insert(name.to_string());
+                        }
                         let symbol_id = fc.symbols.find(name).ok_or_else(|| {
                             MirVmUnsupported::InnerError(CompileError {
                                 msg: format!("MIR-VM: missing VM symbol for builtin `{name}`"),

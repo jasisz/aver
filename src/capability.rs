@@ -135,6 +135,8 @@ pub struct CapabilityRegistry {
     operations: BTreeMap<String, CapabilityOperation>,
     opaque_types: BTreeSet<String>,
     resource_tainted_types: BTreeSet<String>,
+    /// Capability-owned represented boundary types, keyed canonically.
+    boundary_types: BTreeMap<String, TypeDef>,
     /// `(operation identity, explicit profile references)` observed in verify
     /// laws across the entry module and dependency closure. Kept separately
     /// from the contract so proof reports can distinguish model-local hostile
@@ -174,6 +176,10 @@ impl CapabilityRegistry {
         self.resource_tainted_types.contains(canonical_name)
     }
 
+    pub fn boundary_type(&self, canonical_name: &str) -> Option<&TypeDef> {
+        self.boundary_types.get(canonical_name)
+    }
+
     pub fn profile_source_counts(&self, canonical_name: &str) -> (usize, usize) {
         let declared = self
             .operation(canonical_name)
@@ -205,6 +211,7 @@ impl CapabilityRegistry {
         self.opaque_types.extend(other.opaque_types);
         self.resource_tainted_types
             .extend(other.resource_tainted_types);
+        self.boundary_types.extend(other.boundary_types);
         self.profile_givens.extend(other.profile_givens);
     }
 
@@ -406,6 +413,11 @@ impl CapabilityRegistry {
             registry
                 .resource_tainted_types
                 .insert(format!("{scope}.{name}"));
+        }
+        for (name, type_def) in type_defs {
+            registry
+                .boundary_types
+                .insert(format!("{scope}.{name}"), type_def.clone());
         }
         for operation in operations {
             registry

@@ -104,6 +104,7 @@ const _: () = assert!(core::mem::size_of::<ArenaEntry>() == 48);
 
 #[cfg(feature = "runtime")]
 pub use convert::NanValueConvert;
+pub(crate) use convert::register_capability_resource_type;
 
 #[cfg(feature = "runtime")]
 mod convert;

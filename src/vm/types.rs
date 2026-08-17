@@ -108,6 +108,14 @@ pub struct CodeStore {
     pub(crate) symbols: VmSymbolTable,
     /// Per-record-type field slot lookup: (type_id, field_symbol_id) -> field_idx.
     pub(crate) record_field_slots: std::collections::HashMap<(u32, u32), u8>,
+    /// Capability operations that survived lowering into executable code.
+    /// Declarations alone do not enter this set, so unused contracts never
+    /// demand a provider.
+    pub(crate) required_capability_operations: std::collections::BTreeSet<String>,
+    /// Contract/model hashes captured from the checked source program for every
+    /// required capability module. Provider installation is checked against
+    /// these identities before bytecode executes.
+    pub(crate) required_capability_contracts: std::collections::BTreeMap<String, (String, String)>,
 }
 
 impl Default for CodeStore {
@@ -123,6 +131,8 @@ impl CodeStore {
             fn_index: std::collections::HashMap::new(),
             symbols: VmSymbolTable::default(),
             record_field_slots: std::collections::HashMap::new(),
+            required_capability_operations: std::collections::BTreeSet::new(),
+            required_capability_contracts: std::collections::BTreeMap::new(),
         }
     }
 

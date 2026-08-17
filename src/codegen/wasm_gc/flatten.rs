@@ -68,7 +68,15 @@ pub fn flatten_multimodule(
         return HashMap::new();
     }
 
-    let prefixes: HashSet<String> = dep_modules.iter().map(|m| m.prefix.clone()).collect();
+    // Capability operations are host/provider atoms, not dependency function
+    // bodies. Keep `Time.now` as a qualified capability identity so the
+    // backend binding table can lower it; rewriting it to a nonexistent
+    // flattened `Time_now` function would produce a trap stub.
+    let prefixes: HashSet<String> = dep_modules
+        .iter()
+        .filter(|module| module.capability_semantics.is_none())
+        .map(|module| module.prefix.clone())
+        .collect();
 
     // Bare-name → owning dep prefix(es) across all dep modules. A bare
     // name that appears in two+ dep entries is "colliding"; the wasm-gc

@@ -261,7 +261,7 @@ fn doubleSha(bytes: Bytes) -> Digest32
 
 **Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` is equivalent to `! [Disk.readText, Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.deleteDir, Disk.listDir, Disk.makeDir]`. You can still use granular declarations like `! [Disk.readText]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.
 
-The namespaces below are supplied by Aver's standard host runtime. A project can describe an additional host boundary as a [capability module](language.md#capability-modules): its operations participate in the same effect, Oracle, hostile-testing, proof-trust, and replay machinery. Capability declarations currently have no provider-binding ABI, so live execution and compiled targets fail closed when an operation is needed; recorded or suppressed replay remains available from an existing trace.
+The namespaces below are supplied by Aver's standard host runtime. A project can describe an additional host boundary as a [capability module](language.md#capability-modules): its operations participate in the same effect, Oracle, hostile-testing, proof-trust, provider, and replay machinery. Rust embedders can install typed in-process providers for the VM. Arbitrary capability bindings remain unavailable on generated Rust/wasm targets and fail closed there; `recorded` or `suppressed` replay can run without a live provider.
 
 ### `Args` namespace — use `! [Args.get]`
 
@@ -415,7 +415,7 @@ Source: `src/services/random.rs` (backed by `aver_rt::random`)
 
 ### `Time` namespace — use granular effects (`! [Time.now]`, `! [Time.unixMs]`, `! [Time.sleep]`)
 
-Source: `src/services/time.rs`
+Contract source: `stdlib/capabilities/time.av`. Native VM and generated Rust share the `aver-rt` Time adapter; wasm-gc uses the existing `aver.time_*` imports and wasip2 uses WASI clocks/poll. All four bindings are checked/accounted against the same contract and model hashes.
 
 | Function | Signature | Notes |
 |---|---|---|

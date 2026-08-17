@@ -162,11 +162,10 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1]
         )),
         "Args.get" => Some("aver_replay::current_cli_args()".to_string()),
-        "Time.now" => Some("aver_rt::time_now()".to_string()),
-        // Producer: wrap the host `i64` epoch-ms in `AverInt`.
-        "Time.unixMs" => Some("aver_rt::AverInt::from_i64(aver_rt::time_unix_ms())".to_string()),
+        "Time.now" => Some("aver_rt::provider::standard_time_now()".to_string()),
+        "Time.unixMs" => Some("aver_rt::provider::standard_time_unix_ms()".to_string()),
         "Time.sleep" => Some(format!(
-            "aver_rt::time_sleep(crate::to_host_i64(&{}, \"Time.sleep: ms must fit a 64-bit integer\"))",
+            "aver_rt::provider::standard_time_sleep(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
             args[0]
         )),
         "Random.int" => Some(format!(
@@ -531,11 +530,10 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
         "Args.get" => Some("aver_rt::cli_args().into_aver()".to_string()),
 
         // ---- Time ----
-        "Time.now" => Some("aver_rt::time_now()".to_string()),
-        // Producer: wrap the host `i64` epoch-ms in `AverInt`.
-        "Time.unixMs" => Some("aver_rt::AverInt::from_i64(aver_rt::time_unix_ms())".to_string()),
+        "Time.now" => Some("aver_rt::provider::standard_time_now()".to_string()),
+        "Time.unixMs" => Some("aver_rt::provider::standard_time_unix_ms()".to_string()),
         "Time.sleep" => Some(format!(
-            "aver_rt::time_sleep(crate::to_host_i64(&{}, \"Time.sleep: ms must fit a 64-bit integer\"))",
+            "aver_rt::provider::standard_time_sleep(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
             a(0)
         )),
 

@@ -216,7 +216,7 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     if ctx.emit_replay_runtime {
         files.push((
             "src/replay_support.rs".to_string(),
-            replay::generate_replay_runtime(
+            replay::generate_replay_runtime(replay::ReplayRuntimeOptions {
                 has_embedded_policy,
                 has_runtime_policy,
                 has_terminal_types,
@@ -224,7 +224,8 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 has_http_types,
                 has_http_server_types,
                 embedded_independence_cancel,
-            ),
+                has_time_capability: ctx.capabilities.contract("Time").is_some(),
+            }),
         ));
     }
 

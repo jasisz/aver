@@ -24,6 +24,10 @@ pub struct VM {
     code: CodeStore,
     pub arena: Arena,
     runtime: VmRuntime,
+    /// Deferred setup error for the effects-only legacy replay API. Keeping
+    /// its existing infallible signature is source-compatible, while the
+    /// first run still refuses custom capability events that lack provenance.
+    replay_setup_error: Option<String>,
     profile: Option<VmProfileState>,
     /// Last executing (fn_id, ip) — updated at top of dispatch loop for error reporting.
     error_fn_id: u32,
@@ -119,6 +123,10 @@ enum ReturnControl {
 
 impl VM {
     pub fn new(code: CodeStore, globals: Vec<NanValue>, mut arena: Arena) -> Self {
+        // This hidden type must exist before `build_parallel_base_context`
+        // clones the arena: child results preserve record type ids when they
+        // are deep-imported back into the parent.
+        crate::nan_value::register_capability_resource_type(&mut arena);
         // Two root sets the arena has no way to learn about on its own, both
         // fixed before the first instruction runs. A global and a chunk
         // constant hold their map for as long as the program does, so a map
@@ -140,6 +148,7 @@ impl VM {
             code,
             arena,
             runtime: VmRuntime::new(),
+            replay_setup_error: None,
             profile: None,
             error_fn_id: 0,
             error_ip: 0,
@@ -208,6 +217,19 @@ impl VM {
         self.runtime.set_runtime_policy(config);
     }
 
+    /// Install an explicitly constructed, contract-checked provider set.
+    /// Intended for embedded hosts and tests; there is no CLI/env override.
+    pub fn set_provider_registry(
+        &mut self,
+        providers: std::sync::Arc<crate::provider::ProviderRegistry>,
+    ) {
+        self.runtime.set_provider_registry(providers);
+    }
+
+    pub fn provider_registry(&self) -> std::sync::Arc<crate::provider::ProviderRegistry> {
+        self.runtime.provider_registry()
+    }
+
     /// Start recording effectful calls.
     pub fn start_recording(&mut self) {
         self.runtime.start_recording();
@@ -226,7 +248,40 @@ impl VM {
         effects: Vec<crate::replay::session::EffectRecord>,
         validate_args: bool,
     ) {
+        self.replay_setup_error = self
+            .runtime
+            .provider_registry()
+            .validate_replay_provenance_for_operations(
+                &[],
+                &effects,
+                self.code
+                    .required_capability_operations
+                    .iter()
+                    .map(String::as_str),
+            )
+            .err();
         self.runtime.start_replay(effects, validate_args);
+    }
+
+    pub fn start_replay_with_provenance(
+        &mut self,
+        effects: Vec<crate::replay::session::EffectRecord>,
+        provenance: &[crate::replay::CapabilityProvenance],
+        validate_args: bool,
+    ) -> Result<(), String> {
+        self.runtime
+            .provider_registry()
+            .validate_replay_provenance_for_operations(
+                provenance,
+                &effects,
+                self.code
+                    .required_capability_operations
+                    .iter()
+                    .map(String::as_str),
+            )?;
+        self.replay_setup_error = None;
+        self.runtime.start_replay(effects, validate_args);
+        Ok(())
     }
 
     pub fn set_allowed_effects(&mut self, effects: Vec<u32>) {
@@ -339,7 +394,73 @@ impl VM {
         self.runtime.ensure_replay_consumed()
     }
 
+    fn preflight_capability_providers(&self) -> Result<(), VmError> {
+        if let Some(error) = &self.replay_setup_error {
+            return Err(VmError::runtime(error.clone()));
+        }
+        let contracts = self.runtime.provider_registry();
+        let mut required = Vec::new();
+        for name in &self.code.required_capability_operations {
+            // Verify/oracle execution substitutes the declared capability
+            // model before provider dispatch. It deliberately has no live
+            // binding and is already pinned by the checked model hash in the
+            // proof/trust path.
+            if self.runtime.oracle_stub_for(name).is_some() {
+                continue;
+            }
+            let operation = contracts.contracts().operation(name).ok_or_else(|| {
+                VmError::runtime(format!(
+                    "capability contract missing at runtime for '{name}'"
+                ))
+            })?;
+            let module = operation.module.as_str();
+            let (expected_contract_hash, expected_model_hash) = self
+                .code
+                .required_capability_contracts
+                .get(module)
+                .ok_or_else(|| {
+                    VmError::runtime(format!(
+                        "error[capability-provider-mismatch]: compiled capability '{}' has no checked contract_hash",
+                        module
+                    ))
+                })?;
+            let supplied_contract = contracts.contracts().contract(module).ok_or_else(|| {
+                VmError::runtime(format!(
+                    "capability contract missing at runtime for '{name}'"
+                ))
+            })?;
+            if supplied_contract.contract_hash != *expected_contract_hash {
+                let provider = contracts
+                    .binding(module)
+                    .map(|binding| binding.provider_identity())
+                    .unwrap_or("<unbound>");
+                return Err(VmError::runtime(format!(
+                    "error[capability-provider-mismatch]: provider '{}' for '{}' supplied contract_hash {}, expected {}",
+                    provider, module, supplied_contract.contract_hash, expected_contract_hash
+                )));
+            }
+            if supplied_contract.model_hash != *expected_model_hash {
+                return Err(VmError::runtime(format!(
+                    "error[capability-provider-mismatch]: runtime registry for '{}' supplied model_hash {}, expected {}",
+                    module, supplied_contract.model_hash, expected_model_hash
+                )));
+            }
+            if self.runtime.trace_collecting && operation.is_effectful() {
+                continue;
+            }
+            if self.runtime.execution_mode() == super::runtime::VmExecutionMode::Replay
+                && operation.is_effectful()
+                && operation.replay != Some(crate::capability::ReplaySemantics::Reissued)
+            {
+                continue;
+            }
+            required.push(name.as_str());
+        }
+        contracts.preflight(required).map_err(VmError::runtime)
+    }
+
     pub fn run(&mut self) -> Result<NanValue, VmError> {
+        self.preflight_capability_providers()?;
         self.run_top_level()?;
         // If there is no `main` function, finish silently (as expected).
         let has_main = self
@@ -357,6 +478,7 @@ impl VM {
     }
 
     pub fn run_top_level(&mut self) -> Result<(), VmError> {
+        self.preflight_capability_providers()?;
         if let Some(top_id) = self.code.find("__top_level__") {
             let _ = self.call_function(top_id, &[])?;
         }
@@ -368,6 +490,7 @@ impl VM {
         name: &str,
         args: &[NanValue],
     ) -> Result<NanValue, VmError> {
+        self.preflight_capability_providers()?;
         let fn_id = self
             .code
             .symbols

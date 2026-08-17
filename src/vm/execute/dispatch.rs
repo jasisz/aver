@@ -1393,6 +1393,7 @@ impl VM {
                         let cli_args = self.runtime.cli_args().to_vec();
                         let silent_console = self.runtime.silent_console();
                         let runtime_policy = self.runtime.runtime_policy().cloned();
+                        let providers = self.runtime.provider_registry();
                         let independence_mode = self.runtime.independence_mode();
                         let cancel_mode =
                             independence_mode == crate::config::IndependenceMode::Cancel;
@@ -1439,11 +1440,13 @@ impl VM {
                                     let effects = allowed_effects.clone();
                                     let cli_args = cli_args.clone();
                                     let runtime_policy = runtime_policy.clone();
+                                    let providers = providers.clone();
                                     Box::new(move |flag: Arc<AtomicBool>| {
                                         let mut child_vm = VM::new(code, globals, arena);
                                         child_vm.set_allowed_effects(effects);
                                         child_vm.set_cli_args(cli_args);
                                         child_vm.set_silent_console(silent_console);
+                                        child_vm.set_provider_registry(providers);
                                         if let Some(config) = runtime_policy {
                                             child_vm.set_runtime_policy(config);
                                         }
@@ -1512,11 +1515,13 @@ impl VM {
                                     let effects = allowed_effects.clone();
                                     let cli_args = cli_args.clone();
                                     let runtime_policy = runtime_policy.clone();
+                                    let providers = providers.clone();
                                     Box::new(move || {
                                         let mut child_vm = VM::new(code, globals, arena);
                                         child_vm.set_allowed_effects(effects);
                                         child_vm.set_cli_args(cli_args);
                                         child_vm.set_silent_console(silent_console);
+                                        child_vm.set_provider_registry(providers);
                                         if let Some(config) = runtime_policy {
                                             child_vm.set_runtime_policy(config);
                                         }

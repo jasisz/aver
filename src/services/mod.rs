@@ -1,6 +1,6 @@
 /// Built-in platform services available to Aver programs.
 ///
-/// Each service is a named namespace (`Args`, `Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Time`, `Env`, `Random`, `Terminal`) that must
+/// Each service is a named namespace (`Args`, `Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Env`, `Random`, `Terminal`) that must
 /// be declared as an effect in order to be called:
 ///
 /// ```aver
@@ -43,7 +43,12 @@ pub fn all_effect_names() -> Vec<&'static str> {
     out.extend_from_slice(http_server::DECLARED_EFFECTS);
     out.extend_from_slice(random::DECLARED_EFFECTS);
     out.extend_from_slice(tcp::DECLARED_EFFECTS);
-    out.extend_from_slice(time::DECLARED_EFFECTS);
+    out.extend(
+        crate::stdlib::standard_capability_registry_ref()
+            .operations()
+            .filter(|operation| operation.is_effectful())
+            .map(|operation| operation.canonical_name.as_str()),
+    );
     out.extend_from_slice(&[
         "Terminal.enableRawMode",
         "Terminal.disableRawMode",
@@ -72,7 +77,6 @@ pub mod random;
 pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
-pub mod time;
 
 #[cfg(test)]
 mod tests {
@@ -150,5 +154,19 @@ mod tests {
             .filter(|n| n.starts_with("Terminal."))
             .collect();
         assert_eq!(listed, super::terminal::DECLARED_EFFECTS);
+    }
+
+    #[test]
+    fn standard_capability_effect_names_come_from_the_contract_registry() {
+        let listed: Vec<&str> = super::all_effect_names()
+            .into_iter()
+            .filter(|name| name.starts_with("Time."))
+            .collect();
+        let canonical: Vec<&str> = crate::stdlib::standard_capability_registry_ref()
+            .operations()
+            .filter(|operation| operation.module == "Time" && operation.is_effectful())
+            .map(|operation| operation.canonical_name.as_str())
+            .collect();
+        assert_eq!(listed, canonical);
     }
 }

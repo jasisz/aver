@@ -162,6 +162,24 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             }
             Ok(wrap_marker("$vector", JsonValue::Array(arr)))
         }
+        Value::CapabilityResource(handle) => {
+            let mut payload = BTreeMap::new();
+            payload.insert(
+                "type".to_string(),
+                JsonValue::String(handle.type_name().to_string()),
+            );
+            // `slot` is allocated by this recording's shared resource store.
+            // It is a trace-local correlation token, not a provider payload or
+            // a reusable runtime identity.
+            payload.insert(
+                "trace".to_string(),
+                JsonValue::String(handle.slot().to_string()),
+            );
+            Ok(wrap_marker(
+                "$capabilityResource",
+                JsonValue::Object(payload),
+            ))
+        }
         Value::Fn(_) | Value::Builtin(_) | Value::Namespace { .. } => Err(format!(
             "cannot serialize non-replay-safe value: {}",
             aver_repr(value)
@@ -250,8 +268,30 @@ fn decode_marker(marker: &str, payload: &JsonValue) -> Result<Value, String> {
         "$record" => decode_record(payload),
         "$variant" => decode_variant(payload),
         "$vector" => decode_vector(payload),
+        "$capabilityResource" => decode_capability_resource(payload),
         _ => Err(format!("unknown replay marker '{}'", marker)),
     }
+}
+
+fn decode_capability_resource(payload: &JsonValue) -> Result<Value, String> {
+    let obj = expect_object(payload, "$capabilityResource")?;
+    let type_name = parse_string(
+        get_required(obj, "type", "$capabilityResource")?,
+        "$capabilityResource.type",
+    )?
+    .to_string();
+    let trace = parse_string(
+        get_required(obj, "trace", "$capabilityResource")?,
+        "$capabilityResource.trace",
+    )?
+    .parse::<u64>()
+    .map_err(|_| "$capabilityResource.trace must be a u64 string".to_string())?;
+    // Binding id zero is reserved for replay-only tokens. Such a handle can
+    // correlate later recorded consumers but can never cross into a live
+    // provider binding.
+    Ok(Value::CapabilityResource(
+        crate::provider::CapabilityResourceHandle::from_runtime_parts(0, type_name, trace, 0),
+    ))
 }
 
 /// Iron — B3: `value_to_json` emits `wrap_marker("$vector", JsonValue::Array(...))`

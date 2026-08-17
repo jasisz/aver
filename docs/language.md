@@ -393,9 +393,30 @@ fn zero(path: BranchPath, call: Int) -> Int
 
 `given` and `aver verify --hostile` use the same stub signatures as built-in effects. A hostile profile belongs to the capability module, must be pure, and receives `BranchPath`, call index, then the operation arguments. If the operation mints an opaque resource, one unconstrained fresh token appears between the call index and the original arguments; it is not assumed distinct from any other token. Proof trust headers pin two separate SHA-256 identities: `contract_hash` covers the provider ABI and all reachable boundary types, while `model_hash` additionally covers Oracle/replay metadata and the transitive source closure of hostile profiles. Both identities hash canonical `u64be` length-framed descriptors, so field concatenation cannot collide. Provider choice and binding stay outside both hashes and outside the theorem.
 
-`opaque Token` inside a capability is representation-less: only a future provider can mint a value. It may occur at most once in an operation's success payload, directly or through transparent `Result`/`Option` wrappers; resource consumers must use recorded replay. Capability resources, including represented wrapper types that transitively contain one, deliberately have no equality or map-key semantics because provider token identity is not part of the contract.
+`opaque Token` inside a capability is representation-less: only its bound provider can mint a value. It may occur at most once in an operation's success payload, directly or through transparent `Result`/`Option` wrappers; resource consumers must use recorded replay. Runtime handles are tagged by binding instance and canonical type, survive independent-product child VMs, and never expose the provider payload. Capability resources, including represented wrapper types that transitively contain one, deliberately have no display identity, equality, serialization as a host payload, or map-key semantics.
 
-Provider bindings are not implemented in the current slice. Normal execution therefore fails exactly at an unbound operation. Rust, wasm-gc, and wasip2 compilation reject artifacts that reference one, naming the operation and `contract_hash`; replay can satisfy `recorded` and `suppressed` operations from a trace, while `reissued` still requires a live provider. This fail-closed boundary is also the intended seam for a later WASI Component Model/WIT adapter: component wiring supplies the operation, but does not change its Aver contract or proof model.
+An embedded Rust host installs a VM provider with `aver::provider::ProviderBinding` and `ProviderRegistry`. Registration pins the exact `contract_hash` and the complete operation set before execution. Providers implement `aver_rt::provider::CapabilityProvider` and exchange only the closed, transport-neutral `ProviderValue` tree—not VM `NanValue` or the general interpreter `Value`. A returned `ProviderValue::ResultErr` is ordinary Aver data; `ProviderFault` or a provider panic is a separate boundary failure. Duplicate, incomplete, extra-operation, hash-mismatched, and wrong-return-shape bindings fail closed with provider-specific diagnostics.
+
+```rust
+use std::sync::Arc;
+use aver::provider::{ProviderBinding, ProviderRegistry};
+
+// `capabilities` is the CapabilityRegistry returned by type checking.
+let clock = capabilities.contract("Clock").expect("Clock contract");
+let mut providers = ProviderRegistry::for_program(capabilities.clone())?;
+providers.bind(ProviderBinding::new(
+    "Clock",
+    clock.contract_hash.clone(),
+    ["Clock.now"],
+    Arc::new(SystemClock), // implements aver_rt::provider::CapabilityProvider
+))?;
+vm.set_provider_registry(Arc::new(providers));
+vm.run()?;
+```
+
+The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
+
+Custom bindings are VM-first in this phase. Rust, wasm-gc, and wasip2 artifact targets still reject arbitrary program-defined capabilities. Standard `Time` is the deliberate exception: its canonical source is shipped at `stdlib/capabilities/time.av`, and VM, generated Rust, wasm-gc, and wasip2 each declare an exact binding of that one contract. This is the adapter seam for later generated-Rust, IPC, or Component Model transports; changing transport does not change the Aver contract or proof model.
 
 ### Opaque types
 

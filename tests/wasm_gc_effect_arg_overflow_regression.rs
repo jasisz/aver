@@ -256,6 +256,7 @@ fn main() -> Unit
         module_root: String::new(),
         entry_fn: "main".to_string(),
         input: aver::replay::JsonValue::Null,
+        capabilities: Vec::new(),
         effects,
         output: aver::replay::RecordedOutcome::Value(recorded.output),
     };
@@ -320,6 +321,7 @@ fn main() -> Unit
         module_root: String::new(),
         entry_fn: "main".to_string(),
         input: aver::replay::JsonValue::Null,
+        capabilities: Vec::new(),
         effects,
         output: aver::replay::RecordedOutcome::Value(recorded.output),
     };
@@ -389,6 +391,7 @@ fn main() -> Unit
         module_root: String::new(),
         entry_fn: "main".to_string(),
         input: aver::replay::JsonValue::Null,
+        capabilities: Vec::new(),
         effects: recorded
             .recorded_effects
             .expect("record mode must return the effect trace"),

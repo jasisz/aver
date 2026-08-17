@@ -20,7 +20,7 @@ pub(super) fn dispatch(
                 results[0] = Val::AnyRef(r);
                 return Ok(true);
             }
-            let text = aver_rt::time_now();
+            let text = aver_rt::provider::standard_time_now();
             let r = lm_string_from_host(caller, &text)?;
             results[0] = Val::AnyRef(r);
             record_effect_if_recording(
@@ -42,11 +42,9 @@ pub(super) fn dispatch(
                 results[0] = Val::I64(ms);
                 return Ok(true);
             }
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
+            let ms = aver_rt::provider::standard_time_unix_ms()
+                .to_i64()
+                .expect("standard Time.unixMs always fits the wasm i64 transport");
             results[0] = Val::I64(ms);
             record_effect_if_recording(
                 caller,
@@ -64,7 +62,8 @@ pub(super) fn dispatch(
                 // means we skip the wall-clock side effect.
                 return Ok(true);
             }
-            std::thread::sleep(std::time::Duration::from_millis(ms.max(0) as u64));
+            aver_rt::provider::standard_time_sleep(&aver_rt::AverInt::from_i64(ms))
+                .map_err(|fault| wasmtime::Error::msg(fault.to_string()))?;
             record_effect_if_recording(
                 caller,
                 "Time.sleep",

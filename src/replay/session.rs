@@ -5,6 +5,16 @@ use serde_json::Value as SerdeJsonValue;
 
 use super::json::JsonValue;
 
+/// Sorted provider provenance pinned into a recording.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityProvenance {
+    pub capability: String,
+    pub contract_hash: String,
+    pub model_hash: String,
+    pub provider: String,
+    pub fingerprint: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordedOutcome {
     Value(JsonValue),
@@ -42,6 +52,7 @@ pub struct SessionRecording {
     pub module_root: String,
     pub entry_fn: String,
     pub input: JsonValue,
+    pub capabilities: Vec<CapabilityProvenance>,
     pub effects: Vec<EffectRecord>,
     pub output: RecordedOutcome,
 }
@@ -55,6 +66,8 @@ struct SerdeSessionRecording {
     module_root: String,
     entry_fn: String,
     input: SerdeJsonValue,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    capabilities: Vec<CapabilityProvenance>,
     effects: Vec<SerdeEffectRecord>,
     output: SerdeRecordedOutcome,
 }
@@ -124,6 +137,7 @@ fn session_recording_to_serde(recording: &SessionRecording) -> SerdeSessionRecor
         module_root: recording.module_root.clone(),
         entry_fn: recording.entry_fn.clone(),
         input: json_value_to_serde(&recording.input),
+        capabilities: recording.capabilities.clone(),
         effects: recording
             .effects
             .iter()
@@ -144,6 +158,7 @@ fn session_recording_from_serde(
         module_root: recording.module_root,
         entry_fn: recording.entry_fn,
         input: serde_to_json_value(recording.input)?,
+        capabilities: recording.capabilities,
         effects: recording
             .effects
             .into_iter()
@@ -275,6 +290,7 @@ mod tests {
             module_root: ".".to_string(),
             entry_fn: "main".to_string(),
             input: JsonValue::Null,
+            capabilities: Vec::new(),
             effects: vec![EffectRecord {
                 seq: 1,
                 effect_type: "Console.print".to_string(),
