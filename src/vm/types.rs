@@ -1,4 +1,4 @@
-use crate::nan_value::NanValue;
+use crate::nan_value::{LaneMark, NanValue};
 
 use super::symbol::VmSymbolTable;
 
@@ -36,7 +36,7 @@ pub struct FnChunk {
     pub line_table: Vec<(u16, u16)>,
 }
 
-/// Minimal call frame: 16 bytes of metadata, no closure/upvalue fields.
+/// Call-frame metadata, with no closure/upvalue fields.
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     /// Index into `CodeStore::functions`.
@@ -60,6 +60,14 @@ pub struct CallFrame {
     /// Handoff length at function entry; ordinary returns compact this suffix
     /// so helper results can survive into the caller without polluting stable.
     pub handoff_mark: u32,
+    /// Snapshot paired with `arena_mark` / `yard_base` / `handoff_mark` for the
+    /// frame's final return. Unlike `lane_mark`, this base is never rebased by
+    /// a reused tail-call frame.
+    pub lane_base: LaneMark,
+    /// Snapshot paired with the current tail iteration's marks. Collection
+    /// receipts at or below this watermark cannot contain allocations owned by
+    /// that iteration; destructive tail boundaries rebase it with `yard_mark`.
+    pub lane_mark: LaneMark,
     /// Whether this frame stored a young-region value into globals.
     pub globals_dirty: bool,
     /// Whether ordinary returns introduced caller-yard survivors that should

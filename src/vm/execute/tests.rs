@@ -225,6 +225,8 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         yard_base: 0,
         yard_mark: 0,
         handoff_mark: 0,
+        lane_base: 0,
+        lane_mark: 0,
         globals_dirty: false,
         yard_dirty: false,
         handoff_dirty: false,
@@ -531,12 +533,11 @@ fn copying_a_list_of_integers_neither_rebuilds_nor_reads_shared_bodies() {
     // 80,000 and 320,000 — so the two curves are never within reach of the
     // same bound.
     //
-    // Integers are immediates, so this is also the case that gets the whole fix:
-    // the body is skipped without being read, and the reads go to zero along
-    // with the copies. `copying_a_list_of_strings_still_reads_shared_bodies_quadratically`
-    // is the same program over the element type that does not get that, and it
-    // is the honest half of this pair — do not read this test as a statement
-    // about lists in general.
+    // Integers are immediates, so the body is skipped without even consulting a
+    // lane receipt and the reads stay at zero. The heap-backed sibling
+    // `copying_a_list_of_strings_reads_shared_bodies_linearly` may pay a bounded
+    // proof walk, then uses receipts to avoid reading the shrinking suffix at
+    // every later tail boundary.
     const BUDGET_PER_ELEMENT: u64 = 4;
     let small = list_copy_cost(400, "Int", "n");
     let large = list_copy_cost(800, "Int", "n");
@@ -556,22 +557,13 @@ fn copying_a_list_of_integers_neither_rebuilds_nor_reads_shared_bodies() {
     );
 }
 
-/// The control for the test above, and the limit of this fix.
+/// The heap-backed counterpart of the immediate-body test above.
 ///
-/// Same program, same shape, one difference: the elements carry a heap index, so
-/// the all-immediate escape does not apply and the collector has to read the
-/// body on every step to find out that almost nothing in it moved. The copies
-/// stay linear — the memory half of #886 is fixed for every element type — but
-/// the reads are still n^2/2, and the wall clock still follows the reads: over
-/// `aver run --release` this program takes 464 ms at n = 16,000, 7.1 s at
-/// 64,000 and 28.3 s at 128,000, a measured exponent of 2.0, while the
-/// `List<Int>` version above goes 34 / 49 / 71 ms.
-///
-/// So `list_elements_copied` alone reports linear growth on a program that is
-/// still quadratic. This test exists so that nobody reads the pair as "lists
-/// were made linear": they were not. Lists of *immediates* were. If a later
-/// change does make this one linear, this test is supposed to fail — retire it
-/// deliberately, do not relax the bound.
+/// The first collection still has to read a body whose strings carry arena
+/// indices. Once it has proved that body clean for the lane watermark, every
+/// tail view inherits that receipt and later frame boundaries must not re-read
+/// the remaining suffix. This is the time half left open by issue #886: before
+/// the lane receipt, the two runs read 80,600 and 321,200 elements respectively.
 ///
 /// Note that "String" is not the dividing line. A string of five UTF-8 bytes or
 /// fewer is NaN-boxed inline and behaves like the `Int` case; `item-1` is six,
@@ -579,35 +571,33 @@ fn copying_a_list_of_integers_neither_rebuilds_nor_reads_shared_bodies() {
 /// whether the element carries a heap index at all, which also puts records,
 /// variants, tuples, nested lists and big integers on this side of it.
 #[test]
-fn copying_a_list_of_strings_still_reads_shared_bodies_quadratically() {
-    const BUDGET_PER_ELEMENT: u64 = 4;
+fn copying_a_list_of_strings_reads_shared_bodies_linearly() {
+    const COPY_BUDGET_PER_ELEMENT: u64 = 4;
+    const SCAN_BUDGET_PER_ELEMENT: u64 = 16;
     let small = list_copy_cost(400, "String", "\"item-{n}\"");
     let large = list_copy_cost(800, "String", "\"item-{n}\"");
 
     assert!(
-        small.copied <= 400 * BUDGET_PER_ELEMENT && large.copied <= 800 * BUDGET_PER_ELEMENT,
+        small.copied <= 400 * COPY_BUDGET_PER_ELEMENT
+            && large.copied <= 800 * COPY_BUDGET_PER_ELEMENT,
         "list body copies are not linear in the input, which is the half of \
          #886 that is supposed to be fixed for every element type: \
          n=400 copied {} elements, n=800 copied {}",
         small.copied,
         large.copied,
     );
-    // Measured: 80,600 reads at n=400 and 321,200 at n=800, both n^2/2 to within
-    // the linear term. The bound is set at half of that so an ordinary shift in
-    // how often the collector runs cannot flip it, while still sitting some
-    // twenty-five times above anything a linear traversal could reach.
     assert!(
-        small.scanned >= 400 * 400 / 4 && large.scanned >= 800 * 800 / 4,
-        "reads over a heap-backed list body came in far under n^2/2 — if that is \
-         a real improvement, this test has served its purpose and should be \
-         retired deliberately rather than loosened: n=400 read {}, n=800 read {}",
+        small.scanned <= 400 * SCAN_BUDGET_PER_ELEMENT
+            && large.scanned <= 800 * SCAN_BUDGET_PER_ELEMENT,
+        "heap-backed list bodies exceeded the linear scan budget: n=400 read \
+         {}, n=800 read {}",
         small.scanned,
         large.scanned,
     );
     assert!(
-        large.scanned >= 3 * small.scanned,
-        "doubling the input less than tripled the reads, so this program is no \
-         longer the quadratic control this test is here to be: \
+        large.scanned <= 3 * small.scanned + SCAN_BUDGET_PER_ELEMENT,
+        "doubling the input more than tripled the reads, so the body walk is \
+         still super-linear: \
          n=400 read {}, n=800 read {}",
         small.scanned,
         large.scanned,
@@ -948,16 +938,15 @@ fn folding_over_a_map_of_immediates_never_reads_it() {
 
 #[test]
 fn folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step() {
-    // The control for the test above, and the limit of this fix — the same role
-    // `copying_a_list_of_strings_still_reads_shared_bodies_quadratically` plays
-    // for lists. Same fold, same sizes, one difference: the keys and values
-    // carry heap indices, so nothing can be proved about them without reading
-    // them and the walk stays n^2/2.
+    // The same-frame mutation control for the receipt optimization. Each fold
+    // step adds heap-backed keys and values after the frame watermark, so the
+    // new map's receipt is deliberately too new to skip that step's boundary.
+    // The walk therefore stays n^2/2 even though carrying an untouched map
+    // across later frames is bounded.
     //
-    // The bounds are the ones the retired issue-#905 tripwire held the
-    // heap-backed half to, unchanged. If a later change makes this program
-    // linear too, this test is supposed to fail — retire it deliberately rather
-    // than loosen it.
+    // The bounds are the retired issue-#905 tripwire's heap-backed control,
+    // unchanged. Making this linear requires a distinct proof for content
+    // created after frame entry; weakening the receipt comparison is unsound.
     //
     // "String" is not the dividing line: a string of five UTF-8 bytes or fewer
     // is NaN-boxed inline and belongs with the immediates. `"k{n}"` at these
@@ -1037,29 +1026,123 @@ fn map_held_live_scans(built: &str) -> u64 {
     vm.arena.map_entries_scanned()
 }
 
+/// Collector reads caused by carrying one untouched heap-backed map through
+/// `churn` allocating frames. The build is run separately with zero churn so
+/// its own map-insertion cost can be subtracted from the measurement.
+fn untouched_heap_map_churn_scans(entries: i64, churn: i64) -> u64 {
+    let src = format!(
+        "fn build(n: Int, acc: Map<String, String>) -> Map<String, String>\n    match n > 0\n        true -> build(n - 1, Map.set(acc, \"key-row-{{n}}\", \"value-row-{{n}}\"))\n        false -> acc\n\nfn churn(n: Int, m: Map<String, String>, acc: Int) -> Int\n    match n > 0\n        true -> churn(n - 1, m, acc + String.len(\"padding-value-{{n}}\") + Map.len(m))\n        false -> acc\n\nfn main() -> Int\n    m = build({entries}, {{}})\n    churn({churn}, m, 0)\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    vm.run().expect("untouched map churn program should run");
+    vm.arena.map_entries_scanned()
+}
+
 #[test]
-fn writing_a_heap_backed_value_into_a_map_of_immediates_puts_the_reads_back() {
-    // The flag is a claim about content, so every write has to re-establish it,
-    // and the direction that matters is losing it: a map that was all-immediate
-    // and then had something relocatable written into it must go back to being
-    // walked. Getting this wrong is silent — the collector would skip a table
-    // holding arena indices and leave them pointing at where the values used to
-    // be.
+fn an_untouched_heap_backed_map_is_not_rescanned_under_allocation_churn() {
+    const ENTRIES: i64 = 128;
+    const SCAN_BUDGET_PER_ENTRY: u64 = 8;
+
+    let build_only = untouched_heap_map_churn_scans(ENTRIES, 0);
+    let four_hundred = untouched_heap_map_churn_scans(ENTRIES, 400) - build_only;
+    let eight_hundred = untouched_heap_map_churn_scans(ENTRIES, 800) - build_only;
+
+    assert!(
+        four_hundred <= ENTRIES as u64 * SCAN_BUDGET_PER_ENTRY
+            && eight_hundred <= ENTRIES as u64 * SCAN_BUDGET_PER_ENTRY,
+        "an untouched {ENTRIES}-entry heap-backed map exceeded its bounded \
+         churn budget: 400 frames read {four_hundred}, 800 read {eight_hundred}",
+    );
+    assert!(
+        eight_hundred <= four_hundred + ENTRIES as u64 * 2,
+        "doubling unrelated allocation churn made the untouched map get read \
+         again: 400 frames read {four_hundred}, 800 read {eight_hundred}",
+    );
+}
+
+/// Promoting a dirty global advances the arena epoch, but it does not by itself
+/// discharge the reused frame's small young suffix. Rebasing the frame receipt
+/// mark on that unrelated epoch change lets a collection built in the next
+/// iteration look older than the still-retained value it contains.
+#[test]
+fn global_promotion_does_not_rebase_a_retained_small_young_suffix() {
+    let mut vm = VM::new(CodeStore::new(), Vec::new(), Arena::new());
+    let arena_mark = vm.arena.young_len() as u32;
+    let yard_mark = vm.arena.yard_len() as u32;
+    let handoff_mark = vm.arena.handoff_len() as u32;
+    let mut lane_mark = vm.arena.lane_mark();
+
+    // First TCO iteration: both entries remain in the <=4 young fast path.
+    // The global is copied to stable and bumps the epoch; `retained` stays in
+    // the frame's original young suffix and is carried as the next argument.
+    let retained = NanValue::new_string(vm.arena.push_string("retained-exact-value"));
+    let dirty_global = NanValue::new_string(vm.arena.push_string("dirty-global-value"));
+    vm.globals.push(dirty_global);
+    let mut first_args = [retained];
+    let first_suffix_discharged = vm.finalize_frame_locals_for_tail_call(
+        arena_mark,
+        yard_mark,
+        handoff_mark,
+        lane_mark,
+        true,
+        false,
+        false,
+        &mut first_args,
+    );
+    if first_suffix_discharged {
+        lane_mark = vm.arena.lane_mark();
+    }
+
+    // Second iteration: a Flat body captures the retained young reference.
+    // Two more entries push total young growth over the promotion threshold,
+    // so the next tail boundary must rewrite the body before truncating young.
+    let list = NanValue::new_list(vm.arena.push_list(vec![first_args[0]]));
+    vm.arena.push_string("promotion-trigger-one");
+    vm.arena.push_string("promotion-trigger-two");
+    let mut second_args = [list];
+    let second_suffix_discharged = vm.finalize_frame_locals_for_tail_call(
+        arena_mark,
+        yard_mark,
+        handoff_mark,
+        lane_mark,
+        false,
+        false,
+        false,
+        &mut second_args,
+    );
+
+    assert!(second_suffix_discharged);
+    assert!(!first_suffix_discharged);
+    assert_eq!(vm.arena.young_len(), arena_mark as usize);
+
+    // Reuse the retained value's former raw slot. A wrongly skipped Flat body
+    // now reads this exact replacement rather than failing out of bounds.
+    vm.arena.push_string("replacement-for-retained-slot");
+    let payload = vm
+        .arena
+        .list_get_value(second_args[0], 0)
+        .expect("carried list payload");
+    assert_eq!(
+        vm.arena.get_string_value(payload),
+        "retained-exact-value",
+        "an unrelated stable promotion rebased the lane mark over a live young suffix",
+    );
+}
+
+#[test]
+fn a_heap_backed_write_before_churn_gets_the_same_bounded_receipt() {
+    // A write that introduces a heap index must clear `all_immediate`, but it
+    // does not have to condemn an otherwise untouched map to a scan at every
+    // later frame. `push_map` proves the new table's contents and stamps it at
+    // the current lane watermark; once `churn` begins, that receipt predates
+    // every churn frame just like the one on a map built heap-backed from the
+    // start.
     //
-    // Which write path this exercises: `Map.set` on a call result is not a
-    // local, so the owned bit never fires and this goes through the SHARED
-    // path (`set_nv` -> `push_map`, flag proved by a full scan). The O(1)
-    // derivation in `set_nv_owned` — the one place the flag is derived rather
-    // than proved — is pinned by
+    // The within-frame control remains
     // `folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step`:
-    // its fold threads the accumulator as a bare param local (owned path,
-    // `copied == (0,0)` proves it fires) and writes heap-backed pairs, so
-    // dropping either `is_immediate()` conjunct there turns its
-    // `scanned > 0` red. Do not remove that control without replacing this pin.
-    //
-    // Same map, same held-live stretch, one extra `Map.set` between them. The
-    // value it writes is ten bytes, past the five that fit in a NaN box, so it
-    // is the one entry in the table that carries a heap index.
+    // there each insert is newer than the frame mark and must scan. Here the
+    // insert happens before the carried-map frame, so repeated reads are the
+    // bug D2 removes.
     let immediate = map_held_live_scans("build(400, {})");
     let degraded = map_held_live_scans("Map.set(build(400, {}), 0, \"heapbacked\")");
 
@@ -1067,13 +1150,10 @@ fn writing_a_heap_backed_value_into_a_map_of_immediates_puts_the_reads_back() {
         immediate, 0,
         "a map built only out of immediates was read {immediate} times",
     );
-    // At least the whole table once, so this cannot be satisfied by a single
-    // stray read of some other map the program happens to hold.
     assert!(
-        degraded >= 400,
-        "one heap-backed value was written into an all-immediate map and the \
-         collector went on skipping it, which leaves that value's arena index \
-         un-rewritten after it moves: read {degraded} entries",
+        degraded <= 400 * 8,
+        "one heap-backed value added before churn made the untouched map get \
+         rescanned across later frames: read {degraded} entries",
     );
 }
 
@@ -1233,6 +1313,8 @@ fn a_stable_vector_written_in_place_survives_the_depth_zero_return() {
         yard_base: 0,
         yard_mark: 0,
         handoff_mark: 0,
+        lane_base: 0,
+        lane_mark: 0,
         globals_dirty: false,
         yard_dirty: false,
         handoff_dirty: false,

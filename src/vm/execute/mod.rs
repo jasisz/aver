@@ -386,6 +386,7 @@ impl VM {
         let arena_mark = self.arena.young_len() as u32;
         let yard_mark = self.arena.yard_len() as u32;
         let handoff_mark = self.arena.handoff_len() as u32;
+        let lane_mark = self.arena.lane_mark();
         let bp = self.stack.len() as u32;
         for arg in args {
             self.stack.push(*arg);
@@ -402,6 +403,8 @@ impl VM {
             yard_base: yard_mark,
             yard_mark,
             handoff_mark,
+            lane_base: lane_mark,
+            lane_mark,
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,
