@@ -21,7 +21,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, LaneMark, NanValue};
 use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -362,8 +362,59 @@ fn nv_key_bits(v: NanValue, arena: &Arena) -> u64 {
     v.map_key_hash_deep(arena)
 }
 
+/// Transient proof supplied by the VM frame that owns the next destructive
+/// boundary. It is never stored in an arena entry: it only lets an owned map
+/// update retain the logical age of references that demonstrably predate that
+/// frame instead of stamping the age of the fresh container slot.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OwnedMapFrameProof {
+    pub arena_mark: u32,
+    pub yard_mark: u32,
+    pub handoff_mark: u32,
+    pub lane_mark: LaneMark,
+    pub inplace_write_escaped: bool,
+}
+
+impl OwnedMapFrameProof {
+    fn direct_value_predates_frame(self, value: NanValue, arena: &Arena) -> bool {
+        value.is_immediate()
+            || value.heap_index().is_some_and(|index| {
+                !arena.is_frame_local_index(
+                    index,
+                    self.arena_mark,
+                    self.yard_mark,
+                    self.handoff_mark,
+                )
+            })
+    }
+
+    fn receipt_for_owned_set(self, args: &[NanValue], arena: &Arena) -> Option<LaneMark> {
+        if args.len() != 3
+            || self.inplace_write_escaped
+            || !arena.lane_mark_is_valid(self.lane_mark)
+        {
+            return None;
+        }
+
+        let source = args[0];
+        let source_receipt = arena.map_scan_receipt_value(source);
+        let source_is_clean = source.is_empty_map_immediate()
+            || arena.map_all_immediate_value(source)
+            || (arena.lane_mark_is_valid(source_receipt) && source_receipt <= self.lane_mark);
+
+        (source_is_clean
+            && self.direct_value_predates_frame(args[1], arena)
+            && self.direct_value_predates_frame(args[2], arena))
+        .then_some(self.lane_mark)
+    }
+}
+
 /// Map.set with sole-owned first argument — takes instead of cloning.
-pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+pub(crate) fn set_nv_owned(
+    args: &[NanValue],
+    arena: &mut Arena,
+    frame_proof: Option<OwnedMapFrameProof>,
+) -> Result<NanValue, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(
             "Map.set() takes 3 arguments, got {}",
@@ -385,6 +436,7 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
     // the two arguments decide the new flag between them.
     let all_immediate =
         arena.map_all_immediate_value(source) && args[1].is_immediate() && args[2].is_immediate();
+    let inherited_receipt = frame_proof.and_then(|proof| proof.receipt_for_owned_set(args, arena));
     // The one pair `push_map`'s pass would have marked, marked here instead:
     // the new entry holds this key and this value, and if either is a map, this
     // entry is a holder of its slot from now on. Everything else in the table
@@ -394,7 +446,7 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
     let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
-    let scan_receipt = arena.lane_mark();
+    let scan_receipt = inherited_receipt.unwrap_or_else(|| arena.lane_mark());
     let map_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Map {
             map: new_map,
@@ -432,13 +484,13 @@ pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue,
     ensure_hashable_nv("Map.remove", args[1])?;
     let source = args[0];
     let all_immediate = arena.map_all_immediate_value(source);
+    let scan_receipt = arena.map_scan_receipt_value(source);
     let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.remove_owned(&key_hash);
     if new_map.is_empty() {
         return Ok(NanValue::EMPTY_MAP);
     }
-    let scan_receipt = arena.lane_mark();
     let map_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Map {
             map: new_map,
@@ -692,6 +744,151 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame_proof(arena: &Arena) -> OwnedMapFrameProof {
+        OwnedMapFrameProof {
+            arena_mark: arena.young_len() as u32,
+            yard_mark: arena.yard_len() as u32,
+            handoff_mark: arena.handoff_len() as u32,
+            lane_mark: arena.lane_mark(),
+            inplace_write_escaped: false,
+        }
+    }
+
+    fn heap_pair(arena: &mut Arena, suffix: &str) -> (NanValue, NanValue) {
+        (
+            NanValue::new_string_value(&format!("proof-key-{suffix}"), arena),
+            NanValue::new_string_value(&format!("proof-value-{suffix}"), arena),
+        )
+    }
+
+    #[test]
+    fn owned_set_inherits_the_exact_pre_frame_receipt() {
+        let mut arena = Arena::new();
+        let (key, value) = heap_pair(&mut arena, "old");
+        let proof = frame_proof(&arena);
+
+        arena.push_string("post-mark-padding");
+        let result = set_nv_owned(&[NanValue::EMPTY_MAP, key, value], &mut arena, Some(proof))
+            .expect("owned insert with pre-frame values should succeed");
+        assert_eq!(
+            arena.map_scan_receipt_value(result),
+            proof.lane_mark,
+            "the fresh container slot must retain the age of its references",
+        );
+    }
+
+    #[test]
+    fn owned_set_without_a_valid_frame_proof_stamps_current() {
+        let mut arena = Arena::new();
+        let (key, value) = heap_pair(&mut arena, "old");
+        let valid = frame_proof(&arena);
+
+        arena.push_string("post-mark-padding");
+        let current_before_none = arena.lane_mark();
+        let without_proof = set_nv_owned(&[NanValue::EMPTY_MAP, key, value], &mut arena, None)
+            .expect("owned insert without a frame should remain valid");
+        assert_eq!(
+            arena.map_scan_receipt_value(without_proof),
+            current_before_none,
+            "a missing caller frame must not manufacture pre-frame provenance",
+        );
+
+        arena.push_string("more-post-mark-padding");
+        let current_before_invalid = arena.lane_mark();
+        let invalid_proof = OwnedMapFrameProof {
+            lane_mark: 0,
+            ..valid
+        };
+        let with_invalid_proof = set_nv_owned(
+            &[NanValue::EMPTY_MAP, key, value],
+            &mut arena,
+            Some(invalid_proof),
+        )
+        .expect("owned insert with an invalid proof should remain valid");
+        assert_eq!(
+            arena.map_scan_receipt_value(with_invalid_proof),
+            current_before_invalid,
+            "the invalid lane sentinel must fail closed",
+        );
+    }
+
+    #[test]
+    fn owned_set_refuses_post_frame_values_and_invalid_source_receipts() {
+        let mut arena = Arena::new();
+        let proof = frame_proof(&arena);
+        let (fresh_key, fresh_value) = heap_pair(&mut arena, "fresh");
+        assert_eq!(
+            proof.receipt_for_owned_set(&[NanValue::EMPTY_MAP, fresh_key, fresh_value], &arena,),
+            None,
+            "a key and value allocated inside the frame cannot inherit its entry receipt",
+        );
+
+        let (old_key, old_value) = heap_pair(&mut arena, "invalid-source");
+        let mut table = crate::nan_value::PersistentMap::new();
+        table = table.insert_owned(old_key.map_key_hash(&arena), (old_key, old_value));
+        let source = NanValue::new_map(arena.push(aver_memory::ArenaEntry::Map {
+            map: table,
+            all_immediate: false,
+            scan_receipt: 0,
+            held_elsewhere: false,
+        }));
+        let proof = frame_proof(&arena);
+        assert_eq!(
+            proof.receipt_for_owned_set(
+                &[
+                    source,
+                    NanValue::new_int_inline(7),
+                    NanValue::new_int_inline(9)
+                ],
+                &arena,
+            ),
+            None,
+            "an invalid source receipt cannot be upgraded by an owned insert",
+        );
+    }
+
+    #[test]
+    fn inplace_vector_escape_blocks_owned_map_receipt_inheritance() {
+        let mut arena = Arena::new();
+        let old_item = NanValue::new_string_value("old-vector-item", &mut arena);
+        let vector = NanValue::new_vector(arena.push_vector(vec![old_item]));
+        let escaped = OwnedMapFrameProof {
+            inplace_write_escaped: true,
+            ..frame_proof(&arena)
+        };
+        arena.push_string("post-mark-padding");
+        assert_eq!(
+            escaped.receipt_for_owned_set(
+                &[NanValue::EMPTY_MAP, NanValue::new_int_inline(1), vector],
+                &arena,
+            ),
+            None,
+            "a nested mutable vector may contain a post-mark child after its in-place write",
+        );
+    }
+
+    #[test]
+    fn owned_remove_preserves_the_exact_source_receipt() {
+        let mut arena = Arena::new();
+        let (key_a, value_a) = heap_pair(&mut arena, "a");
+        let (key_b, value_b) = heap_pair(&mut arena, "b");
+        let mut table = crate::nan_value::PersistentMap::new();
+        table = table.insert_owned(key_a.map_key_hash(&arena), (key_a, value_a));
+        table = table.insert_owned(key_b.map_key_hash(&arena), (key_b, value_b));
+        let source = NanValue::new_map(arena.push_map(table));
+        let source_receipt = arena.map_scan_receipt_value(source);
+
+        arena.push_string("newer-than-source");
+        let result = remove_nv_owned(&[source, key_a], &mut arena)
+            .expect("owned removal should preserve the remaining entry");
+        assert_eq!(arena.map_ref_value(result).len(), 1);
+        assert_eq!(
+            arena.map_scan_receipt_value(result),
+            source_receipt,
+            "removing a reference must not make every retained reference look newer",
+        );
+    }
 
     /// Every float a program can put in a map key position, including the
     /// three the ordering used to get wrong.

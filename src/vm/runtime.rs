@@ -381,6 +381,7 @@ impl VmRuntime {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn invoke_builtin_with_owned(
         &mut self,
         symbols: &VmSymbolTable,
@@ -389,6 +390,7 @@ impl VmRuntime {
         args: &[NanValue],
         arena: &mut Arena,
         owned_mask: u8,
+        owned_map_frame_proof: Option<crate::types::map::OwnedMapFrameProof>,
     ) -> Result<NanValue, VmError> {
         // Fast path: if arg 0 is owned and this is a collection mutator,
         // call the owned variant that takes instead of cloning.
@@ -400,7 +402,11 @@ impl VmRuntime {
         // read.
         if owned_mask & 1 != 0 {
             let owned_result = match builtin {
-                VmBuiltin::MapSet => Some(crate::types::map::set_nv_owned(args, arena)),
+                VmBuiltin::MapSet => Some(crate::types::map::set_nv_owned(
+                    args,
+                    arena,
+                    owned_map_frame_proof,
+                )),
                 VmBuiltin::MapRemove => Some(crate::types::map::remove_nv_owned(args, arena)),
                 VmBuiltin::VectorSet => Some(crate::types::vector::vec_set_nv_owned(args, arena)),
                 _ => None,

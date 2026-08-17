@@ -20,7 +20,7 @@ impl ArenaTypes for TestTypes {
 type TestArena = Arena<TestTypes>;
 
 #[test]
-fn lane_receipts_require_the_same_epoch_and_pre_frame_watermark() {
+fn lane_receipts_must_not_be_newer_than_the_frame_serial() {
     let mut arena = TestArena::new();
     let early_receipt = arena.lane_mark();
     arena.note_lane_push();
@@ -42,43 +42,40 @@ fn an_old_receipt_cannot_reappear_after_index_reuse() {
     let original_frame = arena.lane_mark();
     arena.begin_lane_rewrite(original_frame);
     assert!(arena.lane_receipt_can_skip(original_frame));
-    let once_renewed = arena.renewed_lane_receipt();
+    let post_boundary_receipt = arena.renewed_lane_receipt();
     arena.finish_lane_rewrite();
 
-    // Model a second destructive boundary and subsequent allocation back
-    // to the same raw arena length. Epoch identity, not raw length, must
-    // keep the old receipt from becoming valid again.
-    arena.begin_lane_rewrite(INVALID_LANE_MARK);
-    arena.finish_lane_rewrite();
-    let current_frame = arena.lane_mark();
-    arena.begin_lane_rewrite(current_frame);
+    // Model another destructive boundary reusing the same raw slots while an
+    // older frame mark remains active. The boundary itself advances the serial,
+    // so a receipt created after that frame cannot become old through reuse.
+    arena.begin_lane_rewrite(original_frame);
 
-    assert!(!arena.lane_receipt_can_skip(once_renewed));
+    assert!(!arena.lane_receipt_can_skip(post_boundary_receipt));
 }
 
 #[test]
 fn lane_clock_overflow_is_sticky_and_fails_closed() {
-    let mut epoch_exhausted = TestArena::new();
-    epoch_exhausted.lane_epoch = u32::MAX;
-    let last_epoch_mark = epoch_exhausted.lane_mark();
-    epoch_exhausted.begin_lane_rewrite(last_epoch_mark);
+    let mut boundary_exhausted = TestArena::new();
+    boundary_exhausted.lane_serial = LaneMark::MAX;
+    let last_boundary_mark = boundary_exhausted.lane_mark();
+    boundary_exhausted.begin_lane_rewrite(last_boundary_mark);
 
-    assert!(epoch_exhausted.lane_clock_exhausted);
-    assert_eq!(epoch_exhausted.lane_mark(), INVALID_LANE_MARK);
-    assert!(!epoch_exhausted.lane_receipt_can_skip(last_epoch_mark));
+    assert!(boundary_exhausted.lane_clock_exhausted);
+    assert_eq!(boundary_exhausted.lane_mark(), INVALID_LANE_MARK);
+    assert!(!boundary_exhausted.lane_receipt_can_skip(last_boundary_mark));
 
-    let mut watermark_exhausted = TestArena::new();
-    watermark_exhausted.lane_watermark = u32::MAX;
-    let last_watermark_mark = watermark_exhausted.lane_mark();
-    watermark_exhausted.note_lane_push();
+    let mut push_exhausted = TestArena::new();
+    push_exhausted.lane_serial = LaneMark::MAX;
+    let last_push_mark = push_exhausted.lane_mark();
+    push_exhausted.note_lane_push();
 
-    assert!(watermark_exhausted.lane_clock_exhausted);
-    assert_eq!(watermark_exhausted.lane_mark(), INVALID_LANE_MARK);
-    assert!(!watermark_exhausted.lane_receipt_can_skip(last_watermark_mark));
+    assert!(push_exhausted.lane_clock_exhausted);
+    assert_eq!(push_exhausted.lane_mark(), INVALID_LANE_MARK);
+    assert!(!push_exhausted.lane_receipt_can_skip(last_push_mark));
 
-    watermark_exhausted.begin_lane_rewrite(last_watermark_mark);
-    assert!(watermark_exhausted.lane_clock_exhausted);
-    assert_eq!(watermark_exhausted.lane_mark(), INVALID_LANE_MARK);
+    push_exhausted.begin_lane_rewrite(last_push_mark);
+    assert!(push_exhausted.lane_clock_exhausted);
+    assert_eq!(push_exhausted.lane_mark(), INVALID_LANE_MARK);
 }
 
 #[test]
@@ -135,12 +132,5 @@ fn deep_import_writes_a_fresh_target_receipt() {
     };
 
     assert_ne!(*target_receipt, source_receipt);
-    assert_eq!(
-        TestArena::lane_mark_epoch(*target_receipt),
-        target.lane_epoch()
-    );
-    assert_eq!(
-        TestArena::lane_mark_watermark(*target_receipt) + 1,
-        TestArena::lane_mark_watermark(target.lane_mark())
-    );
+    assert_eq!(*target_receipt + 1, target.lane_mark());
 }

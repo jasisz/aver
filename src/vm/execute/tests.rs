@@ -1,6 +1,8 @@
 use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
-use crate::vm::opcode::{CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, VECTOR_SET_OR_KEEP};
+use crate::vm::opcode::{
+    CALL_LEAF, CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, VECTOR_SET_OR_KEEP, opcode_operand_width,
+};
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 use crate::{lexer::Lexer, parser::Parser, vm};
 
@@ -604,6 +606,45 @@ fn copying_a_list_of_strings_reads_shared_bodies_linearly() {
     );
 }
 
+/// List-body reads while an untouched caller-owned Flat tail survives an
+/// allocating nested call before each tail step of the caller.
+fn caller_held_flat_nested_scan_cost(n: i64) -> u64 {
+    let src = format!(
+        "record Parsed\n    value: String\n\nfn normalize(value: String) -> String\n    \"parsed-value-{{value}}\"\n\nfn parseOne(value: String) -> Parsed\n    Parsed(value = normalize(value))\n\nfn build(n: Int, acc: List<String>) -> List<String>\n    match n > 0\n        true -> build(n - 1, List.prepend(\"caller-item-{{n}}\", acc))\n        false -> List.reverse(acc)\n\nfn walk(xs: List<String>, acc: List<Parsed>) -> Int\n    match xs\n        [] -> List.len(acc)\n        [head, ..tail] -> walk(tail, List.prepend(parseOne(head), acc))\n\nfn main() -> Int\n    walk(build({n}, []), [])\n"
+    );
+    let mut vm = compile_vm(&src);
+    let allocate = &vm.code.functions[vm.code.fn_index["parseOne"] as usize];
+    assert!(
+        !allocate.parent_thin && !allocate.leaf,
+        "acceptance helper must own a real nested boundary: parent_thin={}, leaf={}",
+        allocate.parent_thin,
+        allocate.leaf,
+    );
+    let result = vm
+        .run()
+        .expect("nested caller-held list program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.list_elements_scanned()
+}
+
+#[test]
+fn a_caller_held_flat_is_not_rescanned_after_each_allocating_nested_call() {
+    const SCAN_BUDGET_PER_ELEMENT: u64 = 24;
+    let small = caller_held_flat_nested_scan_cost(200);
+    let large = caller_held_flat_nested_scan_cost(400);
+
+    assert!(
+        small <= 200 * SCAN_BUDGET_PER_ELEMENT && large <= 400 * SCAN_BUDGET_PER_ELEMENT,
+        "an untouched caller-held Flat exceeded its linear scan budget across \
+         nested allocating calls: n=200 read {small}, n=400 read {large}",
+    );
+    assert!(
+        large <= 3 * small + SCAN_BUDGET_PER_ELEMENT,
+        "doubling the caller-held Flat more than tripled its reads: n=200 read \
+         {small}, n=400 read {large}",
+    );
+}
+
 /// Like [`compile_vm`], plus the two annotation passes the ownership decision
 /// is made from: `last_use` marks the reads a slot never survives, and the
 /// alias pass flags the collection params a caller might still hold. Without
@@ -1010,6 +1051,97 @@ fn folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step() {
     );
 }
 
+/// Map-entry reads for an owned accumulator whose heap-backed keys and values
+/// were all allocated before the fold frame was entered.
+fn prebuilt_heap_pair_map_fold_scans(n: i64) -> u64 {
+    let src = format!(
+        "record Change\n    key: String\n    value: String\n\nfn changes(n: Int, acc: List<Change>) -> List<Change>\n    match n > 0\n        true -> changes(n - 1, List.prepend(Change(key = \"prebuilt-key-{{n}}\", value = \"prebuilt-value-{{n}}\"), acc))\n        false -> List.reverse(acc)\n\nfn applyNext(acc: Map<String, String>, change: Change) -> Map<String, String>\n    padding = String.len(\"apply-padding-{{change.key}}\")\n    match padding > 0\n        true -> Map.set(acc, change.key, change.value)\n        false -> acc\n\nfn fold(xs: List<Change>, acc: Map<String, String>) -> Map<String, String>\n    match xs\n        [] -> acc\n        [change, ..tail] -> fold(tail, applyNext(acc, change))\n\nfn main() -> Int\n    Map.len(fold(changes({n}, []), {{}}))\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("prebuilt heap-backed map fold should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.map_entries_scanned()
+}
+
+#[test]
+fn an_owned_map_fold_inherits_pre_frame_key_and_value_provenance() {
+    const SCAN_BUDGET_PER_ENTRY: u64 = 24;
+    let small = prebuilt_heap_pair_map_fold_scans(200);
+    let large = prebuilt_heap_pair_map_fold_scans(400);
+
+    assert!(
+        small <= 200 * SCAN_BUDGET_PER_ENTRY && large <= 400 * SCAN_BUDGET_PER_ENTRY,
+        "an owned map fed only pre-frame heap pairs exceeded its linear scan \
+         budget: n=200 read {small}, n=400 read {large}",
+    );
+    assert!(
+        large <= 3 * small + SCAN_BUDGET_PER_ENTRY,
+        "doubling the prebuilt-pair fold more than tripled its reads: n=200 \
+         read {small}, n=400 read {large}",
+    );
+}
+
+/// The CALL_LEAF spelling of the prebuilt-pair fold. `applyLeaf` has no locals
+/// beyond its arguments and calls no Aver function, so classification replaces
+/// its caller's `CALL_KNOWN` with the frameless opcode. The Map.set it executes
+/// must therefore borrow `fold`'s proof rather than look for a nonexistent
+/// helper frame.
+fn leaf_owned_map_fold_scans(n: i64) -> u64 {
+    let src = format!(
+        "record Change\n    key: String\n    value: String\n\nfn changes(n: Int, acc: List<Change>) -> List<Change>\n    match n > 0\n        true -> changes(n - 1, List.prepend(Change(key = \"leaf-key-{{n}}\", value = \"leaf-value-{{n}}\"), acc))\n        false -> List.reverse(acc)\n\nfn applyLeaf(acc: Map<String, String>, change: Change) -> Map<String, String>\n    Map.set(acc, change.key, change.value)\n\nfn fold(xs: List<Change>, acc: Map<String, String>) -> Map<String, String>\n    match xs\n        [] -> acc\n        [change, ..tail] -> fold(tail, applyLeaf(acc, change))\n\nfn main() -> String\n    built = fold(changes({n}, []), {{}})\n    Option.withDefault(Map.get(built, \"leaf-key-1\"), \"missing\")\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let helper_id = vm.code.fn_index["applyLeaf"];
+    let helper = &vm.code.functions[helper_id as usize];
+    assert!(helper.leaf, "applyLeaf must be classified as a leaf");
+    assert_eq!(
+        helper.local_count, helper.arity as u16,
+        "a leaf with extra locals is not upgraded to frameless CALL_LEAF",
+    );
+    let fold = &vm.code.functions[vm.code.fn_index["fold"] as usize];
+    let mut ip = 0;
+    let mut calls_helper_frameless = false;
+    while ip < fold.code.len() {
+        let op = fold.code[ip];
+        if op == CALL_LEAF && ip + 3 < fold.code.len() {
+            let target = u16::from_be_bytes([fold.code[ip + 1], fold.code[ip + 2]]) as u32;
+            calls_helper_frameless |= target == helper_id;
+        }
+        ip += 1;
+        ip += opcode_operand_width(op, &fold.code, ip);
+    }
+    assert!(
+        calls_helper_frameless,
+        "fold must invoke applyLeaf through the frameless CALL_LEAF opcode",
+    );
+
+    let result = vm.run().expect("CALL_LEAF owned map fold should run");
+    assert_eq!(
+        vm.arena.get_string_value(result),
+        "leaf-value-1",
+        "the frameless helper must preserve the exact heap-backed payload",
+    );
+    vm.arena.map_entries_scanned()
+}
+
+#[test]
+fn call_leaf_owned_map_set_uses_its_callers_frame_proof() {
+    const SCAN_BUDGET_PER_ENTRY: u64 = 24;
+    let small = leaf_owned_map_fold_scans(200);
+    let large = leaf_owned_map_fold_scans(400);
+
+    assert!(
+        small <= 200 * SCAN_BUDGET_PER_ENTRY && large <= 400 * SCAN_BUDGET_PER_ENTRY,
+        "frameless owned Map.set exceeded its linear scan budget: n=200 read \
+         {small}, n=400 read {large}",
+    );
+    assert!(
+        large <= 3 * small + SCAN_BUDGET_PER_ENTRY,
+        "doubling the CALL_LEAF fold more than tripled its reads: n=200 read \
+         {small}, n=400 read {large}",
+    );
+}
+
 /// Entries the collector reads while a map built by `built` is held live across
 /// a stretch of allocation that does not touch it.
 ///
@@ -1134,7 +1266,7 @@ fn a_heap_backed_write_before_churn_gets_the_same_bounded_receipt() {
     // A write that introduces a heap index must clear `all_immediate`, but it
     // does not have to condemn an otherwise untouched map to a scan at every
     // later frame. `push_map` proves the new table's contents and stamps it at
-    // the current lane watermark; once `churn` begins, that receipt predates
+    // the current lane serial; once `churn` begins, that receipt predates
     // every churn frame just like the one on a map built heap-backed from the
     // start.
     //
