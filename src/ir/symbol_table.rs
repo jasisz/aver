@@ -137,6 +137,11 @@ pub struct SymbolTable {
     /// Canonical provider-bound operation name → whether the call establishes
     /// an effect. These have no `FnId` because there is no Aver body.
     capability_operations: HashMap<String, CapabilityOperationInfo>,
+    /// Canonical capability module → checked contract/model identities. This is
+    /// populated from the same `CapabilityRegistry` as type checking and is
+    /// copied into VM bytecode so installing a registry from another program
+    /// cannot silently change a compiled operation's boundary or replay model.
+    capability_contract_hashes: HashMap<String, (String, String)>,
     /// Recognized literal-dischargeable smart constructors — see
     /// [`SymbolTable::literal_refinements`].
     literal_refinements: crate::analysis::literal_refinement::LiteralRefinementTable,
@@ -375,6 +380,13 @@ impl SymbolTable {
             }
         }
 
+        // Standard capabilities are implicitly visible language atoms even
+        // for embedders that build/resolve VM code without invoking the full
+        // typechecker or module loader. Their source contracts remain the
+        // authority; this only installs the already-validated identities into
+        // the symbolic view used by every backend.
+        table.merge_capability_registry(crate::stdlib::standard_capability_registry_ref());
+
         // Derived last: the recognizer resolves each refinement's
         // per-element predicate against the table that is being built,
         // so it needs every fn/type already indexed. It reads the table
@@ -399,6 +411,38 @@ impl SymbolTable {
         self.capability_operations
             .iter()
             .map(|(name, info)| (name.as_str(), *info))
+    }
+
+    pub fn capability_contract_hashes(&self, module: &str) -> Option<(&str, &str)> {
+        self.capability_contract_hashes
+            .get(module)
+            .map(|(contract, model)| (contract.as_str(), model.as_str()))
+    }
+
+    /// Add already-validated capability identities to a symbolic link view.
+    /// Used for compiler-shipped implicit standards whose operation atoms must
+    /// survive raw embedder builds and backend flattening alike.
+    pub(crate) fn merge_capability_registry(
+        &mut self,
+        registry: &crate::capability::CapabilityRegistry,
+    ) {
+        for contract in registry.contracts() {
+            self.capability_contract_hashes.insert(
+                contract.module.clone(),
+                (contract.contract_hash.clone(), contract.model_hash.clone()),
+            );
+        }
+        for operation in registry.operations() {
+            self.capability_operations.insert(
+                operation.canonical_name.clone(),
+                CapabilityOperationInfo {
+                    effectful: operation.is_effectful(),
+                    oracle: operation.oracle,
+                    replay: operation.replay,
+                    mints_resource: operation.minted_resource.is_some(),
+                },
+            );
+        }
     }
 
     /// Derived gate for the literal smart-constructor discharge.

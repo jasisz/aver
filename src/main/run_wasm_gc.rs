@@ -138,6 +138,8 @@ pub(super) fn try_run_wasm_gc(
     let module_root = resolve_module_root(module_root_override);
     let source = read_file(file)?;
     let mut items = parse_file(&source)?;
+    let dep_modules =
+        load_compile_deps(&items, &module_root, super::commands::DepLowering::PRISTINE);
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
@@ -146,6 +148,7 @@ pub(super) fn try_run_wasm_gc(
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            dep_modules: &dep_modules,
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
@@ -158,8 +161,6 @@ pub(super) fn try_run_wasm_gc(
     {
         return Err(shared::format_type_errors(&tc.errors));
     }
-    let dep_modules =
-        load_compile_deps(&items, &module_root, super::commands::DepLowering::PRISTINE);
     if let Some(error) = super::commands::capability_provider_rejection(
         &items,
         &dep_modules,
@@ -171,6 +172,21 @@ pub(super) fn try_run_wasm_gc(
         "wasm-gc",
     ) {
         return Err(error);
+    }
+    if let rt::EffectMode::Replay(recording, _) = &mode {
+        let capabilities = &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc run pipeline requested typechecking")
+            .capabilities;
+        let required =
+            super::commands::used_capability_operations(&items, &dep_modules, capabilities);
+        aver::provider::ProviderRegistry::for_program(capabilities.clone())?
+            .validate_replay_provenance_for_operations(
+                &recording.capabilities,
+                &recording.effects,
+                required.iter().map(String::as_str),
+            )?;
     }
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after multi-module flatten so the freshly
@@ -230,6 +246,14 @@ pub(super) fn try_run_wasm_gc(
             module_root: record_module_root,
             entry_fn: entry_fn_label,
             input,
+            capabilities: aver::provider::shipped_target_provenance(
+                "wasm-gc",
+                &result
+                    .typecheck
+                    .as_ref()
+                    .expect("wasm-gc run pipeline requested typechecking")
+                    .capabilities,
+            ),
             effects: effects.clone(),
             output: aver::replay::RecordedOutcome::Value(outcome.output.clone()),
         };

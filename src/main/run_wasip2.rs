@@ -86,6 +86,11 @@ fn build_component_bytes(
     let module_root = super::shared::resolve_module_root(module_root_override);
     let source = super::shared::read_file(file).map_err(|e| e.to_string())?;
     let mut items = super::shared::parse_file(&source).map_err(|e| e.to_string())?;
+    let dep_modules = super::commands::load_compile_deps(
+        &items,
+        &module_root,
+        super::commands::DepLowering::PRISTINE,
+    );
 
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
@@ -95,6 +100,7 @@ fn build_component_bytes(
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            dep_modules: &dep_modules,
             // Both traversal-lowering stages stay OFF for wasip2, and
             // that is a backend limit, not an oversight: this path
             // lowers through wasm-gc, which has no representation for
@@ -116,11 +122,6 @@ fn build_component_bytes(
         return Err(super::shared::format_type_errors(&tc.errors));
     }
 
-    let dep_modules = super::commands::load_compile_deps(
-        &items,
-        &module_root,
-        super::commands::DepLowering::PRISTINE,
-    );
     if let Some(error) = super::commands::capability_provider_rejection(
         &items,
         &dep_modules,

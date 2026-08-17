@@ -5,7 +5,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::services::http;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
-use crate::services::{args, console, disk, env, random, tcp, time};
+use crate::services::{args, console, disk, env, random, tcp};
 use crate::types::{
     bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
 };
@@ -90,10 +90,6 @@ vm_builtins! {
     TerminalHideCursor => "Terminal.hideCursor",
     TerminalShowCursor => "Terminal.showCursor",
     TerminalFlush => "Terminal.flush",
-
-    TimeNow => "Time.now",
-    TimeUnixMs => "Time.unixMs",
-    TimeSleep => "Time.sleep",
 
     BoolOr => "Bool.or",
     BoolAnd => "Bool.and",
@@ -316,8 +312,6 @@ impl VmBuiltin {
             Self::TerminalShowCursor => &["Terminal.showCursor"],
             Self::TerminalFlush => &["Terminal.flush"],
 
-            Self::TimeNow | Self::TimeUnixMs | Self::TimeSleep => time::effects(self.name()),
-
             _ => &[],
         }
     }
@@ -428,10 +422,6 @@ impl VmBuiltin {
                     ]),
                 };
                 Some(Ok(NanValue::from_value(&rec, arena)))
-            }
-
-            Self::TimeNow | Self::TimeUnixMs | Self::TimeSleep => {
-                time::call_nv(self.name(), args, arena)
             }
 
             Self::BoolOr | Self::BoolAnd | Self::BoolNot => bool::call_nv(self.name(), args, arena),
@@ -549,16 +539,23 @@ mod tests {
         // events.
         use crate::types::checker::effect_classification::classifications_for_proof_subset;
 
+        let standard_capabilities = crate::stdlib::standard_capability_registry();
         for classification in classifications_for_proof_subset() {
             let method = classification.method;
-            let builtin = VmBuiltin::ALL
-                .iter()
-                .find(|b| b.name() == method)
-                .unwrap_or_else(|| panic!("{method} is classified but the VM has no builtin"));
+            if let Some(builtin) = VmBuiltin::ALL.iter().find(|b| b.name() == method) {
+                assert!(
+                    builtin.effects().contains(&method),
+                    "{method} is classified for proof but `VmBuiltin::effects()` does not report \
+                     it, so calls to it never reach the verify trace"
+                );
+                continue;
+            }
+            let operation = standard_capabilities.operation(method).unwrap_or_else(|| {
+                panic!("{method} is classified but has neither a VM builtin nor a standard capability operation")
+            });
             assert!(
-                builtin.effects().contains(&method),
-                "{method} is classified for proof but `VmBuiltin::effects()` does not report \
-                 it, so calls to it never reach the verify trace"
+                operation.is_effectful(),
+                "{method} is classified for proof but its standard capability contract marks it pure"
             );
         }
     }

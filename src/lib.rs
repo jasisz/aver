@@ -31,6 +31,8 @@ pub mod parser;
 #[cfg(any(feature = "wasm-compile", feature = "playground"))]
 pub mod playground;
 #[cfg(feature = "runtime")]
+pub mod provider;
+#[cfg(feature = "runtime")]
 pub mod replay;
 pub mod resolver;
 #[cfg(feature = "runtime")]

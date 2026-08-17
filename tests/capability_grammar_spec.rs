@@ -1338,9 +1338,23 @@ verify succeeds law providerMayMint
 #[test]
 fn replay_obeys_recorded_suppressed_and_reissued_capability_semantics() {
     use aver::replay::{
-        EffectRecord, JsonValue, RecordedOutcome, SessionRecording,
+        CapabilityProvenance, EffectRecord, JsonValue, RecordedOutcome, SessionRecording,
         session_recording_to_string_pretty,
     };
+
+    fn provenance(module: &str, source: &str) -> Vec<CapabilityProvenance> {
+        let items = parse(source);
+        let (registry, errors) = aver::capability::CapabilityRegistry::from_module(module, &items);
+        assert!(errors.is_empty(), "capability fixture errors: {errors:?}");
+        let contract = registry.contract(module).expect("fixture contract");
+        vec![CapabilityProvenance {
+            capability: module.to_string(),
+            contract_hash: contract.contract_hash.clone(),
+            model_hash: contract.model_hash.clone(),
+            provider: "test.recording/provider".to_string(),
+            fingerprint: "fixture-v1".to_string(),
+        }]
+    }
 
     fn recording(
         dir: &std::path::Path,
@@ -1356,6 +1370,7 @@ fn replay_obeys_recorded_suppressed_and_reissued_capability_semantics() {
             module_root: dir.to_string_lossy().into_owned(),
             entry_fn: "main".to_string(),
             input: JsonValue::Null,
+            capabilities: Vec::new(),
             effects: vec![EffectRecord {
                 seq: 1,
                 effect_type: effect_type.to_string(),
@@ -1387,7 +1402,8 @@ fn main() -> Int
 ",
     )
     .expect("write main.av");
-    let session = recording(&dir, "Clock.now", JsonValue::Int(123), JsonValue::Int(123));
+    let mut session = recording(&dir, "Clock.now", JsonValue::Int(123), JsonValue::Int(123));
+    session.capabilities = provenance("Clock", VALID_EFFECT_CAPABILITY);
     fs::write(
         dir.join("recorded.json"),
         session_recording_to_string_pretty(&session),
@@ -1440,12 +1456,14 @@ fn main() -> Int
 ",
     )
     .expect("write main.av");
-    let session = recording(
+    let mut session = recording(
         &suppressed,
         "Log.flush",
         JsonValue::Null,
         JsonValue::Int(42),
     );
+    let suppressed_source = fs::read_to_string(suppressed.join("Log.av")).expect("read Log.av");
+    session.capabilities = provenance("Log", &suppressed_source);
     fs::write(
         suppressed.join("suppressed.json"),
         session_recording_to_string_pretty(&session),
@@ -1469,11 +1487,16 @@ fn main() -> Int
 
     fs::write(
         suppressed.join("Log.av"),
-        fs::read_to_string(suppressed.join("Log.av"))
-            .expect("read Log.av")
-            .replace("replay = suppressed", "replay = reissued"),
+        suppressed_source.replace("replay = suppressed", "replay = reissued"),
     )
     .expect("write reissued Log.av");
+    let reissued_source = fs::read_to_string(suppressed.join("Log.av")).expect("read Log.av");
+    session.capabilities = provenance("Log", &reissued_source);
+    fs::write(
+        suppressed.join("suppressed.json"),
+        session_recording_to_string_pretty(&session),
+    )
+    .expect("rewrite reissued recording provenance");
     let replay = Command::new(aver_bin())
         .current_dir(&suppressed)
         .args(["replay", "suppressed.json", "--test"])
@@ -1490,7 +1513,7 @@ fn main() -> Int
         "reissued output was silently treated as suppression:\n{report}"
     );
     assert!(
-        report.contains("capability provider missing for 'Log.flush'"),
+        report.contains("reissued replay event 'Log.flush' requires a live provider"),
         "reissued output must require a live provider:\n{report}"
     );
 }

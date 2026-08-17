@@ -946,7 +946,10 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // `--emit-ir-after=build_symbols`); the table itself lands in
     // `result.symbol_table` regardless.
     {
-        let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
+        let mut symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
+        if let Some(typecheck) = result.typecheck.as_ref() {
+            symbol_table.merge_capability_registry(&typecheck.capabilities);
+        }
         result
             .pass_diagnostics
             .push(diag_for_build_symbols(&symbol_table));
@@ -999,7 +1002,10 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             last_use(&mut proof_items);
             crate::ir::alias::annotate_program_alias_slots(&mut proof_items);
         }
-        let proof_symbol_table = crate::ir::SymbolTable::build(&proof_items, cfg.dep_modules);
+        let mut proof_symbol_table = crate::ir::SymbolTable::build(&proof_items, cfg.dep_modules);
+        if let Some(typecheck) = result.typecheck.as_ref() {
+            proof_symbol_table.merge_capability_registry(&typecheck.capabilities);
+        }
         let proof_resolved_items =
             crate::ir::hir::resolve_program(&proof_symbol_table, &proof_items);
 

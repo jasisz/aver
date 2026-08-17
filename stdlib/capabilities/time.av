@@ -1,0 +1,72 @@
+module Time
+    kind = capability
+    semantics = effectful
+    exposes [now, unixMs, sleep]
+
+operation now() -> String
+    ? "Reads the current UTC timestamp as an RFC3339-like string."
+    oracle = generative
+    replay = recorded
+    hostile = [nowNormal, nowFrozen, nowEpoch, nowBackward, nowFastForward]
+
+operation unixMs() -> Int
+    ? "Reads milliseconds elapsed since the Unix epoch."
+    oracle = generative
+    replay = recorded
+    hostile = [unixMsNormal, unixMsFrozenZero, unixMsSaturated, unixMsBackward, unixMsFastForward]
+
+operation sleep(ms: Int) -> Unit
+    ? "Blocks the current execution branch for non-negative milliseconds."
+    oracle = output
+    replay = suppressed
+
+fn nowNormal(path: BranchPath, call: Int) -> String
+    ? "Honest profile: the wall clock advances one second per call."
+    match call
+        0 -> "2026-01-01T00:00:00Z"
+        1 -> "2026-01-01T00:00:01Z"
+        2 -> "2026-01-01T00:00:02Z"
+        _ -> "2026-01-01T00:00:03Z"
+
+fn nowFrozen(path: BranchPath, call: Int) -> String
+    ? "Hostile profile: the wall clock never advances."
+    "2026-01-01T00:00:00Z"
+
+fn nowEpoch(path: BranchPath, call: Int) -> String
+    ? "Hostile profile: the wall clock reports the Unix epoch."
+    "1970-01-01T00:00:00Z"
+
+fn nowBackward(path: BranchPath, call: Int) -> String
+    ? "Hostile profile: the wall clock moves backwards."
+    match call
+        0 -> "2026-01-01T00:00:03Z"
+        1 -> "2026-01-01T00:00:02Z"
+        2 -> "2026-01-01T00:00:01Z"
+        _ -> "2026-01-01T00:00:00Z"
+
+fn nowFastForward(path: BranchPath, call: Int) -> String
+    ? "Hostile profile: the wall clock jumps far into the future."
+    match call
+        0 -> "2026-01-01T00:00:00Z"
+        1 -> "2027-06-15T12:00:00Z"
+        _ -> "2099-12-31T23:59:59Z"
+
+fn unixMsNormal(path: BranchPath, call: Int) -> Int
+    ? "Honest profile: epoch time advances one second per call."
+    1735689600000 + call * 1000
+
+fn unixMsFrozenZero(path: BranchPath, call: Int) -> Int
+    ? "Hostile profile: epoch time is frozen at zero."
+    0
+
+fn unixMsSaturated(path: BranchPath, call: Int) -> Int
+    ? "Hostile profile: epoch time is close to the i64 host boundary."
+    9223372036854000000
+
+fn unixMsBackward(path: BranchPath, call: Int) -> Int
+    ? "Hostile profile: epoch time moves backwards."
+    1735689600000 - call * 1000
+
+fn unixMsFastForward(path: BranchPath, call: Int) -> Int
+    ? "Hostile profile: epoch time jumps one year per call."
+    1735689600000 + call * 31536000000

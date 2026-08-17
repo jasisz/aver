@@ -10,6 +10,6 @@ pub use json::{
 };
 pub use runtime::{EffectReplayMode, EffectReplayState, ReplayFailure};
 pub use session::{
-    EffectRecord, RecordedOutcome, SessionRecording, parse_session_recording,
+    CapabilityProvenance, EffectRecord, RecordedOutcome, SessionRecording, parse_session_recording,
     session_recording_from_json, session_recording_to_json, session_recording_to_string_pretty,
 };

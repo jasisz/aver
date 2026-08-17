@@ -85,15 +85,19 @@ pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCh
 /// its own diagnostics during the actual check, so duplicating them at
 /// the symbol-table layer would only produce noise.
 fn build_symbols_for_items(items: &[TopLevel], base_dir: Option<&str>) -> SymbolTable {
-    let dep_modules = base_dir
+    let mut loaded = base_dir
         .and_then(|base| {
             TypeChecker::module_decl(items).and_then(|m| {
-                crate::source::load_module_tree(&m.depends, base)
-                    .ok()
-                    .map(|loaded| symbols_dep_modules_from_loaded(&loaded))
+                let mut roots = m.depends.clone();
+                roots.extend(crate::stdlib::implicit_stdlib_deps(items));
+                roots.sort();
+                roots.dedup();
+                crate::source::load_module_tree(&roots, base).ok()
             })
         })
         .unwrap_or_default();
+    crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
+    let dep_modules = symbols_dep_modules_from_loaded(&loaded);
     SymbolTable::build(items, &dep_modules)
 }
 
@@ -103,7 +107,9 @@ fn build_symbols_with_loaded(
     items: &[TopLevel],
     loaded: &[crate::source::LoadedModule],
 ) -> SymbolTable {
-    let dep_modules = symbols_dep_modules_from_loaded(loaded);
+    let mut loaded = loaded.to_vec();
+    crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
+    let dep_modules = symbols_dep_modules_from_loaded(&loaded);
     SymbolTable::build(items, &dep_modules)
 }
 
@@ -302,7 +308,8 @@ fn check_capability_effect_shorthand(
         .map(|contract| contract.module.as_str())
         .collect();
     let mut reject = |effect: &str, line: usize| {
-        if capability_modules.contains(effect) {
+        let is_standard = crate::stdlib::is_standard_capability(effect);
+        if capability_modules.contains(effect) && !is_standard {
             errors.push(TypeError {
                 message: format!(
                     "Capability effect shorthand '{}' is not allowed; name the exact operation so adding a provider atom cannot silently widen this boundary",

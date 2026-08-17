@@ -1244,7 +1244,16 @@ pub(super) fn cmd_run_vm(
     };
 
     // Execute
+    let providers =
+        match aver::provider::ProviderRegistry::for_program(tc_result.capabilities.clone()) {
+            Ok(providers) => std::sync::Arc::new(providers),
+            Err(error) => {
+                eprintln!("{}", error.red());
+                process::exit(1);
+            }
+        };
     let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_provider_registry(providers);
     if let Err(e) = apply_runtime_policy_to_vm(&mut machine, &module_root) {
         eprintln!("{}", e.red());
         process::exit(1);
@@ -1356,6 +1365,7 @@ pub(super) fn cmd_run_vm(
             module_root: record_module_root,
             entry_fn: entry_fn_label.clone(),
             input,
+            capabilities: machine.provider_registry().provenance(),
             effects: machine.recorded_effects().to_vec(),
             output,
         };
@@ -1820,6 +1830,27 @@ fn run_check_for_file(
             // default `aver check` summary so the line stays focused on
             // diagnostics.
             println!("  {}", summary_parts.join(" | "));
+            if aver::stdlib::implicit_stdlib_deps(items)
+                .iter()
+                .any(|dep| dep == "Time")
+            {
+                let registry = aver::stdlib::standard_capability_registry();
+                let contract = registry.contract("Time").expect("standard Time contract");
+                let provided = ["vm", "rust", "wasm-gc", "wasip2"]
+                    .into_iter()
+                    .filter_map(|target| {
+                        aver::provider::shipped_target_bindings(target, &registry)
+                            .into_iter()
+                            .next()
+                            .map(|binding| format!("{target}:{}", binding.provider))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "  capability Time: contract_hash={} | model_hash={} | provided=[{}]",
+                    contract.contract_hash, contract.model_hash, provided
+                );
+            }
         }
 
         if has_errors {
@@ -3928,11 +3959,11 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            dep_modules: &dep_modules,
             run_refinement_lower: true,
             run_interval_analyze: true,
             run_contract_lower: true,
             run_law_lower: true,
-            dep_modules: &dep_modules,
             ..Default::default()
         },
     );
@@ -5061,12 +5092,11 @@ fn certify_flag_rejection(certify: bool) -> Option<&'static str> {
     }
 }
 
-pub(super) fn capability_provider_rejection(
+pub(super) fn used_capability_operations(
     items: &[TopLevel],
     modules: &[ModuleInfo],
     registry: &aver::capability::CapabilityRegistry,
-    target: &str,
-) -> Option<String> {
+) -> BTreeSet<String> {
     fn scan_expr(
         expr: &Spanned<Expr>,
         registry: &aver::capability::CapabilityRegistry,
@@ -5110,6 +5140,26 @@ pub(super) fn capability_provider_rejection(
             scan_fn(fd, registry, &mut required);
         }
     }
+    required
+}
+
+pub(super) fn capability_provider_rejection(
+    items: &[TopLevel],
+    modules: &[ModuleInfo],
+    registry: &aver::capability::CapabilityRegistry,
+    target: &str,
+) -> Option<String> {
+    let mut required = used_capability_operations(items, modules, registry);
+    if required.is_empty() {
+        return None;
+    }
+
+    let shipped = aver::provider::shipped_target_bindings(target, registry);
+    required.retain(|name| {
+        !shipped
+            .iter()
+            .any(|binding| binding.operations.contains(name))
+    });
     if required.is_empty() {
         return None;
     }
@@ -5128,8 +5178,34 @@ pub(super) fn capability_provider_rejection(
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "error[capability-provider-missing]: target `{target}` has no provider bindings for: {operations}\n  capability contracts and proof models are available, but provider binding is outside the #864 vertical slice; compilation fails closed"
+        "error[capability-provider-missing]: target `{target}` has no provider bindings for: {operations}\n  arbitrary capability bindings are VM-only in phase 1; compilation fails closed"
     ))
+}
+
+fn print_capability_target_accounting(
+    items: &[TopLevel],
+    modules: &[ModuleInfo],
+    registry: &aver::capability::CapabilityRegistry,
+    target: &str,
+) {
+    let required = used_capability_operations(items, modules, registry);
+    for binding in aver::provider::shipped_target_bindings(target, registry) {
+        if !binding
+            .operations
+            .iter()
+            .any(|operation| required.contains(operation))
+        {
+            continue;
+        }
+        println!(
+            "  capability {}: provided by {}@{} | contract_hash={} | model_hash={}",
+            binding.capability,
+            binding.provider,
+            binding.fingerprint,
+            binding.contract_hash,
+            binding.model_hash
+        );
+    }
 }
 
 fn reject_missing_capability_providers(
@@ -5280,6 +5356,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
+    print_capability_target_accounting(&ctx.items, &ctx.modules, &ctx.capabilities, "rust");
 }
 
 /// `aver compile FILE --target=wasm-gc` — 0.16 probe backend.
@@ -5317,6 +5394,11 @@ fn cmd_compile_wasm_gc(
         }
     };
 
+    // Standard capabilities such as Time are source modules even though their
+    // calls remain implicitly visible. Preload them before symbol/MIR building
+    // so the target sees a real capability callee rather than an unresolved
+    // call that lowers to a trap.
+    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
     use aver::ir::{PipelineConfig, TypecheckMode};
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
@@ -5326,6 +5408,7 @@ fn cmd_compile_wasm_gc(
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            dep_modules: &dep_modules,
             // wasm-gc backend lowers `Expr::InterpolatedStr` natively
             // to a `String.concat` chain (immutable arrays match the
             // engine's GC primitives). The `__buf_*` pipeline that
@@ -5358,7 +5441,6 @@ fn cmd_compile_wasm_gc(
     // The wasm-gc compile path can lower neither the buffer nor the
     // cursor the fabricating passes introduce, and does not use the
     // self-host typecheck driver.
-    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
     reject_missing_capability_providers(
         &items,
         &dep_modules,
@@ -5421,6 +5503,16 @@ fn cmd_compile_wasm_gc(
         wasm_file.display().to_string().cyan(),
         final_size,
         opt_suffix
+    );
+    print_capability_target_accounting(
+        &items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc pipeline requested typechecking")
+            .capabilities,
+        "wasm-gc",
     );
     // `--certify`: emit the artifact-certificate `cert/` project next to
     // the module. Binds THESE bytes (pre-optimize; `--certify` conflicts
@@ -5596,6 +5688,7 @@ fn cmd_compile_wasip2(
             }
         };
 
+        let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
         use aver::ir::{PipelineConfig, TypecheckMode};
         let neutral_policy = aver::ir::NeutralAllocPolicy;
         let result = aver::ir::pipeline::run(
@@ -5605,6 +5698,7 @@ fn cmd_compile_wasip2(
                     base_dir: Some(&module_root),
                 }),
                 alloc_policy: Some(&neutral_policy),
+                dep_modules: &dep_modules,
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
@@ -5619,7 +5713,6 @@ fn cmd_compile_wasip2(
             process::exit(1);
         }
 
-        let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
         reject_missing_capability_providers(
             &items,
             &dep_modules,
@@ -5793,6 +5886,16 @@ fn cmd_compile_wasip2(
             "{}        {}",
             "•".cyan(),
             wit_file.display().to_string().cyan(),
+        );
+        print_capability_target_accounting(
+            &items,
+            &dep_modules,
+            &result
+                .typecheck
+                .as_ref()
+                .expect("wasip2 pipeline requested typechecking")
+                .capabilities,
+            "wasip2",
         );
     }
 }

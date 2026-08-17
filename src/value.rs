@@ -148,6 +148,9 @@ pub enum Value {
         type_name: String,
         fields: Rc<[(String, Value)]>,
     },
+    /// Provider-owned opaque resource. The handle metadata is runtime-only;
+    /// Aver source can neither construct nor inspect this variant.
+    CapabilityResource(crate::provider::CapabilityResourceHandle),
     /// Type namespace: `Shape` — provides `Shape.Circle`, `Shape.Rect`, etc.
     Namespace {
         name: String,
@@ -221,6 +224,7 @@ impl PartialEq for Value {
                     fields: f2,
                 },
             ) => t1 == t2 && f1 == f2,
+            (Value::CapabilityResource(a), Value::CapabilityResource(b)) => a == b,
             (
                 Value::Namespace {
                     name: n1,
@@ -332,6 +336,10 @@ impl std::hash::Hash for Value {
                 14u8.hash(state);
                 type_name.hash(state);
                 fields.hash(state);
+            }
+            Value::CapabilityResource(handle) => {
+                18u8.hash(state);
+                handle.hash(state);
             }
             Value::Namespace { name, members } => {
                 15u8.hash(state);
@@ -493,6 +501,7 @@ pub fn aver_repr(val: &Value) -> String {
                 .collect();
             format!("{}({})", type_name, parts.join(", "))
         }
+        Value::CapabilityResource(_) => "<capability-resource>".to_string(),
         Value::Namespace { name, .. } => format!("<type {}>", name),
     }
 }

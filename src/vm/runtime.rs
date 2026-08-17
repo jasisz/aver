@@ -29,6 +29,7 @@ pub(super) struct VmRuntime {
     silent_console: bool,
     replay_state: EffectReplayState,
     runtime_policy: Option<crate::config::ProjectConfig>,
+    providers: std::sync::Arc<crate::provider::ProviderRegistry>,
     /// Oracle v1: during `aver verify` for an effectful law, install a map
     /// from effect method name (`"Random.int"`) to the fn_id of a stub
     /// function supplied via `given name: Effect.method = [stub]`. When
@@ -109,6 +110,7 @@ impl VmRuntime {
             silent_console: false,
             replay_state: EffectReplayState::default(),
             runtime_policy: None,
+            providers: std::sync::Arc::new(crate::provider::ProviderRegistry::standard()),
             oracle_stubs: std::collections::HashMap::new(),
             oracle_counter: 0,
             collected_trace_events: Vec::new(),
@@ -118,6 +120,17 @@ impl VmRuntime {
             trace_caller_fn_id: 0,
             reverse_independent_eval: false,
         }
+    }
+
+    pub(super) fn set_provider_registry(
+        &mut self,
+        providers: std::sync::Arc<crate::provider::ProviderRegistry>,
+    ) {
+        self.providers = providers;
+    }
+
+    pub(super) fn provider_registry(&self) -> std::sync::Arc<crate::provider::ProviderRegistry> {
+        self.providers.clone()
     }
 
     pub(super) fn set_reverse_independent_eval(&mut self, value: bool) {
@@ -637,9 +650,6 @@ impl VmRuntime {
         self.ensure_effects_allowed(symbols, builtin_name, required_effects)
     }
 
-    /// Provider-bound calls have no host implementation in the first
-    /// capability slice. Replay may satisfy an already-recorded effect; every
-    /// other unstubbed path fails closed with a boundary-specific error.
     pub(super) fn invoke_capability(
         &mut self,
         symbols: &VmSymbolTable,
@@ -653,24 +663,59 @@ impl VmRuntime {
             .ok_or_else(|| VmError::runtime("unknown capability symbol"))?;
         self.ensure_effects_allowed(symbols, &info.name, &info.required_effects)?;
 
+        let operation = self
+            .providers
+            .contracts()
+            .operation(&info.name)
+            .cloned()
+            .ok_or_else(|| {
+                VmError::runtime(format!(
+                    "capability contract missing at runtime for '{}'",
+                    info.name
+                ))
+            })?;
+
         if capability.effectful && self.execution_mode() == VmExecutionMode::Replay {
             match capability.replay {
                 Some(crate::capability::ReplaySemantics::Recorded)
                 | Some(crate::capability::ReplaySemantics::Suppressed) => {
                     return self.replay_builtin(&info.name, args, arena);
                 }
-                // Reissued output must cross the provider boundary again. The
-                // first capability slice deliberately has no provider ABI, so
-                // replay stays fail-closed instead of pretending suppression
-                // is equivalent to re-emission.
-                Some(crate::capability::ReplaySemantics::Reissued) | None => {}
+                Some(crate::capability::ReplaySemantics::Reissued) => {
+                    let _recorded = self.replay_builtin(&info.name, args, arena)?;
+                }
+                None => {}
             }
         }
 
-        Err(VmError::runtime(format!(
-            "capability provider missing for '{}'",
-            info.name
-        )))
+        if capability.effectful
+            && self.execution_mode() == VmExecutionMode::Record
+            && self.replay_state.record_full()
+        {
+            return Err(VmError::runtime(format!(
+                "record cap reached (kept {} effects so far) while calling {} — program was still running. Recording below is a prefix.",
+                self.replay_state.recorded_effects().len(),
+                info.name
+            )));
+        }
+
+        let values: Vec<Value> = args.iter().map(|value| value.to_value(arena)).collect();
+        let result = self
+            .providers
+            .invoke(&operation, &values)
+            .map_err(VmError::runtime)?;
+        let result_nv = NanValue::from_value(&result, arena);
+
+        if capability.effectful && self.execution_mode() == VmExecutionMode::Record {
+            let args_json = values_to_json_lossy(&values);
+            let outcome = match value_to_json(&result) {
+                Ok(json) => RecordedOutcome::Value(json),
+                Err(error) => RecordedOutcome::RuntimeError(error),
+            };
+            self.replay_state
+                .record_effect(&info.name, args_json, outcome, "", 0);
+        }
+        Ok(result_nv)
     }
 
     fn check_runtime_policy(

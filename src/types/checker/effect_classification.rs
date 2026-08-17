@@ -98,7 +98,7 @@ fn err_str(ok: Type) -> Type {
 fn classifications() -> &'static [EffectClassification] {
     static REGISTRY: OnceLock<Vec<EffectClassification>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        vec![
+        let mut entries = vec![
             // Snapshot
             EffectClassification {
                 method: "Args.get",
@@ -132,18 +132,6 @@ fn classifications() -> &'static [EffectClassification] {
                 dimension: EffectDimension::Generative,
                 params: vec![],
                 ret: Type::Float,
-            },
-            EffectClassification {
-                method: "Time.now",
-                dimension: EffectDimension::Generative,
-                params: vec![],
-                ret: Type::Str,
-            },
-            EffectClassification {
-                method: "Time.unixMs",
-                dimension: EffectDimension::Generative,
-                params: vec![],
-                ret: Type::Int,
             },
             EffectClassification {
                 method: "Disk.readText",
@@ -352,12 +340,6 @@ fn classifications() -> &'static [EffectClassification] {
                 ret: Type::Unit,
             },
             EffectClassification {
-                method: "Time.sleep",
-                dimension: EffectDimension::Output,
-                params: vec![Type::Int],
-                ret: Type::Unit,
-            },
-            EffectClassification {
                 method: "Terminal.clear",
                 dimension: EffectDimension::Output,
                 params: vec![],
@@ -427,7 +409,29 @@ fn classifications() -> &'static [EffectClassification] {
                 params: vec![],
                 ret: Type::Unit,
             },
-        ]
+        ];
+        let standard = crate::stdlib::standard_capability_registry_ref();
+        for operation in standard
+            .operations()
+            .filter(|operation| operation.is_effectful())
+        {
+            let dimension = match operation.oracle.expect("effectful standard oracle") {
+                crate::capability::OracleDimension::Snapshot => EffectDimension::Snapshot,
+                crate::capability::OracleDimension::Generative => EffectDimension::Generative,
+                crate::capability::OracleDimension::Output => EffectDimension::Output,
+                crate::capability::OracleDimension::GenerativeOutput => {
+                    EffectDimension::GenerativeOutput
+                }
+            };
+            let method: &'static str = operation.canonical_name.as_str();
+            entries.push(EffectClassification {
+                method,
+                dimension,
+                params: operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                ret: operation.return_type.clone(),
+            });
+        }
+        entries
     })
 }
 
@@ -655,11 +659,12 @@ mod tests {
     }
 
     #[test]
-    fn every_classified_entry_matches_the_registered_builtin_signature() {
-        // This table and `builtins.rs` describe the same effects twice: the
-        // table for the proof pipeline, `builtins.rs` for the checker. Keeping
-        // them in agreement was a comment ("Keep this table synchronized with
-        // the real built-ins") and nothing else, and it had already failed —
+    fn every_classified_entry_matches_its_builtin_or_standard_contract_signature() {
+        // Legacy rows and `builtins.rs` describe the same effects twice: the
+        // table for the proof pipeline, `builtins.rs` for the checker. Standard
+        // capability rows instead come from their source contract. Cross-check
+        // each classification against whichever owner supplies its signature.
+        // The old comment-only synchronization had already failed —
         // `Console.print` carried a printable type variable here for twelve
         // minor releases after 0.16 made it take a plain string.
         //
@@ -672,23 +677,34 @@ mod tests {
         )
         .expect("the cross-check module must parse");
         let checked = super::super::run_type_check_full(&items, None);
+        let standard = crate::stdlib::standard_capability_registry();
 
         for c in classifications() {
-            let (params, ret, _) = checked.fn_sigs.get(c.method).unwrap_or_else(|| {
+            let builtin_shape = checked
+                .fn_sigs
+                .get(c.method)
+                .map(|(params, ret, _)| (params.clone(), ret.clone()));
+            let capability_shape = standard.operation(c.method).map(|operation| {
+                (
+                    operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                    operation.return_type.clone(),
+                )
+            });
+            let (params, ret) = builtin_shape.or(capability_shape).unwrap_or_else(|| {
                 panic!(
-                    "{} is classified for proof but no builtin of that name is registered",
+                    "{} is classified for proof but has neither a builtin nor a standard capability contract",
                     c.method
                 )
             });
             let expected_params: Vec<Type> = c.params.clone();
             assert_eq!(
-                params, &expected_params,
-                "{} takes different parameters here than builtins.rs registers",
+                params, expected_params,
+                "{} takes different parameters here than its runtime contract registers",
                 c.method
             );
             assert_eq!(
-                ret, &c.ret,
-                "{} returns something different here than builtins.rs registers",
+                ret, c.ret,
+                "{} returns something different here than its runtime contract registers",
                 c.method
             );
         }

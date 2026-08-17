@@ -171,6 +171,9 @@ jobs:
       - name: Unit tests (wasm + wasip2)
         run: cargo test -p aver-lang --lib --features wasm,wasip2
 
+      - name: Capability provider target canaries
+        run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec
+
       - name: Test wasm-gc suites
         # Run the wasm-gc integration surface explicitly under `wasm`, not
         # the whole package under `wasm,wasip2`. The old package-wide command

@@ -24,9 +24,18 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/crypto/digest32.av",
             source: include_str!("../stdlib/crypto/digest32.av"),
         }),
+        "Time" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/time.av",
+            source: include_str!("../stdlib/capabilities/time.av"),
+        }),
         _ => None,
     }
 }
+
+/// Provider-backed standard capability modules. Operation identities and
+/// semantics are derived from their embedded Aver contracts rather than
+/// repeated in a Rust table.
+pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Time"];
 
 /// Builtins whose signatures cross nominal record types owned by embedded
 /// standard modules, paired with the modules those types live in.
@@ -88,12 +97,168 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
             }
         }
     }
+    for operation in standard_capability_registry_ref().operations() {
+        if callees.contains(&operation.canonical_name)
+            && !deps.iter().any(|dep| dep == &operation.module)
+        {
+            deps.push(operation.module.clone());
+        }
+    }
     deps
+}
+
+/// Parse the standard capability contracts shipped by the compiler.
+///
+/// They are globally reserved and automatically visible; callers do not need
+/// a `depends [Time]` merely to use the built-in standard capability.
+pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
+    STANDARD_CAPABILITY_MODULES
+        .iter()
+        .map(|name| {
+            let module = find(name).expect("standard capability source must be embedded");
+            crate::source::LoadedModule {
+                dep_name: (*name).to_string(),
+                items: crate::source::parse_source(module.source)
+                    .expect("embedded standard capability must parse"),
+                path: std::path::PathBuf::from(module.virtual_path),
+            }
+        })
+        .collect()
+}
+
+/// Canonical registry for compiler-shipped capabilities. Construction is
+/// cheap enough for compiler setup and returns an owned clone, while the
+/// parsed/validated value itself is cached once per process.
+pub fn standard_capability_registry() -> crate::capability::CapabilityRegistry {
+    standard_capability_registry_ref().clone()
+}
+
+pub(crate) fn standard_capability_registry_ref() -> &'static crate::capability::CapabilityRegistry {
+    static REGISTRY: std::sync::OnceLock<crate::capability::CapabilityRegistry> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = crate::capability::CapabilityRegistry::default();
+        for module in standard_capability_modules() {
+            let (next, errors) =
+                crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
+            assert!(
+                errors.is_empty(),
+                "embedded standard capability '{}' is invalid: {errors:?}",
+                module.dep_name
+            );
+            registry.merge(next);
+        }
+        registry
+    })
+}
+
+pub(crate) fn is_standard_capability(module: &str) -> bool {
+    STANDARD_CAPABILITY_MODULES.contains(&module)
+}
+
+pub(crate) fn append_required_standard_capability_modules(
+    entry_items: &[crate::ast::TopLevel],
+    modules: &mut Vec<crate::source::LoadedModule>,
+) {
+    let mut required = std::collections::BTreeSet::new();
+    for items in
+        std::iter::once(entry_items).chain(modules.iter().map(|module| module.items.as_slice()))
+    {
+        for dependency in implicit_stdlib_deps(items) {
+            if is_standard_capability(&dependency) {
+                required.insert(dependency);
+            }
+        }
+    }
+    for name in required {
+        if modules.iter().any(|loaded| loaded.dep_name == name) {
+            continue;
+        }
+        let module = find(&name).expect("required standard capability must be embedded");
+        modules.push(crate::source::LoadedModule {
+            dep_name: name,
+            items: crate::source::parse_source(module.source)
+                .expect("embedded standard capability must parse"),
+            path: std::path::PathBuf::from(module.virtual_path),
+        });
+    }
+}
+
+/// Hostile profile source declared by a standard capability operation.
+/// Returns `(diagnostic_label, declared_fn_name, source_fn)` in declaration
+/// order so the legacy verify injector can consume the canonical module model
+/// without carrying a second hand-written Time table.
+pub(crate) fn standard_hostile_profiles(method: &str) -> Vec<(&'static str, String, String)> {
+    type ProfileSource = (&'static str, String, String);
+    static PROFILES: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<ProfileSource>>> =
+        std::sync::OnceLock::new();
+    PROFILES
+        .get_or_init(|| {
+            let mut profiles = std::collections::BTreeMap::new();
+            for operation in standard_capability_registry_ref().operations() {
+                let Some(module) = find(&operation.module) else {
+                    continue;
+                };
+                let entries = operation
+                    .hostile
+                    .iter()
+                    .filter_map(|profile| {
+                        let marker = format!("fn {profile}(");
+                        let start = module.source.find(&marker)?;
+                        let rest = &module.source[start..];
+                        let end = rest[1..]
+                            .find("\nfn ")
+                            .map(|offset| offset + 1)
+                            .unwrap_or(rest.len());
+                        let source = format!("{}\n", rest[..end].trim_end());
+                        let suffix = profile
+                            .strip_prefix(&operation.name)
+                            .unwrap_or(profile.as_str());
+                        let label: &'static str =
+                            Box::leak(camel_to_snake(suffix).into_boxed_str());
+                        Some((label, profile.clone(), source))
+                    })
+                    .collect();
+                profiles.insert(operation.canonical_name.clone(), entries);
+            }
+            profiles
+        })
+        .get(method)
+        .cloned()
+        .unwrap_or_default()
+}
+
+pub(crate) fn standard_hostile_profile_label(
+    method: &str,
+    qualified_profile: &str,
+) -> Option<&'static str> {
+    let module = method.split_once('.')?.0;
+    let bare = qualified_profile
+        .strip_prefix(module)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .unwrap_or(qualified_profile);
+    standard_hostile_profiles(method)
+        .into_iter()
+        .find_map(|(label, declared_name, _)| (declared_name == bare).then_some(label))
+}
+
+fn camel_to_snake(name: &str) -> String {
+    let mut out = String::new();
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() && index > 0 {
+            out.push('_');
+        }
+        out.extend(ch.to_lowercase());
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::implicit_stdlib_deps;
+    use super::{
+        find, implicit_stdlib_deps, standard_capability_registry, standard_hostile_profile_label,
+        standard_hostile_profiles,
+    };
 
     fn parse(source: &str) -> Vec<crate::ast::TopLevel> {
         crate::source::parse_source(source).expect("parse test module")
@@ -146,5 +311,46 @@ mod tests {
             "module Relay\n    intent = \"pipe frames without naming Bytes\"\n    depends []\n    effects [Tcp]\n\nfn relay(conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"Echo one 4-byte frame back to the peer.\"\n    ! [Tcp.readBytes, Tcp.writeBytes]\n    frame = Tcp.readBytes(conn, 4)?\n    Tcp.writeBytes(conn, frame)\n",
         );
         assert_eq!(implicit_stdlib_deps(&items), vec!["Bytes"]);
+    }
+
+    #[test]
+    fn time_calls_implicitly_load_the_reserved_standard_contract() {
+        let items = parse(
+            "module ClockUser\n    effects [Time.now]\n\nfn stamp() -> String\n    ! [Time.now]\n    Time.now()\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Time"]);
+        let embedded = find("Time").expect("reserved Time module");
+        assert_eq!(embedded.virtual_path, "<aver-stdlib>/capabilities/time.av");
+    }
+
+    #[test]
+    fn standard_time_contract_and_model_hashes_are_stable() {
+        let registry = standard_capability_registry();
+        let contract = registry.contract("Time").expect("Time contract");
+        assert_eq!(
+            contract.contract_hash,
+            "sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49"
+        );
+        assert_eq!(
+            contract.model_hash,
+            "sha256:3b9239af56c4e89e527a53ce6fe4a470a42f84b203b10078c8633f39a6cec5f6"
+        );
+        assert_eq!(
+            standard_hostile_profiles("Time.unixMs")
+                .into_iter()
+                .map(|(label, _, _)| label)
+                .collect::<Vec<_>>(),
+            vec![
+                "normal",
+                "frozen_zero",
+                "saturated",
+                "backward",
+                "fast_forward"
+            ]
+        );
+        assert_eq!(
+            standard_hostile_profile_label("Time.unixMs", "Time.unixMsNormal"),
+            Some("normal")
+        );
     }
 }

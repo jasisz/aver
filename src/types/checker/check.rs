@@ -16,13 +16,18 @@ impl TypeChecker {
         if let Some(base) = base_dir
             && let Some(module) = Self::module_decl(items)
         {
-            match crate::source::load_module_tree(&module.depends, base) {
+            let mut roots = module.depends.clone();
+            roots.extend(crate::stdlib::implicit_stdlib_deps(items));
+            roots.sort();
+            roots.dedup();
+            match crate::source::load_module_tree(&roots, base) {
                 Ok(modules) => {
                     loaded_modules = modules;
                 }
                 Err(e) => self.error(e),
             }
         }
+        crate::stdlib::append_required_standard_capability_modules(items, &mut loaded_modules);
 
         self.configure_capabilities(items, &loaded_modules);
         if !loaded_modules.is_empty() {
@@ -53,10 +58,12 @@ impl TypeChecker {
         // `build_signatures`'s resolution sees imported types
         // (e.g. `Tile` resolves to `Types.Tile` when `Types` is in
         // `depends`).
-        self.configure_capabilities(items, loaded);
-        self.integrate_loaded_modules(loaded);
+        let mut loaded = loaded.to_vec();
+        crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
+        self.configure_capabilities(items, &loaded);
+        self.integrate_loaded_modules(&loaded);
         self.build_signatures(items);
-        self.check_loaded_module_bodies(loaded);
+        self.check_loaded_module_bodies(&loaded);
         self.check_body(items);
     }
 

@@ -181,9 +181,16 @@ pub(super) fn run_vm_replay(
         pipeline_result.analysis.as_ref(),
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
+    let providers = aver::provider::ProviderRegistry::for_program(tc_result.capabilities.clone())
+        .map(std::sync::Arc::new)?;
     let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_provider_registry(providers);
     apply_runtime_policy_to_vm(&mut machine, replay_module_root)?;
-    machine.start_replay(recording.effects.clone(), check_args);
+    machine.start_replay_with_provenance(
+        recording.effects.clone(),
+        &recording.capabilities,
+        check_args,
+    )?;
 
     let progress_msg = |machine: &vm::VM, e: &dyn std::fmt::Display| -> String {
         let (consumed, total) = machine.replay_progress();

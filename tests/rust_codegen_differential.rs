@@ -4573,21 +4573,13 @@ fn mir_forced_time_random_record_replay_roundtrips() {
     let name = "mir_time_random_probe";
 
     let result = (|| -> Result<(), String> {
-        // (0) PROVE the MIR path is exercised: rollDie + stamp must
-        // lower to MIR.
-        let lowered = mir_lowered_count(&src, None, &["--with-replay"])?;
-        if lowered == 0 {
-            return Err(
-                "no fn lowered to MIR — the Time / Random replay reroute is not \
-                 being exercised"
-                    .to_string(),
-            );
-        }
-
         compile_rust_env(&src, &project, name, None, &["--with-replay"], &[])?;
 
         // Structural tripwire: the emitted Rust must carry the MIR-emitted
-        // invoke_effect reroute for the effectful helpers.
+        // invoke_effect reroute for the effectful helpers. Do not use
+        // `mir_lowered_count` here: its test emission context deliberately has
+        // no builtin table, so every effect helper reports as a fallback (see
+        // the helper's BLIND SPOT comment above).
         let emitted = fs::read_to_string(
             project
                 .join("src")

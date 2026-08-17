@@ -48,6 +48,25 @@ pub struct HostileProfile {
 /// fires identically and there's no return value to vary).
 pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
     let stub_name = |profile: &str| format!("__hostile_{}_{}", method.replace('.', "_"), profile);
+    let standard = crate::stdlib::standard_hostile_profiles(method);
+    if !standard.is_empty() {
+        return standard
+            .into_iter()
+            .map(|(label, declared_name, source)| {
+                let synthetic = stub_name(label);
+                let stub_body = source.replacen(
+                    &format!("fn {declared_name}("),
+                    &format!("fn {synthetic}("),
+                    1,
+                );
+                HostileProfile {
+                    name: label,
+                    stub_fn_name: synthetic,
+                    stub_body,
+                }
+            })
+            .collect();
+    }
     match method {
         // ─── Snapshot ────────────────────────────────────────────────
         "Args.get" => vec![
@@ -178,90 +197,6 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 stub_body: format!(
                     "fn {}(path: BranchPath, n: Int) -> Float\n    ? \"hostile: every roll is exactly 1.0\"\n    1.0\n",
                     stub_name("always_one")
-                ),
-            },
-        ],
-        "Time.now" => vec![
-            HostileProfile {
-                name: "normal",
-                stub_fn_name: stub_name("normal"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> String\n    ? \"honest: clock advances 1s per call\"\n    match n\n        0 -> \"2026-01-01T00:00:00Z\"\n        1 -> \"2026-01-01T00:00:01Z\"\n        2 -> \"2026-01-01T00:00:02Z\"\n        _ -> \"2026-01-01T00:00:03Z\"\n",
-                    stub_name("normal")
-                ),
-            },
-            HostileProfile {
-                name: "frozen",
-                stub_fn_name: stub_name("frozen"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> String\n    ? \"hostile: clock never advances between calls\"\n    \"2026-01-01T00:00:00Z\"\n",
-                    stub_name("frozen")
-                ),
-            },
-            HostileProfile {
-                name: "epoch",
-                stub_fn_name: stub_name("epoch"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> String\n    ? \"hostile: clock returns epoch — exposes deadline-vs-now assumptions\"\n    \"1970-01-01T00:00:00Z\"\n",
-                    stub_name("epoch")
-                ),
-            },
-            HostileProfile {
-                name: "backward",
-                stub_fn_name: stub_name("backward"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> String\n    ? \"hostile: clock goes backwards — NTP correction, suspend/resume\"\n    match n\n        0 -> \"2026-01-01T00:00:03Z\"\n        1 -> \"2026-01-01T00:00:02Z\"\n        2 -> \"2026-01-01T00:00:01Z\"\n        _ -> \"2026-01-01T00:00:00Z\"\n",
-                    stub_name("backward")
-                ),
-            },
-            HostileProfile {
-                name: "fast_forward",
-                stub_fn_name: stub_name("fast_forward"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> String\n    ? \"hostile: clock skips forward — leap-second jump, clock skew\"\n    match n\n        0 -> \"2026-01-01T00:00:00Z\"\n        1 -> \"2027-06-15T12:00:00Z\"\n        _ -> \"2099-12-31T23:59:59Z\"\n",
-                    stub_name("fast_forward")
-                ),
-            },
-        ],
-        "Time.unixMs" => vec![
-            HostileProfile {
-                name: "normal",
-                stub_fn_name: stub_name("normal"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Int\n    ? \"honest: clock advances 1s per call\"\n    1735689600000 + n * 1000\n",
-                    stub_name("normal")
-                ),
-            },
-            HostileProfile {
-                name: "frozen_zero",
-                stub_fn_name: stub_name("frozen_zero"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Int\n    ? \"hostile: clock stuck at unix epoch\"\n    0\n",
-                    stub_name("frozen_zero")
-                ),
-            },
-            HostileProfile {
-                name: "saturated",
-                stub_fn_name: stub_name("saturated"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Int\n    ? \"hostile: clock at i64 saturation — overflow-on-arithmetic territory\"\n    9223372036854000000\n",
-                    stub_name("saturated")
-                ),
-            },
-            HostileProfile {
-                name: "backward",
-                stub_fn_name: stub_name("backward"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Int\n    ? \"hostile: clock goes backwards — NTP correction\"\n    1735689600000 - n * 1000\n",
-                    stub_name("backward")
-                ),
-            },
-            HostileProfile {
-                name: "fast_forward",
-                stub_fn_name: stub_name("fast_forward"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Int\n    ? \"hostile: clock skips forward by years per call — leap, skew\"\n    1735689600000 + n * 31536000000\n",
-                    stub_name("fast_forward")
                 ),
             },
         ],

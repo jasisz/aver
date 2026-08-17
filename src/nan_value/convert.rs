@@ -3,6 +3,27 @@ use std::collections::HashMap;
 
 use crate::value::Value;
 
+const CAPABILITY_RESOURCE_TYPE: &str = "\0aver.capability.resource";
+const CAPABILITY_RESOURCE_FIELDS: [&str; 4] = ["binding", "type", "slot", "generation"];
+
+/// Install the runtime-only resource carrier before an arena can be cloned
+/// for parallel child VMs. `deep_import` preserves record type ids, so every
+/// arena participating in a join must allocate this hidden type in the same
+/// static table position.
+pub(crate) fn register_capability_resource_type(arena: &mut Arena) -> u32 {
+    arena
+        .find_type_id(CAPABILITY_RESOURCE_TYPE)
+        .unwrap_or_else(|| {
+            arena.register_record_type(
+                CAPABILITY_RESOURCE_TYPE,
+                CAPABILITY_RESOURCE_FIELDS
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+            )
+        })
+}
+
 /// Extension trait providing `from_value` / `to_value` conversion between
 /// the runtime `Value` and `NanValue`.  These methods live here
 /// (rather than on `NanValue` directly) because `NanValue` is now defined
@@ -103,6 +124,16 @@ impl NanValueConvert for NanValue {
                     .map(|(_, v)| NanValue::from_value(v, arena))
                     .collect();
                 NanValue::new_record(arena.push_record(type_id, nv_fields))
+            }
+            Value::CapabilityResource(handle) => {
+                let type_id = register_capability_resource_type(arena);
+                let fields = vec![
+                    NanValue::new_string_value(&handle.binding_id().to_string(), arena),
+                    NanValue::new_string_value(handle.type_name(), arena),
+                    NanValue::new_string_value(&handle.slot().to_string(), arena),
+                    NanValue::new_string_value(&handle.generation().to_string(), arena),
+                ];
+                NanValue::new_record(arena.push_record(type_id, fields))
             }
             Value::Variant {
                 type_name,
@@ -222,6 +253,32 @@ impl NanValueConvert for NanValue {
             TAG_RECORD => {
                 let (type_id, fields) = arena.get_record(self.arena_index());
                 let type_name = arena.get_type_name(type_id).to_string();
+                if type_name == CAPABILITY_RESOURCE_TYPE {
+                    let values: Vec<String> = fields
+                        .iter()
+                        .map(|value| match value.to_value(arena) {
+                            Value::Str(value) => value,
+                            _ => String::new(),
+                        })
+                        .collect();
+                    if values.len() == 4
+                        && let (Ok(binding_id), Ok(slot), Ok(generation)) = (
+                            values[0].parse::<u64>(),
+                            values[2].parse::<u64>(),
+                            values[3].parse::<u64>(),
+                        )
+                    {
+                        return Value::CapabilityResource(
+                            crate::provider::CapabilityResourceHandle::from_runtime_parts(
+                                binding_id,
+                                values[1].clone(),
+                                slot,
+                                generation,
+                            ),
+                        );
+                    }
+                    return Value::Unit;
+                }
                 let field_names = arena.get_field_names(type_id);
                 let pairs: Vec<(String, Value)> = field_names
                     .iter()
