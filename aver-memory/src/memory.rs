@@ -146,6 +146,7 @@ impl<T: ArenaTypes> Arena<T> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn evacuate_frame_locals(
         &mut self,
         young_mark: u32,

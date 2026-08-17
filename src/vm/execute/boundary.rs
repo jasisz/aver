@@ -127,6 +127,7 @@ impl VM {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_frame_return_to_caller(
         &mut self,
         arena_mark: u32,
@@ -208,6 +209,7 @@ impl VM {
     /// truncations are about to drop. A vector promoted to stable by an earlier
     /// return of this same kind, handed to a callee and written into by
     /// `VECTOR_SET_OR_KEEP`'s owned branch, is exactly that shape.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_frame_return(
         &mut self,
         arena_mark: u32,
@@ -228,6 +230,7 @@ impl VM {
         self.arena.truncate_handoff_to(handoff_mark);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_parent_thin_return_to_caller(
         &mut self,
         arena_mark: u32,
