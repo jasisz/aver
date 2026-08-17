@@ -56,6 +56,13 @@ fn aver_bin() -> &'static str {
     env!("CARGO_BIN_EXE_aver")
 }
 
+fn tool_available(name: &str) -> bool {
+    Command::new(name)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("aver-capability-{tag}-{}", std::process::id()));
     if dir.exists() {
@@ -985,17 +992,19 @@ verify same law deterministicProvider
     );
 
     let output = dir.join("lean-out");
-    let proof = Command::new(aver_bin())
-        .current_dir(&dir)
-        .args([
-            "proof",
-            "--module-root",
-            dir.to_str().expect("utf-8 dir"),
-            "--output",
-            output.to_str().expect("utf-8 output"),
-            "--check",
-            "main.av",
-        ])
+    let mut proof_command = Command::new(aver_bin());
+    proof_command.current_dir(&dir).args([
+        "proof",
+        "--module-root",
+        dir.to_str().expect("utf-8 dir"),
+        "--output",
+        output.to_str().expect("utf-8 output"),
+    ]);
+    if tool_available("lake") {
+        proof_command.arg("--check");
+    }
+    let proof = proof_command
+        .arg("main.av")
         .output()
         .expect("run pure capability proof");
     let proof_report = format!(
@@ -1006,7 +1015,7 @@ verify same law deterministicProvider
     assert_eq!(
         proof.status.code().unwrap_or(-1),
         0,
-        "Lean must check laws over the opaque deterministic provider model:\n{proof_report}"
+        "Lean must emit and, when lake is available, check the opaque deterministic provider model:\n{proof_report}"
     );
     let lean = collect_files_with_extension(&output, "lean");
     assert!(lean.contains("opaque Context : Type"), "{lean}");
@@ -1247,17 +1256,19 @@ verify succeeds law providerMayMint
     );
 
     let output = dir.join("proof-out");
-    let proof = Command::new(aver_bin())
-        .current_dir(&dir)
-        .args([
-            "proof",
-            "--module-root",
-            dir.to_str().expect("utf-8 dir"),
-            "--output",
-            output.to_str().expect("utf-8 output"),
-            "--check",
-            "Mint.av",
-        ])
+    let mut proof_command = Command::new(aver_bin());
+    proof_command.current_dir(&dir).args([
+        "proof",
+        "--module-root",
+        dir.to_str().expect("utf-8 dir"),
+        "--output",
+        output.to_str().expect("utf-8 output"),
+    ]);
+    if tool_available("lake") {
+        proof_command.arg("--check");
+    }
+    let proof = proof_command
+        .arg("Mint.av")
         .output()
         .expect("run resource proof");
     let report = format!(
@@ -1268,23 +1279,31 @@ verify succeeds law providerMayMint
     assert_eq!(
         proof.status.code().unwrap_or(-1),
         0,
-        "proof lifting must quantify the same unconstrained token passed to the oracle:\n{report}"
+        "proof lifting must emit and, when lake is available, check the same unconstrained token passed to the oracle:\n{report}"
+    );
+    let lean = collect_files_with_extension(&output, "lean");
+    assert!(
+        lean.contains("capFresh_Mint_mint"),
+        "the emitted Lean law lost its hidden resource witness:\n{lean}"
     );
 
     let dafny_output = dir.join("proof-dafny-out");
-    let dafny = Command::new(aver_bin())
-        .current_dir(&dir)
-        .args([
-            "proof",
-            "--backend",
-            "dafny",
-            "--module-root",
-            dir.to_str().expect("utf-8 dir"),
-            "--output",
-            dafny_output.to_str().expect("utf-8 output"),
-            "--check",
-            "Mint.av",
-        ])
+    let has_dafny = tool_available("dafny");
+    let mut dafny_command = Command::new(aver_bin());
+    dafny_command.current_dir(&dir).args([
+        "proof",
+        "--backend",
+        "dafny",
+        "--module-root",
+        dir.to_str().expect("utf-8 dir"),
+        "--output",
+        dafny_output.to_str().expect("utf-8 output"),
+    ]);
+    if has_dafny {
+        dafny_command.arg("--check");
+    }
+    let dafny = dafny_command
+        .arg("Mint.av")
         .output()
         .expect("run resource Dafny proof");
     let dafny_report = format!(
@@ -1292,14 +1311,28 @@ verify succeeds law providerMayMint
         String::from_utf8_lossy(&dafny.stdout),
         String::from_utf8_lossy(&dafny.stderr)
     );
+    if !has_dafny {
+        assert_eq!(
+            dafny.status.code().unwrap_or(-1),
+            0,
+            "Dafny emission failed without invoking an external verifier:\n{dafny_report}"
+        );
+    }
+    let dafny_source = collect_files_with_extension(&dafny_output, "dfy");
     assert!(
-        dafny_report.contains("verified, 0 errors"),
-        "Dafny samples and universal lemmas must bind the same unconstrained token:\n{dafny_report}"
+        dafny_source.contains("capFresh_Mint_mint"),
+        "the emitted Dafny law lost its hidden resource witness:\n{dafny_source}"
     );
-    assert!(
-        !dafny_report.contains("resolution/type errors detected"),
-        "the resource parameter escaped its declaration scope:\n{dafny_report}"
-    );
+    if has_dafny {
+        assert!(
+            dafny_report.contains("verified, 0 errors"),
+            "Dafny samples and universal lemmas must bind the same unconstrained token:\n{dafny_report}"
+        );
+        assert!(
+            !dafny_report.contains("resolution/type errors detected"),
+            "the resource parameter escaped its declaration scope:\n{dafny_report}"
+        );
+    }
 }
 
 #[test]
