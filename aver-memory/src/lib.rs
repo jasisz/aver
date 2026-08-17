@@ -159,7 +159,7 @@ pub fn entry_holds_slot<T: ArenaTypes>(entry: &ArenaEntry<T>, index: u32) -> boo
         }
         ArenaEntry::Map { map, .. } => map.values().any(|(key, value)| holds(key) || holds(value)),
         ArenaEntry::List(list) => match list {
-            ArenaList::Flat { items, start } => {
+            ArenaList::Flat { items, start, .. } => {
                 items[(*start).min(items.len())..].iter().any(holds)
             }
             ArenaList::Prepend { head, tail, .. } => holds(head) || holds(tail),
@@ -1354,6 +1354,23 @@ pub struct Arena<T: ArenaTypes> {
     scratch_stable: Vec<u32>,
     peak_usage: ArenaUsage,
     alloc_space: AllocSpace,
+    /// Monotone clock for the allocation lane. `lane_epoch` changes before a
+    /// destructive heap boundary and `lane_watermark` counts ordinary heap
+    /// pushes since that boundary. A frame snapshots both in a [`LaneMark`].
+    ///
+    /// Collection receipts never own a clock: they are only snapshots of this
+    /// arena clock. That matters for cloned stable entries and shared list
+    /// bodies, which may be visible from more than one execution lane.
+    lane_epoch: u32,
+    lane_watermark: u32,
+    /// Epoch or watermark exhaustion disables receipt skips permanently. GC
+    /// continues normally; only the optimization fails closed.
+    lane_clock_exhausted: bool,
+    /// The pre-boundary epoch and frame mark used by the rewrite currently in
+    /// progress. `active_lane_source_mark == INVALID_LANE_MARK` means that the
+    /// operation has no frame watermark proof and must scan conservatively.
+    active_lane_source_epoch: u32,
+    active_lane_source_mark: LaneMark,
     /// Total list elements the collector has written into a fresh shared body.
     /// A collector that keeps sharing intact leaves this proportional to the
     /// number of elements that actually moved, so a quadratic copy shows up
@@ -1479,6 +1496,10 @@ pub enum ArenaEntry<T: ArenaTypes> {
     Map {
         map: T::Map,
         all_immediate: bool,
+        /// Snapshot of the owning arena's lane clock after every key and value
+        /// currently in `map` had been allocated or rewritten. Zero is the
+        /// invalid, always-scan receipt.
+        scan_receipt: LaneMark,
         /// Whether anything OTHER than a handle in the consumer's own working
         /// set holds this slot: another arena entry, or a root the consumer
         /// registered through [`Arena::note_held_elsewhere`] — a global, a
@@ -1652,6 +1673,10 @@ pub enum ArenaList {
     Flat {
         items: Rc<ListBody>,
         start: usize,
+        /// Arena-lane receipt for this entry's view over `items`. Kept on the
+        /// entry, never on the shared body: `clone_static` can expose one body
+        /// from arenas with different clocks.
+        scan_receipt: LaneMark,
     },
     Prepend {
         head: NanValue,
@@ -1687,6 +1712,15 @@ pub enum AllocSpace {
     Yard,
     Handoff,
 }
+
+/// Snapshot of an arena lane clock: high 32 bits are the destructive epoch,
+/// low 32 bits are the number of ordinary heap pushes in that epoch.
+pub type LaneMark = u64;
+
+/// No proof that a collection predates a frame boundary. Operations without a
+/// frame watermark (stable promotion/collection and the legacy collectors)
+/// pass this and therefore always scan.
+pub const INVALID_LANE_MARK: LaneMark = 0;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ArenaUsage {

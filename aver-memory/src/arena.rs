@@ -13,6 +13,11 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
+            lane_epoch: 1,
+            lane_watermark: 0,
+            lane_clock_exhausted: false,
+            active_lane_source_epoch: 0,
+            active_lane_source_mark: INVALID_LANE_MARK,
             list_elements_copied: 0,
             list_elements_scanned: 0,
             map_entries_copied: 0,
@@ -58,6 +63,14 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_stable: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
+            // Stable entries and their receipts are cloned by value, so the
+            // child must continue the same authoritative clock. The mutable
+            // list bodies themselves carry no arena-local state.
+            lane_epoch: self.lane_epoch,
+            lane_watermark: self.lane_watermark,
+            lane_clock_exhausted: self.lane_clock_exhausted,
+            active_lane_source_epoch: 0,
+            active_lane_source_mark: INVALID_LANE_MARK,
             list_elements_copied: 0,
             list_elements_scanned: 0,
             map_entries_copied: 0,
@@ -77,6 +90,102 @@ impl<T: ArenaTypes> Arena<T> {
             ctor_to_type_variant: self.ctor_to_type_variant.clone(),
             symbol_entries: self.symbol_entries.clone(),
             type_aliases: self.type_aliases.clone(),
+        }
+    }
+
+    #[inline]
+    fn pack_lane_mark(epoch: u32, watermark: u32) -> LaneMark {
+        ((epoch as LaneMark) << 32) | watermark as LaneMark
+    }
+
+    #[inline]
+    fn lane_mark_epoch(mark: LaneMark) -> u32 {
+        (mark >> 32) as u32
+    }
+
+    #[inline]
+    fn lane_mark_watermark(mark: LaneMark) -> u32 {
+        mark as u32
+    }
+
+    /// Snapshot the authoritative allocation-lane clock for a frame or a new
+    /// immutable collection entry. Zero means receipt skips have failed closed.
+    #[inline]
+    pub fn lane_mark(&self) -> LaneMark {
+        if self.lane_clock_exhausted {
+            INVALID_LANE_MARK
+        } else {
+            Self::pack_lane_mark(self.lane_epoch, self.lane_watermark)
+        }
+    }
+
+    #[inline]
+    pub fn lane_epoch(&self) -> u32 {
+        self.lane_epoch
+    }
+
+    /// Start a boundary that can change arena indices.
+    ///
+    /// The old epoch is retained only as the source side of the active rewrite;
+    /// all renewed receipts use the post-boundary epoch. Bumping before the
+    /// walk prevents index reuse (truncate then grow to the same raw length)
+    /// from looking like a clean lane.
+    pub(crate) fn begin_lane_rewrite(&mut self, source_mark: LaneMark) {
+        let source_epoch = self.lane_epoch;
+        if self.lane_clock_exhausted || self.lane_epoch == u32::MAX {
+            self.lane_clock_exhausted = true;
+            self.active_lane_source_epoch = source_epoch;
+            self.active_lane_source_mark = INVALID_LANE_MARK;
+            return;
+        }
+        self.lane_epoch += 1;
+        self.lane_watermark = 0;
+        self.active_lane_source_epoch = source_epoch;
+        self.active_lane_source_mark = source_mark;
+    }
+
+    #[inline]
+    pub(crate) fn finish_lane_rewrite(&mut self) {
+        self.active_lane_source_epoch = 0;
+        self.active_lane_source_mark = INVALID_LANE_MARK;
+    }
+
+    /// Whether `receipt` proves that this immutable collection was complete by
+    /// the active frame's entry watermark. An in-place escape deliberately
+    /// withholds the skip: the descent must keep walking through collections to
+    /// reach the mutated vector below them.
+    #[inline]
+    pub(crate) fn lane_receipt_can_skip(&self, receipt: LaneMark) -> bool {
+        if self.lane_clock_exhausted
+            || self.rewrite_out_of_region_roots
+            || receipt == INVALID_LANE_MARK
+            || self.active_lane_source_mark == INVALID_LANE_MARK
+        {
+            return false;
+        }
+        let receipt_epoch = Self::lane_mark_epoch(receipt);
+        let mark_epoch = Self::lane_mark_epoch(self.active_lane_source_mark);
+        receipt_epoch == self.active_lane_source_epoch
+            && mark_epoch == self.active_lane_source_epoch
+            && Self::lane_mark_watermark(receipt)
+                <= Self::lane_mark_watermark(self.active_lane_source_mark)
+    }
+
+    /// Receipt written after either a full rewrite or a proved skip.
+    #[inline]
+    pub(crate) fn renewed_lane_receipt(&self) -> LaneMark {
+        self.lane_mark()
+    }
+
+    #[inline]
+    fn note_lane_push(&mut self) {
+        if self.lane_clock_exhausted {
+            return;
+        }
+        if self.lane_watermark == u32::MAX {
+            self.lane_clock_exhausted = true;
+        } else {
+            self.lane_watermark += 1;
         }
     }
 
@@ -117,9 +226,11 @@ impl<T: ArenaTypes> Arena<T> {
                     NanValue::EMPTY_LIST
                 } else {
                     let rc_items = Rc::new(ListBody::new(imported));
+                    let scan_receipt = self.lane_mark();
                     let idx = self.push(ArenaEntry::List(ArenaList::Flat {
                         items: rc_items,
                         start: 0,
+                        scan_receipt,
                     }));
                     NanValue::new_list(idx)
                 }
@@ -262,7 +373,7 @@ impl<T: ArenaTypes> Arena<T> {
                 }
             }
             ArenaEntry::List(list) => match list {
-                ArenaList::Flat { items, start } => {
+                ArenaList::Flat { items, start, .. } => {
                     if items.holds_collection() {
                         for value in &items[(*start).min(items.len())..] {
                             self.note_held_elsewhere(*value);
@@ -374,7 +485,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// Put an entry in the space the arena is currently allocating into.
     #[inline]
     fn push_heap(&mut self, entry: ArenaEntry<T>) -> u32 {
-        match self.alloc_space {
+        let index = match self.alloc_space {
             AllocSpace::Young => {
                 let idx = self.young_entries.len() as u32;
                 self.young_entries.push(entry);
@@ -393,7 +504,9 @@ impl<T: ArenaTypes> Arena<T> {
                 self.note_peak_usage();
                 Self::encode_index(HeapSpace::Handoff, idx)
             }
-        }
+        };
+        self.note_lane_push();
+        index
     }
 
     #[inline]
@@ -761,9 +874,11 @@ impl<T: ArenaTypes> Arena<T> {
         })
     }
     pub fn push_list(&mut self, items: Vec<NanValue>) -> u32 {
+        let scan_receipt = self.lane_mark();
         self.push(ArenaEntry::List(ArenaList::Flat {
             items: Rc::new(ListBody::new(items)),
             start: 0,
+            scan_receipt,
         }))
     }
     /// Store a map, proving its `all_immediate` flag from the table itself and
@@ -791,9 +906,11 @@ impl<T: ArenaTypes> Arena<T> {
         for child in held.into_iter().flatten() {
             self.note_held_elsewhere(child);
         }
+        let scan_receipt = self.lane_mark();
         self.push(ArenaEntry::Map {
             map,
             all_immediate,
+            scan_receipt,
             held_elsewhere: false,
         })
     }
@@ -1107,11 +1224,16 @@ impl<T: ArenaTypes> Arena<T> {
             T::Map::new()
         } else {
             let index = map.arena_index();
+            let empty_receipt = self.lane_mark();
             match self.get_mut(index) {
                 ArenaEntry::Map {
-                    map, all_immediate, ..
+                    map,
+                    all_immediate,
+                    scan_receipt,
+                    ..
                 } => {
                     *all_immediate = true;
+                    *scan_receipt = empty_receipt;
                     core::mem::replace(map, T::Map::new())
                 }
                 _ => panic!("Arena: expected Map at {}", index),
@@ -1279,3 +1401,6 @@ impl<T: ArenaTypes> Default for Arena<T> {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests;

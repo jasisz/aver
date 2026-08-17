@@ -394,10 +394,12 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
     let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
+    let scan_receipt = arena.lane_mark();
     let map_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Map {
             map: new_map,
             all_immediate,
+            scan_receipt,
             // A fresh entry nobody has been handed. The table it carries came
             // out of a slot the caller proved nothing else reaches, so nothing
             // reaches this one either until somebody stores it.
@@ -436,10 +438,12 @@ pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue,
     if new_map.is_empty() {
         return Ok(NanValue::EMPTY_MAP);
     }
+    let scan_receipt = arena.lane_mark();
     let map_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Map {
             map: new_map,
             all_immediate,
+            scan_receipt,
             held_elsewhere: false,
         },
         source,

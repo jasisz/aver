@@ -543,13 +543,14 @@ impl VM {
                     // matching skip lives in RETURN's fast path
                     // (`chunk.thin = true` for no-alloc fns; runtime
                     // length checks always pass).
-                    let (arena_mark, yard_mark, handoff_mark) = if target.no_alloc {
-                        (0, 0, 0)
+                    let (arena_mark, yard_mark, handoff_mark, lane_mark) = if target.no_alloc {
+                        (0, 0, 0, 0)
                     } else {
                         (
                             self.arena.young_len() as u32,
                             self.arena.yard_len() as u32,
                             self.arena.handoff_len() as u32,
+                            self.arena.lane_mark(),
                         )
                     };
                     self.frames.push(CallFrame {
@@ -561,6 +562,8 @@ impl VM {
                         yard_base: yard_mark,
                         yard_mark,
                         handoff_mark,
+                        lane_base: lane_mark,
+                        lane_mark,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -741,6 +744,7 @@ impl VM {
                     for _ in 0..(target_lc - argc) {
                         self.stack.push(NanValue::UNIT);
                     }
+                    let lane_mark = self.arena.lane_mark();
 
                     self.frames.push(CallFrame {
                         fn_id: target_fn_id,
@@ -751,6 +755,8 @@ impl VM {
                         yard_base: self.arena.yard_len() as u32,
                         yard_mark: self.arena.yard_len() as u32,
                         handoff_mark: self.arena.handoff_len() as u32,
+                        lane_base: lane_mark,
+                        lane_mark,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -915,19 +921,22 @@ impl VM {
                     // unrelated reasons (e.g. local_count > MAX) but
                     // `compute_alloc_info` still proves alloc-free.
                     let self_no_alloc = self.code.functions[fn_id as usize].no_alloc;
+                    let mut lane_rebased = false;
                     if !self_no_alloc {
                         let frame_mark = self.frames.last().unwrap().arena_mark;
                         let yard_mark = self.frames.last().unwrap().yard_mark;
                         let handoff_mark = self.frames.last().unwrap().handoff_mark;
+                        let lane_mark = self.frames.last().unwrap().lane_mark;
                         let globals_dirty = self.frames.last().unwrap().globals_dirty;
                         let yard_dirty = self.frames.last().unwrap().yard_dirty;
                         let inplace_write_escaped =
                             self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
-                        self.finalize_frame_locals_for_tail_call(
+                        lane_rebased = self.finalize_frame_locals_for_tail_call(
                             frame_mark,
                             yard_mark,
                             handoff_mark,
+                            lane_mark,
                             globals_dirty,
                             yard_dirty,
                             inplace_write_escaped,
@@ -947,6 +956,13 @@ impl VM {
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
                     frame.yard_mark = self.arena.yard_len() as u32;
+                    if lane_rebased {
+                        // The destructive boundary renewed every carried
+                        // receipt into the post-bump epoch. Small-young/no-op
+                        // paths keep the old mark because their suffix is still
+                        // owned by this frame.
+                        frame.lane_mark = self.arena.lane_mark();
+                    }
                     // `inplace_write_escaped` deliberately does NOT join the
                     // three bits above: those are re-derived from the region
                     // lengths at the next boundary, while it remembers an event
@@ -991,6 +1007,7 @@ impl VM {
                     let target_no_alloc = target.no_alloc;
 
                     let args_start = self.stack.len() - argc;
+                    let mut lane_rebased = false;
                     if !target_no_alloc {
                         // Pure no-alloc targets (e.g. mandelStep ↔ mandelIter)
                         // never produce frame-local young/yard/handoff
@@ -1001,15 +1018,17 @@ impl VM {
                         let frame_mark = self.frames.last().unwrap().arena_mark;
                         let yard_mark = self.frames.last().unwrap().yard_mark;
                         let handoff_mark = self.frames.last().unwrap().handoff_mark;
+                        let lane_mark = self.frames.last().unwrap().lane_mark;
                         let globals_dirty = self.frames.last().unwrap().globals_dirty;
                         let yard_dirty = self.frames.last().unwrap().yard_dirty;
                         let inplace_write_escaped =
                             self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
-                        self.finalize_frame_locals_for_tail_call(
+                        lane_rebased = self.finalize_frame_locals_for_tail_call(
                             frame_mark,
                             yard_mark,
                             handoff_mark,
+                            lane_mark,
                             globals_dirty,
                             yard_dirty,
                             inplace_write_escaped,
@@ -1042,6 +1061,9 @@ impl VM {
                     frame.yard_dirty = false;
                     frame.handoff_dirty = false;
                     frame.yard_mark = self.arena.yard_len() as u32;
+                    if lane_rebased {
+                        frame.lane_mark = self.arena.lane_mark();
+                    }
                     // `inplace_write_escaped` deliberately does NOT join the
                     // three bits above: those are re-derived from the region
                     // lengths at the next boundary, while it remembers an event

@@ -15,7 +15,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         match self.get_list(list.arena_index()).clone() {
-            ArenaList::Flat { items, start } => {
+            ArenaList::Flat { items, start, .. } => {
                 let slice = &items[start..];
                 if slice.len() < LIST_APPEND_CHUNK_LIMIT {
                     let mut out = Vec::with_capacity(slice.len() + 1);
@@ -25,7 +25,8 @@ impl<T: ArenaTypes> Arena<T> {
                 }
             }
             ArenaList::Concat { left, right, len } => {
-                if let ArenaList::Flat { items, start } = self.get_list(right.arena_index()).clone()
+                if let ArenaList::Flat { items, start, .. } =
+                    self.get_list(right.arena_index()).clone()
                 {
                     let slice = &items[start..];
                     if slice.len() < LIST_APPEND_CHUNK_LIMIT {
@@ -95,7 +96,7 @@ impl<T: ArenaTypes> Arena<T> {
 
     pub fn list_len(&self, index: u32) -> usize {
         match self.get_list(index) {
-            ArenaList::Flat { items, start } => items.len().saturating_sub(*start),
+            ArenaList::Flat { items, start, .. } => items.len().saturating_sub(*start),
             ArenaList::Prepend { len, .. }
             | ArenaList::Concat { len, .. }
             | ArenaList::Segments { len, .. } => *len,
@@ -115,7 +116,7 @@ impl<T: ArenaTypes> Arena<T> {
                 return None;
             }
             match self.get_list(current.arena_index()) {
-                ArenaList::Flat { items, start } => {
+                ArenaList::Flat { items, start, .. } => {
                     return items.get(start.saturating_add(remaining)).copied();
                 }
                 ArenaList::Prepend { head, tail, .. } => {
@@ -170,7 +171,7 @@ impl<T: ArenaTypes> Arena<T> {
                 continue;
             }
             match self.get_list(list.arena_index()) {
-                ArenaList::Flat { items, start } => {
+                ArenaList::Flat { items, start, .. } => {
                     out.extend(items[*start..].iter().copied());
                 }
                 ArenaList::Prepend { head, tail, .. } => {
@@ -211,7 +212,11 @@ impl<T: ArenaTypes> Arena<T> {
                 return None;
             }
             match self.get_list(current.arena_index()).clone() {
-                ArenaList::Flat { items, start } => {
+                ArenaList::Flat {
+                    items,
+                    start,
+                    scan_receipt,
+                } => {
                     let head = *items.get(start)?;
                     let tail = if start + 1 >= items.len() {
                         self.empty_list_value()
@@ -219,6 +224,7 @@ impl<T: ArenaTypes> Arena<T> {
                         let tail_idx = self.push(ArenaEntry::List(ArenaList::Flat {
                             items: Rc::clone(&items),
                             start: start + 1,
+                            scan_receipt,
                         }));
                         NanValue::new_list(tail_idx)
                     };
@@ -304,10 +310,15 @@ impl<T: ArenaTypes> Arena<T> {
 
             // The step lands strictly inside `current`.
             match self.get_list(current.arena_index()).clone() {
-                ArenaList::Flat { items, start } => {
+                ArenaList::Flat {
+                    items,
+                    start,
+                    scan_receipt,
+                } => {
                     let view_idx = self.push(ArenaEntry::List(ArenaList::Flat {
                         items: Rc::clone(&items),
                         start: start + remaining,
+                        scan_receipt,
                     }));
                     rights.reverse();
                     return self.push_list_segments(NanValue::new_list(view_idx), rights);

@@ -56,13 +56,19 @@ enum PromoteTailStep<T: ArenaTypes> {
 
 impl<T: ArenaTypes> Arena<T> {
     pub fn truncate_to(&mut self, mark: u32) {
+        if self.young_entries.len() <= mark as usize {
+            return;
+        }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.young_entries.truncate(mark as usize);
+        self.finish_lane_rewrite();
     }
 
     pub fn collect_young_from_roots(&mut self, mark: u32, roots: &mut [NanValue]) {
         if self.young_entries.len() <= mark as usize {
             return;
         }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
 
         let mut relocated =
             Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
@@ -75,14 +81,25 @@ impl<T: ArenaTypes> Arena<T> {
         self.young_entries.truncate(mark as usize);
         self.young_entries.extend(compacted);
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
+        self.finish_lane_rewrite();
     }
 
     pub fn truncate_yard_to(&mut self, mark: u32) {
+        if self.yard_entries.len() <= mark as usize {
+            return;
+        }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.yard_entries.truncate(mark as usize);
+        self.finish_lane_rewrite();
     }
 
     pub fn truncate_handoff_to(&mut self, mark: u32) {
+        if self.handoff_entries.len() <= mark as usize {
+            return;
+        }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.handoff_entries.truncate(mark as usize);
+        self.finish_lane_rewrite();
     }
 
     /// `rewrite_out_of_region_roots` reports that the returning frame, or
@@ -93,6 +110,7 @@ impl<T: ArenaTypes> Arena<T> {
         young_mark: u32,
         yard_mark: u32,
         handoff_mark: u32,
+        lane_mark: LaneMark,
         roots: &mut [NanValue],
         rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
@@ -100,6 +118,7 @@ impl<T: ArenaTypes> Arena<T> {
             young_mark,
             yard_mark,
             handoff_mark,
+            lane_mark,
             roots,
             AllocSpace::Yard,
             rewrite_out_of_region_roots,
@@ -112,6 +131,7 @@ impl<T: ArenaTypes> Arena<T> {
         young_mark: u32,
         yard_mark: u32,
         handoff_mark: u32,
+        lane_mark: LaneMark,
         roots: &mut [NanValue],
         rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
@@ -119,6 +139,7 @@ impl<T: ArenaTypes> Arena<T> {
             young_mark,
             yard_mark,
             handoff_mark,
+            lane_mark,
             roots,
             AllocSpace::Handoff,
             rewrite_out_of_region_roots,
@@ -130,10 +151,20 @@ impl<T: ArenaTypes> Arena<T> {
         young_mark: u32,
         yard_mark: u32,
         handoff_mark: u32,
+        lane_mark: LaneMark,
         roots: &mut [NanValue],
         young_target: AllocSpace,
         rewrite_out_of_region_roots: bool,
     ) -> (bool, bool) {
+        let has_work = self.young_entries.len() > young_mark as usize
+            || self.yard_entries.len() > yard_mark as usize
+            || self.handoff_entries.len() > handoff_mark as usize;
+        if !has_work && !rewrite_out_of_region_roots {
+            return (false, false);
+        }
+        if has_work {
+            self.begin_lane_rewrite(lane_mark);
+        }
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
         if rewrite_out_of_region_roots {
             self.begin_inplace_visit_epoch();
@@ -185,6 +216,9 @@ impl<T: ArenaTypes> Arena<T> {
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated_young);
         Self::recycle_u32_scratch(&mut self.scratch_yard, relocated_yard);
         Self::recycle_u32_scratch(&mut self.scratch_handoff, relocated_handoff);
+        if has_work {
+            self.finish_lane_rewrite();
+        }
 
         (
             self.yard_entries.len() > yard_mark as usize,
@@ -351,8 +385,9 @@ impl<T: ArenaTypes> Arena<T> {
             ArenaEntry::Map {
                 map,
                 all_immediate,
+                scan_receipt,
                 held_elsewhere,
-            } => self.rewrite_map_with(map, all_immediate, held_elsewhere, rewrite),
+            } => self.rewrite_map_with(map, all_immediate, scan_receipt, held_elsewhere, rewrite),
             ArenaEntry::Record {
                 type_id,
                 mut fields,
@@ -423,6 +458,7 @@ impl<T: ArenaTypes> Arena<T> {
         &mut self,
         mut map: T::Map,
         all_immediate: bool,
+        scan_receipt: LaneMark,
         held_elsewhere: bool,
         rewrite: &mut F,
     ) -> ArenaEntry<T>
@@ -438,6 +474,15 @@ impl<T: ArenaTypes> Arena<T> {
             return ArenaEntry::Map {
                 map,
                 all_immediate: true,
+                scan_receipt,
+                held_elsewhere,
+            };
+        }
+        if self.lane_receipt_can_skip(scan_receipt) {
+            return ArenaEntry::Map {
+                map,
+                all_immediate: false,
+                scan_receipt: self.renewed_lane_receipt(),
                 held_elsewhere,
             };
         }
@@ -452,6 +497,7 @@ impl<T: ArenaTypes> Arena<T> {
         ArenaEntry::Map {
             map,
             all_immediate: false,
+            scan_receipt: self.renewed_lane_receipt(),
             held_elsewhere,
         }
     }
@@ -462,9 +508,18 @@ impl<T: ArenaTypes> Arena<T> {
         F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
     {
         match list {
-            ArenaList::Flat { items, start } => {
-                let (items, start) = self.rewrite_list_body_with(items, start, rewrite);
-                ArenaList::Flat { items, start }
+            ArenaList::Flat {
+                items,
+                start,
+                scan_receipt,
+            } => {
+                let (items, start, scan_receipt) =
+                    self.rewrite_list_body_with(items, start, scan_receipt, rewrite);
+                ArenaList::Flat {
+                    items,
+                    start,
+                    scan_receipt,
+                }
             }
             ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
                 head: rewrite(self, head),
@@ -483,7 +538,12 @@ impl<T: ArenaTypes> Arena<T> {
                 len,
             } => {
                 let current = rewrite(self, current);
-                let (rest, start) = self.rewrite_list_body_with(rest, start, rewrite);
+                // `Segments` already fills ArenaEntry's 48-byte payload. A
+                // full u64 receipt would grow every arena slot, so segment
+                // bodies deliberately remain the conservative always-scan
+                // spelling while Flat covers the hot traversal shape.
+                let (rest, start, _) =
+                    self.rewrite_list_body_with(rest, start, INVALID_LANE_MARK, rewrite);
                 ArenaList::Segments {
                     current,
                     rest,
@@ -497,30 +557,25 @@ impl<T: ArenaTypes> Arena<T> {
     /// Rewrite the shared element storage behind a `Flat` or `Segments` view,
     /// keeping the existing allocation whenever nothing actually moves.
     ///
-    /// Two escapes, cheapest first. A body built entirely out of immediates
+    /// Three outcomes, cheapest first. A body built entirely out of immediates
     /// cannot hold anything the collector could relocate, so it is returned
-    /// without being read at all. Otherwise the elements are rewritten, and the
-    /// original body is still returned when every rewrite turned out to be the
-    /// identity — which preserves both the `Rc` sharing and the O(1) `start`
-    /// offset that `list_uncons` hands out. Only a body in which something
-    /// really moved is rebuilt, and only from that element onwards.
+    /// without being read. A valid lane receipt proves the body predates the
+    /// frame-local suffix and likewise skips the walk, renewing the receipt into
+    /// the post-boundary epoch. Otherwise the elements are rewritten, and the
+    /// original body is still returned when every rewrite is the identity —
+    /// preserving both `Rc` sharing and the O(1) `start` offset that
+    /// `list_uncons` hands out. Only a body in which something moved is rebuilt.
     ///
     /// Without this, walking a list while a frame keeps allocating rebuilt the
     /// whole remaining input on every step: n^2/2 element copies for one
     /// traversal (issue #886).
     ///
-    /// The two escapes do not buy the same thing, and the difference is the
-    /// standing limit here. The first removes the *read* as well as the copy, so
-    /// a list whose elements are all immediates costs nothing per collection.
-    /// The second removes only the copy: deciding that nothing moved still means
-    /// touching every remaining element, so a list of strings or records is
-    /// still walked n^2/2 times over one traversal and its runtime is still
-    /// quadratic — n = 128,000 takes 28 s where the same program over `List<Int>`
-    /// takes 71 ms. `list_elements_copied` therefore reports linear on a program
-    /// that is not; `list_elements_scanned` is the counter that shows it, and
-    /// `copying_a_list_of_strings_still_reads_shared_bodies_quadratically` pins
-    /// it. Closing that gap needs the collector to skip a live body it has
-    /// already proved stable, which is a different change from this one.
+    /// The receipt closes the repeated-read half of issue #886 for Flat lists:
+    /// once a body of strings or records has been proved clean for a frame
+    /// watermark, later tail boundaries carry that proof instead of walking the
+    /// shrinking suffix again. Segments deliberately pass an invalid receipt
+    /// because a u64 carrier would grow every arena slot, so their shared body
+    /// remains on the conservative scan path.
     ///
     /// Carrying `start` through the second escape is the delicate part, because
     /// losing it does not fail loudly: the elements the slice had already
@@ -536,8 +591,9 @@ impl<T: ArenaTypes> Arena<T> {
         &mut self,
         body: Rc<ListBody>,
         start: usize,
+        scan_receipt: LaneMark,
         rewrite: &mut F,
-    ) -> (Rc<ListBody>, usize)
+    ) -> (Rc<ListBody>, usize, LaneMark)
     where
         F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
     {
@@ -548,7 +604,11 @@ impl<T: ArenaTypes> Arena<T> {
                 "list body marked all-immediate holds a heap-backed element; \
                  skipping it would leave a stale arena index behind"
             );
-            return (body, start);
+            return (body, start, scan_receipt);
+        }
+
+        if self.lane_receipt_can_skip(scan_receipt) {
+            return (body, start, self.renewed_lane_receipt());
         }
 
         self.list_elements_scanned += (body.len() - start) as u64;
@@ -569,10 +629,10 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         match rewritten {
-            None => (body, start),
+            None => (body, start, self.renewed_lane_receipt()),
             Some(out) => {
                 self.list_elements_copied += out.len() as u64;
-                (Rc::new(ListBody::new(out)), 0)
+                (Rc::new(ListBody::new(out)), 0, self.renewed_lane_receipt())
             }
         }
     }
@@ -592,6 +652,7 @@ impl<T: ArenaTypes> Arena<T> {
         let flat = ArenaList::Flat {
             items: Rc::new(ListBody::new(elements)),
             start: 0,
+            scan_receipt: self.lane_mark(),
         };
         let index = self.push(ArenaEntry::List(flat));
         NanValue::new_list(index)
@@ -1444,10 +1505,16 @@ impl<T: ArenaTypes> Arena<T> {
         value
     }
 
-    pub fn promote_young_roots_to_yard(&mut self, mark: u32, roots: &mut [NanValue]) {
+    pub fn promote_young_roots_to_yard(
+        &mut self,
+        mark: u32,
+        lane_mark: LaneMark,
+        roots: &mut [NanValue],
+    ) {
         if self.young_entries.len() <= mark as usize {
             return;
         }
+        self.begin_lane_rewrite(lane_mark);
 
         let mut relocated =
             Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
@@ -1458,12 +1525,19 @@ impl<T: ArenaTypes> Arena<T> {
 
         self.young_entries.truncate(mark as usize);
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
+        self.finish_lane_rewrite();
     }
 
-    pub fn promote_young_roots_to_handoff(&mut self, mark: u32, roots: &mut [NanValue]) {
+    pub fn promote_young_roots_to_handoff(
+        &mut self,
+        mark: u32,
+        lane_mark: LaneMark,
+        roots: &mut [NanValue],
+    ) {
         if self.young_entries.len() <= mark as usize {
             return;
         }
+        self.begin_lane_rewrite(lane_mark);
 
         let mut relocated =
             Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
@@ -1474,6 +1548,7 @@ impl<T: ArenaTypes> Arena<T> {
 
         self.young_entries.truncate(mark as usize);
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
+        self.finish_lane_rewrite();
     }
 
     /// Move every root, and everything it reaches, into stable.
@@ -1494,6 +1569,16 @@ impl<T: ArenaTypes> Arena<T> {
         roots: &mut [NanValue],
         rewrite_out_of_region_roots: bool,
     ) {
+        let has_work = rewrite_out_of_region_roots
+            || roots.iter().any(|value| {
+                value
+                    .heap_index()
+                    .is_some_and(|index| !matches!(Self::decode_index(index).0, HeapSpace::Stable))
+            });
+        if !has_work {
+            return;
+        }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
         if rewrite_out_of_region_roots {
             self.begin_inplace_visit_epoch();
@@ -1517,12 +1602,14 @@ impl<T: ArenaTypes> Arena<T> {
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated_young);
         Self::recycle_u32_scratch(&mut self.scratch_yard, relocated_yard);
         Self::recycle_u32_scratch(&mut self.scratch_handoff, relocated_handoff);
+        self.finish_lane_rewrite();
     }
 
     pub fn collect_yard_from_roots(&mut self, mark: u32, roots: &mut [NanValue]) {
         if self.yard_entries.len() <= mark as usize {
             return;
         }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
 
         let mut relocated = Self::take_u32_scratch(&mut self.scratch_yard, self.yard_entries.len());
         let mut compacted = Vec::with_capacity(self.yard_entries.len() - mark as usize);
@@ -1534,12 +1621,14 @@ impl<T: ArenaTypes> Arena<T> {
         self.yard_entries.truncate(mark as usize);
         self.yard_entries.extend(compacted);
         Self::recycle_u32_scratch(&mut self.scratch_yard, relocated);
+        self.finish_lane_rewrite();
     }
 
     pub fn collect_stable_from_roots(&mut self, roots: &mut [NanValue]) {
         if self.stable_entries.is_empty() {
             return;
         }
+        self.begin_lane_rewrite(INVALID_LANE_MARK);
 
         let mut relocated =
             Self::take_u32_scratch(&mut self.scratch_stable, self.stable_entries.len());
@@ -1551,6 +1640,7 @@ impl<T: ArenaTypes> Arena<T> {
 
         self.stable_entries = compacted;
         Self::recycle_u32_scratch(&mut self.scratch_stable, relocated);
+        self.finish_lane_rewrite();
     }
 
     fn promote_region_root_to_yard(
@@ -1884,11 +1974,19 @@ impl<T: ArenaTypes> Arena<T> {
 
     fn promote_entry_to_target(
         &mut self,
-        entry: ArenaEntry<T>,
+        mut entry: ArenaEntry<T>,
         mark: u32,
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> ArenaEntry<T> {
+        if let ArenaEntry::Map { scan_receipt, .. } = &entry
+            && self.lane_receipt_can_skip(*scan_receipt)
+        {
+            if let ArenaEntry::Map { scan_receipt, .. } = &mut entry {
+                *scan_receipt = self.renewed_lane_receipt();
+            }
+            return entry;
+        }
         // Fast path for bulk-data types: if no NanValue in this entry points
         // to young >= mark, skip the rewrite — move the entry as-is.
         // Only check types where the scan is cheap relative to the rewrite cost.
@@ -1932,6 +2030,9 @@ impl<T: ArenaTypes> Arena<T> {
                 // a full walk costs, so it belongs in the same counter.
                 let entries = map.len();
                 self.note_map_entries_scanned(entries);
+                if let ArenaEntry::Map { scan_receipt, .. } = &mut entry {
+                    *scan_receipt = self.renewed_lane_receipt();
+                }
                 return entry;
             }
             _ => {}

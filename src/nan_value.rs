@@ -30,6 +30,7 @@ pub use aver_memory::{
     IMM_UNIT,
     INT_INLINE_MAX,
     INT_INLINE_MIN,
+    LaneMark,
     ListBody,
     MapLike,
     NanString,
@@ -89,11 +90,12 @@ pub type ArenaEntry = aver_memory::ArenaEntry<AverTypes>;
 pub type ArenaSymbol = aver_memory::ArenaSymbol<AverTypes>;
 
 /// Every arena slot is one of these, so the widest variant sets what a slot
-/// costs whatever it holds. `Namespace` is the widest at 40 bytes, which leaves
-/// the `all_immediate` flag beside the 8-byte map handle riding in padding that
-/// was already there — the flag that lets the collector skip a map of
-/// immediates costs nothing per slot. A variant that grew past 40 would put
-/// that back, on every entry in the arena, which is why this is pinned.
+/// costs whatever it holds. The widest payload remains 40 bytes after adding
+/// the Map and flat-list lane receipts; segmented lists deliberately stay on
+/// their conservative scan path because adding a receipt there would grow the
+/// payload. A variant wider than 40 would increase every slot in the arena,
+/// which is why both boundaries are pinned.
+const _: () = assert!(core::mem::size_of::<ArenaList>() == 40);
 const _: () = assert!(core::mem::size_of::<ArenaEntry>() == 48);
 
 // ---------------------------------------------------------------------------

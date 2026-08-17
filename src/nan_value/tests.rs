@@ -207,6 +207,7 @@ fn the_cheap_heap_reference_filter_turns_nothing_heap_backed_away() {
         ArenaList::Flat {
             items: std::sync::Arc::new(crate::nan_value::ListBody::new(vec![NanValue::TRUE])),
             start: 0,
+            scan_receipt: 0,
         },
     ))));
 
@@ -612,6 +613,100 @@ macro_rules! flat_body {
     };
 }
 
+/// A receipt is an upper bound on when every reference in a collection became
+/// reachable, not a license to skip every collection built in the same epoch.
+/// Both collections here are created after the frame watermark and point into
+/// the suffix that the evacuation drops. Their entries must therefore be read
+/// and their children moved before the same young slots are reused.
+#[test]
+fn post_mark_flat_and_map_receipts_do_not_hide_young_payloads() {
+    let mut arena = Arena::new();
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+    let lane_mark = arena.lane_mark();
+
+    let list_payload = NanValue::new_string(arena.push_string("exact-list-payload"));
+    let list = NanValue::new_list(arena.push_list(vec![list_payload]));
+
+    let map_key = NanValue::new_string(arena.push_string("exact-map-key"));
+    let map_value = NanValue::new_string(arena.push_string("exact-map-value"));
+    let map_hash = map_key.map_key_hash(&arena);
+    let map = PersistentMap::new().insert_owned(map_hash, (map_key, map_value));
+    let map = NanValue::new_map(arena.push_map(map));
+
+    let lists_before = arena.list_elements_scanned();
+    let maps_before = arena.map_entries_scanned();
+    let mut roots = [list, map];
+    arena.evacuate_frame_to_yard(
+        young_mark,
+        yard_mark,
+        handoff_mark,
+        lane_mark,
+        &mut roots,
+        false,
+    );
+
+    assert_eq!(arena.list_elements_scanned() - lists_before, 1);
+    assert_eq!(arena.map_entries_scanned() - maps_before, 1);
+    assert_eq!(arena.young_len(), young_mark as usize);
+
+    // Reoccupy every raw young slot the two collections and their children
+    // used. A skipped child now reads one of these strings instead of merely
+    // becoming an out-of-bounds index, making the corruption exact and stable.
+    for index in 0..5 {
+        arena.push_string(&format!("replacement-slot-{index}"));
+    }
+
+    let moved_list_payload = arena.list_get_value(roots[0], 0).expect("list payload");
+    assert_eq!(
+        arena.get_string_value(moved_list_payload).to_string(),
+        "exact-list-payload"
+    );
+
+    let mut entries = arena.map_ref_value(roots[1]).iter();
+    let (_, (moved_key, moved_value)) = entries.next().expect("map entry");
+    assert!(entries.next().is_none());
+    assert_eq!(arena.get_string_value(*moved_key), "exact-map-key");
+    assert_eq!(arena.get_string_value(*moved_value), "exact-map-value");
+}
+
+/// In-place escape repair must descend through a Flat body even when its lane
+/// receipt would otherwise prove the body older than the frame. The collection
+/// may hide the mutated vector the repair is looking for, so the receipt is not
+/// applicable to this traversal.
+#[test]
+fn an_escape_walk_overrides_a_valid_flat_receipt() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..8)
+        .map(|i| NanValue::new_string(arena.push_string(&format!("resident-{i}"))))
+        .collect();
+    let list = NanValue::new_list(arena.push_list(items));
+
+    let young_mark = arena.young_len() as u32;
+    let yard_mark = arena.yard_len() as u32;
+    let handoff_mark = arena.handoff_len() as u32;
+    let lane_mark = arena.lane_mark();
+    let local = NanValue::new_string(arena.push_string("frame-local-trigger"));
+
+    let scanned_before = arena.list_elements_scanned();
+    let mut roots = [list, local];
+    arena.evacuate_frame_to_yard(
+        young_mark,
+        yard_mark,
+        handoff_mark,
+        lane_mark,
+        &mut roots,
+        true,
+    );
+
+    assert_eq!(
+        arena.list_elements_scanned() - scanned_before,
+        8,
+        "a valid Flat receipt hid the body from an in-place escape repair",
+    );
+}
+
 /// The other half of the immediate-body shortcut: a body that does hold heap
 /// references must still be walked, and every element must come back readable.
 #[test]
@@ -627,7 +722,7 @@ fn evacuating_a_flat_list_of_heap_backed_elements_relocates_every_element() {
     let list = NanValue::new_list(arena.push_list(items));
 
     let mut roots = [list];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, false);
     assert_eq!(
         arena
             .get_string_value(arena.list_get_value(roots[0], 3).unwrap())
@@ -657,7 +752,7 @@ fn evacuation_rewrites_an_out_of_region_slot_written_in_place() {
     arena.get_vector_mut(vector.arena_index())[0] = payload;
 
     let mut roots = [vector];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, true);
 
     let element = arena.vector_ref_value(roots[0])[0];
     assert_eq!(
@@ -685,7 +780,7 @@ fn evacuation_reads_an_out_of_region_root_only_when_told_to() {
 
     let scanned = arena.list_elements_scanned();
     let mut roots = [list];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, false);
     assert_eq!(
         arena.list_elements_scanned() - scanned,
         0,
@@ -694,7 +789,7 @@ fn evacuation_reads_an_out_of_region_root_only_when_told_to() {
 
     let scanned = arena.list_elements_scanned();
     let mut roots = [list];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, true);
     assert_eq!(
         arena.list_elements_scanned() - scanned,
         64,
@@ -719,7 +814,7 @@ fn the_handoff_evacuation_rewrites_an_out_of_region_slot_written_in_place() {
     arena.get_vector_mut(vector.arena_index())[0] = payload;
 
     let mut roots = [vector];
-    arena.evacuate_frame_to_handoff(young_mark, yard_mark, handoff_mark, &mut roots, true);
+    arena.evacuate_frame_to_handoff(young_mark, yard_mark, handoff_mark, 0, &mut roots, true);
 
     let element = arena.vector_ref_value(roots[0])[0];
     assert_eq!(
@@ -759,7 +854,7 @@ fn evacuation_descends_into_a_twice_reached_out_of_region_slot_once() {
     arena.get_vector_mut(vector.arena_index())[0] = payload;
 
     let mut roots = [vector, vector, bystander];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, true);
 
     let element = arena.vector_ref_value(roots[0])[0];
     assert_eq!(
@@ -803,7 +898,7 @@ fn evacuation_rewrites_a_slot_written_in_place_behind_an_out_of_region_list_tail
     arena.get_vector_mut(vector.arena_index())[0] = payload;
 
     let mut roots = [list, survivor];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, true);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, true);
 
     // The vector itself lives below the marks, so its handle is unchanged.
     let element = arena.vector_ref_value(vector)[0];
@@ -834,7 +929,7 @@ fn promotion_survives_a_twice_reached_out_of_region_slot() {
     arena.get_vector_mut(vector.arena_index())[0] = payload;
 
     let mut roots = [vector, vector, bystander];
-    arena.promote_young_roots_to_yard(mark, &mut roots);
+    arena.promote_young_roots_to_yard(mark, 0, &mut roots);
 
     let element = arena.vector_ref_value(roots[0])[0];
     assert_eq!(
@@ -857,7 +952,7 @@ fn evacuating_a_flat_list_of_immediates_keeps_its_backing_allocation() {
     let copied_before = arena.list_elements_copied();
 
     let mut roots = [list];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, false);
 
     let after = flat_body!(arena, roots[0]);
     assert!(
@@ -893,7 +988,7 @@ fn evacuating_a_sliced_flat_list_keeps_the_shared_allocation_and_the_offset() {
     let tail = NanValue::new_list(arena.push_list_prepend(NanValue::new_int_inline(-1), tail));
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, false);
 
     let body = match arena.get_list(roots[0].arena_index()) {
         ArenaList::Prepend { tail, .. } => flat_body!(arena, *tail),
@@ -935,7 +1030,7 @@ fn a_walked_body_that_did_not_move_keeps_the_slice_offset() {
     let copied_before = arena.list_elements_copied();
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, false);
 
     let body = flat_body!(arena, roots[0]);
     assert!(
@@ -989,7 +1084,7 @@ fn rebuilding_a_walked_body_copies_the_prefix_from_the_slice_offset() {
     let copied_before = arena.list_elements_copied();
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, 0, &mut roots, false);
 
     assert_eq!(
         arena.list_len_value(roots[0]),
@@ -1030,15 +1125,24 @@ fn evacuating_a_segments_node_keeps_the_parts_allocation_when_nothing_moves() {
     let young_mark = arena.young_len() as u32;
     let yard_mark = arena.yard_len() as u32;
     let handoff_mark = arena.handoff_len() as u32;
+    let lane_mark = arena.lane_mark();
 
     let (_, tail) = arena.list_uncons(concat).expect("uncons");
     let before = match arena.get_list(tail.arena_index()) {
         ArenaList::Segments { rest, .. } => std::sync::Arc::clone(rest),
         other => panic!("expected a segment view, got {other:?}"),
     };
+    let scanned_before = arena.list_elements_scanned();
 
     let mut roots = [tail];
-    arena.evacuate_frame_to_yard(young_mark, yard_mark, handoff_mark, &mut roots, false);
+    arena.evacuate_frame_to_yard(
+        young_mark,
+        yard_mark,
+        handoff_mark,
+        lane_mark,
+        &mut roots,
+        false,
+    );
 
     let after = match arena.get_list(roots[0].arena_index()) {
         ArenaList::Segments { rest, .. } => std::sync::Arc::clone(rest),
@@ -1047,6 +1151,11 @@ fn evacuating_a_segments_node_keeps_the_parts_allocation_when_nothing_moves() {
     assert!(
         std::sync::Arc::ptr_eq(&before, &after),
         "evacuation rebuilt a segment part list in which nothing moved",
+    );
+    assert_eq!(
+        arena.list_elements_scanned() - scanned_before,
+        1,
+        "Segments incorrectly inherited the Flat receipt skip",
     );
     assert_eq!(arena.list_len_value(roots[0]), 3);
     assert_eq!(arena.list_get_value(roots[0], 2).unwrap().as_int(&arena), 4);
@@ -1163,7 +1272,7 @@ fn dropping_a_prefix_shares_the_list_body_and_advances_the_offset() {
     let dropped = drop_builtin(&mut arena, list, 16);
 
     let (body, start) = match arena.get_list(dropped.arena_index()) {
-        ArenaList::Flat { items, start } => (items.clone(), *start),
+        ArenaList::Flat { items, start, .. } => (items.clone(), *start),
         other => panic!("expected a flat view, got {other:?}"),
     };
     assert!(
@@ -1259,7 +1368,7 @@ fn dropping_into_the_right_half_of_a_concat_shares_its_body() {
     let dropped = drop_builtin(&mut arena, joined, 3);
 
     let (body, start) = match arena.get_list(dropped.arena_index()) {
-        ArenaList::Flat { items, start } => (items.clone(), *start),
+        ArenaList::Flat { items, start, .. } => (items.clone(), *start),
         other => panic!("expected a flat view, got {other:?}"),
     };
     assert!(

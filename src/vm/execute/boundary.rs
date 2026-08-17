@@ -1,5 +1,5 @@
 use super::{ReturnControl, VM};
-use crate::nan_value::{AllocSpace, NanValue};
+use crate::nan_value::{AllocSpace, LaneMark, NanValue};
 use crate::vm::opcode::{RETURN, TAIL_CALL_KNOWN, TAIL_CALL_SELF};
 use crate::vm::profile::ReturnPathProfileKind;
 use crate::vm::types::CallFrame;
@@ -72,6 +72,11 @@ impl VM {
     }
 
     /// Finish the frame's regions before the tail call reuses it.
+    ///
+    /// Returns whether this operation discharged the suffix paired with
+    /// `lane_mark`. An unrelated epoch bump, such as promotion of dirty globals,
+    /// is not enough: the caller may only rebase the mark when the frame's own
+    /// young/yard/handoff suffix was evacuated or promoted.
     // One over the limit, and the one over is `inplace_write_escaped`, which
     // the evacuation below needs.
     #[allow(clippy::too_many_arguments)]
@@ -80,11 +85,12 @@ impl VM {
         arena_mark: u32,
         yard_mark: u32,
         handoff_mark: u32,
+        lane_mark: LaneMark,
         globals_dirty: bool,
         yard_dirty: bool,
         inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
-    ) {
+    ) -> bool {
         let _ = yard_dirty;
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals, false);
@@ -99,10 +105,11 @@ impl VM {
                 arena_mark,
                 yard_mark,
                 handoff_mark,
+                lane_mark,
                 frame_roots,
                 inplace_write_escaped,
             );
-            return;
+            return true;
         }
 
         if has_local_young {
@@ -113,9 +120,11 @@ impl VM {
             let young_growth = self.arena.young_len() - arena_mark as usize;
             if young_growth > 4 {
                 self.arena
-                    .promote_young_roots_to_yard(arena_mark, frame_roots);
+                    .promote_young_roots_to_yard(arena_mark, lane_mark, frame_roots);
+                return true;
             }
         }
+        false
     }
 
     pub(super) fn finalize_frame_return_to_caller(
@@ -123,6 +132,7 @@ impl VM {
         arena_mark: u32,
         yard_base: u32,
         handoff_mark: u32,
+        lane_mark: LaneMark,
         globals_dirty: bool,
         inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
@@ -158,14 +168,14 @@ impl VM {
 
         if !has_local_yard && !has_local_handoff {
             self.arena
-                .promote_young_roots_to_handoff(arena_mark, frame_roots);
+                .promote_young_roots_to_handoff(arena_mark, lane_mark, frame_roots);
             self.arena.truncate_yard_to(yard_base);
             return (false, self.arena.handoff_len() > handoff_mark as usize);
         }
 
         if !has_local_yard && has_local_young && result_is_single_local_handoff {
             self.arena
-                .promote_young_roots_to_handoff(arena_mark, frame_roots);
+                .promote_young_roots_to_handoff(arena_mark, lane_mark, frame_roots);
             self.arena.truncate_yard_to(yard_base);
             return (false, self.arena.handoff_len() > handoff_mark as usize);
         }
@@ -175,6 +185,7 @@ impl VM {
                 arena_mark,
                 yard_base,
                 handoff_mark,
+                lane_mark,
                 frame_roots,
                 inplace_write_escaped,
             );
@@ -202,6 +213,7 @@ impl VM {
         arena_mark: u32,
         yard_base: u32,
         handoff_mark: u32,
+        _lane_mark: LaneMark,
         globals_dirty: bool,
         inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
@@ -221,6 +233,7 @@ impl VM {
         arena_mark: u32,
         yard_base: u32,
         handoff_mark: u32,
+        lane_mark: LaneMark,
         globals_dirty: bool,
         inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
@@ -238,6 +251,7 @@ impl VM {
                 arena_mark,
                 yard_base,
                 handoff_mark,
+                lane_mark,
                 globals_dirty,
                 inplace_write_escaped,
                 frame_roots,
@@ -359,6 +373,7 @@ impl VM {
                 frame.arena_mark,
                 frame.yard_base,
                 frame.handoff_mark,
+                frame.lane_base,
                 frame.globals_dirty,
                 frame.inplace_write_escaped,
                 std::slice::from_mut(&mut result),
@@ -374,6 +389,7 @@ impl VM {
                 frame.arena_mark,
                 frame.yard_base,
                 frame.handoff_mark,
+                frame.lane_base,
                 frame.globals_dirty,
                 frame.inplace_write_escaped,
                 std::slice::from_mut(&mut result),
@@ -393,6 +409,7 @@ impl VM {
             frame.arena_mark,
             frame.yard_base,
             frame.handoff_mark,
+            frame.lane_base,
             frame.globals_dirty,
             frame.inplace_write_escaped,
             std::slice::from_mut(&mut result),
