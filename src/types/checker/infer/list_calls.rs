@@ -112,6 +112,15 @@ impl TypeChecker {
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
                 let needle_ty = arg_types[1].clone();
+                if self.type_contains_capability_resource(&elem_ty)
+                    || self.type_contains_capability_resource(&needle_ty)
+                {
+                    self.error(format!(
+                        "'List.contains' is not defined for capability resource values (got {}); provider token identity is deliberately unobservable",
+                        elem_ty.display()
+                    ));
+                    return Some(Type::Bool);
+                }
                 if !matches!(elem_ty, Type::Var(_) | Type::Invalid)
                     && !matches!(needle_ty, Type::Var(_) | Type::Invalid)
                     && !self.compatible(&needle_ty, &elem_ty)

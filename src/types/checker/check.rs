@@ -6,7 +6,10 @@ impl TypeChecker {
         // resolution in `resolve_fn_id` / `resolve_type_id` knows
         // which scope to try first.
         self.current_module_prefix = Self::module_decl(items).map(|m| m.name.clone());
-        // Load + integrate dependency modules FIRST so the alias
+        // Load dependency modules first. Capability contracts are registered
+        // from the WHOLE closure before any signature or verify-flow check;
+        // otherwise an operation in a dependency would classify as an unknown
+        // fn/effect (the same entry-scoped gap `proof` used to have).
         // maps are populated before `build_signatures` resolves local
         // fn / type annotations.
         let mut loaded_modules: Vec<crate::source::LoadedModule> = Vec::new();
@@ -15,11 +18,15 @@ impl TypeChecker {
         {
             match crate::source::load_module_tree(&module.depends, base) {
                 Ok(modules) => {
-                    self.integrate_loaded_modules(&modules);
                     loaded_modules = modules;
                 }
                 Err(e) => self.error(e),
             }
+        }
+
+        self.configure_capabilities(items, &loaded_modules);
+        if !loaded_modules.is_empty() {
+            self.integrate_loaded_modules(&loaded_modules);
         }
 
         self.build_signatures(items);
@@ -46,10 +53,37 @@ impl TypeChecker {
         // `build_signatures`'s resolution sees imported types
         // (e.g. `Tile` resolves to `Types.Tile` when `Types` is in
         // `depends`).
+        self.configure_capabilities(items, loaded);
         self.integrate_loaded_modules(loaded);
         self.build_signatures(items);
         self.check_loaded_module_bodies(loaded);
         self.check_body(items);
+    }
+
+    fn configure_capabilities(
+        &mut self,
+        entry_items: &[TopLevel],
+        loaded: &[crate::source::LoadedModule],
+    ) {
+        let entry_scope = Self::module_decl(entry_items)
+            .map(|m| m.name.as_str())
+            .unwrap_or("");
+        let (mut registry, mut errors) =
+            crate::capability::CapabilityRegistry::from_module(entry_scope, entry_items);
+        for module in loaded {
+            let (next, mut next_errors) =
+                crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
+            registry.merge(next);
+            errors.append(&mut next_errors);
+        }
+        self.errors
+            .extend(errors.into_iter().map(|error| TypeError {
+                message: error.message,
+                line: error.line,
+                col: 1,
+                secondary: None,
+            }));
+        self.capabilities = registry;
     }
 
     fn integrate_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
@@ -73,6 +107,7 @@ impl TypeChecker {
             self.error(e);
         }
         self.canonicalize_source_typed_builtin_sigs();
+        self.register_capability_sigs();
     }
 
     /// Re-stamp builtin signatures whose nominal types are owned by embedded
@@ -123,6 +158,7 @@ impl TypeChecker {
             // from `entry_items + dep_modules`).
             let mut sub = TypeChecker::new_with_symbols(self.symbol_table.clone());
             sub.self_host_mode = self.self_host_mode;
+            sub.capabilities = self.capabilities.clone();
             // Phase B: the dep module's prefix in the symbol table is
             // its `dep_name` (the path the entry's `depends` clause
             // wrote, e.g. `Pricing.Discount`), not the interior
@@ -150,11 +186,8 @@ impl TypeChecker {
                 .cloned()
                 .collect();
             sub.integrate_loaded_modules(&visible_to_sub);
+            sub.register_capability_sigs();
             sub.build_signatures(&module.items);
-            // Same refusal the entry file gets. `proof` has no `--deps`
-            // flag, so without this a capability declared in a dependency
-            // would slip through every entry point that loads it.
-            super::reject_capability_items(&module.items, &mut sub.errors);
             sub.check_top_level_stmts(&module.items);
             sub.check_verify_blocks(&module.items);
             for item in &module.items {

@@ -365,6 +365,38 @@ module Payments
 
 `effects [...]` declares the module's effect boundary — the union of the effects its functions may perform, in the same granular/namespace-shorthand form as function-level `! [...]`. It goes after `intent`. `aver check` warns when a module with functions omits it; a pure module declares `effects []` explicitly.
 
+### Capability modules
+
+A capability module declares host-provided atoms without choosing how a host binds them. It is still an ordinary module for `depends`, visibility, and naming, but its `operation` declarations have signatures instead of Aver bodies:
+
+```aver
+module Clock
+    kind = capability
+    semantics = effectful
+    exposes [now]
+
+operation now() -> Int
+    ? "Reads the provider's clock."
+    oracle = generative
+    replay = recorded
+    hostile = [zero]
+
+fn zero(path: BranchPath, call: Int) -> Int
+    0
+```
+
+`semantics` is mandatory and homogeneous for the module:
+
+- `pure` operations are total, deterministic functions for proof purposes and carry no effect. They cannot declare `oracle`, `replay`, `hostile`, or `unmodelled` fields.
+- `effectful` operations are their own effect identities (`Clock.now`). Every operation declares an Oracle dimension (`generative`, `output`, or `generativeOutput`) and replay behavior. Generative results use `recorded`; output requires a `Unit` result and uses `reissued` or `suppressed`; `snapshot` is reserved for standard-library effects whose read-only behavior Aver audits itself.
+- An operation is a first-order provider boundary, not a value: it cannot take or return `Fn`, be assigned, or be passed as a callback. Call it directly, including inside `!` and `?!`. Capability effect declarations must name exact operations; namespace shorthand is rejected at module and function scope.
+
+`given` and `aver verify --hostile` use the same stub signatures as built-in effects. A hostile profile belongs to the capability module, must be pure, and receives `BranchPath`, call index, then the operation arguments. If the operation mints an opaque resource, one unconstrained fresh token appears between the call index and the original arguments; it is not assumed distinct from any other token. Proof trust headers pin two separate SHA-256 identities: `contract_hash` covers the provider ABI and all reachable boundary types, while `model_hash` additionally covers Oracle/replay metadata and the transitive source closure of hostile profiles. Both identities hash canonical `u64be` length-framed descriptors, so field concatenation cannot collide. Provider choice and binding stay outside both hashes and outside the theorem.
+
+`opaque Token` inside a capability is representation-less: only a future provider can mint a value. It may occur at most once in an operation's success payload, directly or through transparent `Result`/`Option` wrappers; resource consumers must use recorded replay. Capability resources, including represented wrapper types that transitively contain one, deliberately have no equality or map-key semantics because provider token identity is not part of the contract.
+
+Provider bindings are not implemented in the current slice. Normal execution therefore fails exactly at an unbound operation. Rust, wasm-gc, and wasip2 compilation reject artifacts that reference one, naming the operation and `contract_hash`; replay can satisfy `recorded` and `suppressed` operations from a trace, while `reissued` still requires a live provider. This fail-closed boundary is also the intended seam for a later WASI Component Model/WIT adapter: component wiring supplies the operation, but does not change its Aver contract or proof model.
+
 ### Opaque types
 
 `exposes opaque` makes a type visible in signatures but blocks direct construction, field access, and pattern matching from outside the module. The type can still be passed around, returned, and stored.

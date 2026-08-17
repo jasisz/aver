@@ -304,6 +304,8 @@ mod tests {
             depends: vec![],
             type_defs: vec![],
             fn_defs: fn_names.iter().map(|n| mk_fn(n)).collect(),
+            capability_items: vec![],
+            capability_semantics: None,
             verify_laws: vec![],
             analysis: None,
         }
@@ -344,6 +346,8 @@ mod tests {
             effects_line: None,
             kind: None,
             kind_line: None,
+            semantics: None,
+            semantics_line: None,
         })];
         let modules = vec![mk_module("A", &["walker"]), mk_module("B", &["walker"])];
         let symbol_table = SymbolTable::build(&entry_items, &modules);

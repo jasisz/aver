@@ -108,6 +108,48 @@ pub(crate) fn dafny_module_name(prefix: &str) -> String {
 fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     use std::collections::{HashMap, HashSet};
 
+    fn capability_declarations(ctx: &CodegenContext, module: &str) -> Vec<String> {
+        let mut declarations = ctx
+            .capabilities
+            .opaque_types()
+            .filter_map(|canonical| {
+                let (owner, name) = canonical.rsplit_once('.')?;
+                (owner == module).then(|| {
+                    format!(
+                        "type {}",
+                        crate::codegen::dafny::expr::aver_name_to_dafny(name)
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        declarations.extend(
+            ctx.capabilities
+                .operations()
+                .filter(|operation| !operation.is_effectful() && operation.module == module)
+                .map(|operation| {
+                    let params = operation
+                        .params
+                        .iter()
+                        .map(|(name, ty)| {
+                            format!(
+                                "{}: {}",
+                                crate::codegen::dafny::expr::aver_name_to_dafny(name),
+                                toplevel::emit_type_from(ty)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "function {}({}): {}",
+                        crate::codegen::dafny::expr::aver_name_to_dafny(&operation.name),
+                        params,
+                        toplevel::emit_type_from(&operation.return_type)
+                    )
+                }),
+        );
+        declarations
+    }
+
     // ProofIR is populated by the ContractLower pipeline stage. Mutual
     // SCC members are exactly the fns whose contract is `Fuel { Lex }`
     // — that's the unifying shape MutualIntCountdown /
@@ -299,7 +341,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
 
     // ---- Per-module files (collected into the shared module tree) ----
     for module in &ctx.modules {
-        let mut sections: Vec<String> = Vec::new();
+        let mut sections = capability_declarations(ctx, &module.prefix);
         ctx.with_module_scope(Some(module.prefix.as_str()), || {
             for td in &module.type_defs {
                 if let Some(code) =
@@ -386,6 +428,22 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
 
     // ---- Entry sections ----
     let mut entry_sections: Vec<String> = Vec::new();
+    if let Some(entry_module) = ctx.entry_module_name() {
+        let declarations = capability_declarations(ctx, &entry_module);
+        if !declarations.is_empty() {
+            let body = declarations
+                .join("\n")
+                .lines()
+                .map(|line| format!("  {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            entry_sections.push(format!(
+                "module {} {{\n{}\n}}",
+                dafny_module_name(&entry_module),
+                body
+            ));
+        }
+    }
     for td in &ctx.type_defs {
         if let Some(code) = toplevel::emit_type_def(td, ctx) {
             entry_sections.push(code);
@@ -411,10 +469,13 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
             && reachable.contains(&fd.name)
-            && fd
-                .effects
-                .iter()
-                .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+            && fd.effects.iter().all(|e| {
+                crate::types::checker::effect_classification::classify_with_registry(
+                    &ctx.capabilities,
+                    &e.node,
+                )
+                .is_some()
+            })
         {
             helpers.insert(
                 fd.name.clone(),
@@ -428,12 +489,19 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
             && reachable.contains(&fd.name)
-            && fd
-                .effects
-                .iter()
-                .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+            && fd.effects.iter().all(|e| {
+                crate::types::checker::effect_classification::classify_with_registry(
+                    &ctx.capabilities,
+                    &e.node,
+                )
+                .is_some()
+            })
             && let Ok(Some(lifted)) =
-                crate::types::checker::effect_lifting::lift_fn_def_with_helpers(fd, &helpers)
+                crate::types::checker::effect_lifting::lift_fn_def_with_helpers_and_registry(
+                    fd,
+                    &helpers,
+                    &ctx.capabilities,
+                )
         {
             entry_sections.push(toplevel::emit_fn_def(&lifted, ctx));
         }
@@ -529,16 +597,33 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     for m in &ctx.modules {
         opens.push(format!("import opened {}", dafny_module_name(&m.prefix)));
     }
+    if ctx.capabilities.contract(&entry_name).is_some() {
+        // An entry capability's representation-less resources live in their
+        // own `Aver_<Module>` namespace, just like dependency capabilities.
+        // Hostile profiles and lifted wrapper functions are emitted in Dafny's
+        // default module, so open the capability namespace there to make the
+        // source-faithful bare annotation (`Token`) resolve to the same opaque
+        // type as the canonical oracle parameter (`Aver_Mint.Token`).
+        opens.push(format!("import opened {}", dafny_module_name(&entry_name)));
+    }
     entry_parts.push(opens.join("\n"));
     let declared = crate::codegen::common::collect_declared_effects(ctx);
     let has_ip = union_body.contains("BranchPath");
     let has_classified =
         crate::types::checker::effect_classification::classifications_for_proof_subset()
             .iter()
-            .any(|c| declared.includes(c.method));
-    if has_ip || has_classified {
+            .any(|c| declared.includes(c.method))
+            || ctx.capabilities.operations().any(|operation| {
+                operation.is_effectful() && declared.includes(&operation.canonical_name)
+            });
+    if has_ip || has_classified || ctx.capabilities.contracts().next().is_some() {
         entry_parts.push(
-            crate::types::checker::proof_trust_header::generate_commented("// ", &declared, has_ip),
+            crate::types::checker::proof_trust_header::generate_commented_with_registry(
+                "// ",
+                &declared,
+                has_ip,
+                &ctx.capabilities,
+            ),
         );
     }
     let subtype_block = crate::types::checker::oracle_subtypes::dafny_subtype_predicates(&declared);

@@ -543,6 +543,10 @@ pub struct Module {
     /// branches on it yet.
     pub kind: Option<String>,
     pub kind_line: Option<usize>,
+    /// Mandatory semantic class for a capability module: `pure` or
+    /// `effectful`. Ordinary modules carry `None`.
+    pub semantics: Option<String>,
+    pub semantics_line: Option<usize>,
 }
 
 /// A declaration that only a capability module may carry. Both forms

@@ -64,6 +64,7 @@ impl VM {
             return match kind {
                 VmSymbolKind::Function(_) => "Fn".to_string(),
                 VmSymbolKind::Builtin(_) => "Builtin".to_string(),
+                VmSymbolKind::Capability(_) => "Capability".to_string(),
                 VmSymbolKind::Namespace => "Namespace".to_string(),
                 VmSymbolKind::VariantCtor(ctor) => {
                     if ctor.field_count == 0 {
@@ -95,6 +96,9 @@ impl VM {
                 }
                 VmSymbolKind::Builtin(_) => {
                     format!("<builtin {}>", info.name)
+                }
+                VmSymbolKind::Capability(_) => {
+                    format!("<capability {}>", info.name)
                 }
                 VmSymbolKind::Namespace => {
                     format!("<type {}>", info.name)

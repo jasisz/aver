@@ -63,6 +63,17 @@ pub struct EffectClassification {
     pub ret: Type,
 }
 
+/// Owned classification returned by a whole-program registry lookup. Standard
+/// services are cloned from the static table; program-defined capability
+/// operations are derived from their canonical declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegisteredEffectClassification {
+    pub method: String,
+    pub dimension: EffectDimension,
+    pub params: Vec<Type>,
+    pub ret: Type,
+}
+
 /// `Result<ok, String>` — the shape every fallible service method returns.
 /// Spelled once here so the table below reads as the signatures do, rather
 /// than as a wall of `Box::new`.
@@ -425,6 +436,36 @@ pub fn classify(method: &str) -> Option<&'static EffectClassification> {
     classifications().iter().find(|c| c.method == method)
 }
 
+pub fn classify_with_registry(
+    registry: &crate::capability::CapabilityRegistry,
+    method: &str,
+) -> Option<RegisteredEffectClassification> {
+    if let Some(classification) = classify(method) {
+        return Some(RegisteredEffectClassification {
+            method: classification.method.to_string(),
+            dimension: classification.dimension,
+            params: classification.params.clone(),
+            ret: classification.ret.clone(),
+        });
+    }
+    let operation = registry.operation(method)?;
+    if !operation.is_effectful() {
+        return None;
+    }
+    let dimension = match operation.oracle? {
+        crate::capability::OracleDimension::Snapshot => EffectDimension::Snapshot,
+        crate::capability::OracleDimension::Generative => EffectDimension::Generative,
+        crate::capability::OracleDimension::Output => EffectDimension::Output,
+        crate::capability::OracleDimension::GenerativeOutput => EffectDimension::GenerativeOutput,
+    };
+    Some(RegisteredEffectClassification {
+        method: operation.canonical_name.clone(),
+        dimension,
+        params: operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+        ret: operation.return_type.clone(),
+    })
+}
+
 /// Closed Oracle v1 proof-subset table, exposed for proof metadata
 /// generation. Callers must treat the returned slice as read-only metadata.
 pub fn classifications_for_proof_subset() -> &'static [EffectClassification] {
@@ -528,9 +569,90 @@ pub fn oracle_signature(method: &str) -> Option<Type> {
     }
 }
 
+pub fn oracle_signature_with_registry(
+    registry: &crate::capability::CapabilityRegistry,
+    method: &str,
+) -> Option<Type> {
+    if let Some(operation) = registry.operation(method) {
+        return match operation.oracle {
+            Some(crate::capability::OracleDimension::Output) | None => None,
+            Some(crate::capability::OracleDimension::Snapshot) => Some(Type::Fn(
+                operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                Box::new(operation.return_type.clone()),
+                vec![],
+            )),
+            Some(
+                crate::capability::OracleDimension::Generative
+                | crate::capability::OracleDimension::GenerativeOutput,
+            ) => Some(Type::Fn(
+                operation.oracle_params(),
+                Box::new(operation.return_type.clone()),
+                vec![],
+            )),
+        };
+    }
+    let c = classify_with_registry(registry, method)?;
+    match c.dimension {
+        EffectDimension::Output => None,
+        EffectDimension::Snapshot => Some(Type::Fn(c.params, Box::new(c.ret), vec![])),
+        EffectDimension::Generative | EffectDimension::GenerativeOutput => {
+            let mut params = vec![Type::named(branch_path::TYPE_NAME.to_string()), Type::Int];
+            params.extend(c.params);
+            Some(Type::Fn(params, Box::new(c.ret), vec![]))
+        }
+    }
+}
+
+pub fn classified_effects_summary_with_registry(
+    registry: &crate::capability::CapabilityRegistry,
+) -> String {
+    let mut names: Vec<String> = classifications()
+        .iter()
+        .map(|classification| classification.method.to_string())
+        .collect();
+    names.extend(
+        registry
+            .operations()
+            .filter(|operation| operation.is_effectful())
+            .map(|operation| operation.canonical_name.clone()),
+    );
+    names.sort();
+    names.dedup();
+    names.join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capability_registry(scope: &str, source: &str) -> crate::capability::CapabilityRegistry {
+        let items = crate::source::parse_source(source).expect("parse capability differential");
+        let (registry, errors) = crate::capability::CapabilityRegistry::from_module(scope, &items);
+        assert!(
+            errors.is_empty(),
+            "capability differential errors: {errors:?}"
+        );
+        registry
+    }
+
+    fn assert_same_shape(
+        standard: &str,
+        custom: &str,
+        registry: &crate::capability::CapabilityRegistry,
+    ) {
+        let expected = classify_with_registry(&Default::default(), standard)
+            .unwrap_or_else(|| panic!("missing standard classification {standard}"));
+        let actual = classify_with_registry(registry, custom)
+            .unwrap_or_else(|| panic!("missing capability classification {custom}"));
+        assert_eq!(actual.dimension, expected.dimension, "{standard}");
+        assert_eq!(actual.params, expected.params, "{standard}");
+        assert_eq!(actual.ret, expected.ret, "{standard}");
+        assert_eq!(
+            oracle_signature_with_registry(registry, custom),
+            oracle_signature(standard),
+            "{standard} oracle signature"
+        );
+    }
 
     #[test]
     fn every_classified_entry_matches_the_registered_builtin_signature() {
@@ -570,6 +692,59 @@ mod tests {
                 c.method
             );
         }
+    }
+
+    #[test]
+    fn program_capability_mechanism_explains_terminal_except_audited_snapshot() {
+        let registry = capability_registry(
+            "TerminalCompat",
+            "module TerminalCompat\n    kind = capability\n    semantics = effectful\n\noperation clear() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation moveTo(row: Int, col: Int) -> Unit\n    oracle = output\n    replay = suppressed\n\noperation print(text: String) -> Unit\n    oracle = output\n    replay = reissued\n\noperation readKey() -> Option<String>\n    oracle = generative\n    replay = recorded\n\noperation hideCursor() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation showCursor() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation flush() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation enableRawMode() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation disableRawMode() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation setColor(color: String) -> Unit\n    oracle = output\n    replay = suppressed\n\noperation resetColor() -> Unit\n    oracle = output\n    replay = suppressed\n",
+        );
+        for method in [
+            "clear",
+            "moveTo",
+            "print",
+            "readKey",
+            "hideCursor",
+            "showCursor",
+            "flush",
+            "enableRawMode",
+            "disableRawMode",
+            "setColor",
+            "resetColor",
+        ] {
+            assert_same_shape(
+                &format!("Terminal.{method}"),
+                &format!("TerminalCompat.{method}"),
+                &registry,
+            );
+        }
+
+        // Terminal.size is the deliberate standard-only exception: its
+        // snapshot promise was audited by Aver. A program cannot grant itself
+        // that proof power with one attribute.
+        assert_eq!(
+            classify("Terminal.size").expect("Terminal.size").dimension,
+            EffectDimension::Snapshot
+        );
+        let source = "module TerminalCompat\n    kind = capability\n    semantics = effectful\n\noperation size() -> Int\n    oracle = snapshot\n    replay = recorded\n";
+        let items = crate::source::parse_source(source).expect("parse snapshot refusal");
+        let (_, errors) =
+            crate::capability::CapabilityRegistry::from_module("TerminalCompat", &items);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("cannot claim `oracle = snapshot`"))
+        );
+    }
+
+    #[test]
+    fn program_capability_http_get_has_the_standard_proof_shape() {
+        let registry = capability_registry(
+            "HttpCompat",
+            "module HttpCompat\n    kind = capability\n    semantics = effectful\n\nrecord HttpResponse\n    status: Int\n    body: String\n    headers: Map<String, List<String>>\n\noperation get(url: String) -> Result<HttpResponse, String>\n    oracle = generativeOutput\n    replay = recorded\n",
+        );
+        assert_same_shape("Http.get", "HttpCompat.get", &registry);
     }
 
     #[test]

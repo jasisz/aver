@@ -543,12 +543,15 @@ fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> cod
             _ => None,
         })
         .collect();
+    let (capability_items, capability_semantics) = codegen::capability_metadata(&items);
 
     codegen::ModuleInfo {
         prefix: m.dep_name,
         depends,
         type_defs,
         fn_defs,
+        capability_items,
+        capability_semantics,
         verify_laws: codegen::collect_verify_laws(&items),
         analysis: pipeline_result.analysis,
     }

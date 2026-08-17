@@ -445,6 +445,8 @@ mod tests {
                             _ => None,
                         })
                         .collect(),
+                    capability_items: Vec::new(),
+                    capability_semantics: None,
                     verify_laws: Vec::new(),
                     analysis: None,
                 }

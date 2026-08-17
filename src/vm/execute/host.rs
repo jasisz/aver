@@ -170,11 +170,10 @@ impl VM {
                 // If the current verify-law case installed a stub for
                 // this effect method, redirect the call to the stub
                 // with prepended (BranchPath.root, counter, …).
-                // Counter increments per dispatched effect; flat bodies
-                // only — nested `!`/`?!` branches will thread path via
-                // the lifting transform in a later integration step.
+                // The structural-trace state below supplies the actual
+                // branch path and per-branch counter inside `!` / `?!`.
                 if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
-                    return self.dispatch_oracle_stub(stub_fn_id, args);
+                    return self.dispatch_oracle_stub(stub_fn_id, args, false);
                 }
                 return self.runtime.invoke_builtin(
                     &self.code.symbols,
@@ -183,6 +182,10 @@ impl VM {
                     args,
                     &mut self.arena,
                 );
+            }
+
+            if self.code.symbols.resolve_capability(symbol_id).is_some() {
+                return self.dispatch_capability_operation(symbol_id, args, caller_fn_id);
             }
 
             if let Some(wrap_kind) = self.code.symbols.resolve_wrapper(symbol_id) {
@@ -372,6 +375,7 @@ impl VM {
         &mut self,
         stub_fn_id: u32,
         args: &[NanValue],
+        include_fresh_resource: bool,
     ) -> Result<NanValue, VmError> {
         // Oracle v1: record the effect emission into the verify-trace
         // collector before redirecting. The recorded event uses the
@@ -432,12 +436,77 @@ impl VM {
 
         let counter_nv = NanValue::new_int(counter as i64, &mut self.arena);
 
-        let mut new_args = Vec::with_capacity(args.len() + 2);
+        let mut new_args = Vec::with_capacity(args.len() + 2 + usize::from(include_fresh_resource));
         new_args.push(path_nv);
         new_args.push(counter_nv);
+        if include_fresh_resource {
+            // Capability resource identity is deliberately unobservable. A
+            // single representationless witness is therefore sufficient for
+            // every call; hostile stubs may pass it through or reject it but
+            // cannot compare, hash, construct, or inspect it.
+            new_args.push(NanValue::UNIT);
+        }
         new_args.extend_from_slice(args);
 
         self.call_function(stub_fn_id, &new_args)
+    }
+
+    /// Single dispatch door for provider-bound operations, shared by direct
+    /// and independent-product calls. Operations are deliberately not values.
+    /// Until provider ABIs exist, only an
+    /// oracle stub, a replay record, or verify-time output suppression can
+    /// satisfy the call.
+    pub(super) fn dispatch_capability_operation(
+        &mut self,
+        symbol_id: u32,
+        args: &[NanValue],
+        caller_fn_id: u32,
+    ) -> Result<NanValue, VmError> {
+        let capability = self
+            .code
+            .symbols
+            .resolve_capability(symbol_id)
+            .ok_or_else(|| VmError::runtime("symbol is not a capability operation"))?;
+        let name = self
+            .code
+            .symbols
+            .get(symbol_id)
+            .map(|info| info.name.clone())
+            .ok_or_else(|| VmError::runtime("unknown capability symbol"))?;
+
+        self.runtime.sync_caller_fn_id(caller_fn_id);
+        let required_effects = self
+            .code
+            .symbols
+            .get(symbol_id)
+            .map(|info| info.required_effects.as_slice())
+            .unwrap_or(&[]);
+        self.runtime
+            .ensure_effects_allowed(&self.code.symbols, &name, required_effects)?;
+
+        if let Some(stub_fn_id) = self.runtime.oracle_stub_for(&name) {
+            return self.dispatch_oracle_stub(stub_fn_id, args, capability.mints_resource);
+        }
+
+        if capability.effectful && self.runtime.trace_collecting {
+            let arg_values: Vec<crate::value::Value> =
+                args.iter().map(|arg| arg.to_value(&self.arena)).collect();
+            self.runtime.record_trace_event(&name, &arg_values);
+            if matches!(
+                capability.oracle,
+                Some(crate::capability::OracleDimension::Output)
+            ) {
+                return Ok(NanValue::UNIT);
+            }
+        }
+
+        self.runtime.invoke_capability(
+            &self.code.symbols,
+            symbol_id,
+            capability,
+            args,
+            &mut self.arena,
+        )
     }
 
     /// Handle HttpServer.listen/listenWith with VM callback support.

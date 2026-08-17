@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -1520,27 +1520,33 @@ pub(super) fn reject_literal_refinement_discharge(
         .unwrap_or_default();
     let dep_modules: Vec<aver::codegen::ModuleInfo> = loaded
         .iter()
-        .map(|m| aver::codegen::ModuleInfo {
-            prefix: m.dep_name.clone(),
-            depends: Vec::new(),
-            type_defs: m
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::TypeDef(td) => Some(td.clone()),
-                    _ => None,
-                })
-                .collect(),
-            fn_defs: m
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::FnDef(fd) => Some(fd.clone()),
-                    _ => None,
-                })
-                .collect(),
-            verify_laws: Vec::new(),
-            analysis: None,
+        .map(|m| {
+            let (capability_items, capability_semantics) =
+                aver::codegen::capability_metadata(&m.items);
+            aver::codegen::ModuleInfo {
+                prefix: m.dep_name.clone(),
+                depends: Vec::new(),
+                type_defs: m
+                    .items
+                    .iter()
+                    .filter_map(|i| match i {
+                        TopLevel::TypeDef(td) => Some(td.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                fn_defs: m
+                    .items
+                    .iter()
+                    .filter_map(|i| match i {
+                        TopLevel::FnDef(fd) => Some(fd.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                capability_items,
+                capability_semantics,
+                verify_laws: Vec::new(),
+                analysis: None,
+            }
         })
         .collect();
     // `SymbolTable::build` already derives the refinement table (and the
@@ -5055,6 +5061,89 @@ fn certify_flag_rejection(certify: bool) -> Option<&'static str> {
     }
 }
 
+pub(super) fn capability_provider_rejection(
+    items: &[TopLevel],
+    modules: &[ModuleInfo],
+    registry: &aver::capability::CapabilityRegistry,
+    target: &str,
+) -> Option<String> {
+    fn scan_expr(
+        expr: &Spanned<Expr>,
+        registry: &aver::capability::CapabilityRegistry,
+        required: &mut BTreeSet<String>,
+    ) {
+        codegen::expr_walk::walk(expr, &mut |node| {
+            if let Some(name) = aver::ir::expr_to_dotted_name(&node.node)
+                && registry.operation(&name).is_some()
+            {
+                required.insert(name);
+            }
+        });
+    }
+
+    fn scan_fn(
+        fd: &FnDef,
+        registry: &aver::capability::CapabilityRegistry,
+        required: &mut BTreeSet<String>,
+    ) {
+        for stmt in fd.body.stmts() {
+            match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => scan_expr(expr, registry, required),
+            }
+        }
+    }
+
+    let mut required = BTreeSet::new();
+    for item in items {
+        match item {
+            TopLevel::FnDef(fd) => scan_fn(fd, registry, &mut required),
+            TopLevel::Stmt(stmt) => match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                    scan_expr(expr, registry, &mut required)
+                }
+            },
+            _ => {}
+        }
+    }
+    for module in modules {
+        for fd in &module.fn_defs {
+            scan_fn(fd, registry, &mut required);
+        }
+    }
+    if required.is_empty() {
+        return None;
+    }
+
+    let operations = required
+        .into_iter()
+        .map(|name| {
+            let operation = registry
+                .operation(&name)
+                .expect("required operation came from the capability registry");
+            let contract = registry
+                .contract(&operation.module)
+                .expect("capability operation must have an owning contract");
+            format!("{name} ({})", contract.contract_hash)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "error[capability-provider-missing]: target `{target}` has no provider bindings for: {operations}\n  capability contracts and proof models are available, but provider binding is outside the #864 vertical slice; compilation fails closed"
+    ))
+}
+
+fn reject_missing_capability_providers(
+    items: &[TopLevel],
+    modules: &[ModuleInfo],
+    registry: &aver::capability::CapabilityRegistry,
+    target: &str,
+) {
+    if let Some(error) = capability_provider_rejection(items, modules, registry, target) {
+        eprintln!("{}", error.red());
+        process::exit(1);
+    }
+}
+
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let CompileOptions {
         file,
@@ -5175,6 +5264,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         false, // run_contract_lower — same
         false, // run_law_lower — same
     );
+    reject_missing_capability_providers(&ctx.items, &ctx.modules, &ctx.capabilities, "rust");
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
         process::exit(1);
@@ -5269,6 +5359,16 @@ fn cmd_compile_wasm_gc(
     // cursor the fabricating passes introduce, and does not use the
     // self-host typecheck driver.
     let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    reject_missing_capability_providers(
+        &items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc pipeline requested typechecking")
+            .capabilities,
+        "wasm-gc",
+    );
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
@@ -5520,6 +5620,16 @@ fn cmd_compile_wasip2(
         }
 
         let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+        reject_missing_capability_providers(
+            &items,
+            &dep_modules,
+            &result
+                .typecheck
+                .as_ref()
+                .expect("wasip2 pipeline requested typechecking")
+                .capabilities,
+            "wasip2",
+        );
         // Bypass the `flatten_multimodule` shim in this file (gated on
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
@@ -10371,11 +10481,14 @@ fn load_module_recursive(
         })
         .collect();
 
+    let (capability_items, capability_semantics) = aver::codegen::capability_metadata(&items);
     result.push(ModuleInfo {
         prefix: name.to_string(),
         depends,
         type_defs,
         fn_defs,
+        capability_items,
+        capability_semantics,
         verify_laws: aver::codegen::collect_verify_laws(&items),
         analysis: pipeline_result.analysis,
     });
@@ -11226,6 +11339,7 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             fn_defs: vec![],
             project_name: "test".to_string(),
             modules: vec![],
+            capabilities: Default::default(),
             module_prefixes: HashSet::new(),
             policy: None,
             emit_replay_runtime: false,

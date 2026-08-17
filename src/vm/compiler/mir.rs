@@ -198,6 +198,26 @@ pub(super) fn compile_mir_expr(
                 }
                 MirCallee::Builtin(id) => {
                     let name = fc.mir_program.map(|p| p.builtin_name(*id)).unwrap_or("");
+                    if let Some(capability) = fc.symbol_table.capability_operation(name) {
+                        for arg in args {
+                            compile_mir_expr(fc, arg)?;
+                        }
+                        let symbol_id =
+                            fc.symbols
+                                .intern_capability(name, capability)
+                                .map_err(|error| {
+                                    MirVmUnsupported::InnerError(CompileError {
+                                        msg: format!(
+                                            "MIR-VM: capability symbol '{}' failed: {}",
+                                            name, error
+                                        ),
+                                    })
+                                })?;
+                        fc.emit_op(CALL_BUILTIN);
+                        fc.emit_u32(symbol_id);
+                        fc.emit_u8(args.len() as u8);
+                        return Ok(());
+                    }
                     let builtin =
                         lookup_vm_builtin(name).ok_or(MirVmUnsupported::UnsupportedCallee)?;
                     // Compound leaf-op recognition — parity with the HIR
@@ -797,11 +817,22 @@ pub(super) fn compile_mir_expr(
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(idx);
                     }
-                    // A synthesis intrinsic can't appear as an
-                    // independent-product branch callee (intrinsics are
-                    // never first-class values); a first-class-fn-valued
-                    // IP branch is rare — both fall back conservatively.
-                    MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
+                    MirCallee::LocalSlot {
+                        slot,
+                        last_use,
+                        name: _,
+                    } => {
+                        // CALL_PAR consumes callable values, not merely static
+                        // symbols. Preserve the same LocalSlot path as an
+                        // ordinary CALL_VALUE so a capability operation passed
+                        // through a `Fn` parameter cannot bypass provider,
+                        // oracle, replay, or hostile dispatch.
+                        fc.emit_op(if *last_use { MOVE_LOCAL } else { LOAD_LOCAL });
+                        fc.emit_u8(*slot as u8);
+                    }
+                    // Synthesis intrinsics are compiler-only and never
+                    // first-class callable values.
+                    MirCallee::Intrinsic(_) => {
                         return Err(MirVmUnsupported::UnsupportedCallee);
                     }
                 }

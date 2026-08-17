@@ -1012,6 +1012,16 @@ impl TypeChecker {
                         }
                         return ret;
                     }
+                    if self.capabilities.operation(&display_name).is_some() {
+                        self.error_at_line(
+                            err_line,
+                            format!(
+                                "Capability operation '{}' is not exposed by its module",
+                                display_name
+                            ),
+                        );
+                        return Type::Invalid;
+                    }
                 }
 
                 let callee_ty = self.infer_type(fn_expr);
@@ -1265,7 +1275,9 @@ impl TypeChecker {
                     let current_key = self.infer_type(key_expr);
                     let current_val = self.infer_type(value_expr);
 
-                    if matches!(current_key, Type::Fn { .. } | Type::Unit) {
+                    if matches!(current_key, Type::Fn { .. } | Type::Unit)
+                        || self.type_contains_capability_resource(&current_key)
+                    {
                         self.error(format!(
                             "Map literal key type must be hashable (got {})",
                             current_key.display()
@@ -1410,6 +1422,14 @@ impl TypeChecker {
                     let obj_key = parts.join(".");
                     parts.push(field.clone());
                     let key = parts.join(".");
+                    if self.capabilities.operation(&key).is_some() {
+                        self.error(format!(
+                            "Capability operation '{}' is not a value; call it directly at the provider boundary",
+                            key
+                        ));
+                        obj.set_ty(Type::Invalid);
+                        return Type::Invalid;
+                    }
                     // The lookups below resolve the *whole* `Vector.set`
                     // path without ever recursing into `obj` — so for
                     // namespace shapes the inner `Spanned<Expr>` (the

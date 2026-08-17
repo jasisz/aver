@@ -10,14 +10,12 @@ impl TypeChecker {
         let option_ty = |v: Type| Type::Option(Box::new(v));
         let list_ty = |v: Type| Type::List(Box::new(v));
         let tuple2 = |k: Type, v: Type| Type::Tuple(vec![k, v]);
-        let is_hashable_key_type = |ty: &Type| {
-            // The Map runtime hashes any heap value through rt_deep_hash,
-            // so user-defined types (variants/records/tuples/lists) are
-            // first-class keys alongside the built-in scalars.
-            !matches!(ty, Type::Fn { .. } | Type::Unit)
-        };
         let ensure_hashable_key = |tc: &mut Self, key_ty: &Type, name: &str, arg_idx: usize| {
-            if !is_hashable_key_type(key_ty) {
+            // Represented heap values are hashable, but a capability resource
+            // has deliberately unobservable provider identity.
+            if matches!(key_ty, Type::Fn { .. } | Type::Unit)
+                || tc.type_contains_capability_resource(key_ty)
+            {
                 tc.error(format!(
                     "Argument {} of '{}': map key type must be hashable (got {})",
                     arg_idx,

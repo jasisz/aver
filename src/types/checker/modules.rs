@@ -65,6 +65,14 @@ impl TypeChecker {
                 self.register_type_def_sigs(td, &module_name);
             }
         }
+        // Capability resources participate in ordinary function signatures:
+        // hostile profiles for a resource-minting operation receive the fresh
+        // resource as an explicit oracle parameter.  Register their nominal
+        // identities before walking FnDefs, otherwise a perfectly valid local
+        // profile such as `fn accept(..., fresh: Token)` is diagnosed as using
+        // an unknown type merely because operation signatures used to be
+        // installed last.
+        self.register_capability_sigs();
         for item in items {
             if let TopLevel::FnDef(f) = item {
                 let mut params = Vec::new();
@@ -134,6 +142,65 @@ impl TypeChecker {
                     self.merge_bare_fn_alias(f.name.clone(), id);
                 }
             }
+        }
+    }
+
+    /// Register provider-bound operations as callable signatures. They stay
+    /// outside the `FnId` table because they have no Aver body; the resolver
+    /// classifies them through `SymbolTable::capability_operation` instead.
+    pub(super) fn register_capability_sigs(&mut self) {
+        let opaque_types: Vec<_> = self.capabilities.opaque_types().cloned().collect();
+        for opaque in opaque_types {
+            self.opaque_types.insert(opaque.clone());
+
+            let Some((module, name)) = opaque.rsplit_once('.') else {
+                continue;
+            };
+            let module_id = self
+                .symbol_table
+                .type_id_of(&TypeKey::in_module(module, name));
+            let entry_id = self.symbol_table.type_id_of(&TypeKey::entry(name));
+            let id = module_id.or(entry_id);
+            if let Some(id) = id {
+                // A representation-less resource is nameable because its
+                // operation signature exposes it, but the opaque-access gates
+                // still forbid construction, field access, and matching.
+                self.mark_type_visible(id);
+                let is_own_scope = self.current_module_prefix.as_deref() == Some(module)
+                    || (self.current_module_prefix.is_none() && module_id.is_none());
+                if is_own_scope {
+                    self.merge_bare_type_alias(name.to_string(), id);
+                }
+            }
+        }
+
+        let current_scope = self.current_module_prefix.as_deref();
+        let operations: Vec<_> = self.capabilities.operations().cloned().collect();
+        for operation in operations {
+            let visible = current_scope == Some(operation.module.as_str()) || operation.exposed;
+            if !visible {
+                continue;
+            }
+            let params = operation
+                .params
+                .iter()
+                .map(|(_, ty)| self.canonicalize_named_in_module(ty.clone(), &operation.module))
+                .collect();
+            let ret =
+                self.canonicalize_named_in_module(operation.return_type.clone(), &operation.module);
+            let effects = if operation.is_effectful() {
+                vec![operation.canonical_name.clone()]
+            } else {
+                Vec::new()
+            };
+            self.extra_sigs.insert(
+                operation.canonical_name,
+                FnSig {
+                    params,
+                    ret,
+                    effects,
+                },
+            );
         }
     }
 

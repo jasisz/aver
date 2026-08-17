@@ -25,7 +25,7 @@ fn emit_lifted_effectful_functions(
     recursive_fns: &HashSet<String>,
     sections: &mut Vec<String>,
 ) {
-    use crate::types::checker::effect_classification::is_classified;
+    use crate::types::checker::effect_classification::classify_with_registry;
 
     // Oracle v1: only emit effectful fns reachable from some verify
     // block. Non-terminating effectful fns (e.g. REPL loops that loop
@@ -45,7 +45,11 @@ fn emit_lifted_effectful_functions(
         if fd.effects.is_empty() || fd.name == "main" {
             continue;
         }
-        if !fd.effects.iter().all(|e| is_classified(&e.node)) {
+        if !fd
+            .effects
+            .iter()
+            .all(|e| classify_with_registry(&ctx.capabilities, &e.node).is_some())
+        {
             continue;
         }
         if !reachable.contains(&fd.name) {
@@ -63,14 +67,22 @@ fn emit_lifted_effectful_functions(
         if fd.effects.is_empty() || fd.name == "main" {
             continue;
         }
-        if !fd.effects.iter().all(|e| is_classified(&e.node)) {
+        if !fd
+            .effects
+            .iter()
+            .all(|e| classify_with_registry(&ctx.capabilities, &e.node).is_some())
+        {
             continue;
         }
         if !reachable.contains(&fd.name) {
             continue;
         }
         let Ok(Some(lifted)) =
-            crate::types::checker::effect_lifting::lift_fn_def_with_helpers(fd, &helpers)
+            crate::types::checker::effect_lifting::lift_fn_def_with_helpers_and_registry(
+                fd,
+                &helpers,
+                &ctx.capabilities,
+            )
         else {
             continue;
         };
@@ -383,6 +395,45 @@ fn emit_type_sections(
     })
 }
 
+fn emit_capability_opaque_types(ctx: &CodegenContext, scope: Option<&str>) -> Vec<String> {
+    let entry_module = ctx.entry_module_name();
+    ctx.capabilities
+        .opaque_types()
+        .filter_map(|canonical| {
+            let (module, name) = canonical.rsplit_once('.')?;
+            let belongs = match scope {
+                Some(prefix) => module == prefix,
+                None => entry_module.as_deref() == Some(module),
+            };
+            belongs.then(|| {
+                let declaration_name = if scope.is_some() {
+                    super::syntax::aver_name_to_lean(name)
+                } else {
+                    super::syntax::aver_path_to_lean(canonical)
+                };
+                format!("opaque {declaration_name} : Type")
+            })
+        })
+        .collect()
+}
+
+fn emit_pure_capability_operation(
+    operation: &crate::capability::CapabilityOperation,
+    scope: Option<&str>,
+) -> String {
+    let name = if scope.is_some() {
+        super::syntax::aver_name_to_lean(&operation.name)
+    } else {
+        super::syntax::aver_path_to_lean(&operation.canonical_name)
+    };
+    let ty = crate::types::Type::Fn(
+        operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+        Box::new(operation.return_type.clone()),
+        vec![],
+    );
+    format!("opaque {name} : {}", super::types::type_to_lean(&ty))
+}
+
 /// Multi-file Lean output for multi-module Aver projects:
 /// - `AverCommon.lean` carries built-in helpers + records (UNION decision
 ///   over every module + entry body, so a helper is included only if
@@ -493,7 +544,7 @@ pub(super) fn transpile_unified(
     let dep_theorem_order_keys = super::law_auto::dep_theorem_order_keys(ctx);
 
     for module in &ctx.modules {
-        let mut body_sections: Vec<String> = Vec::new();
+        let mut body_sections = emit_capability_opaque_types(ctx, Some(&module.prefix));
         let scope = Some(module.prefix.as_str());
         let decl_plan = super::decl_order::plan_scoped_declarations(
             ctx,
@@ -513,6 +564,18 @@ pub(super) fn transpile_unified(
                         &recursive_types,
                         &measure_sig_type_refs,
                     ));
+                }
+                super::decl_order::ScopedDecl::CapabilityOperation(index) => {
+                    let operation = ctx
+                        .capabilities
+                        .operations()
+                        .filter(|operation| {
+                            !operation.is_effectful() && operation.module == module.prefix
+                        })
+                        .nth(index)
+                        .expect("capability operation plan index");
+                    body_sections.push(emit_pure_capability_operation(operation, scope));
+                    body_sections.push(String::new());
                 }
                 super::decl_order::ScopedDecl::FnComponent(index) => {
                     body_sections.extend(emit_pure_component(
@@ -647,7 +710,7 @@ pub(super) fn transpile_unified(
     }
 
     // ---- Entry sections ----
-    let mut entry_body_sections: Vec<String> = Vec::new();
+    let mut entry_body_sections = emit_capability_opaque_types(ctx, None);
     let entry_plan =
         super::decl_order::plan_scoped_declarations(ctx, &ctx.type_defs, &ctx.fn_defs, None);
     for decl in &entry_plan.order {
@@ -662,6 +725,20 @@ pub(super) fn transpile_unified(
                     &recursive_types,
                     &measure_sig_type_refs,
                 ));
+            }
+            super::decl_order::ScopedDecl::CapabilityOperation(index) => {
+                let entry_module = ctx.entry_module_name();
+                let operation = ctx
+                    .capabilities
+                    .operations()
+                    .filter(|operation| {
+                        !operation.is_effectful()
+                            && entry_module.as_deref() == Some(operation.module.as_str())
+                    })
+                    .nth(index)
+                    .expect("entry capability operation plan index");
+                entry_body_sections.push(emit_pure_capability_operation(operation, None));
+                entry_body_sections.push(String::new());
             }
             super::decl_order::ScopedDecl::FnComponent(index) => {
                 entry_body_sections.extend(emit_pure_component(
@@ -763,10 +840,18 @@ pub(super) fn transpile_unified(
     let has_classified =
         crate::types::checker::effect_classification::classifications_for_proof_subset()
             .iter()
-            .any(|c| declared.includes(c.method));
-    if has_ip || has_classified {
+            .any(|c| declared.includes(c.method))
+            || ctx.capabilities.operations().any(|operation| {
+                operation.is_effectful() && declared.includes(&operation.canonical_name)
+            });
+    if has_ip || has_classified || ctx.capabilities.contracts().next().is_some() {
         entry_parts.push(
-            crate::types::checker::proof_trust_header::generate_commented("-- ", &declared, has_ip),
+            crate::types::checker::proof_trust_header::generate_commented_with_registry(
+                "-- ",
+                &declared,
+                has_ip,
+                &ctx.capabilities,
+            ),
         );
     }
     let subtype_block = crate::types::checker::oracle_subtypes::lean_subtypes(&declared);

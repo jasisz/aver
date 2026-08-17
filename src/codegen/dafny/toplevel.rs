@@ -1481,6 +1481,16 @@ pub fn emit_law_samples(
 
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
+    let fresh_resource_params =
+        crate::codegen::common::law_fresh_resource_params(law, &ctx.capabilities);
+    let fresh_param_decls = fresh_resource_params
+        .iter()
+        .map(|(_, name, resource)| format!("{}: {}", aver_name_to_dafny(name), emit_type(resource)))
+        .collect::<Vec<_>>();
+    let fresh_args = fresh_resource_params
+        .iter()
+        .map(|(_, name, _)| aver_name_to_dafny(name))
+        .collect::<Vec<_>>();
 
     // Pre-pre-pass: rewrite the first sample to detect whether the
     // law reaches an opaque (mutual-rec) callee. Opaque mode emits
@@ -1491,17 +1501,19 @@ pub fn emit_law_samples(
         let case_bindings = vb.case_givens.first().map(|v| v.as_slice()).unwrap_or(&[]);
         let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
         (
-            rewrite_effectful_calls_in_law(
+            rewrite_effectful_calls_in_law_with_registry(
                 lhs,
                 law,
                 |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode.clone(),
+                &ctx.capabilities,
             ),
-            rewrite_effectful_calls_in_law(
+            rewrite_effectful_calls_in_law_with_registry(
                 rhs,
                 law,
                 |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode,
+                &ctx.capabilities,
             ),
         )
     });
@@ -1555,17 +1567,19 @@ pub fn emit_law_samples(
         .map(|(idx, (lhs, rhs))| {
             let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
             let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
-            let lhs_rw = rewrite_effectful_calls_in_law(
+            let lhs_rw = rewrite_effectful_calls_in_law_with_registry(
                 lhs,
                 law,
                 |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode.clone(),
+                &ctx.capabilities,
             );
-            let rhs_rw = rewrite_effectful_calls_in_law(
+            let rhs_rw = rewrite_effectful_calls_in_law_with_registry(
                 rhs,
                 law,
                 |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode,
+                &ctx.capabilities,
             );
             (lhs_rw, rhs_rw)
         })
@@ -1702,12 +1716,13 @@ pub fn emit_law_samples(
                 .map(|g| format!("  requires {}\n", emit_expr_legacy(g, ctx, None)))
                 .unwrap_or_default();
             lines.push(format!(
-                "lemma {} {}_{}{}__sample_{}()\n{}  ensures {} == {}\n{}",
+                "lemma {} {}_{}{}__sample_{}({})\n{}  ensures {} == {}\n{}",
                 fuel_attrs,
                 fn_name,
                 law_name,
                 suffix,
                 idx + 1,
+                fresh_param_decls.join(", "),
                 requires_guard,
                 l,
                 r,
@@ -1749,8 +1764,12 @@ pub fn emit_law_samples(
             format!("{} ", sample_fuel)
         };
         lines.push(format!(
-            "method {}test_{}_{}{}_samples() {{",
-            fuel_prefix, fn_name, law_name, suffix
+            "method {}test_{}_{}{}_samples({}) {{",
+            fuel_prefix,
+            fn_name,
+            law_name,
+            suffix,
+            fresh_param_decls.join(", ")
         ));
         // Seed each sample assert with the universal lemma
         // instantiated at the sample values (see
@@ -1776,6 +1795,8 @@ pub fn emit_law_samples(
                             .map(|(_, v)| emit_expr_legacy(v, ctx, None))
                     })
                     .collect::<Option<Vec<_>>>()?;
+                let mut args = args;
+                args.extend(fresh_args.iter().cloned());
                 Some(format!("{}({});", lemma, args.join(", ")))
             });
             // `{:split_here}` tells Dafny to check the preceding assert as
@@ -1816,7 +1837,7 @@ pub fn emit_law_samples(
     Some(lines.join("\n"))
 }
 
-use crate::codegen::common::{OracleInjectionMode, rewrite_effectful_calls_in_law};
+use crate::codegen::common::{OracleInjectionMode, rewrite_effectful_calls_in_law_with_registry};
 
 /// Emit a verify law as a Dafny lemma.
 /// Compute the transitive closure of opaque fns: any fn whose body
@@ -2789,7 +2810,11 @@ fn eligible_cites<'a>(
         // Plain givens only: an oracle / refinement-lifted given does not map to
         // a bare Dafny binder the `forall` can quantify over.
         if prev_law.givens.iter().any(|g| {
-            crate::types::checker::effect_classification::oracle_signature(&g.type_name).is_some()
+            crate::types::checker::effect_classification::oracle_signature_with_registry(
+                &ctx.capabilities,
+                &g.type_name,
+            )
+            .is_some()
                 || crate::codegen::common::refinement_lift_for_given(
                     &g.name,
                     &g.type_name,
@@ -3266,7 +3291,7 @@ pub fn emit_verify_law(
         }
     }
 
-    let params: Vec<String> = law
+    let mut params: Vec<String> = law
         .givens
         .iter()
         .map(|g| {
@@ -3290,15 +3315,22 @@ pub fn emit_verify_law(
             // the effect name as a type. `oracle_signature` gives
             // `(BranchPath, Int, args...) -> T` for generative /
             // generative+output and `(args...) -> T` for snapshot.
-            let type_text = match crate::types::checker::effect_classification::oracle_signature(
-                &g.type_name,
-            ) {
-                Some(oracle_ty) => type_ref_to_dafny(&oracle_ty),
-                None => emit_type(&g.type_name),
-            };
+            let type_text =
+                match crate::types::checker::effect_classification::oracle_signature_with_registry(
+                    &ctx.capabilities,
+                    &g.type_name,
+                ) {
+                    Some(oracle_ty) => type_ref_to_dafny(&oracle_ty),
+                    None => emit_type(&g.type_name),
+                };
             format!("{}: {}", aver_name_to_dafny(&g.name), type_text)
         })
         .collect();
+    let fresh_resource_params =
+        crate::codegen::common::law_fresh_resource_params(law, &ctx.capabilities);
+    params.extend(fresh_resource_params.iter().map(|(_, name, resource)| {
+        format!("{}: {}", aver_name_to_dafny(name), emit_type(resource))
+    }));
 
     // Oracle v1: rewrite calls to effectful fns in the law body so
     // they target the lifted form. Surface source writes
@@ -3306,17 +3338,19 @@ pub fn emit_verify_law(
     // lifted `pickOne` takes `(path, rnd_Random_int, <orig_args>)`.
     // Inject `BranchPath.root()` + the matching given identifier for
     // each classified non-output effect in the callee's signature.
-    let law_lhs = rewrite_effectful_calls_in_law(
+    let law_lhs = rewrite_effectful_calls_in_law_with_registry(
         &law.lhs,
         law,
         |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         OracleInjectionMode::LemmaBinding,
+        &ctx.capabilities,
     );
-    let law_rhs = rewrite_effectful_calls_in_law(
+    let law_rhs = rewrite_effectful_calls_in_law_with_registry(
         &law.rhs,
         law,
         |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         OracleInjectionMode::LemmaBinding,
+        &ctx.capabilities,
     );
 
     // Refinement-lift wrapper stripping: when a given was promoted to
@@ -3545,7 +3579,15 @@ pub fn emit_verify_law(
                     .collect::<Vec<_>>()
                     .join(" && ");
                 let sample_name = format!("{}_{}{}__sample_{}", fn_name, law_name, suffix, idx + 1);
-                lines.push(format!("  if {} {{ {}(); }}", guard, sample_name));
+                let fresh_args = fresh_resource_params
+                    .iter()
+                    .map(|(_, name, _)| aver_name_to_dafny(name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!(
+                    "  if {} {{ {}({}); }}",
+                    guard, sample_name, fresh_args
+                ));
             }
             lines.push("}\n".to_string());
             return lines.join("\n");

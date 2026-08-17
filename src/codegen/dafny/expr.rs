@@ -353,6 +353,15 @@ fn emit_fn_call(
                 let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
                 return emit_dafny_builtin(builtin, &a);
             }
+            if let Some(operation) = ctx.capabilities.operation(name) {
+                let qualified = format!(
+                    "{}.{}",
+                    super::dafny_module_name(&operation.module),
+                    aver_name_to_dafny(&operation.name)
+                );
+                let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+                return format!("{}({})", qualified, a.join(", "));
+            }
             // Oracle v1: BranchPath.* constructor calls map onto the
             // underscore-named prelude functions (Dafny's dotted
             // notation collides with record-member access on the

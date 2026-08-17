@@ -10,8 +10,19 @@ impl TypeChecker {
     /// same canonicalization, or a user stub typed against the resolved
     /// nominal `Bytes` fails to match the raw-named oracle type.
     fn canonical_oracle_signature(&self, method: &str) -> Option<Type> {
-        super::effect_classification::oracle_signature(method)
+        super::effect_classification::oracle_signature_with_registry(&self.capabilities, method)
             .map(|sig| self.canonicalize_named(sig))
+    }
+
+    fn classify_effect(
+        &self,
+        method: &str,
+    ) -> Option<super::effect_classification::RegisteredEffectClassification> {
+        super::effect_classification::classify_with_registry(&self.capabilities, method)
+    }
+
+    fn effect_is_classified(&self, method: &str) -> bool {
+        self.classify_effect(method).is_some()
     }
 
     fn with_verify_law_givens<T>(
@@ -27,7 +38,7 @@ impl TypeChecker {
             // the effect's oracle signature (branch-indexed for generative,
             // capability reader for snapshot). Output effects have no oracle
             // and are rejected with a clear message.
-            if let Some(c) = super::effect_classification::classify(&given.type_name) {
+            if let Some(c) = self.classify_effect(&given.type_name) {
                 match self.canonical_oracle_signature(&given.type_name) {
                     Some(sig) => {
                         self.locals.insert(given.name.clone(), sig);
@@ -294,12 +305,12 @@ impl TypeChecker {
                     .unwrap_or_default();
                 let classified_effects: Vec<String> = fn_effects
                     .iter()
-                    .filter(|e| super::effect_classification::is_classified(e.as_str()))
+                    .filter(|e| self.effect_is_classified(e.as_str()))
                     .cloned()
                     .collect();
                 let unclassified_effects: Vec<String> = fn_effects
                     .iter()
-                    .filter(|e| !super::effect_classification::is_classified(e.as_str()))
+                    .filter(|e| !self.effect_is_classified(e.as_str()))
                     .cloned()
                     .collect();
 
@@ -351,7 +362,7 @@ impl TypeChecker {
                             fn_name = vb.fn_name,
                             effects = unclassified_effects.join(", "),
                             classified =
-                                super::effect_classification::classified_effects_summary(),
+                                super::effect_classification::classified_effects_summary_with_registry(&self.capabilities),
                         ),
                     );
                 }
@@ -377,7 +388,7 @@ impl TypeChecker {
                         crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
                     };
                     for given in givens {
-                        if super::effect_classification::classify(&given.type_name).is_some() {
+                        if self.classify_effect(&given.type_name).is_some() {
                             given_effects
                                 .entry(given.type_name.as_str())
                                 .or_default()
@@ -415,7 +426,7 @@ impl TypeChecker {
                 // didn't realise Random.int was live. A loud rejection
                 // at check time points straight at the fix.
                 if vb.trace {
-                    use super::effect_classification::{EffectDimension, classify};
+                    use super::effect_classification::EffectDimension;
                     let given_names: std::collections::HashSet<&str> = match &vb.kind {
                         crate::ast::VerifyKind::Law(law) => {
                             law.givens.iter().map(|g| g.type_name.as_str()).collect()
@@ -429,7 +440,7 @@ impl TypeChecker {
                     let needs_stub: Vec<String> = fn_effects
                         .iter()
                         .filter_map(|e| {
-                            let c = classify(e)?;
+                            let c = self.classify_effect(e)?;
                             matches!(
                                 c.dimension,
                                 EffectDimension::Generative | EffectDimension::GenerativeOutput

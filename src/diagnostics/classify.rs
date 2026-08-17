@@ -219,19 +219,6 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         return ("type-mismatch", Some(msg.to_string()), fields, repair);
     }
 
-    if msg.starts_with(crate::types::checker::CAPABILITY_UNSUPPORTED) {
-        return (
-            "capability-unsupported",
-            None,
-            Vec::new(),
-            Some(
-                "Remove the capability declaration. The grammar is accepted so the shape can be \
-                 reviewed, but no operation is registered and no boundary is enforced yet."
-                    .to_string(),
-            ),
-        );
-    }
-
     if msg.starts_with("Unknown identifier") || msg.starts_with("Unknown function") {
         return (
             "unknown-ident",

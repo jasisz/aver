@@ -302,17 +302,19 @@ fn emit_verify_trace_block_proofs(
         // concrete stub value (e.g. `fairDie`) for each given.
         let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
         let mode = crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
-        let lhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+        let lhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
             &fn_call,
             &synthetic_law,
             |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode.clone(),
+            &ctx.capabilities,
         );
-        let rhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+        let rhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
             right,
             &synthetic_law,
             |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode,
+            &ctx.capabilities,
         );
 
         let lhs_str = emit_expr_legacy(&lhs_rw, ctx, None);
@@ -407,17 +409,19 @@ fn emit_verify_law_block(
     // `codegen/common.rs` / `codegen/dafny/toplevel.rs` for the
     // discovery that motivated this). Lemma body uses lemma-local
     // bindings; sample assertions use the concrete stub values.
-    let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+    let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         &law.lhs,
         law,
         |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+        &ctx.capabilities,
     );
-    let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+    let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         &law.rhs,
         law,
         |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+        &ctx.capabilities,
     );
     // Refinement quantifier lift: when a given Int variable shows up
     // in the law body wrapped in a refinement-record constructor
@@ -464,11 +468,12 @@ fn emit_verify_law_block(
     // against a `RandomIntInBounds` parameter and Lean would reject
     // the type mismatch.
     let when_template = law.when.as_ref().map(|expr| {
-        let oracle_projected = crate::codegen::common::rewrite_effectful_calls_in_law(
+        let oracle_projected = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
             expr,
             law,
             |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+            &ctx.capabilities,
         );
         // Refinement lift: bare references to lifted-given idents
         // inside `when`'s comparator BinOps need `.val` projection
@@ -480,7 +485,30 @@ fn emit_verify_law_block(
             crate::codegen::common::project_lifted_idents_to_val(&oracle_projected, &lifted_vars);
         emit_expr_legacy(&val_projected, ctx, None)
     });
-    let quant_params = law
+    let fresh_resource_params =
+        crate::codegen::common::law_fresh_resource_params(law, &ctx.capabilities);
+    let fresh_theorem_params = fresh_resource_params
+        .iter()
+        .map(|(_, name, resource)| {
+            format!(
+                " ({} : {})",
+                aver_name_to_lean(name),
+                type_annotation_to_lean(resource)
+            )
+        })
+        .collect::<String>();
+    // `native_decide` refuses propositions with opaque free variables: a
+    // capability resource intentionally has no finite/decidable enumeration.
+    // Resource identity is unobservable, so ground sample claims can only use
+    // the token parametrically; close those by definitional reduction instead.
+    // If a future construct makes the claim depend on the token, `rfl` fails
+    // closed rather than smuggling an equality/inhabitedness assumption in.
+    let ground_sample_tactic = if fresh_resource_params.is_empty() {
+        "native_decide"
+    } else {
+        "rfl"
+    };
+    let mut quant_param_parts = law
         .givens
         .iter()
         .map(|given| {
@@ -505,7 +533,8 @@ fn emit_verify_law_block(
             } else if let Some(subtype) = bounded_oracle_subtype_for(&given.type_name) {
                 subtype.to_string()
             } else {
-                match crate::types::checker::effect_classification::oracle_signature(
+                match crate::types::checker::effect_classification::oracle_signature_with_registry(
+                    &ctx.capabilities,
                     &given.type_name,
                 ) {
                     Some(oracle_ty) => crate::codegen::lean::types::type_to_lean(&oracle_ty),
@@ -514,8 +543,15 @@ fn emit_verify_law_block(
             };
             format!("({} : {})", aver_name_to_lean(&given.name), type_text)
         })
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect::<Vec<_>>();
+    quant_param_parts.extend(fresh_resource_params.iter().map(|(_, name, resource)| {
+        format!(
+            "({} : {})",
+            aver_name_to_lean(name),
+            type_annotation_to_lean(resource)
+        )
+    }));
+    let quant_params = quant_param_parts.join(" ");
 
     match &spec_ref {
         Some(spec_ref) => lines.push(format!(
@@ -1029,17 +1065,19 @@ fn emit_verify_law_block(
                 let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
                 let mode =
                     crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
-                let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+                let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
                     left,
                     law,
                     |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                     mode.clone(),
+                    &ctx.capabilities,
                 );
-                let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+                let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
                     right,
                     law,
                     |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                     mode,
+                    &ctx.capabilities,
                 );
                 let (left_str, propagates_error) = emit_statement_lhs(&left_rw, ctx);
                 // Model-vs-ground-truth: same literalization as the per-case
@@ -1137,19 +1175,29 @@ fn emit_verify_law_block(
                 };
                 for (part_name, part_prop) in &checked_domain_statements {
                     lines.push(format!(
-                        "{}set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
-                        heartbeats_budget, part_name, part_prop
+                        "{}set_option synthInstance.maxSize 4096 in\ntheorem {}{} : {} := by {}",
+                        heartbeats_budget,
+                        part_name,
+                        fresh_theorem_params,
+                        part_prop,
+                        ground_sample_tactic
                     ));
                 }
             }
             VerifyEmitMode::Sorry => {
                 for (part_name, part_prop) in &checked_domain_statements {
-                    lines.push(format!("theorem {} : {} := by sorry", part_name, part_prop));
+                    lines.push(format!(
+                        "theorem {}{} : {} := by sorry",
+                        part_name, fresh_theorem_params, part_prop
+                    ));
                 }
             }
             VerifyEmitMode::TheoremSkeleton => {
                 for (part_name, part_prop) in &checked_domain_statements {
-                    lines.push(format!("theorem {} : {} := by", part_name, part_prop));
+                    lines.push(format!(
+                        "theorem {}{} : {} := by",
+                        part_name, fresh_theorem_params, part_prop
+                    ));
                     lines.push("  sorry".to_string());
                 }
             }
@@ -1173,17 +1221,19 @@ fn emit_verify_law_block(
         // `impl(…, a) = spec(…, b)` pairs.
         let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
         let mode = crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
-        let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+        let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
             left,
             law,
             |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode.clone(),
+            &ctx.capabilities,
         );
-        let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+        let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
             right,
             law,
             |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode,
+            &ctx.capabilities,
         );
         let (left_str, propagates_error) = emit_statement_lhs(&left_rw, ctx);
         // Expected side from VM ground truth: the `_sample_N` theorem is
@@ -1223,18 +1273,21 @@ fn emit_verify_law_block(
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
-                    "theorem {} : {} := by native_decide",
-                    theorem_name, sample_prop
+                    "theorem {}{} : {} := by {}",
+                    theorem_name, fresh_theorem_params, sample_prop, ground_sample_tactic
                 ));
             }
             VerifyEmitMode::Sorry => {
                 lines.push(format!(
-                    "theorem {} : {} := by sorry",
-                    theorem_name, sample_prop
+                    "theorem {}{} : {} := by sorry",
+                    theorem_name, fresh_theorem_params, sample_prop
                 ));
             }
             VerifyEmitMode::TheoremSkeleton => {
-                lines.push(format!("theorem {} : {} := by", theorem_name, sample_prop));
+                lines.push(format!(
+                    "theorem {}{} : {} := by",
+                    theorem_name, fresh_theorem_params, sample_prop
+                ));
                 lines.push("  sorry".to_string());
             }
         }
@@ -1402,17 +1455,19 @@ pub(crate) fn law_as_lemma_statement(
         ),
         None => format!("{}_law_{}", fn_name, law_name),
     };
-    let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+    let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         &law.lhs,
         law,
         |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+        &ctx.capabilities,
     );
-    let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+    let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         &law.rhs,
         law,
         |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+        &ctx.capabilities,
     );
     // A refinement-lifted given would change the quantifier type (the theorem
     // reads `∀ a : Natural, …`); such a statement isn't a plain rewrite rule

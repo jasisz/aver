@@ -3297,6 +3297,25 @@ pub(crate) fn rewrite_effectful_calls_in_law<'fd, F>(
 where
     F: Fn(&str) -> Option<&'fd crate::ast::FnDef> + Copy,
 {
+    rewrite_effectful_calls_in_law_with_registry(
+        expr,
+        law,
+        find_fn_def,
+        mode,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+}
+
+pub(crate) fn rewrite_effectful_calls_in_law_with_registry<'fd, F>(
+    expr: &crate::ast::Spanned<Expr>,
+    law: &crate::ast::VerifyLaw,
+    find_fn_def: F,
+    mode: OracleInjectionMode,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> crate::ast::Spanned<Expr>
+where
+    F: Fn(&str) -> Option<&'fd crate::ast::FnDef> + Copy,
+{
     use crate::ast::{Spanned, VerifyGivenDomain};
 
     let injection_by_effect: std::collections::HashMap<String, Spanned<Expr>> = law
@@ -3329,7 +3348,18 @@ where
             Some((g.type_name.clone(), arg_expr))
         })
         .collect();
-    let rewritten = rewrite_effectful_call(expr, &injection_by_effect, find_fn_def);
+    let fresh_by_effect: std::collections::HashMap<String, Spanned<Expr>> =
+        law_fresh_resource_params(law, capabilities)
+            .into_iter()
+            .map(|(effect, name, _)| (effect, Spanned::new(Expr::Ident(name), expr.line)))
+            .collect();
+    let rewritten = rewrite_effectful_call(
+        expr,
+        &injection_by_effect,
+        &fresh_by_effect,
+        find_fn_def,
+        capabilities,
+    );
 
     // For `LemmaBindingProjected`, oracle bindings live as subtypes
     // (`RandomIntInBounds` etc.); direct calls `rng(path, n, min, max)`
@@ -3360,6 +3390,43 @@ where
         }
     }
     rewritten
+}
+
+/// Hidden proof parameters that witness representation-less resources minted
+/// by capability providers.  They are derived from effect givens rather than
+/// written by the author: a provider oracle gets one unconstrained token after
+/// its `(BranchPath, Int, args...)` inputs, and every theorem/sample closes
+/// over the same value.  One token per operation is sufficient because the
+/// language deliberately provides neither equality nor hashing for resources.
+pub(crate) fn law_fresh_resource_params(
+    law: &crate::ast::VerifyLaw,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Vec<(String, String, String)> {
+    let mut used: std::collections::HashSet<String> =
+        law.givens.iter().map(|given| given.name.clone()).collect();
+    let mut seen_effects = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for given in &law.givens {
+        if !seen_effects.insert(given.type_name.clone()) {
+            continue;
+        }
+        let Some(operation) = capabilities.operation(&given.type_name) else {
+            continue;
+        };
+        let Some(resource) = &operation.minted_resource else {
+            continue;
+        };
+        let base = format!("capFresh_{}", given.type_name.replace('.', "_"));
+        let mut name = base.clone();
+        let mut suffix = 0u32;
+        while used.contains(&name) {
+            name = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        used.insert(name.clone());
+        out.push((given.type_name.clone(), name, resource.clone()));
+    }
+    out
 }
 
 /// Rewrite every reference to a subtype-carried oracle so the surrounding
@@ -3432,24 +3499,36 @@ fn project_oracle_direct_calls(
 fn rewrite_effectful_call<'fd, F>(
     expr: &crate::ast::Spanned<Expr>,
     injection_by_effect: &std::collections::HashMap<String, crate::ast::Spanned<Expr>>,
+    fresh_by_effect: &std::collections::HashMap<String, crate::ast::Spanned<Expr>>,
     find_fn_def: F,
+    capabilities: &crate::capability::CapabilityRegistry,
 ) -> crate::ast::Spanned<Expr>
 where
     F: Fn(&str) -> Option<&'fd crate::ast::FnDef> + Copy,
 {
     use crate::ast::Spanned;
-    use crate::types::checker::effect_classification::{EffectDimension, classify};
+    use crate::types::checker::effect_classification::{EffectDimension, classify_with_registry};
 
     match &expr.node {
         Expr::FnCall(callee, args) => {
             let rewritten_args: Vec<Spanned<Expr>> = args
                 .iter()
-                .map(|a| rewrite_effectful_call(a, injection_by_effect, find_fn_def))
+                .map(|a| {
+                    rewrite_effectful_call(
+                        a,
+                        injection_by_effect,
+                        fresh_by_effect,
+                        find_fn_def,
+                        capabilities,
+                    )
+                })
                 .collect();
             let rewritten_callee = Box::new(rewrite_effectful_call(
                 callee,
                 injection_by_effect,
+                fresh_by_effect,
                 find_fn_def,
+                capabilities,
             ));
 
             let callee_name = match &callee.node {
@@ -3464,12 +3543,12 @@ where
                 && fd
                     .effects
                     .iter()
-                    .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+                    .all(|e| classify_with_registry(capabilities, &e.node).is_some())
             {
                 let mut injected: Vec<Spanned<Expr>> = Vec::new();
                 let needs_path = fd.effects.iter().any(|e| {
                     matches!(
-                        classify(&e.node).map(|c| c.dimension),
+                        classify_with_registry(capabilities, &e.node).map(|c| c.dimension),
                         Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
                     )
                 });
@@ -3493,12 +3572,22 @@ where
                     if !seen.insert(e.node.clone()) {
                         continue;
                     }
-                    let Some(c) = classify(&e.node) else { continue };
+                    let Some(c) = classify_with_registry(capabilities, &e.node) else {
+                        continue;
+                    };
                     if matches!(c.dimension, EffectDimension::Output) {
                         continue;
                     }
                     if let Some(inj) = injection_by_effect.get(&e.node) {
                         injected.push(inj.clone());
+                    }
+                }
+                let mut seen_fresh = std::collections::HashSet::new();
+                for e in &fd.effects {
+                    if seen_fresh.insert(e.node.clone())
+                        && let Some(fresh) = fresh_by_effect.get(&e.node)
+                    {
+                        injected.push(fresh.clone());
                     }
                 }
                 injected.extend(rewritten_args);
@@ -3510,8 +3599,20 @@ where
         Expr::BinOp(op, l, r) => Spanned::new(
             Expr::BinOp(
                 *op,
-                Box::new(rewrite_effectful_call(l, injection_by_effect, find_fn_def)),
-                Box::new(rewrite_effectful_call(r, injection_by_effect, find_fn_def)),
+                Box::new(rewrite_effectful_call(
+                    l,
+                    injection_by_effect,
+                    fresh_by_effect,
+                    find_fn_def,
+                    capabilities,
+                )),
+                Box::new(rewrite_effectful_call(
+                    r,
+                    injection_by_effect,
+                    fresh_by_effect,
+                    find_fn_def,
+                    capabilities,
+                )),
             ),
             expr.line,
         ),
@@ -3519,7 +3620,15 @@ where
             Expr::Tuple(
                 items
                     .iter()
-                    .map(|i| rewrite_effectful_call(i, injection_by_effect, find_fn_def))
+                    .map(|i| {
+                        rewrite_effectful_call(
+                            i,
+                            injection_by_effect,
+                            fresh_by_effect,
+                            find_fn_def,
+                            capabilities,
+                        )
+                    })
                     .collect(),
             ),
             expr.line,
@@ -3931,6 +4040,8 @@ mod tests {
                 line: 1,
             }],
             fn_defs: Vec::new(),
+            capability_items: Vec::new(),
+            capability_semantics: None,
             verify_laws: Vec::new(),
             analysis: None,
         };
@@ -4019,6 +4130,8 @@ mod tests {
                 line: 1,
             }],
             fn_defs: Vec::new(),
+            capability_items: Vec::new(),
+            capability_semantics: None,
             verify_laws: Vec::new(),
             analysis: None,
         };
@@ -4055,6 +4168,7 @@ mod tests {
             fn_defs: Vec::new(),
             project_name: "scope-test".to_string(),
             modules,
+            capabilities: Default::default(),
             module_prefixes: HashSet::new(),
             #[cfg(feature = "runtime")]
             policy: None,
