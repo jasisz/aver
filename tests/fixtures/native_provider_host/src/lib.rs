@@ -67,6 +67,8 @@ pub fn clock_binding_for_contract(
 
 pub struct ShapesProvider;
 
+static COUNTED_SHAPES_FACTORIES: AtomicUsize = AtomicUsize::new(0);
+
 impl CapabilityProvider for ShapesProvider {
     fn identity(&self) -> &str {
         "example.shapes-echo@1"
@@ -97,6 +99,45 @@ pub fn shapes_binding() -> ProviderBinding {
         SHAPES_CONTRACT_HASH,
         ["Shapes.echo"],
         Arc::new(ShapesProvider),
+    )
+}
+
+struct CountedShapesProvider;
+
+impl CapabilityProvider for CountedShapesProvider {
+    fn identity(&self) -> &str {
+        "example.counted-shapes-echo@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "counted-shapes-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        let factories = COUNTED_SHAPES_FACTORIES.load(Ordering::SeqCst);
+        if factories != 1 {
+            return Err(ProviderFault::new(
+                "duplicate_factory",
+                format!("expected one binding construction, observed {factories}"),
+            ));
+        }
+        ShapesProvider.invoke(context, args)
+    }
+}
+
+/// Host-workflow fixture: every direct/parallel invocation faults unless the
+/// binding factory was evaluated exactly once in this process.
+pub fn counted_shapes_binding() -> ProviderBinding {
+    COUNTED_SHAPES_FACTORIES.fetch_add(1, Ordering::SeqCst);
+    ProviderBinding::new(
+        "Shapes",
+        SHAPES_CONTRACT_HASH,
+        ["Shapes.echo"],
+        Arc::new(CountedShapesProvider),
     )
 }
 

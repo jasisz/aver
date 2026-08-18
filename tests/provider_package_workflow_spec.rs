@@ -91,7 +91,7 @@ fn local_manifest_is_the_complete_stock_binary_workflow() {
         .find("provider_support::install_provider_bindings")
         .expect("provider installation");
     let factory = bootstrap
-        .find("native_provider_fixture::shapes_binding()")
+        .find("native_provider_fixture::counted_shapes_binding()")
         .expect("typed provider factory call");
     let preflight = bootstrap
         .find("provider_support::preflight_required_providers()")

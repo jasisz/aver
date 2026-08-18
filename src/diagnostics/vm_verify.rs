@@ -628,11 +628,25 @@ pub fn run_verify_for_items_vm(
 /// `VerifyBlock::case_hostile_origins` so the renderer can label them as
 /// "outside declared given" when they fail.
 pub fn run_verify_for_items_vm_with_mode(
+    items: Vec<TopLevel>,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+    mode: ExpansionMode,
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_with_mode_and_bindings(items, config, base_dir, source_file, mode, &[])
+}
+
+/// VM verify with explicit process-level provider bindings. Source-local
+/// `given` stubs remain per-case overrides because dispatch checks the oracle
+/// map before consulting this registry.
+pub fn run_verify_for_items_vm_with_mode_and_bindings(
     mut items: Vec<TopLevel>,
     config: Option<ProjectConfig>,
     base_dir: Option<&str>,
     source_file: &str,
     mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
@@ -725,7 +739,7 @@ pub fn run_verify_for_items_vm_with_mode(
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
-    configure_verify_capabilities(&mut machine, &tc_result.capabilities)?;
+    configure_verify_capabilities(&mut machine, &tc_result.capabilities, provider_bindings)?;
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }
@@ -754,8 +768,12 @@ const VERIFY_VM_STEP_LIMIT: u64 = 1_000_000;
 fn configure_verify_capabilities(
     machine: &mut vm::VM,
     capabilities: &crate::capability::CapabilityRegistry,
+    provider_bindings: &[crate::provider::ProviderBinding],
 ) -> Result<(), String> {
-    let providers = crate::provider::ProviderRegistry::for_program(capabilities.clone())?;
+    let providers = crate::provider::ProviderRegistry::for_program_with_bindings(
+        capabilities.clone(),
+        provider_bindings.iter().cloned(),
+    )?;
     machine.set_provider_registry(std::sync::Arc::new(providers));
     machine.defer_missing_capability_providers_to_dispatch(true);
     Ok(())
@@ -843,7 +861,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
-    configure_verify_capabilities(&mut machine, &tc_result.capabilities)?;
+    configure_verify_capabilities(&mut machine, &tc_result.capabilities, &[])?;
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }

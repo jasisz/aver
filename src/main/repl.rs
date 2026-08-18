@@ -11,7 +11,7 @@ use aver::source::parse_source;
 use aver::value::{Value, aver_repr};
 use aver::vm;
 
-use crate::shared::print_type_errors;
+use crate::cli_entry::shared::print_type_errors;
 
 pub(super) fn is_incomplete(source: &str) -> bool {
     let lines: Vec<&str> = source.lines().collect();

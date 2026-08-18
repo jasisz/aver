@@ -15,6 +15,8 @@ pub mod bench;
 pub mod call_graph;
 pub mod capability;
 pub mod checker;
+#[cfg(all(feature = "runtime", feature = "terminal", feature = "tty-render"))]
+pub mod cli_entry;
 pub mod codegen;
 #[cfg(feature = "runtime")]
 pub mod config;
@@ -32,6 +34,8 @@ pub mod parser;
 pub mod playground;
 #[cfg(feature = "runtime")]
 pub mod provider;
+#[cfg(all(feature = "runtime", feature = "terminal", feature = "tty-render"))]
+mod provider_vm_host;
 #[cfg(feature = "runtime")]
 pub mod replay;
 pub mod resolver;

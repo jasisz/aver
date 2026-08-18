@@ -8,10 +8,14 @@ You are an expert at using the Aver toolchain in this repository. Use the instal
 aver run file.av
 aver run file.av --module-root .
 aver run file.av -- arg1 arg2 arg3
+aver run file.av --module-root . --providers
 ```
 
 - Aver program args are available through `Args.get()`
 - `--record <dir>` records effect traces for replay
+- `--providers` explicitly builds/reuses the `[providers]` Rust host and runs
+  the ordinary bytecode VM with those bindings installed in-process; without
+  the flag, `run` never invokes Cargo or provider package code
 
 ### Check
 
@@ -52,6 +56,7 @@ reason code.
 ```bash
 aver verify file-or-dir --module-root . --deps
 aver verify file-or-dir --wasm-gc
+aver verify file-or-dir --module-root . --providers
 ```
 
 `verify` runs only declared `left => right` examples.
@@ -61,6 +66,10 @@ It fails on:
 - execution errors
 
 It is not a coverage tool.
+
+`--providers` runs configured pure providers in ordinary VM cases. An exact
+operation `given` remains a case-local override. The flag is explicit and
+mutually exclusive with `--wasm-gc`; plain verify never builds provider code.
 
 `--wasm-gc` (0.17.3+) executes the same cases via the wasm-gc backend instead of the VM — cross-target check that catches divergence between VM and wasm-gc codegen on equality. The host decodes a single Bool per case (wasm-gc lowers `==` per-type via eq_helpers natively). Failure diagnostics show the actual runtime value for primitive return types (Int/Float/Bool/String). Trace projections (`.trace.*`), classified-effect Oracle stubs (`given X: Time = stub`), and case bodies mentioning `BranchPath` are rejected upfront with a pointer back to VM verify — those features depend on namespace-value dispatch and runtime override that the wasm-gc backend doesn't have yet.
 

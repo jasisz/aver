@@ -1,7 +1,7 @@
 use aver::ast::{DecisionBlock, DecisionImpact, FnDef, Spanned, TypeDef};
 use serde::Serialize;
 
-use crate::context_data::FileContext;
+use crate::cli_entry::context_data::FileContext;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ContextSelection {

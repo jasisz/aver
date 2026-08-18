@@ -298,9 +298,12 @@ generated library accepts the same `aver_rt::provider::ProviderBinding` used by
 an embedded VM. A versioned `[providers]` section in `aver.toml` can name an
 explicit Cargo package/path and zero-argument binding factory; `aver compile`
 then emits the dependency and stock-binary bootstrap, while Cargo performs
-package resolution during the generated build. Without that section, the
-artifact remains host-bound and embedders can install bindings through the
-generated library API. Aver never downloads or loads Rust code into `aver run`.
+package resolution during the generated build. The same manifest can be used
+without changing program backend: `aver run app.av --providers` and
+`aver verify app.av --providers` build/reuse a thin cached Rust host, then run
+the ordinary bytecode VM with those bindings in-process. Plain `run` and
+`verify` never invoke Cargo. Without `[providers]`, generated artifacts remain
+host-bound and embedders can install bindings through the library API.
 
 ### Self-hosted
 

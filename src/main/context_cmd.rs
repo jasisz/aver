@@ -8,13 +8,13 @@ use aver::ast::{DecisionBlock, DecisionImpact, FnDef, TypeDef};
 use aver::types::{Type, parse_type_str};
 use colored::Colorize;
 
-use crate::cli::ContextDepth;
-use crate::context_data::{FileContext, collect_contexts};
-use crate::context_format::{
+use crate::cli_entry::cli::ContextDepth;
+use crate::cli_entry::context_data::{FileContext, collect_contexts};
+use crate::cli_entry::context_format::{
     ContextSelection, collect_all_decisions, format_context_json, format_context_md,
     format_decisions_json, format_decisions_md,
 };
-use crate::shared::resolve_module_root;
+use crate::cli_entry::shared::resolve_module_root;
 
 #[derive(Clone)]
 struct SelectedContext {

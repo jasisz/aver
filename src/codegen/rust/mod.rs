@@ -2,7 +2,7 @@
 ///
 /// Transforms Aver AST -> valid Rust source code.
 mod builtins;
-mod composition;
+pub(crate) mod composition;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
