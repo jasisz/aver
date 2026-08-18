@@ -1,0 +1,25 @@
+module Shapes
+    kind = capability
+    semantics = pure
+    exposes [Bundle, State, echo]
+
+record Bundle
+    number: Int
+    ratio: Float
+    text: String
+    flag: Bool
+    nothing: Unit
+    pair: Tuple<Int, String>
+    items: List<Int>
+    vector: Vector<String>
+    index: Map<String, Int>
+    maybe: Option<Bool>
+    outcome: Result<Int, String>
+    state: State
+
+type State
+    Ready(Int)
+    Empty
+
+operation echo(value: Bundle) -> Result<Bundle, String>
+    ? "Round-trip the complete represented ProviderValue vocabulary."

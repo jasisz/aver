@@ -80,7 +80,54 @@ AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/h
 
 ## Native custom capability providers
 
-A generated project that calls a custom capability compiles successfully but is host-bound. Its stock binary installs compiler defaults only and exits with `error[capability-provider-missing]` when a required custom operation has no binding. To supply one, link a Rust provider crate in the generated `Cargo.toml`, add a host binary, and install the same binding type accepted by the bytecode VM:
+A provider crate exports a public zero-argument factory returning the same checked binding accepted by an embedded VM:
+
+```rust
+pub fn binding() -> aver_rt::provider::ProviderBinding {
+    aver_rt::provider::ProviderBinding::new(
+        "Clock",
+        CLOCK_CONTRACT_HASH,
+        ["Clock.now"],
+        std::sync::Arc::new(ClockProvider),
+    )
+}
+```
+
+Here `ClockProvider` implements `aver_rt::provider::CapabilityProvider`, and the hash and operation set describe the complete checked Aver contract.
+
+Declare explicit static composition in the `aver.toml` beside the module root:
+
+```toml
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Clock"
+crate = "clock_provider"
+package = "aver-clock-provider"
+version = "=0.1.0"
+factory = "binding"
+```
+
+For local development, replace `version` with a path relative to that `aver.toml`; the generated output directory does not affect it:
+
+```toml
+path = "providers/clock"
+```
+
+Then the ordinary generated binary is the host:
+
+```bash
+aver compile app.av --module-root . --target rust -o build/app
+cd build/app
+cargo run
+```
+
+`aver compile` validates the manifest, emits the Cargo dependency and a typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, manage a lockfile, or load Rust into `aver run`; Cargo resolves the dependency when the generated project is built. The stock binary installs all configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
+
+Schema 1 requires exactly one of `version` or `path` per binding. Capability names and Cargo aliases must be unique. Once `[providers]` is present, every required custom capability needs one binding; unknown and unused entries are errors. Compiler defaults such as `Time` need no entry, but an explicit checked `Time` binding replaces the default. Provider runtime configuration and secrets stay in the provider's normal host environment, not in `aver.toml`.
+
+Without `[providers]`, compatibility stays unchanged: a custom-capability project remains host-bound, and its stock binary exits with `error[capability-provider-missing]`. Custom embedders can still add their own host binary and use the generated library API directly:
 
 ```rust
 use generated_app as generated;
@@ -96,7 +143,7 @@ fn main() {
 
 The binding contains an `Arc<dyn aver_rt::provider::CapabilityProvider>`, the exact contract hash, and the complete operation set. Calls use the transport-neutral `ProviderValue` tree and support all contract-v1 values, represented records/sums, and opaque resources. One once-installed registry and resource store is shared by direct calls and every `!` / `?!` branch. `install_provider_bindings_exact` is available to hosts that want no compiler-shipped defaults; unlike `install_provider_bindings`, it does not add the standard `Time` provider.
 
-This is explicit static composition: Aver emits the adapter and host API, but it does not add, download, or discover the provider crate. Repeated installation in one process fails rather than racing a mutable global replacement.
+Repeated installation in one process fails rather than racing a mutable global replacement.
 
 ## Scoped replay runtime
 

@@ -13,6 +13,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+mod providers;
+pub use providers::{
+    PROVIDER_MANIFEST_SCHEMA, ProviderPackageBinding, ProviderPackageManifest,
+    ProviderPackageSource,
+};
+
 /// Runtime policy for a single effect namespace.
 #[derive(Debug, Clone)]
 pub struct EffectPolicy {
@@ -98,6 +104,8 @@ pub struct ProjectConfig {
     /// Path-glob → expected-layer declarations for `aver shape --lint`.
     /// Empty = `--lint` is a no-op (nothing to flag against).
     pub shape_expected: Vec<ShapeExpected>,
+    /// Explicit static Cargo composition for native Rust capability providers.
+    pub provider_manifest: Option<ProviderPackageManifest>,
 }
 
 impl ProjectConfig {
@@ -111,7 +119,11 @@ impl ProjectConfig {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(format!("Failed to read {}: {}", path.display(), e)),
         };
-        Self::parse(&content).map(Some)
+        let mut config = Self::parse(&content)?;
+        if let Some(manifest) = &mut config.provider_manifest {
+            manifest.resolve_local_paths(dir)?;
+        }
+        Ok(Some(config))
     }
 
     /// Parse the TOML content into a ProjectConfig.
@@ -201,6 +213,7 @@ impl ProjectConfig {
         let check_suppressions = parse_check_suppressions(&table)?;
         let independence_mode = parse_independence_mode(&table)?;
         let (shape_layers, shape_expected) = parse_shape(&table)?;
+        let provider_manifest = providers::parse_provider_manifest(&table)?;
 
         Ok(ProjectConfig {
             effect_policies,
@@ -208,6 +221,7 @@ impl ProjectConfig {
             independence_mode,
             shape_layers,
             shape_expected,
+            provider_manifest,
         })
     }
 

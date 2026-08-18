@@ -1,6 +1,10 @@
 /// Cargo.toml generation for the transpiled project.
 use std::collections::HashSet;
 
+use super::composition::{
+    ProviderComposition, ProviderCompositionBinding, ProviderCompositionSource,
+};
+
 /// aver-rt version embedded at compile time from build.rs.
 const RUNTIME_VERSION: &str = env!("AVER_RT_VERSION");
 
@@ -42,6 +46,7 @@ pub fn generate_cargo_toml(
     has_embedded_policy: bool,
     has_runtime_policy: bool,
     has_scoped_runtime: bool,
+    provider_composition: &ProviderComposition,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
@@ -81,6 +86,9 @@ pub fn generate_cargo_toml(
     if has_runtime_policy {
         deps.push("toml = \"0.8\"".to_string());
     }
+    for binding in &provider_composition.bindings {
+        deps.push(provider_dependency_line(binding));
+    }
 
     if !deps.is_empty() {
         lines.push("[dependencies]".to_string());
@@ -112,9 +120,53 @@ pub fn generate_cargo_toml(
     lines.join("\n")
 }
 
+fn provider_dependency_line(binding: &ProviderCompositionBinding) -> String {
+    let source = match &binding.source {
+        ProviderCompositionSource::Registry { version } => {
+            format!("version = {}", toml_string(version))
+        }
+        ProviderCompositionSource::LocalPath { path } => {
+            format!(
+                "path = {}",
+                toml_string(
+                    path.to_str()
+                        .expect("provider paths are validated as UTF-8")
+                )
+            )
+        }
+    };
+    format!(
+        "{} = {{ package = {}, {} }}",
+        binding.crate_name,
+        toml_string(&binding.package),
+        source
+    )
+}
+
+fn toml_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch <= '\u{001f}' => {
+                use std::fmt::Write;
+                write!(out, "\\u{:04X}", ch as u32).expect("write to String");
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::runtime_dependency_line;
+    use super::{runtime_dependency_line, toml_string};
 
     #[test]
     fn runtime_dependency_defaults_to_registry_pin() {
@@ -147,5 +199,10 @@ mod tests {
             dep,
             "aver-rt = { path = \"/tmp/aver-rt\", version = \"=0.3.0\", features = [\"http\"] }"
         );
+    }
+
+    #[test]
+    fn generated_toml_string_escapes_data_instead_of_source() {
+        assert_eq!(toml_string("a\\b\"c\n"), "\"a\\\\b\\\"c\\n\"");
     }
 }

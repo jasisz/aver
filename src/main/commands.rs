@@ -5292,7 +5292,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         process::exit(1);
     }
 
-    let (mut ctx, _module_root) = build_codegen_context(
+    let (mut ctx, module_root) = build_codegen_context(
         file,
         project_name,
         module_root_override,
@@ -5323,7 +5323,25 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         );
         process::exit(1);
     }
-    let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
+    let project_config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{}", error.red());
+            process::exit(1);
+        }
+    };
+    let provider_manifest = project_config
+        .as_ref()
+        .and_then(|config| config.provider_manifest.as_ref());
+    let output = match with_local_runtime_override(|| {
+        rust_codegen::transpile_with_provider_manifest(&mut ctx, provider_manifest)
+    }) {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("{}", error.red());
+            process::exit(1);
+        }
+    };
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
     print_capability_target_accounting(

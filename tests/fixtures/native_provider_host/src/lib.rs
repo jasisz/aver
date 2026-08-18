@@ -17,6 +17,8 @@ pub const MODES_CONTRACT_HASH: &str =
     "sha256:a721f2c2e4106b7e2abebf4a6600937ac59dfa78b9fc4b880ed3ae6c0574f9d5";
 pub const PURE_PROBE_CONTRACT_HASH: &str =
     "sha256:842c8dcaef4ca39100285d8866c78b2848fdc10d0819c4def11a5fb018320120";
+pub const TIME_CONTRACT_HASH: &str =
+    "sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49";
 
 pub struct ClockProvider {
     calls: Arc<AtomicUsize>,
@@ -95,6 +97,53 @@ pub fn shapes_binding() -> ProviderBinding {
         SHAPES_CONTRACT_HASH,
         ["Shapes.echo"],
         Arc::new(ShapesProvider),
+    )
+}
+
+pub fn mismatched_shapes_binding() -> ProviderBinding {
+    ProviderBinding::new(
+        "Shapes",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ["Shapes.echo"],
+        Arc::new(ShapesProvider),
+    )
+}
+
+pub fn not_a_binding() -> usize {
+    0
+}
+
+struct FixedTimeProvider;
+
+impl CapabilityProvider for FixedTimeProvider {
+    fn identity(&self) -> &str {
+        "example.fixed-time@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "fixed-time-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        _args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        match context.operation.as_str() {
+            "Time.now" => Ok(ProviderValue::String("fixed-time".to_string())),
+            "Time.unixMs" => Ok(ProviderValue::Int(0.into())),
+            "Time.sleep" => Ok(ProviderValue::Unit),
+            other => Err(ProviderFault::new("bad_call", other)),
+        }
+    }
+}
+
+pub fn fixed_time_binding() -> ProviderBinding {
+    ProviderBinding::new(
+        "Time",
+        TIME_CONTRACT_HASH,
+        ["Time.now", "Time.sleep", "Time.unixMs"],
+        Arc::new(FixedTimeProvider),
     )
 }
 

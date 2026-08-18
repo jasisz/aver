@@ -1,0 +1,9 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Shapes"
+crate = "native_provider_fixture"
+package = "native-provider-fixture"
+path = "../native_provider_host"
+factory = "shapes_binding"

@@ -2,6 +2,7 @@
 ///
 /// Transforms Aver AST -> valid Rust source code.
 mod builtins;
+mod composition;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
@@ -73,6 +74,25 @@ fn synthesize_rust_module_cascade(
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
+    let required = provider::required_operations(ctx);
+    transpile_project(ctx, required, composition::ProviderComposition::default())
+}
+
+#[cfg(feature = "runtime")]
+pub fn transpile_with_provider_manifest(
+    ctx: &mut CodegenContext,
+    manifest: Option<&crate::config::ProviderPackageManifest>,
+) -> Result<ProjectOutput, String> {
+    let required = provider::required_operations(ctx);
+    let composition = composition::plan(&ctx.capabilities, &required, manifest)?;
+    Ok(transpile_project(ctx, required, composition))
+}
+
+fn transpile_project(
+    ctx: &mut CodegenContext,
+    required_provider_operations: BTreeSet<String>,
+    provider_composition: composition::ProviderComposition,
+) -> ProjectOutput {
     // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
     // backend codegens from. This runs ONLY here (the Rust entry) — the VM,
     // wasm-gc, proof, Dafny and Lean backends never call `transpile`, so
@@ -107,7 +127,6 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         .as_ref()
         .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
-    let required_provider_operations = provider::required_operations(ctx);
     let has_provider_runtime = !required_provider_operations.is_empty();
     let needs_http_types =
         needs_named_type(ctx, "HttpResponse") || needs_named_type(ctx, "HttpRequest");
@@ -175,6 +194,7 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 has_embedded_policy,
                 has_runtime_policy,
                 ctx.emit_replay_runtime,
+                &provider_composition,
             ),
         ),
         (
@@ -186,7 +206,7 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 ctx.guest_entry.as_deref(),
                 !verify_blocks.is_empty(),
                 ctx.emit_self_host_support,
-                has_provider_runtime,
+                has_provider_runtime.then_some(&provider_composition),
             ),
         ),
         (
@@ -360,8 +380,9 @@ fn render_root_main(
     guest_entry: Option<&str>,
     has_verify: bool,
     has_self_host_support: bool,
-    has_provider_runtime: bool,
+    provider_composition: Option<&composition::ProviderComposition>,
 ) -> String {
+    let has_provider_runtime = provider_composition.is_some();
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
         "// Aver Rust emission".to_string(),
@@ -392,13 +413,15 @@ fn render_root_main(
         sections.push("mod self_host_support;".to_string());
     }
 
-    if has_provider_runtime {
+    if let Some(provider_composition) = provider_composition {
         sections.push(String::new());
         sections.push("pub mod provider_support;".to_string());
         sections.push(
             "pub use provider_support::{install_provider_bindings, install_provider_bindings_exact};"
                 .to_string(),
         );
+        sections.push(String::new());
+        sections.extend(provider_composition.render_bootstrap());
     }
 
     sections.push(String::new());
@@ -449,7 +472,7 @@ fn render_root_main(
         if result_unit_string {
             sections.push("fn main() {".to_string());
             if has_provider_runtime {
-                sections.push("    if let Err(error) = provider_support::preflight_required_providers() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
+                sections.push("    if let Err(error) = bootstrap_provider_bindings() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
             }
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
@@ -478,7 +501,7 @@ fn render_root_main(
             let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
             sections.push(format!("fn main() -> {} {{", ret_type));
             if has_provider_runtime {
-                sections.push("    provider_support::preflight_required_providers().unwrap_or_else(|error| panic!(\"{}\", error));".to_string());
+                sections.push("    bootstrap_provider_bindings().unwrap_or_else(|error| panic!(\"{}\", error));".to_string());
             }
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             if has_replay && guest_entry.is_none() {
@@ -493,7 +516,7 @@ fn render_root_main(
     } else {
         sections.push("fn main() {".to_string());
         if has_provider_runtime {
-            sections.push("    if let Err(error) = provider_support::preflight_required_providers() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
+            sections.push("    if let Err(error) = bootstrap_provider_bindings() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
         }
         if main_fn.is_some() {
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
@@ -2492,6 +2515,7 @@ fn main() -> Result<String, String>
             independence_mode: crate::config::IndependenceMode::default(),
             shape_layers: Vec::new(),
             shape_expected: Vec::new(),
+            provider_manifest: None,
         });
 
         let out = transpile(&mut ctx);
@@ -2583,6 +2607,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
             independence_mode: crate::config::IndependenceMode::Cancel,
             shape_layers: Vec::new(),
             shape_expected: Vec::new(),
+            provider_manifest: None,
         });
 
         let out = transpile(&mut ctx);
