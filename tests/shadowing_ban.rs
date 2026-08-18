@@ -576,6 +576,16 @@ fn front_doors(out_dir: &Path) -> Vec<Door> {
         cli_door("audit", "audit", vec!["audit".into(), "{file}".into()]),
         cli_door("shape", "shape", vec!["shape".into(), "{file}".into()]),
         cli_door(
+            "capabilities",
+            "capabilities",
+            vec![
+                "capabilities".into(),
+                "{file}".into(),
+                "--module-root".into(),
+                module_root.clone(),
+            ],
+        ),
+        cli_door(
             "bench",
             "bench",
             vec![
