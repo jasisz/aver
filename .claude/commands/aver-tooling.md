@@ -9,13 +9,15 @@ aver run file.av
 aver run file.av --module-root .
 aver run file.av -- arg1 arg2 arg3
 aver run file.av --module-root . --providers
+aver run file.av --module-root . --providers --wasip2
 ```
 
 - Aver program args are available through `Args.get()`
 - `--record <dir>` records effect traces for replay
-- `--providers` explicitly builds/reuses the `[providers]` Rust host and runs
-  the ordinary bytecode VM with those bindings installed in-process; without
-  the flag, `run` never invokes Cargo or provider package code
+- `--providers` explicitly builds/reuses the `[providers]` Rust host. It runs
+  the ordinary bytecode VM with those bindings installed in-process, or with
+  `--wasip2` adapts the WIT-lowerable bindings to Component Model imports.
+  Without the flag, `run` never invokes Cargo or provider package code
 
 ### Check
 

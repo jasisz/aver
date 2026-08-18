@@ -11,6 +11,69 @@ use wasmtime_wasi::p2::bindings::sync::Command as WasiCommand;
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
+use aver::provider::{
+    CapabilityProvider, ProviderBinding, ProviderContext, ProviderFault, ProviderValue,
+};
+
+struct ConfiguredEchoProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+struct ConfiguredProbeProvider {
+    unit_calls: Arc<AtomicUsize>,
+}
+
+impl CapabilityProvider for ConfiguredProbeProvider {
+    fn identity(&self) -> &str {
+        "test.configured-wit-probe@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "configured-wit-probe-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        match (context.operation.as_str(), args) {
+            ("Probe.flip", [ProviderValue::Bool(value)]) => Ok(ProviderValue::Bool(!value)),
+            ("Probe.scale", [ProviderValue::Float(value)]) => Ok(ProviderValue::Float(value * 2.0)),
+            ("Probe.ping", [ProviderValue::Unit]) => {
+                self.unit_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ProviderValue::Unit)
+            }
+            (operation, _) => Err(ProviderFault::new("bad_call", operation)),
+        }
+    }
+}
+
+impl CapabilityProvider for ConfiguredEchoProvider {
+    fn identity(&self) -> &str {
+        "test.configured-wit-echo@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "configured-wit-echo-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        match (context.operation.as_str(), args) {
+            ("Echo.echo", [ProviderValue::String(value)]) => {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ProviderValue::String(format!("host echoed: {value}")))
+            }
+            ("Echo.healthy", []) => Ok(ProviderValue::Bool(true)),
+            (operation, _) => Err(ProviderFault::new("bad_call", operation)),
+        }
+    }
+}
+
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capability_wit")
 }
@@ -118,6 +181,105 @@ fn echo_component_import_runs_through_a_separately_installed_host() {
         String::from_utf8(stdout.contents().to_vec()).expect("utf-8 stdout"),
         "host echoed: hello from Aver\n"
     );
+}
+
+#[test]
+fn configured_rust_binding_runs_through_the_stock_wasip2_cli_adapter() {
+    let root = fixture_root();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let binding = ProviderBinding::new(
+        "Echo",
+        "sha256:36832abf9ae258a8d018106da7ea75b15618c40d9f45a1959ab5d59e59358586",
+        ["Echo.echo", "Echo.healthy"],
+        Arc::new(ConfiguredEchoProvider {
+            calls: Arc::clone(&calls),
+        }),
+    );
+    aver::cli_entry::main_with_args_and_provider_bindings(
+        vec![
+            "aver".into(),
+            "run".into(),
+            root.join("main.av").into_os_string(),
+            "--module-root".into(),
+            root.into_os_string(),
+            "--providers".into(),
+            "--wasip2".into(),
+        ],
+        vec![binding],
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+#[ignore = "builds a nested wasip2-enabled cached Rust host; run explicitly for package smoke"]
+fn configured_package_factory_runs_and_then_reuses_the_cached_wasip2_host() {
+    let root = fixture_root();
+    let cache = tempfile::tempdir().expect("wasip2 provider-host cache");
+    let run = |cargo: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+        command
+            .arg("run")
+            .arg(root.join("main.av"))
+            .arg("--module-root")
+            .arg(&root)
+            .arg("--providers")
+            .arg("--wasip2")
+            .env("AVER_PROVIDER_HOST_CACHE", cache.path())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("RUSTC_WORKSPACE_WRAPPER");
+        if let Some(cargo) = cargo {
+            command.env("CARGO", cargo);
+        }
+        command.output().expect("run cached wasip2 provider host")
+    };
+
+    let first = run(None);
+    let first_report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(first.status.success(), "{first_report}");
+    assert!(first_report.contains("Building provider host"));
+    assert!(first_report.contains("host echoed: hello from Aver"));
+
+    let cached = run(Some("/definitely/missing/cargo"));
+    let cached_report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cached.stdout),
+        String::from_utf8_lossy(&cached.stderr)
+    );
+    assert!(cached.status.success(), "{cached_report}");
+    assert!(cached_report.contains("host echoed: hello from Aver"));
+    assert!(!cached_report.contains("provider host"));
+}
+
+#[test]
+fn configured_pure_binding_round_trips_bool_float_and_unit() {
+    let root = fixture_root();
+    let unit_calls = Arc::new(AtomicUsize::new(0));
+    let binding = ProviderBinding::new(
+        "Probe",
+        "sha256:dcb1c1be42562497bcef73b92de089a3c39049905d7ee686e0b0cccb30b30c92",
+        ["Probe.flip", "Probe.ping", "Probe.scale"],
+        Arc::new(ConfiguredProbeProvider {
+            unit_calls: Arc::clone(&unit_calls),
+        }),
+    );
+    aver::cli_entry::main_with_args_and_provider_bindings(
+        vec![
+            "aver".into(),
+            "run".into(),
+            root.join("probes.av").into_os_string(),
+            "--module-root".into(),
+            root.into_os_string(),
+            "--providers".into(),
+            "--wasip2".into(),
+        ],
+        vec![binding],
+    );
+    assert_eq!(unit_calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]

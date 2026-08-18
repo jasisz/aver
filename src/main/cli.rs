@@ -221,17 +221,15 @@ pub(super) enum Commands {
         /// bridge, no preview-1 adapter. Same effect set as
         /// `aver compile --target wasip2`: `Console.{print, error, warn,
         /// readLine}`, `Time.{unixMs, now, sleep}`, `Random.{int, float}`,
-        /// `Args.get`, `Env.get`, all `Disk.*`. `Terminal`, `Env.set`,
-        /// `Http`, `Tcp`, `HttpServer` are rejected (see docs/wasip2.md
-        /// "Why X is rejected, not stubbed").
+        /// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and `Tcp.*`.
+        /// `Terminal`, `Env.set`, and `HttpServer.listenWith` are rejected
+        /// (see docs/wasip2.md "Why X is rejected, not stubbed").
         #[arg(long = "wasip2", conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasip2: bool,
-        /// Build/reuse the Rust provider host declared by `[providers]` and
-        /// execute this program on the ordinary bytecode VM inside that host.
-        #[arg(
-            long,
-            conflicts_with_all = ["self_host", "wasm_gc", "wasip2"]
-        )]
+        /// Build/reuse the Rust provider host declared by `[providers]`.
+        /// By default it installs bindings in the ordinary VM; with
+        /// `--wasip2` it adapts WIT-lowerable bindings to component imports.
+        #[arg(long, conflicts_with_all = ["self_host", "wasm_gc"])]
         providers: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
@@ -886,11 +884,20 @@ mod tests {
     }
 
     #[test]
-    fn provider_host_rejects_incompatible_backends() {
+    fn provider_host_accepts_wasip2_and_rejects_incompatible_backends() {
+        let wasip2 = Cli::parse_from(["aver", "run", "app.av", "--providers", "--wasip2"]);
+        assert!(matches!(
+            wasip2.command,
+            Commands::Run {
+                providers: true,
+                wasip2: true,
+                ..
+            }
+        ));
+
         for args in [
             ["aver", "run", "app.av", "--providers", "--self-host"].as_slice(),
             ["aver", "run", "app.av", "--providers", "--wasm-gc"].as_slice(),
-            ["aver", "run", "app.av", "--providers", "--wasip2"].as_slice(),
             ["aver", "verify", "app.av", "--providers", "--wasm-gc"].as_slice(),
         ] {
             assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");

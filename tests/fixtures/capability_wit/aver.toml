@@ -1,0 +1,9 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Echo"
+crate = "native_provider_fixture"
+package = "native-provider-fixture"
+path = "../native_provider_host"
+factory = "counted_wit_echo_binding"

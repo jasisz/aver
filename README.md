@@ -281,8 +281,10 @@ was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
 [`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
 Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
 and `String` compile to typed wasip2 component imports. They are host-bound: an
-external Component Model host must provide the generated interface; the stock
-`aver run --wasip2` runner does not install custom providers.
+external Component Model host may provide the generated interface directly, or
+`aver run app.av --wasip2 --providers` can adapt the same Rust `ProviderBinding`
+configured for the VM. Plain `aver run --wasip2` remains inert and reports the
+missing import before component linking.
 
 ### Native Rust
 
@@ -301,9 +303,11 @@ then emits the dependency and stock-binary bootstrap, while Cargo performs
 package resolution during the generated build. The same manifest can be used
 without changing program backend: `aver run app.av --providers` and
 `aver verify app.av --providers` build/reuse a thin cached Rust host, then run
-the ordinary bytecode VM with those bindings in-process. Plain `run` and
-`verify` never invoke Cargo. Without `[providers]`, generated artifacts remain
-host-bound and embedders can install bindings through the library API.
+the ordinary bytecode VM with those bindings in-process. For a WIT-lowerable
+contract, `aver run app.av --providers --wasip2` uses that same host package and
+binding behind the generated Component Model import. Plain `run` and `verify`
+never invoke Cargo. Without `[providers]`, generated artifacts remain host-bound
+and embedders can install bindings through the library API.
 
 ### Self-hosted
 

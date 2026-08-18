@@ -164,10 +164,19 @@ emitted. If any is used, the provider binds the full contract.
 Compilation intentionally leaves this import unresolved: the artifact is
 `host-bound[component-import-required]`, not `provided`. Install the interface
 implementation in a Component Model host/linker, then instantiate the component.
-The embedded `aver run --wasip2` runner does not yet accept custom provider
-bindings and reports `error[capability-provider-missing]` before component
-linking. Aver does not download a package, run Cargo, or silently compose an
-implementation; provider-package discovery and composition are later phases.
+For local execution, `aver run app.av --wasip2 --providers` uses the explicit
+schema-1 `[providers]` manifest and cached Rust host. It validates the full
+contract through the ordinary native `ProviderRegistry`, dynamically installs
+the generated WIT functions in the embedded wasmtime linker, and converts the
+phase-3a values to/from the same transport-neutral `ProviderValue` tree used by
+the VM and generated Rust. Provider faults, panics, and wrong return shapes keep
+their provider-boundary diagnostics instead of surfacing as canonical-ABI traps.
+
+Plain `aver run --wasip2` remains inert and reports
+`error[capability-provider-missing]` before linking. Aver never discovers or
+downloads a package implicitly. `aver compile --target wasip2` also remains an
+unresolved, portable component; the cached Rust composition is a run shortcut,
+not a mutation of the artifact contract.
 
 ## Effect mapping
 
