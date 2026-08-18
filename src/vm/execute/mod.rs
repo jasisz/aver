@@ -43,6 +43,11 @@ pub struct VM {
     /// no stack growth). Counter resets at the top of each
     /// `run_named_function` so consecutive cases don't share budget.
     step_limit: Option<u64>,
+    /// Verify compiles the whole module but executes one concrete case at a
+    /// time. It still validates checked contract/model identities up front,
+    /// while an absent custom binding is allowed to fail only if that case
+    /// actually dispatches the capability operation.
+    defer_missing_capability_providers_to_dispatch: bool,
     /// Mutable scratch buffers for the deforestation lowering's `__buf_*`
     /// intrinsics (0.15 Traversal). Slots are `Option<String>` so finalize
     /// can take ownership and leave a tombstone; `BUFFER_NEW` reuses freed
@@ -159,6 +164,7 @@ impl VM {
             byte_builder_pool: Vec::new(),
             byte_builder_free: Vec::new(),
             step_limit: None,
+            defer_missing_capability_providers_to_dispatch: false,
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),
             vector_ownership: VmRuntimeOwnershipStats::default(),
@@ -172,6 +178,13 @@ impl VM {
     /// pinning the host. `None` removes the cap.
     pub fn set_step_limit(&mut self, limit: Option<u64>) {
         self.step_limit = limit;
+    }
+
+    /// Keep contract/hash preflight, but let an absent provider fail at the
+    /// operation boundary. Used by concrete verify cases so an unrelated case
+    /// is not rejected merely because another function needs a custom host.
+    pub fn defer_missing_capability_providers_to_dispatch(&mut self, defer: bool) {
+        self.defer_missing_capability_providers_to_dispatch = defer;
     }
 
     pub fn start_profiling(&mut self) {
@@ -456,7 +469,11 @@ impl VM {
             }
             required.push(name.as_str());
         }
-        contracts.preflight(required).map_err(VmError::runtime)
+        if self.defer_missing_capability_providers_to_dispatch {
+            Ok(())
+        } else {
+            contracts.preflight(required).map_err(VmError::runtime)
+        }
     }
 
     pub fn run(&mut self) -> Result<NanValue, VmError> {
