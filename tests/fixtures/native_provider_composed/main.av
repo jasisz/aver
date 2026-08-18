@@ -1,0 +1,13 @@
+module NativeProviderComposed
+    intent = "Run a statically composed native provider from the stock generated binary."
+    depends [Shapes]
+    exposes [sample, main]
+
+fn sample() -> Result<Shapes.Bundle, String>
+    ? "Call the provider through the generated bootstrap."
+    Shapes.echo(Shapes.Bundle(number = 7, ratio = 1.5, text = "hello", flag = true, nothing = Unit, pair = (3, "three"), items = [1, 2], vector = Vector.fromList(["v"]), index = {"z" => 9, "a" => 2}, maybe = Option.Some(false), outcome = Result.Err("declared"), state = Shapes.State.Ready(9)))
+
+fn main() -> Result<Unit, String>
+    ? "Prove the provider was installed before entering Aver code."
+    bundle = sample()?
+    Result.Ok(Unit)

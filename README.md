@@ -295,9 +295,12 @@ aver compile hello.av --policy runtime # load aver.toml at runtime
 See [docs/rust.md](docs/rust.md) for the generated code model.
 Generated Rust can also be linked with native custom capability providers. The
 generated library accepts the same `aver_rt::provider::ProviderBinding` used by
-an embedded VM; the host adds the provider crate as an ordinary Cargo
-dependency and installs its bindings before calling the generated entry. Aver
-does not discover or inject that dependency automatically.
+an embedded VM. A versioned `[providers]` section in `aver.toml` can name an
+explicit Cargo package/path and zero-argument binding factory; `aver compile`
+then emits the dependency and stock-binary bootstrap, while Cargo performs
+package resolution during the generated build. Without that section, the
+artifact remains host-bound and embedders can install bindings through the
+generated library API. Aver never downloads or loads Rust code into `aver run`.
 
 ### Self-hosted
 
