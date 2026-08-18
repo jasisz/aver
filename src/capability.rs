@@ -378,7 +378,9 @@ impl CapabilityRegistry {
                 _ => None,
             })
             .collect();
-        validate_boundary_type_ownership(scope, &operations, &mut errors);
+        let mut locally_declared: BTreeSet<String> = type_defs.keys().cloned().collect();
+        locally_declared.extend(opaque.iter().cloned());
+        validate_boundary_type_ownership(scope, &operations, &locally_declared, &mut errors);
         let reachable_types = reachable_type_defs(&operations, &type_defs);
         let resource_tainted = resource_tainted_type_names(&opaque, &type_defs);
         validate_operation_boundaries(

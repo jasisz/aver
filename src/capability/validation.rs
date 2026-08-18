@@ -366,26 +366,32 @@ pub(super) fn validate_resource_map_keys(
 }
 
 /// The v1 descriptor builder owns only the capability module's declarations.
-/// Admitting a qualified type from another module would print its name in an
-/// operation row without hashing that type's layout, so a dependency could
-/// mutate the provider ABI while contract_hash stayed fixed. Fail closed until
-/// descriptors can bind cross-module type-contract identities transitively.
+/// Admitting a type from another module would print its name in an operation
+/// row without hashing that type's layout, so a dependency could mutate the
+/// provider ABI while contract_hash stayed fixed. Bare names are local only
+/// when a represented or opaque declaration proves ownership; an imported bare
+/// alias must not be silently qualified into the capability's own scope. Fail
+/// closed until descriptors can bind cross-module identities transitively.
 pub(super) fn validate_boundary_type_ownership(
     scope: &str,
     operations: &[CapabilityOperation],
+    locally_declared: &BTreeSet<String>,
     errors: &mut Vec<CapabilityError>,
 ) {
     fn visit(
         scope: &str,
         operation: &CapabilityOperation,
         ty: &Type,
+        locally_declared: &BTreeSet<String>,
         errors: &mut Vec<CapabilityError>,
     ) {
         match ty {
             Type::Named { name, .. } => {
-                if let Some((owner, _)) = name.rsplit_once('.')
-                    && owner != scope
-                {
+                let belongs_to_capability = match name.rsplit_once('.') {
+                    Some((owner, _)) => owner == scope,
+                    None => locally_declared.contains(name),
+                };
+                if !belongs_to_capability {
                     errors.push(CapabilityError::at(
                         operation.line,
                         format!(
@@ -396,18 +402,18 @@ pub(super) fn validate_boundary_type_ownership(
                 }
             }
             Type::Result(left, right) | Type::Map(left, right) => {
-                visit(scope, operation, left, errors);
-                visit(scope, operation, right, errors);
+                visit(scope, operation, left, locally_declared, errors);
+                visit(scope, operation, right, locally_declared, errors);
             }
             Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
-                visit(scope, operation, inner, errors)
+                visit(scope, operation, inner, locally_declared, errors)
             }
             Type::Tuple(items) | Type::Fn(items, _, _) => {
                 for item in items {
-                    visit(scope, operation, item, errors);
+                    visit(scope, operation, item, locally_declared, errors);
                 }
                 if let Type::Fn(_, ret, _) = ty {
-                    visit(scope, operation, ret, errors);
+                    visit(scope, operation, ret, locally_declared, errors);
                 }
             }
             Type::Int
@@ -422,8 +428,14 @@ pub(super) fn validate_boundary_type_ownership(
 
     for operation in operations {
         for (_, ty) in &operation.params {
-            visit(scope, operation, ty, errors);
+            visit(scope, operation, ty, locally_declared, errors);
         }
-        visit(scope, operation, &operation.return_type, errors);
+        visit(
+            scope,
+            operation,
+            &operation.return_type,
+            locally_declared,
+            errors,
+        );
     }
 }

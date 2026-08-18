@@ -273,6 +273,19 @@ fn semantic_classes_reject_unsound_attribute_combinations() {
     assert!(external_boundary.iter().any(|error| {
         error.contains("cross-module boundary type") && error.contains("contract_hash")
     }));
+
+    let bare_external_boundary = error_messages(
+        "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Bytes]\n\noperation f(value: Bytes) -> Bytes\n",
+    );
+    assert!(bare_external_boundary.iter().any(|error| {
+        error.contains("cross-module boundary type 'Bytes'") && error.contains("contract_hash")
+    }));
+    assert!(
+        bare_external_boundary
+            .iter()
+            .all(|error| !error.contains("Invalid.Bytes")),
+        "a bare imported type must not be misqualified as capability-owned: {bare_external_boundary:?}"
+    );
 }
 
 #[test]
