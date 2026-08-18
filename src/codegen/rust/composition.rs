@@ -8,7 +8,7 @@ use crate::capability::CapabilityRegistry;
 use crate::config::{ProviderPackageManifest, ProviderPackageSource};
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct ProviderComposition {
+pub(crate) struct ProviderComposition {
     pub manifest_present: bool,
     pub bindings: Vec<ProviderCompositionBinding>,
 }
@@ -31,7 +31,7 @@ impl ProviderComposition {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ProviderCompositionBinding {
+pub(crate) struct ProviderCompositionBinding {
     pub capability: String,
     pub crate_name: String,
     pub package: String,
@@ -40,7 +40,7 @@ pub(super) struct ProviderCompositionBinding {
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum ProviderCompositionSource {
+pub(crate) enum ProviderCompositionSource {
     Registry { version: String },
     LocalPath { path: std::path::PathBuf },
 }
@@ -49,10 +49,34 @@ impl ProviderCompositionBinding {
     pub fn factory_call(&self) -> String {
         format!("{}::{}()", self.crate_name, self.factory.join("::"))
     }
+
+    /// Render the exact Cargo dependency used by every native provider host.
+    /// Keeping this beside the checked composition plan prevents the cached VM
+    /// host and generated-Rust host from interpreting schema 1 differently.
+    pub fn cargo_dependency_line(&self) -> String {
+        let source = match &self.source {
+            ProviderCompositionSource::Registry { version } => {
+                format!("version = {}", toml_string(version))
+            }
+            ProviderCompositionSource::LocalPath { path } => format!(
+                "path = {}",
+                toml_string(
+                    path.to_str()
+                        .expect("provider paths are validated as UTF-8")
+                )
+            ),
+        };
+        format!(
+            "{} = {{ package = {}, {} }}",
+            self.crate_name,
+            toml_string(&self.package),
+            source
+        )
+    }
 }
 
 #[cfg(feature = "runtime")]
-pub(super) fn plan(
+pub(crate) fn plan(
     registry: &CapabilityRegistry,
     required_operations: &BTreeSet<String>,
     manifest: Option<&ProviderPackageManifest>,
@@ -127,6 +151,27 @@ pub(super) fn plan(
         manifest_present: true,
         bindings,
     })
+}
+
+fn toml_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch <= '\u{001f}' => {
+                use std::fmt::Write;
+                write!(out, "\\u{:04X}", ch as u32).expect("write to String");
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 #[cfg(feature = "runtime")]

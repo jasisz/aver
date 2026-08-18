@@ -26,7 +26,7 @@ use aver::vm;
 use super::diagnostic;
 use aver::tty_render::render_tty;
 
-use crate::shared::{
+use crate::cli_entry::shared::{
     apply_runtime_policy_to_vm, format_type_errors, load_runtime_policy, parse_file,
     print_type_errors, read_file, resolve_module_root,
 };
@@ -1156,6 +1156,7 @@ pub(super) fn cmd_run_vm(
     program_args: Vec<String>,
     profile: bool,
     entry_expression: Option<&str>,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     use aver::replay::{
         JsonValue, session::RecordedOutcome, session::SessionRecording,
@@ -1244,14 +1245,16 @@ pub(super) fn cmd_run_vm(
     };
 
     // Execute
-    let providers =
-        match aver::provider::ProviderRegistry::for_program(tc_result.capabilities.clone()) {
-            Ok(providers) => std::sync::Arc::new(providers),
-            Err(error) => {
-                eprintln!("{}", error.red());
-                process::exit(1);
-            }
-        };
+    let providers = match aver::provider::ProviderRegistry::for_program_with_bindings(
+        tc_result.capabilities.clone(),
+        provider_bindings.iter().cloned(),
+    ) {
+        Ok(providers) => std::sync::Arc::new(providers),
+        Err(error) => {
+            eprintln!("{}", error.red());
+            process::exit(1);
+        }
+    };
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_provider_registry(providers);
     if let Err(e) = apply_runtime_policy_to_vm(&mut machine, &module_root) {
@@ -1490,7 +1493,13 @@ pub(super) fn cmd_run_vm(
             }
         }
         Err(e) => {
-            eprintln!("{}", format!("{}", e).red());
+            let error = e.to_string();
+            eprintln!("{}", error.red());
+            if let Some(repair) =
+                super::provider_host_cmd::missing_provider_repair(&error, &module_root, "run", file)
+            {
+                eprintln!("\n{}", repair);
+            }
             process::exit(1);
         }
     }
@@ -1882,7 +1891,7 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
     use super::format_cmd::try_format_source;
     use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
 
-    let module_root = crate::shared::resolve_module_root(module_root_override);
+    let module_root = crate::cli_entry::shared::resolve_module_root(module_root_override);
     let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
         Ok(c) => c,
         Err(e) => {
@@ -1914,7 +1923,7 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
 
     for file in &inputs {
         let shown_path = display_check_path(file, &module_root);
-        let source = match crate::shared::read_file(file) {
+        let source = match crate::cli_entry::shared::read_file(file) {
             Ok(s) => s,
             Err(e) => {
                 if json {
@@ -2206,6 +2215,7 @@ fn run_verify_for_file(
     deps: bool,
     hostile: bool,
     wasm_gc: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) -> Result<Vec<VerifyFileResult>, String> {
     use aver::verify_law::expand::ExpansionMode;
 
@@ -2249,12 +2259,13 @@ fn run_verify_for_file(
                 return Err("verify --wasm-gc requires building with --features wasm".to_string());
             }
         } else {
-            aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
+            aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode_and_bindings(
                 items,
                 config.clone(),
                 Some(module_root),
                 &path,
                 mode,
+                provider_bindings,
             )?
         };
         file_results.push(VerifyFileResult {
@@ -2674,6 +2685,7 @@ fn render_verify_output(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_verify(
     path: &str,
     module_root_override: Option<&str>,
@@ -2682,6 +2694,7 @@ pub(super) fn cmd_verify(
     json: bool,
     hostile: bool,
     wasm_gc: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
     // world. Domain side (this commit) injects boundary values per typed
@@ -2703,7 +2716,14 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps, hostile, wasm_gc) {
+        match run_verify_for_file(
+            file,
+            &module_root,
+            deps,
+            hostile,
+            wasm_gc,
+            provider_bindings,
+        ) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());
@@ -2867,6 +2887,25 @@ pub(super) fn cmd_verify(
         } else {
             println!("{}", summary.red());
         }
+    }
+
+    if !json
+        && let Some(error) = all_file_results
+            .iter()
+            .flat_map(|file| &file.blocks)
+            .flat_map(|block| &block.case_results)
+            .find_map(|case| match &case.outcome {
+                aver::checker::VerifyCaseOutcome::RuntimeError { error }
+                    if error.contains("capability-provider-missing") =>
+                {
+                    Some(error.as_str())
+                }
+                _ => None,
+            })
+        && let Some(repair) =
+            super::provider_host_cmd::missing_provider_repair(error, &module_root, "verify", path)
+    {
+        eprintln!("\n{repair}");
     }
 
     if !failed_files.is_empty() || total_failed > 0 {

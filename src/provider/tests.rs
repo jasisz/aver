@@ -241,6 +241,33 @@ fn registration_is_exact_complete_and_explicit() {
 }
 
 #[test]
+fn program_registry_overlays_one_checked_host_binding_and_rejects_duplicates() {
+    let registry = contracts("Probe", PURE);
+    let provider = Arc::new(FixedProvider {
+        identity: "test/host-overlay",
+        fingerprint: "host-overlay-v1",
+        calls: Arc::new(AtomicUsize::new(0)),
+        value: ProviderValue::ResultOk(Box::new(ProviderValue::Int(7.into()))),
+    });
+    let supplied = binding(&registry, "Probe", &["Probe.read"], provider.clone());
+    let providers =
+        ProviderRegistry::for_program_with_bindings(registry.clone(), [supplied.clone()])
+            .expect("checked host overlay");
+    assert_eq!(
+        providers
+            .binding("Probe")
+            .expect("installed host binding")
+            .provider_identity(),
+        "test/host-overlay"
+    );
+
+    let error = ProviderRegistry::for_program_with_bindings(registry, [supplied.clone(), supplied])
+        .err()
+        .expect("duplicate host bindings");
+    assert!(error.contains("error[capability-provider-duplicate]"));
+}
+
+#[test]
 fn result_err_is_data_but_fault_panic_and_wrong_shape_are_boundary_errors() {
     let registry = contracts("Probe", PURE);
     let operation = registry.operation("Probe.read").expect("read operation");

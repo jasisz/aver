@@ -8,7 +8,7 @@ use aver::ast::TopLevel;
 use aver::replay::{JsonValue, SessionRecording, json_to_value, parse_session_recording};
 use aver::value::{Value, list_to_vec};
 
-use crate::shared::{parse_file, read_file};
+use crate::cli_entry::shared::{parse_file, read_file};
 use aver::tty_render::render_tty;
 
 #[path = "replay_cmd/backends.rs"]
@@ -298,11 +298,11 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
             "\"kind\":\"replay-result\"".to_string(),
             format!(
                 "\"recording\":{}",
-                crate::diagnostic::json_escape(&result.recording_path)
+                crate::cli_entry::diagnostic::json_escape(&result.recording_path)
             ),
             format!(
                 "\"file\":{}",
-                crate::diagnostic::json_escape(&result.program_file)
+                crate::cli_entry::diagnostic::json_escape(&result.program_file)
             ),
             format!("\"status\":\"{}\"", status),
             format!("\"effects_consumed\":{}", result.effects_consumed),

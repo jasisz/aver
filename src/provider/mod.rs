@@ -82,6 +82,32 @@ impl ProviderRegistry {
         Ok(registry)
     }
 
+    /// Build the checked provider view for one program and overlay explicit
+    /// host bindings. The same path serves embedded hosts and the cached CLI
+    /// provider host: compiler defaults are installed first, then an explicit
+    /// binding may replace one default or fill one custom capability slot.
+    pub fn for_program_with_bindings(
+        contracts: CapabilityRegistry,
+        bindings: impl IntoIterator<Item = ProviderBinding>,
+    ) -> Result<Self, String> {
+        let mut registry = Self::for_program(contracts)?;
+        let mut supplied = std::collections::BTreeSet::new();
+        for binding in bindings {
+            if !supplied.insert(binding.capability().to_string()) {
+                return Err(format!(
+                    "error[capability-provider-duplicate]: capability '{}' has more than one host-supplied provider binding",
+                    binding.capability()
+                ));
+            }
+            if registry.binding(binding.capability()).is_some() {
+                registry.replace_binding(binding)?;
+            } else {
+                registry.bind(binding)?;
+            }
+        }
+        Ok(registry)
+    }
+
     pub fn for_contracts(contracts: CapabilityRegistry) -> Self {
         let native = NativeProviderRegistry::new(contracts.contracts().map(|contract| {
             ProviderContractSpec::new(

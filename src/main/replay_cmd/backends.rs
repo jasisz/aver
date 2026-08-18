@@ -167,7 +167,9 @@ pub(super) fn run_vm_replay(
     );
     let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
-        return Err(crate::shared::format_type_errors(&tc_result.errors));
+        return Err(crate::cli_entry::shared::format_type_errors(
+            &tc_result.errors,
+        ));
     }
 
     let mut arena = aver::nan_value::Arena::new();

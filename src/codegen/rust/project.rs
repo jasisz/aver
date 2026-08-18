@@ -1,9 +1,7 @@
 /// Cargo.toml generation for the transpiled project.
 use std::collections::HashSet;
 
-use super::composition::{
-    ProviderComposition, ProviderCompositionBinding, ProviderCompositionSource,
-};
+use super::composition::ProviderComposition;
 
 /// aver-rt version embedded at compile time from build.rs.
 const RUNTIME_VERSION: &str = env!("AVER_RT_VERSION");
@@ -87,7 +85,7 @@ pub fn generate_cargo_toml(
         deps.push("toml = \"0.8\"".to_string());
     }
     for binding in &provider_composition.bindings {
-        deps.push(provider_dependency_line(binding));
+        deps.push(binding.cargo_dependency_line());
     }
 
     if !deps.is_empty() {
@@ -120,29 +118,7 @@ pub fn generate_cargo_toml(
     lines.join("\n")
 }
 
-fn provider_dependency_line(binding: &ProviderCompositionBinding) -> String {
-    let source = match &binding.source {
-        ProviderCompositionSource::Registry { version } => {
-            format!("version = {}", toml_string(version))
-        }
-        ProviderCompositionSource::LocalPath { path } => {
-            format!(
-                "path = {}",
-                toml_string(
-                    path.to_str()
-                        .expect("provider paths are validated as UTF-8")
-                )
-            )
-        }
-    };
-    format!(
-        "{} = {{ package = {}, {} }}",
-        binding.crate_name,
-        toml_string(&binding.package),
-        source
-    )
-}
-
+#[cfg(test)]
 fn toml_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

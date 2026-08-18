@@ -1,13 +1,57 @@
 module NativeProviderComposed
-    intent = "Run a statically composed native provider from the stock generated binary."
+    intent = "Run and verify one native provider through generated Rust and the cached VM host."
     depends [Shapes]
-    exposes [sample, main]
+    effects [Args]
+    exposes [sample, sampleAfterStub, sharedRegistryWorks, expectFirstArg, main]
+
+fn fixtureBundle() -> Shapes.Bundle
+    ? "Build the represented value expected on both sides of the provider boundary."
+    Shapes.Bundle(number = 7, ratio = 1.5, text = "hello", flag = true, nothing = Unit, pair = (3, "three"), items = [1, 2], vector = Vector.fromList(["v"]), index = {"z" => 9, "a" => 2}, maybe = Option.Some(false), outcome = Result.Err("declared"), state = Shapes.State.Ready(9))
 
 fn sample() -> Result<Shapes.Bundle, String>
-    ? "Call the provider through the generated bootstrap."
-    Shapes.echo(Shapes.Bundle(number = 7, ratio = 1.5, text = "hello", flag = true, nothing = Unit, pair = (3, "three"), items = [1, 2], vector = Vector.fromList(["v"]), index = {"z" => 9, "a" => 2}, maybe = Option.Some(false), outcome = Result.Err("declared"), state = Shapes.State.Ready(9)))
+    ? "Call the real provider through the installed process registry."
+    Shapes.echo(fixtureBundle())
+
+fn sampleAfterStub() -> Result<Shapes.Bundle, String>
+    ? "Call the real provider after a verify-local override has been removed."
+    sample()
+
+fn stubEcho(value: Shapes.Bundle) -> Result<Shapes.Bundle, String>
+    ? "Replace exactly Shapes.echo for one verify world."
+    Result.Err("verify-local stub")
+
+fn sharedRegistryWorks() -> Bool
+    ? "Exercise the same binding from independent branch VMs."
+    pair = (sample(), sample())!
+    match pair
+        (Result.Ok(_), Result.Ok(_)) -> true
+        _ -> false
+
+fn expectFirstArg() -> Result<Unit, String>
+    ? "Require the program argument used by the provider-host boundary test."
+    ! [Args.get]
+    match Args.get()
+        [first, ..rest] -> match first
+            "host-boundary" -> Result.Ok(Unit)
+            _ -> Result.Err("wrong first program argument")
+        [] -> Result.Err("program arguments were lost")
+
+verify sample
+    sample() => Result.Ok(fixtureBundle())
+
+verify sample
+    given echo: Shapes.echo = [stubEcho]
+    sample() => Result.Err("verify-local stub")
+
+verify sampleAfterStub
+    sampleAfterStub() => Result.Ok(fixtureBundle())
+
+verify sharedRegistryWorks
+    sharedRegistryWorks() => true
 
 fn main() -> Result<Unit, String>
-    ? "Prove the provider was installed before entering Aver code."
+    ? "Prove direct and independent branch VMs share the one installed binding."
     bundle = sample()?
-    Result.Ok(Unit)
+    match sharedRegistryWorks()
+        true -> Result.Ok(Unit)
+        false -> Result.Err("provider registry was not shared")
