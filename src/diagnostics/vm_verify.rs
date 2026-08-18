@@ -1486,11 +1486,18 @@ fn build_case_oracle_stubs(
         && let Some(case_bindings) = block.case_givens.get(case_idx)
     {
         for given in givens_source {
-            let Some(classification) = classify_with_registry(capabilities, &given.type_name)
-            else {
-                continue;
+            let bindable = if let Some(operation) = capabilities.operation(&given.type_name) {
+                !operation.is_effectful()
+                    || !matches!(
+                        operation.oracle,
+                        Some(crate::capability::OracleDimension::Output)
+                    )
+            } else {
+                classify_with_registry(capabilities, &given.type_name).is_some_and(
+                    |classification| !matches!(classification.dimension, EffectDimension::Output),
+                )
             };
-            if matches!(classification.dimension, EffectDimension::Output) {
+            if !bindable {
                 continue;
             }
             let Some((_, value_expr)) = case_bindings.iter().find(|(n, _)| n == &given.name) else {

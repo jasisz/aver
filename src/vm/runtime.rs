@@ -30,13 +30,11 @@ pub(super) struct VmRuntime {
     replay_state: EffectReplayState,
     runtime_policy: Option<crate::config::ProjectConfig>,
     providers: std::sync::Arc<crate::provider::ProviderRegistry>,
-    /// Oracle v1: during `aver verify` for an effectful law, install a map
-    /// from effect method name (`"Random.int"`) to the fn_id of a stub
-    /// function supplied via `given name: Effect.method = [stub]`. When
-    /// the VM dispatches a classified effect that has a stub installed,
-    /// it calls the stub with `(BranchPath.root, counter, orig_args...)`
-    /// instead of invoking the real effect. Counter increments per call;
-    /// reset when stubs are installed or cleared. Empty map ⇒ no hook.
+    /// During `aver verify`, map an operation name (`"Hash160.digest"`,
+    /// `"Random.int"`) to the fn_id selected by an operation-shaped
+    /// `given`. Pure capability dispatch forwards the original arguments;
+    /// effectful Oracle dispatch adds its dimension-specific coordinates.
+    /// Empty map means no verify-time dispatch hook.
     pub(super) oracle_stubs: std::collections::HashMap<String, u32>,
     pub(super) oracle_counter: u32,
     /// Oracle v1: during a verify-trace case, the VM collects every
@@ -229,24 +227,21 @@ impl VmRuntime {
         self.collected_trace_coords.push(coord);
     }
 
-    /// Install the oracle-stub map for the current scope (typically a
-    /// single verify-law case). `stubs` maps classified effect method
-    /// names (e.g. `"Random.int"`) to the fn_id of an Aver stub function
-    /// with signature `(BranchPath, Int, orig_args...) -> T`.
+    /// Install operation/Oracle stubs for one expanded verify case.
+    /// Callable shape is checked before the VM runs the case.
     pub(super) fn install_oracle_stubs(&mut self, stubs: std::collections::HashMap<String, u32>) {
         self.oracle_stubs = stubs;
         self.oracle_counter = 0;
     }
 
-    /// Clear the oracle-stub map and reset the counter. Called at the end
-    /// of each verify-law case and on any mode transition.
+    /// Clear the verify-time stub map and reset the Oracle counter.
     pub(super) fn clear_oracle_stubs(&mut self) {
         self.oracle_stubs.clear();
         self.oracle_counter = 0;
     }
 
-    pub(super) fn oracle_stub_for(&self, effect_name: &str) -> Option<u32> {
-        self.oracle_stubs.get(effect_name).copied()
+    pub(super) fn oracle_stub_for(&self, operation_name: &str) -> Option<u32> {
+        self.oracle_stubs.get(operation_name).copied()
     }
 
     pub(super) fn allowed_effects(&self) -> &[u32] {

@@ -260,8 +260,8 @@ fn emit_verify_trace_block_proofs(
 
     // Build a synthetic VerifyLaw for the rewriter — re-uses
     // `rewrite_effectful_calls_in_law` which wants a law handle to
-    // look up given names. Cases-form trace blocks keep their givens
-    // on `vb.cases_givens`; the rewriter only reads `law.givens`.
+    // look up given names. Cases-form blocks keep their givens on
+    // `vb.cases_givens`; the rewriter only reads `law.givens`.
     let synthetic_law = crate::ast::VerifyLaw {
         name: String::new(),
         givens: vb.cases_givens.clone(),

@@ -1122,6 +1122,33 @@ verify f law law1
 }
 
 #[test]
+fn verify_cases_accepts_operation_given_without_trace() {
+    let src = r#"
+verify hashed
+    given hash: Hash160.digest = [fixtureHash]
+    hashed([0]) => [1]
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    assert!(matches!(vb.kind, VerifyKind::Cases));
+    assert!(!vb.trace);
+    assert_eq!(vb.cases_givens.len(), 1);
+    assert_eq!(vb.cases_givens[0].name, "hash");
+    assert_eq!(vb.cases_givens[0].type_name, "Hash160.digest");
+    assert_eq!(vb.cases.len(), 1);
+    assert_eq!(vb.case_givens.len(), 1);
+
+    let rendered = aver::ast::unparse::unparse(&items).expect("unparse cases-form given");
+    let reparsed = parse(&rendered);
+    let TopLevel::Verify(round_trip) = &reparsed[0] else {
+        panic!("expected Verify after round trip");
+    };
+    assert_eq!(round_trip.cases_givens[0].type_name, "Hash160.digest");
+}
+
+#[test]
 fn verify_cases_parses_trace_keyword() {
     // `verify fn trace` — cases form with trace-awareness enabled.
     let src = r#"

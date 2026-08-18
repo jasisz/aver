@@ -1,12 +1,10 @@
 //! Warning: plain cases-form `verify fn` on an effectful fn whose effect
 //! list includes at least one generative (or generative+output) effect.
 //!
-//! Plain cases-form runs the fn at verify time with real effects; any
-//! generative effect produces a fresh value per call, so the case's
-//! expected RHS is effectively being compared against a non-deterministic
-//! value. The test will flap. A law-form `verify fn law <name>` with
-//! `given` stubs, or a trace-form `verify fn trace`, is what the user
-//! almost always wants.
+//! An unbound plain cases-form verify runs the fn with real effects; any
+//! generative effect produces a fresh value per call, so the case's expected
+//! RHS is effectively compared against a non-deterministic value. A cases-form
+//! `given`, law-form Oracle, or trace-form fixture makes that world explicit.
 //!
 //! Rare legitimate case: the user wants the fn executed for its output
 //! side-effects and doesn't care about the return value; this warning
@@ -56,8 +54,14 @@ fn warning_for_verify_block(vb: &VerifyBlock, fn_sigs: &FnSigMap) -> Option<Chec
     if effects.is_empty() {
         return None;
     }
+    let stubbed: std::collections::HashSet<&str> = vb
+        .cases_givens
+        .iter()
+        .map(|given| given.type_name.as_str())
+        .collect();
     let generative: Vec<String> = effects
         .iter()
+        .filter(|effect| !stubbed.contains(effect.as_str()))
         .filter(|e| is_generative_like(e))
         .cloned()
         .collect();
@@ -70,12 +74,11 @@ fn warning_for_verify_block(vb: &VerifyBlock, fn_sigs: &FnSigMap) -> Option<Chec
         file: None,
         fn_name: Some(vb.fn_name.clone()),
         message: format!(
-            "plain 'verify {fn}' runs the fn with real effects, but {fn} uses generative \
-             effect(s): {effects}. Each case compares against a freshly-produced value so the \
-             test will flap. Use 'verify {fn} law <spec>' with 'given' stubs for a formal proof, \
-             or 'verify {fn} trace' with 'given' stubs to assert on the emitted trace. Keep the \
-             plain form only if you deliberately want a one-shot runtime smoke check and accept \
-             the non-determinism.",
+            "plain 'verify {fn}' has no stub for generative effect(s) used by {fn}: \
+             {effects}. Each case compares against a freshly-produced value so the \
+             test will flap. Add a cases-form 'given' stub for an explicit runtime fixture, use \
+             'verify {fn} law <spec>' for a formal proof, or add 'trace' to assert on emitted \
+             events. Keep the unbound plain form only for a deliberate one-shot smoke check.",
             fn = vb.fn_name,
             effects = generative.join(", "),
         ),
@@ -152,6 +155,22 @@ mod tests {
             "Console.print is Output, should not be listed; msg: {}",
             ws[0].message
         );
+    }
+
+    #[test]
+    fn plain_cases_with_a_generative_given_do_not_warn() {
+        let src = "module M\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn fixed(path: BranchPath, call: Int, lo: Int, hi: Int) -> Int\n\
+             \x20   lo\n\
+             fn roll() -> Int\n\
+             \x20   ! [Random.int]\n\
+             \x20   Random.int(1, 6)\n\
+             verify roll\n\
+             \x20   given rnd: Random.int = [fixed]\n\
+             \x20   roll() => 1\n";
+        assert!(warnings_for(src).is_empty());
     }
 
     #[test]

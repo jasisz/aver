@@ -133,8 +133,6 @@ pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> b
 
 pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
     let mut merged: Vec<VerifyBlock> = Vec::new();
-    let mut by_fn_cases: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
 
     for item in items {
         let TopLevel::Verify(vb) = item else {
@@ -142,13 +140,32 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
         };
         match &vb.kind {
             VerifyKind::Cases => {
-                if let Some(&idx) = by_fn_cases.get(&vb.fn_name) {
+                // Coalesce only blocks that run in the same verify-time
+                // world. `trace` changes evaluation shape, while cases-form
+                // `given` clauses install operation stubs. Merging two blocks
+                // that differ on either would retain the first block's world
+                // for every later case and silently dispatch the wrong stub.
+                let compatible = merged.iter().position(|candidate| {
+                    matches!(candidate.kind, VerifyKind::Cases)
+                        && candidate.fn_name == vb.fn_name
+                        && candidate.trace == vb.trace
+                        && candidate.cases_givens == vb.cases_givens
+                });
+                if let Some(idx) = compatible {
                     merged[idx].cases.extend(vb.cases.clone());
                     merged[idx].case_spans.extend(vb.case_spans.clone());
                     merged[idx].case_givens.extend(vb.case_givens.clone());
+                    merged[idx]
+                        .case_hostile_origins
+                        .extend(vb.case_hostile_origins.clone());
+                    merged[idx]
+                        .case_hostile_profiles
+                        .extend(vb.case_hostile_profiles.clone());
+                    merged[idx]
+                        .case_reverse_order
+                        .extend(vb.case_reverse_order.clone());
                     debug_assert_eq!(merged[idx].cases.len(), merged[idx].case_spans.len());
                 } else {
-                    by_fn_cases.insert(vb.fn_name.clone(), merged.len());
                     merged.push(vb.clone());
                 }
             }
@@ -340,5 +357,36 @@ verify f
         assert_eq!(merged[0].cases.len(), 2);
         assert!(matches!(merged[1].kind, VerifyKind::Law(_)));
         assert!(matches!(merged[2].kind, VerifyKind::Law(_)));
+    }
+
+    #[test]
+    fn merge_verify_blocks_keeps_distinct_case_stub_worlds_separate() {
+        let items = parse_items(
+            r#"
+fn low(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+    min
+
+fn high(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+    max
+
+fn roll() -> Int
+    ! [Random.int]
+    Random.int(1, 6)
+
+verify roll
+    given rnd: Random.int = [low]
+    roll() => 1
+
+verify roll
+    given rnd: Random.int = [high]
+    roll() => 6
+"#,
+        );
+        let merged = merge_verify_blocks(&items);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].cases_givens[0].type_name, "Random.int");
+        assert_eq!(merged[0].case_givens.len(), 1);
+        assert_eq!(merged[1].case_givens.len(), 1);
+        assert_ne!(merged[0].cases_givens, merged[1].cases_givens);
     }
 }

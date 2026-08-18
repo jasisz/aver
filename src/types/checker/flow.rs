@@ -14,6 +14,27 @@ impl TypeChecker {
             .map(|sig| self.canonicalize_named(sig))
     }
 
+    /// Verify-time callable shape for an operation-shaped `given`.
+    /// Effectful operations use their Oracle signature; pure provider
+    /// operations are deterministic seams and therefore use their contract
+    /// signature unchanged.
+    fn verify_given_stub_signature(&self, method: &str) -> Option<Type> {
+        if let Some(operation) = self.capabilities.operation(method)
+            && !operation.is_effectful()
+        {
+            return Some(self.canonicalize_named(Type::Fn(
+                operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                Box::new(operation.return_type.clone()),
+                vec![],
+            )));
+        }
+        self.canonical_oracle_signature(method)
+    }
+
+    fn verify_given_targets_operation(&self, method: &str) -> bool {
+        self.capabilities.operation(method).is_some() || self.classify_effect(method).is_some()
+    }
+
     fn classify_effect(
         &self,
         method: &str,
@@ -33,25 +54,15 @@ impl TypeChecker {
     ) -> T {
         let prev_locals = self.locals.clone();
         for given in givens {
-            // Oracle v1: `given rnd: Random.int = [...]` — the type annotation
-            // is a classified effect method reference, not a type. Substitute
-            // the effect's oracle signature (branch-indexed for generative,
-            // capability reader for snapshot). Output effects have no oracle
-            // and are rejected with a clear message.
-            if let Some(c) = self.classify_effect(&given.type_name) {
-                match self.canonical_oracle_signature(&given.type_name) {
-                    Some(sig) => {
-                        self.locals.insert(given.name.clone(), sig);
-                    }
-                    None => {
-                        self.error(format!(
-                            "given '{}': effect '{}' is output-only (dimension {:?}) \
-                             and has no oracle — output effects are asserted about via \
-                             the trace API, not bound via `given`",
-                            given.name, given.type_name, c.dimension
-                        ));
-                    }
+            // An operation-shaped annotation is not a type. Bind its callable
+            // verify shape: exact contract signature for a pure provider
+            // operation, Oracle signature for a classified effect.
+            if self.verify_given_targets_operation(&given.type_name) {
+                if let Some(sig) = self.verify_given_stub_signature(&given.type_name) {
+                    self.locals.insert(given.name.clone(), sig);
                 }
+                // Output-only operations are rejected once for the whole
+                // block by the validation below. They have no local value.
                 continue;
             }
             match parse_type_str_strict(&given.type_name) {
@@ -367,21 +378,13 @@ impl TypeChecker {
                         ),
                     );
                 }
-                // Rejection 2b: duplicate `given` bindings for the same
-                // effect method. Lifted fns carry one oracle param per
-                // unique effect, so two givens with the same effect
-                // `type_name` have no sensible mapping — the lifter's
-                // `oracles_map` keys by effect name and the second
-                // given silently overwrites the first. The emitted
-                // theorem still quantifies both binding names and
-                // asserts `stubA(...) = stubB(...)`, which is false
-                // for any two distinct stubs. Only classifies as
-                // duplicate when `type_name` names a built-in effect
-                // (e.g. `Random.int`) — plain-type givens like
-                // `given a: Int = [1]` and `given b: Int = [2]` are
-                // independent domain bindings, not oracle stubs.
+                // Rejection 2b: duplicate operation-shaped `given`
+                // bindings. The runtime stub map has one slot per
+                // operation, as does the proof lifter's Oracle map, so
+                // a second binding would silently overwrite the first.
+                // Plain-type givens remain independent value domains.
                 {
-                    let mut given_effects: std::collections::HashMap<&str, Vec<&str>> =
+                    let mut given_operations: std::collections::HashMap<&str, (bool, Vec<&str>)> =
                         std::collections::HashMap::new();
                     let givens: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> = match &vb.kind
                     {
@@ -389,31 +392,102 @@ impl TypeChecker {
                         crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
                     };
                     for given in givens {
-                        if self.classify_effect(&given.type_name).is_some() {
-                            given_effects
+                        if self.verify_given_targets_operation(&given.type_name) {
+                            let is_effect = self.classify_effect(&given.type_name).is_some();
+                            given_operations
                                 .entry(given.type_name.as_str())
-                                .or_default()
+                                .or_insert_with(|| (is_effect, Vec::new()))
+                                .1
                                 .push(given.name.as_str());
                         }
                     }
-                    for (effect, names) in &given_effects {
+                    for (operation, (is_effect, names)) in &given_operations {
                         if names.len() > 1 {
+                            let target_kind = if *is_effect {
+                                "effect"
+                            } else {
+                                "capability operation"
+                            };
                             self.error_at_line(
                                 vb.line,
                                 format!(
                                     "verify '{fn_name}' has {count} `given` bindings for the same \
-                                     effect '{effect}': {names}. Each effect method has one oracle \
-                                     parameter in the lifted form, so a second stub has no slot to \
+                                     {target_kind} '{operation}': {names}. Each operation has one \
+                                     verify-time stub slot, so a second stub has no slot to \
                                      bind to. To test multiple stub behaviours, use a multi-value \
-                                     domain: `given {first}: {effect} = [stub1, stub2, ...]`, which \
-                                     expands into a separate sample theorem per stub.",
+                                     domain: `given {first}: {operation} = [stub1, stub2, ...]`, \
+                                     which expands into a separate case per stub.",
                                     fn_name = vb.fn_name,
                                     count = names.len(),
-                                    effect = effect,
+                                    target_kind = target_kind,
+                                    operation = operation,
                                     names = names.join(", "),
                                     first = names[0],
                                 ),
                             );
+                        }
+                    }
+                }
+
+                // Every operation-shaped `given` must select Aver fns with
+                // the callable shape that dispatch will use. Pure provider
+                // operations keep their contract signature; effectful ones
+                // use the existing Oracle signature. Validate this even for
+                // plain cases where the binding name need not occur in the
+                // assertion — its purpose may be solely to install a provider
+                // stub for a reached operation.
+                {
+                    let givens: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> = match &vb.kind
+                    {
+                        crate::ast::VerifyKind::Law(law) => Box::new(law.givens.iter()),
+                        crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
+                    };
+                    for given in givens {
+                        if !self.verify_given_targets_operation(&given.type_name) {
+                            continue;
+                        }
+                        let Some(expected) = self.verify_given_stub_signature(&given.type_name)
+                        else {
+                            self.error_at_line(
+                                vb.line,
+                                format!(
+                                    "given '{}': operation '{}' is output-only and has no result \
+                                     stub — output operations are asserted about through the trace \
+                                     API, not bound via `given`",
+                                    given.name, given.type_name
+                                ),
+                            );
+                            continue;
+                        };
+                        if let crate::ast::VerifyGivenDomain::Explicit(vals) = &given.domain {
+                            for value in vals {
+                                let actual = self.infer_type(value);
+                                if !self.compatible(&actual, &expected) {
+                                    let (want, got) = self.describe_type_pair(&expected, &actual);
+                                    let shape_hint = self
+                                        .capabilities
+                                        .operation(&given.type_name)
+                                        .filter(|operation| !operation.is_effectful())
+                                        .map(|_| {
+                                            "Pure capability stubs use the operation's contract signature unchanged."
+                                        })
+                                        .unwrap_or(
+                                            "Snapshot effects take no BranchPath / counter; generative effects take a leading (BranchPath, Int).",
+                                        );
+                                    self.error_at_line(
+                                        value.line,
+                                        format!(
+                                            "given '{name}: {operation}' expects a stub of type {exp}, \
+                                             got {act}. {shape_hint}",
+                                            name = given.name,
+                                            operation = given.type_name,
+                                            exp = want,
+                                            act = got,
+                                            shape_hint = shape_hint,
+                                        ),
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -450,45 +524,6 @@ impl TypeChecker {
                         })
                         .filter(|e| !given_names.contains(e.as_str()))
                         .collect();
-                    // Rejection 4: each `given <name>: <Effect.method> = [vals]`
-                    // must bind values whose inferred type matches the
-                    // oracle signature for that effect. Catches the
-                    // common footgun of authoring a snapshot stub with
-                    // a leading (BranchPath, Int) (copy-paste from a
-                    // generative stub) — at runtime those stubs silently
-                    // ignore extra params and produce bogus values.
-                    let givens_iter: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> =
-                        match &vb.kind {
-                            crate::ast::VerifyKind::Law(law) => Box::new(law.givens.iter()),
-                            crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
-                        };
-                    for given in givens_iter {
-                        let Some(expected) = self.canonical_oracle_signature(&given.type_name)
-                        else {
-                            continue;
-                        };
-                        if let crate::ast::VerifyGivenDomain::Explicit(vals) = &given.domain {
-                            for v in vals {
-                                let actual = self.infer_type(v);
-                                if !self.compatible(&actual, &expected) {
-                                    let (want, got) = self.describe_type_pair(&expected, &actual);
-                                    self.error_at_line(
-                                        v.line,
-                                        format!(
-                                            "given '{name}: {effect}' expects a stub of type {exp}, \
-                                             got {act}. Snapshot effects take no BranchPath / counter; \
-                                             generative effects take a leading (BranchPath, Int).",
-                                            name = given.name,
-                                            effect = given.type_name,
-                                            exp = want,
-                                            act = got,
-                                        ),
-                                    );
-                                }
-                            }
-                        }
-                    }
-
                     if !needs_stub.is_empty() {
                         self.error_at_line(
                             vb.line,
