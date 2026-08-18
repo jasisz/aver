@@ -97,6 +97,8 @@ aver verify   hello.av
 aver verify   hello.av --json
 aver check    hello.av
 aver check    hello.av --json
+aver capabilities hello.av
+aver capabilities hello.av --json
 aver audit    hello.av
 aver audit    hello.av --json
 aver why      hello.av

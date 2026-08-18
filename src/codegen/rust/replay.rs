@@ -35,11 +35,18 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     };
 
     let capability_provenance = if has_time_capability {
-        let time = crate::stdlib::standard_capability_registry();
-        let time = time.contract("Time").expect("standard Time contract");
+        let contracts = crate::stdlib::standard_capability_registry();
+        let provenance = crate::provider::shipped_target_provenance(
+            crate::provider::CapabilityTarget::Rust,
+            &contracts,
+        );
+        let time = provenance
+            .into_iter()
+            .find(|entry| entry.capability == "Time")
+            .expect("standard Time has a Rust target-manifest row");
         format!(
-            "vec![CapabilityProvenance {{ capability: \"Time\".to_string(), contract_hash: {:?}.to_string(), model_hash: {:?}.to_string(), provider: \"aver.standard.Time/rust-static\".to_string(), fingerprint: aver_rt::provider::STANDARD_TIME_FINGERPRINT.to_string() }}]",
-            time.contract_hash, time.model_hash
+            "vec![CapabilityProvenance {{ capability: {:?}.to_string(), contract_hash: {:?}.to_string(), model_hash: {:?}.to_string(), provider: {:?}.to_string(), fingerprint: {:?}.to_string() }}]",
+            time.capability, time.contract_hash, time.model_hash, time.provider, time.fingerprint,
         )
     } else {
         "vec![]".to_string()

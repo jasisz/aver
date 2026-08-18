@@ -1,0 +1,14 @@
+module Vault
+    kind = capability
+    semantics = effectful
+    exposes [open, read]
+
+opaque Token
+
+operation open() -> Result<Token, String>
+    oracle = generative
+    replay = recorded
+
+operation read(token: Token) -> Result<Int, String>
+    oracle = generative
+    replay = recorded

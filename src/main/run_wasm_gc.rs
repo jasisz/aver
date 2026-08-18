@@ -161,7 +161,7 @@ pub(super) fn try_run_wasm_gc(
     {
         return Err(shared::format_type_errors(&tc.errors));
     }
-    if let Some(error) = super::commands::capability_provider_rejection(
+    if let Some(error) = super::commands::capability_target_rejection(
         &items,
         &dep_modules,
         &result
@@ -169,7 +169,7 @@ pub(super) fn try_run_wasm_gc(
             .as_ref()
             .expect("wasm-gc run pipeline requested typechecking")
             .capabilities,
-        "wasm-gc",
+        aver::provider::CapabilityTarget::WasmGc,
     ) {
         return Err(error);
     }
@@ -180,7 +180,7 @@ pub(super) fn try_run_wasm_gc(
             .expect("wasm-gc run pipeline requested typechecking")
             .capabilities;
         let required =
-            super::commands::used_capability_operations(&items, &dep_modules, capabilities);
+            aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
         aver::provider::ProviderRegistry::for_program(capabilities.clone())?
             .validate_replay_provenance_for_operations(
                 &recording.capabilities,
@@ -247,7 +247,7 @@ pub(super) fn try_run_wasm_gc(
             entry_fn: entry_fn_label,
             input,
             capabilities: aver::provider::shipped_target_provenance(
-                "wasm-gc",
+                aver::provider::CapabilityTarget::WasmGc,
                 &result
                     .typecheck
                     .as_ref()

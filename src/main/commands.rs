@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -1836,13 +1836,20 @@ fn run_check_for_file(
             {
                 let registry = aver::stdlib::standard_capability_registry();
                 let contract = registry.contract("Time").expect("standard Time contract");
-                let provided = ["vm", "rust", "wasm-gc", "wasip2"]
-                    .into_iter()
-                    .filter_map(|target| {
-                        aver::provider::shipped_target_bindings(target, &registry)
-                            .into_iter()
-                            .next()
-                            .map(|binding| format!("{target}:{}", binding.provider))
+                let required =
+                    aver::provider::required_capability_operations(items, &[], &registry);
+                let manifest =
+                    aver::provider::CapabilityTargetManifest::build(&registry, &required)
+                        .expect("standard Time calls belong to the standard registry");
+                let provided = manifest
+                    .rows()
+                    .iter()
+                    .filter_map(|row| match &row.status {
+                        aver::provider::TargetBindingStatus::Provided(provider) => {
+                            Some(format!("{}:{}", row.target, provider.identity))
+                        }
+                        aver::provider::TargetBindingStatus::HostBound { .. }
+                        | aver::provider::TargetBindingStatus::Unsupported { .. } => None,
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -5092,129 +5099,87 @@ fn certify_flag_rejection(certify: bool) -> Option<&'static str> {
     }
 }
 
-pub(super) fn used_capability_operations(
+pub(super) fn capability_target_rejection(
     items: &[TopLevel],
     modules: &[ModuleInfo],
     registry: &aver::capability::CapabilityRegistry,
-) -> BTreeSet<String> {
-    fn scan_expr(
-        expr: &Spanned<Expr>,
-        registry: &aver::capability::CapabilityRegistry,
-        required: &mut BTreeSet<String>,
-    ) {
-        codegen::expr_walk::walk(expr, &mut |node| {
-            if let Some(name) = aver::ir::expr_to_dotted_name(&node.node)
-                && registry.operation(&name).is_some()
-            {
-                required.insert(name);
-            }
-        });
-    }
-
-    fn scan_fn(
-        fd: &FnDef,
-        registry: &aver::capability::CapabilityRegistry,
-        required: &mut BTreeSet<String>,
-    ) {
-        for stmt in fd.body.stmts() {
-            match stmt {
-                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => scan_expr(expr, registry, required),
-            }
-        }
-    }
-
-    let mut required = BTreeSet::new();
-    for item in items {
-        match item {
-            TopLevel::FnDef(fd) => scan_fn(fd, registry, &mut required),
-            TopLevel::Stmt(stmt) => match stmt {
-                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-                    scan_expr(expr, registry, &mut required)
-                }
-            },
-            _ => {}
-        }
-    }
-    for module in modules {
-        for fd in &module.fn_defs {
-            scan_fn(fd, registry, &mut required);
-        }
-    }
-    required
-}
-
-pub(super) fn capability_provider_rejection(
-    items: &[TopLevel],
-    modules: &[ModuleInfo],
-    registry: &aver::capability::CapabilityRegistry,
-    target: &str,
+    target: aver::provider::CapabilityTarget,
 ) -> Option<String> {
-    let mut required = used_capability_operations(items, modules, registry);
-    if required.is_empty() {
-        return None;
-    }
-
-    let shipped = aver::provider::shipped_target_bindings(target, registry);
-    required.retain(|name| {
-        !shipped
-            .iter()
-            .any(|binding| binding.operations.contains(name))
-    });
-    if required.is_empty() {
-        return None;
-    }
-
-    let operations = required
-        .into_iter()
-        .map(|name| {
-            let operation = registry
-                .operation(&name)
-                .expect("required operation came from the capability registry");
-            let contract = registry
-                .contract(&operation.module)
-                .expect("capability operation must have an owning contract");
-            format!("{name} ({})", contract.contract_hash)
+    let required = aver::provider::required_capability_operations(items, modules, registry);
+    let manifest = aver::provider::CapabilityTargetManifest::build(registry, &required)
+        .expect("required operations came from the capability registry");
+    let errors = manifest
+        .required_unsupported(target)
+        .map(|row| {
+            let aver::provider::TargetBindingStatus::Unsupported { reason } = row.status else {
+                unreachable!("required_unsupported returns only unsupported rows")
+            };
+            format!(
+                "error[capability-target-unsupported]: target `{}` cannot bind capability `{}`\n  reason[{}]: {}\n  required operations: {}\n  contract_hash: {}\n  model_hash: {}",
+                target,
+                row.capability,
+                reason.code(),
+                reason.description(),
+                row.required_operations
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                row.contract_hash,
+                row.model_hash,
+            )
         })
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!(
-        "error[capability-provider-missing]: target `{target}` has no provider bindings for: {operations}\n  arbitrary capability bindings are VM-only in phase 1; compilation fails closed"
-    ))
+        .collect::<Vec<_>>();
+    (!errors.is_empty()).then(|| errors.join("\n\n"))
 }
 
 fn print_capability_target_accounting(
     items: &[TopLevel],
     modules: &[ModuleInfo],
     registry: &aver::capability::CapabilityRegistry,
-    target: &str,
+    target: aver::provider::CapabilityTarget,
 ) {
-    let required = used_capability_operations(items, modules, registry);
-    for binding in aver::provider::shipped_target_bindings(target, registry) {
-        if !binding
-            .operations
-            .iter()
-            .any(|operation| required.contains(operation))
-        {
+    let required = aver::provider::required_capability_operations(items, modules, registry);
+    let manifest = aver::provider::CapabilityTargetManifest::build(registry, &required)
+        .expect("required operations came from the capability registry");
+    for row in manifest.for_target(target) {
+        if !row.is_required() {
             continue;
         }
-        println!(
-            "  capability {}: provided by {}@{} | contract_hash={} | model_hash={}",
-            binding.capability,
-            binding.provider,
-            binding.fingerprint,
-            binding.contract_hash,
-            binding.model_hash
-        );
+        match &row.status {
+            aver::provider::TargetBindingStatus::Provided(provider) => println!(
+                "  capability {}: provided by {}@{} | contract_hash={} | model_hash={}",
+                row.capability,
+                provider.identity,
+                provider.fingerprint,
+                row.contract_hash,
+                row.model_hash
+            ),
+            aver::provider::TargetBindingStatus::HostBound { reason } => println!(
+                "  capability {}: host-bound[{}] | contract_hash={} | model_hash={}",
+                row.capability,
+                reason.code(),
+                row.contract_hash,
+                row.model_hash
+            ),
+            aver::provider::TargetBindingStatus::Unsupported { reason } => println!(
+                "  capability {}: unsupported[{}] | contract_hash={} | model_hash={}",
+                row.capability,
+                reason.code(),
+                row.contract_hash,
+                row.model_hash
+            ),
+        }
     }
 }
 
-fn reject_missing_capability_providers(
+fn reject_unsupported_capability_targets(
     items: &[TopLevel],
     modules: &[ModuleInfo],
     registry: &aver::capability::CapabilityRegistry,
-    target: &str,
+    target: aver::provider::CapabilityTarget,
 ) {
-    if let Some(error) = capability_provider_rejection(items, modules, registry, target) {
+    if let Some(error) = capability_target_rejection(items, modules, registry, target) {
         eprintln!("{}", error.red());
         process::exit(1);
     }
@@ -5340,7 +5305,12 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         false, // run_contract_lower — same
         false, // run_law_lower — same
     );
-    reject_missing_capability_providers(&ctx.items, &ctx.modules, &ctx.capabilities, "rust");
+    reject_unsupported_capability_targets(
+        &ctx.items,
+        &ctx.modules,
+        &ctx.capabilities,
+        aver::provider::CapabilityTarget::Rust,
+    );
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
         process::exit(1);
@@ -5356,7 +5326,12 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
-    print_capability_target_accounting(&ctx.items, &ctx.modules, &ctx.capabilities, "rust");
+    print_capability_target_accounting(
+        &ctx.items,
+        &ctx.modules,
+        &ctx.capabilities,
+        aver::provider::CapabilityTarget::Rust,
+    );
 }
 
 /// `aver compile FILE --target=wasm-gc` — 0.16 probe backend.
@@ -5441,7 +5416,7 @@ fn cmd_compile_wasm_gc(
     // The wasm-gc compile path can lower neither the buffer nor the
     // cursor the fabricating passes introduce, and does not use the
     // self-host typecheck driver.
-    reject_missing_capability_providers(
+    reject_unsupported_capability_targets(
         &items,
         &dep_modules,
         &result
@@ -5449,7 +5424,7 @@ fn cmd_compile_wasm_gc(
             .as_ref()
             .expect("wasm-gc pipeline requested typechecking")
             .capabilities,
-        "wasm-gc",
+        aver::provider::CapabilityTarget::WasmGc,
     );
     let type_aliases = flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
@@ -5512,7 +5487,7 @@ fn cmd_compile_wasm_gc(
             .as_ref()
             .expect("wasm-gc pipeline requested typechecking")
             .capabilities,
-        "wasm-gc",
+        aver::provider::CapabilityTarget::WasmGc,
     );
     // `--certify`: emit the artifact-certificate `cert/` project next to
     // the module. Binds THESE bytes (pre-optimize; `--certify` conflicts
@@ -5713,7 +5688,7 @@ fn cmd_compile_wasip2(
             process::exit(1);
         }
 
-        reject_missing_capability_providers(
+        reject_unsupported_capability_targets(
             &items,
             &dep_modules,
             &result
@@ -5721,7 +5696,7 @@ fn cmd_compile_wasip2(
                 .as_ref()
                 .expect("wasip2 pipeline requested typechecking")
                 .capabilities,
-            "wasip2",
+            aver::provider::CapabilityTarget::Wasip2,
         );
         // Bypass the `flatten_multimodule` shim in this file (gated on
         // the `wasm` feature) and call the wasm-gc library function
@@ -5895,7 +5870,7 @@ fn cmd_compile_wasip2(
                 .as_ref()
                 .expect("wasip2 pipeline requested typechecking")
                 .capabilities,
-            "wasip2",
+            aver::provider::CapabilityTarget::Wasip2,
         );
     }
 }

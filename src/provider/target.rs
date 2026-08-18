@@ -1,77 +1,329 @@
-//! Auditable bindings shipped by compiler artifact targets.
+//! Target-total capability binding accounting.
+//!
+//! A missing row is never used to mean "unsupported". Every loaded
+//! capability has one explicit row for every shipped target, including
+//! capabilities that the program declares but does not call.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::str::FromStr;
 
-use crate::capability::CapabilityRegistry;
+use crate::ast::{Expr, FnDef, Spanned, Stmt, TopLevel};
+use crate::capability::{CapabilityContract, CapabilityRegistry};
+use crate::codegen::ModuleInfo;
 
-/// Binding metadata for a compiler-shipped static/host target.
-///
-/// These rows do not make arbitrary capabilities available on artifact
-/// targets. They recognize the one canonical standard contract whose target
-/// adapters already ship with Aver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CapabilityTarget {
+    Vm,
+    Rust,
+    WasmGc,
+    Wasip2,
+}
+
+impl CapabilityTarget {
+    pub const ALL: [Self; 4] = [Self::Vm, Self::Rust, Self::WasmGc, Self::Wasip2];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::Rust => "rust",
+            Self::WasmGc => "wasm-gc",
+            Self::Wasip2 => "wasip2",
+        }
+    }
+}
+
+impl std::fmt::Display for CapabilityTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for CapabilityTarget {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "vm" => Ok(Self::Vm),
+            "rust" => Ok(Self::Rust),
+            "wasm-gc" => Ok(Self::WasmGc),
+            "wasip2" => Ok(Self::Wasip2),
+            other => Err(format!(
+                "error[capability-target-unknown]: unknown capability target `{other}`; expected one of: vm, rust, wasm-gc, wasip2"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostBindingReason {
+    RuntimeProviderRequired,
+}
+
+impl HostBindingReason {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::RuntimeProviderRequired => "runtime-provider-required",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::RuntimeProviderRequired => {
+                "the VM accepts this contract through an embedder-installed ProviderRegistry binding"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsupportedReason {
+    StaticAdapterNotLinked,
+    HostImportAdapterNotGenerated,
+    ComponentBindingNotComposed,
+}
+
+impl UnsupportedReason {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::StaticAdapterNotLinked => "static-adapter-not-linked",
+            Self::HostImportAdapterNotGenerated => "host-import-adapter-not-generated",
+            Self::ComponentBindingNotComposed => "component-binding-not-composed",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::StaticAdapterNotLinked => {
+                "generated Rust has no linked static adapter for this capability contract"
+            }
+            Self::HostImportAdapterNotGenerated => {
+                "wasm-gc has no generated host-import adapter for this capability contract"
+            }
+            Self::ComponentBindingNotComposed => {
+                "no WIT binding or Component Model adapter is composed for this capability contract"
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TargetBindingInfo {
-    pub target: String,
+pub struct TargetProvider {
+    pub identity: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetBindingStatus {
+    Provided(TargetProvider),
+    HostBound { reason: HostBindingReason },
+    Unsupported { reason: UnsupportedReason },
+}
+
+impl TargetBindingStatus {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Provided(_) => "provided",
+            Self::HostBound { .. } => "host-bound",
+            Self::Unsupported { .. } => "unsupported",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityTargetRow {
+    pub target: CapabilityTarget,
     pub capability: String,
     pub contract_hash: String,
     pub model_hash: String,
-    pub provider: String,
-    pub fingerprint: String,
-    pub operations: BTreeSet<String>,
+    pub declared_operations: BTreeSet<String>,
+    pub required_operations: BTreeSet<String>,
+    pub status: TargetBindingStatus,
 }
 
-/// Compiler-shipped target bindings. Only canonical standard `Time` is
-/// recognized here; custom capabilities remain VM-only in phase 1.
-pub fn shipped_target_bindings(
-    target: &str,
-    contracts: &CapabilityRegistry,
-) -> Vec<TargetBindingInfo> {
-    let Some(contract) = contracts.contract("Time") else {
-        return Vec::new();
-    };
+impl CapabilityTargetRow {
+    pub fn is_required(&self) -> bool {
+        !self.required_operations.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapabilityTargetManifest {
+    rows: Vec<CapabilityTargetRow>,
+}
+
+impl CapabilityTargetManifest {
+    pub fn build(
+        contracts: &CapabilityRegistry,
+        required_operations: &BTreeSet<String>,
+    ) -> Result<Self, String> {
+        let mut required_by_capability: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for name in required_operations {
+            let operation = contracts.operation(name).ok_or_else(|| {
+                format!("capability target manifest received unknown required operation `{name}`")
+            })?;
+            required_by_capability
+                .entry(operation.module.clone())
+                .or_default()
+                .insert(name.clone());
+        }
+
+        let mut rows =
+            Vec::with_capacity(contracts.contracts().count() * CapabilityTarget::ALL.len());
+        for contract in contracts.contracts() {
+            let declared_operations = contracts
+                .operations()
+                .filter(|operation| operation.module == contract.module)
+                .map(|operation| operation.canonical_name.clone())
+                .collect::<BTreeSet<_>>();
+            let required_operations = required_by_capability
+                .get(&contract.module)
+                .cloned()
+                .unwrap_or_default();
+
+            for target in CapabilityTarget::ALL {
+                rows.push(CapabilityTargetRow {
+                    target,
+                    capability: contract.module.clone(),
+                    contract_hash: contract.contract_hash.clone(),
+                    model_hash: contract.model_hash.clone(),
+                    declared_operations: declared_operations.clone(),
+                    required_operations: required_operations.clone(),
+                    status: binding_status(target, contract),
+                });
+            }
+        }
+        Ok(Self { rows })
+    }
+
+    pub fn rows(&self) -> &[CapabilityTargetRow] {
+        &self.rows
+    }
+
+    pub fn for_target(
+        &self,
+        target: CapabilityTarget,
+    ) -> impl Iterator<Item = &CapabilityTargetRow> {
+        self.rows.iter().filter(move |row| row.target == target)
+    }
+
+    pub fn required_unsupported(
+        &self,
+        target: CapabilityTarget,
+    ) -> impl Iterator<Item = &CapabilityTargetRow> {
+        self.for_target(target).filter(|row| {
+            row.is_required() && matches!(row.status, TargetBindingStatus::Unsupported { .. })
+        })
+    }
+}
+
+fn binding_status(target: CapabilityTarget, contract: &CapabilityContract) -> TargetBindingStatus {
+    if is_canonical_standard_time(contract) {
+        let identity = match target {
+            CapabilityTarget::Vm => "aver.standard.Time/native",
+            CapabilityTarget::Rust => "aver.standard.Time/rust-static",
+            CapabilityTarget::WasmGc => "aver.standard.Time/wasm-gc-imports",
+            CapabilityTarget::Wasip2 => "aver.standard.Time/wasip2-wasi",
+        };
+        return TargetBindingStatus::Provided(TargetProvider {
+            identity: identity.to_string(),
+            fingerprint: aver_rt::provider::STANDARD_TIME_FINGERPRINT.to_string(),
+        });
+    }
+
+    match target {
+        CapabilityTarget::Vm => TargetBindingStatus::HostBound {
+            reason: HostBindingReason::RuntimeProviderRequired,
+        },
+        CapabilityTarget::Rust => TargetBindingStatus::Unsupported {
+            reason: UnsupportedReason::StaticAdapterNotLinked,
+        },
+        CapabilityTarget::WasmGc => TargetBindingStatus::Unsupported {
+            reason: UnsupportedReason::HostImportAdapterNotGenerated,
+        },
+        CapabilityTarget::Wasip2 => TargetBindingStatus::Unsupported {
+            reason: UnsupportedReason::ComponentBindingNotComposed,
+        },
+    }
+}
+
+fn is_canonical_standard_time(contract: &CapabilityContract) -> bool {
+    if contract.module != "Time" {
+        return false;
+    }
     let canonical = crate::stdlib::standard_capability_registry();
     let Some(expected) = canonical.contract("Time") else {
-        return Vec::new();
+        return false;
     };
-    if contract.contract_hash != expected.contract_hash
-        || contract.model_hash != expected.model_hash
-    {
-        return Vec::new();
+    contract.contract_hash == expected.contract_hash && contract.model_hash == expected.model_hash
+}
+
+/// Syntactically required capability operations across the loaded program.
+/// A declaration alone contributes no required operation.
+pub fn required_capability_operations(
+    items: &[TopLevel],
+    modules: &[ModuleInfo],
+    registry: &CapabilityRegistry,
+) -> BTreeSet<String> {
+    fn scan_expr(
+        expr: &Spanned<Expr>,
+        registry: &CapabilityRegistry,
+        required: &mut BTreeSet<String>,
+    ) {
+        crate::codegen::expr_walk::walk(expr, &mut |node| {
+            if let Some(name) = crate::ir::expr_to_dotted_name(&node.node)
+                && registry.operation(&name).is_some()
+            {
+                required.insert(name);
+            }
+        });
     }
-    let provider = match target {
-        "vm" => "aver.standard.Time/native",
-        "rust" => "aver.standard.Time/rust-static",
-        "wasm-gc" => "aver.standard.Time/wasm-gc-imports",
-        "wasip2" => "aver.standard.Time/wasip2-wasi",
-        _ => return Vec::new(),
-    };
-    vec![TargetBindingInfo {
-        target: target.to_string(),
-        capability: "Time".to_string(),
-        contract_hash: contract.contract_hash.clone(),
-        model_hash: contract.model_hash.clone(),
-        provider: provider.to_string(),
-        fingerprint: aver_rt::provider::STANDARD_TIME_FINGERPRINT.to_string(),
-        operations: contracts
-            .operations()
-            .filter(|operation| operation.module == "Time")
-            .map(|operation| operation.canonical_name.clone())
-            .collect(),
-    }]
+
+    fn scan_fn(function: &FnDef, registry: &CapabilityRegistry, required: &mut BTreeSet<String>) {
+        for statement in function.body.stmts() {
+            match statement {
+                Stmt::Binding(_, _, expression) | Stmt::Expr(expression) => {
+                    scan_expr(expression, registry, required);
+                }
+            }
+        }
+    }
+
+    let mut required = BTreeSet::new();
+    for item in items {
+        match item {
+            TopLevel::FnDef(function) => scan_fn(function, registry, &mut required),
+            TopLevel::Stmt(statement) => match statement {
+                Stmt::Binding(_, _, expression) | Stmt::Expr(expression) => {
+                    scan_expr(expression, registry, &mut required);
+                }
+            },
+            _ => {}
+        }
+    }
+    for module in modules {
+        for function in &module.fn_defs {
+            scan_fn(function, registry, &mut required);
+        }
+    }
+    required
 }
 
 pub fn shipped_target_provenance(
-    target: &str,
+    target: CapabilityTarget,
     contracts: &CapabilityRegistry,
 ) -> Vec<crate::replay::CapabilityProvenance> {
-    shipped_target_bindings(target, contracts)
-        .into_iter()
-        .map(|binding| crate::replay::CapabilityProvenance {
-            capability: binding.capability,
-            contract_hash: binding.contract_hash,
-            model_hash: binding.model_hash,
-            provider: binding.provider,
-            fingerprint: binding.fingerprint,
+    CapabilityTargetManifest::build(contracts, &BTreeSet::new())
+        .expect("an empty required-operation set is valid")
+        .for_target(target)
+        .filter_map(|row| match &row.status {
+            TargetBindingStatus::Provided(provider) => Some(crate::replay::CapabilityProvenance {
+                capability: row.capability.clone(),
+                contract_hash: row.contract_hash.clone(),
+                model_hash: row.model_hash.clone(),
+                provider: provider.identity.clone(),
+                fingerprint: provider.fingerprint.clone(),
+            }),
+            TargetBindingStatus::HostBound { .. } | TargetBindingStatus::Unsupported { .. } => None,
         })
         .collect()
 }
