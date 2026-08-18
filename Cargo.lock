@@ -162,6 +162,7 @@ dependencies = [
  "colored",
  "criterion",
  "insta",
+ "native-provider-fixture",
  "num-bigint",
  "num-traits",
  "proptest",
@@ -1543,6 +1544,13 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "native-provider-fixture"
+version = "0.1.0"
+dependencies = [
+ "aver-rt",
 ]
 
 [[package]]

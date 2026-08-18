@@ -395,7 +395,7 @@ fn zero(path: BranchPath, call: Int) -> Int
 
 `opaque Token` inside a capability is representation-less: only its bound provider can mint a value. It may occur at most once in an operation's success payload, directly or through transparent `Result`/`Option` wrappers; resource consumers must use recorded replay. Runtime handles are tagged by binding instance and canonical type, survive independent-product child VMs, and never expose the provider payload. Capability resources, including represented wrapper types that transitively contain one, deliberately have no display identity, equality, serialization as a host payload, or map-key semantics.
 
-An embedded Rust host installs a VM provider with `aver::provider::ProviderBinding` and `ProviderRegistry`. Registration pins the exact `contract_hash` and the complete operation set before execution. Providers implement `aver_rt::provider::CapabilityProvider` and exchange only the closed, transport-neutral `ProviderValue` tree—not VM `NanValue` or the general interpreter `Value`. A returned `ProviderValue::ResultErr` is ordinary Aver data; `ProviderFault` or a provider panic is a separate boundary failure. Duplicate, incomplete, extra-operation, hash-mismatched, and wrong-return-shape bindings fail closed with provider-specific diagnostics.
+An embedded Rust host installs a VM provider with `aver::provider::ProviderBinding` and `ProviderRegistry`. A generated Rust host installs that same public `aver_rt::provider::ProviderBinding` through the generated library's `install_provider_bindings` entry. Registration pins the exact `contract_hash` and the complete operation set before execution. Providers implement `aver_rt::provider::CapabilityProvider` and exchange only the closed, transport-neutral `ProviderValue` tree—not VM `NanValue` or the general interpreter `Value`. A returned `ProviderValue::ResultErr` is ordinary Aver data; `ProviderFault` or a provider panic is a separate boundary failure. Duplicate, incomplete, extra-operation, hash-mismatched, and wrong-return-shape bindings fail closed with provider-specific diagnostics.
 
 ```rust
 use std::sync::Arc;
@@ -419,7 +419,7 @@ Target support is explicit rather than inferred from a missing provider row.
 and shipped target (`vm`, `rust`, `wasm-gc`, `wasip2`). A row is `provided`,
 `host-bound` when an embedder or Component Model host must install a provider, or
 `unsupported(reason)` with a stable architectural reason such as
-`static-adapter-not-linked`, `host-import-adapter-not-generated`, or
+`host-import-adapter-not-generated` or
 `wit-boundary-type-unsupported`. A WIT-lowerable custom contract is
 `host-bound[component-import-required]` on wasip2. The manifest lists the full
 declared operation set separately from operations used by the program; unused
@@ -434,15 +434,17 @@ target, capability, required operations, contract/model hashes, and reason.
 
 The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
 
-Custom bindings have two host-bound routes. A Rust embedder can install a typed
-in-process provider for the VM. A wasip2 artifact can import a generated WIT
+Custom bindings have two host-bound routes. A Rust embedder can install one typed
+in-process provider binding unchanged in the VM or a generated Rust artifact. A wasip2 artifact can import a generated WIT
 interface when every parameter and result in the complete contract is `Unit`,
 `Bool`, `Float`, or `String`; pure and effectful operations use the same
 transport. The component import pins the full `contract_hash`, publishes both
 hashes in its sibling WIT, and must be supplied by an external Component Model
 host. The stock `aver run --wasip2` does not install custom providers and fails
-preflight with `error[capability-provider-missing]`. Rust and bare wasm-gc still
-reject arbitrary custom capabilities. Standard `Time` is the deliberate
+preflight with `error[capability-provider-missing]`. The stock generated Rust
+binary likewise has no custom binding and fails preflight; a separate Rust host
+links the provider crate through Cargo and installs the binding explicitly.
+Bare wasm-gc still rejects arbitrary custom capabilities. Standard `Time` is a
 provided exception: its canonical source is shipped at
 `stdlib/capabilities/time.av`, and VM, generated Rust, wasm-gc, and wasip2 each
 declare an exact shipped binding of that one contract. See

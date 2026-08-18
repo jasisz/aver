@@ -5,12 +5,22 @@
 //! resource payloads. A future IPC or Component Model adapter can therefore
 //! preserve this boundary without inheriting VM representation details.
 
+mod codec;
+mod runtime;
+
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::AverInt;
+
+pub use codec::{ProviderCodec, provider_value_order_key};
+pub use runtime::{
+    NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
+    StandardTimeProvider, standard_time_now, standard_time_sleep, standard_time_unix_ms,
+};
 
 /// A host-owned payload carried by a capability resource.
 ///
@@ -27,7 +37,7 @@ impl ProviderResource {
     pub fn new<T: Any + Send + Sync>(payload: T) -> Self {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         Self {
-            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            id: NEXT_ID.fetch_add(1, AtomicOrdering::Relaxed),
             payload: Arc::new(payload),
         }
     }
@@ -159,70 +169,162 @@ pub trait CapabilityProvider: Send + Sync {
     ) -> Result<ProviderValue, ProviderFault>;
 }
 
-/// Standard native Time provider shared by the bytecode VM and generated
-/// Rust artifacts. The VM selects it through a registry; native artifacts
-/// bind the same adapter statically.
-pub struct StandardTimeProvider;
-
-pub const STANDARD_TIME_NATIVE_IDENTITY: &str = "aver.standard.Time/native";
-pub const STANDARD_TIME_FINGERPRINT: &str = concat!("aver-rt/", env!("CARGO_PKG_VERSION"));
-
-pub fn standard_time_now() -> String {
-    crate::time_now()
+/// One host implementation pinned to one exact capability contract.
+///
+/// This type lives in `aver-rt` so the same binding value can be installed in
+/// an embedded bytecode VM or a generated Rust artifact. Language-specific
+/// values and VM arena identities deliberately do not appear here.
+#[derive(Clone)]
+pub struct ProviderBinding {
+    id: u64,
+    capability: String,
+    contract_hash: String,
+    operations: BTreeSet<String>,
+    provider: Arc<dyn CapabilityProvider>,
 }
 
-pub fn standard_time_unix_ms() -> AverInt {
-    AverInt::from_i64(crate::time_unix_ms())
+impl ProviderBinding {
+    pub fn new(
+        capability: impl Into<String>,
+        contract_hash: impl Into<String>,
+        operations: impl IntoIterator<Item = impl Into<String>>,
+        provider: Arc<dyn CapabilityProvider>,
+    ) -> Self {
+        static NEXT_BINDING_ID: AtomicU64 = AtomicU64::new(1);
+        Self {
+            id: NEXT_BINDING_ID.fetch_add(1, AtomicOrdering::Relaxed),
+            capability: capability.into(),
+            contract_hash: contract_hash.into(),
+            operations: operations.into_iter().map(Into::into).collect(),
+            provider,
+        }
+    }
+
+    pub fn capability(&self) -> &str {
+        &self.capability
+    }
+
+    pub fn contract_hash(&self) -> &str {
+        &self.contract_hash
+    }
+
+    pub fn operations(&self) -> &BTreeSet<String> {
+        &self.operations
+    }
+
+    pub fn provider_identity(&self) -> &str {
+        self.provider.identity()
+    }
+
+    pub fn provider_fingerprint(&self) -> &str {
+        self.provider.fingerprint()
+    }
+
+    /// Process-local binding identity used to validate opaque resource
+    /// handles. It is runtime metadata and must never be serialized.
+    pub fn runtime_id(&self) -> u64 {
+        self.id
+    }
 }
 
-pub fn standard_time_sleep(ms: &AverInt) -> Result<(), ProviderFault> {
-    let ms = ms.to_i64().ok_or_else(|| {
-        ProviderFault::new(
-            "integer_out_of_range",
-            "Time.sleep: ms must fit a 64-bit integer",
-        )
-    })?;
-    if ms < 0 {
-        return Err(ProviderFault::new(
-            "negative_duration",
-            "Time.sleep: ms must be non-negative",
-        ));
-    }
-    crate::time_sleep(ms);
-    Ok(())
+/// Runtime metadata required to validate a native provider binding.
+///
+/// Type layouts stay in the language/generated adapters; the native core only
+/// needs stable identities and the complete operation set. This keeps
+/// `aver-rt` independent of the compiler's `Type` representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderContractSpec {
+    pub capability: String,
+    pub contract_hash: String,
+    pub model_hash: String,
+    pub operations: BTreeSet<String>,
 }
 
-impl CapabilityProvider for StandardTimeProvider {
-    fn identity(&self) -> &str {
-        STANDARD_TIME_NATIVE_IDENTITY
+/// Transport-neutral replay identity for one installed native binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeProviderProvenance {
+    pub capability: String,
+    pub contract_hash: String,
+    pub model_hash: String,
+    pub provider: String,
+    pub fingerprint: String,
+}
+
+/// Declared contract plus the optional live binding currently installed for
+/// it. Recorded replay validates theorem identity without a live provider;
+/// pure/reissued replay additionally pins the deployment identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeProviderContractProvenance {
+    pub capability: String,
+    pub contract_hash: String,
+    pub model_hash: String,
+    pub provider: Option<String>,
+    pub fingerprint: Option<String>,
+}
+
+impl ProviderContractSpec {
+    pub fn new(
+        capability: impl Into<String>,
+        contract_hash: impl Into<String>,
+        model_hash: impl Into<String>,
+        operations: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            capability: capability.into(),
+            contract_hash: contract_hash.into(),
+            model_hash: model_hash.into(),
+            operations: operations.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Opaque language-side reference to a provider-owned payload.
+///
+/// The payload itself remains in [`NativeProviderRegistry`]'s shared store.
+/// The tuple is unforgeable through Aver source and validates binding, type,
+/// slot, and generation at every live provider boundary.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ProviderResourceHandle {
+    binding_id: u64,
+    type_name: String,
+    slot: u64,
+    generation: u64,
+}
+
+impl fmt::Debug for ProviderResourceHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ProviderResourceHandle(<opaque>)")
+    }
+}
+
+impl ProviderResourceHandle {
+    pub fn binding_id(&self) -> u64 {
+        self.binding_id
     }
 
-    fn fingerprint(&self) -> &str {
-        STANDARD_TIME_FINGERPRINT
+    pub fn type_name(&self) -> &str {
+        &self.type_name
     }
 
-    fn invoke(
-        &self,
-        context: &ProviderContext,
-        args: &[ProviderValue],
-    ) -> Result<ProviderValue, ProviderFault> {
-        match context.operation.as_str() {
-            "Time.now" if args.is_empty() => Ok(ProviderValue::String(standard_time_now())),
-            "Time.unixMs" if args.is_empty() => Ok(ProviderValue::Int(standard_time_unix_ms())),
-            "Time.sleep" => {
-                let [ProviderValue::Int(ms)] = args else {
-                    return Err(ProviderFault::new(
-                        "invalid_arguments",
-                        format!("Time.sleep expects one Int argument, got {}", args.len()),
-                    ));
-                };
-                standard_time_sleep(ms)?;
-                Ok(ProviderValue::Unit)
-            }
-            operation => Err(ProviderFault::new(
-                "unknown_operation",
-                format!("standard Time provider cannot invoke '{operation}'"),
-            )),
+    pub fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn from_runtime_parts(
+        binding_id: u64,
+        type_name: String,
+        slot: u64,
+        generation: u64,
+    ) -> Self {
+        Self {
+            binding_id,
+            type_name,
+            slot,
+            generation,
         }
     }
 }

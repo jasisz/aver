@@ -1,0 +1,22 @@
+module NativeProviderClock
+    intent = "Exercise one native Rust provider through the VM and generated Rust."
+    depends [Clock]
+    exposes [main, read, readThree]
+    effects [Clock.now]
+
+fn read() -> Int
+    ? "Return the provider value."
+    ! [Clock.now]
+    Clock.now()
+
+fn readThree() -> Tuple<Int, Tuple<Int, Int>>
+    ? "Use one shared provider for a direct call and two independent branches."
+    ! [Clock.now]
+    direct = Clock.now()
+    parallel = (Clock.now(), Clock.now())!
+    (direct, parallel)
+
+fn main() -> Int
+    ? "Run the native provider canary."
+    ! [Clock.now]
+    read()

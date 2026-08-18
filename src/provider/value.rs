@@ -1,22 +1,18 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
 
-use aver_rt::provider::ProviderValue;
+use aver_rt::provider::{NativeProviderRegistry, ProviderValue};
 
 use crate::ast::{Type, TypeDef};
 use crate::capability::CapabilityRegistry;
 use crate::value::Value;
 
 use super::ordering::provider_value_order_key;
-use super::{CapabilityResourceHandle, ResourceStore};
-
 pub(super) fn to_provider_value(
     value: &Value,
     ty: &Type,
     scope: &str,
     contracts: &CapabilityRegistry,
-    binding_id: u64,
-    resources: &Arc<Mutex<ResourceStore>>,
+    native: &NativeProviderRegistry,
 ) -> Result<ProviderValue, String> {
     match (ty, value) {
         (Type::Int, Value::Int(value)) => Ok(ProviderValue::Int(value.clone())),
@@ -29,37 +25,28 @@ pub(super) fn to_provider_value(
                 types
                     .iter()
                     .zip(values)
-                    .map(|(ty, value)| {
-                        to_provider_value(value, ty, scope, contracts, binding_id, resources)
-                    })
+                    .map(|(ty, value)| to_provider_value(value, ty, scope, contracts, native))
                     .collect::<Result<Vec<_>, _>>()?,
             ))
         }
         (Type::List(inner), Value::List(values)) => Ok(ProviderValue::List(
             values
                 .iter()
-                .map(|value| {
-                    to_provider_value(value, inner, scope, contracts, binding_id, resources)
-                })
+                .map(|value| to_provider_value(value, inner, scope, contracts, native))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         (Type::Vector(inner), Value::Vector(values)) => Ok(ProviderValue::Vector(
             values
                 .iter()
-                .map(|value| {
-                    to_provider_value(value, inner, scope, contracts, binding_id, resources)
-                })
+                .map(|value| to_provider_value(value, inner, scope, contracts, native))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         (Type::Map(key_ty, value_ty), Value::Map(values)) => {
             let mut ordered = values
                 .iter()
                 .map(|(key, value)| {
-                    let key =
-                        to_provider_value(key, key_ty, scope, contracts, binding_id, resources)?;
-                    let value = to_provider_value(
-                        value, value_ty, scope, contracts, binding_id, resources,
-                    )?;
+                    let key = to_provider_value(key, key_ty, scope, contracts, native)?;
+                    let value = to_provider_value(value, value_ty, scope, contracts, native)?;
                     Ok((provider_value_order_key(&key)?, key, value))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
@@ -72,13 +59,13 @@ pub(super) fn to_provider_value(
             ))
         }
         (Type::Result(ok, _), Value::Ok(value)) => Ok(ProviderValue::ResultOk(Box::new(
-            to_provider_value(value, ok, scope, contracts, binding_id, resources)?,
+            to_provider_value(value, ok, scope, contracts, native)?,
         ))),
         (Type::Result(_, err), Value::Err(value)) => Ok(ProviderValue::ResultErr(Box::new(
-            to_provider_value(value, err, scope, contracts, binding_id, resources)?,
+            to_provider_value(value, err, scope, contracts, native)?,
         ))),
         (Type::Option(inner), Value::Some(value)) => Ok(ProviderValue::OptionSome(Box::new(
-            to_provider_value(value, inner, scope, contracts, binding_id, resources)?,
+            to_provider_value(value, inner, scope, contracts, native)?,
         ))),
         (Type::Option(_), Value::None) => Ok(ProviderValue::OptionNone),
         (Type::Named { name, .. }, Value::CapabilityResource(handle)) => {
@@ -86,35 +73,16 @@ pub(super) fn to_provider_value(
             if !contracts.opaque_types().any(|known| known == &canonical) {
                 return Err(format!("type '{}' is not a capability resource", canonical));
             }
-            if handle.binding_id() != binding_id {
-                return Err(format!(
-                    "resource '{}' belongs to a different provider binding",
-                    canonical
-                ));
-            }
-            if handle.type_name() != canonical {
-                return Err(format!(
-                    "resource has type '{}', expected resource type '{}'",
-                    handle.type_name(),
-                    canonical
-                ));
-            }
-            let store = resources.lock().map_err(|_| "resource store poisoned")?;
-            let resource = store
-                .resources
-                .get(&(handle.binding_id(), handle.slot(), handle.generation()))
-                .cloned()
-                .ok_or_else(|| format!("resource '{}' is stale", canonical))?;
-            Ok(ProviderValue::Resource(resource))
+            native
+                .resolve_resource(scope, &canonical, handle)
+                .map(ProviderValue::Resource)
         }
         (Type::Named { name, .. }, value) => {
             let canonical = canonical_type(scope, name);
             let type_def = contracts
                 .boundary_type(&canonical)
                 .ok_or_else(|| format!("unknown boundary type '{}'", canonical))?;
-            represented_to_provider(
-                value, type_def, &canonical, scope, contracts, binding_id, resources,
-            )
+            represented_to_provider(value, type_def, &canonical, scope, contracts, native)
         }
         _ => Err(format!(
             "expected {}, got {}",
@@ -130,9 +98,8 @@ pub(super) fn from_provider_value(
     ty: &Type,
     scope: &str,
     contracts: &CapabilityRegistry,
-    binding_id: u64,
     minted_resource: Option<&str>,
-    resources: &Arc<Mutex<ResourceStore>>,
+    native: &NativeProviderRegistry,
 ) -> Result<Value, String> {
     match (ty, value) {
         (Type::Int, ProviderValue::Int(value)) => Ok(Value::Int(value)),
@@ -146,15 +113,7 @@ pub(super) fn from_provider_value(
                     .iter()
                     .zip(values)
                     .map(|(ty, value)| {
-                        from_provider_value(
-                            value,
-                            ty,
-                            scope,
-                            contracts,
-                            binding_id,
-                            minted_resource,
-                            resources,
-                        )
+                        from_provider_value(value, ty, scope, contracts, minted_resource, native)
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             ))
@@ -163,15 +122,7 @@ pub(super) fn from_provider_value(
             values
                 .into_iter()
                 .map(|value| {
-                    from_provider_value(
-                        value,
-                        inner,
-                        scope,
-                        contracts,
-                        binding_id,
-                        minted_resource,
-                        resources,
-                    )
+                    from_provider_value(value, inner, scope, contracts, minted_resource, native)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )),
@@ -180,15 +131,7 @@ pub(super) fn from_provider_value(
                 values
                     .into_iter()
                     .map(|value| {
-                        from_provider_value(
-                            value,
-                            inner,
-                            scope,
-                            contracts,
-                            binding_id,
-                            minted_resource,
-                            resources,
-                        )
+                        from_provider_value(value, inner, scope, contracts, minted_resource, native)
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             )))
@@ -196,23 +139,15 @@ pub(super) fn from_provider_value(
         (Type::Map(key_ty, value_ty), ProviderValue::Map(values)) => {
             let mut map = HashMap::new();
             for (key, value) in values {
-                let key = from_provider_value(
-                    key,
-                    key_ty,
-                    scope,
-                    contracts,
-                    binding_id,
-                    minted_resource,
-                    resources,
-                )?;
+                let key =
+                    from_provider_value(key, key_ty, scope, contracts, minted_resource, native)?;
                 let value = from_provider_value(
                     value,
                     value_ty,
                     scope,
                     contracts,
-                    binding_id,
                     minted_resource,
-                    resources,
+                    native,
                 )?;
                 if map.insert(key, value).is_some() {
                     return Err("provider Map contains a duplicate key".to_string());
@@ -220,39 +155,15 @@ pub(super) fn from_provider_value(
             }
             Ok(Value::Map(map))
         }
-        (Type::Result(ok, _), ProviderValue::ResultOk(value)) => {
-            Ok(Value::Ok(Box::new(from_provider_value(
-                *value,
-                ok,
-                scope,
-                contracts,
-                binding_id,
-                minted_resource,
-                resources,
-            )?)))
-        }
-        (Type::Result(_, err), ProviderValue::ResultErr(value)) => {
-            Ok(Value::Err(Box::new(from_provider_value(
-                *value,
-                err,
-                scope,
-                contracts,
-                binding_id,
-                minted_resource,
-                resources,
-            )?)))
-        }
-        (Type::Option(inner), ProviderValue::OptionSome(value)) => {
-            Ok(Value::Some(Box::new(from_provider_value(
-                *value,
-                inner,
-                scope,
-                contracts,
-                binding_id,
-                minted_resource,
-                resources,
-            )?)))
-        }
+        (Type::Result(ok, _), ProviderValue::ResultOk(value)) => Ok(Value::Ok(Box::new(
+            from_provider_value(*value, ok, scope, contracts, minted_resource, native)?,
+        ))),
+        (Type::Result(_, err), ProviderValue::ResultErr(value)) => Ok(Value::Err(Box::new(
+            from_provider_value(*value, err, scope, contracts, minted_resource, native)?,
+        ))),
+        (Type::Option(inner), ProviderValue::OptionSome(value)) => Ok(Value::Some(Box::new(
+            from_provider_value(*value, inner, scope, contracts, minted_resource, native)?,
+        ))),
         (Type::Option(_), ProviderValue::OptionNone) => Ok(Value::None),
         (Type::Named { name, .. }, ProviderValue::Resource(resource)) => {
             let canonical = canonical_type(scope, name);
@@ -262,20 +173,8 @@ pub(super) fn from_provider_value(
                     canonical
                 ));
             }
-            let mut store = resources.lock().map_err(|_| "resource store poisoned")?;
-            let slot = store.next_slot;
-            store.next_slot = store
-                .next_slot
-                .checked_add(1)
-                .ok_or("capability resource store exhausted")?;
-            let generation = resource.id();
-            store
-                .resources
-                .insert((binding_id, slot, generation), resource);
             Ok(Value::CapabilityResource(
-                CapabilityResourceHandle::from_runtime_parts(
-                    binding_id, canonical, slot, generation,
-                ),
+                native.store_resource(scope, canonical, resource)?,
             ))
         }
         (Type::Named { name, .. }, value) => {
@@ -289,9 +188,8 @@ pub(super) fn from_provider_value(
                 &canonical,
                 scope,
                 contracts,
-                binding_id,
                 minted_resource,
-                resources,
+                native,
             )
         }
         (expected, actual) => Err(format!(
@@ -309,8 +207,7 @@ fn represented_to_provider(
     canonical: &str,
     scope: &str,
     contracts: &CapabilityRegistry,
-    binding_id: u64,
-    resources: &Arc<Mutex<ResourceStore>>,
+    native: &NativeProviderRegistry,
 ) -> Result<ProviderValue, String> {
     match (type_def, value) {
         (
@@ -338,7 +235,7 @@ fn represented_to_provider(
                     .ok_or_else(|| format!("record '{}' is missing field '{}'", canonical, name))?;
                 out.push((
                     name.clone(),
-                    to_provider_value(value, &ty, scope, contracts, binding_id, resources)?,
+                    to_provider_value(value, &ty, scope, contracts, native)?,
                 ));
             }
             if !values.is_empty() {
@@ -374,7 +271,7 @@ fn represented_to_provider(
                 .map(|(source_ty, value)| {
                     let ty = crate::types::parse_type_str_strict(source_ty)
                         .map_err(|_| format!("invalid variant field type '{}'", source_ty))?;
-                    to_provider_value(value, &ty, scope, contracts, binding_id, resources)
+                    to_provider_value(value, &ty, scope, contracts, native)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ProviderValue::Variant {
@@ -397,9 +294,8 @@ fn represented_from_provider(
     canonical: &str,
     scope: &str,
     contracts: &CapabilityRegistry,
-    binding_id: u64,
     minted_resource: Option<&str>,
-    resources: &Arc<Mutex<ResourceStore>>,
+    native: &NativeProviderRegistry,
 ) -> Result<Value, String> {
     match (type_def, value) {
         (
@@ -427,15 +323,7 @@ fn represented_from_provider(
                     .ok_or_else(|| format!("record '{}' is missing field '{}'", canonical, name))?;
                 out.push((
                     name.clone(),
-                    from_provider_value(
-                        value,
-                        &ty,
-                        scope,
-                        contracts,
-                        binding_id,
-                        minted_resource,
-                        resources,
-                    )?,
+                    from_provider_value(value, &ty, scope, contracts, minted_resource, native)?,
                 ));
             }
             if !by_name.is_empty() {
@@ -471,15 +359,7 @@ fn represented_from_provider(
                 .map(|(source_ty, value)| {
                     let ty = crate::types::parse_type_str_strict(source_ty)
                         .map_err(|_| format!("invalid variant field type '{}'", source_ty))?;
-                    from_provider_value(
-                        value,
-                        &ty,
-                        scope,
-                        contracts,
-                        binding_id,
-                        minted_resource,
-                        resources,
-                    )
+                    from_provider_value(value, &ty, scope, contracts, minted_resource, native)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Value::Variant {

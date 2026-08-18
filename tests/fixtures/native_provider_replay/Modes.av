@@ -1,0 +1,16 @@
+module Modes
+    kind = capability
+    semantics = effectful
+    exposes [recorded, suppressed, reissued]
+
+operation recorded() -> Int
+    oracle = generative
+    replay = recorded
+
+operation suppressed() -> Unit
+    oracle = output
+    replay = suppressed
+
+operation reissued() -> Unit
+    oracle = output
+    replay = reissued

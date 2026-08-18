@@ -71,7 +71,7 @@ impl HostBindingReason {
     pub const fn description(self) -> &'static str {
         match self {
             Self::RuntimeProviderRequired => {
-                "the VM accepts this contract through an embedder-installed ProviderRegistry binding"
+                "the native target accepts this contract through a host-installed ProviderRegistry binding"
             }
             Self::ComponentImportRequired => {
                 "the component imports this contract as WIT and requires the host to supply it"
@@ -82,7 +82,6 @@ impl HostBindingReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
-    StaticAdapterNotLinked,
     HostImportAdapterNotGenerated,
     WitBoundaryTypeUnsupported(crate::codegen::wasip2::CapabilityWitUnsupported),
 }
@@ -90,7 +89,6 @@ pub enum UnsupportedReason {
 impl UnsupportedReason {
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::StaticAdapterNotLinked => "static-adapter-not-linked",
             Self::HostImportAdapterNotGenerated => "host-import-adapter-not-generated",
             Self::WitBoundaryTypeUnsupported(_) => "wit-boundary-type-unsupported",
         }
@@ -98,10 +96,6 @@ impl UnsupportedReason {
 
     pub fn description(&self) -> String {
         match self {
-            Self::StaticAdapterNotLinked => {
-                "generated Rust has no linked static adapter for this capability contract"
-                    .to_string()
-            }
             Self::HostImportAdapterNotGenerated => {
                 "wasm-gc has no generated host-import adapter for this capability contract"
                     .to_string()
@@ -228,8 +222,9 @@ fn binding_status(
 ) -> TargetBindingStatus {
     if is_canonical_standard_time(contract) {
         let identity = match target {
-            CapabilityTarget::Vm => "aver.standard.Time/native",
-            CapabilityTarget::Rust => "aver.standard.Time/rust-static",
+            CapabilityTarget::Vm | CapabilityTarget::Rust => {
+                aver_rt::provider::STANDARD_TIME_NATIVE_IDENTITY
+            }
             CapabilityTarget::WasmGc => "aver.standard.Time/wasm-gc-imports",
             CapabilityTarget::Wasip2 => "aver.standard.Time/wasip2-wasi",
         };
@@ -240,11 +235,8 @@ fn binding_status(
     }
 
     match target {
-        CapabilityTarget::Vm => TargetBindingStatus::HostBound {
+        CapabilityTarget::Vm | CapabilityTarget::Rust => TargetBindingStatus::HostBound {
             reason: HostBindingReason::RuntimeProviderRequired,
-        },
-        CapabilityTarget::Rust => TargetBindingStatus::Unsupported {
-            reason: UnsupportedReason::StaticAdapterNotLinked,
         },
         CapabilityTarget::WasmGc => TargetBindingStatus::Unsupported {
             reason: UnsupportedReason::HostImportAdapterNotGenerated,

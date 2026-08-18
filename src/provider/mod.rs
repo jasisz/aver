@@ -11,14 +11,13 @@ mod target;
 mod tests;
 mod value;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::capability::{CapabilityOperation, CapabilityRegistry};
 pub use aver_rt::provider::{
-    CapabilityProvider, ProviderContext, ProviderFault, ProviderResource, ProviderValue,
+    CapabilityProvider, NativeProviderContractProvenance, NativeProviderProvenance,
+    NativeProviderRegistry, ProviderBinding, ProviderContext, ProviderContractSpec, ProviderFault,
+    ProviderResource, ProviderResourceHandle, ProviderValue,
 };
 pub use target::{
     CapabilityTarget, CapabilityTargetManifest, CapabilityTargetRow, HostBindingReason,
@@ -26,109 +25,14 @@ pub use target::{
     shipped_target_provenance,
 };
 
-/// Opaque language-side reference to a provider-owned payload.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct CapabilityResourceHandle {
-    binding_id: u64,
-    type_name: String,
-    slot: u64,
-    generation: u64,
-}
-
-impl std::fmt::Debug for CapabilityResourceHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("CapabilityResourceHandle(<opaque>)")
-    }
-}
-
-impl CapabilityResourceHandle {
-    pub(crate) fn binding_id(&self) -> u64 {
-        self.binding_id
-    }
-
-    pub(crate) fn type_name(&self) -> &str {
-        &self.type_name
-    }
-
-    pub(crate) fn slot(&self) -> u64 {
-        self.slot
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub(crate) fn from_runtime_parts(
-        binding_id: u64,
-        type_name: String,
-        slot: u64,
-        generation: u64,
-    ) -> Self {
-        Self {
-            binding_id,
-            type_name,
-            slot,
-            generation,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct ProviderBinding {
-    id: u64,
-    capability: String,
-    contract_hash: String,
-    operations: BTreeSet<String>,
-    provider: Arc<dyn CapabilityProvider>,
-}
-
-impl ProviderBinding {
-    pub fn new(
-        capability: impl Into<String>,
-        contract_hash: impl Into<String>,
-        operations: impl IntoIterator<Item = impl Into<String>>,
-        provider: Arc<dyn CapabilityProvider>,
-    ) -> Self {
-        static NEXT_BINDING_ID: AtomicU64 = AtomicU64::new(1);
-        Self {
-            id: NEXT_BINDING_ID.fetch_add(1, Ordering::Relaxed),
-            capability: capability.into(),
-            contract_hash: contract_hash.into(),
-            operations: operations.into_iter().map(Into::into).collect(),
-            provider,
-        }
-    }
-
-    pub fn capability(&self) -> &str {
-        &self.capability
-    }
-
-    pub fn contract_hash(&self) -> &str {
-        &self.contract_hash
-    }
-
-    pub fn provider_identity(&self) -> &str {
-        self.provider.identity()
-    }
-
-    pub fn provider_fingerprint(&self) -> &str {
-        self.provider.fingerprint()
-    }
-}
-
-#[derive(Default)]
-struct ResourceStore {
-    next_slot: u64,
-    resources: BTreeMap<(u64, u64, u64), ProviderResource>,
-}
+pub type CapabilityResourceHandle = ProviderResourceHandle;
 
 /// Shared, contract-checked provider set used by a VM and all of its parallel
 /// branch VMs.
 #[derive(Clone, Default)]
 pub struct ProviderRegistry {
     contracts: CapabilityRegistry,
-    bindings: BTreeMap<String, ProviderBinding>,
-    resources: Arc<Mutex<ResourceStore>>,
+    native: NativeProviderRegistry,
 }
 
 impl ProviderRegistry {
@@ -174,87 +78,34 @@ impl ProviderRegistry {
     }
 
     pub fn for_contracts(contracts: CapabilityRegistry) -> Self {
-        Self {
-            contracts,
-            bindings: BTreeMap::new(),
-            resources: Arc::new(Mutex::new(ResourceStore::default())),
-        }
+        let native = NativeProviderRegistry::new(contracts.contracts().map(|contract| {
+            ProviderContractSpec::new(
+                contract.module.clone(),
+                contract.contract_hash.clone(),
+                contract.model_hash.clone(),
+                contracts
+                    .operations()
+                    .filter(|operation| operation.module == contract.module)
+                    .map(|operation| operation.canonical_name.clone()),
+            )
+        }))
+        .expect("CapabilityRegistry has unique capability identities");
+        Self { contracts, native }
     }
 
     pub fn bind(&mut self, binding: ProviderBinding) -> Result<(), String> {
-        if self.bindings.contains_key(binding.capability()) {
-            return Err(format!(
-                "error[capability-provider-duplicate]: capability '{}' already has a provider binding",
-                binding.capability()
-            ));
-        }
-        self.validate_binding(&binding)?;
-        self.bindings.insert(binding.capability.clone(), binding);
-        Ok(())
+        self.native.bind(binding)
     }
 
     /// Explicitly replace one installed binding. This is the only API that
     /// overrides compiler-shipped defaults; CLI/environment discovery does not
     /// call it.
     pub fn replace_binding(&mut self, binding: ProviderBinding) -> Result<(), String> {
-        if !self.bindings.contains_key(binding.capability()) {
-            return Err(format!(
-                "error[capability-provider-missing]: cannot replace unbound capability '{}'",
-                binding.capability()
-            ));
-        }
-        self.validate_binding(&binding)?;
-        self.bindings.insert(binding.capability.clone(), binding);
-        Ok(())
-    }
-
-    fn validate_binding(&self, binding: &ProviderBinding) -> Result<(), String> {
-        let contract = self
-            .contracts
-            .contract(binding.capability())
-            .ok_or_else(|| {
-                format!(
-                    "provider binding names unknown capability '{}'",
-                    binding.capability()
-                )
-            })?;
-        if binding.contract_hash() != contract.contract_hash {
-            return Err(format!(
-                "error[capability-provider-mismatch]: provider '{}' for '{}' supplied contract_hash {}, expected {}",
-                binding.provider_identity(),
-                binding.capability(),
-                binding.contract_hash(),
-                contract.contract_hash
-            ));
-        }
-
-        let required: BTreeSet<String> = self
-            .contracts
-            .operations()
-            .filter(|operation| operation.module == binding.capability())
-            .map(|operation| operation.canonical_name.clone())
-            .collect();
-        let missing: Vec<_> = required.difference(&binding.operations).cloned().collect();
-        let unknown: Vec<_> = binding.operations.difference(&required).cloned().collect();
-        if !missing.is_empty() || !unknown.is_empty() {
-            let mut differences = Vec::new();
-            if !missing.is_empty() {
-                differences.push(format!("missing: {}", missing.join(", ")));
-            }
-            if !unknown.is_empty() {
-                differences.push(format!("unknown: {}", unknown.join(", ")));
-            }
-            return Err(format!(
-                "error[capability-provider-incomplete]: provider binding for '{}' does not match the contract operation set ({})",
-                binding.capability(),
-                differences.join("; ")
-            ));
-        }
-        Ok(())
+        self.native.replace_binding(binding)
     }
 
     pub fn unbind(&mut self, capability: &str) {
-        self.bindings.remove(capability);
+        self.native.unbind(capability);
     }
 
     pub fn contracts(&self) -> &CapabilityRegistry {
@@ -262,31 +113,14 @@ impl ProviderRegistry {
     }
 
     pub fn binding(&self, capability: &str) -> Option<&ProviderBinding> {
-        self.bindings.get(capability)
+        self.native.binding(capability)
     }
 
     pub fn preflight<'a>(
         &self,
         required_operations: impl IntoIterator<Item = &'a str>,
     ) -> Result<(), String> {
-        for name in required_operations {
-            let operation = self
-                .contracts
-                .operation(name)
-                .ok_or_else(|| format!("capability contract missing at runtime for '{name}'"))?;
-            if self.bindings.contains_key(&operation.module) {
-                continue;
-            }
-            let contract = self
-                .contracts
-                .contract(&operation.module)
-                .expect("operation has an owning capability contract");
-            return Err(format!(
-                "error[capability-provider-missing]: capability provider missing for '{}' (contract_hash {})",
-                operation.canonical_name, contract.contract_hash
-            ));
-        }
-        Ok(())
+        self.native.preflight(required_operations)
     }
 
     pub fn invoke(
@@ -294,24 +128,6 @@ impl ProviderRegistry {
         operation: &CapabilityOperation,
         args: &[crate::value::Value],
     ) -> Result<crate::value::Value, String> {
-        let binding = self.bindings.get(&operation.module).ok_or_else(|| {
-            format!(
-                "error[capability-provider-missing]: capability provider missing for '{}' (contract_hash {})",
-                operation.canonical_name,
-                self.contracts
-                    .contract(&operation.module)
-                    .map(|contract| contract.contract_hash.as_str())
-                    .unwrap_or("<unknown>")
-            )
-        })?;
-        if !binding.operations.contains(&operation.canonical_name) {
-            return Err(format!(
-                "provider binding '{}' does not implement '{}'",
-                binding.provider.identity(),
-                operation.canonical_name
-            ));
-        }
-
         let provider_args = operation
             .params
             .iter()
@@ -322,8 +138,7 @@ impl ProviderRegistry {
                     ty,
                     &operation.module,
                     &self.contracts,
-                    binding.id,
-                    &self.resources,
+                    &self.native,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -336,54 +151,24 @@ impl ProviderRegistry {
             ));
         }
 
-        let contract = self
-            .contracts
-            .contract(&operation.module)
-            .expect("binding validation pinned a known contract");
-        let context = ProviderContext {
-            capability: operation.module.clone(),
-            operation: operation.canonical_name.clone(),
-            contract_hash: contract.contract_hash.clone(),
-            model_hash: contract.model_hash.clone(),
-        };
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            binding.provider.invoke(&context, &provider_args)
-        }))
-        .map_err(|panic| {
-            let message = panic
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("non-string panic payload");
-            format!(
-                "error[capability-provider-panic]: provider '{}' panicked while calling '{}': {}",
-                binding.provider.identity(),
-                operation.canonical_name,
-                message
-            )
-        })?
-        .map_err(|fault| {
-            format!(
-                "error[capability-provider-fault]: provider fault from '{}' while calling '{}': {}",
-                binding.provider.identity(),
-                operation.canonical_name,
-                fault
-            )
-        })?;
+        let result = self
+            .native
+            .invoke(&operation.canonical_name, &provider_args)?;
         let received_shape = result.shape();
         value::from_provider_value(
             result,
             &operation.return_type,
             &operation.module,
             &self.contracts,
-            binding.id,
             operation.minted_resource.as_deref(),
-            &self.resources,
+            &self.native,
         )
         .map_err(|message| {
             format!(
                 "error[capability-provider-invalid-return]: provider '{}' returned an invalid value for '{}': expected {}, received {}; {}",
-                binding.provider.identity(),
+                self.native
+                    .provider_identity_for(&operation.module)
+                    .unwrap_or("<missing>"),
                 operation.canonical_name,
                 operation.return_type.display(),
                 received_shape,

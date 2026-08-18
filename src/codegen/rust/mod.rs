@@ -9,6 +9,7 @@ pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_
 mod pattern;
 mod policy;
 mod project;
+mod provider;
 mod replay;
 mod runtime;
 mod self_host;
@@ -106,6 +107,8 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         .as_ref()
         .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
+    let required_provider_operations = provider::required_operations(ctx);
+    let has_provider_runtime = !required_provider_operations.is_empty();
     let needs_http_types =
         needs_named_type(ctx, "HttpResponse") || needs_named_type(ctx, "HttpRequest");
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
@@ -183,6 +186,7 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 ctx.guest_entry.as_deref(),
                 !verify_blocks.is_empty(),
                 ctx.emit_self_host_support,
+                has_provider_runtime,
             ),
         ),
         (
@@ -198,6 +202,21 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
             ),
         ),
     ];
+
+    if has_provider_runtime {
+        files.push((
+            "src/provider_support.rs".to_string(),
+            provider::generate_provider_runtime(&ctx.capabilities, &required_provider_operations),
+        ));
+        files.push((
+            "src/lib.rs".to_string(),
+            render_root_library(
+                has_embedded_policy,
+                ctx.emit_replay_runtime,
+                ctx.emit_self_host_support,
+            ),
+        ));
+    }
 
     if ctx.emit_self_host_support {
         files.push((
@@ -225,6 +244,34 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 has_http_server_types,
                 embedded_independence_cancel,
                 has_time_capability: ctx.capabilities.contract("Time").is_some(),
+                has_provider_runtime,
+                capability_operations: ctx
+                    .capabilities
+                    .operations()
+                    .map(|operation| (operation.canonical_name.clone(), operation.module.clone()))
+                    .collect(),
+                live_replay_capabilities: {
+                    let mut live = std::collections::BTreeSet::new();
+                    for name in &required_provider_operations {
+                        let Some(operation) = ctx.capabilities.operation(name) else {
+                            continue;
+                        };
+                        let is_pure =
+                            ctx.capabilities
+                                .contract(&operation.module)
+                                .is_some_and(|contract| {
+                                    contract.semantics
+                                        == crate::capability::CapabilitySemantics::Pure
+                                });
+                        if is_pure
+                            || operation.replay
+                                == Some(crate::capability::ReplaySemantics::Reissued)
+                        {
+                            live.insert(operation.module.clone());
+                        }
+                    }
+                    live.into_iter().collect()
+                },
             }),
         ));
     }
@@ -267,6 +314,45 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     ProjectOutput { files }
 }
 
+fn render_root_library(has_policy: bool, has_replay: bool, has_self_host_support: bool) -> String {
+    let mut sections = vec![
+        "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
+        "// Aver Rust library emission — native provider host boundary".to_string(),
+        "#[macro_use] extern crate aver_rt;".to_string(),
+        "pub use ::aver_rt::AverMap as HashMap;".to_string(),
+        "pub use ::aver_rt::AverStr;".to_string(),
+        "pub use ::aver_rt::Buffer;".to_string(),
+        "pub use ::aver_rt::ByteBuilder;".to_string(),
+        String::new(),
+        "mod runtime_support;".to_string(),
+        "pub use runtime_support::*;".to_string(),
+    ];
+    if has_policy {
+        sections.push(String::new());
+        sections.push("mod policy_support;".to_string());
+        sections.push("pub use policy_support::*;".to_string());
+    }
+    if has_replay {
+        sections.push(String::new());
+        sections.push("mod replay_support;".to_string());
+        sections.push("pub use replay_support::*;".to_string());
+    }
+    if has_self_host_support {
+        sections.push(String::new());
+        sections.push("mod self_host_support;".to_string());
+    }
+    sections.push(String::new());
+    sections.push("pub mod provider_support;".to_string());
+    sections.push(
+        "pub use provider_support::{install_provider_bindings, install_provider_bindings_exact, preflight_required_providers};"
+            .to_string(),
+    );
+    sections.push(String::new());
+    sections.push("pub mod aver_generated;".to_string());
+    sections.push(String::new());
+    sections.join("\n")
+}
+
 fn render_root_main(
     main_fn: Option<&FnDef>,
     has_policy: bool,
@@ -274,6 +360,7 @@ fn render_root_main(
     guest_entry: Option<&str>,
     has_verify: bool,
     has_self_host_support: bool,
+    has_provider_runtime: bool,
 ) -> String {
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
@@ -303,6 +390,15 @@ fn render_root_main(
     if has_self_host_support {
         sections.push(String::new());
         sections.push("mod self_host_support;".to_string());
+    }
+
+    if has_provider_runtime {
+        sections.push(String::new());
+        sections.push("pub mod provider_support;".to_string());
+        sections.push(
+            "pub use provider_support::{install_provider_bindings, install_provider_bindings_exact};"
+                .to_string(),
+        );
     }
 
     sections.push(String::new());
@@ -352,6 +448,9 @@ fn render_root_main(
     if returns_result {
         if result_unit_string {
             sections.push("fn main() {".to_string());
+            if has_provider_runtime {
+                sections.push("    if let Err(error) = provider_support::preflight_required_providers() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
+            }
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
             sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
@@ -378,6 +477,9 @@ fn render_root_main(
         } else {
             let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
             sections.push(format!("fn main() -> {} {{", ret_type));
+            if has_provider_runtime {
+                sections.push("    provider_support::preflight_required_providers().unwrap_or_else(|error| panic!(\"{}\", error));".to_string());
+            }
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             if has_replay && guest_entry.is_none() {
                 sections.push(
@@ -390,6 +492,9 @@ fn render_root_main(
         }
     } else {
         sections.push("fn main() {".to_string());
+        if has_provider_runtime {
+            sections.push("    if let Err(error) = provider_support::preflight_required_providers() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
+        }
         if main_fn.is_some() {
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
@@ -626,11 +731,31 @@ fn entry_module_sections(
 fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) -> Vec<String> {
     let mut sections = Vec::new();
 
+    if let Some(opaque_types) =
+        provider::opaque_types_by_module(&ctx.capabilities).get(&module.prefix)
+    {
+        for name in opaque_types {
+            sections.push(provider::emit_opaque_type(
+                &module.prefix,
+                name,
+                ctx.emit_replay_runtime,
+            ));
+        }
+    }
+
     for td in &module.type_defs {
         if is_shared_runtime_type(td) {
             continue;
         }
         sections.push(toplevel::emit_public_type_def(td, ctx));
+        let canonical = format!(
+            "{}.{}",
+            module.prefix,
+            crate::codegen::common::type_def_name(td)
+        );
+        if ctx.capabilities.boundary_type(&canonical).is_some() {
+            sections.push(provider::emit_represented_type_codec(&module.prefix, td));
+        }
         if ctx.emit_replay_runtime {
             sections.push(replay::emit_replay_value_impl(td));
         }

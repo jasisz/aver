@@ -1,0 +1,16 @@
+module NativeProviderReplay
+    intent = "Pin the native provider replay matrix."
+    depends [Modes, PureProbe]
+    exposes [exercise, main]
+    effects [Modes.recorded, Modes.suppressed, Modes.reissued]
+
+fn exercise() -> Tuple<Int, Int>
+    ! [Modes.recorded, Modes.suppressed, Modes.reissued]
+    pure = PureProbe.read()
+    recorded = Modes.recorded()
+    Modes.suppressed()
+    Modes.reissued()
+    (pure, recorded)
+
+fn main() -> Unit
+    Unit

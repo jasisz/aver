@@ -78,34 +78,6 @@ fn compile_vm(root: &Path, entry: &str) -> (vm::VM, aver::capability::Capability
     (vm::VM::new(code, globals, arena), contracts)
 }
 
-struct CounterProvider {
-    calls: Arc<AtomicUsize>,
-    fingerprint: &'static str,
-}
-
-impl CapabilityProvider for CounterProvider {
-    fn identity(&self) -> &str {
-        "example.counter-clock@1"
-    }
-
-    fn fingerprint(&self) -> &str {
-        self.fingerprint
-    }
-
-    fn invoke(
-        &self,
-        context: &ProviderContext,
-        args: &[ProviderValue],
-    ) -> Result<ProviderValue, ProviderFault> {
-        if context.operation != "Clock.now" || !args.is_empty() {
-            return Err(ProviderFault::new("bad_call", &context.operation));
-        }
-        Ok(ProviderValue::Int(
-            (self.calls.fetch_add(1, Ordering::SeqCst) as i64).into(),
-        ))
-    }
-}
-
 const CLOCK: &str = "\
 module Clock
     kind = capability
@@ -123,14 +95,8 @@ fn bind_clock(
     fingerprint: &'static str,
 ) -> ProviderRegistry {
     let mut providers = ProviderRegistry::for_program(contracts.clone()).expect("program registry");
-    let contract = contracts.contract("Clock").expect("Clock contract");
     providers
-        .bind(ProviderBinding::new(
-            "Clock",
-            contract.contract_hash.clone(),
-            ["Clock.now"],
-            Arc::new(CounterProvider { calls, fingerprint }),
-        ))
+        .bind(native_provider_fixture::clock_binding(calls, fingerprint))
         .expect("bind Clock");
     providers
 }
@@ -240,11 +206,20 @@ fn main() -> String
     );
 
     let calls = Arc::new(AtomicUsize::new(0));
-    machine.set_provider_registry(Arc::new(bind_clock(
-        &other_contracts,
-        calls.clone(),
-        "other-v1",
-    )));
+    let mut other_providers = ProviderRegistry::for_program(other_contracts.clone())
+        .expect("incompatible program registry");
+    other_providers
+        .bind(native_provider_fixture::clock_binding_for_contract(
+            other_contracts
+                .contract("Clock")
+                .expect("other Clock")
+                .contract_hash
+                .clone(),
+            calls.clone(),
+            "other-v1",
+        ))
+        .expect("binding is valid for the incompatible registry");
+    machine.set_provider_registry(Arc::new(other_providers));
     let error = machine
         .run()
         .expect_err("bytecode must pin its checked contract");
@@ -945,7 +920,7 @@ fn check_and_rust_compile_report_the_standard_time_binding_identities() {
     assert!(check_text.contains("capability Time: contract_hash=sha256:"));
     assert!(check_text.contains("model_hash=sha256:"));
     assert!(check_text.contains("vm:aver.standard.Time/native"));
-    assert!(check_text.contains("rust:aver.standard.Time/rust-static"));
+    assert!(check_text.contains("rust:aver.standard.Time/native"));
     assert!(check_text.contains("wasm-gc:aver.standard.Time/wasm-gc-imports"));
     assert!(check_text.contains("wasip2:aver.standard.Time/wasip2-wasi"));
 
@@ -962,18 +937,21 @@ fn check_and_rust_compile_report_the_standard_time_binding_identities() {
         .expect("compile Time canary to Rust");
     let compile_text = String::from_utf8_lossy(&compile.stdout);
     assert!(compile.status.success(), "{compile_text}");
-    assert!(compile_text.contains("aver.standard.Time/rust-static@aver-rt/"));
+    assert!(compile_text.contains("aver.standard.Time/native@aver-rt/"));
     assert!(compile_text.contains("contract_hash=sha256:"));
     assert!(compile_text.contains("model_hash=sha256:"));
     let replay_support =
         fs::read_to_string(output.join("src/replay_support.rs")).expect("generated replay runtime");
-    assert!(replay_support.contains("aver.standard.Time/rust-static"));
+    assert!(replay_support.contains("crate::provider_support::registry().provenance()"));
+    let provider_support = fs::read_to_string(output.join("src/provider_support.rs"))
+        .expect("generated provider runtime");
+    assert!(provider_support.contains("StandardTimeProvider"));
     assert!(
-        replay_support
+        provider_support
             .contains("sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49")
     );
     assert!(
-        replay_support
+        provider_support
             .contains("sha256:3b9239af56c4e89e527a53ce6fe4a470a42f84b203b10078c8633f39a6cec5f6")
     );
 }

@@ -13,6 +13,9 @@ pub(super) struct ReplayRuntimeOptions {
     pub has_http_server_types: bool,
     pub embedded_independence_cancel: bool,
     pub has_time_capability: bool,
+    pub has_provider_runtime: bool,
+    pub capability_operations: Vec<(String, String)>,
+    pub live_replay_capabilities: Vec<String>,
 }
 
 pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
@@ -25,6 +28,9 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
         has_http_server_types,
         embedded_independence_cancel,
         has_time_capability,
+        has_provider_runtime,
+        capability_operations,
+        live_replay_capabilities,
     } = options;
     let policy_check = if has_runtime_policy {
         RUNTIME_POLICY_CHECK_SNIPPET
@@ -34,7 +40,9 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
         "    #[derive(Clone, Debug, Default)]\n    struct RuntimePolicy {\n        independence_mode_cancel: bool,\n    }\n\n    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {\n        Ok(None)\n    }\n\n    fn check_policy(_effect_type: &str, _args: &[ReplayJson]) {}"
     };
 
-    let capability_provenance = if has_time_capability {
+    let capability_provenance = if has_provider_runtime {
+        "crate::provider_support::registry().provenance().into_iter().map(|entry| CapabilityProvenance { capability: entry.capability, contract_hash: entry.contract_hash, model_hash: entry.model_hash, provider: entry.provider, fingerprint: entry.fingerprint }).collect()".to_string()
+    } else if has_time_capability {
         let contracts = crate::stdlib::standard_capability_registry();
         let provenance = crate::provider::shipped_target_provenance(
             crate::provider::CapabilityTarget::Rust,
@@ -51,11 +59,82 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     } else {
         "vec![]".to_string()
     };
+    let current_capability_contracts = if has_provider_runtime {
+        "crate::provider_support::registry().contract_provenance()"
+    } else {
+        "standard_capability_provenance()"
+    };
+    let operation_match = capability_operations
+        .iter()
+        .map(|(operation, capability)| format!("{operation:?} => Some({capability:?}),"))
+        .collect::<Vec<_>>()
+        .join("\n                ");
+    let custom_event_validation = if capability_operations.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"        for effect in &session.effects {{
+            let capability = match effect.effect_type.as_str() {{
+                {operation_match}
+                _ => None,
+            }};
+            if let Some(capability) = capability {{
+                if capability != "Time" && !seen.contains(capability) {{
+                    panic!(
+                        "Legacy replay event '{{}}' has no capability contract/model provenance; refusing to guess",
+                        effect.effect_type
+                    );
+                }}
+            }}
+        }}"#,
+        )
+    };
+    let live_capabilities = live_replay_capabilities
+        .iter()
+        .map(|capability| format!("{capability:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let live_capability_validation = if has_provider_runtime && !live_replay_capabilities.is_empty()
+    {
+        format!(
+            r#"        for capability in [{live_capabilities}] {{
+            let recorded = session.capabilities.iter()
+                .find(|entry| entry.capability == capability)
+                .unwrap_or_else(|| panic!("Live replay capability '{{}}' has no provider provenance in the replay", capability));
+            let expected = current.iter()
+                .find(|entry| entry.capability == capability)
+                .expect("live capability contract validated above");
+            let (Some(provider), Some(fingerprint)) = (&expected.provider, &expected.fingerprint) else {{
+                panic!("Capability '{{}}' requires a live provider during replay", capability);
+            }};
+            if recorded.provider != *provider || recorded.fingerprint != *fingerprint {{
+                panic!(
+                    "Live provider mismatch for '{{}}': recorded {{}}@{{}}, current {{}}@{{}}",
+                    capability, recorded.provider, recorded.fingerprint, provider, fingerprint
+                );
+            }}
+        }}"#
+        )
+    } else {
+        String::new()
+    };
 
     let mut sections = vec![
         REPLAY_RUNTIME_TEMPLATE
             .replace("__POLICY_CHECK__", policy_check)
             .replace("__CAPABILITY_PROVENANCE__", &capability_provenance)
+            .replace(
+                "__CURRENT_CAPABILITY_CONTRACTS__",
+                current_capability_contracts,
+            )
+            .replace(
+                "__CUSTOM_CAPABILITY_EVENT_VALIDATION__",
+                &custom_event_validation,
+            )
+            .replace(
+                "__LIVE_CAPABILITY_VALIDATION__",
+                &live_capability_validation,
+            )
             .replace(
                 "__EMBEDDED_INDEPENDENCE_MODE_CANCEL__",
                 if embedded_independence_cancel {
@@ -817,15 +896,25 @@ mod policy_tests {
     #[test]
     fn generated_replay_provenance_only_names_time_when_the_source_contract_is_present() {
         let without_time = generate_replay_runtime(ReplayRuntimeOptions::default());
-        assert!(!without_time.contains("aver.standard.Time/rust-static"));
+        assert!(!without_time.contains("aver.standard.Time/native"));
 
         let with_time = generate_replay_runtime(ReplayRuntimeOptions {
             has_time_capability: true,
             ..ReplayRuntimeOptions::default()
         });
-        assert!(with_time.contains("aver.standard.Time/rust-static"));
+        assert!(with_time.contains("aver.standard.Time/native"));
         assert!(with_time.contains("contract_hash"));
         assert!(with_time.contains("model_hash"));
+    }
+
+    #[test]
+    fn recorded_only_provider_replay_does_not_emit_an_untyped_empty_loop() {
+        let runtime = generate_replay_runtime(ReplayRuntimeOptions {
+            has_provider_runtime: true,
+            ..ReplayRuntimeOptions::default()
+        });
+        assert!(!runtime.contains("for capability in []"));
+        assert!(!runtime.contains("let capability = match"));
     }
 }
 
@@ -1173,6 +1262,13 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         branch_stack: Vec<u32>,
         effect_count_stack: Vec<u32>,
         next_group_id: u32,
+        resource_tokens: std::sync::Arc<std::sync::Mutex<ResourceTokenState>>,
+    }
+
+    #[derive(Default)]
+    struct ResourceTokenState {
+        next_trace: u64,
+        live: BTreeMap<(u64, String, u64, u64), u64>,
     }
 
     #[derive(Clone)]
@@ -1472,6 +1568,100 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         }
     }
 
+    pub fn invoke_capability_effect<T, F>(
+        effect_type: &str,
+        replay: &str,
+        args: Vec<ReplayJson>,
+        call: F,
+    ) -> T
+    where
+        T: ReplayValue,
+        F: FnOnce() -> T,
+    {
+        match replay {
+            "recorded" | "suppressed" => invoke_effect(effect_type, args, call),
+            "reissued" if matches!(current_scope_mode(), Some(ScopeMode::Replay { .. })) => {
+                let _: T = replay_effect(effect_type, args);
+                call()
+            }
+            "reissued" => invoke_effect(effect_type, args, call),
+            other => panic!("unknown capability replay semantics '{}'", other),
+        }
+    }
+
+    fn capability_resource_json(type_name: &str, trace: u64) -> ReplayJson {
+        let mut payload = serde_json::Map::new();
+        payload.insert("type".to_string(), ReplayJson::String(type_name.to_string()));
+        payload.insert("trace".to_string(), ReplayJson::String(trace.to_string()));
+        wrap_marker("$capabilityResource", ReplayJson::Object(payload))
+    }
+
+    pub fn encode_live_capability_resource(
+        type_name: &str,
+        handle: &aver_rt::provider::ProviderResourceHandle,
+    ) -> ReplayJson {
+        let trace = SCOPE_STATE.with(|cell| match &*cell.borrow() {
+            ScopeState::Active(scope) => {
+                let mut tokens = scope.resource_tokens.lock().unwrap_or_else(|_| {
+                    panic!("capability replay resource-token store poisoned")
+                });
+                let key = (
+                    handle.binding_id(),
+                    handle.type_name().to_string(),
+                    handle.slot(),
+                    handle.generation(),
+                );
+                if let Some(trace) = tokens.live.get(&key) {
+                    *trace
+                } else {
+                    let trace = tokens.next_trace;
+                    tokens.next_trace = tokens
+                        .next_trace
+                        .checked_add(1)
+                        .expect("capability replay resource-token space exhausted");
+                    tokens.live.insert(key, trace);
+                    trace
+                }
+            }
+            ScopeState::Inactive => handle.slot().saturating_add(1),
+        });
+        capability_resource_json(type_name, trace)
+    }
+
+    pub fn encode_replay_capability_resource(type_name: &str, trace: u64) -> ReplayJson {
+        capability_resource_json(type_name, trace)
+    }
+
+    pub fn decode_capability_resource(
+        value: &ReplayJson,
+        expected_type: &str,
+    ) -> Result<u64, String> {
+        let payload = expect_marker(value, "$capabilityResource")?;
+        let obj = expect_object(payload, "$capabilityResource")?;
+        let type_name = expect_string(
+            obj.get("type")
+                .ok_or_else(|| "$capabilityResource missing field 'type'".to_string())?,
+            "$capabilityResource.type",
+        )?;
+        if type_name != expected_type {
+            return Err(format!(
+                "$capabilityResource type mismatch: expected {}, got {}",
+                expected_type, type_name
+            ));
+        }
+        let trace = expect_string(
+            obj.get("trace")
+                .ok_or_else(|| "$capabilityResource missing field 'trace'".to_string())?,
+            "$capabilityResource.trace",
+        )?
+        .parse::<u64>()
+        .map_err(|_| "$capabilityResource.trace must be a u64 string".to_string())?;
+        if trace == 0 {
+            return Err("$capabilityResource.trace must be non-zero".to_string());
+        }
+        Ok(trace)
+    }
+
 __POLICY_CHECK__
 
     pub fn wrap_marker(name: &str, value: ReplayJson) -> ReplayJson {
@@ -1547,6 +1737,12 @@ __POLICY_CHECK__
                 branch_stack: Vec::new(),
                 effect_count_stack: Vec::new(),
                 next_group_id: 0,
+                resource_tokens: std::sync::Arc::new(std::sync::Mutex::new(
+                    ResourceTokenState {
+                        next_trace: 1,
+                        live: BTreeMap::new(),
+                    },
+                )),
             });
         });
     }
@@ -1623,7 +1819,7 @@ __POLICY_CHECK__
     }
 
     fn validate_capability_provenance(session: &SessionRecording) {
-        let current = standard_capability_provenance();
+        let current = __CURRENT_CAPABILITY_CONTRACTS__;
         let mut seen = BTreeSet::new();
         for recorded in &session.capabilities {
             if !seen.insert(recorded.capability.as_str()) {
@@ -1637,7 +1833,7 @@ __POLICY_CHECK__
                 .find(|entry| entry.capability == recorded.capability)
             else {
                 panic!(
-                    "Replay names capability '{}' which this Rust artifact does not provide",
+                    "Replay names capability '{}' which this Rust artifact does not declare",
                     recorded.capability
                 );
             };
@@ -1654,6 +1850,8 @@ __POLICY_CHECK__
                 );
             }
         }
+__CUSTOM_CAPABILITY_EVENT_VALIDATION__
+__LIVE_CAPABILITY_VALIDATION__
     }
 
     fn canonical_unit(value: ReplayJson) -> ReplayJson {
