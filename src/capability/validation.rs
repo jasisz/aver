@@ -381,8 +381,10 @@ pub(super) fn validate_boundary_type_ownership(
     fn visit(
         scope: &str,
         operation: &CapabilityOperation,
+        position: &str,
         ty: &Type,
         locally_declared: &BTreeSet<String>,
+        seen: &mut BTreeSet<(String, String)>,
         errors: &mut Vec<CapabilityError>,
     ) {
         match ty {
@@ -391,29 +393,67 @@ pub(super) fn validate_boundary_type_ownership(
                     Some((owner, _)) => owner == scope,
                     None => locally_declared.contains(name),
                 };
-                if !belongs_to_capability {
+                if !belongs_to_capability && seen.insert((position.to_string(), name.to_string())) {
                     errors.push(CapabilityError::at(
                         operation.line,
                         format!(
-                            "operation '{}' uses cross-module boundary type '{}'; capability contract v1 requires named boundary types to be declared in the capability module so their layout is bound by contract_hash",
-                            operation.canonical_name, name
+                            "operation '{}' {} uses cross-module boundary type '{}'; capability contract v1 requires named boundary types to be declared in the capability module so their layout is bound by contract_hash",
+                            operation.canonical_name, position, name
                         ),
                     ));
                 }
             }
             Type::Result(left, right) | Type::Map(left, right) => {
-                visit(scope, operation, left, locally_declared, errors);
-                visit(scope, operation, right, locally_declared, errors);
+                visit(
+                    scope,
+                    operation,
+                    position,
+                    left,
+                    locally_declared,
+                    seen,
+                    errors,
+                );
+                visit(
+                    scope,
+                    operation,
+                    position,
+                    right,
+                    locally_declared,
+                    seen,
+                    errors,
+                );
             }
-            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
-                visit(scope, operation, inner, locally_declared, errors)
-            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => visit(
+                scope,
+                operation,
+                position,
+                inner,
+                locally_declared,
+                seen,
+                errors,
+            ),
             Type::Tuple(items) | Type::Fn(items, _, _) => {
                 for item in items {
-                    visit(scope, operation, item, locally_declared, errors);
+                    visit(
+                        scope,
+                        operation,
+                        position,
+                        item,
+                        locally_declared,
+                        seen,
+                        errors,
+                    );
                 }
                 if let Type::Fn(_, ret, _) = ty {
-                    visit(scope, operation, ret, locally_declared, errors);
+                    visit(
+                        scope,
+                        operation,
+                        position,
+                        ret,
+                        locally_declared,
+                        seen,
+                        errors,
+                    );
                 }
             }
             Type::Int
@@ -427,14 +467,25 @@ pub(super) fn validate_boundary_type_ownership(
     }
 
     for operation in operations {
-        for (_, ty) in &operation.params {
-            visit(scope, operation, ty, locally_declared, errors);
+        let mut seen = BTreeSet::new();
+        for (index, (_, ty)) in operation.params.iter().enumerate() {
+            visit(
+                scope,
+                operation,
+                &format!("parameter {index}"),
+                ty,
+                locally_declared,
+                &mut seen,
+                errors,
+            );
         }
         visit(
             scope,
             operation,
+            "result",
             &operation.return_type,
             locally_declared,
+            &mut seen,
             errors,
         );
     }

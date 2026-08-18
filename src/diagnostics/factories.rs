@@ -14,6 +14,13 @@ use crate::types::checker::TypeError;
 
 /// Build a `Diagnostic` from a `TypeError` (from the typechecker).
 pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
+    let (source, file) = match &te.origin {
+        Some(origin) => (
+            origin.source.as_deref().unwrap_or_default(),
+            origin.file.as_str(),
+        ),
+        None => (source, file),
+    };
     let msg = &te.message;
     let line = te.line;
     let col = te.col;

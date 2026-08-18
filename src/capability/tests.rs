@@ -277,14 +277,36 @@ fn semantic_classes_reject_unsound_attribute_combinations() {
     let bare_external_boundary = error_messages(
         "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Bytes]\n\noperation f(value: Bytes) -> Bytes\n",
     );
+    assert_eq!(
+        bare_external_boundary.len(),
+        2,
+        "{bare_external_boundary:?}"
+    );
     assert!(bare_external_boundary.iter().any(|error| {
-        error.contains("cross-module boundary type 'Bytes'") && error.contains("contract_hash")
+        error.contains("operation 'Invalid.f' parameter 0 uses cross-module boundary type 'Bytes'")
+            && error.contains("contract_hash")
+    }));
+    assert!(bare_external_boundary.iter().any(|error| {
+        error.contains("operation 'Invalid.f' result uses cross-module boundary type 'Bytes'")
+            && error.contains("contract_hash")
     }));
     assert!(
         bare_external_boundary
             .iter()
             .all(|error| !error.contains("Invalid.Bytes")),
         "a bare imported type must not be misqualified as capability-owned: {bare_external_boundary:?}"
+    );
+
+    let repeated_in_one_position = error_messages(
+        "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Bytes]\n\noperation f(value: Tuple<Bytes, Bytes>) -> Int\n",
+    );
+    assert_eq!(
+        repeated_in_one_position
+            .iter()
+            .filter(|error| error.contains("cross-module boundary type 'Bytes'"))
+            .count(),
+        1,
+        "the same foreign type should be reported once per position: {repeated_in_one_position:?}"
     );
 }
 

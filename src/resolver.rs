@@ -571,6 +571,7 @@ impl ShadowWalker<'_> {
                 ),
                 line,
                 col: 0,
+                origin: None,
                 secondary: None,
             });
         }

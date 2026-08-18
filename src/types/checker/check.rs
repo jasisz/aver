@@ -29,7 +29,7 @@ impl TypeChecker {
         }
         crate::stdlib::append_required_standard_capability_modules(items, &mut loaded_modules);
 
-        self.configure_capabilities(items, &loaded_modules);
+        self.configure_capabilities(items, &loaded_modules, base_dir);
         if !loaded_modules.is_empty() {
             self.integrate_loaded_modules(&loaded_modules);
         }
@@ -60,7 +60,7 @@ impl TypeChecker {
         // `depends`).
         let mut loaded = loaded.to_vec();
         crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
-        self.configure_capabilities(items, &loaded);
+        self.configure_capabilities(items, &loaded, None);
         self.integrate_loaded_modules(&loaded);
         self.build_signatures(items);
         self.check_loaded_module_bodies(&loaded);
@@ -71,25 +71,56 @@ impl TypeChecker {
         &mut self,
         entry_items: &[TopLevel],
         loaded: &[crate::source::LoadedModule],
+        module_root: Option<&str>,
     ) {
         let entry_scope = Self::module_decl(entry_items)
             .map(|m| m.name.as_str())
             .unwrap_or("");
-        let (mut registry, mut errors) =
+        let (mut registry, errors) =
             crate::capability::CapabilityRegistry::from_module(entry_scope, entry_items);
-        for module in loaded {
-            let (next, mut next_errors) =
-                crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
-            registry.merge(next);
-            errors.append(&mut next_errors);
-        }
         self.errors
             .extend(errors.into_iter().map(|error| TypeError {
                 message: error.message,
                 line: error.line,
                 col: 1,
+                origin: None,
                 secondary: None,
             }));
+        for module in loaded {
+            let (next, next_errors) =
+                crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
+            registry.merge(next);
+            let display_path = module_root
+                .and_then(|root| module.path.strip_prefix(root).ok())
+                .unwrap_or(module.path.as_path())
+                .display()
+                .to_string();
+            // Keep LoadedModule's public parsed-module shape stable. Disk
+            // analysis can enrich the exceptional error path from the file
+            // the loader already resolved; preloaded/virtual modules retain
+            // the correct file but deliberately omit a potentially false
+            // entry-source snippet.
+            let source = if next_errors.is_empty() || module_root.is_none() {
+                None
+            } else {
+                crate::source::resolve_standard_module_source(&module.dep_name)
+                    .map(|module| module.source)
+                    .or_else(|| std::fs::read_to_string(&module.path).ok())
+                    .map(std::sync::Arc::<str>::from)
+            };
+            let origin = TypeErrorOrigin {
+                file: display_path,
+                source,
+            };
+            self.errors
+                .extend(next_errors.into_iter().map(|error| TypeError {
+                    message: error.message,
+                    line: error.line,
+                    col: 1,
+                    origin: Some(origin.clone()),
+                    secondary: None,
+                }));
+        }
         self.capabilities = registry;
     }
 

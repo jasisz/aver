@@ -173,6 +173,7 @@ impl TypeChecker {
                     ),
                     line: f.line,
                     col: 0,
+                    origin: None,
                     secondary,
                 });
             }
