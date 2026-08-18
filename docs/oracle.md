@@ -75,6 +75,8 @@ verify reported
 
 The `hash` alias does not have to appear in the assertion. For each expanded case, the selected function is installed in the VM's operation-stub map before the left side runs. A pure capability stub has exactly the declared operation signature; an effectful generative capability keeps the Oracle signature `(BranchPath, Int, args...) -> result`. Multiple functions in the domain produce separate cases.
 
+The operation after `given name:` is always its full canonical path. If the capability is loaded as `Domain.Crypto.Hash160`, write `Domain.Crypto.Hash160.digest`, exactly as at the call site and in diagnostics. A shorter `Hash160.digest` does not fall through to runtime: checking rejects it and, when the suffix identifies one loaded operation, suggests the canonical path.
+
 This binding is verify-local. It does not install a package, exercise the Rust provider implementation, or satisfy provider preflight for `aver run` and compiled artifacts. Provider cryptography still belongs in the provider's own tests; the Aver case checks the contract shape and the caller's behavior under an explicit result.
 
 ## Trace-aware cases
