@@ -456,6 +456,138 @@ fn main() -> String
     assert!(message.contains("Time.now") && message.contains("contract_hash sha256:"));
 }
 
+#[test]
+fn standard_random_uses_the_default_provider_and_cannot_bypass_it() {
+    let root = temp_root("random-fault-injection");
+    fs::write(
+        root.join("main.av"),
+        "\
+module Client
+    exposes [main]
+    effects [Random.int, Random.float]
+
+fn main() -> Tuple<Int, Float>
+    ! [Random.int, Random.float]
+    (Random.int(4, 4), Random.float())
+",
+    )
+    .expect("write entry");
+
+    let (mut machine, _contracts) = compile_vm(&root, "main.av");
+    let value = machine
+        .run()
+        .expect("default Random provider")
+        .to_value(&machine.arena);
+    let Value::Tuple(values) = value else {
+        panic!("standard Random provider must return the tuple")
+    };
+    assert_eq!(values[0], Value::int(4));
+    let Value::Float(float) = &values[1] else {
+        panic!("Random.float must return Float")
+    };
+    assert!((0.0..1.0).contains(float));
+
+    let (mut machine, contracts) = compile_vm(&root, "main.av");
+    let mut providers = ProviderRegistry::for_program(contracts).expect("standard registry");
+    providers.unbind("Random");
+    machine.set_provider_registry(Arc::new(providers));
+    let error = machine.run().expect_err("Random must not bypass registry");
+    let message = error.to_string();
+    assert!(message.contains("error[capability-provider-missing]"));
+    assert!(message.contains("Random.") && message.contains("contract_hash sha256:"));
+}
+
+struct CountingRandomProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl CapabilityProvider for CountingRandomProvider {
+    fn identity(&self) -> &str {
+        "test.random@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "fixed-random-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        _args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        match context.operation.as_str() {
+            "Random.int" => Ok(ProviderValue::Int(4.into())),
+            "Random.float" => Ok(ProviderValue::Float(0.5)),
+            operation => Err(ProviderFault::new("bad_call", operation)),
+        }
+    }
+}
+
+fn replace_random_provider(
+    contracts: &aver::capability::CapabilityRegistry,
+    calls: Arc<AtomicUsize>,
+) -> ProviderRegistry {
+    let contract = contracts.contract("Random").expect("Random contract");
+    let mut providers =
+        ProviderRegistry::for_program(contracts.clone()).expect("standard registry");
+    providers
+        .replace_binding(ProviderBinding::new(
+            "Random",
+            contract.contract_hash.clone(),
+            ["Random.int", "Random.float"],
+            Arc::new(CountingRandomProvider { calls }),
+        ))
+        .expect("replace Random through the explicit exact-contract API");
+    providers
+}
+
+#[test]
+fn standard_random_recording_uses_an_explicit_override_and_replay_stays_offline() {
+    let root = temp_root("random-recorded-replay");
+    fs::write(
+        root.join("main.av"),
+        "\
+module Client
+    exposes [main]
+    effects [Random.int]
+
+fn main() -> Int
+    ! [Random.int]
+    Random.int(1, 6)
+",
+    )
+    .expect("write entry");
+
+    let (mut recording_vm, contracts) = compile_vm(&root, "main.av");
+    let recording_calls = Arc::new(AtomicUsize::new(0));
+    let providers = replace_random_provider(&contracts, recording_calls.clone());
+    let provenance = providers.provenance();
+    recording_vm.set_provider_registry(Arc::new(providers));
+    recording_vm.start_recording();
+    let recorded = recording_vm.run().expect("record Random provider call");
+    assert_eq!(recorded.to_value(&recording_vm.arena), Value::int(4));
+    assert_eq!(recording_calls.load(Ordering::SeqCst), 1);
+    let effects = recording_vm.recorded_effects().to_vec();
+    assert_eq!(effects.len(), 1);
+
+    let (mut replay_vm, replay_contracts) = compile_vm(&root, "main.av");
+    let replay_calls = Arc::new(AtomicUsize::new(0));
+    replay_vm.set_provider_registry(Arc::new(replace_random_provider(
+        &replay_contracts,
+        replay_calls.clone(),
+    )));
+    replay_vm
+        .start_replay_with_provenance(effects, &provenance, true)
+        .expect("Random replay provenance");
+    let replayed = replay_vm.run().expect("offline Random replay");
+    assert_eq!(replayed.to_value(&replay_vm.arena), Value::int(4));
+    assert_eq!(replay_calls.load(Ordering::SeqCst), 0);
+    replay_vm
+        .ensure_replay_consumed()
+        .expect("Random transcript consumed");
+}
+
 struct PureCounterProvider {
     calls: Arc<AtomicUsize>,
     fingerprint: &'static str,
@@ -909,7 +1041,7 @@ fn time_target_fixture() -> PathBuf {
 }
 
 #[test]
-fn check_and_rust_compile_report_the_standard_time_binding_identities() {
+fn check_and_rust_compile_report_standard_binding_identities() {
     let fixture = time_target_fixture();
     let check = Command::new(aver_bin())
         .args(["check", fixture.to_str().expect("fixture path")])
@@ -923,6 +1055,11 @@ fn check_and_rust_compile_report_the_standard_time_binding_identities() {
     assert!(check_text.contains("rust:aver.standard.Time/native"));
     assert!(check_text.contains("wasm-gc:aver.standard.Time/wasm-gc-imports"));
     assert!(check_text.contains("wasip2:aver.standard.Time/wasip2-wasi"));
+    assert!(check_text.contains("capability Random: contract_hash=sha256:"));
+    assert!(check_text.contains("vm:aver.standard.Random/native"));
+    assert!(check_text.contains("rust:aver.standard.Random/native"));
+    assert!(check_text.contains("wasm-gc:aver.standard.Random/wasm-gc-imports"));
+    assert!(check_text.contains("wasip2:aver.standard.Random/wasip2-wasi"));
 
     let output = temp_root("rust-accounting");
     let compile = Command::new(aver_bin())
@@ -938,6 +1075,7 @@ fn check_and_rust_compile_report_the_standard_time_binding_identities() {
     let compile_text = String::from_utf8_lossy(&compile.stdout);
     assert!(compile.status.success(), "{compile_text}");
     assert!(compile_text.contains("aver.standard.Time/native@aver-rt/"));
+    assert!(compile_text.contains("aver.standard.Random/native@aver-rt/"));
     assert!(compile_text.contains("contract_hash=sha256:"));
     assert!(compile_text.contains("model_hash=sha256:"));
     let replay_support =
@@ -946,6 +1084,7 @@ fn check_and_rust_compile_report_the_standard_time_binding_identities() {
     let provider_support = fs::read_to_string(output.join("src/provider_support.rs"))
         .expect("generated provider runtime");
     assert!(provider_support.contains("StandardTimeProvider"));
+    assert!(provider_support.contains("StandardRandomProvider"));
     assert!(
         provider_support
             .contains("sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49")

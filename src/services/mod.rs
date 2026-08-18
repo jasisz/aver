@@ -41,7 +41,6 @@ pub fn all_effect_names() -> Vec<&'static str> {
         "Http.patch",
     ]);
     out.extend_from_slice(http_server::DECLARED_EFFECTS);
-    out.extend_from_slice(random::DECLARED_EFFECTS);
     out.extend_from_slice(tcp::DECLARED_EFFECTS);
     out.extend(
         crate::stdlib::standard_capability_registry_ref()
@@ -73,7 +72,6 @@ pub mod env;
 #[cfg(feature = "runtime-net")]
 pub mod http;
 pub mod http_server;
-pub mod random;
 pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
@@ -160,11 +158,11 @@ mod tests {
     fn standard_capability_effect_names_come_from_the_contract_registry() {
         let listed: Vec<&str> = super::all_effect_names()
             .into_iter()
-            .filter(|name| name.starts_with("Time."))
+            .filter(|name| name.starts_with("Time.") || name.starts_with("Random."))
             .collect();
         let canonical: Vec<&str> = crate::stdlib::standard_capability_registry_ref()
             .operations()
-            .filter(|operation| operation.module == "Time" && operation.is_effectful())
+            .filter(|operation| operation.is_effectful())
             .map(|operation| operation.canonical_name.as_str())
             .collect();
         assert_eq!(listed, canonical);

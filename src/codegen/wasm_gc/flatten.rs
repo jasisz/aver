@@ -69,7 +69,8 @@ pub fn flatten_multimodule(
     }
 
     // Capability operations are host/provider atoms, not dependency function
-    // bodies. Keep `Time.now` as a qualified capability identity so the
+    // bodies. Keep standard operations such as `Time.now` and `Random.int` as
+    // qualified capability identities so the
     // backend binding table can lower it; rewriting it to a nonexistent
     // flattened `Time_now` function would produce a trap stub.
     let prefixes: HashSet<String> = dep_modules

@@ -5,7 +5,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::services::http;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
-use crate::services::{args, console, disk, env, random, tcp};
+use crate::services::{args, console, disk, env, tcp};
 use crate::types::{
     bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
 };
@@ -64,9 +64,6 @@ vm_builtins! {
 
     EnvGet => "Env.get",
     EnvSet => "Env.set",
-
-    RandomInt => "Random.int",
-    RandomFloat => "Random.float",
 
     TcpSend => "Tcp.send",
     TcpSendBytes => "Tcp.sendBytes",
@@ -282,8 +279,6 @@ impl VmBuiltin {
             Self::ArgsGet => args::effects(self.name()),
 
             Self::EnvGet | Self::EnvSet => env::effects(self.name()),
-            Self::RandomInt | Self::RandomFloat => random::effects(self.name()),
-
             Self::TcpSend
             | Self::TcpSendBytes
             | Self::TcpPing
@@ -367,8 +362,6 @@ impl VmBuiltin {
             | Self::DiskMakeDir => disk::call_nv(self.name(), args, arena),
 
             Self::EnvGet | Self::EnvSet => env::call_nv(self.name(), args, arena),
-            Self::RandomInt | Self::RandomFloat => random::call_nv(self.name(), args, arena),
-
             Self::TcpSend
             | Self::TcpSendBytes
             | Self::TcpPing

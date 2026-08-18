@@ -220,18 +220,8 @@ fn binding_status(
     contract: &CapabilityContract,
     contracts: &CapabilityRegistry,
 ) -> TargetBindingStatus {
-    if is_canonical_standard_time(contract) {
-        let identity = match target {
-            CapabilityTarget::Vm | CapabilityTarget::Rust => {
-                aver_rt::provider::STANDARD_TIME_NATIVE_IDENTITY
-            }
-            CapabilityTarget::WasmGc => "aver.standard.Time/wasm-gc-imports",
-            CapabilityTarget::Wasip2 => "aver.standard.Time/wasip2-wasi",
-        };
-        return TargetBindingStatus::Provided(TargetProvider {
-            identity: identity.to_string(),
-            fingerprint: aver_rt::provider::STANDARD_TIME_FINGERPRINT.to_string(),
-        });
+    if let Some(provider) = standard_target_provider(target, contract) {
+        return TargetBindingStatus::Provided(provider);
     }
 
     match target {
@@ -254,15 +244,28 @@ fn binding_status(
     }
 }
 
-fn is_canonical_standard_time(contract: &CapabilityContract) -> bool {
-    if contract.module != "Time" {
-        return false;
+fn standard_target_provider(
+    target: CapabilityTarget,
+    contract: &CapabilityContract,
+) -> Option<TargetProvider> {
+    if !crate::stdlib::is_standard_capability(&contract.module) {
+        return None;
     }
     let canonical = crate::stdlib::standard_capability_registry();
-    let Some(expected) = canonical.contract("Time") else {
-        return false;
-    };
-    contract.contract_hash == expected.contract_hash && contract.model_hash == expected.model_hash
+    let expected = canonical
+        .contract(&contract.module)
+        .expect("standard capability registry is complete");
+    if contract.contract_hash != expected.contract_hash
+        || contract.model_hash != expected.model_hash
+    {
+        return None;
+    }
+    let binding = super::standard::for_module(&contract.module)
+        .expect("standard capability has execution metadata");
+    Some(TargetProvider {
+        identity: binding.target_identity(target).to_string(),
+        fingerprint: binding.fingerprint().to_string(),
+    })
 }
 
 /// Syntactically required capability operations across the loaded program.

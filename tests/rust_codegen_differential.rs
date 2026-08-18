@@ -4575,8 +4575,9 @@ fn mir_forced_time_random_record_replay_roundtrips() {
     let result = (|| -> Result<(), String> {
         compile_rust_env(&src, &project, name, None, &["--with-replay"], &[])?;
 
-        // Structural tripwire: the emitted Rust must carry the MIR-emitted
-        // invoke_effect reroute for the effectful helpers. Do not use
+        // Structural tripwire: standard Time/Random calls must use the typed
+        // capability replay door, while legacy Console keeps invoke_effect.
+        // Do not use
         // `mir_lowered_count` here: its test emission context deliberately has
         // no builtin table, so every effect helper reports as a fallback (see
         // the helper's BLIND SPOT comment above).
@@ -4588,10 +4589,15 @@ fn mir_forced_time_random_record_replay_roundtrips() {
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted module: {e}"))?;
+        if !emitted.contains("aver_replay::invoke_capability_effect") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_replay::invoke_capability_effect` reroute — \
+                 the standard capability replay wrap was dropped:\n{emitted}"
+            ));
+        }
         if !emitted.contains("aver_replay::invoke_effect") {
             return Err(format!(
-                "emitted Rust is missing the `aver_replay::invoke_effect` reroute — \
-                 the MIR effectful replay wrap was dropped:\n{emitted}"
+                "emitted Rust is missing the legacy `aver_replay::invoke_effect` reroute for Console:\n{emitted}"
             ));
         }
 
@@ -4620,7 +4626,7 @@ fn mir_forced_time_random_record_replay_roundtrips() {
             .to_string();
 
         // BOTH nondeterministic effects must be captured through
-        // invoke_effect — a dropped MIR replay wrapper makes one vanish.
+        // their respective replay doors — a dropped MIR wrapper makes one vanish.
         let session_json = fs::read_to_string(&session).expect("read session");
         for effect in ["\"Random.int\"", "\"Time.unixMs\"", "\"Console.print\""] {
             if !session_json.contains(effect) {

@@ -21,6 +21,11 @@ pub use runtime::{
     NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
     StandardTimeProvider, standard_time_now, standard_time_sleep, standard_time_unix_ms,
 };
+#[cfg(feature = "random")]
+pub use runtime::{
+    STANDARD_RANDOM_FINGERPRINT, STANDARD_RANDOM_NATIVE_IDENTITY, StandardRandomProvider,
+    standard_random_float, standard_random_int,
+};
 
 /// A host-owned payload carried by a capability resource.
 ///

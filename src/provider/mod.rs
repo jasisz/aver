@@ -6,12 +6,11 @@
 
 mod ordering;
 mod provenance;
+pub(crate) mod standard;
 mod target;
 #[cfg(test)]
 mod tests;
 mod value;
-
-use std::sync::Arc;
 
 use crate::capability::{CapabilityOperation, CapabilityRegistry};
 pub use aver_rt::provider::{
@@ -46,34 +45,40 @@ impl ProviderRegistry {
     /// their embedded contract hash matches the program registry exactly.
     pub fn for_program(contracts: CapabilityRegistry) -> Result<Self, String> {
         let mut registry = Self::for_contracts(contracts);
-        let Some(contract) = registry.contracts.contract("Time").cloned() else {
-            return Ok(registry);
-        };
         let canonical = crate::stdlib::standard_capability_registry();
-        let expected = canonical.contract("Time").expect("standard Time contract");
-        if contract.contract_hash != expected.contract_hash {
-            return Err(format!(
-                "reserved standard capability 'Time' has contract_hash {}, expected {}",
-                contract.contract_hash, expected.contract_hash
-            ));
+        for standard in standard::StandardCapabilityBinding::ALL {
+            let module = standard.module();
+            let Some(contract) = registry.contracts.contract(module).cloned() else {
+                continue;
+            };
+            let expected = canonical
+                .contract(module)
+                .expect("standard capability registry is complete");
+            if contract.contract_hash != expected.contract_hash {
+                return Err(format!(
+                    "reserved standard capability '{}' has contract_hash {}, expected {}",
+                    module, contract.contract_hash, expected.contract_hash
+                ));
+            }
+            if contract.model_hash != expected.model_hash {
+                return Err(format!(
+                    "reserved standard capability '{}' has model_hash {}, expected {}",
+                    module, contract.model_hash, expected.model_hash
+                ));
+            }
+            let operations = canonical
+                .operations()
+                .filter(|operation| operation.module == module)
+                .map(|operation| operation.canonical_name.clone())
+                .collect::<Vec<_>>();
+            let provider = standard.native_provider();
+            registry.bind(ProviderBinding::new(
+                module,
+                contract.contract_hash,
+                operations,
+                provider,
+            ))?;
         }
-        if contract.model_hash != expected.model_hash {
-            return Err(format!(
-                "reserved standard capability 'Time' has model_hash {}, expected {}",
-                contract.model_hash, expected.model_hash
-            ));
-        }
-        let operations = canonical
-            .operations()
-            .filter(|operation| operation.module == "Time")
-            .map(|operation| operation.canonical_name.clone())
-            .collect::<Vec<_>>();
-        registry.bind(ProviderBinding::new(
-            "Time",
-            contract.contract_hash,
-            operations,
-            Arc::new(aver_rt::provider::StandardTimeProvider),
-        ))?;
         Ok(registry)
     }
 

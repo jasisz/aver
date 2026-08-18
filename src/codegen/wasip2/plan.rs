@@ -194,7 +194,7 @@ impl CapabilityWitPlan {
             let contract = registry
                 .contract(&capability)
                 .expect("required operation has an owning contract");
-            if is_canonical_standard_time(contract) {
+            if is_canonical_standard_capability(contract) {
                 continue;
             }
             interfaces.push(CapabilityWitInterfacePlan::build(registry, contract)?);
@@ -207,12 +207,12 @@ impl CapabilityWitPlan {
     }
 }
 
-fn is_canonical_standard_time(contract: &CapabilityContract) -> bool {
-    if contract.module != "Time" {
+fn is_canonical_standard_capability(contract: &CapabilityContract) -> bool {
+    if !crate::stdlib::is_standard_capability(&contract.module) {
         return false;
     }
     crate::stdlib::standard_capability_registry()
-        .contract("Time")
+        .contract(&contract.module)
         .is_some_and(|standard| {
             contract.contract_hash == standard.contract_hash
                 && contract.model_hash == standard.model_hash

@@ -42,17 +42,22 @@ pub(super) fn generate_provider_runtime(
     }
     out.push_str("    ])?;\n");
 
-    if let Some(time) = contracts.contract("Time") {
+    for standard in crate::provider::standard::StandardCapabilityBinding::ALL {
+        let module = standard.module();
+        let Some(contract) = contracts.contract(module) else {
+            continue;
+        };
         let operations = contracts
             .operations()
-            .filter(|operation| operation.module == "Time")
+            .filter(|operation| operation.module == module)
             .map(|operation| format!("{:?}.to_string()", operation.canonical_name))
             .collect::<Vec<_>>()
             .join(", ");
+        let provider_type = standard.generated_rust_provider_type();
         writeln!(
             out,
-            "    if include_defaults {{ registry.bind(ProviderBinding::new(\"Time\", {:?}, vec![{}], std::sync::Arc::new(aver_rt::provider::StandardTimeProvider)))?; }}",
-            time.contract_hash, operations
+            "    if include_defaults {{ registry.bind(ProviderBinding::new({:?}, {:?}, vec![{}], std::sync::Arc::new({})))?; }}",
+            module, contract.contract_hash, operations, provider_type
         )
         .unwrap();
     }

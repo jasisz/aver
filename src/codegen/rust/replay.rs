@@ -12,7 +12,7 @@ pub(super) struct ReplayRuntimeOptions {
     pub has_http_types: bool,
     pub has_http_server_types: bool,
     pub embedded_independence_cancel: bool,
-    pub has_time_capability: bool,
+    pub standard_capabilities: Vec<String>,
     pub has_provider_runtime: bool,
     pub capability_operations: Vec<(String, String)>,
     pub live_replay_capabilities: Vec<String>,
@@ -27,7 +27,7 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
         has_http_types,
         has_http_server_types,
         embedded_independence_cancel,
-        has_time_capability,
+        standard_capabilities,
         has_provider_runtime,
         capability_operations,
         live_replay_capabilities,
@@ -42,20 +42,22 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
 
     let capability_provenance = if has_provider_runtime {
         "crate::provider_support::registry().provenance().into_iter().map(|entry| CapabilityProvenance { capability: entry.capability, contract_hash: entry.contract_hash, model_hash: entry.model_hash, provider: entry.provider, fingerprint: entry.fingerprint }).collect()".to_string()
-    } else if has_time_capability {
+    } else if !standard_capabilities.is_empty() {
         let contracts = crate::stdlib::standard_capability_registry();
         let provenance = crate::provider::shipped_target_provenance(
             crate::provider::CapabilityTarget::Rust,
             &contracts,
         );
-        let time = provenance
+        let entries = provenance
             .into_iter()
-            .find(|entry| entry.capability == "Time")
-            .expect("standard Time has a Rust target-manifest row");
-        format!(
-            "vec![CapabilityProvenance {{ capability: {:?}.to_string(), contract_hash: {:?}.to_string(), model_hash: {:?}.to_string(), provider: {:?}.to_string(), fingerprint: {:?}.to_string() }}]",
-            time.capability, time.contract_hash, time.model_hash, time.provider, time.fingerprint,
-        )
+            .filter(|entry| standard_capabilities.contains(&entry.capability))
+            .map(|entry| format!(
+                "CapabilityProvenance {{ capability: {:?}.to_string(), contract_hash: {:?}.to_string(), model_hash: {:?}.to_string(), provider: {:?}.to_string(), fingerprint: {:?}.to_string() }}",
+                entry.capability, entry.contract_hash, entry.model_hash, entry.provider, entry.fingerprint,
+            ))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("vec![{entries}]")
     } else {
         "vec![]".to_string()
     };
@@ -72,6 +74,16 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     let custom_event_validation = if capability_operations.is_empty() {
         String::new()
     } else {
+        let legacy_standard = standard_capabilities
+            .iter()
+            .map(|capability| format!("capability == {capability:?}"))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        let legacy_standard = if legacy_standard.is_empty() {
+            "false".to_string()
+        } else {
+            legacy_standard
+        };
         format!(
             r#"        for effect in &session.effects {{
             let capability = match effect.effect_type.as_str() {{
@@ -79,7 +91,7 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
                 _ => None,
             }};
             if let Some(capability) = capability {{
-                if capability != "Time" && !seen.contains(capability) {{
+                if !({legacy_standard}) && !seen.contains(capability) {{
                     panic!(
                         "Legacy replay event '{{}}' has no capability contract/model provenance; refusing to guess",
                         effect.effect_type
@@ -894,17 +906,19 @@ mod policy_tests {
     }
 
     #[test]
-    fn generated_replay_provenance_only_names_time_when_the_source_contract_is_present() {
-        let without_time = generate_replay_runtime(ReplayRuntimeOptions::default());
-        assert!(!without_time.contains("aver.standard.Time/native"));
+    fn generated_replay_provenance_only_names_present_standard_contracts() {
+        let without_standard = generate_replay_runtime(ReplayRuntimeOptions::default());
+        assert!(!without_standard.contains("aver.standard.Time/native"));
+        assert!(!without_standard.contains("aver.standard.Random/native"));
 
-        let with_time = generate_replay_runtime(ReplayRuntimeOptions {
-            has_time_capability: true,
+        let with_standard = generate_replay_runtime(ReplayRuntimeOptions {
+            standard_capabilities: vec!["Random".to_string(), "Time".to_string()],
             ..ReplayRuntimeOptions::default()
         });
-        assert!(with_time.contains("aver.standard.Time/native"));
-        assert!(with_time.contains("contract_hash"));
-        assert!(with_time.contains("model_hash"));
+        assert!(with_standard.contains("aver.standard.Time/native"));
+        assert!(with_standard.contains("aver.standard.Random/native"));
+        assert!(with_standard.contains("contract_hash"));
+        assert!(with_standard.contains("model_hash"));
     }
 
     #[test]

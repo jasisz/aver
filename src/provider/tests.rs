@@ -838,45 +838,65 @@ fn normal(path: BranchPath, call: Int) -> Int
 }
 
 #[test]
-fn target_manifest_is_total_and_canonical_time_is_provided_everywhere() {
+fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() {
     let empty =
         CapabilityTargetManifest::build(&CapabilityRegistry::default(), &Default::default())
             .expect("empty manifest");
     assert!(empty.rows().is_empty());
 
     let registry = crate::stdlib::standard_capability_registry();
-    let contract = registry.contract("Time").expect("Time contract");
-    let required = ["Time.now".to_string()].into_iter().collect();
+    let required = ["Random.int".to_string(), "Time.now".to_string()]
+        .into_iter()
+        .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 4);
-    for (target, identity) in [
-        (CapabilityTarget::Vm, "aver.standard.Time/native"),
-        (CapabilityTarget::Rust, "aver.standard.Time/native"),
+    assert_eq!(manifest.rows().len(), 8);
+    for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
         (
-            CapabilityTarget::WasmGc,
-            "aver.standard.Time/wasm-gc-imports",
+            "Random",
+            &["Random.float", "Random.int"][..],
+            "Random.int",
+            "aver.standard.Random/native",
+            "aver.standard.Random/wasm-gc-imports",
+            "aver.standard.Random/wasip2-wasi",
+            aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
         ),
-        (CapabilityTarget::Wasip2, "aver.standard.Time/wasip2-wasi"),
+        (
+            "Time",
+            &["Time.now", "Time.sleep", "Time.unixMs"][..],
+            "Time.now",
+            "aver.standard.Time/native",
+            "aver.standard.Time/wasm-gc-imports",
+            "aver.standard.Time/wasip2-wasi",
+            aver_rt::provider::STANDARD_TIME_FINGERPRINT,
+        ),
     ] {
-        let row = manifest.for_target(target).next().expect("target row");
-        let TargetBindingStatus::Provided(provider) = &row.status else {
-            panic!("Time must be provided on {target}");
-        };
-        assert_eq!(provider.identity, identity);
-        assert_eq!(
-            provider.fingerprint,
-            aver_rt::provider::STANDARD_TIME_FINGERPRINT
-        );
-        assert_eq!(row.contract_hash, contract.contract_hash);
-        assert_eq!(row.model_hash, contract.model_hash);
-        assert_eq!(
-            row.declared_operations,
-            ["Time.now", "Time.sleep", "Time.unixMs"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        );
-        assert_eq!(row.required_operations, required);
+        let contract = registry.contract(capability).expect("standard contract");
+        for (target, identity) in [
+            (CapabilityTarget::Vm, native),
+            (CapabilityTarget::Rust, native),
+            (CapabilityTarget::WasmGc, wasm_gc),
+            (CapabilityTarget::Wasip2, wasip2),
+        ] {
+            let row = manifest
+                .for_target(target)
+                .find(|row| row.capability == capability)
+                .expect("target row");
+            let TargetBindingStatus::Provided(provider) = &row.status else {
+                panic!("{capability} must be provided on {target}");
+            };
+            assert_eq!(provider.identity, identity);
+            assert_eq!(provider.fingerprint, fingerprint);
+            assert_eq!(row.contract_hash, contract.contract_hash);
+            assert_eq!(row.model_hash, contract.model_hash);
+            assert_eq!(
+                row.declared_operations,
+                operations.iter().map(|name| (*name).to_string()).collect()
+            );
+            assert_eq!(
+                row.required_operations,
+                [required_operation.to_string()].into_iter().collect()
+            );
+        }
     }
     assert!(
         "unknown"
@@ -893,10 +913,24 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
 
     for target in CapabilityTarget::ALL {
         let provenance = super::shipped_target_provenance(target, &registry);
-        assert_eq!(provenance.len(), 1, "only Time is provided on {target}");
-        assert_eq!(provenance[0].capability, "Time");
+        assert_eq!(
+            provenance.len(),
+            2,
+            "both standards are provided on {target}"
+        );
+        assert_eq!(
+            provenance
+                .iter()
+                .map(|entry| entry.capability.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Random", "Time"]
+        );
         assert_eq!(
             provenance[0].fingerprint,
+            aver_rt::provider::STANDARD_RANDOM_FINGERPRINT
+        );
+        assert_eq!(
+            provenance[1].fingerprint,
             aver_rt::provider::STANDARD_TIME_FINGERPRINT
         );
     }

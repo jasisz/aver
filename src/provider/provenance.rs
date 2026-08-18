@@ -114,7 +114,7 @@ impl ProviderRegistry {
                 continue;
             };
             let provenance = by_capability.get(operation.module.as_str()).copied();
-            if provenance.is_none() && operation.module != "Time" {
+            if provenance.is_none() && !crate::stdlib::is_standard_capability(&operation.module) {
                 return Err(format!(
                     "legacy replay event '{}' has no capability contract/model provenance; refusing to guess",
                     operation.canonical_name

@@ -223,10 +223,12 @@ fn identifier_encoding_is_injective_for_lookalike_source_names() {
 }
 
 #[test]
-fn canonical_standard_time_uses_its_existing_wasi_binding() {
+fn canonical_standard_capabilities_use_their_existing_wasi_bindings() {
     let registry = crate::stdlib::standard_capability_registry();
-    let required = ["Time.now".to_string()].into_iter().collect();
-    let plan = CapabilityWitPlan::build(&registry, &required).expect("standard Time plan");
+    let required = ["Random.int".to_string(), "Time.now".to_string()]
+        .into_iter()
+        .collect();
+    let plan = CapabilityWitPlan::build(&registry, &required).expect("standard capability plan");
     assert!(plan.interfaces().is_empty());
 }
 

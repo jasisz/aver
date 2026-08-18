@@ -28,6 +28,10 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/time.av",
             source: include_str!("../stdlib/capabilities/time.av"),
         }),
+        "Random" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/random.av",
+            source: include_str!("../stdlib/capabilities/random.av"),
+        }),
         _ => None,
     }
 }
@@ -35,7 +39,7 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// Provider-backed standard capability modules. Operation identities and
 /// semantics are derived from their embedded Aver contracts rather than
 /// repeated in a Rust table.
-pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Time"];
+pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Random", "Time"];
 
 /// Builtins whose signatures cross nominal record types owned by embedded
 /// standard modules, paired with the modules those types live in.
@@ -110,7 +114,8 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
 /// Parse the standard capability contracts shipped by the compiler.
 ///
 /// They are globally reserved and automatically visible; callers do not need
-/// a `depends [Time]` merely to use the built-in standard capability.
+/// a `depends [Time]` or `depends [Random]` merely to use a built-in standard
+/// capability.
 pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
     STANDARD_CAPABILITY_MODULES
         .iter()
@@ -187,7 +192,7 @@ pub(crate) fn append_required_standard_capability_modules(
 /// Hostile profile source declared by a standard capability operation.
 /// Returns `(diagnostic_label, declared_fn_name, source_fn)` in declaration
 /// order so the legacy verify injector can consume the canonical module model
-/// without carrying a second hand-written Time table.
+/// without carrying a second hand-written semantic table.
 pub(crate) fn standard_hostile_profiles(method: &str) -> Vec<(&'static str, String, String)> {
     type ProfileSource = (&'static str, String, String);
     static PROFILES: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<ProfileSource>>> =
@@ -314,13 +319,23 @@ mod tests {
     }
 
     #[test]
-    fn time_calls_implicitly_load_the_reserved_standard_contract() {
+    fn standard_capability_calls_implicitly_load_reserved_contracts() {
         let items = parse(
             "module ClockUser\n    effects [Time.now]\n\nfn stamp() -> String\n    ! [Time.now]\n    Time.now()\n",
         );
         assert_eq!(implicit_stdlib_deps(&items), vec!["Time"]);
         let embedded = find("Time").expect("reserved Time module");
         assert_eq!(embedded.virtual_path, "<aver-stdlib>/capabilities/time.av");
+
+        let items = parse(
+            "module DiceUser\n    effects [Random.int]\n\nfn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Random"]);
+        let embedded = find("Random").expect("reserved Random module");
+        assert_eq!(
+            embedded.virtual_path,
+            "<aver-stdlib>/capabilities/random.av"
+        );
     }
 
     #[test]
@@ -351,6 +366,31 @@ mod tests {
         assert_eq!(
             standard_hostile_profile_label("Time.unixMs", "Time.unixMsNormal"),
             Some("normal")
+        );
+    }
+
+    #[test]
+    fn standard_random_contract_model_and_profiles_are_stable() {
+        let registry = standard_capability_registry();
+        let contract = registry.contract("Random").expect("Random contract");
+        assert_eq!(
+            contract.contract_hash,
+            "sha256:d5d224fdf600e70776a570c5fb11781b4ca0e5260196860f477b355676c80197"
+        );
+        assert_eq!(
+            contract.model_hash,
+            "sha256:100e21ef3da57eeed31149c82704a77f125811f3da90a376ab9484bd41fba9c4"
+        );
+        assert_eq!(
+            standard_hostile_profiles("Random.int")
+                .into_iter()
+                .map(|(label, _, _)| label)
+                .collect::<Vec<_>>(),
+            vec!["midrange", "always_min", "always_max", "alternating"]
+        );
+        assert_eq!(
+            standard_hostile_profile_label("Random.float", "Random.floatAlwaysOne"),
+            Some("always_one")
         );
     }
 }
