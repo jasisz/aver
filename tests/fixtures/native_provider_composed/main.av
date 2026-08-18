@@ -12,9 +12,19 @@ fn sample() -> Result<Shapes.Bundle, String>
     ? "Call the real provider through the installed process registry."
     Shapes.echo(fixtureBundle())
 
+verify sample
+    sample() => Result.Ok(fixtureBundle())
+
+verify sample
+    given echo: Shapes.echo = [stubEcho]
+    sample() => Result.Err("verify-local stub")
+
 fn sampleAfterStub() -> Result<Shapes.Bundle, String>
     ? "Call the real provider after a verify-local override has been removed."
     sample()
+
+verify sampleAfterStub
+    sampleAfterStub() => Result.Ok(fixtureBundle())
 
 fn stubEcho(value: Shapes.Bundle) -> Result<Shapes.Bundle, String>
     ? "Replace exactly Shapes.echo for one verify world."
@@ -27,6 +37,9 @@ fn sharedRegistryWorks() -> Bool
         (Result.Ok(_), Result.Ok(_)) -> true
         _ -> false
 
+verify sharedRegistryWorks
+    sharedRegistryWorks() => true
+
 fn expectFirstArg() -> Result<Unit, String>
     ? "Require the program argument used by the provider-host boundary test."
     ! [Args.get]
@@ -35,19 +48,6 @@ fn expectFirstArg() -> Result<Unit, String>
             "host-boundary" -> Result.Ok(Unit)
             _ -> Result.Err("wrong first program argument")
         [] -> Result.Err("program arguments were lost")
-
-verify sample
-    sample() => Result.Ok(fixtureBundle())
-
-verify sample
-    given echo: Shapes.echo = [stubEcho]
-    sample() => Result.Err("verify-local stub")
-
-verify sampleAfterStub
-    sampleAfterStub() => Result.Ok(fixtureBundle())
-
-verify sharedRegistryWorks
-    sharedRegistryWorks() => true
 
 fn main() -> Result<Unit, String>
     ? "Prove direct and independent branch VMs share the one installed binding."

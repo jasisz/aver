@@ -770,9 +770,19 @@ fn configure_verify_capabilities(
     capabilities: &crate::capability::CapabilityRegistry,
     provider_bindings: &[crate::provider::ProviderBinding],
 ) -> Result<(), String> {
+    // A cached host is composed once for a project-wide verify target, while
+    // each file is checked and executed as its own program. Keep the strict
+    // manifest validation in the host planner, but install only the subset
+    // whose contracts exist in this file. Otherwise an unrelated configured
+    // capability turns a valid independent module into an "unknown
+    // capability" setup failure.
+    let applicable_bindings = provider_bindings
+        .iter()
+        .filter(|binding| capabilities.contract(binding.capability()).is_some())
+        .cloned();
     let providers = crate::provider::ProviderRegistry::for_program_with_bindings(
         capabilities.clone(),
-        provider_bindings.iter().cloned(),
+        applicable_bindings,
     )?;
     machine.set_provider_registry(std::sync::Arc::new(providers));
     machine.defer_missing_capability_providers_to_dispatch(true);
@@ -797,11 +807,29 @@ pub fn run_verify_for_items_vm_with_loaded(
 }
 
 pub fn run_verify_for_items_vm_with_loaded_and_mode(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    config: Option<ProjectConfig>,
+    source_file: &str,
+    mode: ExpansionMode,
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
+        items,
+        loaded,
+        config,
+        source_file,
+        mode,
+        &[],
+    )
+}
+
+pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
     mut items: Vec<TopLevel>,
     loaded: Vec<crate::source::LoadedModule>,
     config: Option<ProjectConfig>,
     source_file: &str,
     mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
@@ -861,7 +889,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
-    configure_verify_capabilities(&mut machine, &tc_result.capabilities, &[])?;
+    configure_verify_capabilities(&mut machine, &tc_result.capabilities, provider_bindings)?;
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }

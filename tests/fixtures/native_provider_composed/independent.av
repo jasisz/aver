@@ -1,0 +1,10 @@
+module Independent
+    intent = "Verify a module that does not depend on the configured Shapes capability."
+    exposes [identity]
+
+fn identity(value: Int) -> Int
+    ? "Return an integer unchanged."
+    value
+
+verify identity
+    identity(7) => 7

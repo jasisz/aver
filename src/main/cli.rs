@@ -319,6 +319,10 @@ pub(super) enum Commands {
         /// Forward `--hostile` to the verify step. See `aver verify --hostile`.
         #[arg(long)]
         hostile: bool,
+        /// Build/reuse the Rust provider host declared by `[providers]` and
+        /// use its bindings for the verify phase of the audit.
+        #[arg(long)]
+        providers: bool,
     },
     /// Format Aver source files
     Format {
@@ -863,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn run_and_verify_accept_provider_host_flag() {
+    fn run_verify_and_audit_accept_provider_host_flag() {
         let run = Cli::parse_from(["aver", "run", "app.av", "--providers"]);
         assert!(matches!(
             run.command,
@@ -877,6 +881,15 @@ mod tests {
         assert!(matches!(
             verify.command,
             Commands::Verify {
+                providers: true,
+                ..
+            }
+        ));
+
+        let audit = Cli::parse_from(["aver", "audit", ".", "--providers"]);
+        assert!(matches!(
+            audit.command,
+            Commands::Audit {
                 providers: true,
                 ..
             }

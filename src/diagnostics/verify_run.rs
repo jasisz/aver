@@ -46,16 +46,49 @@ pub fn run_verify_blocks_with_mode(
     source: &str,
     mode: ExpansionMode,
 ) -> (Vec<Diagnostic>, VerifySummary) {
+    run_verify_blocks_with_mode_and_bindings(items, base_dir, file_label, source, mode, &[])
+}
+
+/// Verify with process-level provider bindings supplied by an embedding host.
+/// Bindings for capabilities outside this file's program are ignored by the
+/// VM runner, allowing one project host to verify multiple independent files.
+pub fn run_verify_blocks_with_mode_and_bindings(
+    items: Vec<TopLevel>,
+    base_dir: Option<&str>,
+    file_label: &str,
+    source: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> (Vec<Diagnostic>, VerifySummary) {
+    try_run_verify_blocks_with_mode_and_bindings(
+        items,
+        base_dir,
+        file_label,
+        source,
+        mode,
+        provider_bindings,
+    )
+    .unwrap_or_else(|_| (Vec::new(), VerifySummary { blocks: Vec::new() }))
+}
+
+pub fn try_run_verify_blocks_with_mode_and_bindings(
+    items: Vec<TopLevel>,
+    base_dir: Option<&str>,
+    file_label: &str,
+    source: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> Result<(Vec<Diagnostic>, VerifySummary), String> {
     let config = base_dir.and_then(load_project_config);
-    let results = match vm_verify::run_verify_for_items_vm_with_mode(
-        items, config, base_dir, file_label, mode,
-    ) {
-        Ok(r) => r,
-        Err(_) => {
-            return (Vec::new(), VerifySummary { blocks: Vec::new() });
-        }
-    };
-    map_results_to_diagnostics(results, file_label, source)
+    let results = vm_verify::run_verify_for_items_vm_with_mode_and_bindings(
+        items,
+        config,
+        base_dir,
+        file_label,
+        mode,
+        provider_bindings,
+    )?;
+    Ok(map_results_to_diagnostics(results, file_label, source))
 }
 
 /// Variant that accepts pre-loaded dependency modules (e.g. from the
@@ -82,15 +115,52 @@ pub fn run_verify_blocks_with_loaded_and_mode(
     source: &str,
     mode: ExpansionMode,
 ) -> (Vec<Diagnostic>, VerifySummary) {
-    let results = match vm_verify::run_verify_for_items_vm_with_loaded_and_mode(
-        items, loaded, None, file_label, mode,
-    ) {
-        Ok(r) => r,
-        Err(_) => {
-            return (Vec::new(), VerifySummary { blocks: Vec::new() });
-        }
-    };
-    map_results_to_diagnostics(results, file_label, source)
+    run_verify_blocks_with_loaded_and_mode_and_bindings(
+        items,
+        loaded,
+        file_label,
+        source,
+        mode,
+        &[],
+    )
+}
+
+pub fn run_verify_blocks_with_loaded_and_mode_and_bindings(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    file_label: &str,
+    source: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> (Vec<Diagnostic>, VerifySummary) {
+    try_run_verify_blocks_with_loaded_and_mode_and_bindings(
+        items,
+        loaded,
+        file_label,
+        source,
+        mode,
+        provider_bindings,
+    )
+    .unwrap_or_else(|_| (Vec::new(), VerifySummary { blocks: Vec::new() }))
+}
+
+pub fn try_run_verify_blocks_with_loaded_and_mode_and_bindings(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    file_label: &str,
+    source: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> Result<(Vec<Diagnostic>, VerifySummary), String> {
+    let results = vm_verify::run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
+        items,
+        loaded,
+        None,
+        file_label,
+        mode,
+        provider_bindings,
+    )?;
+    Ok(map_results_to_diagnostics(results, file_label, source))
 }
 
 fn load_project_config(base_dir: &str) -> Option<crate::config::ProjectConfig> {

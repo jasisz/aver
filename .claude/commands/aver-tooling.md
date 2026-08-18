@@ -72,6 +72,8 @@ It is not a coverage tool.
 `--providers` runs configured pure providers in ordinary VM cases. An exact
 operation `given` remains a case-local override. The flag is explicit and
 mutually exclusive with `--wasm-gc`; plain verify never builds provider code.
+For file and directory targets, project bindings unrelated to a given file are
+ignored for that file instead of causing a skip or a fake type error.
 
 `--wasm-gc` (0.17.3+) executes the same cases via the wasm-gc backend instead of the VM — cross-target check that catches divergence between VM and wasm-gc codegen on equality. The host decodes a single Bool per case (wasm-gc lowers `==` per-type via eq_helpers natively). Failure diagnostics show the actual runtime value for primitive return types (Int/Float/Bool/String). Trace projections (`.trace.*`), classified-effect Oracle stubs (`given X: Time = stub`), and case bodies mentioning `BranchPath` are rejected upfront with a pointer back to VM verify — those features depend on namespace-value dispatch and runtime override that the wasm-gc backend doesn't have yet.
 
@@ -88,7 +90,8 @@ aver format examples --check
 ### Audit
 
 ```bash
-aver audit file-or-dir --module-root . --deps
+aver audit file-or-dir --module-root .
+aver audit file-or-dir --module-root . --providers
 ```
 
 `audit` is the single-shot CI gate that runs all three axes at once:
@@ -96,6 +99,10 @@ aver audit file-or-dir --module-root . --deps
 1. static checks (same diagnostics as `check`)
 2. `verify` execution (same as `verify`)
 3. `format --check` (structural compliance)
+
+`--providers` forwards the explicit project provider composition to the verify
+axis through the same cached Rust host as `aver verify --providers`. Static
+checks and formatting remain provider-neutral. Plain audit never invokes Cargo.
 
 Output is a flat list of `error[slug]:` / `warning[slug]:` lines plus a
 summary footer: `N files | X check errors | Y verify failures | Z format`.

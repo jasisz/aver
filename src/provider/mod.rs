@@ -26,6 +26,15 @@ pub use target::{
 
 pub type CapabilityResourceHandle = ProviderResourceHandle;
 
+/// Identify failures owned by host/provider composition rather than source
+/// type checking or a target backend. CLI front doors use this to keep batch
+/// skip summaries and audit diagnostics honest.
+pub fn is_provider_setup_error(error: &str) -> bool {
+    error.starts_with("error[capability-provider-")
+        || error.starts_with("provider binding ")
+        || error.starts_with("reserved standard capability ")
+}
+
 /// Shared, contract-checked provider set used by a VM and all of its parallel
 /// branch VMs.
 #[derive(Clone, Default)]

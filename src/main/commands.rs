@@ -1887,9 +1887,17 @@ fn run_check_for_file(
 /// pass. JSON mode emits one AnalysisReport bundle per file (diagnostics
 /// include check issues + verify failures + needs-format), trailing
 /// summary aggregates the three axes.
-pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool, hostile: bool) {
+pub(super) fn cmd_audit(
+    path: &str,
+    module_root_override: Option<&str>,
+    json: bool,
+    hostile: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
+) {
     use super::format_cmd::try_format_source;
-    use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
+    use aver::diagnostics::{
+        AnalyzeOptions, analyze_source_with_verify_provider_bindings, needs_format_diagnostic,
+    };
 
     let module_root = crate::cli_entry::shared::resolve_module_root(module_root_override);
     let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
@@ -1943,7 +1951,8 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         opts.module_base_dir = Some(module_root.clone());
         opts.include_verify_run = true;
         opts.verify_run_hostile = hostile;
-        let mut report = analyze_source(&source, &opts);
+        let mut report =
+            analyze_source_with_verify_provider_bindings(&source, &opts, provider_bindings);
 
         // Suppression runs before the format check on purpose: `needs-format`
         // still increments `total_format_needed` and still forces exit 1, so
@@ -1989,11 +1998,17 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
             .iter()
             .filter(|d| matches!(d.severity, aver::diagnostics::Severity::Error))
             .count();
-        let file_verify_failures = report
-            .verify_summary
-            .as_ref()
-            .map(|vs| vs.blocks.iter().map(|b| b.failed).sum::<usize>())
-            .unwrap_or(0);
+        let verify_setup_failures = report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.slug == "verify-provider-setup")
+            .count();
+        let file_verify_failures = verify_setup_failures
+            + report
+                .verify_summary
+                .as_ref()
+                .map(|vs| vs.blocks.iter().map(|b| b.failed).sum::<usize>())
+                .unwrap_or(0);
         total_check_errors += file_check_errors;
         total_verify_failures += file_verify_failures;
 
@@ -2713,6 +2728,7 @@ pub(super) fn cmd_verify(
     let mut failed_files = Vec::new();
     let mut skipped_typecheck: Vec<String> = Vec::new();
     let mut skipped_wasm_gc_backend: Vec<String> = Vec::new();
+    let mut skipped_provider_setup: Vec<String> = Vec::new();
     let mut printed_any = false;
 
     for file in &inputs {
@@ -2748,10 +2764,13 @@ pub(super) fn cmd_verify(
                 // NOT a source type error — `aver check` passes on such
                 // files, so pointing the user there would be a dead end.
                 // Backend errors carry a `wasm-gc` / `verify --wasm-gc`
-                // prefix (see `diagnostics::wasm_gc_verify`); everything
-                // else stays in the type-error bucket.
+                // prefix (see `diagnostics::wasm_gc_verify`). Provider
+                // registry setup has its own bucket; only remaining setup
+                // failures retain the historical type-error classification.
                 if e.starts_with("wasm-gc") || e.starts_with("verify --wasm-gc") {
                     skipped_wasm_gc_backend.push(display_check_path(file, &module_root));
+                } else if aver::provider::is_provider_setup_error(&e) {
+                    skipped_provider_setup.push(display_check_path(file, &module_root));
                 } else {
                     skipped_typecheck.push(display_check_path(file, &module_root));
                 }
@@ -2796,6 +2815,21 @@ pub(super) fn cmd_verify(
             "{}",
             "hint: `aver verify` (VM) runs these blocks without the wasm-gc backend".dimmed()
         );
+    }
+
+    if !skipped_provider_setup.is_empty() && !json {
+        println!();
+        println!(
+            "{}",
+            format!(
+                "{} file(s) skipped — provider composition error (the source type-checks; see the message above):",
+                skipped_provider_setup.len()
+            )
+            .yellow()
+        );
+        for f in &skipped_provider_setup {
+            println!("  {}", f.dimmed());
+        }
     }
 
     // Summary
@@ -10679,6 +10713,26 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
+    }
+
+    #[test]
+    fn verify_setup_errors_distinguish_provider_composition_from_typechecking() {
+        for error in [
+            "provider binding names unknown capability 'Shapes'",
+            "error[capability-provider-mismatch]: wrong contract",
+            "reserved standard capability 'Time' has contract_hash wrong",
+        ] {
+            assert!(
+                aver::provider::is_provider_setup_error(error),
+                "provider error was mislabeled: {error}"
+            );
+        }
+        assert!(!aver::provider::is_provider_setup_error(
+            "error[7:3]: expected Int, got String"
+        ));
+        assert!(!aver::provider::is_provider_setup_error(
+            "wasm-gc compile failed"
+        ));
     }
 
     #[test]

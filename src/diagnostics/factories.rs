@@ -12,6 +12,31 @@ use super::model::{AnnotatedRegion, Diagnostic, Repair, Severity, Span, Underlin
 use crate::checker::{CheckFinding, VerifyLawContext};
 use crate::types::checker::TypeError;
 
+/// Provider composition failed before verify cases could execute. This is a
+/// runtime setup error, not a source type error; keeping the distinction in
+/// the canonical diagnostic prevents `audit` from silently passing or
+/// sending users to `aver check`.
+pub fn verify_provider_setup_diagnostic(file: &str, error: &str) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-provider-setup",
+        summary: format!("provider composition could not be installed for verify: {error}"),
+        span: Span {
+            file: file.to_string(),
+            line: 1,
+            col: 1,
+        },
+        fn_name: None,
+        intent: None,
+        fields: vec![("provider_error", error.to_string())],
+        conflict: None,
+        repair: Repair::default(),
+        regions: Vec::new(),
+        related: Vec::new(),
+        from_hostile: false,
+    }
+}
+
 /// Build a `Diagnostic` from a `TypeError` (from the typechecker).
 pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
     let (source, file) = match &te.origin {
