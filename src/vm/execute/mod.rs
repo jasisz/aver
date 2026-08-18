@@ -301,17 +301,13 @@ impl VM {
         self.runtime.set_allowed_effects(effects);
     }
 
-    /// Oracle v1: install the oracle-stub map for a verify-law case.
-    /// Maps classified effect method names (e.g. `"Random.int"`) to the
-    /// fn_id of an Aver stub function with signature
-    /// `(BranchPath, Int, orig_args...) -> T`. Counter resets to 0.
+    /// Install the operation/Oracle stub map for one expanded verify case.
+    /// Keys are canonical operation names; values are Aver fn ids.
     pub fn install_oracle_stubs(&mut self, stubs: std::collections::HashMap<String, u32>) {
         self.runtime.install_oracle_stubs(stubs);
     }
 
-    /// Clear the oracle-stub map and reset the counter. Always call this
-    /// at the end of the verify-law case so the next case (or normal
-    /// evaluation) doesn't see stale substitutions.
+    /// Clear verify-time operation stubs and reset the Oracle counter.
     pub fn clear_oracle_stubs(&mut self) {
         self.runtime.clear_oracle_stubs();
     }

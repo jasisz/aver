@@ -55,6 +55,28 @@ theorem pickOne_law_usesOracle :
 
 Named spec functions are still useful for larger laws. For the simple one-call case, keeping the oracle call inline is clearer.
 
+## Plain cases and capability stubs
+
+Cases-form `verify` can bind a provider operation without turning the case into a law or enabling trace projections:
+
+```aver
+fn publishedEmptyHash(input: List<Int>) -> String
+    ? "Stand in for the provider at one published vector."
+    "b472a266d0bd89c13706a4132ccfb16f7c3b9fcb"
+
+fn reported(input: List<Int>) -> String
+    ? "Call the host-provided hash seam."
+    Hash160.digest(input)
+
+verify reported
+    given hash: Hash160.digest = [publishedEmptyHash]
+    reported([]) => "b472a266d0bd89c13706a4132ccfb16f7c3b9fcb"
+```
+
+The `hash` alias does not have to appear in the assertion. For each expanded case, the selected function is installed in the VM's operation-stub map before the left side runs. A pure capability stub has exactly the declared operation signature; an effectful generative capability keeps the Oracle signature `(BranchPath, Int, args...) -> result`. Multiple functions in the domain produce separate cases.
+
+This binding is verify-local. It does not install a package, exercise the Rust provider implementation, or satisfy provider preflight for `aver run` and compiled artifacts. Provider cryptography still belongs in the provider's own tests; the Aver case checks the contract shape and the caller's behavior under an explicit result.
+
 ## Trace-aware cases
 
 Use cases-form `verify <fn> trace` when you want runtime assertions over the collected trace:

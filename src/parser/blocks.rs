@@ -444,20 +444,19 @@ impl Parser {
                     sample_guards,
                 }));
             } else {
-                // Oracle v1: trace-aware cases-form blocks may declare
-                // `given` clauses at the top (natural extension for
-                // oracles that the trace-aware impl needs). v0: given
-                // stubs are silently accepted at parse time and their
-                // bindings become case-local in the same way law-form
-                // handles them — no cartesian expansion yet, so if the
-                // stub list has >1 element we take the first for now.
+                // Cases-form blocks may declare `given` clauses at the
+                // top. Besides ordinary value domains, an operation-shaped
+                // annotation (`Hash160.digest`, `Random.int`) installs the
+                // selected Aver fn as that operation's verify-time stub.
+                // This works for plain result cases as well as trace cases;
+                // trace controls projections, not provider binding.
                 let mut cases_givens: Vec<crate::ast::VerifyGiven> = Vec::new();
                 let mut local_bindings: Vec<(String, Spanned<Expr>)> = Vec::new();
+                while self.current_ident_is("given") {
+                    cases_givens.push(self.parse_verify_given()?);
+                    self.skip_newlines();
+                }
                 if trace_mode {
-                    while self.current_ident_is("given") {
-                        cases_givens.push(self.parse_verify_given()?);
-                        self.skip_newlines();
-                    }
                     // Oracle v1: local bindings in verify-trace block —
                     // `expect = rnd(BranchPath.root, 0, 1, 6)`. Parsed as
                     // `name = expr` lines between `given` clauses and
@@ -574,17 +573,17 @@ impl Parser {
                         let len = Self::domain_len(&g.domain);
                         if len == 0 {
                             return Err(self.error(format!(
-                                "given '{}' has empty domain in verify trace block",
+                                "given '{}' has empty domain in cases-form verify block",
                                 g.name
                             )));
                         }
                         total = total.checked_mul(len).ok_or_else(|| {
-                            self.error("verify trace expands to too many cases".to_string())
+                            self.error("verify block expands to too many cases".to_string())
                         })?;
                     }
                     if total > Self::VERIFY_LAW_MAX_CASES {
                         return Err(self.error(format!(
-                            "verify trace expands to {} cases (max {})",
+                            "verify block expands to {} cases (max {})",
                             total,
                             Self::VERIFY_LAW_MAX_CASES
                         )));

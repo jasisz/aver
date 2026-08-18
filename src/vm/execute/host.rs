@@ -453,9 +453,8 @@ impl VM {
 
     /// Single dispatch door for provider-bound operations, shared by direct
     /// and independent-product calls. Operations are deliberately not values.
-    /// Until provider ABIs exist, only an
-    /// oracle stub, a replay record, or verify-time output suppression can
-    /// satisfy the call.
+    /// A live provider handles normal execution; verify may redirect through
+    /// a source stub, replay record, or output suppression first.
     pub(super) fn dispatch_capability_operation(
         &mut self,
         symbol_id: u32,
@@ -485,6 +484,13 @@ impl VM {
             .ensure_effects_allowed(&self.code.symbols, &name, required_effects)?;
 
         if let Some(stub_fn_id) = self.runtime.oracle_stub_for(&name) {
+            // A pure capability is a deterministic provider seam, not an
+            // effect Oracle. Its Aver stub has the operation's contract
+            // signature exactly, so dispatch forwards only the original
+            // arguments. Effectful operations retain Oracle coordinates.
+            if !capability.effectful {
+                return self.call_function(stub_fn_id, args);
+            }
             return self.dispatch_oracle_stub(stub_fn_id, args, capability.mints_resource);
         }
 

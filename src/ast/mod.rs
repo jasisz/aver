@@ -658,7 +658,8 @@ pub struct VerifyBlock {
     pub line: usize,
     pub cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
     pub case_spans: Vec<SourceSpan>,
-    /// Per-case given bindings for law verify (empty for Cases kind).
+    /// Per-case `given` bindings after domain expansion. Populated for
+    /// both law-form and cases-form verify blocks.
     pub case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
     /// Parallel to `cases`: `true` when the case was injected by
     /// `aver verify --hostile` (boundary-value expansion of a law's
@@ -692,11 +693,10 @@ pub struct VerifyBlock {
     /// adding a debug print does not break proofs that do not care
     /// about traces.
     pub trace: bool,
-    /// Oracle v1: `given` clauses declared at the top of a cases-form
-    /// trace block. Law-form stores its givens inside `VerifyKind::Law`;
-    /// cases-form doesn't have that wrapper, so this field carries them
-    /// so the verify runner can build oracle-stub mappings from the
-    /// same data. Empty for non-trace or law-form blocks.
+    /// `given` clauses declared at the top of a cases-form block. Law-form
+    /// stores its givens inside `VerifyKind::Law`; cases-form doesn't have
+    /// that wrapper, so this field carries them for value-domain expansion
+    /// and verify-time operation-stub mappings. Empty for law-form blocks.
     pub cases_givens: Vec<VerifyGiven>,
 }
 
