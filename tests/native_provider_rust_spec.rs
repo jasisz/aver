@@ -278,7 +278,8 @@ fn generated_rust_resources_survive_direct_calls_and_parallel_join() {
     fs::write(
         project.root.join("src/bin/vault_host.rs"),
         format!(
-            r#"use {generated_crate} as generated;
+            r#"use aver_rt::AverDisplay as _;
+use {generated_crate} as generated;
 
 fn main() {{
     generated::install_provider_bindings(vec![native_provider_fixture::vault_binding()])
@@ -288,6 +289,12 @@ fn main() {{
     let (left, right) = generated::aver_generated::entry::openPair();
     let left_token = left.expect("left token");
     let right_token = right.expect("right token");
+    let boxed = generated::aver_generated::entry::boxToken(&left_token);
+    let bagged = generated::aver_generated::entry::bagToken(&left_token);
+    assert_eq!(boxed, boxed.clone());
+    assert_eq!(bagged, bagged.clone());
+    assert_eq!(boxed.aver_display(), "TokenBox(token: Vault.Token(<opaque>))");
+    assert_eq!(bagged.aver_display(), "Stored(Vault.Token(<opaque>))");
     let left = generated::aver_generated::entry::consume(&left_token).expect("consume left token");
     let right = generated::aver_generated::entry::consume(&right_token).expect("consume right token");
     println!("{{direct}}:{{left}}:{{right}}");
