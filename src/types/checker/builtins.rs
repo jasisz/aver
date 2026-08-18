@@ -104,7 +104,7 @@ impl TypeChecker {
         // record fields above (`Map<String, List<String>>`).
         let header_list = header_map;
         let server_handler_effects = || {
-            vec![
+            let mut effects = vec![
                 "Args.get".to_string(),
                 "Console.print".to_string(),
                 "Console.error".to_string(),
@@ -137,9 +137,14 @@ impl TypeChecker {
                 "Tcp.close".to_string(),
                 "HttpServer.listen".to_string(),
                 "HttpServer.listenWith".to_string(),
-                "Random.int".to_string(),
-                "Random.float".to_string(),
-            ]
+            ];
+            effects.extend(
+                crate::stdlib::standard_capability_registry_ref()
+                    .operations()
+                    .filter(|operation| operation.is_effectful())
+                    .map(|operation| operation.canonical_name.clone()),
+            );
+            effects
         };
         let http_handler = || {
             Type::Fn(
@@ -335,13 +340,6 @@ impl TypeChecker {
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp.close"],
             ),
-            (
-                "Random.int",
-                &[Type::Int, Type::Int],
-                Type::Int,
-                &["Random.int"],
-            ),
-            ("Random.float", &[], Type::Float, &["Random.float"]),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

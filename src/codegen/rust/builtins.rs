@@ -169,10 +169,10 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0]
         )),
         "Random.int" => Some(format!(
-            "aver_rt::AverInt::from_i64(aver_rt::random::random_int(crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\")).unwrap())",
+            "aver_rt::provider::standard_random_int(&{}, &{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
             args[0], args[1]
         )),
-        "Random.float" => Some("aver_rt::random::random_float()".to_string()),
+        "Random.float" => Some("aver_rt::provider::standard_random_float()".to_string()),
         "Tcp.send" => Some(format!(
             "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
             args[0], args[1], args[2]
@@ -539,11 +539,11 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
 
         // ---- Random ----
         "Random.int" => Some(format!(
-            "aver_rt::AverInt::from_i64(aver_rt::random::random_int(crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\")).unwrap())",
+            "aver_rt::provider::standard_random_int(&{}, &{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
             a(0),
             a(1)
         )),
-        "Random.float" => Some("aver_rt::random::random_float()".to_string()),
+        "Random.float" => Some("aver_rt::provider::standard_random_float()".to_string()),
 
         // ---- Terminal ----
         "Terminal.enableRawMode" => {

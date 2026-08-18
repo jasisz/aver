@@ -358,3 +358,72 @@ impl CapabilityProvider for StandardTimeProvider {
         }
     }
 }
+
+/// Standard native Random provider shared by the bytecode VM and generated
+/// Rust artifacts. Target-specific wasm adapters bind the same source-owned
+/// contract to their existing host imports.
+#[cfg(feature = "random")]
+pub struct StandardRandomProvider;
+
+#[cfg(feature = "random")]
+pub const STANDARD_RANDOM_NATIVE_IDENTITY: &str = "aver.standard.Random/native";
+#[cfg(feature = "random")]
+pub const STANDARD_RANDOM_FINGERPRINT: &str = concat!("aver-rt/", env!("CARGO_PKG_VERSION"));
+
+#[cfg(feature = "random")]
+pub fn standard_random_int(min: &AverInt, max: &AverInt) -> Result<AverInt, ProviderFault> {
+    let min = min.to_i64().ok_or_else(|| {
+        ProviderFault::new(
+            "integer_out_of_range",
+            "Random.int: bounds must fit a 64-bit integer",
+        )
+    })?;
+    let max = max.to_i64().ok_or_else(|| {
+        ProviderFault::new(
+            "integer_out_of_range",
+            "Random.int: bounds must fit a 64-bit integer",
+        )
+    })?;
+    crate::random::random_int(min, max)
+        .map(AverInt::from_i64)
+        .map_err(|message| ProviderFault::new("invalid_range", message))
+}
+
+#[cfg(feature = "random")]
+pub fn standard_random_float() -> f64 {
+    crate::random::random_float()
+}
+
+#[cfg(feature = "random")]
+impl CapabilityProvider for StandardRandomProvider {
+    fn identity(&self) -> &str {
+        STANDARD_RANDOM_NATIVE_IDENTITY
+    }
+
+    fn fingerprint(&self) -> &str {
+        STANDARD_RANDOM_FINGERPRINT
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        match context.operation.as_str() {
+            "Random.int" => {
+                let [ProviderValue::Int(min), ProviderValue::Int(max)] = args else {
+                    return Err(ProviderFault::new(
+                        "invalid_arguments",
+                        format!("Random.int expects two Int arguments, got {}", args.len()),
+                    ));
+                };
+                standard_random_int(min, max).map(ProviderValue::Int)
+            }
+            "Random.float" if args.is_empty() => Ok(ProviderValue::Float(standard_random_float())),
+            operation => Err(ProviderFault::new(
+                "unknown_operation",
+                format!("standard Random provider cannot invoke '{operation}'"),
+            )),
+        }
+    }
+}

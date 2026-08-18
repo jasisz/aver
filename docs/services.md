@@ -406,7 +406,7 @@ remains right for line-oriented text.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 
-Source: `src/services/random.rs` (backed by `aver_rt::random`)
+Contract source: `stdlib/capabilities/random.av`. Native VM and generated Rust share the `aver-rt` Random provider; wasm-gc keeps the existing `aver.random_*` imports and wasip2 keeps its WASI random lowering. Signatures, Oracle classification, hostile profiles, replay semantics, and target accounting all derive from the same contract and model hashes.
 
 | Function | Signature | Notes |
 |---|---|---|

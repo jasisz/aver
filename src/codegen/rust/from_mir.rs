@@ -1506,7 +1506,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
     }
 }
 
-/// Emit one program-defined (or standard `Time`) capability call through the
+/// Emit one program-defined or standard capability call through the
 /// native provider registry generated for this Rust artifact.
 fn emit_mir_capability_call(
     operation: &crate::capability::CapabilityOperation,

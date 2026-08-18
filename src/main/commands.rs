@@ -1830,33 +1830,39 @@ fn run_check_for_file(
             // default `aver check` summary so the line stays focused on
             // diagnostics.
             println!("  {}", summary_parts.join(" | "));
-            if aver::stdlib::implicit_stdlib_deps(items)
-                .iter()
-                .any(|dep| dep == "Time")
-            {
-                let registry = aver::stdlib::standard_capability_registry();
-                let contract = registry.contract("Time").expect("standard Time contract");
+            let registry = aver::stdlib::standard_capability_registry();
+            let standard_dependencies = aver::stdlib::implicit_stdlib_deps(items)
+                .into_iter()
+                .filter(|dependency| registry.contract(dependency).is_some())
+                .collect::<std::collections::BTreeSet<_>>();
+            if !standard_dependencies.is_empty() {
                 let required =
                     aver::provider::required_capability_operations(items, &[], &registry);
                 let manifest =
                     aver::provider::CapabilityTargetManifest::build(&registry, &required)
-                        .expect("standard Time calls belong to the standard registry");
-                let provided = manifest
-                    .rows()
-                    .iter()
-                    .filter_map(|row| match &row.status {
-                        aver::provider::TargetBindingStatus::Provided(provider) => {
-                            Some(format!("{}:{}", row.target, provider.identity))
-                        }
-                        aver::provider::TargetBindingStatus::HostBound { .. }
-                        | aver::provider::TargetBindingStatus::Unsupported { .. } => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                println!(
-                    "  capability Time: contract_hash={} | model_hash={} | provided=[{}]",
-                    contract.contract_hash, contract.model_hash, provided
-                );
+                        .expect("standard capability calls belong to the standard registry");
+                for capability in standard_dependencies {
+                    let contract = registry
+                        .contract(&capability)
+                        .expect("standard capability contract");
+                    let provided = manifest
+                        .rows()
+                        .iter()
+                        .filter(|row| row.capability == capability)
+                        .filter_map(|row| match &row.status {
+                            aver::provider::TargetBindingStatus::Provided(provider) => {
+                                Some(format!("{}:{}", row.target, provider.identity))
+                            }
+                            aver::provider::TargetBindingStatus::HostBound { .. }
+                            | aver::provider::TargetBindingStatus::Unsupported { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!(
+                        "  capability {}: contract_hash={} | model_hash={} | provided=[{}]",
+                        capability, contract.contract_hash, contract.model_hash, provided
+                    );
+                }
             }
         }
 

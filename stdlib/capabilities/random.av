@@ -1,0 +1,46 @@
+module Random
+    kind = capability
+    semantics = effectful
+    exposes [int, float]
+
+operation int(min: Int, max: Int) -> Int
+    ? "Returns a random integer in the inclusive range from min to max."
+    oracle = generative
+    replay = recorded
+    hostile = [intMidrange, intAlwaysMin, intAlwaysMax, intAlternating]
+
+operation float() -> Float
+    ? "Returns a random floating-point value in the half-open range from zero to one."
+    oracle = generative
+    replay = recorded
+    hostile = [floatMidrange, floatAlwaysZero, floatAlwaysOne]
+
+fn intMidrange(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+    ? "Honest profile: every roll lands in the middle of the requested range."
+    Int.div(min + max, 2)
+
+fn intAlwaysMin(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+    ? "Hostile profile: every roll is stuck at the lower bound."
+    min
+
+fn intAlwaysMax(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+    ? "Hostile profile: every roll is stuck at the upper bound."
+    max
+
+fn intAlternating(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+    ? "Hostile profile: rolls alternate between both bounds."
+    match Int.mod(call, 2)
+        0 -> min
+        _ -> max
+
+fn floatMidrange(path: BranchPath, call: Int) -> Float
+    ? "Honest profile: every roll lands at the midpoint."
+    0.5
+
+fn floatAlwaysZero(path: BranchPath, call: Int) -> Float
+    ? "Hostile profile: every roll is exactly zero."
+    0.0
+
+fn floatAlwaysOne(path: BranchPath, call: Int) -> Float
+    ? "Hostile profile: every roll reaches the excluded upper boundary."
+    1.0

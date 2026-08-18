@@ -263,7 +263,12 @@ fn transpile_project(
                 has_http_types,
                 has_http_server_types,
                 embedded_independence_cancel,
-                has_time_capability: ctx.capabilities.contract("Time").is_some(),
+                standard_capabilities: ctx
+                    .capabilities
+                    .contracts()
+                    .filter(|contract| crate::stdlib::is_standard_capability(&contract.module))
+                    .map(|contract| contract.module.clone())
+                    .collect(),
                 has_provider_runtime,
                 capability_operations: ctx
                     .capabilities

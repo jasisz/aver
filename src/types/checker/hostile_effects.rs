@@ -139,67 +139,6 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
-        // ─── Generative ───────────────────────────────────────────────
-        "Random.int" => vec![
-            HostileProfile {
-                name: "midrange",
-                stub_fn_name: stub_name("midrange"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"honest: roll lands in the middle of the range\"\n    Int.div(min + max, 2)\n",
-                    stub_name("midrange")
-                ),
-            },
-            HostileProfile {
-                name: "always_min",
-                stub_fn_name: stub_name("always_min"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"hostile: stuck at lower bound\"\n    min\n",
-                    stub_name("always_min")
-                ),
-            },
-            HostileProfile {
-                name: "always_max",
-                stub_fn_name: stub_name("always_max"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"hostile: stuck at upper bound\"\n    max\n",
-                    stub_name("always_max")
-                ),
-            },
-            HostileProfile {
-                name: "alternating",
-                stub_fn_name: stub_name("alternating"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"hostile: alternates min/max — most-likely-fair-coin assumption broken\"\n    match Int.mod(n, 2)\n        0 -> min\n        _ -> max\n",
-                    stub_name("alternating")
-                ),
-            },
-        ],
-        "Random.float" => vec![
-            HostileProfile {
-                name: "midrange",
-                stub_fn_name: stub_name("midrange"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Float\n    ? \"honest: every roll lands at 0.5\"\n    0.5\n",
-                    stub_name("midrange")
-                ),
-            },
-            HostileProfile {
-                name: "always_zero",
-                stub_fn_name: stub_name("always_zero"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Float\n    ? \"hostile: every roll is exactly 0.0\"\n    0.0\n",
-                    stub_name("always_zero")
-                ),
-            },
-            HostileProfile {
-                name: "always_one",
-                stub_fn_name: stub_name("always_one"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Float\n    ? \"hostile: every roll is exactly 1.0\"\n    1.0\n",
-                    stub_name("always_one")
-                ),
-            },
-        ],
         "Disk.readText" => vec![
             HostileProfile {
                 name: "normal",

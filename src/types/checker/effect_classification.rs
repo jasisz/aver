@@ -122,18 +122,6 @@ fn classifications() -> &'static [EffectClassification] {
             },
             // Generative
             EffectClassification {
-                method: "Random.int",
-                dimension: EffectDimension::Generative,
-                params: vec![Type::Int, Type::Int],
-                ret: Type::Int,
-            },
-            EffectClassification {
-                method: "Random.float",
-                dimension: EffectDimension::Generative,
-                params: vec![],
-                ret: Type::Float,
-            },
-            EffectClassification {
                 method: "Disk.readText",
                 dimension: EffectDimension::Generative,
                 params: vec![Type::Str],

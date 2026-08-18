@@ -486,6 +486,29 @@ impl TypeChecker {
         fn_expr: &Spanned<Expr>,
         args: &[Spanned<Expr>],
     ) -> Option<Type> {
+        // `trace.contains(Capability.operation)` and
+        // `trace.count(Capability.operation)` use an operation reference as a
+        // method-name needle, not as a callable value. Capability operations
+        // remain non-first-class everywhere else. Recognize the pseudo-value
+        // only after the receiver proves this is a TraceNeedle accessor.
+        if args.len() == 1
+            && let Some(operation_name) = Self::callee_key(&args[0].node)
+            && let Some(operation) = self.capabilities.operation(&operation_name)
+            && operation.is_effectful()
+        {
+            let operation_type = Type::Fn(
+                operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                Box::new(operation.return_type.clone()),
+                vec![operation.canonical_name.clone()],
+            );
+            let accessor_type = self.infer_type(fn_expr);
+            if let Type::Fn(params, ret, _) = accessor_type
+                && matches!(params.as_slice(), [Type::Var(name)] if name == "TraceNeedle")
+            {
+                args[0].set_ty(operation_type);
+                return Some(*ret);
+            }
+        }
         let display_name = Self::callee_key(&fn_expr.node)?;
         match (display_name.as_str(), args.len()) {
             // Infer K/V from the key and value first, then push that concrete
