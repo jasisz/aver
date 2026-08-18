@@ -711,7 +711,8 @@ pub fn run_verify_for_items_vm_with_mode(
     // "assume allocates" branch (no per-fn `no_alloc` promotion).
     // Build the resolved-identity table + lift the items to resolved
     // HIR ourselves so the VM compiler stays on the Phase E contract.
-    let symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
+    let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
+    symbol_table.merge_capability_registry(&tc_result.capabilities);
     let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_modules(
         &resolved_items,
@@ -724,6 +725,7 @@ pub fn run_verify_for_items_vm_with_mode(
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
+    configure_verify_capabilities(&mut machine, &tc_result.capabilities)?;
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }
@@ -748,6 +750,16 @@ pub fn run_verify_for_items_vm_with_mode(
 /// surface as proper `VmError::StepLimit` instead of AFL hangs. The
 /// cap resets per `run_named_function`, so cases don't share budget.
 const VERIFY_VM_STEP_LIMIT: u64 = 1_000_000;
+
+fn configure_verify_capabilities(
+    machine: &mut vm::VM,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Result<(), String> {
+    let providers = crate::provider::ProviderRegistry::for_program(capabilities.clone())?;
+    machine.set_provider_registry(std::sync::Arc::new(providers));
+    machine.defer_missing_capability_providers_to_dispatch(true);
+    Ok(())
+}
 
 /// Variant for audit / LSP: accept pre-loaded dependency modules
 /// (virtual filesystems) instead of resolving from disk.
@@ -817,7 +829,8 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     // "missing VM symbol for exposed function" path that the disk path
     // hit before the fix.
     let dep_modules = crate::source::loaded_to_module_info(&loaded);
-    let symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
+    let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
+    symbol_table.merge_capability_registry(&tc_result.capabilities);
     let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_loaded_modules(
         &resolved_items,
@@ -830,6 +843,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
+    configure_verify_capabilities(&mut machine, &tc_result.capabilities)?;
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }
