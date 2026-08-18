@@ -43,6 +43,18 @@ pub(super) fn run_if_requested(
                 crate::provider_vm_host::ProviderHostBackend::Vm,
             )
         }
+        Commands::Audit {
+            path,
+            module_root,
+            providers: true,
+            ..
+        } => {
+            let module_root = super::shared::resolve_module_root(module_root.as_deref());
+            (
+                plan_for_verify(path, &module_root),
+                crate::provider_vm_host::ProviderHostBackend::Vm,
+            )
+        }
         _ => return None,
     };
     Some(composition.and_then(|composition| {
@@ -56,7 +68,7 @@ pub(super) fn plan_for_run(
     file: &str,
     module_root: &str,
 ) -> Result<rust_codegen::composition::ProviderComposition, String> {
-    plan_for_files(&[file.to_string()], module_root)
+    plan_for_files(&[file.to_string()], module_root, false)
 }
 
 pub(super) fn plan_for_verify(
@@ -64,12 +76,13 @@ pub(super) fn plan_for_verify(
     module_root: &str,
 ) -> Result<rust_codegen::composition::ProviderComposition, String> {
     let files = resolve_av_inputs(path)?;
-    plan_for_files(&files, module_root)
+    plan_for_files(&files, module_root, true)
 }
 
 fn plan_for_files(
     files: &[String],
     module_root: &str,
+    ignore_unreachable_bindings: bool,
 ) -> Result<rust_codegen::composition::ProviderComposition, String> {
     let config = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))?
         .ok_or_else(|| missing_manifest_error(module_root))?;
@@ -103,7 +116,24 @@ fn plan_for_files(
         capabilities.merge(tc.capabilities);
     }
 
-    rust_codegen::composition::plan(&capabilities, &required, Some(manifest))
+    if ignore_unreachable_bindings {
+        // `[providers]` describes the project, but verify targets may be one
+        // independent module or a subset of the tree. Select only bindings
+        // reachable from this target; strict unused/unknown validation remains
+        // unchanged for run and generated-Rust compilation.
+        let required_capabilities = required
+            .iter()
+            .filter_map(|operation| capabilities.operation(operation))
+            .map(|operation| operation.module.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut relevant_manifest = manifest.clone();
+        relevant_manifest
+            .bindings
+            .retain(|binding| required_capabilities.contains(binding.capability.as_str()));
+        rust_codegen::composition::plan(&capabilities, &required, Some(&relevant_manifest))
+    } else {
+        rust_codegen::composition::plan(&capabilities, &required, Some(manifest))
+    }
 }
 
 fn missing_manifest_error(module_root: &str) -> String {

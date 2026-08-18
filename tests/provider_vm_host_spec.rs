@@ -6,6 +6,7 @@ use std::process::{Command, Output};
 
 const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shapes.av");
 const MAIN_SOURCE: &str = include_str!("fixtures/native_provider_composed/main.av");
+const INDEPENDENT_SOURCE: &str = include_str!("fixtures/native_provider_composed/independent.av");
 const PROVIDER_SOURCE: &str = include_str!("fixtures/native_provider_host/src/lib.rs");
 
 fn aver_bin() -> &'static str {
@@ -48,6 +49,8 @@ fn write_app(root: &Path, provider_root: &Path) {
     fs::create_dir_all(root).expect("create app root");
     fs::write(root.join("Shapes.av"), SHAPES_SOURCE).expect("write capability fixture");
     fs::write(root.join("main.av"), MAIN_SOURCE).expect("write entry fixture");
+    fs::write(root.join("independent.av"), INDEPENDENT_SOURCE)
+        .expect("write independent verify fixture");
     fs::write(
         root.join("aver.toml"),
         provider_manifest(provider_root, "counted_shapes_binding"),
@@ -124,6 +127,114 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     let verify_report = report(&verify);
     assert!(verify_report.contains("4/4 cases passed"));
     assert!(!verify_report.contains("provider host"));
+
+    // A project-wide provider host carries the union of configured bindings,
+    // while each verify file has its own capability registry. A binding used
+    // by main.av must be ignored for independent.av, not mislabeled as a type
+    // error or used as a reason to skip that file.
+    let project_path = app.to_string_lossy().into_owned();
+    let module_root = app.to_string_lossy().into_owned();
+    let project_verify = run_aver(
+        &cache,
+        &[
+            "verify",
+            &project_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(
+        project_verify.status.success(),
+        "{}",
+        report(&project_verify)
+    );
+    let project_verify_report = report(&project_verify);
+    assert!(project_verify_report.contains("5/5 cases passed"));
+    assert!(!project_verify_report.contains("skipped — type errors"));
+    assert!(!project_verify_report.contains("unknown capability"));
+
+    let independent_path = app.join("independent.av").to_string_lossy().into_owned();
+    let independent_verify = run_aver(
+        &cache,
+        &[
+            "verify",
+            &independent_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(
+        independent_verify.status.success(),
+        "{}",
+        report(&independent_verify)
+    );
+    let independent_verify_report = report(&independent_verify);
+    assert!(independent_verify_report.contains("1/1 cases passed"));
+    assert!(!independent_verify_report.contains("unused provider binding"));
+    assert!(!independent_verify_report.contains("unknown capability"));
+
+    // Audit is the one-command project gate, so it must forward the same
+    // provider opt-in through its verify phase.
+    let project_audit = run_aver(
+        &cache,
+        &[
+            "audit",
+            &project_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(project_audit.status.success(), "{}", report(&project_audit));
+    let project_audit_report = report(&project_audit);
+    assert!(project_audit_report.contains("Audit: 3 files"));
+    assert!(project_audit_report.contains("verify identity"));
+
+    // A real provider setup failure is not a source type error, and audit
+    // must not swallow it into an empty verify summary.
+    fs::write(
+        app.join("aver.toml"),
+        provider_manifest(&provider, "mismatched_shapes_binding"),
+    )
+    .expect("select mismatched provider binding");
+    let mismatched_verify = run_aver(
+        &cache,
+        &[
+            "verify",
+            &project_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(!mismatched_verify.status.success());
+    let mismatched_verify_report = report(&mismatched_verify);
+    assert!(mismatched_verify_report.contains("skipped — provider composition error"));
+    assert!(!mismatched_verify_report.contains("skipped — type errors"));
+
+    let mismatched_audit = run_aver(
+        &cache,
+        &[
+            "audit",
+            &project_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(!mismatched_audit.status.success());
+    let mismatched_audit_report = report(&mismatched_audit);
+    assert!(mismatched_audit_report.contains("[verify-provider-setup]"));
+    assert!(mismatched_audit_report.contains("provider composition could not be installed"));
+    assert!(mismatched_audit_report.contains("0 check errors | 1 verify failures"));
+
+    fs::write(
+        app.join("aver.toml"),
+        provider_manifest(&provider, "counted_shapes_binding"),
+    )
+    .expect("restore valid provider binding");
 
     // CLI options, program args, recording, and provider provenance all cross
     // the host process boundary unchanged.

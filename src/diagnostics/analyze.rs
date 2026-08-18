@@ -5,6 +5,8 @@
 //! concerns (unused exposes, config suppression, dependency resolution)
 //! stay in CLI / LSP callers.
 
+#[cfg(feature = "runtime")]
+use super::factories::verify_provider_setup_diagnostic;
 use super::factories::{from_check_finding, from_type_error, unused_binding_diagnostic};
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::checker::{
@@ -125,7 +127,32 @@ impl AnalyzeOptions {
 ///
 /// Pipeline: parse → TCO → typecheck → collectors → canonical diagnostics.
 /// Returns all diagnostics encountered; does not stop at first error.
+#[cfg(feature = "runtime")]
 pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport {
+    analyze_source_impl(source, options, &[])
+}
+
+#[cfg(not(feature = "runtime"))]
+pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport {
+    analyze_source_impl(source, options)
+}
+
+/// Analyze source while installing explicit process-level bindings for the
+/// optional verify execution. Static collectors remain provider-neutral.
+#[cfg(feature = "runtime")]
+pub fn analyze_source_with_verify_provider_bindings(
+    source: &str,
+    options: &AnalyzeOptions,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> AnalysisReport {
+    analyze_source_impl(source, options, provider_bindings)
+}
+
+fn analyze_source_impl(
+    source: &str,
+    options: &AnalyzeOptions,
+    #[cfg(feature = "runtime")] provider_bindings: &[crate::provider::ProviderBinding],
+) -> AnalysisReport {
     let items = match parse_source(source) {
         Ok(items) => items,
         Err(e) => {
@@ -344,27 +371,40 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
         } else {
             crate::verify_law::expand::ExpansionMode::Declared
         };
-        let (verify_diags, verify_summary) = if let Some(loaded) = options.loaded_modules.clone() {
-            super::verify_run::run_verify_blocks_with_loaded_and_mode(
+        let verify_result = if let Some(loaded) = options.loaded_modules.clone() {
+            super::verify_run::try_run_verify_blocks_with_loaded_and_mode_and_bindings(
                 runnable_items,
                 loaded,
                 &options.file_label,
                 source,
                 mode,
+                provider_bindings,
             )
         } else {
-            super::verify_run::run_verify_blocks_with_mode(
+            super::verify_run::try_run_verify_blocks_with_mode_and_bindings(
                 runnable_items,
                 options.module_base_dir.as_deref(),
                 &options.file_label,
                 source,
                 mode,
+                provider_bindings,
             )
         };
-        for diag in verify_diags {
-            diagnostics.push(diag);
+        match verify_result {
+            Ok((verify_diags, verify_summary)) => {
+                diagnostics.extend(verify_diags);
+                Some(verify_summary)
+            }
+            Err(error) => {
+                if crate::provider::is_provider_setup_error(&error) {
+                    diagnostics.push(verify_provider_setup_diagnostic(
+                        &options.file_label,
+                        &error,
+                    ));
+                }
+                Some(super::model::VerifySummary { blocks: Vec::new() })
+            }
         }
-        Some(verify_summary)
     } else {
         None
     };

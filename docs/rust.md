@@ -129,6 +129,7 @@ a cached host:
 ```bash
 aver run app.av --module-root . --providers
 aver verify app.av --module-root . --providers
+aver audit . --module-root . --providers
 aver run app.av --module-root . --providers --wasip2
 ```
 
@@ -146,16 +147,20 @@ redirected with `AVER_PROVIDER_HOST_CACHE`.
 
 `aver verify --providers` may execute a configured pure provider in a normal
 case. An exact `given name: Capability.operation = [stub]` remains a
-case-local override and wins without mutating the process binding. `--providers`
-is opt-in: plain `run` / `verify` never invoke Cargo or execute provider package
-code, and a matching missing-provider diagnostic prints the exact command that
-enables it. On `run`, the flag conflicts with `--self-host` and bare
-`--wasm-gc`; it can be combined with `--wasip2`. On `verify`, it conflicts with
-`--wasm-gc`.
+case-local override and wins without mutating the process binding. A directory
+verify or audit composes the project host once, then installs only the subset
+of bindings whose capability contracts exist in each file. A single unrelated
+module likewise ignores project bindings it does not reach. This per-target
+projection applies only to verify: generated compilation and `run` keep strict
+unknown/unused binding validation. `--providers` is opt-in: plain `run`,
+`verify`, and `audit` never invoke Cargo or execute provider package code, and
+a matching missing-provider diagnostic prints the exact command that enables
+it. On `run`, the flag conflicts with `--self-host` and bare `--wasm-gc`; it can
+be combined with `--wasip2`. On `verify`, it conflicts with `--wasm-gc`.
 
-`aver compile` validates the manifest, emits the Cargo dependency and a typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the dependency when the generated project is built. The separate `--providers` run/verify workflow above is the only stock CLI path that builds provider code. The generated stock binary installs all configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
+`aver compile` validates the manifest, emits the Cargo dependency and a typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the dependency when the generated project is built. The separate `--providers` run/verify/audit workflow above is the only stock CLI path that builds provider code. The generated stock binary installs all configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
 
-Schema 1 requires exactly one of `version` or `path` per binding. Capability names and Cargo aliases must be unique. Once `[providers]` is present, every required custom capability needs one binding; unknown and unused entries are errors. Compiler defaults such as `Time` need no entry, but an explicit checked `Time` binding replaces the default. Provider runtime configuration and secrets stay in the provider's normal host environment, not in `aver.toml`.
+Schema 1 requires exactly one of `version` or `path` per binding. Capability names and Cargo aliases must be unique. Once `[providers]` is present, every required custom capability needs one binding; unknown and unused entries are errors for generated compilation and `run`. Verify/audit treat entries outside the selected file or directory as project bindings for another target and do not load them. Compiler defaults such as `Time` need no entry, but an explicit checked `Time` binding replaces the default. Provider runtime configuration and secrets stay in the provider's normal host environment, not in `aver.toml`.
 
 Without `[providers]`, compatibility stays unchanged: a custom-capability project remains host-bound, and its stock binary exits with `error[capability-provider-missing]`. Custom embedders can still add their own host binary and use the generated library API directly:
 

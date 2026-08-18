@@ -256,8 +256,15 @@ fn main_impl(
             module_root,
             json,
             hostile,
+            providers: _,
         } => {
-            commands::cmd_audit(path, module_root.as_deref(), *json, *hostile);
+            commands::cmd_audit(
+                path,
+                module_root.as_deref(),
+                *json,
+                *hostile,
+                provider_bindings,
+            );
         }
         Commands::Format { path, check, json } => {
             format_cmd::cmd_format(path, *check, *json);

@@ -301,13 +301,17 @@ an embedded VM. A versioned `[providers]` section in `aver.toml` can name an
 explicit Cargo package/path and zero-argument binding factory; `aver compile`
 then emits the dependency and stock-binary bootstrap, while Cargo performs
 package resolution during the generated build. The same manifest can be used
-without changing program backend: `aver run app.av --providers` and
-`aver verify app.av --providers` build/reuse a thin cached Rust host, then run
-the ordinary bytecode VM with those bindings in-process. For a WIT-lowerable
+without changing program backend: `aver run app.av --providers`,
+`aver verify app.av --providers`, and `aver audit . --providers` build/reuse a
+thin cached Rust host, then run the ordinary bytecode VM with those bindings
+in-process. Project-wide verify/audit installs only the bindings relevant to
+each file, so independent modules are still executed rather than mislabeled as
+type errors. For a WIT-lowerable
 contract, `aver run app.av --providers --wasip2` uses that same host package and
 binding behind the generated Component Model import. Plain `run` and `verify`
-never invoke Cargo. Without `[providers]`, generated artifacts remain host-bound
-and embedders can install bindings through the library API.
+never invoke Cargo; plain `audit` remains equally inert. Without `[providers]`,
+generated artifacts remain host-bound and embedders can install bindings
+through the library API.
 
 ### Self-hosted
 
