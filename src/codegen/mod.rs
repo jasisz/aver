@@ -26,7 +26,6 @@ pub mod recursion;
 #[cfg(feature = "runtime")]
 pub mod rust;
 pub mod scc;
-#[cfg(feature = "wasip2")]
 pub mod wasip2;
 #[cfg(feature = "wasm-compile")]
 pub mod wasm_gc;

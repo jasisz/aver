@@ -85,8 +85,15 @@ impl WasmGcLinkedView {
     /// Wasm-gc emits a single flattened module — `dep_modules` is
     /// empty by construction in [`SymbolTable::build`]; the
     /// flattened items carry every dep fn under prefixed names.
-    pub(super) fn build(items: &[TopLevel], fn_defs: &[&FnDef]) -> Result<Self, WasmGcError> {
-        let symbol_table = SymbolTable::build(items, &[]);
+    pub(super) fn build(
+        items: &[TopLevel],
+        fn_defs: &[&FnDef],
+        capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
+    ) -> Result<Self, WasmGcError> {
+        let mut symbol_table = SymbolTable::build(items, &[]);
+        if let Some(plan) = capability_wit_plan {
+            symbol_table.merge_capability_wit_plan(plan);
+        }
         let mut resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
         // Same current-module context every other resolution site uses
         // (`resolve_program`, the Rust and Dafny lifters, `CodegenContext`):

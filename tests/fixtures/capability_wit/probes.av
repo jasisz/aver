@@ -1,0 +1,16 @@
+module ProbeClient
+    depends [Probe]
+    exposes [main]
+    effects [Console.print]
+
+fn main() -> Unit
+    ? "Checks Bool, Float, and Unit across the custom WIT boundary."
+    ! [Console.print]
+    flipped = Probe.flip(false)
+    scaled = Probe.scale(1.25)
+    pinged = Probe.ping(Unit)
+    match flipped
+        true -> match scaled == 2.5
+            true -> Console.print("probe-ok")
+            false -> Console.print("float-bad")
+        false -> Console.print("bool-bad")

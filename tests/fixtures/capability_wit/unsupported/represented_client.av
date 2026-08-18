@@ -1,0 +1,7 @@
+module RepresentedClient
+    depends [Represented]
+    exposes [main]
+
+fn main() -> Unit
+    value = Represented.read()
+    Unit

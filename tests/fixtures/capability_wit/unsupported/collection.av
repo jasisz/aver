@@ -1,0 +1,7 @@
+module CollectionsClient
+    depends [Collections]
+    exposes [main]
+
+fn main() -> Unit
+    value = Collections.read()
+    Unit

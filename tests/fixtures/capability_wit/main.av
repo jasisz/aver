@@ -1,0 +1,9 @@
+module EchoClient
+    depends [Echo]
+    exposes [main]
+    effects [Echo.echo, Console.print]
+
+fn main() -> Unit
+    ? "Prints a string returned by a host-bound component capability."
+    ! [Echo.echo, Console.print]
+    Console.print(Echo.echo("hello from Aver"))

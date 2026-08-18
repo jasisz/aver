@@ -1,0 +1,7 @@
+module SecretsClient
+    depends [Secrets]
+    exposes [main]
+
+fn main() -> Unit
+    value = Secrets.read()
+    Unit

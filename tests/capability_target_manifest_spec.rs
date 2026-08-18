@@ -102,7 +102,7 @@ fn json_manifest_is_total_ordered_and_explicit() {
     );
     assert_eq!(
         row("Clock", "wasip2")["status"]["reason"]["code"],
-        "component-binding-not-composed"
+        "component-import-required"
     );
     assert_eq!(row("Time", "wasip2")["status"]["kind"], "provided");
     assert_eq!(
@@ -136,11 +136,22 @@ fn json_manifest_is_total_ordered_and_explicit() {
             row(capability, "wasm-gc")["status"]["reason"]["code"],
             "host-import-adapter-not-generated"
         );
-        assert_eq!(
-            row(capability, "wasip2")["status"]["reason"]["code"],
-            "component-binding-not-composed"
-        );
     }
+    assert_eq!(row("Clock", "wasip2")["status"]["kind"], "host-bound");
+    let probe_reason = &row("Probe", "wasip2")["status"]["reason"];
+    assert_eq!(probe_reason["code"], "wit-boundary-type-unsupported");
+    assert_eq!(probe_reason["capability"], "Probe");
+    assert_eq!(probe_reason["operation"], "Probe.read");
+    assert_eq!(probe_reason["position"], "result");
+    assert_eq!(probe_reason["averType"], "Int");
+    assert!(probe_reason.get("parameterIndex").is_none());
+
+    let vault_reason = &row("Vault", "wasip2")["status"]["reason"];
+    assert_eq!(vault_reason["code"], "wit-boundary-type-unsupported");
+    assert_eq!(vault_reason["capability"], "Vault");
+    assert_eq!(vault_reason["operation"], "Vault.open");
+    assert_eq!(vault_reason["position"], "result");
+    assert_eq!(vault_reason["averType"], "Result<Token, String>");
 }
 
 #[test]
@@ -161,6 +172,7 @@ fn human_manifest_names_every_binding_state() {
     assert!(text.contains("vm      host-bound[runtime-provider-required]"));
     assert!(text.contains("rust    unsupported[static-adapter-not-linked]"));
     assert!(text.contains("wasm-gc unsupported[host-import-adapter-not-generated]"));
+    assert!(text.contains("wasip2  host-bound[component-import-required]"));
     assert!(text.contains("Time"));
     assert!(text.contains("provided by aver.standard.Time/wasip2-wasi@"));
     assert!(text.contains("required operations: Clock.now"));

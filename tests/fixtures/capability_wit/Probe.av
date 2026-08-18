@@ -1,0 +1,10 @@
+module Probe
+    kind = capability
+    semantics = pure
+    exposes [flip, scale, ping]
+
+operation flip(value: Bool) -> Bool
+
+operation scale(value: Float) -> Float
+
+operation ping(marker: Unit) -> Unit

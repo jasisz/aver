@@ -445,6 +445,38 @@ impl SymbolTable {
         }
     }
 
+    /// Restore custom capability atoms in the wasm-gc post-flatten link
+    /// view. Capability modules intentionally contribute no function body,
+    /// so flattening removes their source declarations; the WIT plan carries
+    /// the exact selected complete contracts needed to classify those calls
+    /// as provider-bound builtins during the backend's fresh resolver pass.
+    #[cfg(feature = "wasm-compile")]
+    pub(crate) fn merge_capability_wit_plan(
+        &mut self,
+        plan: &crate::codegen::wasip2::CapabilityWitPlan,
+    ) {
+        for interface in plan.interfaces() {
+            self.capability_contract_hashes.insert(
+                interface.capability.clone(),
+                (
+                    interface.contract_hash.clone(),
+                    interface.model_hash.clone(),
+                ),
+            );
+            for operation in &interface.operations {
+                self.capability_operations.insert(
+                    operation.canonical_name.clone(),
+                    CapabilityOperationInfo {
+                        effectful: operation.effectful,
+                        oracle: None,
+                        replay: None,
+                        mints_resource: false,
+                    },
+                );
+            }
+        }
+    }
+
     /// Derived gate for the literal smart-constructor discharge.
     ///
     /// Lives on the symbol table because that is the single place where

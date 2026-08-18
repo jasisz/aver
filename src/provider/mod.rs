@@ -16,6 +16,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::capability::{CapabilityOperation, CapabilityRegistry};
 pub use aver_rt::provider::{
     CapabilityProvider, ProviderContext, ProviderFault, ProviderResource, ProviderValue,
 };
@@ -24,8 +25,6 @@ pub use target::{
     TargetBindingStatus, TargetProvider, UnsupportedReason, required_capability_operations,
     shipped_target_provenance,
 };
-
-use crate::capability::{CapabilityOperation, CapabilityRegistry};
 
 /// Opaque language-side reference to a provider-owned payload.
 #[derive(Clone, PartialEq, Eq, Hash)]

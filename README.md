@@ -279,6 +279,10 @@ Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers).
 pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`)
 was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
 [`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
+Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
+and `String` compile to typed wasip2 component imports. They are host-bound: an
+external Component Model host must provide the generated interface; the stock
+`aver run --wasip2` runner does not install custom providers.
 
 ### Native Rust
 

@@ -17,11 +17,61 @@
 use wasm_encoder::Instruction;
 
 use crate::ast::Spanned;
+use crate::codegen::wasip2::CapabilityWitType;
 use crate::ir::mir::MirExpr;
 
 use super::super::WasmGcError;
 use super::from_mir::emit_mir_expr;
 use super::{EmitCtx, SlotTable};
+
+/// Lower a custom capability call through its generated internal bridge.
+/// Unit arguments are still evaluated in source order but occupy no wasm
+/// value slot; every other phase-3a value is passed directly to the bridge.
+pub(super) fn emit_capability_call_wasip2(
+    func: &mut wasm_encoder::Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<bool, WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("custom capability call missing wasip2 lowering context".into())
+    })?;
+    let call = lowering.capability_calls.get(dotted).ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "custom capability `{dotted}` has no generated wasip2 bridge"
+        ))
+    })?;
+    if args.len() != call.params.len() {
+        return Err(WasmGcError::Validation(format!(
+            "custom capability `{dotted}` expects {} arguments, got {}",
+            call.params.len(),
+            args.len()
+        )));
+    }
+    for (argument, parameter) in args.iter().zip(&call.params) {
+        let produced = emit_mir_expr(func, argument, slots, ctx)?.ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "custom capability `{dotted}` argument p{} is not covered by MIR wasm-gc lowering",
+                parameter.index
+            ))
+        })?;
+        match (parameter.ty, produced) {
+            (CapabilityWitType::Unit, true) => {
+                func.instruction(&Instruction::Drop);
+            }
+            (CapabilityWitType::Unit, false) | (_, true) => {}
+            (_, false) => {
+                return Err(WasmGcError::Validation(format!(
+                    "custom capability `{dotted}` argument p{} produced no wasm value",
+                    parameter.index
+                )));
+            }
+        }
+    }
+    func.instruction(&Instruction::Call(call.helper_fn_idx));
+    Ok(call.result != CapabilityWitType::Unit)
+}
 
 /// `Int = ℤ`: emit an `Int` effect ARGUMENT and CHECKED-lower it from the
 /// `$AverInt` carrier to a raw i64 — the wasip2 effect lowerings (random

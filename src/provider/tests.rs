@@ -11,6 +11,7 @@ use super::{
     ProviderBinding, ProviderRegistry, TargetBindingStatus, UnsupportedReason,
 };
 use crate::capability::CapabilityRegistry;
+use crate::codegen::wasip2::{CapabilityWitTypePosition, CapabilityWitUnsupported};
 use crate::replay::{CapabilityProvenance, EffectRecord, JsonValue, RecordedOutcome};
 use crate::value::Value;
 
@@ -899,7 +900,7 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
 }
 
 #[test]
-fn custom_capability_is_host_bound_on_vm_and_explicitly_unsupported_elsewhere() {
+fn custom_capability_is_host_bound_on_vm_and_reports_each_unavailable_adapter() {
     let registry = contracts("Probe", PURE);
     let manifest = CapabilityTargetManifest::build(&registry, &Default::default())
         .expect("unused custom capability manifest");
@@ -927,7 +928,12 @@ fn custom_capability_is_host_bound_on_vm_and_explicitly_unsupported_elsewhere() 
         ),
         (
             CapabilityTarget::Wasip2,
-            UnsupportedReason::ComponentBindingNotComposed,
+            UnsupportedReason::WitBoundaryTypeUnsupported(CapabilityWitUnsupported {
+                capability: "Probe".to_string(),
+                operation: "Probe.read".to_string(),
+                position: CapabilityWitTypePosition::Result,
+                aver_type: "Result<Int, String>".to_string(),
+            }),
         ),
     ] {
         let row = manifest.for_target(target).next().expect("target row");
@@ -936,6 +942,35 @@ fn custom_capability_is_host_bound_on_vm_and_explicitly_unsupported_elsewhere() 
             TargetBindingStatus::Unsupported { reason: expected }
         );
     }
+}
+
+#[test]
+fn wit_lowerable_custom_capability_is_host_bound_on_wasip2() {
+    let registry = contracts(
+        "Echo",
+        "\
+module Echo
+    kind = capability
+    semantics = effectful
+    exposes [echo]
+
+operation echo(value: String) -> String
+    oracle = generative
+    replay = recorded
+",
+    );
+    let manifest = CapabilityTargetManifest::build(&registry, &Default::default())
+        .expect("lowerable custom capability manifest");
+    let row = manifest
+        .for_target(CapabilityTarget::Wasip2)
+        .next()
+        .expect("wasip2 row");
+    assert_eq!(
+        row.status,
+        TargetBindingStatus::HostBound {
+            reason: HostBindingReason::ComponentImportRequired,
+        }
+    );
 }
 
 #[test]

@@ -4,33 +4,34 @@
 //! `.component.wasm` we emit ships a sibling `.wit` whose contents
 //! are the human-readable view of the import / export surface.
 //!
-//! Phase 1.2a transitional: emits an empty world in the `aver:user`
-//! package. The wasm-gc core's `_start` and any internal exports
-//! become private to the component (not surfaced through the world).
-//! Phase 1.2b switches the body to `include wasi:cli/command@0.2.4;`
-//! once the wasm-gc backend exports a matching `wasi:cli/run`. The
-//! WASI WIT bundle that backs the include is already vendored under
-//! `wit/wasi-0.2.4/` and loaded by `wasi_bundle::push_wasi_packages`.
-//!
-//! WIT emission is by inline `format!` while the surface is small
-//! and template-shaped. Add `wit-encoder` (structured builder) only
-//! if per-effect imports beyond the standard WASI worlds need it.
+//! The package is emitted through `wit-encoder`. Fixed upstream WASI
+//! worlds and generated custom-capability interfaces therefore share
+//! one structured source of truth.
 
 use super::wrap::Wasip2World;
+use super::{CapabilityWitPlan, CapabilityWitType};
+use wit_encoder::{Include, Interface, Package, PackageName, Params, StandaloneFunc, Type, World};
 
 /// Emit the WIT source that pairs with the component bytes. The
 /// emitted source is also parsed by `wrap.rs` to build the
 /// `component-type:<world>` metadata custom section, so this is the
 /// single source of truth for what the component declares.
 ///
-/// Phase 1 keeps the world body empty: Aver's effects do not yet
-/// flow into WIT imports here. The wrap pipeline still validates
-/// end-to-end on the empty world (component is a valid WASI 0.2
-/// artifact, just with no public surface). Phase 1.2 turns this
-/// into a meaningful world declaration.
 pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
+    emit_world_wit_with_capabilities(world, needs_http, &CapabilityWitPlan::default())
+}
+
+/// Emit the selected WASI world plus every required custom-capability
+/// interface. A selected interface always contains its complete sorted
+/// contract; unused capabilities are absent from `capabilities` and
+/// therefore contribute no component import.
+pub fn emit_world_wit_with_capabilities(
+    world: Wasip2World,
+    needs_http: bool,
+    capabilities: &CapabilityWitPlan,
+) -> String {
     let local_name = world.local_name();
-    let (header_note, body) = match world {
+    let header_note = match world {
         // `wasi:cli/command` is the canonical CLI shape from the
         // upstream `wasi-0.2.4` bundle: every cli/io/clocks/random/
         // filesystem/sockets import that the imports-only world
@@ -50,14 +51,7 @@ pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
         // source of truth, no risk of drift between codegen and
         // world declaration.
         Wasip2World::CliCommand => {
-            let header =
-                "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.";
-            let body = if needs_http {
-                "  include wasi:cli/command@0.2.4;\n  \n  // Phase 2 / 0.19 — Http.* effects on `--target wasip2` lower\n  // directly to `wasi:http/outgoing-handler.handle` plus the\n  // future-incoming-response / incoming-response choreography.\n  // WASI 0.3 collapses this into native `future<T>` / `stream<u8>`\n  // types and three imports; a `Wasip3World` variant lands when\n  // the spec stabilises.\n  import wasi:http/outgoing-handler@0.2.4;".to_string()
-            } else {
-                "  include wasi:cli/command@0.2.4;".to_string()
-            };
-            (header, body)
+            "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world."
         }
         // Phase 3 / 0.19 — HttpServer.listen. Component exports
         // `wasi:http/incoming-handler.handle`, host (e.g.
@@ -66,11 +60,43 @@ pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
         // requirement plus every wasi:http/types / wasi:io/streams /
         // wasi:clocks import the request/response choreography
         // consumes — single declaration covers both directions.
-        Wasip2World::HttpProxy => (
-            "// Phase 3 / 0.19 — HttpServer.listen on `--target wasip2`.",
-            "  include wasi:http/proxy@0.2.4;".to_string(),
-        ),
+        Wasip2World::HttpProxy => "// Phase 3 / 0.19 — HttpServer.listen on `--target wasip2`.",
     };
+    let mut package = Package::new(PackageName::new("aver", "user", None));
+    for capability in capabilities.interfaces() {
+        let mut interface = Interface::new(capability.interface_name.clone());
+        interface.set_docs(Some(format!(
+            "Aver capability `{}`.\ncontract_hash: {}\nmodel_hash: {}",
+            capability.capability, capability.contract_hash, capability.model_hash
+        )));
+        for operation in &capability.operations {
+            let mut function = StandaloneFunc::new(operation.wit_name.clone(), false);
+            function.set_params(Params::from_iter(operation.params.iter().filter_map(
+                |parameter| wit_type(parameter.ty).map(|ty| (format!("p{}", parameter.index), ty)),
+            )));
+            function.set_result(wit_type(operation.result));
+            interface.function(function);
+        }
+        package.interface(interface);
+    }
+
+    let mut generated_world = World::new(local_name);
+    match world {
+        Wasip2World::CliCommand => {
+            generated_world.include(Include::new("wasi:cli/command@0.2.4"));
+            if needs_http {
+                generated_world.named_interface_import("wasi:http/outgoing-handler@0.2.4");
+            }
+        }
+        Wasip2World::HttpProxy => {
+            generated_world.include(Include::new("wasi:http/proxy@0.2.4"));
+        }
+    }
+    for capability in capabilities.interfaces() {
+        generated_world.named_interface_import(capability.interface_name.clone());
+    }
+    package.world(generated_world);
+
     format!(
         "// Generated by `aver compile --target wasip2`.\n\
          // Direct WIT lowering: this is the source of truth for the\n\
@@ -79,9 +105,166 @@ pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
          // module. See docs/wasip2.md for the contract.\n\
          //\n\
          {header_note}\n\n\
-         package aver:user;\n\n\
-         world {local_name} {{\n\
-         {body}\n\
-         }}\n"
+         {package}"
     )
+}
+
+fn wit_type(ty: CapabilityWitType) -> Option<Type> {
+    match ty {
+        CapabilityWitType::Unit => None,
+        CapabilityWitType::Bool => Some(Type::Bool),
+        CapabilityWitType::F64 => Some(Type::F64),
+        CapabilityWitType::String => Some(Type::String),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use crate::capability::CapabilityRegistry;
+
+    const ECHO: &str = "\
+module Echo
+    kind = capability
+    semantics = effectful
+    exposes [echo, healthy]
+
+operation healthy() -> Bool
+    oracle = generative
+    replay = recorded
+
+operation echo(value: String) -> String
+    oracle = generative
+    replay = recorded
+";
+
+    fn registry(module: &str, source: &str) -> CapabilityRegistry {
+        let items = crate::source::parse_source(source).expect("parse capability");
+        let (registry, errors) = CapabilityRegistry::from_module(module, &items);
+        assert!(errors.is_empty(), "capability errors: {errors:?}");
+        registry
+    }
+
+    fn plan(registry: &CapabilityRegistry, required: &[&str]) -> CapabilityWitPlan {
+        CapabilityWitPlan::build(
+            registry,
+            &required
+                .iter()
+                .map(|operation| (*operation).to_string())
+                .collect::<BTreeSet<_>>(),
+        )
+        .expect("WIT plan")
+    }
+
+    #[test]
+    fn zero_contracts_emit_only_the_selected_wasi_world() {
+        let wit = emit_world_wit_with_capabilities(
+            Wasip2World::CliCommand,
+            false,
+            &CapabilityWitPlan::default(),
+        );
+        assert_eq!(wit, emit_world_wit(Wasip2World::CliCommand, false));
+        assert!(!wit.contains("interface cap-"));
+        assert!(!wit.contains("import cap-"));
+    }
+
+    #[test]
+    fn one_contract_has_a_byte_exact_golden_wit_surface() {
+        let registry = registry("Echo", ECHO);
+        let wit = emit_world_wit_with_capabilities(
+            Wasip2World::CliCommand,
+            false,
+            &plan(&registry, &["Echo.echo"]),
+        );
+        assert_eq!(
+            wit,
+            concat!(
+                "// Generated by `aver compile --target wasip2`.\n",
+                "// Direct WIT lowering: this is the source of truth for the\n",
+                "// component's import / export surface. Component metadata is\n",
+                "// encoded from this same WIT and embedded into the core\n",
+                "// module. See docs/wasip2.md for the contract.\n",
+                "//\n",
+                "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.\n",
+                "\n",
+                "package aver:user;\n",
+                "\n",
+                "/// Aver capability `Echo`.\n",
+                "/// contract_hash: sha256:36832abf9ae258a8d018106da7ea75b15618c40d9f45a1959ab5d59e59358586\n",
+                "/// model_hash: sha256:93a06eb209016f719dc7c4783cd016ea1807b3d621f1f265efdbbd50b6bccce9\n",
+                "interface cap-n4563686f-c36832abf9ae258a8d018106da7ea75b15618c40d9f45a1959ab5d59e59358586 {\n",
+                "  op-n6563686f: func(p0: string) -> string;\n",
+                "  op-n6865616c746879: func() -> bool;\n",
+                "}\n",
+                "\n",
+                "world command {\n",
+                "  include wasi:cli/command@0.2.4;\n",
+                "  import cap-n4563686f-c36832abf9ae258a8d018106da7ea75b15618c40d9f45a1959ab5d59e59358586;\n",
+                "}\n",
+            )
+        );
+    }
+
+    #[test]
+    fn multiple_contracts_are_byte_deterministic_across_merge_order() {
+        let probe = "\
+module Probe
+    kind = capability
+    semantics = pure
+    exposes [flip]
+
+operation flip(value: Bool) -> Bool
+";
+        let mut first = registry("Echo", ECHO);
+        first.merge(registry("Probe", probe));
+        let mut second = registry("Probe", probe);
+        second.merge(registry("Echo", ECHO));
+
+        let first = emit_world_wit_with_capabilities(
+            Wasip2World::CliCommand,
+            false,
+            &plan(&first, &["Probe.flip", "Echo.echo"]),
+        );
+        let second = emit_world_wit_with_capabilities(
+            Wasip2World::CliCommand,
+            false,
+            &plan(&second, &["Echo.echo", "Probe.flip"]),
+        );
+        assert_eq!(first, second);
+        assert!(first.find("cap-n4563686f-") < first.find("cap-n50726f6265-"));
+    }
+
+    #[test]
+    fn parameter_rename_and_declaration_reorder_keep_wit_bytes_identical() {
+        let reordered = "\
+module Echo
+    kind = capability
+    semantics = effectful
+    exposes [healthy, echo]
+
+operation echo(payload: String) -> String
+    replay = recorded
+    oracle = generative
+
+operation healthy() -> Bool
+    replay = recorded
+    oracle = generative
+";
+        let first = registry("Echo", ECHO);
+        let reordered = registry("Echo", reordered);
+        assert_eq!(
+            emit_world_wit_with_capabilities(
+                Wasip2World::CliCommand,
+                false,
+                &plan(&first, &["Echo.echo"]),
+            ),
+            emit_world_wit_with_capabilities(
+                Wasip2World::CliCommand,
+                false,
+                &plan(&reordered, &["Echo.echo"]),
+            )
+        );
+    }
 }
