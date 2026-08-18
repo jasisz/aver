@@ -247,6 +247,17 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Show the target-total capability binding manifest
+    Capabilities {
+        /// Aver entry file
+        file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
+        /// Emit the versioned deterministic manifest as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Run all verify blocks
     Verify {
         /// Aver file or directory

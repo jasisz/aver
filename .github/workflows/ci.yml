@@ -172,7 +172,7 @@ jobs:
         run: cargo test -p aver-lang --lib --features wasm,wasip2
 
       - name: Capability provider target canaries
-        run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec
+        run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec --test capability_target_manifest_spec
 
       - name: Test wasm-gc suites
         # Run the wasm-gc integration surface explicitly under `wasm`, not

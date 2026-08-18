@@ -6,7 +6,10 @@ use aver_rt::provider::{
     CapabilityProvider, ProviderContext, ProviderFault, ProviderResource, ProviderValue,
 };
 
-use super::{CapabilityResourceHandle, ProviderBinding, ProviderRegistry};
+use super::{
+    CapabilityResourceHandle, CapabilityTarget, CapabilityTargetManifest, HostBindingReason,
+    ProviderBinding, ProviderRegistry, TargetBindingStatus, UnsupportedReason,
+};
 use crate::capability::CapabilityRegistry;
 use crate::replay::{CapabilityProvenance, EffectRecord, JsonValue, RecordedOutcome};
 use crate::value::Value;
@@ -831,24 +834,148 @@ fn normal(path: BranchPath, call: Int) -> Int
 }
 
 #[test]
-fn canonical_time_is_the_only_binding_shipped_on_every_artifact_target() {
+fn target_manifest_is_total_and_canonical_time_is_provided_everywhere() {
+    let empty =
+        CapabilityTargetManifest::build(&CapabilityRegistry::default(), &Default::default())
+            .expect("empty manifest");
+    assert!(empty.rows().is_empty());
+
     let registry = crate::stdlib::standard_capability_registry();
     let contract = registry.contract("Time").expect("Time contract");
+    let required = ["Time.now".to_string()].into_iter().collect();
+    let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
+    assert_eq!(manifest.rows().len(), 4);
     for (target, identity) in [
-        ("vm", "aver.standard.Time/native"),
-        ("rust", "aver.standard.Time/rust-static"),
-        ("wasm-gc", "aver.standard.Time/wasm-gc-imports"),
-        ("wasip2", "aver.standard.Time/wasip2-wasi"),
+        (CapabilityTarget::Vm, "aver.standard.Time/native"),
+        (CapabilityTarget::Rust, "aver.standard.Time/rust-static"),
+        (
+            CapabilityTarget::WasmGc,
+            "aver.standard.Time/wasm-gc-imports",
+        ),
+        (CapabilityTarget::Wasip2, "aver.standard.Time/wasip2-wasi"),
     ] {
-        let rows = super::shipped_target_bindings(target, &registry);
-        assert_eq!(rows.len(), 1, "{target}");
-        let row = &rows[0];
-        assert_eq!(row.provider, identity);
+        let row = manifest.for_target(target).next().expect("target row");
+        let TargetBindingStatus::Provided(provider) = &row.status else {
+            panic!("Time must be provided on {target}");
+        };
+        assert_eq!(provider.identity, identity);
+        assert_eq!(
+            provider.fingerprint,
+            aver_rt::provider::STANDARD_TIME_FINGERPRINT
+        );
         assert_eq!(row.contract_hash, contract.contract_hash);
         assert_eq!(row.model_hash, contract.model_hash);
-        assert_eq!(row.operations.len(), 3);
+        assert_eq!(
+            row.declared_operations,
+            ["Time.now", "Time.sleep", "Time.unixMs"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+        assert_eq!(row.required_operations, required);
     }
-    assert!(super::shipped_target_bindings("unknown", &registry).is_empty());
+    assert!(
+        "unknown"
+            .parse::<CapabilityTarget>()
+            .expect_err("unknown target")
+            .contains("error[capability-target-unknown]")
+    );
+}
+
+#[test]
+fn shipped_provenance_projects_only_provided_manifest_rows() {
+    let mut registry = crate::stdlib::standard_capability_registry();
+    registry.merge(contracts("Probe", PURE));
+
+    for target in CapabilityTarget::ALL {
+        let provenance = super::shipped_target_provenance(target, &registry);
+        assert_eq!(provenance.len(), 1, "only Time is provided on {target}");
+        assert_eq!(provenance[0].capability, "Time");
+        assert_eq!(
+            provenance[0].fingerprint,
+            aver_rt::provider::STANDARD_TIME_FINGERPRINT
+        );
+    }
+}
+
+#[test]
+fn custom_capability_is_host_bound_on_vm_and_explicitly_unsupported_elsewhere() {
+    let registry = contracts("Probe", PURE);
+    let manifest = CapabilityTargetManifest::build(&registry, &Default::default())
+        .expect("unused custom capability manifest");
+    assert_eq!(manifest.rows().len(), 4);
+    assert!(manifest.rows().iter().all(|row| !row.is_required()));
+
+    let vm = manifest
+        .for_target(CapabilityTarget::Vm)
+        .next()
+        .expect("VM row");
+    assert_eq!(
+        vm.status,
+        TargetBindingStatus::HostBound {
+            reason: HostBindingReason::RuntimeProviderRequired
+        }
+    );
+    for (target, expected) in [
+        (
+            CapabilityTarget::Rust,
+            UnsupportedReason::StaticAdapterNotLinked,
+        ),
+        (
+            CapabilityTarget::WasmGc,
+            UnsupportedReason::HostImportAdapterNotGenerated,
+        ),
+        (
+            CapabilityTarget::Wasip2,
+            UnsupportedReason::ComponentBindingNotComposed,
+        ),
+    ] {
+        let row = manifest.for_target(target).next().expect("target row");
+        assert_eq!(
+            row.status,
+            TargetBindingStatus::Unsupported { reason: expected }
+        );
+    }
+}
+
+#[test]
+fn wrapper_alias_and_independent_product_require_the_underlying_operation_once() {
+    let registry = contracts(
+        "Clock",
+        "\
+module Clock
+    kind = capability
+    semantics = effectful
+    exposes [now, tick]
+
+operation now() -> Result<Int, String>
+    oracle = generative
+    replay = recorded
+
+operation tick() -> Int
+    oracle = generative
+    replay = recorded
+",
+    );
+    let items = crate::source::parse_source(
+        "\
+module Client
+    depends [Clock]
+    exposes [main]
+
+fn wrapped() -> Result<Int, String>
+    ! [Clock.now]
+    Clock.now()
+
+fn main() -> Result<Tuple<Int, Int>, String>
+    ! [Clock.now]
+    alias = wrapped
+    (alias(), alias())?!
+",
+    )
+    .expect("parse wrapper/product program");
+    let required = super::required_capability_operations(&items, &[], &registry);
+    assert_eq!(required, ["Clock.now".to_string()].into_iter().collect());
 }
 
 #[test]

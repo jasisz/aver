@@ -64,6 +64,25 @@ aver check file-or-dir --module-root . --deps
 
 Warnings do not make `check` fail.
 
+### Capabilities
+
+```bash
+aver capabilities file.av --module-root .
+aver capabilities file.av --module-root . --json
+```
+
+`capabilities` prints the target-total binding manifest for every capability in
+the loaded dependency closure. Each contract has exactly one row for `vm`,
+`rust`, `wasm-gc`, and `wasip2`: `provided`, `host-bound`, or
+`unsupported(reason)`. Declared and actually required operation sets are shown
+separately, so an unused contract is auditable without blocking a target.
+
+Use `--json` for the deterministic `schemaVersion = 1` envelope consumed by
+tooling and future adapter planners. `capability-provider-missing` means a target
+can accept a binding but none was installed; `capability-target-unsupported`
+means that target has no adapter mechanism for the contract and carries a stable
+reason code.
+
 ### Verify
 
 ```bash

@@ -1,0 +1,8 @@
+module CapabilityManifestDemo
+    depends [Clock, Probe, Vault]
+    exposes [main]
+
+fn main() -> String
+    ! [Clock.now, Time.unixMs]
+    Time.unixMs()
+    Clock.now()

@@ -19,7 +19,11 @@ use std::sync::{Arc, Mutex};
 pub use aver_rt::provider::{
     CapabilityProvider, ProviderContext, ProviderFault, ProviderResource, ProviderValue,
 };
-pub use target::{TargetBindingInfo, shipped_target_bindings, shipped_target_provenance};
+pub use target::{
+    CapabilityTarget, CapabilityTargetManifest, CapabilityTargetRow, HostBindingReason,
+    TargetBindingStatus, TargetProvider, UnsupportedReason, required_capability_operations,
+    shipped_target_provenance,
+};
 
 use crate::capability::{CapabilityOperation, CapabilityRegistry};
 

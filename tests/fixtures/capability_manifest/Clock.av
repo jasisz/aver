@@ -1,0 +1,12 @@
+module Clock
+    kind = capability
+    semantics = effectful
+    exposes [now, tick]
+
+operation now() -> String
+    oracle = generative
+    replay = recorded
+
+operation tick() -> Int
+    oracle = generative
+    replay = recorded

@@ -122,7 +122,7 @@ fn build_component_bytes(
         return Err(super::shared::format_type_errors(&tc.errors));
     }
 
-    if let Some(error) = super::commands::capability_provider_rejection(
+    if let Some(error) = super::commands::capability_target_rejection(
         &items,
         &dep_modules,
         &result
@@ -130,7 +130,7 @@ fn build_component_bytes(
             .as_ref()
             .expect("wasip2 run pipeline requested typechecking")
             .capabilities,
-        "wasip2",
+        aver::provider::CapabilityTarget::Wasip2,
     ) {
         return Err(error);
     }

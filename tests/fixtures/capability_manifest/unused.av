@@ -1,0 +1,7 @@
+module CapabilityManifestUnused
+    depends [Probe, Vault]
+    exposes [main]
+
+fn main() -> Int
+    ! [Time.unixMs]
+    Time.unixMs()

@@ -618,9 +618,12 @@ fn main() -> Int
         "the Rust target emitted an artifact with an unbound provider:\n{text}"
     );
     assert!(
-        text.contains("error[capability-provider-missing]")
+        text.contains("error[capability-target-unsupported]")
             && text.contains("target `rust`")
-            && text.contains("Clock.now (sha256:"),
+            && text.contains("reason[static-adapter-not-linked]")
+            && text.contains("required operations: Clock.now")
+            && text.contains("contract_hash: sha256:")
+            && text.contains("model_hash: sha256:"),
         "compiled-target rejection must name the target, operation, and contract identity:\n{text}"
     );
 
@@ -648,9 +651,12 @@ fn main() -> Int
             "run --wasm-gc emitted an artifact with an unbound provider:\n{report}"
         );
         assert!(
-            report.contains("error[capability-provider-missing]")
+            report.contains("error[capability-target-unsupported]")
                 && report.contains("target `wasm-gc`")
-                && report.contains("Clock.now (sha256:"),
+                && report.contains("reason[host-import-adapter-not-generated]")
+                && report.contains("required operations: Clock.now")
+                && report.contains("contract_hash: sha256:")
+                && report.contains("model_hash: sha256:"),
             "the wasm-gc run shortcut must share the compile-time provider gate:\n{report}"
         );
     }
@@ -679,9 +685,12 @@ fn main() -> Int
             "run --wasip2 emitted a component with an unbound provider:\n{report}"
         );
         assert!(
-            report.contains("error[capability-provider-missing]")
+            report.contains("error[capability-target-unsupported]")
                 && report.contains("target `wasip2`")
-                && report.contains("Clock.now (sha256:"),
+                && report.contains("reason[component-binding-not-composed]")
+                && report.contains("required operations: Clock.now")
+                && report.contains("contract_hash: sha256:")
+                && report.contains("model_hash: sha256:"),
             "the wasip2 run shortcut must share the compile-time provider gate:\n{report}"
         );
     }

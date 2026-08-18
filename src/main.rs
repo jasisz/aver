@@ -1,5 +1,7 @@
 use clap::Parser as ClapParser;
 
+#[path = "main/capabilities_cmd.rs"]
+mod capabilities_cmd;
 #[path = "main/cert_delegate.rs"]
 mod cert_delegate;
 #[path = "main/cli.rs"]
@@ -173,6 +175,13 @@ fn main() {
             json,
         } => {
             commands::cmd_check(file, module_root.as_deref(), *deps, *verbose, *json);
+        }
+        Commands::Capabilities {
+            file,
+            module_root,
+            json,
+        } => {
+            capabilities_cmd::cmd_capabilities(file, module_root.as_deref(), *json);
         }
         Commands::Verify {
             file,
