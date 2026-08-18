@@ -196,31 +196,58 @@ impl Parser {
     /// Parse a `given` clause's type annotation.
     ///
     /// Accepts two forms:
-    /// - Regular type annotation (`Int`, `String`, `List<Int>`, `Tcp.Connection`).
-    /// - Effect-method reference (`Random.int`, `Console.print`) — lowercase
-    ///   second segment. Oracle v1 treats these as type-like annotations
-    ///   meaning "the oracle signature of this classified effect method".
-    ///   The typechecker resolves the method name to its lifted signature
-    ///   via `types::checker::effect_classification::oracle_signature`.
+    /// - Regular type annotation (`Int`, `List<Int>`, `Domain.Tcp.Connection`).
+    /// - Canonical operation reference (`Random.int`, `Sub.Probe.answer`) —
+    ///   one or more capitalized module segments followed by a lowercase
+    ///   operation. Oracle/capability verification treats these as type-like
+    ///   annotations whose callable signature comes from the active registry.
     fn parse_given_type_annotation(&mut self) -> Result<String, ParseError> {
-        // Look ahead for `Upper.lower` effect-method ref (`Random.int` etc.).
-        // `parse_type` expects uppercase on both sides of the dot, which
-        // is the right check for regular dotted types like `Tcp.Connection`
-        // but rejects classified effect methods.
-        if let TokenKind::Ident(head) = &self.current().kind
-            && head.chars().next().is_some_and(|c| c.is_uppercase())
-            && matches!(self.peek(1).kind, TokenKind::Dot)
-            && let TokenKind::Ident(tail) = &self.peek(2).kind
-            && tail.chars().next().is_some_and(|c| c.is_lowercase())
-        {
-            let head = head.clone();
-            let tail = tail.clone();
-            self.advance(); // head
-            self.advance(); // dot
-            self.advance(); // tail
-            return Ok(format!("{}.{}", head, tail));
+        if self.canonical_operation_annotation_ahead() {
+            return self.parse_qualified_ident();
         }
         self.parse_type()
+    }
+
+    /// Whether the annotation at the cursor has the unambiguous operation
+    /// shape `Upper(.Upper)*.lower` and ends immediately before `=`.
+    /// Looking through the complete path is essential: stopping after the
+    /// first pair makes `Sub.Probe.answer` look like the type `Sub.Probe` and
+    /// leaves `.answer` to become a misleading parse error.
+    fn canonical_operation_annotation_ahead(&self) -> bool {
+        let TokenKind::Ident(first) = &self.current().kind else {
+            return false;
+        };
+
+        let mut segment_count = 1usize;
+        let mut previous = first.as_str();
+        let mut module_segments_are_capitalized = true;
+        let mut cursor = self.pos;
+
+        while matches!(
+            self.tokens.get(cursor + 1).map(|token| &token.kind),
+            Some(TokenKind::Dot)
+        ) {
+            let Some(Token {
+                kind: TokenKind::Ident(next),
+                ..
+            }) = self.tokens.get(cursor + 2)
+            else {
+                return false;
+            };
+            module_segments_are_capitalized &=
+                previous.chars().next().is_some_and(|c| c.is_uppercase());
+            previous = next;
+            segment_count += 1;
+            cursor += 2;
+        }
+
+        segment_count >= 2
+            && module_segments_are_capitalized
+            && previous.chars().next().is_some_and(|c| c.is_lowercase())
+            && matches!(
+                self.tokens.get(cursor + 1).map(|token| &token.kind),
+                Some(TokenKind::Assign)
+            )
     }
 
     fn parse_verify_given(&mut self) -> Result<VerifyGiven, ParseError> {

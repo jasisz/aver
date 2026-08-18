@@ -63,6 +63,33 @@ fn main() -> Int
     unrelated(1)
 ";
 
+const NAMESPACED_PROBE_SOURCE: &str = "module Probe
+    intent = \"A pure capability below a module namespace.\"
+    kind = capability
+    semantics = pure
+    exposes [answer]
+
+operation answer(n: Int) -> Int
+    ? \"Return the provider's answer.\"
+";
+
+const NAMESPACED_STUBBED_MAIN_SOURCE: &str = "module Main
+    depends [Sub.Probe]
+    exposes [doubled]
+
+fn doubled(n: Int) -> Int
+    ? \"Double a namespaced capability result.\"
+    Sub.Probe.answer(n) * 2
+
+fn fixtureAnswer(n: Int) -> Int
+    ? \"Stand in for the namespaced provider.\"
+    n + 100
+
+verify doubled
+    given probe: Sub.Probe.answer = [fixtureAnswer]
+    doubled(2) => 204
+";
+
 fn aver_bin() -> &'static str {
     env!("CARGO_BIN_EXE_aver")
 }
@@ -109,6 +136,74 @@ fn plain_verify_case_can_bind_a_pure_capability_operation_to_an_aver_stub() {
     assert!(
         !report.contains("capability provider missing"),
         "verify-time stubbing must precede provider dispatch:\n{report}"
+    );
+}
+
+#[test]
+fn plain_verify_case_can_bind_a_namespaced_capability_by_its_canonical_path() {
+    let temp = tempfile::tempdir().expect("temporary module root");
+    fs::create_dir_all(temp.path().join("sub")).expect("create module namespace");
+    fs::write(temp.path().join("sub/probe.av"), NAMESPACED_PROBE_SOURCE)
+        .expect("write namespaced capability module");
+    fs::write(temp.path().join("main.av"), NAMESPACED_STUBBED_MAIN_SOURCE)
+        .expect("write namespaced capability consumer");
+
+    let output = Command::new(aver_bin())
+        .arg("verify")
+        .arg(temp.path().join("main.av"))
+        .arg("--module-root")
+        .arg(temp.path())
+        .output()
+        .expect("run aver verify");
+    assert!(
+        output.status.success(),
+        "the canonical namespaced operation must install its stub:\n{}",
+        command_report(&output)
+    );
+    let report = command_report(&output);
+    assert!(
+        report.contains("doubled") && report.contains("1/1"),
+        "the namespaced capability-backed case must pass:\n{report}"
+    );
+}
+
+#[test]
+fn unresolved_operation_given_fails_statically_with_the_canonical_path() {
+    let temp = tempfile::tempdir().expect("temporary module root");
+    fs::create_dir_all(temp.path().join("sub")).expect("create module namespace");
+    fs::write(temp.path().join("sub/probe.av"), NAMESPACED_PROBE_SOURCE)
+        .expect("write namespaced capability module");
+    let short_name = NAMESPACED_STUBBED_MAIN_SOURCE.replacen(
+        "given probe: Sub.Probe.answer",
+        "given probe: Probe.answer",
+        1,
+    );
+    fs::write(temp.path().join("main.av"), short_name)
+        .expect("write consumer with a near-miss given");
+
+    let output = Command::new(aver_bin())
+        .arg("verify")
+        .arg(temp.path().join("main.av"))
+        .arg("--module-root")
+        .arg(temp.path())
+        .output()
+        .expect("run aver verify");
+    assert!(
+        !output.status.success(),
+        "an unresolved operation-shaped given must fail before runtime:\n{}",
+        command_report(&output)
+    );
+    let report = command_report(&output);
+    assert!(
+        report.contains(
+            "given 'probe': unknown capability operation or classified effect 'Probe.answer'"
+        ) && report.contains("Did you mean the full canonical path 'Sub.Probe.answer'"),
+        "the diagnostic must resolve the short spelling to its canonical candidate:\n{report}"
+    );
+    assert!(
+        !report.contains("capability-provider-missing")
+            && !report.contains("capability provider missing"),
+        "the invalid binding must never reach provider dispatch:\n{report}"
     );
 }
 

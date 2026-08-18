@@ -35,6 +35,20 @@ impl TypeChecker {
         self.capabilities.operation(method).is_some() || self.classify_effect(method).is_some()
     }
 
+    /// Syntactic operation-reference shape accepted after `given name:`.
+    /// Keeping this independent from registry resolution lets checking reject
+    /// a typo/short name instead of reinterpreting it as a user-defined type.
+    fn verify_given_is_operation_reference(method: &str) -> bool {
+        let Some((module_path, operation)) = method.rsplit_once('.') else {
+            return false;
+        };
+        !module_path.is_empty()
+            && module_path
+                .split('.')
+                .all(|part| part.chars().next().is_some_and(|c| c.is_uppercase()))
+            && operation.chars().next().is_some_and(|c| c.is_lowercase())
+    }
+
     fn classify_effect(
         &self,
         method: &str,
@@ -63,6 +77,14 @@ impl TypeChecker {
                 }
                 // Output-only operations are rejected once for the whole
                 // block by the validation below. They have no local value.
+                continue;
+            }
+            if Self::verify_given_is_operation_reference(&given.type_name) {
+                // The block-level validation reports the unresolved canonical
+                // name once. Invalid recovery prevents a second misleading
+                // "named value is not callable" error when a law uses its
+                // alias in the assertion.
+                self.locals.insert(given.name.clone(), Type::Invalid);
                 continue;
             }
             match parse_type_str_strict(&given.type_name) {
@@ -377,6 +399,49 @@ impl TypeChecker {
                                 super::effect_classification::classified_effects_summary_with_registry(&self.capabilities),
                         ),
                     );
+                }
+                // An operation-shaped `given` must resolve exactly. Before
+                // this gate, `Probe.answer` could parse as a named type while
+                // the real operation was `Sub.Probe.answer`; verify then
+                // installed no stub and failed much later at provider dispatch.
+                {
+                    let givens: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> = match &vb.kind
+                    {
+                        crate::ast::VerifyKind::Law(law) => Box::new(law.givens.iter()),
+                        crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
+                    };
+                    for given in givens {
+                        if !Self::verify_given_is_operation_reference(&given.type_name)
+                            || self.verify_given_targets_operation(&given.type_name)
+                        {
+                            continue;
+                        }
+
+                        let suffix = format!(".{}", given.type_name);
+                        let mut candidates: Vec<&str> = self
+                            .capabilities
+                            .operations()
+                            .map(|operation| operation.canonical_name.as_str())
+                            .filter(|canonical| canonical.ends_with(&suffix))
+                            .collect();
+                        candidates.sort_unstable();
+                        let hint = match candidates.as_slice() {
+                            [only] => format!(" Did you mean the full canonical path '{only}'?"),
+                            [] => " Use the full canonical operation path shown by capability diagnostics."
+                                .to_string(),
+                            _ => format!(
+                                " Use one of the matching full canonical paths: {}.",
+                                candidates.join(", ")
+                            ),
+                        };
+                        self.error_at_line(
+                            vb.line,
+                            format!(
+                                "given '{}': unknown capability operation or classified effect '{}'.{}",
+                                given.name, given.type_name, hint
+                            ),
+                        );
+                    }
                 }
                 // Rejection 2b: duplicate operation-shaped `given`
                 // bindings. The runtime stub map has one slot per

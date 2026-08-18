@@ -1149,6 +1149,27 @@ verify hashed
 }
 
 #[test]
+fn verify_cases_accepts_a_canonical_namespaced_operation_given() {
+    let src = r#"
+verify doubled
+    given probe: Sub.Probe.answer = [fixtureAnswer]
+    doubled(2) => 204
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    assert_eq!(vb.cases_givens[0].type_name, "Sub.Probe.answer");
+
+    let rendered = aver::ast::unparse::unparse(&items).expect("unparse namespaced given");
+    let reparsed = parse(&rendered);
+    let TopLevel::Verify(round_trip) = &reparsed[0] else {
+        panic!("expected Verify after round trip");
+    };
+    assert_eq!(round_trip.cases_givens[0].type_name, "Sub.Probe.answer");
+}
+
+#[test]
 fn verify_cases_parses_trace_keyword() {
     // `verify fn trace` — cases form with trace-awareness enabled.
     let src = r#"
@@ -1195,11 +1216,11 @@ verify f law consistent
 
 #[test]
 fn verify_law_given_preserves_regular_type_annotations() {
-    // Sanity: Upper.Upper still works, lowercase-after-dot doesn't clobber
-    // the existing `given urlA: String = [...]` and dotted-type paths.
+    // Sanity: namespaced Upper.Upper paths remain types, while a lowercase
+    // final segment is reserved for canonical operation references.
     let src = r#"
 verify f law law1
-    given conn: Tcp.Connection = [stub]
+    given conn: Domain.Tcp.Connection = [stub]
     given s: String = ["hi"]
     f(conn, s) => f(conn, s)
 "#;
@@ -1210,7 +1231,7 @@ verify f law law1
     let VerifyKind::Law(law) = &vb.kind else {
         panic!("expected law verify");
     };
-    assert_eq!(law.givens[0].type_name, "Tcp.Connection");
+    assert_eq!(law.givens[0].type_name, "Domain.Tcp.Connection");
     assert_eq!(law.givens[1].type_name, "String");
 }
 

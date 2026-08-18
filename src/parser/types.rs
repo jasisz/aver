@@ -178,8 +178,10 @@ impl Parser {
             }
         };
 
-        // Dotted type name: e.g. Tcp.Connection
-        if self.check_exact(&TokenKind::Dot)
+        // Dotted type name: e.g. Tcp.Connection or Domain.Tcp.Connection.
+        // Every segment of a type path is capitalized; a lowercase final
+        // segment belongs to an operation reference parsed by the caller.
+        while self.check_exact(&TokenKind::Dot)
             && let Some(Token {
                 kind: TokenKind::Ident(next),
                 ..
