@@ -57,12 +57,14 @@ impl FromStr for CapabilityTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostBindingReason {
     RuntimeProviderRequired,
+    ComponentImportRequired,
 }
 
 impl HostBindingReason {
     pub const fn code(self) -> &'static str {
         match self {
             Self::RuntimeProviderRequired => "runtime-provider-required",
+            Self::ComponentImportRequired => "component-import-required",
         }
     }
 
@@ -71,37 +73,40 @@ impl HostBindingReason {
             Self::RuntimeProviderRequired => {
                 "the VM accepts this contract through an embedder-installed ProviderRegistry binding"
             }
+            Self::ComponentImportRequired => {
+                "the component imports this contract as WIT and requires the host to supply it"
+            }
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
     StaticAdapterNotLinked,
     HostImportAdapterNotGenerated,
-    ComponentBindingNotComposed,
+    WitBoundaryTypeUnsupported(crate::codegen::wasip2::CapabilityWitUnsupported),
 }
 
 impl UnsupportedReason {
-    pub const fn code(self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
             Self::StaticAdapterNotLinked => "static-adapter-not-linked",
             Self::HostImportAdapterNotGenerated => "host-import-adapter-not-generated",
-            Self::ComponentBindingNotComposed => "component-binding-not-composed",
+            Self::WitBoundaryTypeUnsupported(_) => "wit-boundary-type-unsupported",
         }
     }
 
-    pub const fn description(self) -> &'static str {
+    pub fn description(&self) -> String {
         match self {
             Self::StaticAdapterNotLinked => {
                 "generated Rust has no linked static adapter for this capability contract"
+                    .to_string()
             }
             Self::HostImportAdapterNotGenerated => {
                 "wasm-gc has no generated host-import adapter for this capability contract"
+                    .to_string()
             }
-            Self::ComponentBindingNotComposed => {
-                "no WIT binding or Component Model adapter is composed for this capability contract"
-            }
+            Self::WitBoundaryTypeUnsupported(detail) => detail.description(),
         }
     }
 }
@@ -188,7 +193,7 @@ impl CapabilityTargetManifest {
                     model_hash: contract.model_hash.clone(),
                     declared_operations: declared_operations.clone(),
                     required_operations: required_operations.clone(),
-                    status: binding_status(target, contract),
+                    status: binding_status(target, contract, contracts),
                 });
             }
         }
@@ -216,7 +221,11 @@ impl CapabilityTargetManifest {
     }
 }
 
-fn binding_status(target: CapabilityTarget, contract: &CapabilityContract) -> TargetBindingStatus {
+fn binding_status(
+    target: CapabilityTarget,
+    contract: &CapabilityContract,
+    contracts: &CapabilityRegistry,
+) -> TargetBindingStatus {
     if is_canonical_standard_time(contract) {
         let identity = match target {
             CapabilityTarget::Vm => "aver.standard.Time/native",
@@ -240,9 +249,16 @@ fn binding_status(target: CapabilityTarget, contract: &CapabilityContract) -> Ta
         CapabilityTarget::WasmGc => TargetBindingStatus::Unsupported {
             reason: UnsupportedReason::HostImportAdapterNotGenerated,
         },
-        CapabilityTarget::Wasip2 => TargetBindingStatus::Unsupported {
-            reason: UnsupportedReason::ComponentBindingNotComposed,
-        },
+        CapabilityTarget::Wasip2 => {
+            match crate::codegen::wasip2::CapabilityWitInterfacePlan::build(contracts, contract) {
+                Ok(_) => TargetBindingStatus::HostBound {
+                    reason: HostBindingReason::ComponentImportRequired,
+                },
+                Err(detail) => TargetBindingStatus::Unsupported {
+                    reason: UnsupportedReason::WitBoundaryTypeUnsupported(detail),
+                },
+            }
+        }
     }
 }
 

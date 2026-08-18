@@ -342,6 +342,9 @@ pub(super) struct EmitCtx<'a> {
 /// borrowed reference. Each `Option<...>` field is populated when
 /// at least one effect that needs it is registered.
 pub(super) struct Wasip2Lowering {
+    /// Program-defined capability operations lowered through generated
+    /// WIT imports. The key is the canonical Aver operation name.
+    pub(super) capability_calls: HashMap<String, CapabilityWitCallLowering>,
     // ── Phase 1.2b1.5: Console.{print, error, warn} ─────────────
     /// `wasi:cli/stdout.get-stdout` imported wasm fn idx.
     pub(super) get_stdout_fn_idx: Option<u32>,
@@ -560,6 +563,13 @@ pub(super) struct Wasip2Lowering {
     /// `Some(...)` when `tcp_pool_global` is.
     #[allow(dead_code)]
     pub(super) tcp_pool_type_idx: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct CapabilityWitCallLowering {
+    pub(super) helper_fn_idx: u32,
+    pub(super) params: Vec<crate::codegen::wasip2::CapabilityWitParameterPlan>,
+    pub(super) result: crate::codegen::wasip2::CapabilityWitType,
 }
 
 impl<'a> EmitCtx<'a> {

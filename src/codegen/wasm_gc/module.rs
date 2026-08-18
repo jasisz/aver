@@ -142,6 +142,7 @@ pub(super) fn emit_module_with(
     handler_name: Option<&str>,
     target: super::TargetMode,
     type_aliases: &HashMap<String, String>,
+    capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
 ) -> Result<
     (
         Vec<u8>,
@@ -158,7 +159,7 @@ pub(super) fn emit_module_with(
         })
         .collect();
 
-    let view = super::view::WasmGcLinkedView::build(items, &fn_defs)?;
+    let view = super::view::WasmGcLinkedView::build(items, &fn_defs, capability_wit_plan)?;
     let symbol_table = view.symbol_table;
     let resolved_fn_defs = view.resolved_fn_defs;
 
@@ -762,6 +763,14 @@ pub(super) fn emit_module_with(
     //    from `pending` to `wired`.
     let mut next_type_idx = registry.user_type_count;
     let mut wasip2_imports = super::wasip2_imports::Wasip2ImportRegistry::new();
+    let mut capability_imports =
+        super::wasip2_capability_imports::CapabilityImportRegistry::from_plan(
+            if matches!(target, super::TargetMode::Wasip2) {
+                capability_wit_plan
+            } else {
+                None
+            },
+        );
     match target {
         super::TargetMode::AverBridge => {
             effect_registry.assign_slots(&mut next_type_idx);
@@ -1137,8 +1146,15 @@ pub(super) fn emit_module_with(
                 let r = slot.results();
                 types.ty().function(p, r);
             }
+            capability_imports.assign_import_slots(
+                wasip2_imports.import_count(),
+                &mut next_type_idx,
+                &mut types,
+            );
         }
     }
+
+    let wasip2_import_count = wasip2_imports.import_count() + capability_imports.import_count();
 
     // 3) Entry-point type. Three shapes drive different exports:
     //    - AverBridge: `_start: () -> ()` — the JS host calls
@@ -1216,7 +1232,7 @@ pub(super) fn emit_module_with(
     //    drove the import-type emission above (per `target`).
     let import_count: u32 = match target {
         super::TargetMode::AverBridge => effect_registry.import_count(),
-        super::TargetMode::Wasip2 => wasip2_imports.import_count(),
+        super::TargetMode::Wasip2 => wasip2_import_count,
     };
 
     // ── Funcref table for first-class `Fn` values ──────────────────
@@ -1271,6 +1287,13 @@ pub(super) fn emit_module_with(
         registry.aint_umag_cmp_fn_idx =
             builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintUmagCmp);
     }
+
+    capability_imports.assign_helper_slots(
+        &registry,
+        &mut next_builtin_fn_idx,
+        &mut next_type_idx,
+        &mut types,
+    )?;
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).
     let mut map_helpers = MapHelperRegistry::default();
@@ -1413,7 +1436,7 @@ pub(super) fn emit_module_with(
     //     come in 1.3.2+. wit-component is happy to carry an
     //     unused export — host just never calls it.
     let cabi_realloc: Option<CabiReallocIndices> =
-        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_import_count > 0 {
             types.ty().function(
                 [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
                 [ValType::I32],
@@ -2193,7 +2216,7 @@ pub(super) fn emit_module_with(
             }
         }
         super::TargetMode::Wasip2 => {
-            if wasip2_imports.import_count() > 0 {
+            if wasip2_import_count > 0 {
                 let mut imports = ImportSection::new();
                 for slot in wasip2_imports.iter() {
                     let (module_, field) = slot.module_field_pair();
@@ -2202,6 +2225,7 @@ pub(super) fn emit_module_with(
                         .expect("just-assigned wasip2 import type idx");
                     imports.import(module_, field, EntityType::Function(type_idx));
                 }
+                capability_imports.emit_imports(&mut imports);
                 module.section(&imports);
             }
         }
@@ -2219,6 +2243,7 @@ pub(super) fn emit_module_with(
             .expect("just-assigned builtin type idx");
         funcs.function(type_idx);
     }
+    capability_imports.emit_function_section(&mut funcs);
     map_helpers.emit_function_section(&mut funcs);
     list_helpers.emit_function_section(&mut funcs);
     packed_sequence_helpers.emit_function_section(&mut funcs);
@@ -2354,7 +2379,7 @@ pub(super) fn emit_module_with(
     //   on wasip2 (no JS host calls them); they exist purely for
     //   internal wasm-side glue at effect call sites.
     let need_memory_for_wasip2 =
-        matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0;
+        matches!(target, super::TargetMode::Wasip2) && wasip2_import_count > 0;
     if bridge.is_some() || need_memory_for_wasip2 {
         let mut memories = wasm_encoder::MemorySection::new();
         memories.memory(wasm_encoder::MemoryType {
@@ -2383,7 +2408,7 @@ pub(super) fn emit_module_with(
     // too). Empty Aver programs hit neither and skip the section
     // entirely — no semantic change vs. Phase 1.2b1.3.
     let wasip2_globals: Option<Wasip2Globals> = if matches!(target, super::TargetMode::Wasip2)
-        && wasip2_imports.import_count() > 0
+        && wasip2_import_count > 0
     {
         let mut globals = wasm_encoder::GlobalSection::new();
         let mut next_global_idx: u32 = 0;
@@ -2574,7 +2599,7 @@ pub(super) fn emit_module_with(
     // `__rt_string_to_lm` has been allocated — the call site uses
     // it to marshal the Aver String into LM[0..len]).
     let wasip2_lowering: Option<super::body::Wasip2Lowering> =
-        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_import_count > 0 {
             use super::wasip2_imports::Wasip2ImportSlot;
             // Console.* needs both the bridge `__rt_string_to_lm`
             // helper and the resource-handle globals; clocks /
@@ -2582,6 +2607,7 @@ pub(super) fn emit_module_with(
             // their owning effects are registered, not as a
             // precondition for `Some(...)` on the whole struct.
             Some(super::body::Wasip2Lowering {
+                capability_calls: capability_imports.call_lowerings(),
                 get_stdout_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStdout),
                 get_stderr_fn_idx: wasip2_imports
@@ -3427,6 +3453,13 @@ pub(super) fn emit_module_with(
     // wasm fn indices come last. Bodies are stubs today (Unreachable);
     // real impls land in `builtins/` per phase 3c roadmap.
     builtin_registry.emit_helper_bodies(&mut codes, &registry)?;
+
+    capability_imports.emit_helper_bodies(
+        &mut codes,
+        bridge.as_ref().map(|bridge| bridge.to_lm_fn),
+        bridge.as_ref().map(|bridge| bridge.from_lm_fn),
+        cabi_realloc.as_ref().map(|realloc| realloc.fn_idx),
+    )?;
 
     // Map helper bodies (hash, eq, empty, set, get, len per
     // instantiation) — emitted last so their wasm fn indices line up

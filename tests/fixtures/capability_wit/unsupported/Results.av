@@ -1,0 +1,6 @@
+module Results
+    kind = capability
+    semantics = pure
+    exposes [read]
+
+operation read() -> Result<String, String>

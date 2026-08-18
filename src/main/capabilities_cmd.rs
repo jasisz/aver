@@ -52,13 +52,44 @@ fn capability_target_row_json(row: &aver::provider::CapabilityTargetRow) -> serd
                 "message": reason.description(),
             },
         }),
-        aver::provider::TargetBindingStatus::Unsupported { reason } => serde_json::json!({
-            "kind": "unsupported",
-            "reason": {
+        aver::provider::TargetBindingStatus::Unsupported { reason } => {
+            let mut detail = serde_json::json!({
                 "code": reason.code(),
                 "message": reason.description(),
-            },
-        }),
+            });
+            if let aver::provider::UnsupportedReason::WitBoundaryTypeUnsupported(boundary) = reason
+            {
+                let (position, parameter_index) = match boundary.position {
+                    aver::codegen::wasip2::CapabilityWitTypePosition::Parameter(index) => {
+                        ("parameter", Some(index))
+                    }
+                    aver::codegen::wasip2::CapabilityWitTypePosition::Result => ("result", None),
+                };
+                let object = detail
+                    .as_object_mut()
+                    .expect("capability reason detail is an object");
+                object.insert(
+                    "capability".to_string(),
+                    serde_json::json!(boundary.capability),
+                );
+                object.insert(
+                    "operation".to_string(),
+                    serde_json::json!(boundary.operation),
+                );
+                object.insert("position".to_string(), serde_json::json!(position));
+                if let Some(index) = parameter_index {
+                    object.insert("parameterIndex".to_string(), serde_json::json!(index));
+                }
+                object.insert(
+                    "averType".to_string(),
+                    serde_json::json!(boundary.aver_type),
+                );
+            }
+            serde_json::json!({
+                "kind": "unsupported",
+                "reason": detail,
+            })
+        }
     };
     serde_json::json!({
         "capability": row.capability,

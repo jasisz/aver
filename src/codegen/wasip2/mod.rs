@@ -29,23 +29,38 @@
 //! - `error.rs` — typed error enum, source-side diagnostics.
 //! - `wrap.rs` — `wit-component::ComponentEncoder` invocation. No
 //!   adapters: the core module already speaks canonical ABI.
-//! - `wit.rs` — WIT source emission via inline `format!` since the
-//!   world body is small and template-like. Switches to
-//!   `wit-encoder` (structured builder) only if per-effect imports
-//!   beyond the standard WASI worlds force it.
+//! - `plan.rs` — the feature-independent, typed custom-capability
+//!   transport plan shared by target accounting and code generation.
+//! - `wit.rs` — structured WIT package emission through `wit-encoder`.
+//!   Generated interfaces and embedded component metadata consume the
+//!   same plan rather than rediscovering one another.
 //! - `wasi_bundle.rs` — vendored WASI 0.2.4 WIT package set,
 //!   embedded via `include_str!` and pushed into the per-build
 //!   `Resolve` so the user world can `include wasi:cli/command;`.
 
+#[cfg(feature = "wasip2")]
 mod effect_check;
+#[cfg(feature = "wasip2")]
 mod error;
+mod plan;
+#[cfg(feature = "wasip2")]
 mod wasi_bundle;
+#[cfg(feature = "wasip2")]
 mod wit;
+#[cfg(feature = "wasip2")]
 mod wrap;
 
+#[cfg(feature = "wasip2")]
 pub use effect_check::{
     UnsupportedEffect, UnsupportedReason, check_supported_effects, render_errors,
 };
+#[cfg(feature = "wasip2")]
 pub use error::Wasip2Error;
-pub use wit::emit_world_wit;
-pub use wrap::{Wasip2World, compile_to_component};
+pub use plan::{
+    CapabilityWitInterfacePlan, CapabilityWitOperationPlan, CapabilityWitParameterPlan,
+    CapabilityWitPlan, CapabilityWitType, CapabilityWitTypePosition, CapabilityWitUnsupported,
+};
+#[cfg(feature = "wasip2")]
+pub use wit::{emit_world_wit, emit_world_wit_with_capabilities};
+#[cfg(feature = "wasip2")]
+pub use wrap::{Wasip2World, compile_to_component, compile_to_component_with_capabilities};

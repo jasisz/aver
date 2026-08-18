@@ -1,0 +1,7 @@
+module WideIntClient
+    depends [WideInt]
+    exposes [main]
+
+fn main() -> Unit
+    value = WideInt.read()
+    Unit

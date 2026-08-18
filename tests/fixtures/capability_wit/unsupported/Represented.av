@@ -1,0 +1,9 @@
+module Represented
+    kind = capability
+    semantics = pure
+    exposes [read]
+
+record Reply
+    value: String
+
+operation read() -> Reply

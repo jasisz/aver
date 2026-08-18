@@ -134,6 +134,37 @@ fn build_component_bytes(
     ) {
         return Err(error);
     }
+    let capabilities = &result
+        .typecheck
+        .as_ref()
+        .expect("wasip2 run pipeline requested typechecking")
+        .capabilities;
+    let required =
+        aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
+    let capability_wit_plan =
+        aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required).map_err(
+            |unsupported| {
+                format!(
+                    "error[wit-boundary-type-unsupported]: {}",
+                    unsupported.description()
+                )
+            },
+        )?;
+    if !capability_wit_plan.interfaces().is_empty() {
+        let mut error = String::from(
+            "error[capability-provider-missing]: the embedded wasip2 runner has no custom capability provider binding",
+        );
+        for interface in capability_wit_plan.interfaces() {
+            error.push_str(&format!(
+                "\n  capability: {}\n  contract_hash: {}\n  model_hash: {}",
+                interface.capability, interface.contract_hash, interface.model_hash
+            ));
+        }
+        error.push_str(
+            "\n  hint: compile with `--target wasip2` and install the generated component import in an external host",
+        );
+        return Err(error);
+    }
     let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     // `_and_reannotate`: a bare post-flatten re-resolve wipes
     // `aliased_slots`, and the wasm-gc in-place fast path then mutates
@@ -154,18 +185,21 @@ fn build_component_bytes(
         return Err(out);
     }
 
-    let core_bytes = wasm_gc::compile_to_wasm_gc_flattened(
+    let core_bytes = wasm_gc::compile_to_wasm_gc_flattened_with_capabilities(
         &items,
         result.analysis.as_ref(),
         None,
-        wasm_gc::TargetMode::Wasip2,
         &type_aliases,
+        &capability_wit_plan,
     )
     .map(|out| out.bytes)
     .map_err(|e| format!("wasm-gc lowering: {e}"))?;
-    let (component_bytes, _wit) =
-        wasip2_codegen::compile_to_component(&core_bytes, wasip2_codegen::Wasip2World::CliCommand)
-            .map_err(|e| format!("component wrap: {e}"))?;
+    let (component_bytes, _wit) = wasip2_codegen::compile_to_component_with_capabilities(
+        &core_bytes,
+        wasip2_codegen::Wasip2World::CliCommand,
+        &capability_wit_plan,
+    )
+    .map_err(|e| format!("component wrap: {e}"))?;
     Ok(component_bytes)
 }
 

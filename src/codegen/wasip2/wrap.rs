@@ -14,6 +14,7 @@
 use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
 use wit_parser::{Resolve, UnresolvedPackageGroup};
 
+use super::CapabilityWitPlan;
 use super::error::Wasip2Error;
 
 /// Which WIT world the component targets. Keep in sync with
@@ -71,6 +72,18 @@ pub fn compile_to_component(
     core_wasm: &[u8],
     world: Wasip2World,
 ) -> Result<(Vec<u8>, String), Wasip2Error> {
+    compile_to_component_with_capabilities(core_wasm, world, &CapabilityWitPlan::default())
+}
+
+/// Wrap a core module whose custom canonical imports were generated
+/// from `capabilities`. The same plan emits the sibling WIT and the
+/// embedded component metadata; neither surface is reconstructed by
+/// scanning the other.
+pub fn compile_to_component_with_capabilities(
+    core_wasm: &[u8],
+    world: Wasip2World,
+    capabilities: &CapabilityWitPlan,
+) -> Result<(Vec<u8>, String), Wasip2Error> {
     // Build a Resolve seeded with the bundled WASI 0.2.4 WIT
     // package set, then push the user package on top. Order matters:
     // the user world `include`s `wasi:cli/command` or
@@ -92,7 +105,7 @@ pub fn compile_to_component(
     // the CLI command path.
     let needs_http = core_imports_use_wasi_http(core_wasm);
 
-    let wit_source = super::wit::emit_world_wit(world, needs_http);
+    let wit_source = super::wit::emit_world_wit_with_capabilities(world, needs_http, capabilities);
 
     // Parse our generated WIT into the same `Resolve`. `parse` reads
     // from a string — the path argument is for error messages only,

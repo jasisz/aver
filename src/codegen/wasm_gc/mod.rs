@@ -71,6 +71,7 @@ mod types;
 pub(crate) use types::{OPTION_SOME_TAG, RESULT_OK_TAG};
 mod types_discovery;
 mod view;
+mod wasip2_capability_imports;
 mod wasip2_helpers;
 mod wasip2_http;
 mod wasip2_http_server;
@@ -164,7 +165,7 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new())
+    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new(), None)
         .map(|(bytes, _, _)| bytes)
 }
 
@@ -184,13 +185,36 @@ pub fn compile_to_wasm_gc_flattened(
     target: TargetMode,
     type_aliases: &HashMap<String, String>,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
-    module::emit_module_with(items, handler, target, type_aliases).map(
+    module::emit_module_with(items, handler, target, type_aliases, None).map(
         |(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
             bytes,
             mir_count,
             fragment_plans,
         },
     )
+}
+
+/// Compile a flattened wasip2 core whose custom imports and bridge
+/// helpers are driven by the same plan used for WIT metadata.
+pub fn compile_to_wasm_gc_flattened_with_capabilities(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    handler: Option<&str>,
+    type_aliases: &HashMap<String, String>,
+    capabilities: &crate::codegen::wasip2::CapabilityWitPlan,
+) -> Result<WasmGcCompileOutput, WasmGcError> {
+    module::emit_module_with(
+        items,
+        handler,
+        TargetMode::Wasip2,
+        type_aliases,
+        Some(capabilities),
+    )
+    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+        bytes,
+        mir_count,
+        fragment_plans,
+    })
 }
 
 /// `compile_to_wasm_gc` returning the MIR-coverage count alongside the
@@ -206,7 +230,7 @@ pub fn compile_to_wasm_gc_with_mir_count(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<(Vec<u8>, usize), WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new())
+    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new(), None)
         .map(|(bytes, mir_count, _)| (bytes, mir_count))
 }
 
@@ -220,8 +244,14 @@ pub fn compile_to_wasm_gc_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge, &HashMap::new())
-        .map(|(bytes, _, _)| bytes)
+    module::emit_module_with(
+        items,
+        handler,
+        TargetMode::AverBridge,
+        &HashMap::new(),
+        None,
+    )
+    .map(|(bytes, _, _)| bytes)
 }
 
 /// Same bytes as [`compile_to_wasm_gc_with_handler`], plus the expression
@@ -231,13 +261,18 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge, &HashMap::new()).map(
-        |(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
-            bytes,
-            mir_count,
-            fragment_plans,
-        },
+    module::emit_module_with(
+        items,
+        handler,
+        TargetMode::AverBridge,
+        &HashMap::new(),
+        None,
     )
+    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+        bytes,
+        mir_count,
+        fragment_plans,
+    })
 }
 
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
@@ -256,7 +291,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2, &HashMap::new())
+    module::emit_module_with(items, None, TargetMode::Wasip2, &HashMap::new(), None)
         .map(|(bytes, _, _)| bytes)
 }
 
@@ -281,8 +316,14 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: &str,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, Some(handler), TargetMode::Wasip2, &HashMap::new())
-        .map(|(bytes, _, _)| bytes)
+    module::emit_module_with(
+        items,
+        Some(handler),
+        TargetMode::Wasip2,
+        &HashMap::new(),
+        None,
+    )
+    .map(|(bytes, _, _)| bytes)
 }
 
 /// True when `bytes` names its map insert helpers — the `name` section

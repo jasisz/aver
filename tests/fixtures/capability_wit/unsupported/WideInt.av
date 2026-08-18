@@ -1,0 +1,6 @@
+module WideInt
+    kind = capability
+    semantics = pure
+    exposes [read]
+
+operation read() -> Int

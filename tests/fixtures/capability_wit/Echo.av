@@ -1,12 +1,12 @@
-module Clock
+module Echo
     kind = capability
     semantics = effectful
-    exposes [now, tick]
+    exposes [echo, healthy]
 
-operation now() -> String
+operation healthy() -> Bool
     oracle = generative
     replay = recorded
 
-operation tick() -> Bool
+operation echo(value: String) -> String
     oracle = generative
     replay = recorded

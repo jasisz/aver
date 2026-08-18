@@ -63,7 +63,7 @@ certify = ["wasm-compile", "aver-cert/producer"]
 # to WIT/WASI imports — there is no preview1 ABI to preserve. See
 # docs/wasip2.md for the contract and feedback_aver_no_preview1_adapter
 # for the architectural rationale.
-wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-parser", "dep:wasmtime", "dep:wasmtime-wasi", "dep:wasmtime-wasi-http"]
+wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wit-parser", "dep:wasmtime", "dep:wasmtime-wasi", "dep:wasmtime-wasi-http"]
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
@@ -98,11 +98,8 @@ wat = { version = "1", optional = true }
 # release train. `wasi-preview1-component-adapter-provider` is NOT
 # a dep: Aver effects lower directly to WIT/WASI imports, no
 # preview1 adapter wrap (see feedback_aver_no_preview1_adapter).
-# `wit-encoder` is also NOT a dep — Phase 1.2a emits WIT via inline
-# `format!` in `src/codegen/wasip2/wit.rs`. Add it back when
-# per-effect imports beyond the standard WASI worlds force
-# structured emission (Phase 1.6+ if at all).
 wit-component = { version = "0.248", optional = true }
+wit-encoder = { version = "0.248", optional = true }
 wit-parser = { version = "0.248", optional = true }
 
 [dev-dependencies]

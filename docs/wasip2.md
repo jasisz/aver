@@ -50,7 +50,7 @@ The wasm-gc emitter does **not** implement the Component Model boundary. It emit
 
 Eight properties every `--target wasip2` build must satisfy:
 
-1. **Imports are declared effects only.** Every WIT import in the component is justified by at least one declared Aver effect (`! [...]`), and every declared effect either lowers to one or more WIT imports in the selected world or is rejected at compile time. A single Aver call may translate into several WIT calls in the generated glue (e.g., `Console.print` cache + stream write); a single WIT interface may serve many Aver effects (e.g., `wasi:io/streams` for both stdout writes and stdin reads). No silent capability creep, no host hooks beyond what the source asks for.
+1. **Imports are source-declared boundaries only.** Every WIT import in the component is justified by at least one declared Aver effect (`! [...]`) or a required operation of a loaded capability contract. Every declared standard effect either lowers to one or more WIT imports in the selected world or is rejected at compile time. A single Aver call may translate into several WIT calls in the generated glue (e.g., `Console.print` cache + stream write); a single WIT interface may serve many Aver effects (e.g., `wasi:io/streams` for both stdout writes and stdin reads). No silent capability creep, no host hooks beyond what the source asks for.
 2. **Exports are the handler shape only.** A program with a `main` function exports `wasi:cli/run`; a program compiled with `--world wasi:http/proxy` (Phase 3 / 0.19) exports `wasi:http/incoming-handler`. No internal Aver functions, types, or runtime helpers leak out as public exports.
 3. **All public ABI goes through WIT.** Anything that crosses the component boundary uses canonical WIT types: strings, lists, records, variants, results. No Aver-specific encoding.
 4. **No Aver values cross the boundary.** Per-instantiation `Map<K, V>`, `List<T>`, `Vector<T>`, `Option<T>`, `Result<T, E>`, tuples, records, and variants stay inside the user core module. The canonical ABI for engine-GC types is still pre-proposal upstream; we do not encode anything that would break when it lands.
@@ -126,6 +126,48 @@ Flags:
 - `--optimize {size,speed}` — **rejected** on `--target wasip2`. Upstream `wasm-opt` does not yet handle wasm-gc + Component Model bytes cleanly, so the flag is refused at the CLI rather than silently dropped. Use `--target wasm-gc` if you need post-pass size/speed optimization; we will wire it for wasip2 once the toolchain catches up.
 
 The compiler does not shell out. WIT emission goes through `wit-encoder`; component-type metadata is encoded via `wit-component::metadata` and embedded as a custom section in the core module; the actual component wrap goes through `wit_component::ComponentEncoder`. Single binary, no toolchain to install on the user's machine.
+
+### Custom capability imports (phase 3a)
+
+Calling one operation of a program-defined capability selects its complete
+contract. If every declared operation parameter and result is `Unit`, `Bool`,
+`Float`, or `String`, `aver compile --target wasip2` emits one generated WIT
+interface and imports it into the selected world. Pure and effectful capability
+modules follow the same transport path; `semantics`, Oracle, replay, and hostile
+profiles keep their existing language/proof meaning and do not change the ABI.
+
+The boundary mapping is deliberately small and exact:
+
+| Aver | WIT / canonical ABI |
+|---|---|
+| `Unit` | no value slot |
+| `Bool` | `bool` / flat `i32` |
+| `Float` | `f64` |
+| `String` | `string`; copied between Aver GC storage and canonical linear memory |
+
+`Int` is not narrowed to `s64`: Aver integers are arbitrary precision. `Result`,
+`Option`, tuples, lists/vectors/maps, represented records/sums, and opaque
+resources are also outside phase 3a. One unsupported type makes the entire
+contract `unsupported[wit-boundary-type-unsupported]`; there is no partial
+interface. The diagnostic names the capability, operation, exact
+parameter/result position, offending Aver type, `contract_hash`, and
+`model_hash`.
+
+Generated interface identity contains an injective encoding of the module name
+and the full `contract_hash`. Operations are sorted and encoded deterministically;
+parameters are positional (`p0`, `p1`, …), so source parameter renames and
+declaration order do not alter WIT bytes. Both hashes appear in interface docs,
+but `model_hash` does not alter transport identity: it audits source semantics,
+not ABI layout. If none of a capability's operations is used, no interface is
+emitted. If any is used, the provider binds the full contract.
+
+Compilation intentionally leaves this import unresolved: the artifact is
+`host-bound[component-import-required]`, not `provided`. Install the interface
+implementation in a Component Model host/linker, then instantiate the component.
+The embedded `aver run --wasip2` runner does not yet accept custom provider
+bindings and reports `error[capability-provider-missing]` before component
+linking. Aver does not download a package, run Cargo, or silently compose an
+implementation; provider-package discovery and composition are later phases.
 
 ## Effect mapping
 

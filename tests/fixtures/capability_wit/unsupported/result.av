@@ -1,0 +1,7 @@
+module ResultsClient
+    depends [Results]
+    exposes [main]
+
+fn main() -> Unit
+    value = Results.read()
+    Unit

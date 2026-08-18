@@ -163,6 +163,13 @@ pub(crate) fn emit_mir_wasip2_effect(
     if ctx.wasip2_lowering.is_none() {
         return Ok(MirBuiltinEmit::NotHandled);
     }
+    if ctx
+        .wasip2_lowering
+        .is_some_and(|lowering| lowering.capability_calls.contains_key(dotted))
+    {
+        let produces = emit_capability_call_wasip2(func, dotted, args, slots, ctx)?;
+        return Ok(MirBuiltinEmit::Produced(produces));
+    }
     let produces = aver_type_str_of(expr).trim() != "Unit";
     let Some((parent, method)) = dotted.split_once('.') else {
         return Ok(MirBuiltinEmit::NotHandled);

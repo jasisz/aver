@@ -5111,7 +5111,7 @@ pub(super) fn capability_target_rejection(
     let errors = manifest
         .required_unsupported(target)
         .map(|row| {
-            let aver::provider::TargetBindingStatus::Unsupported { reason } = row.status else {
+            let aver::provider::TargetBindingStatus::Unsupported { reason } = &row.status else {
                 unreachable!("required_unsupported returns only unsupported rows")
             };
             format!(
@@ -5698,6 +5698,26 @@ fn cmd_compile_wasip2(
                 .capabilities,
             aver::provider::CapabilityTarget::Wasip2,
         );
+        let capabilities = &result
+            .typecheck
+            .as_ref()
+            .expect("wasip2 pipeline requested typechecking")
+            .capabilities;
+        let required =
+            aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
+        let capability_wit_plan =
+            aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required)
+                .unwrap_or_else(|unsupported| {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "error[wit-boundary-type-unsupported]: {}",
+                            unsupported.description()
+                        )
+                        .red()
+                    );
+                    process::exit(1);
+                });
         // Bypass the `flatten_multimodule` shim in this file (gated on
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
@@ -5760,12 +5780,12 @@ fn cmd_compile_wasip2(
                 );
                 process::exit(1);
             });
-            match wasm_gc::compile_to_wasm_gc_flattened(
+            match wasm_gc::compile_to_wasm_gc_flattened_with_capabilities(
                 &items,
                 result.analysis.as_ref(),
                 Some(handler_name),
-                wasm_gc::TargetMode::Wasip2,
                 &type_aliases,
+                &capability_wit_plan,
             ) {
                 Ok(out) => out.bytes,
                 Err(e) => {
@@ -5785,12 +5805,12 @@ fn cmd_compile_wasip2(
                 );
                 process::exit(1);
             }
-            match wasm_gc::compile_to_wasm_gc_flattened(
+            match wasm_gc::compile_to_wasm_gc_flattened_with_capabilities(
                 &items,
                 result.analysis.as_ref(),
                 None,
-                wasm_gc::TargetMode::Wasip2,
                 &type_aliases,
+                &capability_wit_plan,
             ) {
                 Ok(out) => out.bytes,
                 Err(e) => {
@@ -5806,7 +5826,11 @@ fn cmd_compile_wasip2(
         };
 
         let (component_bytes, wit_source) =
-            match wasip2_codegen::compile_to_component(&core_bytes, world_codegen) {
+            match wasip2_codegen::compile_to_component_with_capabilities(
+                &core_bytes,
+                world_codegen,
+                &capability_wit_plan,
+            ) {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());

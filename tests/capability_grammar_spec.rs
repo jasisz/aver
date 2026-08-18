@@ -687,7 +687,8 @@ fn main() -> Int
         assert!(
             report.contains("error[capability-target-unsupported]")
                 && report.contains("target `wasip2`")
-                && report.contains("reason[component-binding-not-composed]")
+                && report.contains("reason[wit-boundary-type-unsupported]")
+                && report.contains("operation `Clock.now` result has Aver type `Int`")
                 && report.contains("required operations: Clock.now")
                 && report.contains("contract_hash: sha256:")
                 && report.contains("model_hash: sha256:"),
