@@ -105,6 +105,7 @@ wit-parser = { version = "0.248", optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
+native-provider-fixture = { path = "tests/fixtures/native_provider_host" }
 # Iron (0.21) — property-based testing for type-checker matcher
 # invariants + Type AST generation. Defaults to 256 cases per
 # `proptest!` block; the CI gate bumps that to 10_000 via the

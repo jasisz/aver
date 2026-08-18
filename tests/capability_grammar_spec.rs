@@ -612,20 +612,34 @@ fn main() -> Int
         "the error must identify the exact boundary, got:\n{text}"
     );
 
-    let (code, text) = run("compile", &dir, "main.av");
-    assert_ne!(
-        code, 0,
-        "the Rust target emitted an artifact with an unbound provider:\n{text}"
+    let output_dir = dir.join("generated-rust");
+    let output = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args([
+            "compile",
+            "--module-root",
+            dir.to_str().expect("utf-8 dir"),
+            "main.av",
+            "--target",
+            "rust",
+            "-o",
+        ])
+        .arg(&output_dir)
+        .output()
+        .expect("compile host-bound Rust provider artifact");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert!(output.status.success(), "Rust compilation failed:\n{text}");
     assert!(
-        text.contains("error[capability-target-unsupported]")
-            && text.contains("target `rust`")
-            && text.contains("reason[static-adapter-not-linked]")
-            && text.contains("required operations: Clock.now")
-            && text.contains("contract_hash: sha256:")
-            && text.contains("model_hash: sha256:"),
-        "compiled-target rejection must name the target, operation, and contract identity:\n{text}"
+        text.contains("capability Clock: host-bound[runtime-provider-required]")
+            && text.contains("contract_hash=sha256:")
+            && text.contains("model_hash=sha256:"),
+        "compiled target must name its host boundary and contract identity:\n{text}"
     );
+    assert!(output_dir.join("src/provider_support.rs").is_file());
 
     #[cfg(feature = "wasm")]
     {

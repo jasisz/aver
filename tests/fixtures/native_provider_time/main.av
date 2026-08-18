@@ -1,0 +1,14 @@
+module NativeProviderTime
+    intent = "Prove generated Rust routes standard Time through the native provider registry."
+    exposes [read, main]
+    effects [Time.now]
+
+fn read() -> String
+    ? "Read Time through the shared provider boundary."
+    ! [Time.now]
+    Time.now()
+
+fn main() -> String
+    ? "Run the generated Time provider canary."
+    ! [Time.now]
+    read()

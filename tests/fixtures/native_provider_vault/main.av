@@ -1,0 +1,21 @@
+module NativeProviderVault
+    intent = "Exercise native opaque resources across direct and parallel calls."
+    depends [Vault]
+    exposes [openAndRead, openPair, consume, main]
+    effects [Vault.open, Vault.read]
+
+fn openAndRead() -> Result<Int, String>
+    ! [Vault.open, Vault.read]
+    token = Vault.open()?
+    Vault.read(token)
+
+fn openPair() -> Tuple<Result<Vault.Token, String>, Result<Vault.Token, String>>
+    ! [Vault.open]
+    (Vault.open(), Vault.open())!
+
+fn consume(token: Vault.Token) -> Result<Int, String>
+    ! [Vault.read]
+    Vault.read(token)
+
+fn main() -> Unit
+    Unit

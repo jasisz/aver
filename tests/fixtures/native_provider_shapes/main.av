@@ -1,0 +1,10 @@
+module NativeProviderShapes
+    intent = "Exercise every represented native provider codec."
+    depends [Shapes]
+    exposes [sample, main]
+
+fn sample() -> Result<Shapes.Bundle, String>
+    Shapes.echo(Shapes.Bundle(number = 7, ratio = 1.5, text = "hello", flag = true, nothing = Unit, pair = (3, "three"), items = [1, 2], vector = Vector.fromList(["v"]), index = {"z" => 9, "a" => 2}, maybe = Option.Some(false), outcome = Result.Err("declared"), state = Shapes.State.Ready(9)))
+
+fn main() -> Unit
+    Unit

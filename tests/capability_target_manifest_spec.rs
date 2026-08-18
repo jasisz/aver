@@ -92,10 +92,7 @@ fn json_manifest_is_total_ordered_and_explicit() {
             .expect("manifest row")
     };
     assert_eq!(row("Clock", "vm")["status"]["kind"], "host-bound");
-    assert_eq!(
-        row("Clock", "rust")["status"]["reason"]["code"],
-        "static-adapter-not-linked"
-    );
+    assert_eq!(row("Clock", "rust")["status"]["kind"], "host-bound");
     assert_eq!(
         row("Clock", "wasm-gc")["status"]["reason"]["code"],
         "host-import-adapter-not-generated"
@@ -128,9 +125,10 @@ fn json_manifest_is_total_ordered_and_explicit() {
             row(capability, "vm")["status"]["reason"]["code"],
             "runtime-provider-required"
         );
+        assert_eq!(row(capability, "rust")["status"]["kind"], "host-bound");
         assert_eq!(
             row(capability, "rust")["status"]["reason"]["code"],
-            "static-adapter-not-linked"
+            "runtime-provider-required"
         );
         assert_eq!(
             row(capability, "wasm-gc")["status"]["reason"]["code"],
@@ -170,7 +168,7 @@ fn human_manifest_names_every_binding_state() {
     assert!(text.contains("Capability target manifest:"));
     assert!(text.contains("Clock"));
     assert!(text.contains("vm      host-bound[runtime-provider-required]"));
-    assert!(text.contains("rust    unsupported[static-adapter-not-linked]"));
+    assert!(text.contains("rust    host-bound[runtime-provider-required]"));
     assert!(text.contains("wasm-gc unsupported[host-import-adapter-not-generated]"));
     assert!(text.contains("wasip2  host-bound[component-import-required]"));
     assert!(text.contains("Time"));
@@ -180,26 +178,29 @@ fn human_manifest_names_every_binding_state() {
 }
 
 #[test]
-fn rust_gate_reports_target_unsupported_with_a_stable_reason() {
+fn rust_compilation_emits_a_host_bound_provider_artifact() {
     let root = fixture_root();
+    let output_dir = temp_output("host-bound-rust");
     let output = Command::new(aver_bin())
         .arg("compile")
         .arg(root.join("main.av"))
         .arg("--module-root")
         .arg(&root)
         .args(["--target", "rust", "-o"])
-        .arg(temp_output("rejected-rust"))
+        .arg(&output_dir)
         .output()
         .expect("compile custom capability");
-    assert!(!output.status.success());
-    let text = String::from_utf8_lossy(&output.stderr);
-    assert!(text.contains("error[capability-target-unsupported]"));
-    assert!(text.contains("target `rust` cannot bind capability `Clock`"));
-    assert!(text.contains("reason[static-adapter-not-linked]"));
-    assert!(text.contains("required operations: Clock.now"));
-    assert!(text.contains("contract_hash: sha256:"));
-    assert!(text.contains("model_hash: sha256:"));
-    assert!(!text.contains("error[capability-provider-missing]"));
+    assert!(output.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("capability Clock: host-bound[runtime-provider-required]"));
+    assert!(text.contains("contract_hash=sha256:"));
+    assert!(text.contains("model_hash=sha256:"));
+    assert!(output_dir.join("src/provider_support.rs").is_file());
+    std::fs::remove_dir_all(output_dir).expect("remove generated host-bound artifact");
 }
 
 #[test]

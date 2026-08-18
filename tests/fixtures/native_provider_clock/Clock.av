@@ -1,0 +1,9 @@
+module Clock
+    kind = capability
+    semantics = effectful
+    exposes [now]
+
+operation now() -> Int
+    ? "Read a host-provided counter."
+    oracle = generative
+    replay = recorded

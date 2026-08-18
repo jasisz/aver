@@ -38,8 +38,10 @@ out/
 ```
 
 The generated project includes:
+- `src/lib.rs` with the public host boundary when capabilities are present
 - `src/main.rs` with the runtime prelude and final entrypoint
 - `src/runtime_support.rs` for the shared `aver-rt` bridge and shared runtime types
+- `src/provider_support.rs` when the program calls a capability operation
 - `src/replay_support.rs` when `--with-replay` is enabled
 - `src/aver_generated/.../mod.rs` files that preserve the Aver module graph as Rust modules
 - `src/verify.rs` when the entry module has `verify` blocks
@@ -75,6 +77,26 @@ For local runtime development from the Aver repository, set `AVER_RUNTIME_PATH` 
 ```bash
 AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/hello-rs
 ```
+
+## Native custom capability providers
+
+A generated project that calls a custom capability compiles successfully but is host-bound. Its stock binary installs compiler defaults only and exits with `error[capability-provider-missing]` when a required custom operation has no binding. To supply one, link a Rust provider crate in the generated `Cargo.toml`, add a host binary, and install the same binding type accepted by the bytecode VM:
+
+```rust
+use generated_app as generated;
+
+fn main() {
+    generated::install_provider_bindings(vec![my_provider::clock_binding()])
+        .expect("install capability provider");
+    generated::preflight_required_providers().expect("provider preflight");
+    let answer = generated::aver_generated::entry::main();
+    println!("{answer}");
+}
+```
+
+The binding contains an `Arc<dyn aver_rt::provider::CapabilityProvider>`, the exact contract hash, and the complete operation set. Calls use the transport-neutral `ProviderValue` tree and support all contract-v1 values, represented records/sums, and opaque resources. One once-installed registry and resource store is shared by direct calls and every `!` / `?!` branch. `install_provider_bindings_exact` is available to hosts that want no compiler-shipped defaults; unlike `install_provider_bindings`, it does not add the standard `Time` provider.
+
+This is explicit static composition: Aver emits the adapter and host API, but it does not add, download, or discover the provider crate. Repeated installation in one process fails rather than racing a mutable global replacement.
 
 ## Scoped replay runtime
 

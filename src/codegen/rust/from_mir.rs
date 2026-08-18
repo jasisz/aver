@@ -1135,6 +1135,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 // tolerate defensively) returns `None` → HIR fallback.
                 MirCallee::Builtin(id) => {
                     let name = emit_ctx.mir_builtins.get(id.0 as usize)?.as_str();
+                    if let Some(operation) = emit_ctx
+                        .codegen
+                        .and_then(|codegen| codegen.capabilities.operation(name))
+                    {
+                        return emit_mir_capability_call(operation, &call.args, emit_ctx);
+                    }
                     if super::builtins::builtin_is_effectful(name) {
                         emit_mir_effectful_builtin_call(name, &call.args, emit_ctx)
                     } else {
@@ -1498,6 +1504,85 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         _ => None,
     }
+}
+
+/// Emit one program-defined (or standard `Time`) capability call through the
+/// native provider registry generated for this Rust artifact.
+fn emit_mir_capability_call(
+    operation: &crate::capability::CapabilityOperation,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let return_type = super::types::type_to_rust(&operation.return_type);
+    let minted = operation
+        .minted_resource
+        .as_deref()
+        .map(|name| format!("Some({name:?})"))
+        .unwrap_or_else(|| "None".to_string());
+    let expected = operation.return_type.display();
+
+    let mut owned_args = Vec::with_capacity(args.len());
+    for arg in args {
+        owned_args.push(mir_clone_arg(emit_mir_expr(arg, ctx)?, &arg.node, ctx));
+    }
+
+    let invoke_with = |names: &[String]| {
+        let encoded = names
+            .iter()
+            .map(|name| {
+                format!(
+                    "crate::provider_support::encode({}, {:?})",
+                    name, operation.module
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "crate::provider_support::invoke::<{}>({:?}, {:?}, vec![{}], {}, {:?})",
+            return_type, operation.module, operation.canonical_name, encoded, minted, expected
+        )
+    };
+
+    if !operation.is_effectful()
+        || !ctx
+            .codegen
+            .is_some_and(|codegen| codegen.emit_replay_runtime)
+    {
+        let names = (0..owned_args.len())
+            .map(|index| format!("__provider_arg{index}"))
+            .collect::<Vec<_>>();
+        let mut lines = vec!["{".to_string()];
+        for (name, value) in names.iter().zip(&owned_args) {
+            lines.push(format!("    let {name} = {value};"));
+        }
+        lines.push(format!("    {}", invoke_with(&names)));
+        lines.push("}".to_string());
+        return Some(lines.join("\n"));
+    }
+
+    let replay = operation.replay?.as_str();
+    let names = (0..owned_args.len())
+        .map(|index| format!("__provider_arg{index}"))
+        .collect::<Vec<_>>();
+    let json_args = names
+        .iter()
+        .map(|name| format!("crate::aver_replay::ReplayValue::to_replay_json(&{name})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut lines = vec!["{".to_string()];
+    for (name, value) in names.iter().zip(&owned_args) {
+        lines.push(format!("    let {name} = {value};"));
+    }
+    lines.push("    crate::cancel_checkpoint();".to_string());
+    lines.push(format!(
+        "    crate::aver_replay::invoke_capability_effect({:?}, {:?}, vec![{}], || {})",
+        operation.canonical_name,
+        replay,
+        json_args,
+        invoke_with(&names)
+    ));
+    lines.push("}".to_string());
+    Some(lines.join("\n"))
 }
 
 /// Reconstruct the dotted source name of a `Project` chain whose head

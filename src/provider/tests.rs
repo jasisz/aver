@@ -408,7 +408,10 @@ operation echo(value: Bundle) -> Bundle
         .into(),
     };
     let output = providers
-        .invoke(registry.operation("Shapes.echo").unwrap(), &[input.clone()])
+        .invoke(
+            registry.operation("Shapes.echo").unwrap(),
+            std::slice::from_ref(&input),
+        )
         .expect("round-trip closed boundary tree");
     assert_eq!(output, input);
 }
@@ -653,7 +656,7 @@ fn resources_are_binding_typed_unobservable_and_trace_serializable() {
     assert!(error.contains("different provider binding"));
 
     let stale = Value::CapabilityResource(CapabilityResourceHandle::from_runtime_parts(
-        providers.binding("Vault").unwrap().id,
+        providers.binding("Vault").unwrap().runtime_id(),
         "Vault.Token".to_string(),
         u64::MAX,
         1,
@@ -848,7 +851,7 @@ fn target_manifest_is_total_and_canonical_time_is_provided_everywhere() {
     assert_eq!(manifest.rows().len(), 4);
     for (target, identity) in [
         (CapabilityTarget::Vm, "aver.standard.Time/native"),
-        (CapabilityTarget::Rust, "aver.standard.Time/rust-static"),
+        (CapabilityTarget::Rust, "aver.standard.Time/native"),
         (
             CapabilityTarget::WasmGc,
             "aver.standard.Time/wasm-gc-imports",
@@ -900,28 +903,23 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
 }
 
 #[test]
-fn custom_capability_is_host_bound_on_vm_and_reports_each_unavailable_adapter() {
+fn custom_capability_is_host_bound_on_native_targets_and_reports_unavailable_wasm_adapters() {
     let registry = contracts("Probe", PURE);
     let manifest = CapabilityTargetManifest::build(&registry, &Default::default())
         .expect("unused custom capability manifest");
     assert_eq!(manifest.rows().len(), 4);
     assert!(manifest.rows().iter().all(|row| !row.is_required()));
 
-    let vm = manifest
-        .for_target(CapabilityTarget::Vm)
-        .next()
-        .expect("VM row");
-    assert_eq!(
-        vm.status,
-        TargetBindingStatus::HostBound {
-            reason: HostBindingReason::RuntimeProviderRequired
-        }
-    );
+    for target in [CapabilityTarget::Vm, CapabilityTarget::Rust] {
+        let row = manifest.for_target(target).next().expect("native row");
+        assert_eq!(
+            row.status,
+            TargetBindingStatus::HostBound {
+                reason: HostBindingReason::RuntimeProviderRequired
+            }
+        );
+    }
     for (target, expected) in [
-        (
-            CapabilityTarget::Rust,
-            UnsupportedReason::StaticAdapterNotLinked,
-        ),
         (
             CapabilityTarget::WasmGc,
             UnsupportedReason::HostImportAdapterNotGenerated,

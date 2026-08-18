@@ -6,20 +6,17 @@ use super::{ProviderBinding, ProviderRegistry};
 
 impl ProviderRegistry {
     pub fn provenance(&self) -> Vec<crate::replay::CapabilityProvenance> {
-        let mut out = Vec::new();
-        for contract in self.contracts.contracts() {
-            let Some(binding) = self.bindings.get(&contract.module) else {
-                continue;
-            };
-            out.push(crate::replay::CapabilityProvenance {
-                capability: contract.module.clone(),
-                contract_hash: contract.contract_hash.clone(),
-                model_hash: contract.model_hash.clone(),
-                provider: binding.provider.identity().to_string(),
-                fingerprint: binding.provider.fingerprint().to_string(),
-            });
-        }
-        out
+        self.native
+            .provenance()
+            .into_iter()
+            .map(|entry| crate::replay::CapabilityProvenance {
+                capability: entry.capability,
+                contract_hash: entry.contract_hash,
+                model_hash: entry.model_hash,
+                provider: entry.provider,
+                fingerprint: entry.fingerprint,
+            })
+            .collect()
     }
 
     /// Validate replay metadata against the capability operations reachable
@@ -92,7 +89,7 @@ impl ProviderRegistry {
                     capability
                 )
             })?;
-            let binding = self.bindings.get(capability).ok_or_else(|| {
+            let binding = self.binding(capability).ok_or_else(|| {
                 if let Some(operation) = effects.iter().find_map(|effect| {
                     let operation = self.contracts.operation(&effect.effect_type)?;
                     (operation.module == capability
@@ -130,7 +127,7 @@ impl ProviderRegistry {
                         operation.canonical_name
                     )
                 })?;
-                let binding = self.bindings.get(&operation.module).ok_or_else(|| {
+                let binding = self.binding(&operation.module).ok_or_else(|| {
                     format!(
                         "reissued replay event '{}' requires a live provider",
                         operation.canonical_name
@@ -148,8 +145,8 @@ fn validate_live_provider(
     binding: &ProviderBinding,
     boundary: &str,
 ) -> Result<(), String> {
-    if provenance.provider == binding.provider.identity()
-        && provenance.fingerprint == binding.provider.fingerprint()
+    if provenance.provider == binding.provider_identity()
+        && provenance.fingerprint == binding.provider_fingerprint()
     {
         return Ok(());
     }
@@ -158,7 +155,7 @@ fn validate_live_provider(
         boundary,
         provenance.provider,
         provenance.fingerprint,
-        binding.provider.identity(),
-        binding.provider.fingerprint()
+        binding.provider_identity(),
+        binding.provider_fingerprint()
     ))
 }
