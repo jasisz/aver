@@ -207,4 +207,19 @@ impl ProviderRegistry {
             )
         })
     }
+
+    /// Invoke the contract-checked native core with transport-neutral values.
+    ///
+    /// VM and generated-Rust adapters own their richer Aver type codecs. A
+    /// Component Model adapter has already been type-checked by WIT and only
+    /// needs the common binding, panic, and provider-fault boundary before it
+    /// validates the returned WIT shape.
+    #[cfg(feature = "wasip2")]
+    pub(crate) fn invoke_provider_values(
+        &self,
+        operation: &str,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, String> {
+        self.native.invoke(operation, args)
+    }
 }

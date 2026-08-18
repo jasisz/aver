@@ -9,6 +9,8 @@ use aver_rt::provider::{
 
 pub const CLOCK_CONTRACT_HASH: &str =
     "sha256:1fd9c680f96ea752d3eaf1665322c2aca584d088726d874640da3a310f97bc75";
+pub const ECHO_CONTRACT_HASH: &str =
+    "sha256:36832abf9ae258a8d018106da7ea75b15618c40d9f45a1959ab5d59e59358586";
 pub const SHAPES_CONTRACT_HASH: &str =
     "sha256:32a895c71442e3cf3bf5fbad50ec7aaaa1b3a2c4de3c8ee5d8745abf3840242c";
 pub const VAULT_CONTRACT_HASH: &str =
@@ -62,6 +64,50 @@ pub fn clock_binding_for_contract(
         contract_hash,
         ["Clock.now"],
         Arc::new(ClockProvider { calls, fingerprint }),
+    )
+}
+
+struct WitEchoProvider;
+
+static COUNTED_WIT_ECHO_FACTORIES: AtomicUsize = AtomicUsize::new(0);
+
+impl CapabilityProvider for WitEchoProvider {
+    fn identity(&self) -> &str {
+        "example.wit-echo@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "wit-echo-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        if COUNTED_WIT_ECHO_FACTORIES.load(Ordering::SeqCst) != 1 {
+            return Err(ProviderFault::new(
+                "duplicate_factory",
+                "WIT Echo provider factory must run exactly once",
+            ));
+        }
+        match (context.operation.as_str(), args) {
+            ("Echo.echo", [ProviderValue::String(value)]) => {
+                Ok(ProviderValue::String(format!("host echoed: {value}")))
+            }
+            ("Echo.healthy", []) => Ok(ProviderValue::Bool(true)),
+            (operation, _) => Err(ProviderFault::new("bad_call", operation)),
+        }
+    }
+}
+
+pub fn counted_wit_echo_binding() -> ProviderBinding {
+    COUNTED_WIT_ECHO_FACTORIES.fetch_add(1, Ordering::SeqCst);
+    ProviderBinding::new(
+        "Echo",
+        ECHO_CONTRACT_HASH,
+        ["Echo.echo", "Echo.healthy"],
+        Arc::new(WitEchoProvider),
     )
 }
 

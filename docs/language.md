@@ -437,15 +437,18 @@ target, capability, required operations, contract/model hashes, and reason.
 The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
 
 Custom bindings have two host-bound routes. A Rust embedder can install one typed
-in-process provider binding unchanged in the VM or a generated Rust artifact. A wasip2 artifact can import a generated WIT
-interface when every parameter and result in the complete contract is `Unit`,
-`Bool`, `Float`, or `String`; pure and effectful operations use the same
-transport. The component import pins the full `contract_hash`, publishes both
-hashes in its sibling WIT, and must be supplied by an external Component Model
-host. The stock `aver run --wasip2` does not install custom providers and fails
-preflight with `error[capability-provider-missing]`. The stock generated Rust
-binary likewise has no custom binding and fails preflight; a separate Rust host
-links the provider crate through Cargo and installs the binding explicitly.
+in-process provider binding unchanged in the VM or a generated Rust artifact. A
+wasip2 artifact can import a generated WIT interface when every parameter and
+result in the complete contract is `Unit`, `Bool`, `Float`, or `String`; pure
+and effectful operations use the same transport. The component import pins the
+full `contract_hash` and publishes both hashes in its sibling WIT. An external
+Component Model host may implement that interface directly. For local execution,
+`aver run app.av --wasip2 --providers` instead links the configured Rust package
+in the cached host and dynamically adapts its existing `ProviderBinding` to the
+same WIT interface. Plain `aver run --wasip2` remains inert and fails preflight
+with `error[capability-provider-missing]`. The stock generated Rust binary
+likewise has no custom binding and fails preflight; a separate Rust host links
+the provider crate through Cargo and installs the binding explicitly.
 Bare wasm-gc still rejects arbitrary custom capabilities. Standard `Time` is a
 provided exception: its canonical source is shipped at
 `stdlib/capabilities/time.av`, and VM, generated Rust, wasm-gc, and wasip2 each

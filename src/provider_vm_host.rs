@@ -13,14 +13,21 @@ use sha2::{Digest, Sha256};
 
 use crate::codegen::rust::composition::{ProviderComposition, ProviderCompositionSource};
 
-const HOST_SCHEMA: &str = "aver-provider-vm-host-v2";
+const HOST_SCHEMA: &str = "aver-provider-vm-host-v3";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderHostBackend {
+    Vm,
+    Wasip2,
+}
 
 pub(crate) fn run_cached_host(
     raw_args: &[OsString],
     composition: &ProviderComposition,
+    backend: ProviderHostBackend,
 ) -> Result<ExitStatus, String> {
     let source = render_host_source(composition);
-    let dependency_lines = render_dependency_lines(composition)?;
+    let dependency_lines = render_dependency_lines(composition, backend)?;
     let runtime_identity = host_runtime_identity()?;
     let key = host_key(&source, &dependency_lines, &runtime_identity);
     let binary_name = format!("aver-provider-host-{}", &key[..16]);
@@ -208,16 +215,23 @@ fn render_host_source(composition: &ProviderComposition) -> String {
     )
 }
 
-fn render_dependency_lines(composition: &ProviderComposition) -> Result<Vec<String>, String> {
-    let mut lines = vec![aver_dependency_line()?];
+fn render_dependency_lines(
+    composition: &ProviderComposition,
+    backend: ProviderHostBackend,
+) -> Result<Vec<String>, String> {
+    let mut lines = vec![aver_dependency_line(backend)?];
     for binding in &composition.bindings {
         lines.push(binding.cargo_dependency_line());
     }
     Ok(lines)
 }
 
-fn aver_dependency_line() -> Result<String, String> {
+fn aver_dependency_line(backend: ProviderHostBackend) -> Result<String, String> {
     let version = format!("={}", env!("CARGO_PKG_VERSION"));
+    let features = match backend {
+        ProviderHostBackend::Vm => String::new(),
+        ProviderHostBackend::Wasip2 => ", features = [\"wasip2\"]".to_string(),
+    };
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let local_manifest = source_root.join("Cargo.toml");
     if local_manifest.is_file() {
@@ -232,14 +246,16 @@ fn aver_dependency_line() -> Result<String, String> {
             .ok_or_else(|| "local aver-lang path is not valid UTF-8".to_string())?
             .replace('\\', "/");
         Ok(format!(
-            "aver = {{ package = \"aver-lang\", version = {}, path = {} }}",
+            "aver = {{ package = \"aver-lang\", version = {}, path = {}{} }}",
             toml_string(&version),
-            toml_string(&path)
+            toml_string(&path),
+            features
         ))
     } else {
         Ok(format!(
-            "aver = {{ package = \"aver-lang\", version = {} }}",
-            toml_string(&version)
+            "aver = {{ package = \"aver-lang\", version = {}{} }}",
+            toml_string(&version),
+            features
         ))
     }
 }
@@ -388,10 +404,30 @@ mod tests {
                 .unwrap();
         assert_eq!(render_host_source(&one), render_host_source(&two));
         assert_eq!(
-            render_dependency_lines(&one).unwrap(),
-            render_dependency_lines(&two).unwrap()
+            render_dependency_lines(&one, ProviderHostBackend::Vm).unwrap(),
+            render_dependency_lines(&two, ProviderHostBackend::Vm).unwrap()
         );
-        assert!(render_dependency_lines(&one).unwrap()[0].starts_with("aver = {"));
+        assert!(
+            render_dependency_lines(&one, ProviderHostBackend::Vm).unwrap()[0]
+                .starts_with("aver = {")
+        );
+        assert!(
+            render_dependency_lines(&one, ProviderHostBackend::Wasip2).unwrap()[0]
+                .contains("features = [\"wasip2\"]")
+        );
+        assert_ne!(
+            host_key(
+                &render_host_source(&one),
+                &render_dependency_lines(&one, ProviderHostBackend::Vm).unwrap(),
+                "rustc-test"
+            ),
+            host_key(
+                &render_host_source(&one),
+                &render_dependency_lines(&one, ProviderHostBackend::Wasip2).unwrap(),
+                "rustc-test"
+            ),
+            "VM and wasip2 hosts must never alias one cached binary"
+        );
     }
 
     #[test]

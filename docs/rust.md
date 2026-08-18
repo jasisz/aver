@@ -129,24 +129,29 @@ a cached host:
 ```bash
 aver run app.av --module-root . --providers
 aver verify app.av --module-root . --providers
+aver run app.av --module-root . --providers --wasip2
 ```
 
 The first invocation builds a thin Rust binary that links `aver-lang` and the
 declared factories. Later invocations with the same checked composition reuse
-it directly. The Aver program still compiles to bytecode; provider calls are
-in-process and use the same checked registry, resource store, panic/fault
-isolation, replay, and provenance as an embedded VM. Changing only `.av` source
-does not rebuild the host. Changing a local provider source lets Cargo perform
-an incremental rebuild. The cache defaults to the platform user cache and can
-be redirected with `AVER_PROVIDER_HOST_CACHE`.
+it directly. Normally the Aver program still compiles to bytecode. With
+`--wasip2`, the host enables the Component Model runner and adapts the same
+binding to the generated WIT import; this route currently accepts the exact WIT
+subset `Unit`, `Bool`, `Float`, and `String`. Both routes retain the checked
+registry and panic/fault isolation. VM runs additionally retain the resource
+store, replay, and provenance behavior. Changing only `.av` source does not
+rebuild the host. Changing a local provider source lets Cargo perform an
+incremental rebuild. The cache defaults to the platform user cache and can be
+redirected with `AVER_PROVIDER_HOST_CACHE`.
 
 `aver verify --providers` may execute a configured pure provider in a normal
 case. An exact `given name: Capability.operation = [stub]` remains a
 case-local override and wins without mutating the process binding. `--providers`
 is opt-in: plain `run` / `verify` never invoke Cargo or execute provider package
 code, and a matching missing-provider diagnostic prints the exact command that
-enables it. On `run`, the flag conflicts with `--self-host`, `--wasm-gc`, and
-`--wasip2`; on `verify`, it conflicts with `--wasm-gc`.
+enables it. On `run`, the flag conflicts with `--self-host` and bare
+`--wasm-gc`; it can be combined with `--wasip2`. On `verify`, it conflicts with
+`--wasm-gc`.
 
 `aver compile` validates the manifest, emits the Cargo dependency and a typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the dependency when the generated project is built. The separate `--providers` run/verify workflow above is the only stock CLI path that builds provider code. The generated stock binary installs all configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
 

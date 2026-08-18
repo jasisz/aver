@@ -33,6 +33,9 @@ mod run_wasm_gc;
 mod shape_cmd;
 #[path = "main/shared.rs"]
 mod shared;
+#[cfg(feature = "wasip2")]
+#[path = "main/wasip2_provider_host.rs"]
+mod wasip2_provider_host;
 #[path = "main/why_cmd.rs"]
 mod why_cmd;
 
@@ -41,17 +44,31 @@ use cli::{Cli, Commands, CompilePolicyMode};
 use cli::{CompileTarget, DeployPack, DeployPreset};
 
 pub fn main() {
-    main_impl(None);
+    main_impl(None, None);
 }
 
 /// Run the exact stock CLI with process-local provider bindings already
 /// constructed by the cached Rust provider host.
 pub fn main_with_provider_bindings(bindings: Vec<aver::provider::ProviderBinding>) {
-    main_impl(Some(bindings));
+    main_impl(Some(bindings), None);
 }
 
-fn main_impl(injected_provider_bindings: Option<Vec<aver::provider::ProviderBinding>>) {
-    if let Some(result) = cert_delegate::run_if_requested() {
+/// Run the stock CLI against explicit argv and process-local bindings.
+/// Useful to embedders that cannot mutate process-global arguments.
+pub fn main_with_args_and_provider_bindings(
+    raw_args: Vec<std::ffi::OsString>,
+    bindings: Vec<aver::provider::ProviderBinding>,
+) {
+    main_impl(Some(bindings), Some(raw_args));
+}
+
+fn main_impl(
+    injected_provider_bindings: Option<Vec<aver::provider::ProviderBinding>>,
+    raw_args_override: Option<Vec<std::ffi::OsString>>,
+) {
+    if raw_args_override.is_none()
+        && let Some(result) = cert_delegate::run_if_requested()
+    {
         match result {
             Ok(status) => std::process::exit(cert_delegate::exit_code(status)),
             Err(error) => {
@@ -61,7 +78,7 @@ fn main_impl(injected_provider_bindings: Option<Vec<aver::provider::ProviderBind
         }
     }
 
-    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let raw_args = raw_args_override.unwrap_or_else(|| std::env::args_os().collect());
     let cli = Cli::parse_from(raw_args.clone());
 
     if injected_provider_bindings.is_none()
@@ -128,6 +145,7 @@ fn main_impl(injected_provider_bindings: Option<Vec<aver::provider::ProviderBind
                     module_root.as_deref(),
                     record.as_deref(),
                     program_args.clone(),
+                    provider_bindings,
                 );
                 #[cfg(not(feature = "wasip2"))]
                 {

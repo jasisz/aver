@@ -26,10 +26,17 @@ pub(super) fn cmd_run_wasip2(
     module_root_override: Option<&str>,
     record_dir: Option<&str>,
     program_args: Vec<String>,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     #[cfg(not(feature = "wasip2"))]
     {
-        let _ = (file, module_root_override, record_dir, program_args);
+        let _ = (
+            file,
+            module_root_override,
+            record_dir,
+            program_args,
+            provider_bindings,
+        );
         eprintln!(
             "{}",
             "--wasip2 requires --features wasip2 (rebuild with: cargo build --features wasip2)"
@@ -55,14 +62,19 @@ pub(super) fn cmd_run_wasip2(
             );
             process::exit(1);
         }
-        let component_bytes = match build_component_bytes(file, module_root_override) {
+        let component = match build_component(file, module_root_override, provider_bindings) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("{}", e.red());
                 process::exit(1);
             }
         };
-        match run_component(&component_bytes, &program_args) {
+        match run_component(
+            &component.bytes,
+            &program_args,
+            &component.capability_wit_plan,
+            &component.providers,
+        ) {
             Ok(()) => {}
             Err(e) => {
                 eprintln!(
@@ -76,10 +88,18 @@ pub(super) fn cmd_run_wasip2(
 }
 
 #[cfg(feature = "wasip2")]
-fn build_component_bytes(
+struct BuiltComponent {
+    bytes: Vec<u8>,
+    capability_wit_plan: aver::codegen::wasip2::CapabilityWitPlan,
+    providers: aver::provider::ProviderRegistry,
+}
+
+#[cfg(feature = "wasip2")]
+fn build_component(
     file: &str,
     module_root_override: Option<&str>,
-) -> Result<Vec<u8>, String> {
+    provider_bindings: &[aver::provider::ProviderBinding],
+) -> Result<BuiltComponent, String> {
     use aver::codegen::{wasip2 as wasip2_codegen, wasm_gc};
     use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
@@ -150,10 +170,12 @@ fn build_component_bytes(
                 )
             },
         )?;
-    if !capability_wit_plan.interfaces().is_empty() {
-        let mut error = String::from(
-            "error[capability-provider-missing]: the embedded wasip2 runner has no custom capability provider binding",
-        );
+    let providers = aver::provider::ProviderRegistry::for_program_with_bindings(
+        capabilities.clone(),
+        provider_bindings.iter().cloned(),
+    )?;
+    if let Err(preflight) = providers.preflight(required.iter().map(std::string::String::as_str)) {
+        let mut error = preflight;
         for interface in capability_wit_plan.interfaces() {
             error.push_str(&format!(
                 "\n  capability: {}\n  contract_hash: {}\n  model_hash: {}",
@@ -161,7 +183,8 @@ fn build_component_bytes(
             ));
         }
         error.push_str(
-            "\n  hint: compile with `--target wasip2` and install the generated component import in an external host",
+            "\n  hint: configure [providers] and run with `--wasip2 --providers`, \
+             or compile with `--target wasip2` and install the generated component import in an external host",
         );
         return Err(error);
     }
@@ -200,11 +223,20 @@ fn build_component_bytes(
         &capability_wit_plan,
     )
     .map_err(|e| format!("component wrap: {e}"))?;
-    Ok(component_bytes)
+    Ok(BuiltComponent {
+        bytes: component_bytes,
+        capability_wit_plan,
+        providers,
+    })
 }
 
 #[cfg(feature = "wasip2")]
-fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::Result<()> {
+fn run_component(
+    component_bytes: &[u8],
+    program_args: &[String],
+    capability_wit_plan: &aver::codegen::wasip2::CapabilityWitPlan,
+    providers: &aver::provider::ProviderRegistry,
+) -> wasmtime::Result<()> {
     use wasmtime::component::{Component, Linker, ResourceTable};
     use wasmtime::{Config, Engine, Store};
     use wasmtime_wasi::p2::bindings::sync::Command;
@@ -319,6 +351,7 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
     // double-register those and fail with
     // "map entry `wasi:io/error@0.2.x` defined twice".
     wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
+    super::wasip2_provider_host::install(&mut linker, capability_wit_plan, providers)?;
     let command = Command::instantiate(&mut store, &component, &linker)?;
     // wasi:cli/run.run() -> result<_, _>; Ok(()) on success, Err(())
     // when the guest signalled failure via `i32.const 1`. Aver's
@@ -330,5 +363,59 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
             eprintln!("{}", "--wasip2: program returned non-zero exit code".red());
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(all(test, feature = "wasip2"))]
+mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use aver::provider::{
+        CapabilityProvider, ProviderBinding, ProviderContext, ProviderFault, ProviderValue,
+    };
+
+    use super::build_component;
+
+    struct UnusedProvider;
+
+    impl CapabilityProvider for UnusedProvider {
+        fn identity(&self) -> &str {
+            "test.unused-wit-provider@1"
+        }
+
+        fn fingerprint(&self) -> &str {
+            "unused-wit-provider-v1"
+        }
+
+        fn invoke(
+            &self,
+            _context: &ProviderContext,
+            _args: &[ProviderValue],
+        ) -> Result<ProviderValue, ProviderFault> {
+            panic!("mismatched binding must fail before provider invocation")
+        }
+    }
+
+    #[test]
+    fn contract_mismatch_fails_before_component_lowering_or_invocation() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capability_wit");
+        let binding = ProviderBinding::new(
+            "Echo",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            ["Echo.echo", "Echo.healthy"],
+            Arc::new(UnusedProvider),
+        );
+        let result = build_component(
+            root.join("main.av").to_str().unwrap(),
+            Some(root.to_str().unwrap()),
+            &[binding],
+        );
+        let error = match result {
+            Ok(_) => panic!("mismatched provider unexpectedly built a component"),
+            Err(error) => error,
+        };
+        assert!(error.contains("error[capability-provider-mismatch]"));
+        assert!(error.contains("test.unused-wit-provider@1"));
     }
 }

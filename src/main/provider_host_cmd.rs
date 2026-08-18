@@ -15,15 +15,21 @@ pub(super) fn run_if_requested(
     command: &Commands,
     raw_args: &[OsString],
 ) -> Option<Result<ExitStatus, String>> {
-    let composition = match command {
+    let (composition, backend) = match command {
         Commands::Run {
             file,
             module_root,
             providers: true,
+            wasip2,
             ..
         } => {
             let module_root = super::shared::resolve_module_root(module_root.as_deref());
-            plan_for_run(file, &module_root)
+            let backend = if *wasip2 {
+                crate::provider_vm_host::ProviderHostBackend::Wasip2
+            } else {
+                crate::provider_vm_host::ProviderHostBackend::Vm
+            };
+            (plan_for_run(file, &module_root), backend)
         }
         Commands::Verify {
             file,
@@ -32,15 +38,16 @@ pub(super) fn run_if_requested(
             ..
         } => {
             let module_root = super::shared::resolve_module_root(module_root.as_deref());
-            plan_for_verify(file, &module_root)
+            (
+                plan_for_verify(file, &module_root),
+                crate::provider_vm_host::ProviderHostBackend::Vm,
+            )
         }
         _ => return None,
     };
-    Some(
-        composition.and_then(|composition| {
-            crate::provider_vm_host::run_cached_host(raw_args, &composition)
-        }),
-    )
+    Some(composition.and_then(|composition| {
+        crate::provider_vm_host::run_cached_host(raw_args, &composition, backend)
+    }))
 }
 
 /// Validate the complete schema-1 composition before provider code reaches
