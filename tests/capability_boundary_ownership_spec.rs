@@ -63,6 +63,25 @@ fn imported_bare_boundary_type_is_rejected_before_contract_hash_publication() {
                 && report.contains("contract_hash"),
             "{command} missed the static contract diagnostic:\n{report}"
         );
+        assert_eq!(
+            report.matches("cross-module boundary type 'Bytes'").count(),
+            2,
+            "{command} should report the parameter and result once each:\n{report}"
+        );
+        assert!(
+            report.contains("operation 'Ripemd.hash160' parameter 0 uses")
+                && report.contains("operation 'Ripemd.hash160' result uses"),
+            "{command} did not identify the two boundary positions:\n{report}"
+        );
+        if command == "check" {
+            let lower = report.to_lowercase();
+            assert!(
+                lower.contains("at: ripemd.av:7:1")
+                    && report.contains("operation hash160(input: Bytes) -> Bytes")
+                    && !lower.contains("at: main.av:7:1"),
+                "check did not render the capability module's source location:\n{report}"
+            );
+        }
         assert!(
             !output
                 .stdout

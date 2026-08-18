@@ -41,8 +41,18 @@ pub struct TypeError {
     pub message: String,
     pub line: usize,
     pub col: usize,
+    /// Dependency source when the error does not belong to the entry file.
+    pub origin: Option<TypeErrorOrigin>,
     /// Optional secondary span for multi-region diagnostics (e.g. declared type vs actual return).
     pub secondary: Option<TypeErrorSpan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeErrorOrigin {
+    pub file: String,
+    /// Exact source when the checker used the filesystem loader. Virtual
+    /// callers may provide only the file identity.
+    pub source: Option<std::sync::Arc<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -317,6 +327,7 @@ fn check_capability_effect_shorthand(
                 ),
                 line,
                 col: 1,
+                origin: None,
                 secondary: None,
             });
         }
@@ -387,6 +398,7 @@ fn check_module_effect_boundary(items: &[TopLevel], errors: &mut Vec<TypeError>)
                 ),
                 line: eff.line,
                 col: 1,
+                origin: None,
                 secondary: module.effects_line.map(|l| TypeErrorSpan {
                     line: l,
                     col: 1,
@@ -1485,6 +1497,7 @@ impl TypeChecker {
             message: msg.into(),
             line,
             col: 0,
+            origin: None,
             secondary: None,
         });
     }
@@ -1494,6 +1507,7 @@ impl TypeChecker {
             message: msg.into(),
             line,
             col: 0,
+            origin: None,
             secondary: None,
         });
     }
