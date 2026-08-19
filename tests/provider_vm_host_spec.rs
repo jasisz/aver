@@ -8,6 +8,7 @@ const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shap
 const MAIN_SOURCE: &str = include_str!("fixtures/native_provider_composed/main.av");
 const INDEPENDENT_SOURCE: &str = include_str!("fixtures/native_provider_composed/independent.av");
 const PROVIDER_SOURCE: &str = include_str!("fixtures/native_provider_host/src/lib.rs");
+const PROBE_SOURCE: &str = "module Probe\n    intent = \"Exercise an entry program smaller than the project manifest.\"\n\nfn main() -> Unit\n    Unit\n";
 
 fn aver_bin() -> &'static str {
     env!("CARGO_BIN_EXE_aver")
@@ -51,6 +52,7 @@ fn write_app(root: &Path, provider_root: &Path) {
     fs::write(root.join("main.av"), MAIN_SOURCE).expect("write entry fixture");
     fs::write(root.join("independent.av"), INDEPENDENT_SOURCE)
         .expect("write independent verify fixture");
+    fs::write(root.join("probe.av"), PROBE_SOURCE).expect("write independent run fixture");
     fs::write(
         root.join("aver.toml"),
         provider_manifest(provider_root, "counted_shapes_binding"),
@@ -119,6 +121,48 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     assert!(first.status.success(), "{}", report(&first));
     assert!(report(&first).contains("Building provider host"));
 
+    // `aver.toml` describes the project, not only main.av. Shapes is known
+    // elsewhere in this module root but inactive for this smaller program,
+    // so its binding must not make a valid probe un-runnable.
+    let probe_path = app.join("probe.av").to_string_lossy().into_owned();
+    let module_root = app.to_string_lossy().into_owned();
+    let probe = run_aver(
+        &cache,
+        &[
+            "run",
+            &probe_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(probe.status.success(), "{}", report(&probe));
+    assert!(!report(&probe).contains("no capability contract"));
+
+    // Inactivity is not a typo exemption: a manifest capability that cannot
+    // resolve to any project contract still fails before Cargo or host code.
+    let valid_manifest = provider_manifest(&provider, "counted_shapes_binding");
+    let unknown_manifest =
+        valid_manifest.replacen("capability = \"Shapes\"", "capability = \"Missing\"", 1);
+    fs::write(app.join("aver.toml"), unknown_manifest).expect("select unknown binding");
+    let unknown_probe = run_aver(
+        &cache,
+        &[
+            "run",
+            &probe_path,
+            "--module-root",
+            &module_root,
+            "--providers",
+        ],
+    );
+    assert!(!unknown_probe.status.success(), "unknown binding passed");
+    let unknown_report = report(&unknown_probe);
+    assert!(
+        unknown_report.contains("capability 'Missing' has no capability contract in this project")
+    );
+    assert!(!unknown_report.contains("Building provider host"));
+    fs::write(app.join("aver.toml"), valid_manifest).expect("restore valid provider binding");
+
     // The fixture has four blocks: real pure provider, exact local given,
     // real provider again, and two independent branch VMs. Its counted factory
     // faults every call unless it was constructed exactly once in the process.
@@ -133,7 +177,6 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     // by main.av must be ignored for independent.av, not mislabeled as a type
     // error or used as a reason to skip that file.
     let project_path = app.to_string_lossy().into_owned();
-    let module_root = app.to_string_lossy().into_owned();
     let project_verify = run_aver(
         &cache,
         &[
@@ -189,7 +232,7 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     );
     assert!(project_audit.status.success(), "{}", report(&project_audit));
     let project_audit_report = report(&project_audit);
-    assert!(project_audit_report.contains("Audit: 3 files"));
+    assert!(project_audit_report.contains("Audit: 4 files"));
     assert!(project_audit_report.contains("verify identity"));
 
     // A real provider setup failure is not a source type error, and audit

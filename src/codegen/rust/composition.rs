@@ -75,11 +75,31 @@ impl ProviderCompositionBinding {
     }
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(all(test, feature = "runtime"))]
 pub(crate) fn plan(
     registry: &CapabilityRegistry,
     required_operations: &BTreeSet<String>,
     manifest: Option<&ProviderPackageManifest>,
+) -> Result<ProviderComposition, String> {
+    let known_capabilities = registry
+        .contracts()
+        .map(|contract| contract.module.clone())
+        .collect();
+    plan_for_project(registry, required_operations, manifest, &known_capabilities)
+}
+
+/// Plan one artifact against a project-wide provider manifest.
+///
+/// `registry` and `required_operations` describe the current program. The
+/// separate `known_capabilities` set describes the project containing it, so
+/// a manifest binding for another entry program can remain inert without
+/// making typos or foreign capability names valid.
+#[cfg(feature = "runtime")]
+pub(crate) fn plan_for_project(
+    registry: &CapabilityRegistry,
+    required_operations: &BTreeSet<String>,
+    manifest: Option<&ProviderPackageManifest>,
+    known_capabilities: &BTreeSet<String>,
 ) -> Result<ProviderComposition, String> {
     let Some(manifest) = manifest else {
         return Ok(ProviderComposition::default());
@@ -94,15 +114,11 @@ pub(crate) fn plan(
     let mut configured = BTreeSet::new();
     let mut bindings = Vec::with_capacity(manifest.bindings.len());
     for (index, binding) in manifest.bindings.iter().enumerate() {
-        if registry.contract(&binding.capability).is_none() {
+        if registry.contract(&binding.capability).is_none()
+            && !known_capabilities.contains(&binding.capability)
+        {
             return Err(format!(
-                "aver.toml: [[providers.bindings]] index {index} capability '{}' has no capability contract in this program",
-                binding.capability
-            ));
-        }
-        if !required_capabilities.contains(&binding.capability) {
-            return Err(format!(
-                "aver.toml: [[providers.bindings]] index {index} capability '{}' is not used by this program; remove the unused provider binding",
+                "aver.toml: [[providers.bindings]] index {index} capability '{}' has no capability contract in this project",
                 binding.capability
             ));
         }
@@ -111,6 +127,9 @@ pub(crate) fn plan(
                 "aver.toml: [[providers.bindings]] index {index} capability '{}': crate alias '{}' conflicts with a generated Rust name; choose a distinct provider alias",
                 binding.capability, binding.crate_name
             ));
+        }
+        if !required_capabilities.contains(&binding.capability) {
+            continue;
         }
         configured.insert(binding.capability.clone());
         bindings.push(ProviderCompositionBinding {
@@ -236,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_unused_and_reserved_crate_bindings() {
+    fn rejects_unknown_and_reserved_crate_bindings_but_ignores_inactive_ones() {
         let registry = registry(
             "module Clock\n    kind = capability\n    semantics = pure\n\noperation now() -> Int\n",
         );
@@ -252,11 +271,23 @@ mod tests {
             assert!(error.contains(expected), "{error}");
         }
 
-        let unused = plan(&registry, &BTreeSet::new(), Some(&manifest(
+        let inactive = plan(&registry, &BTreeSet::new(), Some(&manifest(
             "[providers]\nschema = 1\n[[providers.bindings]]\ncapability='Clock'\ncrate='clock_provider'\npackage='provider'\nfactory='binding'\nversion='1'\n",
         )))
-        .expect_err("unused binding");
-        assert!(unused.contains("is not used by this program"));
+        .expect("known inactive project binding");
+        assert!(inactive.bindings.is_empty());
+
+        let project_known = BTreeSet::from(["Elsewhere".to_string()]);
+        let external = plan_for_project(
+            &CapabilityRegistry::default(),
+            &BTreeSet::new(),
+            Some(&manifest(
+                "[providers]\nschema = 1\n[[providers.bindings]]\ncapability='Elsewhere'\ncrate='elsewhere_provider'\npackage='provider'\nfactory='binding'\nversion='1'\n",
+            )),
+            &project_known,
+        )
+        .expect("binding known elsewhere in the project");
+        assert!(external.bindings.is_empty());
     }
 
     #[test]

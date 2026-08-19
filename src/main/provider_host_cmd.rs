@@ -68,7 +68,7 @@ pub(super) fn plan_for_run(
     file: &str,
     module_root: &str,
 ) -> Result<rust_codegen::composition::ProviderComposition, String> {
-    plan_for_files(&[file.to_string()], module_root, false)
+    plan_for_files(&[file.to_string()], module_root)
 }
 
 pub(super) fn plan_for_verify(
@@ -76,13 +76,12 @@ pub(super) fn plan_for_verify(
     module_root: &str,
 ) -> Result<rust_codegen::composition::ProviderComposition, String> {
     let files = resolve_av_inputs(path)?;
-    plan_for_files(&files, module_root, true)
+    plan_for_files(&files, module_root)
 }
 
 fn plan_for_files(
     files: &[String],
     module_root: &str,
-    ignore_unreachable_bindings: bool,
 ) -> Result<rust_codegen::composition::ProviderComposition, String> {
     let config = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))?
         .ok_or_else(|| missing_manifest_error(module_root))?;
@@ -116,24 +115,67 @@ fn plan_for_files(
         capabilities.merge(tc.capabilities);
     }
 
-    if ignore_unreachable_bindings {
-        // `[providers]` describes the project, but verify targets may be one
-        // independent module or a subset of the tree. Select only bindings
-        // reachable from this target; strict unused/unknown validation remains
-        // unchanged for run and generated-Rust compilation.
-        let required_capabilities = required
-            .iter()
-            .filter_map(|operation| capabilities.operation(operation))
-            .map(|operation| operation.module.as_str())
-            .collect::<BTreeSet<_>>();
-        let mut relevant_manifest = manifest.clone();
-        relevant_manifest
-            .bindings
-            .retain(|binding| required_capabilities.contains(binding.capability.as_str()));
-        rust_codegen::composition::plan(&capabilities, &required, Some(&relevant_manifest))
-    } else {
-        rust_codegen::composition::plan(&capabilities, &required, Some(manifest))
+    let known_capabilities = known_project_capabilities(module_root, &capabilities, Some(manifest));
+    rust_codegen::composition::plan_for_project(
+        &capabilities,
+        &required,
+        Some(manifest),
+        &known_capabilities,
+    )
+}
+
+/// Resolve only the manifest capability names that are outside the current
+/// entry program. This follows normal module-root lookup instead of scanning
+/// and typechecking unrelated application files: a project binding is known
+/// when its canonical module resolves to a valid capability contract.
+pub(super) fn known_project_capabilities(
+    module_root: &str,
+    program_registry: &aver::capability::CapabilityRegistry,
+    manifest: Option<&aver::config::ProviderPackageManifest>,
+) -> BTreeSet<String> {
+    let mut known = aver::stdlib::standard_capability_registry()
+        .contracts()
+        .map(|contract| contract.module.clone())
+        .collect::<BTreeSet<_>>();
+    known.extend(
+        program_registry
+            .contracts()
+            .map(|contract| contract.module.clone()),
+    );
+    let Some(manifest) = manifest else {
+        return known;
+    };
+
+    for binding in &manifest.bindings {
+        if known.contains(&binding.capability) {
+            continue;
+        }
+        let Some(path) = aver::source::find_module_file(&binding.capability, module_root) else {
+            continue;
+        };
+        let Ok(source) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(items) = aver::source::parse_source(&source) else {
+            continue;
+        };
+        let declares_expected_module = items.iter().any(|item| {
+            matches!(
+                item,
+                aver::ast::TopLevel::Module(module) if module.name == binding.capability
+            )
+        });
+        if !declares_expected_module {
+            continue;
+        }
+        let (registry, errors) =
+            aver::capability::CapabilityRegistry::from_module(&binding.capability, &items);
+        if errors.is_empty() && registry.contract(&binding.capability).is_some() {
+            known.insert(binding.capability.clone());
+        }
     }
+
+    known
 }
 
 fn missing_manifest_error(module_root: &str) -> String {
