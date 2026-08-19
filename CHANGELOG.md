@@ -52,6 +52,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **CSE diagnostics now respect mutually exclusive `match` arms.** Repeating the same pure builtin call or arithmetic expression in sibling arms no longer produces an impossible “extract to a binding” repair. Counts still add across sequential work and within one arm, while alternative arms contribute their maximum reachable count, so genuine duplicates remain visible.
+
 - **Capability-backed modules no longer fall out of Lean proof export.** A plain `verify` case on a branch that never dispatches its declared capability effect is exported against the Oracle-lifted function and quantified over the unused oracle, so the generated theorem states that the concrete result is provider-independent. A case with an explicit `given` keeps using that concrete stub. Qualified dependency operations such as `Infra.Kv.get` are now lifted through the same path instead of surviving as unknown host identifiers in an otherwise empty capability namespace.
 
 - **Verify stubs now reach capabilities below module namespaces by their canonical operation path.** `given probe: Sub.Probe.answer = [stub]` parses, type-checks, and installs the same `Sub.Probe.answer` identity used by calls, diagnostics, and provider dispatch. Dotted type annotations remain distinct and may also contain multiple capitalized namespace segments. A shortened or misspelled operation-shaped binding such as `Probe.answer` is rejected statically; when it uniquely matches a loaded canonical suffix, the diagnostic suggests `Sub.Probe.answer` instead of silently installing nothing and failing later with `capability-provider-missing`.
