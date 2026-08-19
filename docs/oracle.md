@@ -79,9 +79,18 @@ The operation after `given name:` is always its full canonical path. If the capa
 
 This binding is verify-local. It does not install a package, exercise the Rust provider implementation, or satisfy provider preflight for `aver run` and compiled artifacts. Provider cryptography still belongs in the provider's own tests; the Aver case checks the contract shape and the caller's behavior under an explicit result.
 
+A plain cases block may call a function whose signature declares effects when
+that concrete case never reaches an effectful operation. Aver decides this at
+execution time, not from the function-wide `! [...]` list. If the case does
+reach an effect without an exact `given`, verification stops before host
+dispatch. Add `trace` (and a `given` for an effect that returns a generated
+value), or move a stateful/interactive flow to record/replay. Plain verify is
+never a one-shot real-world smoke test.
+
 ## Trace-aware cases
 
-Use cases-form `verify <fn> trace` when you want runtime assertions over the collected trace:
+Use cases-form `verify <fn> trace` when a case intentionally reaches classified
+effects or when you want runtime assertions over the collected trace:
 
 ```aver
 verify pickOne trace

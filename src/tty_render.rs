@@ -95,10 +95,7 @@ pub fn render_tty(d: &Diagnostic, verbose: bool) -> String {
     }
 
     // --- source snippet (multi-region) ---
-    let skip_snippet = matches!(
-        d.slug,
-        "missing-verify" | "verify-effectful" | "missing-description"
-    );
+    let skip_snippet = matches!(d.slug, "missing-verify" | "missing-description");
     let show_source = (is_error || verbose) && !skip_snippet;
     let has_source = d.regions.iter().any(|r| !r.source_lines.is_empty());
     if show_source && has_source {

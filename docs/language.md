@@ -258,6 +258,13 @@ verify pickOne law usesOracle
 
 Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
 
+A plain case may call a function with a non-empty effect declaration as long as
+that concrete execution never reaches an effectful operation, or every reached
+operation has an exact `given` stub. An unstubbed reached effect aborts before
+host dispatch and points to `verify <fn> trace` or record/replay. Aver does not
+infer path reachability from the function-wide effect list, and plain verify is
+not a real-world smoke-test mode.
+
 Effects outside Oracle's classified set still belong in record/replay, especially ambient state, persistent protocol sessions, terminal modes, and server callbacks. See [oracle.md](oracle.md) for the supported effect set, stub signatures, and trace API.
 
 `aver check` expects pure, non-trivial, non-`main` functions to carry a colocated `verify` block.

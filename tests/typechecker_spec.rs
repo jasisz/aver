@@ -4182,8 +4182,8 @@ fn caller() -> Int
 /// entry unambiguously means the entry's own fn. The exported
 /// `TypeCheckResult.fn_sigs` bare alias must therefore point at the
 /// entry fn rather than being suppressed as "ambiguous" — consumers
-/// (`verify_effects`, `diagnostics::context::callgraph`, intent
-/// checks) still look the entry's bodies up by `&fd.name` and need
+/// (`diagnostics::context::callgraph`, intent checks) still look the
+/// entry's bodies up by `&fd.name` and need
 /// the local signature.
 #[test]
 fn entry_local_fn_shadows_dep_module_bare_alias() {
