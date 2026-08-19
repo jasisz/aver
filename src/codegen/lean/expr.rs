@@ -334,6 +334,46 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
 }
 
 /// Emit an expression wrapped in parens if it's a compound expression.
+/// Whether `s` is a single bracketed group, and so already atomic where an
+/// argument is expected.
+///
+/// Beginning with a bracket is not enough, which is what this used to test.
+/// `List.take` emits `{receiver}.take (Int.toNat n)` and its receiver arrives
+/// parenthesised, so the whole application began with `(` and was passed
+/// through unwrapped — and `Except.ok (xs).take (Int.toNat 4)` is read by Lean
+/// as `Except.ok` applied to two arguments, the first a partially applied
+/// `List.take`. Every `receiver.method arg` builtin had the same hazard.
+///
+/// Deliberately conservative: anything this cannot see through — a bracket
+/// inside a string literal, say — comes back `false` and gets wrapped, and a
+/// redundant pair of parentheses costs nothing.
+fn is_one_group(s: &str) -> bool {
+    let Some(open) = s.chars().next() else {
+        return false;
+    };
+    if open == '"' {
+        return s.len() > 1 && s.ends_with('"');
+    }
+    let close = match open {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        _ => return false,
+    };
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return i + c.len_utf8() == s.len();
+            }
+        }
+    }
+    false
+}
+
 fn emit_expr_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     let s = emit_expr(expr, ctx);
     match &expr.node {
@@ -345,12 +385,7 @@ fn emit_expr_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String 
         | ResolvedExpr::Tuple(_)
         | ResolvedExpr::IndependentProduct(_, _) => s,
         _ => {
-            if s.starts_with('(')
-                || s.starts_with('[')
-                || s.starts_with('"')
-                || s.starts_with('{')
-                || !s.contains(' ')
-            {
+            if is_one_group(&s) || !s.contains(' ') {
                 s
             } else {
                 format!("({})", s)
