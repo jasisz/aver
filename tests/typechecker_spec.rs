@@ -3690,7 +3690,7 @@ fn caller() -> Float
 /// to also pull in.
 ///
 /// Repro: B depends on A and re-uses `A.Shape` as bare `Shape` in
-/// its own signature. Main depends on B and C (C exposes an
+/// its own signature. Main directly depends on A, B, and C (C exposes an
 /// unrelated `Shape`). Pre-fix, when Main's checker canonicalised
 /// B's exported sig, the bare `Shape` resolved against the
 /// importer's bare alias map — which was ambiguous between
@@ -3740,7 +3740,7 @@ type Shape
     .expect("write C.av failed");
 
     let src = r#"module Main
-    depends [B, C]
+    depends [A, B, C]
     intent = "Plumbs A.make through B.pass; C is just an unrelated sibling."
 
 fn takeA(s: A.Shape) -> Float

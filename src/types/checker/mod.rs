@@ -555,8 +555,18 @@ struct TypeChecker {
     /// flagged on `fn takes(s: C.Shape)` references against a `C`
     /// whose `exposes` list didn't include `Shape`.
     visible_type_ids: HashSet<TypeId>,
+    /// Direct dependency modules visible to this checker. Kept separately
+    /// from `visible_type_ids` because an explicit type re-export such as
+    /// `High.Item` resolves to the original `Low.Item` identity and therefore
+    /// has no `TypeKey::in_module("High", "Item")` of its own.
+    visible_module_names: HashSet<String>,
+    /// Public type surface for every loaded module, including explicit
+    /// re-exports resolved to their original declaration identity. The full
+    /// map is resolver context; only entries whose module is in
+    /// `visible_module_names` are visible to ordinary importer lookups.
+    module_type_exports: crate::visibility::ModuleTypeExports,
     /// Per-module `depends` list, keyed by the dep module's
-    /// `dep_name`. Populated by `integrate_loaded_modules` so the
+    /// `dep_name`. Populated by `prepare_loaded_modules` so the
     /// per-owner type resolver (`canonicalize_named_in_module`) can
     /// walk an owner module's *own* depends when canonicalising its
     /// exported signatures — not the entry module's or arbitrary
@@ -658,6 +668,8 @@ impl TypeChecker {
             bare_type_aliases: HashMap::new(),
             visible_fn_ids: HashSet::new(),
             visible_type_ids: HashSet::new(),
+            visible_module_names: HashSet::new(),
+            module_type_exports: crate::visibility::ModuleTypeExports::new(),
             module_depends: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
@@ -1141,16 +1153,27 @@ impl TypeChecker {
     /// table holds every dep type unconditionally.
     pub(crate) fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
         if let Some((prefix, n)) = name.rsplit_once('.') {
-            if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
-                && self.visible_type_ids.contains(&id)
-            {
-                return Some(id);
+            if self.current_module_prefix.as_deref() == Some(prefix) {
+                if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
+                    && self.visible_type_ids.contains(&id)
+                {
+                    return Some(id);
+                }
+                if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
+                    && self.visible_type_ids.contains(&id)
+                {
+                    return Some(id);
+                }
             }
-            if self.current_module_prefix.as_deref() == Some(prefix)
-                && let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
-                && self.visible_type_ids.contains(&id)
-            {
-                return Some(id);
+            if self.visible_module_names.contains(prefix) {
+                if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
+                    && self.visible_type_ids.contains(&id)
+                {
+                    return Some(id);
+                }
+                if let Some(id) = self.type_export_id(prefix, n) {
+                    return Some(id);
+                }
             }
         }
         if let Some(prefix) = self.current_module_prefix.as_deref()
@@ -1171,6 +1194,15 @@ impl TypeChecker {
             .and_then(Resolution::unambiguous)
     }
 
+    /// Resolve `module.alias` through that module's public type surface. The
+    /// returned ID belongs to the original declaration, not necessarily to
+    /// `module` itself (explicit re-exports deliberately preserve identity).
+    pub(super) fn type_export_id(&self, module: &str, alias: &str) -> Option<TypeId> {
+        let target = self.module_type_exports.get(module)?.get(alias)?;
+        self.symbol_table
+            .type_id_of(&TypeKey::in_module(&target.module, &target.name))
+    }
+
     /// `true` when `name` (qualified `Module.Type` form) resolves to
     /// an existing `TypeId` in the symbol table but the typechecker
     /// hasn't registered that ID as visible to the current scope.
@@ -1188,10 +1220,20 @@ impl TypeChecker {
             // failure.
             return false;
         }
-        let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n)) else {
-            return false;
-        };
-        !self.visible_type_ids.contains(&id)
+        if self.visible_module_names.contains(prefix) {
+            return self.type_export_id(prefix, n).is_none()
+                && self
+                    .symbol_table
+                    .type_id_of(&TypeKey::in_module(prefix, n))
+                    .is_some();
+        }
+        self.symbol_table
+            .type_id_of(&TypeKey::in_module(prefix, n))
+            .is_some()
+            || self
+                .module_type_exports
+                .get(prefix)
+                .is_some_and(|exports| exports.contains_key(n))
     }
 
     /// Canonical name (`"Module.Type"` or bare entry name) for a

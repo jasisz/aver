@@ -1,4 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::ast::{FnDef, Module, TopLevel, TypeDef, TypeVariant};
+
+mod type_exports;
+
+pub use type_exports::{ExportedTypeTarget, ModuleTypeExports, collect_module_type_exports};
 
 /// Type definition collected from a module — backend-agnostic metadata.
 #[derive(Debug, Clone)]
@@ -256,6 +262,79 @@ impl SymbolRegistry {
             let exports = collect_module_exports(items);
             Self::collect_from_exports(module_name, &exports, &mut entries);
         }
+        SymbolRegistry { entries }
+    }
+
+    /// Build the symbols visible through a module's direct dependency list.
+    ///
+    /// Functions come only from the named dependency modules themselves.
+    /// Types come from each dependency's resolved export surface, so an
+    /// explicit re-export carries the original declaration (including record
+    /// fields / sum constructors and opacity) without exposing unrelated
+    /// transitive modules.
+    pub fn from_visible_modules(
+        modules: &[(String, Vec<TopLevel>)],
+        visible_modules: &[String],
+        type_exports: &ModuleTypeExports,
+    ) -> Self {
+        let visible: HashSet<&str> = visible_modules.iter().map(String::as_str).collect();
+        let mut entries = Vec::new();
+
+        // Public functions are never pulled transitively. Type re-exports are
+        // handled separately below because their declaring module differs from
+        // the module whose `exposes` list made them visible.
+        for (module_name, items) in modules {
+            if !visible.contains(module_name.as_str()) {
+                continue;
+            }
+            let exports = collect_module_exports(items);
+            let functions_only = ModuleExports {
+                functions: exports.functions,
+                types: Vec::new(),
+            };
+            Self::collect_from_exports(module_name, &functions_only, &mut entries);
+        }
+
+        // The same declaration may be reachable through two facades. Emit its
+        // metadata once; if any visible path exposes the representation, the
+        // importer may use that public path and the aggregate is non-opaque.
+        let mut targets: HashMap<(String, String), bool> = HashMap::new();
+        for visible_module in visible_modules {
+            let Some(exports) = type_exports.get(visible_module) else {
+                continue;
+            };
+            for target in exports.values() {
+                targets
+                    .entry((target.module.clone(), target.name.clone()))
+                    .and_modify(|is_opaque| *is_opaque &= target.is_opaque)
+                    .or_insert(target.is_opaque);
+            }
+        }
+
+        // Walk in loader/source order so registry construction stays stable.
+        for (module_name, items) in modules {
+            for item in items {
+                let TopLevel::TypeDef(type_def) = item else {
+                    continue;
+                };
+                let type_name = match type_def {
+                    TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+                };
+                let key = (module_name.clone(), type_name.clone());
+                let Some(is_opaque) = targets.remove(&key) else {
+                    continue;
+                };
+                let one_type = ModuleExports {
+                    functions: Vec::new(),
+                    types: vec![ExportedTypeDef {
+                        def: type_def,
+                        is_opaque,
+                    }],
+                };
+                Self::collect_from_exports(module_name, &one_type, &mut entries);
+            }
+        }
+
         SymbolRegistry { entries }
     }
 
