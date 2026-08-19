@@ -601,14 +601,15 @@ fn error_map_set_key_type_mismatch() {
 }
 
 #[test]
-fn map_key_type_accepts_user_defined_via_deep_hash() {
-    // The Map runtime hashes any heap structure by value (rt_deep_hash),
-    // so List<Int> (and other user-defined types) is a valid map key.
+fn map_key_type_rejects_a_list_key() {
+    // The Map runtime hashes any heap structure by value (rt_deep_hash), but a
+    // map iterates sorted by key, and a list has no ordering the proof model
+    // can state — so a list in key position is a type error.
     let src = concat!(
-        "fn ok() -> Map<List<Int>, Int>\n",
+        "fn bad() -> Map<List<Int>, Int>\n",
         "    Map.fromList([([1], 2)])\n",
     );
-    assert_no_errors(src);
+    assert_error_containing(src, "a Map key type must have an ordering");
 }
 
 #[test]
@@ -624,8 +625,22 @@ fn error_map_from_list_requires_tuple_pairs() {
 }
 
 #[test]
-fn map_literal_accepts_user_defined_keys() {
-    let src = concat!("fn ok() -> Map<List<Int>, Int>\n", "    {[1] => 2}\n",);
+fn map_literal_rejects_a_key_type_with_no_ordering() {
+    let src = concat!("fn bad() -> Map<List<Int>, Int>\n", "    {[1] => 2}\n",);
+    assert_error_containing(src, "a Map key type must have an ordering");
+}
+
+#[test]
+fn map_key_types_with_an_ordering_stay_legal() {
+    for key in ["Int", "String", "Bool"] {
+        let src = format!("fn ok(m: Map<{key}, Int>) -> Int\n    Map.len(m)\n");
+        assert_no_errors(&src);
+    }
+}
+
+#[test]
+fn float_stays_legal_as_a_map_value() {
+    let src = "fn ok(m: Map<String, Float>) -> Int\n    Map.len(m)\n";
     assert_no_errors(src);
 }
 

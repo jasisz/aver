@@ -1,10 +1,12 @@
 module MapOrderGivenNamedAfterReader
     intent =
-        "A true law whose given is named after an unrelated helper that reads a float-keyed map."
+        "A true law whose given is named after an unrelated helper that reads a map in iteration order."
         "Nothing in the claim touches a map, and the law holds on the VM — following a name into that helper just because the two share a spelling would refuse a law that is provable, which costs as much as exporting one that is not. The given may keep the shared spelling: verify-block binders are outside the shadowing ban's v1 scope."
+    effects []
 
-fn keys(m: Map<Float, Int>) -> List<Float>
-    ? "Reads a float-keyed map's keys. Nothing below calls it."
+fn keys() -> List<String>
+    ? "Builds a map in place and reads its keys in iteration order. Nothing below calls it."
+    m = Map.set(Map.set({}, "b", 5), "a", 3)
     Map.keys(m)
 
 fn howMany(counted: List<Float>) -> Int

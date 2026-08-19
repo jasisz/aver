@@ -726,7 +726,17 @@ impl TypeChecker {
                         // bare `Shape` in B's `fn make() -> Shape`
                         // stamps as B.Shape regardless of what `Shape`
                         // means in the importing module.
-                        parsed_params.push(self.canonicalize_named_in_module(ty, &entry.module));
+                        let ty = self.canonicalize_named_in_module(ty, &entry.module);
+                        if let Some(key) = crate::types::first_unordered_map_key(&ty) {
+                            return Err(format!(
+                                "Module '{}', function '{}', parameter '{}': {}",
+                                entry.module,
+                                fn_name,
+                                param_name,
+                                crate::types::unordered_map_key_message(key)
+                            ));
+                        }
+                        parsed_params.push(ty);
                     }
                     let ret_raw = parse_type_str_strict(return_type).map_err(|unknown| {
                         format!(
@@ -735,6 +745,14 @@ impl TypeChecker {
                         )
                     })?;
                     let ret = self.canonicalize_named_in_module(ret_raw, &entry.module);
+                    if let Some(key) = crate::types::first_unordered_map_key(&ret) {
+                        return Err(format!(
+                            "Module '{}', function '{}': return type: {}",
+                            entry.module,
+                            fn_name,
+                            crate::types::unordered_map_key_message(key)
+                        ));
+                    }
                     self.insert_fn_sig(
                         &entry.canonical_name,
                         FnSig {
@@ -784,6 +802,17 @@ impl TypeChecker {
                             )
                         })
                         .collect();
+                    if let Some(key) = params
+                        .iter()
+                        .find_map(crate::types::first_unordered_map_key)
+                    {
+                        return Err(format!(
+                            "Module '{}', constructor '{}': {}",
+                            entry.module,
+                            entry.canonical_name,
+                            crate::types::unordered_map_key_message(key)
+                        ));
+                    }
                     if params.is_empty() {
                         self.value_members.insert(
                             entry.canonical_name.clone(),
@@ -805,6 +834,14 @@ impl TypeChecker {
                         parse_type_str_strict(field_type).unwrap_or(Type::Invalid),
                         &entry.module,
                     );
+                    if let Some(key) = crate::types::first_unordered_map_key(&field_ty) {
+                        return Err(format!(
+                            "Module '{}', field '{}': {}",
+                            entry.module,
+                            entry.canonical_name,
+                            crate::types::unordered_map_key_message(key)
+                        ));
+                    }
                     let canonical = &entry.canonical_name;
                     if let Some((canonical_type, field_name)) = canonical.rsplit_once('.') {
                         self.record_field_types

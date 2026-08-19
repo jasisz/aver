@@ -21,6 +21,7 @@ pub mod int;
 pub mod list;
 #[cfg(feature = "runtime")]
 pub mod map;
+pub mod map_key;
 pub mod option;
 pub mod result;
 #[cfg(feature = "runtime")]
@@ -33,6 +34,10 @@ pub mod vector;
 // optional `Type` annotation without a cycle through `crate::types`. This
 // re-export preserves the historical `crate::types::Type` path.
 pub use crate::ast::Type;
+
+pub use map_key::{
+    ORDERED_MAP_KEY_TYPES, first_unordered_map_key, map_key_has_ordering, unordered_map_key_message,
+};
 
 /// Parse a type annotation string strictly.
 /// Returns `Err(unknown_name)` if the string is a non-empty identifier

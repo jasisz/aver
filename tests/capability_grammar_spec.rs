@@ -1227,9 +1227,17 @@ fn contains(items: List<Tokens.Connection>, needle: Tokens.Connection) -> Bool
         text.contains("Equality is not defined for capability resource values"),
         "a represented wrapper must inherit the token's no-equality rule:\n{text}"
     );
+    // The capability-resource sentence, not the general map-key rule. A
+    // wrapper around a token is refused in key position because the token has
+    // no equality or hash semantics — which is a different fact from "this key
+    // type has no ordering", the rule every other unordered key type meets
+    // (`tests/ordered_map_key_ban.rs`). Accepting either message would let the
+    // capability-aware refusal disappear behind the general one.
     assert!(
-        text.contains("cannot be used as a Map key")
-            || text.contains("map key type must be hashable"),
+        text.contains(
+            "capability resource type `Tokens.Connection` cannot be used as a Map key; \
+             provider token identity has no equality or hash semantics"
+        ),
         "a represented wrapper must inherit the token's no-hash rule:\n{text}"
     );
     assert!(

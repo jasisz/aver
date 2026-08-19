@@ -1,16 +1,16 @@
 module MapOrderCrossModule
     intent =
         "A law whose iteration-order observer lives in another module."
-        "The refusal walks the functions a claim reaches, and a module boundary is not a place for that walk to stop: a helper one module over hides the observation exactly the way a local helper does."
+        "The refusal walks the functions a claim reaches, and a module boundary is not a place for that walk to stop: a helper one module over hides the observation exactly the way a local helper does. No signature on either side of the boundary names a map, so once the walk arrives the key type is invisible and the claim is declined rather than exported on an assumption."
     effects []
     depends [MapKeys]
 
-fn firstFloatValue(m: Map<Float, Int>) -> Int
+fn firstValue(v: Int) -> Int
     ? "The value paired with the lowest key, read through another module."
-    match MapKeys.floatValues(m)
+    match MapKeys.builtValues(v)
         [x, ..__rest] -> x
         _ -> 0
 
-verify firstFloatValue law firstIsLowestKeysValue
-    given m: Map<Float, Int> = [{1.0 => 3, 2.0 => 5}]
-    firstFloatValue(m) => 3
+verify firstValue law firstIsLowestKeysValue
+    given v: Int = [5, 7]
+    firstValue(v) => 3

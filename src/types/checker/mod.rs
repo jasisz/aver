@@ -1041,6 +1041,8 @@ impl TypeChecker {
                             k.display()
                         ),
                     );
+                } else {
+                    self.require_ordered_map_key(k, line, Some(source_ctx));
                 }
                 self.reject_fn_in_type(k, false, line, source_ctx);
                 self.reject_fn_in_type(v, false, line, source_ctx);
@@ -1552,6 +1554,90 @@ impl TypeChecker {
             origin: None,
             secondary: None,
         });
+    }
+
+    /// Report `msg` unless that exact sentence is already recorded.
+    ///
+    /// One key type is usually decided at several doors at once — a parameter
+    /// annotation, the `Map.keys` call that reads it, the literal that built
+    /// it — and the refusal reads the same at each. The sentence names the
+    /// offending type rather than the site, so repeating it per site would be
+    /// the same fact several times over. The first site keeps the span.
+    fn error_once(&mut self, line: usize, msg: impl Into<String>) {
+        let msg = msg.into();
+        if self.errors.iter().any(|e| e.message == msg) {
+            return;
+        }
+        self.error_at_line(line, msg);
+    }
+
+    /// Refuse every unordered map key anywhere inside `ty`.
+    ///
+    /// The annotation doors reach each `Map` on their own way down, so they
+    /// use [`Self::require_ordered_map_key`] directly. Doors that hold a
+    /// whole type and nothing that walks it — a `verify` given, a signature
+    /// registered from a dependency — use this.
+    pub(super) fn require_ordered_map_keys_in(
+        &mut self,
+        ty: &Type,
+        line: usize,
+        source_ctx: Option<&str>,
+    ) {
+        match ty {
+            Type::Map(k, v) => {
+                self.require_ordered_map_key(k, line, source_ctx);
+                self.require_ordered_map_keys_in(k, line, source_ctx);
+                self.require_ordered_map_keys_in(v, line, source_ctx);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.require_ordered_map_keys_in(inner, line, source_ctx);
+            }
+            Type::Result(ok, err) => {
+                self.require_ordered_map_keys_in(ok, line, source_ctx);
+                self.require_ordered_map_keys_in(err, line, source_ctx);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.require_ordered_map_keys_in(item, line, source_ctx);
+                }
+            }
+            Type::Fn(params, ret, _) => {
+                for param in params {
+                    self.require_ordered_map_keys_in(param, line, source_ctx);
+                }
+                self.require_ordered_map_keys_in(ret, line, source_ctx);
+            }
+            Type::Named { .. }
+            | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+        }
+    }
+
+    /// Refuse a map key type that has no ordering.
+    ///
+    /// `source_ctx` prefixes the sentence where the door knows whose
+    /// annotation it is (`Function 'tally', parameter 'm'`); call sites that
+    /// only know an expression pass `None`.
+    pub(super) fn require_ordered_map_key(
+        &mut self,
+        key: &Type,
+        line: usize,
+        source_ctx: Option<&str>,
+    ) {
+        if crate::types::map_key_has_ordering(key) {
+            return;
+        }
+        let tail = crate::types::unordered_map_key_message(key);
+        let msg = match source_ctx {
+            Some(ctx) => format!("{ctx}: {tail}"),
+            None => tail,
+        };
+        self.error_once(line, msg);
     }
 
     /// Current length of the diagnostic list, for use with

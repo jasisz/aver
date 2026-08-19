@@ -219,6 +219,16 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         return ("type-mismatch", Some(msg.to_string()), fields, repair);
     }
 
+    // Keyed on the wording built by `crate::types::unordered_map_key_message`.
+    if msg.contains("a Map key type must have an ordering") {
+        return (
+            "map-key-unordered",
+            Some(msg.to_string()),
+            Vec::new(),
+            Some("Use Int, String or Bool as the map's key type.".to_string()),
+        );
+    }
+
     if msg.starts_with("Unknown identifier") || msg.starts_with("Unknown function") {
         return (
             "unknown-ident",

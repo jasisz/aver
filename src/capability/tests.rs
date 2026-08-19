@@ -315,10 +315,20 @@ fn capability_resources_and_transitive_wrappers_are_not_map_keys() {
     let errors = error_messages(
         "module Invalid\n    kind = capability\n    semantics = effectful\n\nopaque Token\n\ntype Wrapper\n    Wrapped(Token)\n\noperation index(values: Map<Wrapper, Int>) -> Int\n    oracle = generative\n    replay = recorded\n",
     );
+    // The capability-resource sentence in full. A wrapper around a token is
+    // refused in key position because the token has no equality or hash
+    // semantics, which is a different fact from the general rule that a map
+    // key type needs an ordering (`src/types/map_key.rs`) — and both fire on
+    // this source. Matching loosely would let the capability-aware refusal
+    // disappear behind the general one.
     assert!(
         errors.iter().any(|error| {
-            error.contains("Map key") && error.contains("provider token identity")
-        })
+            error.contains(
+                "uses capability resource type 'Wrapper' as a Map key; provider token \
+                 identity has no equality or hash semantics",
+            )
+        }),
+        "expected the capability-resource map-key refusal: {errors:?}"
     );
 
     let nested_source = error_messages(

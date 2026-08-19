@@ -1,0 +1,74 @@
+module MapOrderInvisibleKey
+    intent =
+        "Claims that read a map's iteration order without naming the map in any signature."
+        "Every map below is built inside a function body and every annotation is scalar-shaped, so nothing tells the exporter what the maps are keyed on. A key it cannot see is a key it cannot check, so it declines the claim instead of assuming one — while an order-blind law over a map whose key type IS in the signature still exports."
+    effects []
+
+fn firstInt(xs: List<Int>) -> Int
+    ? "The first element of a list of integers, or zero."
+    match xs
+        [] -> 0
+        [x, ..__rest] -> x
+
+verify firstInt
+    firstInt([]) => 0
+    firstInt([7, 8]) => 7
+
+fn firstStr(xs: List<String>) -> String
+    ? "The first element of a list of strings, or the empty string."
+    match xs
+        [] -> ""
+        [x, ..__rest] -> x
+
+verify firstStr
+    firstStr([]) => ""
+    firstStr(["p", "q"]) => "p"
+
+fn iteratedValues(v: Int) -> List<Int>
+    ? "Values of a two-key map built in place, read in iteration order."
+    m = Map.set(Map.set({}, "b", v), "a", 3)
+    Map.values(m)
+
+verify iteratedValues law lowestKeyLeadsTheValues
+    given v: Int = [5, 7]
+    firstInt(iteratedValues(v)) => 3
+
+fn iteratedKeys(k: String) -> List<String>
+    ? "Keys of a two-key map built in place, read in iteration order."
+    m = Map.set(Map.set({}, "b", 5), k, 3)
+    Map.keys(m)
+
+verify iteratedKeys law lowestKeyLeadsTheKeys
+    given k: String = ["a", "ab"]
+    firstStr(iteratedKeys(k)) => k
+
+fn plainEntries() -> List<Tuple<String, Int>>
+    ? "Entries of a map literal written out of key order."
+    Map.entries({"b" => 1, "a" => 2})
+
+verify plainEntries
+    plainEntries() => [("a", 2), ("b", 1)]
+
+fn hiddenValues() -> List<Int>
+    ? "A helper that reads iteration order, called by a law that never names it."
+    m = Map.set(Map.set({}, "b", 5), "a", 3)
+    Map.values(m)
+
+fn firstValue(fallback: Int) -> Int
+    ? "The value paired with the lowest key, read through the helper."
+    match hiddenValues()
+        [x, ..__rest] -> x
+        _ -> fallback
+
+verify firstValue law firstIsLowestKeysValue
+    given fallback: Int = [0, 9]
+    firstValue(fallback) => 3
+
+fn sizeAfterSet(m: Map<String, Int>, k: String) -> Int
+    ? "Size of a map after writing one key: order-blind, and the key type is right there in the signature."
+    Map.len(Map.set(m, k, 9))
+
+verify sizeAfterSet law neverEmptyAfterSet
+    given m: Map<String, Int> = [{}, {"a" => 1}, {"b" => 5, "a" => 3}]
+    given k: String = ["a", "new"]
+    Map.len(Map.set(m, k, 9)) >= 1 => true

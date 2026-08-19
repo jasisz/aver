@@ -1,36 +1,38 @@
 module MapOrderHiddenObserver
     intent =
         "Two ways of reaching a map iteration-order observer that the cone walk used to miss."
-        "Neither law names Map.values itself: one reaches it through a string interpolation, the other through a tail call into a mutual peer."
+        "Neither law names Map.values itself: one reaches it through a string interpolation, the other through a tail call into a mutual peer. Every map is built inside a body and no signature mentions one, so once the walk arrives the key type is invisible as well. Both claims name the value written LAST, which is not the value the map iterates first, so aver verify refutes both."
+    effects []
 
-fn hiddenValues(m: Map<Float, Int>) -> List<Int>
-    ? "Reads a float-keyed map in iteration order."
+fn hiddenValues(v: Int) -> List<Int>
+    ? "Reads a two-key map, built in place, in iteration order."
+    m = Map.set(Map.set({}, "b", 5), "a", v)
     Map.values(m)
 
-fn firstValue(m: Map<Float, Int>) -> Int
+fn firstValue(v: Int) -> Int
     ? "The value the map yields first."
-    match hiddenValues(m)
+    match hiddenValues(v)
         [x, ..__rest] -> x
         _ -> 0
 
-fn describe(m: Map<Float, Int>) -> String
+fn describe(v: Int) -> String
     ? "The first value, rendered through an interpolated string."
-    "{firstValue(m)}"
+    "{firstValue(v)}"
 
 verify describe law describeReadsIterationOrder
-    given m: Map<Float, Int> = [{2.0 => 5, 1.0 => 3}]
-    describe(m) => "5"
+    given v: Int = [3, 4]
+    describe(v) => "5"
 
-fn readValues(m: Map<Float, Int>, n: Int) -> List<Int>
+fn readValues(v: Int, n: Int) -> List<Int>
     ? "Reads the map in iteration order, or bounces back to its peer."
     match n
-        0 -> Map.values(m)
-        _ -> bounce(m, n - 1)
+        0 -> hiddenValues(v)
+        _ -> bounce(v, n - 1)
 
-fn bounce(m: Map<Float, Int>, n: Int) -> List<Int>
+fn bounce(v: Int, n: Int) -> List<Int>
     ? "Bounces straight into the reader; the call is in tail position."
-    readValues(m, n)
+    readValues(v, n)
 
 verify bounce law bounceReadsIterationOrder
-    given m: Map<Float, Int> = [{2.0 => 5, 1.0 => 3}]
-    bounce(m, 1) => [5, 3]
+    given v: Int = [3, 4]
+    bounce(v, 1) => [5, v]

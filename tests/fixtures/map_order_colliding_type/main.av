@@ -1,0 +1,33 @@
+module MapOrderCollidingType
+    intent =
+        "Two modules declare a record called Entry and a record called Scored, and each of those names carries a map in exactly one of the two."
+        "A claim that reads iteration order is exported only once the exporter knows what the maps in its signature are keyed on, and the record each law carries is the ONLY thing here that says so — deliberately, because that makes the annotation's resolution the whole difference. Routing by bare name gets exactly one of the two records wrong, finds no key type, and declines a provable law."
+    effects []
+    depends [Holder]
+
+record Entry
+    label: String
+
+record Scored
+    tag: String
+    scores: Map<String, Int>
+
+fn heldOrder(e: Holder.Entry, v: Int) -> Int
+    ? "How many values a two-key map iterates. The entry is carried, not read: it is the signature's only word about a key type."
+    m = Map.set(Map.set({}, "b", v), "a", 3)
+    List.len(Map.values(m))
+
+verify heldOrder law readsBothValues
+    given e: Holder.Entry = [Holder.Entry(label = "x", scores = {"a" => 1})]
+    given v: Int = [5, 7]
+    heldOrder(e, v) => 2
+
+fn ownOrder(s: Scored, v: Int) -> Int
+    ? "The same reading, carrying THIS module's map-bearing Scored instead."
+    m = Map.set(Map.set({}, "b", v), "a", 3)
+    List.len(Map.values(m))
+
+verify ownOrder law alsoReadsBothValues
+    given s: Scored = [Scored(tag = "x", scores = {"a" => 1})]
+    given v: Int = [5, 7]
+    ownOrder(s, v) => 2

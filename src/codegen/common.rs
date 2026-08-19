@@ -2083,6 +2083,15 @@ const MAP_ORDER_OBSERVERS: &[&str] = &["Map.keys", "Map.values", "Map.entries"];
 /// numeric on both sides, `String` is codepoint order on both sides (Rust
 /// compares UTF-8 bytes, which is the same order), `Bool` is `false` before
 /// `true`. See `src/types/map.rs::compare_scalar_keys`.
+///
+/// Deliberately its own list rather than a read of
+/// `crate::types::ORDERED_MAP_KEY_TYPES`: this is the backstop for the
+/// language rule, and a backstop that reads the thing it guards widens
+/// whenever that thing widens. Adding a key type to the language must not
+/// silently admit it here — the model needs an `AverKeyOrder` instance for
+/// it first, or the priority-50 catch-all answers and the export states
+/// written order. `tests/ordered_map_key_ban.rs` holds the two lists and
+/// the prelude's instances to each other.
 const MODELLED_MAP_KEY_TYPES: &[&str] = &["Int", "String", "Bool"];
 
 /// Why a law that observes map iteration order cannot be exported, or

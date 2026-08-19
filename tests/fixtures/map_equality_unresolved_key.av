@@ -1,0 +1,32 @@
+module MapEqualityUnresolvedKey
+    intent =
+        "Deciding whether a map is the empty map, where the empty map literal has no decided key type."
+        "The exporter reads a key type off the operand it is comparing, and an empty map literal carries none — nothing has decided what it would be keyed on. The model stores a map as an association list kept sorted by key, so a key type it cannot name is one it cannot say it sorts the way the runtime does, and it declines rather than assume. Each shape below reaches that decision through a different construct."
+    effects []
+
+fn writtenOrderMatters(v: Int) -> Bool
+    ? "Whether a map holding one pair differs from the empty map. Both maps are local: neither is named in the signature."
+    a = Map.set({}, "a", v)
+    b = {}
+    a != b
+
+verify writtenOrderMatters
+    writtenOrderMatters(1) => true
+    writtenOrderMatters(3) => true
+
+fn seenBefore(v: Int) -> Bool
+    ? "Whether a one-pair map is already among the maps seen, decided by membership rather than by an operator."
+    a = Map.set({}, "a", v)
+    List.contains([{}], a)
+
+verify seenBefore
+    seenBefore(1) => false
+    seenBefore(3) => false
+
+fn rewrite(v: Int) -> Map<String, Int>
+    ? "Writes two keys back in descending order."
+    Map.set(Map.set({}, "b", 5), "a", v)
+
+verify rewrite law rewriteChangesIdentity
+    given v: Int = [3, 4]
+    rewrite(v) == {} => false

@@ -1,0 +1,11 @@
+module Holder
+    intent =
+        "A record named Holder.Entry that carries a map, and a record named Holder.Scored that carries none."
+        "The entry module declares its own Entry and its own Scored the other way round, so each bare name means one thing here and something else there, and only the resolved type identity tells them apart."
+
+record Entry
+    label: String
+    scores: Map<String, Int>
+
+record Scored
+    tag: String

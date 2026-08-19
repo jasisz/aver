@@ -11,11 +11,11 @@ For Oracle laws and trace assertions over classified effects, see [oracle.md](or
 ## Types
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` (`K` is `Int`, `String` or `Bool`), `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 
 Each primitive has exactly one spelling — the string type is written `String`, never abbreviated.
 
-There is no dedicated `Set` type — use `Map<T, Unit>` (see [Sets](#sets) below).
+There is no dedicated `Set` type — use `Map<T, Unit>`, for the same `T` a map may be keyed on (see [Sets](#sets) below).
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 
@@ -157,6 +157,8 @@ m = {"key" => value, "other" => 42}
 ```
 
 `=>` is required inside map literals; `:` stays type-only.
+
+A map iterates its entries sorted by key — when you run a program, in a compiled binary, and in the exported proof model — so its key type must be one that has an ordering: `Int`, `String` or `Bool`. Any other key type is a type error wherever the key is decided: an annotation, a map literal, the key argument of `Map.set`, the pair list handed to `Map.fromList`, a `verify` given, or a signature reached through a dependency. The error names the offending key type. Float and every other type stays legal as a map *value*.
 
 ## Effects
 
@@ -307,7 +309,7 @@ Most application code in Aver stays first-order and explicit. Use function param
 
 ## Sets
 
-Aver has no dedicated `Set` type. The idiomatic way to express a set is `Map<T, Unit>` — a map whose values carry no information. All `Map.*` operations work on sets:
+Aver has no dedicated `Set` type. The idiomatic way to express a set is `Map<T, Unit>` — a map whose values carry no information, where `T` is one of the key types a map admits (`Int`, `String`, `Bool`). All `Map.*` operations work on sets:
 
 ```aver
 seen: Map<String, Unit> = {}

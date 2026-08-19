@@ -1,15 +1,16 @@
 module Peek
     intent =
-        "Reads a float-keyed map in iteration order, one bare peer call away."
+        "Builds a map in place and reads it in iteration order, one bare peer call away."
         "The peer is called by its bare name, and that word is a name in this module's scope and nowhere else."
     effects []
 
-fn hiddenValues(m: Map<Float, Int>) -> Int
+fn hiddenValues(v: Int) -> Int
     ? "The value the map yields first, read in iteration order."
+    m = Map.set(Map.set({}, "b", 5), "a", v)
     match Map.values(m)
         [x, ..__rest] -> x
         _ -> 0
 
-fn describe(m: Map<Float, Int>) -> String
+fn describe(v: Int) -> String
     ? "The first value, rendered — the peer call sits inside the braces."
-    "{hiddenValues(m)}"
+    "{hiddenValues(v)}"

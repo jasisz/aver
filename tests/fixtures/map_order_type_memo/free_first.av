@@ -1,0 +1,19 @@
+module MapOrderTypeMemoFreeFirst
+    intent =
+        "One law that reads iteration order and whose signature names a map-free Holder.Entry BEFORE this module's own map-carrying Entry."
+        "Its sibling map_first.av is the same file with the two named the other way round — same law, same runtime answer, so the two must export or be declined together. The map-free entry is carried and not read: it is there to be met first, because 'already looked at this type' keyed on the WORD lets whichever Entry the walk meets first claim the name and hide the other one's map."
+    effects []
+    depends [Holder]
+
+record Entry
+    label: String
+    scores: Map<String, Int>
+
+fn scoreCount(free: Holder.Entry, own: Entry) -> Int
+    ? "How many values this module's entry iterates. The other module's namesake is carried, not read."
+    List.len(Map.values(own.scores))
+
+verify scoreCount law countsWhatItIterates
+    given free: Holder.Entry = [Holder.Entry(label = "q")]
+    given own: Entry = [Entry(label = "x", scores = {"b" => 5, "a" => 3})]
+    scoreCount(free, own) => Map.len(own.scores)

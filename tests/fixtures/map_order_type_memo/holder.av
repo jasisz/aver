@@ -1,0 +1,7 @@
+module Holder
+    intent =
+        "A record named Holder.Entry that carries no map at all."
+        "The entry modules next to this one declare their own Entry, which does carry one, so the two share a bare name and only the resolved type identity tells them apart."
+
+record Entry
+    label: String

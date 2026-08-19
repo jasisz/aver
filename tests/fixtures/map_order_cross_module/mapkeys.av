@@ -1,8 +1,9 @@
 module MapKeys
     intent =
-        "Reads a float-keyed map in iteration order, for a caller in another module."
+        "Builds a map in place and reads it in iteration order, for a caller in another module."
     effects []
 
-fn floatValues(m: Map<Float, Int>) -> List<Int>
-    ? "Values of a float-keyed map, in iteration order."
+fn builtValues(v: Int) -> List<Int>
+    ? "Values of a two-key map built in place, in iteration order."
+    m = Map.set(Map.set({}, "b", v), "a", 3)
     Map.values(m)

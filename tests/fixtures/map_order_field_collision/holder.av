@@ -1,0 +1,8 @@
+module Holder
+    intent =
+        "A record named Holder.Scored that carries a map."
+        "The entry modules next to this one reach it only through a field annotation, which is a bare piece of text — the module the annotation was written in is what says which Scored it means."
+
+record Scored
+    label: String
+    scores: Map<String, Int>

@@ -130,7 +130,7 @@ impl CapabilityProvider for EchoProvider {
 }
 
 struct MapOrderProvider {
-    seen: Arc<Mutex<Vec<u64>>>,
+    seen: Arc<Mutex<Vec<String>>>,
 }
 
 impl CapabilityProvider for MapOrderProvider {
@@ -150,14 +150,14 @@ impl CapabilityProvider for MapOrderProvider {
         let [ProviderValue::Map(entries)] = args else {
             return Err(ProviderFault::new("bad_args", "expected one Map"));
         };
-        let bits = entries
+        let keys = entries
             .iter()
             .map(|(key, _)| match key {
-                ProviderValue::Float(value) => Ok(value.to_bits()),
-                _ => Err(ProviderFault::new("bad_key", "expected Float key")),
+                ProviderValue::String(value) => Ok(value.to_string()),
+                _ => Err(ProviderFault::new("bad_key", "expected String key")),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        *self.seen.lock().expect("map order capture") = bits;
+        *self.seen.lock().expect("map order capture") = keys;
         Ok(ProviderValue::Int((entries.len() as i64).into()))
     }
 }
@@ -443,15 +443,30 @@ operation echo(value: Bundle) -> Bundle
     assert_eq!(output, input);
 }
 
+/// A `Map` crossing the provider boundary arrives KEY-SORTED, whatever order
+/// the caller's hash map happened to hold it in.
+///
+/// A provider sees an ordered sequence of entries, so the order has to be a
+/// function of the keys and not of the hash map's internal layout — otherwise
+/// two runs of the same program hand the same map to the provider two
+/// different ways, and a recorded replay stops matching.
+///
+/// This used to be written with two distinct NaN bit patterns, because the
+/// hazard then was a key comparator that was not a total order over Float. A
+/// map key must have an ordering now — `Int`, `String` or `Bool`
+/// (`src/types/map_key.rs`) — so a `Map<Float, Int>` operation is a capability
+/// validation error and that shape cannot reach a provider at all. The
+/// boundary's own ordering is still worth pinning, and `String` is the key type
+/// that pins it: `"b"` is inserted first and must arrive second.
 #[test]
-fn provider_maps_use_a_total_structural_order_even_for_distinct_nan_keys() {
+fn provider_maps_arrive_key_sorted_at_the_boundary() {
     const MAPS: &str = "\
 module Maps
     kind = capability
     semantics = pure
     exposes [inspect]
 
-operation inspect(values: Map<Float, Int>) -> Int
+operation inspect(values: Map<String, Int>) -> Int
 ";
     let registry = contracts("Maps", MAPS);
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -465,11 +480,9 @@ operation inspect(values: Map<Float, Int>) -> Int
         ))
         .expect("bind map inspector");
 
-    let first_bits = 0x7ff8_0000_0000_0001;
-    let second_bits = 0x7ff8_0000_0000_0002;
     let mut values = std::collections::HashMap::new();
-    values.insert(Value::Float(f64::from_bits(second_bits)), Value::int(2));
-    values.insert(Value::Float(f64::from_bits(first_bits)), Value::int(1));
+    values.insert(Value::Str("b".to_string()), Value::int(2));
+    values.insert(Value::Str("a".to_string()), Value::int(1));
     assert_eq!(
         providers
             .invoke(
@@ -481,7 +494,7 @@ operation inspect(values: Map<Float, Int>) -> Int
     );
     assert_eq!(
         *seen.lock().expect("captured map order"),
-        [first_bits, second_bits]
+        ["a".to_string(), "b".to_string()]
     );
 }
 

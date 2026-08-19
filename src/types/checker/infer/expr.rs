@@ -344,6 +344,8 @@ impl TypeChecker {
                     // Map.fromList(xs) — expected Map<K, V> gives xs the
                     // concrete List<(K, V)> element type.
                     ("Map.fromList", 1, Type::Map(k, v)) => {
+                        let line = self.current_fn_line.unwrap_or(1);
+                        self.require_ordered_map_key(k, line, None);
                         let expected_pairs =
                             Type::List(Box::new(Type::Tuple(vec![*k.clone(), *v.clone()])));
                         let list_ty =
@@ -377,6 +379,8 @@ impl TypeChecker {
                     // context to all three args, including nested Map.empty().
                     ("Map.set", 3, Type::Map(k, v)) => {
                         let expected_map = expected.clone();
+                        let line = self.current_fn_line.unwrap_or(1);
+                        self.require_ordered_map_key(k, line, None);
                         let map_ty = self.infer_type_with_expected(&args[0], Some(&expected_map));
                         let key_ty = self.infer_type_with_expected(&args[1], Some(k));
                         let val_ty = self.infer_type_with_expected(&args[2], Some(v));
@@ -548,6 +552,8 @@ impl TypeChecker {
                         want, got
                     ));
                 }
+                let line = self.current_fn_line.unwrap_or(1);
+                self.require_ordered_map_key(&k, line, None);
                 let expected_map = Type::Map(Box::new(k), Box::new(v));
                 self.infer_type_with_expected(&args[0], Some(&expected_map));
                 Some(expected_map)
@@ -1305,6 +1311,9 @@ impl TypeChecker {
                             "Map literal key type must be hashable (got {})",
                             current_key.display()
                         ));
+                    } else {
+                        let line = key_expr.line.max(self.current_fn_line.unwrap_or(1));
+                        self.require_ordered_map_key(&current_key, line, None);
                     }
 
                     if matches!(key_ty, Type::Var(_)) {

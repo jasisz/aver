@@ -10,7 +10,7 @@ impl TypeChecker {
         let option_ty = |v: Type| Type::Option(Box::new(v));
         let list_ty = |v: Type| Type::List(Box::new(v));
         let tuple2 = |k: Type, v: Type| Type::Tuple(vec![k, v]);
-        let ensure_hashable_key = |tc: &mut Self, key_ty: &Type, name: &str, arg_idx: usize| {
+        let ensure_key_is_usable = |tc: &mut Self, key_ty: &Type, name: &str, arg_idx: usize| {
             // Represented heap values are hashable, but a capability resource
             // has deliberately unobservable provider identity.
             if matches!(key_ty, Type::Fn { .. } | Type::Unit)
@@ -22,7 +22,15 @@ impl TypeChecker {
                     name,
                     key_ty.display()
                 ));
+                return;
             }
+            // A map iterates sorted by key, so the key needs an order too.
+            // This has to happen on every builtin that reads a key and not
+            // only on the ones that obviously decide it: `Map.has({}, 1.0)`
+            // decides `K` at the call, because an empty literal arrives with
+            // its key still unresolved.
+            let line = tc.current_fn_line.unwrap_or(1);
+            tc.require_ordered_map_key(key_ty, line, None);
         };
         let map_parts = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> (Type, Type) {
             match arg_ty {
@@ -66,7 +74,7 @@ impl TypeChecker {
                     return Some(fallback);
                 }
                 let (k, _) = map_parts(self, &arg_types[0], 1);
-                ensure_hashable_key(self, &k, name, 1);
+                ensure_key_is_usable(self, &k, name, 1);
                 Some(list_ty(k))
             }
             "Map.values" => {
@@ -83,7 +91,7 @@ impl TypeChecker {
                     return Some(fallback);
                 }
                 let (k, v) = map_parts(self, &arg_types[0], 1);
-                ensure_hashable_key(self, &k, name, 1);
+                ensure_key_is_usable(self, &k, name, 1);
                 Some(list_ty(tuple2(k, v)))
             }
             "Map.get" => {
@@ -101,8 +109,8 @@ impl TypeChecker {
                         name, want, got
                     ));
                 }
-                ensure_hashable_key(self, &k, name, 1);
-                ensure_hashable_key(self, &key_ty, name, 2);
+                ensure_key_is_usable(self, &k, name, 1);
+                ensure_key_is_usable(self, &key_ty, name, 2);
                 Some(option_ty(v))
             }
             "Map.has" => {
@@ -120,8 +128,8 @@ impl TypeChecker {
                         name, want, got
                     ));
                 }
-                ensure_hashable_key(self, &k, name, 1);
-                ensure_hashable_key(self, &key_ty, name, 2);
+                ensure_key_is_usable(self, &k, name, 1);
+                ensure_key_is_usable(self, &key_ty, name, 2);
                 Some(Type::Bool)
             }
             "Map.remove" => {
@@ -139,8 +147,8 @@ impl TypeChecker {
                         name, want, got
                     ));
                 }
-                ensure_hashable_key(self, &k, name, 1);
-                ensure_hashable_key(self, &key_ty, name, 2);
+                ensure_key_is_usable(self, &k, name, 1);
+                ensure_key_is_usable(self, &key_ty, name, 2);
                 Some(map_ty(k, v))
             }
             "Map.set" => {
@@ -169,8 +177,8 @@ impl TypeChecker {
                         name, want, got
                     ));
                 }
-                ensure_hashable_key(self, &k, name, 1);
-                ensure_hashable_key(self, &key_ty, name, 2);
+                ensure_key_is_usable(self, &k, name, 1);
+                ensure_key_is_usable(self, &key_ty, name, 2);
                 Some(map_ty(k, v))
             }
             "Map.fromList" => {
@@ -202,7 +210,7 @@ impl TypeChecker {
                         (Type::Invalid, Type::Invalid)
                     }
                 };
-                ensure_hashable_key(self, &k, name, 1);
+                ensure_key_is_usable(self, &k, name, 1);
                 Some(map_ty(k, v))
             }
             _ => None,

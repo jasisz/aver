@@ -1,28 +1,29 @@
 module MapOrderNameCollision
     intent =
         "Two laws that reach an iteration-order observer through a namesake in another module."
-        "Each law calls a map-order-free `hiddenValues` in this file and an observing `Peek.hiddenValues` one module over; the two laws differ only in which of them is written first."
+        "Each law calls a map-order-free `hiddenValues` in this file and an observing `Peek.hiddenValues` one module over; the two laws differ only in which of them is written first. No signature on either side names a map, so once the walk arrives the key type is invisible too. Both claims name the value written LAST, which is not the value the map iterates first, so aver verify refutes both."
     effects []
     depends [Peek]
 
-fn hiddenValues(m: Map<Float, Int>) -> Int
+fn hiddenValues(v: Int) -> Int
     ? "A map-order-free namesake: it looks one key up, it never iterates."
-    match Map.get(m, 1.0)
-        Option.Some(v) -> v
+    m = Map.set(Map.set({}, "b", 5), "a", v)
+    match Map.get(m, "b")
+        Option.Some(x) -> x
         Option.None -> 0
 
-fn renderedThenLocal(m: Map<Float, Int>) -> String
+fn renderedThenLocal(v: Int) -> String
     ? "Reaches the other module's namesake first, this file's second."
-    "{Peek.describe(m)}-{hiddenValues(m)}"
+    "{Peek.describe(v)}-{hiddenValues(v)}"
 
-fn localThenRendered(m: Map<Float, Int>) -> String
+fn localThenRendered(v: Int) -> String
     ? "The same two calls, written the other way round."
-    "{hiddenValues(m)}-{Peek.describe(m)}"
+    "{hiddenValues(v)}-{Peek.describe(v)}"
 
 verify renderedThenLocal law renderedThenLocalIsWrittenOrder
-    given m: Map<Float, Int> = [{2.0 => 5, 1.0 => 3}]
-    renderedThenLocal(m) => "5-3"
+    given v: Int = [3]
+    renderedThenLocal(v) => "5-5"
 
 verify localThenRendered law localThenRenderedIsWrittenOrder
-    given m: Map<Float, Int> = [{2.0 => 5, 1.0 => 3}]
-    localThenRendered(m) => "3-5"
+    given v: Int = [3]
+    localThenRendered(v) => "5-5"

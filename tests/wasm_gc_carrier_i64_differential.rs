@@ -1673,157 +1673,14 @@ fn main() -> Unit
     );
 }
 
-/// HOLE #2 regression — a carrier used as a `Map` KEY. The Map-key scan
-/// demotes `IntRange` to boxed, so the program compiles to wasm-gc via the
-/// boxed key path and matches the VM. The revert (scan disabled) keeps
-/// `IntRange` as i64 in the key position and wasm VALIDATION fails.
-#[test]
-fn carrier_as_map_key_demotes_to_boxed() {
-    let src = r#"module M
-    intent = "carrier as Map KEY"
-    effects [Console]
-
-record IntRange
-    value: Int
-
-fn fromInt(n: Int) -> Result<IntRange, String>
-    match Bool.and(n >= 0, n <= 100)
-        true  -> Result.Ok(IntRange(value = n))
-        false -> Result.Err("oob")
-
-fn unwrap(r: Result<IntRange, String>) -> IntRange
-    match r
-        Result.Ok(c)  -> c
-        Result.Err(_) -> IntRange(value = 0)
-
-fn ir(n: Int) -> IntRange
-    unwrap(fromInt(n))
-
-fn mkMap() -> Map<IntRange, String>
-    Map.fromList([(ir(5), "five"), (ir(7), "seven")])
-
-fn lookup(m: Map<IntRange, String>, k: IntRange) -> String
-    match Map.get(m, k)
-        Option.Some(v) -> v
-        Option.None    -> "MISS"
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print("{lookup(mkMap(), ir(5))} {lookup(mkMap(), ir(7))} {lookup(mkMap(), ir(9))}")
-"#;
-    // FIX: demoted to boxed key ⇒ compiles clean AND VM == wasm-gc.
-    let out = assert_vm_wasm_identical("mapkey", src);
-    assert_eq!(out, "five seven MISS");
-
-    // REVERT: scan disabled ⇒ i64-erased Map KEY ⇒ wasm validation fails.
-    let (ok, msg) = run_wasm_skip_demotion("mapkey-revert", src);
-    assert!(
-        !ok,
-        "revert: with the Map-key scan disabled an i64-erased carrier KEY must \
-         fail wasm validation (the hole returns), but the run succeeded:\n{msg}"
-    );
-    assert!(
-        msg.contains("validation failed") || msg.contains("type mismatch"),
-        "revert: expected a wasm validation / type-mismatch error from the \
-         i64-erased Map key, got:\n{msg}"
-    );
-}
-
-/// HOLE #2 (completeness) — a carrier used as a `Map` KEY through a LOCAL
-/// BINDING annotation (`m: Map<IntRange, Int> = …`). The original Map-key scan
-/// only walked fn-param / fn-return / record-field annotation strings, so a
-/// binding-level `Map<…>` annotation was MISSED and the carrier wrongly stayed
-/// i64 → wasm validation failure on a VM-valid program. The resolved-IR scan
-/// (typed-MIR `Map<K, V>` instantiations) sees this Map and demotes the key.
-#[test]
-fn carrier_as_map_key_via_local_binding_demotes_to_boxed() {
-    let src = r#"module M
-    intent = "carrier as Map KEY via local binding annotation"
-    effects [Console]
-
-record IntRange
-    value: Int
-
-fn fromInt(n: Int) -> Result<IntRange, String>
-    match Bool.and(n >= 0, n <= 100)
-        true  -> Result.Ok(IntRange(value = n))
-        false -> Result.Err("oob")
-
-fn use(c: IntRange) -> Int
-    m: Map<IntRange, Int> = Map.set({}, c, 5)
-    Option.withDefault(Map.get(m, c), 0)
-
-fn main() -> Unit
-    ! [Console.print]
-    match fromInt(7)
-        Result.Ok(c)  -> Console.print("{use(c)}")
-        Result.Err(_) -> Console.print("err")
-"#;
-    // FIX: the binding-annotated Map key demotes ⇒ boxed key path ⇒ compiles
-    // clean AND VM == wasm-gc.
-    let out = assert_vm_wasm_identical("mapkey-localbind", src);
-    assert_eq!(out, "5");
-
-    // REVERT: scan disabled ⇒ i64-erased Map KEY ⇒ wasm validation fails.
-    let (ok, msg) = run_wasm_skip_demotion("mapkey-localbind-revert", src);
-    assert!(
-        !ok,
-        "revert: with demotion disabled the i64-erased carrier KEY (local-binding \
-         annotation) must fail wasm validation, but the run succeeded:\n{msg}"
-    );
-    assert!(
-        msg.contains("validation failed") || msg.contains("type mismatch"),
-        "revert: expected a wasm validation / type-mismatch error from the \
-         i64-erased Map key, got:\n{msg}"
-    );
-}
-
-/// HOLE #2 (completeness) — a carrier used as a `Map` KEY reached ONLY through
-/// INFERENCE: `m = Map.set({}, c, 5)` with NO annotation anywhere. A textual
-/// annotation scan fundamentally cannot see this key type; the resolved typed
-/// MIR carries it. The resolved-IR scan demotes the key.
-#[test]
-fn carrier_as_map_key_fully_inferred_demotes_to_boxed() {
-    let src = r#"module M
-    intent = "carrier as Map KEY, fully inferred (no annotation)"
-    effects [Console]
-
-record IntRange
-    value: Int
-
-fn fromInt(n: Int) -> Result<IntRange, String>
-    match Bool.and(n >= 0, n <= 100)
-        true  -> Result.Ok(IntRange(value = n))
-        false -> Result.Err("oob")
-
-fn use(c: IntRange) -> Int
-    m = Map.set({}, c, 5)
-    Option.withDefault(Map.get(m, c), 0)
-
-fn main() -> Unit
-    ! [Console.print]
-    match fromInt(7)
-        Result.Ok(c)  -> Console.print("{use(c)}")
-        Result.Err(_) -> Console.print("err")
-"#;
-    // FIX: the inferred Map key demotes ⇒ boxed key path ⇒ compiles clean AND
-    // VM == wasm-gc.
-    let out = assert_vm_wasm_identical("mapkey-inferred", src);
-    assert_eq!(out, "5");
-
-    // REVERT: scan disabled ⇒ i64-erased inferred Map KEY ⇒ wasm validation fails.
-    let (ok, msg) = run_wasm_skip_demotion("mapkey-inferred-revert", src);
-    assert!(
-        !ok,
-        "revert: with demotion disabled the i64-erased carrier KEY (fully inferred) \
-         must fail wasm validation, but the run succeeded:\n{msg}"
-    );
-    assert!(
-        msg.contains("validation failed") || msg.contains("type mismatch"),
-        "revert: expected a wasm validation / type-mismatch error from the \
-         i64-erased Map key, got:\n{msg}"
-    );
-}
+// HOLE #2 (`Map` KEY carrier demotion) had three regression tests here —
+// bare, local-binding-annotated and fully-inferred `Map<IntRange, …>`. A
+// record in key position is a type error now (a map key must have an
+// ordering: `Int`, `String` or `Bool` — `src/types/map_key.rs`), so none of
+// the three programs can be written and the demotion cannot be reached from
+// source. The Map-key scan itself stays in place as a backstop, and nothing
+// exercises the branch that fires any more — the control below only pins the
+// other half, that the scan leaves a carrier in VALUE position i64-erased.
 
 /// No-over-boxing CONTROL for the inferred-key fix — the SAME inference shape
 /// (`m = Map.set(…)`, no annotation) but the carrier sits in the Map VALUE
@@ -3875,9 +3732,14 @@ fn main() -> Unit
 // per-V hash/eq helper SIGNATURE follows. The helper BODY used to
 // `struct.get` the unerased `$V` struct, diverging from the erased
 // signature → wasm validation failure
-// (`map_keyed_by_record_with_record_value`). The body must hash/eq the
-// carrier directly. Keys are never erased; multi-field record values
-// keep the struct path. These pin the fix on the three shapes.
+// (a record in map-KEY position, which no longer typechecks). The body must hash/eq the
+// carrier directly. Multi-field record values keep the struct path.
+// These pin the fix on the three shapes.
+//
+// The keys are `String` because the defect is about the VALUE helper and
+// a map key must have an ordering — `Int`, `String` or `Bool` (see
+// `src/types/map_key.rs`). The record key these used to carry was only
+// ever a way to get a map, and it is a type error now.
 
 #[test]
 fn map_newtype_int_value_helper_matches_erased_signature() {
@@ -3885,21 +3747,21 @@ fn map_newtype_int_value_helper_matches_erased_signature() {
     intent = "newtype Int record map value — erased hash/eq helper"
     effects [Console]
 
-record K
-    a: Int
-
 record V
     b: Int
 
-fn lookup(m: Map<K, V>, k: K) -> Int
+fn lookup(m: Map<String, V>, k: String) -> Int
     match Map.get(m, k)
         Option.Some(v) -> v.b
         Option.None -> 0 - 1
 
 fn main() -> Unit
     ! [Console.print]
-    m = Map.set(Map.set({}, K(a = 1), V(b = 9)), K(a = 2), V(b = 8))
-    Console.print("{lookup(m, K(a = 1))},{lookup(m, K(a = 2))},{lookup(m, K(a = 3))}")
+    m = Map.set(Map.set({}, "a", V(b = 9)), "b", V(b = 8))
+    hit = lookup(m, "a")
+    other = lookup(m, "b")
+    miss = lookup(m, "c")
+    Console.print("{hit},{other},{miss}")
 "#;
     // The bug was a pure validation failure on the V helper — the
     // clean-compile assert is the load-bearing one; value parity pins
@@ -3915,21 +3777,19 @@ fn map_newtype_float_value_helper_matches_erased_signature() {
     intent = "newtype Float record map value — erased hash/eq helper"
     effects [Console]
 
-record K
-    a: Int
-
 record V
     f: Float
 
-fn lookup(m: Map<K, V>, k: K) -> Float
+fn lookup(m: Map<String, V>, k: String) -> Float
     match Map.get(m, k)
         Option.Some(v) -> v.f
         Option.None -> 0.0
 
 fn main() -> Unit
     ! [Console.print]
-    m = Map.set({}, K(a = 1), V(f = 9.5))
-    Console.print("{lookup(m, K(a = 1))}")
+    m = Map.set({}, "a", V(f = 9.5))
+    hit = lookup(m, "a")
+    Console.print("{hit}")
 "#;
     assert_compiles_clean_wasm_gc("map-newtype-float-value", src);
     let out = assert_vm_wasm_identical("map-newtype-float-value", src);
@@ -3946,22 +3806,20 @@ fn map_multifield_record_value_keeps_struct_path() {
     intent = "multi-field record map value — unerased struct path"
     effects [Console]
 
-record K
-    a: Int
-
 record V
     x: Int
     y: Int
 
-fn lookup(m: Map<K, V>, k: K) -> Int
+fn lookup(m: Map<String, V>, k: String) -> Int
     match Map.get(m, k)
         Option.Some(v) -> v.x + v.y
         Option.None -> 0 - 1
 
 fn main() -> Unit
     ! [Console.print]
-    m = Map.set({}, K(a = 1), V(x = 3, y = 7))
-    Console.print("{lookup(m, K(a = 1))}")
+    m = Map.set({}, "a", V(x = 3, y = 7))
+    hit = lookup(m, "a")
+    Console.print("{hit}")
 "#;
     assert_compiles_clean_wasm_gc("map-multifield-value", src);
     let out = assert_vm_wasm_identical("map-multifield-value", src);
@@ -4128,21 +3986,20 @@ fn ledger_map_value_record_with_string_field() {
     intent = "map value record with String field"
     effects [Console]
 
-record K
-    a: Int
-
 record V
     s: String
 
-fn lookup(m: Map<K, V>, k: K) -> String
+fn lookup(m: Map<String, V>, k: String) -> String
     match Map.get(m, k)
         Option.Some(v) -> v.s
         Option.None -> "none"
 
 fn main() -> Unit
     ! [Console.print]
-    m = Map.set({}, K(a = 1), V(s = "hi"))
-    Console.print("{lookup(m, K(a = 1))},{lookup(m, K(a = 2))}")
+    m = Map.set({}, "a", V(s = "hi"))
+    hit = lookup(m, "a")
+    miss = lookup(m, "b")
+    Console.print("{hit},{miss}")
 "#;
     assert_compiles_clean_wasm_gc("ledger-map-string-value", src);
     let out = assert_vm_wasm_identical("ledger-map-string-value", src);

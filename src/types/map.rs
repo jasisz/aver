@@ -892,6 +892,11 @@ mod tests {
 
     /// Every float a program can put in a map key position, including the
     /// three the ordering used to get wrong.
+    ///
+    /// Deliberate defence-in-depth BELOW the language rule: `Map<Float, _>` is
+    /// a type error at `aver check` (`src/types/map_key.rs`), so these tests
+    /// exercise a comparator no source program can reach any more — and they
+    /// stay, because the comparator is still what every key type runs through.
     fn float_key_corpus() -> Vec<Value> {
         [
             f64::NAN,

@@ -1,0 +1,22 @@
+module MapOrderFieldShadowed
+    intent =
+        "A law that reads iteration order and whose only word about a key type is a field annotation naming Holder.Scored."
+        "Identical to plain.av except for the unrelated record named Scored below, which this law never names and which must not change its verdict. Resolving the field's annotation by its last dotted segment hands the question to that record, which carries no map, and a provable law is declined."
+    effects []
+    depends [Holder]
+
+record Scored
+    tag: String
+
+record Box
+    held: Holder.Scored
+
+fn boxOrder(b: Box, v: Int) -> Int
+    ? "How many values a two-key map iterates. The box is carried, not read."
+    m = Map.set(Map.set({}, "b", v), "a", 3)
+    List.len(Map.values(m))
+
+verify boxOrder law readsBothValues
+    given b: Box = [Box(held = Holder.Scored(label = "x", scores = {"a" => 1}))]
+    given v: Int = [5, 7]
+    boxOrder(b, v) => 2

@@ -1841,70 +1841,13 @@ fn main() -> Int
     );
 }
 
-#[test]
-fn map_record_key_get() {
-    assert_eq!(
-        run_int(
-            r#"module Tmp
-    intent = "map<record, int>"
-    depends []
-
-record Point
-    x: Int
-    y: Int
-
-fn key() -> Point
-    Point(x = 1, y = 2)
-
-fn build() -> Map<Point, Int>
-    Map.set({}, key(), 99)
-
-fn main() -> Int
-    Option.withDefault(Map.get(build(), key()), -1)
-"#
-        ),
-        99
-    );
-}
-
-#[test]
-fn map_sum_key_get() {
-    assert_eq!(
-        run_int(
-            r#"module Tmp
-    intent = "map<sum, int>"
-    depends []
-
-type Tag
-    Red
-    Green
-    Blue
-
-fn redKey() -> Tag
-    Tag.Red
-
-fn greenKey() -> Tag
-    Tag.Green
-
-fn blueKey() -> Tag
-    Tag.Blue
-
-fn build() -> Map<Tag, Int>
-    m1 = Map.set({}, redKey(), 1)
-    m2 = Map.set(m1, greenKey(), 2)
-    Map.set(m2, blueKey(), 3)
-
-fn main() -> Int
-    Option.withDefault(Map.get(build(), greenKey()), -1)
-"#
-        ),
-        2
-    );
-}
-
-// ────────────────────────────────────────────────────────────────────
-// Vector<T>
-// ────────────────────────────────────────────────────────────────────
+// `map_record_key_get` and `map_sum_key_get` used to sit here, compiling a
+// `Map<Point, Int>` and a `Map<Tag, Int>` through the wasm-gc emitter. A map
+// key must have an ordering now — `Int`, `String` or `Bool`
+// (`src/types/map_key.rs`) — so neither program typechecks and the record /
+// sum key path cannot be reached from source. The emitter's struct-ref key
+// layout stays as a backstop; the String-, Int- and Bool-keyed map tests
+// around this note are what exercise it.
 
 #[test]
 fn vector_get_after_set() {
@@ -2425,57 +2368,15 @@ fn fromInt(n: Int) -> Result<IntRange, String>
     );
 }
 
-// A carrier used as a `Map` KEY must stay boxed (the Map-key codegen
-// expects the struct-ref key layout), and that demotion must fire even
-// when the ONLY spelling naming the carrier in Map-key position is the
-// entry-side QUALIFIED one (`m: Map<Dep.IntRange, Int>` — the resolved
-// key type keeps the qualified stamp). The alias-aware Scan 2 must
-// canonicalize the resolved key spelling to the same bare key the
-// eligibility set uses; missing it leaves the carrier i64-erased and
-// the module fails wasm validation.
-#[test]
-fn qualified_map_key_spelling_over_sole_declarer_carrier_demotes() {
-    let entry_src = r#"
-module Entry
-    intent = "qualified Map-key spelling over a sole-declarer carrier dep type"
-    depends [Dep]
-
-fn lookup(r: Dep.IntRange) -> Int
-    m: Map<Dep.IntRange, Int> = Map.set({}, r, 41)
-    match Map.get(m, r)
-        Option.Some(v) -> v
-        Option.None -> 0 - 1
-
-fn run() -> Result<Int, String>
-    r: Dep.IntRange = Dep.fromInt(70)?
-    Result.Ok(lookup(r))
-
-fn main() -> Int
-    match run()
-        Result.Ok(n) -> n
-        Result.Err(_) -> 0 - 2
-"#;
-    let dep_src = r#"
-module Dep
-    intent = "sole-declarer gated IntRange carrier"
-    exposes [IntRange, fromInt]
-    depends []
-
-record IntRange
-    value: Int
-
-fn fromInt(n: Int) -> Result<IntRange, String>
-    match Bool.and(n >= 0, n <= 100)
-        true -> Result.Ok(IntRange(value = n))
-        false -> Result.Err("oob")
-"#;
-    let result = run_int_multi(entry_src, &[("Dep", dep_src)]);
-    assert_eq!(
-        result, 41,
-        "expected the qualified Map-key spelling to demote the carrier to \
-         its boxed struct-ref key layout and read back 41"
-    );
-}
+// `qualified_map_key_spelling_over_sole_declarer_carrier_demotes` used to sit
+// here: it pinned that the alias-aware Map-key scan canonicalizes an
+// entry-side QUALIFIED key spelling (`m: Map<Dep.IntRange, Int>`) to the bare
+// key the eligibility set uses, so a sole-declarer carrier in key position
+// demotes to its boxed struct-ref layout instead of staying i64-erased and
+// failing wasm validation. A record in map-key position is a type error now
+// (a map key must have an ordering: `Int`, `String` or `Bool` —
+// `src/types/map_key.rs`), so that program cannot be written. The scan and its
+// alias canonicalization stay in place as a backstop.
 
 // Availability counterpart for the MULTI-FIELD carrier path: an
 // entry-side qualified local-binding annotation over a sole-declarer

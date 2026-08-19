@@ -986,18 +986,29 @@ fn map_from_list_and_entries_roundtrip() {
     );
 }
 
+/// The runtime is PERMISSIVE below the language rule: it hashes any heap
+/// structure by value (`rt_deep_hash`), so a list works as a map key here.
+///
+/// This file evaluates source directly and bypasses the typechecker, which is
+/// the only reason such a program can be run at all: `Map<List<Int>, Int>` is a
+/// type error at `aver check` (see `tests/ordered_map_key_ban.rs` and
+/// `tests/typechecker_spec.rs`), because a map iterates its entries sorted by
+/// key and a list has no ordering the proof model can state. The permissiveness
+/// stays pinned because it is what the interpreter's map is built on — the rule
+/// is a language rule, not a claim that the runtime would fall over.
 #[test]
-fn map_accepts_list_key_with_structural_hash() {
-    // Aver maps now hash by value across every shape, so List<Int>
-    // (and any other heap structure) participates as a key.
+fn the_runtime_hashes_a_list_key_below_the_language_rule() {
     assert_eq!(
         eval("Map.get(Map.set({}, [1, 2], 42), [1, 2])"),
         Value::Some(Box::new(Value::int(42)))
     );
 }
 
+/// The same permissiveness through a map literal. See
+/// [`the_runtime_hashes_a_list_key_below_the_language_rule`] for why a program
+/// like this cannot reach the runtime through `aver check`.
 #[test]
-fn map_literal_accepts_list_key() {
+fn the_runtime_hashes_a_list_key_in_a_map_literal() {
     assert_eq!(
         eval("Map.get({[1] => 42}, [1])"),
         Value::Some(Box::new(Value::int(42)))

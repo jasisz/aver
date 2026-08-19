@@ -904,7 +904,7 @@ fn emit_hash_for(
     // `values_array` element are both `aver_to_wasm(under)`. Hash it as
     // the underlying primitive. Routing through `emit_hash_record` would
     // `struct.get` the unerased struct and diverge from the erased
-    // signature (the `map_keyed_by_record_with_record_value` validation
+    // signature (the record-keyed-map validation
     // bug). Map keys are never erased (`newtype_underlying` returns
     // `None` for `non_newtypable_keys`), so this fires only for value
     // records — exactly where `aver_to_wasm` erases.

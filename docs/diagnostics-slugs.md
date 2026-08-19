@@ -20,6 +20,7 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 | `type-mismatch` | error | Expression's inferred type differs from the declared context. | Change the expression to produce the expected type. |
 | `unknown-ident` | error | A referenced name has no binding in scope. | Check spelling or add the missing import. |
 | `arity-mismatch` | error | Function or constructor called with the wrong number of args. | Adjust the number of arguments. |
+| `map-key-unordered` | error | A map's key type has no ordering. A map iterates its entries sorted by key on every backend and in the exported proof, so `Int`, `String` and `Bool` are the key types the language admits. | Use Int, String or Bool as the map's key type. |
 | `effect-violation` | error | A function calls an effect it doesn't declare in `! [...]`. | Add the missing effect to the function's `! [...]`. |
 | `int-div` | error | The `/` operator was used on two `Int`s. Integer division is partial (the divisor may be zero → `Result.Err`), so it is a function, not an operator. | Use `Int.div(a, b) : Result<Int, String>`; handle with `match` or `Result.withDefault`. With a nonzero literal divisor, `Int.div(a, k)` is total and returns plain `Int`. |
 | `error-prop-non-result` | error | `?` was applied to an expression that is not a `Result`. | Drop the `?`. A smart-constructor call over an all-literal list inside the refinement's proven element interval (`Bytes.fromList([0, 10, 255])`) is total and already returns the refined type. |

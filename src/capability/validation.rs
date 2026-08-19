@@ -327,6 +327,15 @@ pub(super) fn validate_resource_map_keys(
                             key.display()
                         ),
                     ));
+                } else if !crate::types::map_key_has_ordering(key) {
+                    errors.push(CapabilityError::at(
+                        operation.line,
+                        format!(
+                            "operation '{}': {}",
+                            operation.canonical_name,
+                            crate::types::unordered_map_key_message(key)
+                        ),
+                    ));
                 }
                 visit(key, operation, tainted, errors);
                 visit(value, operation, tainted, errors);

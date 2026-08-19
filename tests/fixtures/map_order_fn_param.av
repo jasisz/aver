@@ -1,19 +1,21 @@
 module MapOrderFnParam
     intent =
-        "A claim that reads a float-keyed map's iteration order through a function it was handed by name."
-        "The observer is never written inside the claim's own text: viaHof applies whatever reader it is given, and the reader arrives as an argument — so the cone has to follow the name to find the observation. Both claims below are refuted by aver verify."
+        "A claim that reads a map's iteration order through a function it was handed by name."
+        "The observer is never written inside the claim's own text: viaHof applies whatever reader it is given, and the reader arrives as an argument — so the cone has to follow the name to find the observation. The map is built inside the reader and no signature mentions one, so once the walk arrives the key type is invisible as well. Both claims name the keys in the order they were WRITTEN, which is not the order the map iterates, so aver verify refutes both."
+    effects []
 
-fn floatKeys(m: Map<Float, Int>) -> List<Float>
-    ? "Reads the map's keys in iteration order."
+fn builtKeys(v: Int) -> List<String>
+    ? "Builds a two-key map in place and reads its keys in iteration order."
+    m = Map.set(Map.set({}, "b", v), "a", 3)
     Map.keys(m)
 
-fn viaHof(f: Fn(Map<Float, Int>) -> List<Float>, m: Map<Float, Int>) -> List<Float>
-    ? "Applies the given reader to the map."
-    f(m)
+fn viaHof(f: Fn(Int) -> List<String>, v: Int) -> List<String>
+    ? "Applies the given reader."
+    f(v)
 
 verify viaHof
-    viaHof(floatKeys, {2.0 => 2, 1.0 => 1}) => [2.0, 1.0]
+    viaHof(builtKeys, 5) => ["b", "a"]
 
 verify viaHof law keysAsWritten
-    given m: Map<Float, Int> = [{2.0 => 2, 1.0 => 1}]
-    viaHof(floatKeys, m) => [2.0, 1.0]
+    given v: Int = [5, 7]
+    viaHof(builtKeys, v) => ["b", "a"]
