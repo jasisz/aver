@@ -179,11 +179,11 @@ pub fn emit_verify_block(
         // keep the source RHS and rely on the `--check` panic gate.
         let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx);
         let has_ground_truth = ground_truth.is_some();
-        let expected_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(&right, ctx, None));
         // A case carrying `?` denotes an `Except` action (see
-        // `emit_statement_lhs`), so the expected value is lifted into the same
-        // monad.
-        let right_str = lift_expected(expected_str, propagates_error);
+        // `emit_statement_lhs`), so both sides end up in the same monad.
+        let (right_str, right_propagates) = emit_statement_rhs(&right, ground_truth, ctx);
+        let (left_str, right_str) =
+            agree_monads(left_str, propagates_error, right_str, right_propagates);
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 let tactic = if theorem_params.is_empty() {
@@ -253,15 +253,47 @@ fn emit_statement_lhs(left: &Spanned<Expr>, ctx: &CodegenContext) -> (String, bo
     (format!("(do pure ({}))", body), true)
 }
 
-/// Lift the expected side into the monad the left side runs in.
+/// Emit the expected side of a case or law, and report whether it propagates
+/// an error.
 ///
-/// Both expected-side sources — the VM ground-truth literal and the source
-/// right-hand side — go through here, so they stay interchangeable.
-fn lift_expected(expected: String, propagates_error: bool) -> String {
-    if propagates_error {
-        format!("Except.ok ({})", expected)
-    } else {
-        expected
+/// A ground-truth literal is a plain value and never propagates. A source
+/// right-hand side carrying `?` is an `Except` action exactly as the left side
+/// is, and gets the same `do` context to bind it in. It used to be emitted
+/// without one, so `?` fell back to `withDefault default` — a value the model
+/// cannot stand behind. It asks for an `Inhabited` instance the type may not
+/// have (a refined type such as `Bytes` deliberately has none, and then the
+/// whole module fails to build), and where the instance does exist, a case
+/// that fails at run time is still true as a theorem whenever the expected
+/// value happens to equal that default.
+fn emit_statement_rhs(
+    right: &Spanned<Expr>,
+    ground_truth: Option<String>,
+    ctx: &CodegenContext,
+) -> (String, bool) {
+    if let Some(literal) = ground_truth {
+        return (literal, false);
+    }
+    let scope = ctx.active_module_scope();
+    let resolved = ctx.resolve_expr(right, scope.as_deref());
+    if !super::expr::resolved_expr_contains_error_prop(&resolved) {
+        return (super::expr::emit_expr(&resolved, ctx), false);
+    }
+    let body = ctx.with_lean_do_block(true, || super::expr::emit_expr(&resolved, ctx));
+    (format!("(do pure ({}))", body), true)
+}
+
+/// Put both sides of the equation in the same monad: whichever side is a bare
+/// value while the other runs in `Except` is lifted with `Except.ok`.
+fn agree_monads(
+    left: String,
+    left_propagates: bool,
+    right: String,
+    right_propagates: bool,
+) -> (String, String) {
+    match (left_propagates, right_propagates) {
+        (true, false) => (left, format!("Except.ok ({})", right)),
+        (false, true) => (format!("Except.ok ({})", left), right),
+        _ => (left, right),
     }
 }
 
@@ -486,7 +518,9 @@ fn emit_verify_law_block(
     // `emit_statement_lhs`. The universal theorem, `_checked_domain` and every
     // `_sample_N` all take this shape, so the three agree on what the law says.
     let (lhs_template, propagates_error) = emit_statement_lhs(&law_lhs, ctx);
-    let rhs_template = lift_expected(emit_expr_legacy(&law_rhs, ctx, None), propagates_error);
+    let (rhs_template, rhs_propagates) = emit_statement_rhs(&law_rhs, None, ctx);
+    let (lhs_template, rhs_template) =
+        agree_monads(lhs_template, propagates_error, rhs_template, rhs_propagates);
     // The `when` clause references the same oracle bindings the law
     // body does, so it needs the same subtype projection. Without this
     // a `when rng(root, 0, 1, 6) >= 1` clause would emit `rng ...`
@@ -1109,11 +1143,13 @@ fn emit_verify_law_block(
                 // `_sample_N` theorems below (see the comment there); this
                 // arm is reached only for non-refinement-lifted laws, where
                 // the carrier-typed VM literal matches the statement type.
-                let right_str = lift_expected(
-                    super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
-                        .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None)),
-                    propagates_error,
+                let (right_str, right_propagates) = emit_statement_rhs(
+                    &right_rw,
+                    super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx),
+                    ctx,
                 );
+                let (left_str, right_str) =
+                    agree_monads(left_str, propagates_error, right_str, right_propagates);
                 if let Some(guard) = law.sample_guards.get(idx) {
                     // Int-ascribed guard rendering — see `emit_sample_guard`
                     // (a bare numeral premise with subtraction elaborates as
@@ -1273,15 +1309,17 @@ fn emit_verify_law_block(
         // (failed/skipped at `aver verify`, Float-carrying values — decimal
         // repr isn't bit-exact — or non-round-tripping shapes) fall back to
         // the source spec side.
-        let right_str = lift_expected(
+        let (right_str, right_propagates) = emit_statement_rhs(
+            &right_rw,
             if lifted_vars.is_empty() {
                 super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
-                    .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None))
             } else {
-                emit_expr_legacy(&right_rw, ctx, None)
+                None
             },
-            propagates_error,
+            ctx,
         );
+        let (left_str, right_str) =
+            agree_monads(left_str, propagates_error, right_str, right_propagates);
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
             // Int-ascribed guard rendering — see `emit_sample_guard` (a bare
             // numeral premise with subtraction elaborates as truncated `Nat`

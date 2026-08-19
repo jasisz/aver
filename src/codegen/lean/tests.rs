@@ -232,6 +232,92 @@ fn divL(n: Int, d: Int) -> Result<Int, String>
 }
 
 #[test]
+fn a_record_carrying_a_refined_type_derives_no_inhabited() {
+    let mut ctx = ctx_from_source(
+        r#"
+module Carrier
+    effects []
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? "Smart constructor: admits only non-negative ints."
+    match n >= 0
+        true -> Result.Ok(Natural(value = n))
+        false -> Result.Err("must be non-negative")
+
+record Held
+    payload: Natural
+    line: Int
+
+fn lineOf(held: Held) -> Int
+    held.line
+"#,
+        "Carrier",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    // A refined type is emitted as a `Subtype` with deliberately no
+    // `Inhabited`, so a record carrying one has no witness either. Claiming
+    // the instance anyway fails the derive and takes every claim in the
+    // module with it -- including claims that never mention the field.
+    assert!(
+        lean.contains("abbrev Natural :="),
+        "sanity: the fixture's carrier must be emitted as a refined type:\n{lean}"
+    );
+    let held = lean
+        .split_once("structure Held where")
+        .map(|(_, rest)| rest)
+        .expect("Held is emitted");
+    let derives = held
+        .lines()
+        .find(|line| line.trim_start().starts_with("deriving"))
+        .expect("Held carries a deriving clause");
+    assert!(
+        !derives.contains("Inhabited"),
+        "a record carrying a refined type must not claim an `Inhabited` it has no witness for, got `{derives}`:\n{lean}"
+    );
+}
+
+#[test]
+fn error_prop_on_the_expected_side_is_bound_not_defaulted() {
+    let mut ctx = ctx_from_source(
+        r#"
+module ExpectedSide
+    effects []
+
+fn quotient(n: Int, d: Int) -> Result<Int, String>
+    ? "Divide two integers."
+    Int.div(n, d)
+
+verify quotient
+    quotient(10, 2)? => quotient(20, 4)?
+"#,
+        "ExpectedSide",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    // Both sides carry `?`, so both are `Except` actions. The expected side
+    // used to be emitted with no `do` context, where `?` fell back to
+    // `withDefault default` -- a value the model cannot stand behind: it asks
+    // for an `Inhabited` instance the type may not have (a refined type such
+    // as `Bytes` deliberately has none, and then nothing in the module
+    // builds), and where the instance exists, a case that fails at run time is
+    // still true as a theorem whenever the expected value equals that default.
+    assert!(
+        lean.contains("= (do pure ((<- quotient 20 4)))"),
+        "a `?` on the expected side must be bound, not defaulted:\n{lean}"
+    );
+    assert!(
+        !lean.contains("withDefault default"),
+        "the expected side must not substitute a default on the error path:\n{lean}"
+    );
+}
+
+#[test]
 fn error_prop_in_verify_case_states_an_except_action() {
     let mut ctx = ctx_from_source(
         r#"
