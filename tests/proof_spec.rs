@@ -4,6 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "proof_spec/builds.rs"]
 mod builds;
+#[path = "proof_spec/capability.rs"]
+mod capability;
 #[path = "proof_spec/check_gates.rs"]
 mod check_gates;
 #[path = "proof_spec/container_induction.rs"]

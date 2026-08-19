@@ -156,7 +156,19 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        let (left_str, propagates_error) = emit_statement_lhs(left, ctx);
+        let (left, right, theorem_params) =
+            super::verify_cases::rewrite_plain_case_oracles(vb, idx, left, right, ctx);
+        let theorem_param_text = theorem_params
+            .iter()
+            .map(|(name, ty)| {
+                format!(
+                    " ({} : {})",
+                    aver_name_to_lean(name),
+                    type_annotation_to_lean(ty)
+                )
+            })
+            .collect::<String>();
+        let (left_str, propagates_error) = emit_statement_lhs(&left, ctx);
         // Expected side: prefer the VM ground-truth literal over the source
         // RHS. A source RHS that calls a user fn (`verify f: f(x) => g(x)`)
         // routes BOTH sides through the model — vacuously true under fuel
@@ -167,24 +179,37 @@ pub fn emit_verify_block(
         // keep the source RHS and rely on the `--check` panic gate.
         let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx);
         let has_ground_truth = ground_truth.is_some();
-        let expected_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
+        let expected_str = ground_truth.unwrap_or_else(|| emit_expr_legacy(&right, ctx, None));
         // A case carrying `?` denotes an `Except` action (see
         // `emit_statement_lhs`), so the expected value is lifted into the same
         // monad.
         let right_str = lift_expected(expected_str, propagates_error);
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
+                let tactic = if theorem_params.is_empty() {
+                    decidability
+                        .tactic_for(&left, &left_str, &right_str, has_ground_truth, ctx)
+                        .to_string()
+                } else {
+                    // The symbolic oracle is absent from every passing plain
+                    // case after the concrete branch reduces. `simp` removes
+                    // it before native evaluation; if a future case actually
+                    // depends on the oracle, the remaining free variable makes
+                    // `native_decide` fail closed.
+                    format!(
+                        "simp [{}] <;> native_decide",
+                        aver_name_to_lean(&vb.fn_name)
+                    )
+                };
                 lines.push(format!(
-                    "example : {} = {} := by {}",
-                    left_str,
-                    right_str,
-                    decidability.tactic_for(left, &left_str, &right_str, has_ground_truth, ctx)
+                    "example{} : {} = {} := by {}",
+                    theorem_param_text, left_str, right_str, tactic
                 ));
             }
             VerifyEmitMode::Sorry => {
                 lines.push(format!(
-                    "example : {} = {} := by sorry",
-                    left_str, right_str
+                    "example{} : {} = {} := by sorry",
+                    theorem_param_text, left_str, right_str
                 ));
             }
             VerifyEmitMode::TheoremSkeleton => {
@@ -194,8 +219,8 @@ pub fn emit_verify_block(
                     case_index_start + idx + 1
                 );
                 lines.push(format!(
-                    "theorem {} : {} = {} := by",
-                    theorem_name, left_str, right_str
+                    "theorem {}{} : {} = {} := by",
+                    theorem_name, theorem_param_text, left_str, right_str
                 ));
                 lines.push("  sorry".to_string());
             }

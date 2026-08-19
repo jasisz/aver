@@ -778,14 +778,16 @@ fn lift_classified_call(
 }
 
 fn effect_method_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Attr(obj, field) => {
-            let head = match &obj.node {
-                Expr::Ident(s) => s.clone(),
-                _ => return None,
-            };
-            Some(format!("{}.{}", head, field))
+    fn qualified_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
+            Expr::Attr(base, field) => Some(format!("{}.{}", qualified_name(&base.node)?, field)),
+            _ => None,
         }
+    }
+
+    match expr {
+        Expr::Attr(_, _) => qualified_name(expr),
         _ => None,
     }
 }
@@ -1207,6 +1209,21 @@ mod tests {
             }
             other => panic!("expected FnCall, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn effect_method_name_preserves_all_module_segments() {
+        let body = parse_body("    Infra.Kv.get(\"key\")");
+        let [Stmt::Expr(tail)] = body.stmts() else {
+            panic!("expected one expr stmt");
+        };
+        let Expr::FnCall(callee, _) = &tail.node else {
+            panic!("expected function call");
+        };
+        assert_eq!(
+            effect_method_name(&callee.node),
+            Some("Infra.Kv.get".to_string())
+        );
     }
 
     #[test]
