@@ -175,6 +175,8 @@ fn main() -> Unit
 
 Both granular and namespace shorthand declarations are supported. `! [Disk.readText]` declares a single effect, while `! [Disk]` covers all `Disk.*` effects (namespace shorthand). `aver check` suggests narrowing when a shorthand could be more specific. `effects X = [...]` aliases are no longer supported.
 
+Entries are separated by commas, and the comma is required: `! [Console.error Console.print]` is a parse error naming the effect it stopped after, not two effects. The list may be written across several lines, and a trailing comma is allowed.
+
 ## Command-line arguments
 
 Programs access CLI arguments via the `Args` service:
