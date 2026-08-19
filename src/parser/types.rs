@@ -214,31 +214,56 @@ impl Parser {
         Ok(base)
     }
 
+    /// Newlines and indentation inside an effect list carry no meaning: the
+    /// list may be written across several lines.
+    fn skip_effect_list_layout(&mut self) {
+        while matches!(
+            self.current().kind,
+            TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+        ) && !self.is_eof()
+        {
+            self.advance();
+        }
+    }
+
     pub(super) fn parse_effect_ident_list(
         &mut self,
     ) -> Result<Vec<crate::ast::Spanned<String>>, ParseError> {
         self.expect_exact(&TokenKind::LBracket)?;
         let mut effects = Vec::new();
-        while !self.check_exact(&TokenKind::RBracket) && !self.is_eof() {
-            match self.current().kind.clone() {
-                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent => {
-                    self.advance();
-                }
-                TokenKind::Ident(_) => {
-                    let line = self.current().line;
-                    let name = self.parse_qualified_ident()?;
-                    effects.push(crate::ast::Spanned::new(name, line));
-                }
-                TokenKind::Comma => {
-                    self.advance();
-                }
-                _ => {
-                    return Err(self.error(format!(
-                        "Expected effect name in type annotation, found {}",
-                        self.current().kind
-                    )));
-                }
+        loop {
+            self.skip_effect_list_layout();
+            if self.check_exact(&TokenKind::RBracket) || self.is_eof() {
+                break;
             }
+            if !matches!(self.current().kind, TokenKind::Ident(_)) {
+                return Err(self.error(format!(
+                    "Expected effect name in type annotation, found {}",
+                    self.current().kind
+                )));
+            }
+            let line = self.current().line;
+            let name = self.parse_qualified_ident()?;
+            effects.push(crate::ast::Spanned::new(name.clone(), line));
+
+            // The separator is required. Two names in a row used to be read as
+            // two effects, so `! [Console.error Console.print]` — a dropped
+            // comma in a wide diff — declared both and said nothing, and
+            // `aver format` reprinted it as written. A typo there survived
+            // every gate the project has.
+            self.skip_effect_list_layout();
+            if self.check_exact(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            if self.check_exact(&TokenKind::RBracket) || self.is_eof() {
+                break;
+            }
+            return Err(self.error(format!(
+                "Expected ',' or ']' after effect `{}`, found {} — effects in a list are separated by commas",
+                name,
+                self.current().kind
+            )));
         }
         self.expect_exact(&TokenKind::RBracket)?;
         Ok(effects)

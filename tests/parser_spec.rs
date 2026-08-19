@@ -1760,3 +1760,73 @@ proptest! {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Effect lists: the separator is required
+// ---------------------------------------------------------------------------
+
+/// Two effect names in a row used to be read as two effects, so a dropped
+/// comma declared both and said nothing — and `aver format` reprinted the
+/// source as written, so the typo survived check, verify, format and compile.
+#[test]
+fn an_effect_list_without_a_separator_is_a_parse_error() {
+    let src = concat!(
+        "fn main() -> Unit\n",
+        "    ? \"Print a line.\"\n",
+        "    ! [Console.error Console.print]\n",
+        "    Console.print(\"hello\")\n",
+    );
+    let err = parse_error(src);
+    assert!(
+        err.contains("Expected ',' or ']' after effect `Console.error`"),
+        "the refusal must name the effect it stopped after: {err}"
+    );
+    assert!(
+        err.contains("separated by commas"),
+        "the refusal must say what was missing: {err}"
+    );
+}
+
+/// The same rule on the module header, which parses its effect list through
+/// the same function.
+#[test]
+fn a_module_effect_list_without_a_separator_is_a_parse_error() {
+    let src = concat!(
+        "module Main\n",
+        "    intent = \"Probe the separator rule.\"\n",
+        "    effects [Console.error Console.print]\n",
+    );
+    assert!(parse_fails(src), "a module header must carry the same rule");
+}
+
+/// And in type position, where an effect list rides on an `Fn` type.
+#[test]
+fn an_fn_type_effect_list_without_a_separator_is_a_parse_error() {
+    let src = concat!(
+        "fn apply(f: Fn(String) -> Unit ! [Console.print Console.error], s: String) -> Unit\n",
+        "    ? \"Applies a printer.\"\n",
+        "    ! [Console.print]\n",
+        "    f(s)\n",
+    );
+    assert!(parse_fails(src), "an Fn type must carry the same rule");
+}
+
+/// Everything a well-formed list is allowed to look like keeps parsing: one
+/// entry, several on a line, several across lines, a trailing comma, and none
+/// at all.
+#[test]
+fn well_formed_effect_lists_still_parse() {
+    let shapes = [
+        "! [Console.print]",
+        "! [Console.print, Console.error]",
+        "! [\n        Console.print,\n        Console.error,\n    ]",
+        "! []",
+    ];
+    for shape in shapes {
+        let src = format!(
+            "fn main() -> Unit\n    ? \"Print a line.\"\n    {shape}\n    Console.print(\"hello\")\n"
+        );
+        let items = parse(&src);
+        assert_eq!(items.len(), 1, "expected one item from: {shape}");
+    }
+}
