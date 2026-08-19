@@ -4,6 +4,10 @@ use crate::ast::{BinOp, Expr, FnDef, MatchArm, Spanned, Stmt, TailCallData, TopL
 
 use super::CheckFinding;
 
+mod body_duplicates;
+
+use body_duplicates::check_fn_body_duplicates;
+
 const PURE_NAMESPACE_PREFIXES: &[&str] = &[
     "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.", "Char.",
 ];
@@ -125,59 +129,6 @@ fn check_match_cse(subject: &Spanned<Expr>, arms: &[MatchArm], warnings: &mut Ve
                     extra_spans: vec![],
                 });
                 break;
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Body-wide duplicate detection
-// ---------------------------------------------------------------------------
-
-fn check_fn_body_duplicates(
-    fd: &FnDef,
-    match_warned_messages: &std::collections::HashSet<String>,
-    warnings: &mut Vec<CheckFinding>,
-) {
-    let mut all_subtrees: Vec<&Spanned<Expr>> = Vec::new();
-    for stmt in fd.body.stmts() {
-        let spanned = match stmt {
-            Stmt::Expr(e) => e,
-            Stmt::Binding(_, _, e) => e,
-        };
-        collect_all_nontrivial_from_spanned(spanned, &mut all_subtrees);
-    }
-
-    // Count occurrences via structural equality (Expr::PartialEq ignores line).
-    // Track first spanned for each unique subtree.
-    let mut counts: Vec<(&Spanned<Expr>, usize)> = Vec::new();
-    for subtree in &all_subtrees {
-        if let Some(entry) = counts.iter_mut().find(|(e, _)| e.node == subtree.node) {
-            entry.1 += 1;
-        } else {
-            counts.push((subtree, 1));
-        }
-    }
-
-    for (subtree, count) in &counts {
-        if *count >= 2 {
-            let subtree_str = expr_to_short_str(&subtree.node);
-            let msg = format!(
-                "`{}` is computed {} times in this function — consider extracting to a binding",
-                subtree_str, count
-            );
-            let already_warned = match_warned_messages
-                .iter()
-                .any(|m| m.contains(&subtree_str));
-            if !already_warned {
-                warnings.push(CheckFinding {
-                    line: subtree.line,
-                    module: None,
-                    file: None,
-                    fn_name: None,
-                    message: msg,
-                    extra_spans: vec![],
-                });
             }
         }
     }
@@ -418,66 +369,6 @@ fn collect_nontrivial_subtrees<'a>(spanned: &'a Spanned<Expr>, out: &mut Vec<&'a
     }
 }
 
-/// Collect all nontrivial subtrees from a spanned expression, recursing into
-/// all AST nodes (not just BinOp/FnCall).
-fn collect_all_nontrivial_from_spanned<'a>(
-    spanned: &'a Spanned<Expr>,
-    out: &mut Vec<&'a Spanned<Expr>>,
-) {
-    collect_nontrivial_subtrees(spanned, out);
-    match &spanned.node {
-        Expr::Match { subject, arms } => {
-            collect_all_nontrivial_from_spanned(subject, out);
-            for arm in arms {
-                collect_all_nontrivial_from_spanned(&arm.body, out);
-            }
-        }
-        Expr::Constructor(_, Some(inner)) => {
-            collect_all_nontrivial_from_spanned(inner, out);
-        }
-        Expr::ErrorProp(inner) => {
-            collect_all_nontrivial_from_spanned(inner, out);
-        }
-        Expr::List(elements) => {
-            for e in elements {
-                collect_all_nontrivial_from_spanned(e, out);
-            }
-        }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for e in items {
-                collect_all_nontrivial_from_spanned(e, out);
-            }
-        }
-        Expr::InterpolatedStr(parts) => {
-            for p in parts {
-                if let crate::ast::StrPart::Parsed(e) = p {
-                    collect_all_nontrivial_from_spanned(e, out);
-                }
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                collect_all_nontrivial_from_spanned(e, out);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_all_nontrivial_from_spanned(base, out);
-            for (_, e) in updates {
-                collect_all_nontrivial_from_spanned(e, out);
-            }
-        }
-        Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: _, args, ..
-            } = boxed.as_ref();
-            for a in args {
-                collect_all_nontrivial_from_spanned(a, out);
-            }
-        }
-        _ => {}
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -659,6 +550,7 @@ fn expr_to_short_str(expr: &Expr) -> String {
 mod tests {
     use super::*;
     use crate::ast::{Literal, SourceLine, Spanned};
+    use crate::source::parse_source;
 
     fn spanned(node: Expr) -> Spanned<Expr> {
         Spanned::new(node, 1 as SourceLine)
@@ -678,6 +570,16 @@ mod tests {
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
         Expr::BinOp(op, Box::new(spanned(left)), Box::new(spanned(right)))
+    }
+
+    fn namespace_call(namespace: &str, method: &str, arg: Expr) -> Expr {
+        Expr::FnCall(
+            Box::new(spanned(Expr::Attr(
+                Box::new(spanned(ident(namespace))),
+                method.to_string(),
+            ))),
+            vec![spanned(arg)],
+        )
     }
 
     #[test]
@@ -845,6 +747,57 @@ mod tests {
             "expected warning for repeated String.len(s)"
         );
         assert!(warnings.iter().any(|w| w.message.contains("String.len")));
+    }
+
+    #[test]
+    fn no_warning_for_builtin_call_in_mutually_exclusive_match_arms() {
+        let source = r#"type Bag
+    Memory(Map<String, Int>)
+    Logged(String, Map<String, Int>)
+
+fn size(bag: Bag) -> Int
+    match bag
+        Bag.Memory(entries) -> Map.len(entries)
+        Bag.Logged(path, entries) -> Map.len(entries)
+"#;
+        let items = parse_source(source).expect("parse #991 regression");
+
+        let warnings = collect_cse_warnings(&items);
+
+        assert!(
+            warnings.is_empty(),
+            "mutually exclusive match arms do not duplicate work: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn warns_for_builtin_call_repeated_within_one_match_arm() {
+        let len_call = namespace_call("Map", "len", ident("entries"));
+        let match_expr = Expr::Match {
+            subject: Box::new(spanned(ident("bag"))),
+            arms: vec![
+                MatchArm {
+                    pattern: crate::ast::Pattern::Ident("memory".to_string()),
+                    body: Box::new(spanned(binop(BinOp::Add, len_call.clone(), len_call))),
+                    binding_slots: std::sync::OnceLock::new(),
+                },
+                MatchArm {
+                    pattern: crate::ast::Pattern::Wildcard,
+                    body: Box::new(spanned(int(0))),
+                    binding_slots: std::sync::OnceLock::new(),
+                },
+            ],
+        };
+        let fd = caller_fn("size", vec![], match_expr);
+
+        let warnings = collect_cse_warnings(&[TopLevel::FnDef(fd)]);
+
+        assert!(
+            warnings.iter().any(|warning| warning
+                .message
+                .contains("`Map.len(entries)` is computed 2 times")),
+            "a duplicate inside one reachable arm must still warn: {warnings:?}"
+        );
     }
 
     #[test]
