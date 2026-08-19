@@ -1777,6 +1777,56 @@ fn arg_is_non_growing(expr: &Spanned<Expr>) -> bool {
     }
 }
 
+/// Names the body binds with `=` rather than by destructuring — every value
+/// the function COMPUTED.
+fn let_bound_names(body: &FnBody) -> HashSet<String> {
+    body.stmts()
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Binding(name, _, _) => Some(name.clone()),
+            Stmt::Expr(_) => None,
+        })
+        .collect()
+}
+
+/// Does some call between members of this group hand on, at a measured
+/// position, a value the caller COMPUTED?
+///
+/// A plain `sizeOf` measure is only honest when the emitter can SEE each step
+/// shrink, and a computed value cannot be seen to. `climb` binds
+/// `next = pairsOf(level, [])?` and hands `next` to its peer: whether that is
+/// smaller than `level` is a fact about `pairsOf`, not about the shape of the
+/// call. Emitting the measure anyway states a `decreasing_by` obligation
+/// `sizeOf next < sizeOf level` that `omega` cannot close, and the module
+/// loses every claim in it — including the claims with nothing to do with the
+/// recursion.
+///
+/// Backing off costs little: the next strategy synthesises and KERNEL-PROVES
+/// a length lemma when the computed value comes from a non-growing filter
+/// (quicksort's `sort`/`sortWithPivot`), and failing that the group lowers
+/// with fuel, which builds. This says only "not by plain `sizeOf`".
+pub(crate) fn scc_passes_computed_measure_arg(fns: &[&FnDef]) -> bool {
+    let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    fns.iter().any(|fd| {
+        let computed = let_bound_names(fd.body.as_ref());
+        collect_calls_from_body(fd.body.as_ref())
+            .into_iter()
+            .filter_map(|(callee_raw, args)| {
+                canonical_callee_name(&callee_raw, &names).map(|callee| (callee, args))
+            })
+            .any(|(callee, args)| {
+                let Some(peer) = fns.iter().find(|peer| peer.name == callee) else {
+                    return false;
+                };
+                mutual_sizeof_measure_param_indices(peer).iter().any(|idx| {
+                    args.get(*idx).is_some_and(|arg| {
+                        local_name_of(arg).is_none_or(|name| computed.contains(name))
+                    })
+                })
+            })
+    })
+}
+
 pub(crate) fn supports_mutual_sizeof_ranked(
     component: &[&FnDef],
 ) -> Option<HashMap<String, usize>> {

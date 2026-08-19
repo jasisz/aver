@@ -232,6 +232,55 @@ fn divL(n: Int, d: Int) -> Result<Int, String>
 }
 
 #[test]
+fn a_mutual_group_passing_a_computed_value_does_not_claim_a_sizeof_measure() {
+    let mut ctx = ctx_from_source(
+        r#"
+module Climb
+    effects []
+
+fn pairsOf(level: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Halve the level, two entries at a time."
+    match level
+        [] -> List.reverse(acc)
+        [left, ..rest] -> pairsOf(rest, List.concat(acc, [left]))
+
+fn rootFrom(level: List<Int>) -> Result<Int, String>
+    ? "Fold the level down until one entry is left."
+    match level
+        [] -> Result.Err("empty")
+        [only, ..rest] -> settleOrClimb(only, rest, level)
+
+fn settleOrClimb(only: Int, rest: List<Int>, level: List<Int>) -> Result<Int, String>
+    ? "One entry is the answer; more than one means another level."
+    match rest
+        [] -> Result.Ok(only)
+        [head, ..tail] -> climb(level)
+
+fn climb(level: List<Int>) -> Result<Int, String>
+    ? "One level of pairing, then look again."
+    next = pairsOf(level, [])
+    rootFrom(next)
+"#,
+        "Climb",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    // `next` is a value `climb` COMPUTED, so whether it is smaller than
+    // `level` is a fact about `pairsOf`, not about the shape of the call.
+    // Claiming `sizeOf` anyway states a `decreasing_by` obligation nothing can
+    // close, and the module loses every claim in it.
+    assert!(
+        !lean.contains("termination_by (sizeOf level"),
+        "a computed step must not be claimed as a plain `sizeOf` decrease:\n{lean}"
+    );
+    assert!(
+        lean.contains("climb__fuel"),
+        "the group must still be lowered, on the fuel path:\n{lean}"
+    );
+}
+
+#[test]
 fn a_record_carrying_a_refined_type_derives_no_inhabited() {
     let mut ctx = ctx_from_source(
         r#"
