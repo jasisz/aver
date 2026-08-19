@@ -31,7 +31,9 @@ impl TypeChecker {
 
         self.configure_capabilities(items, &loaded_modules, base_dir);
         if !loaded_modules.is_empty() {
-            self.integrate_loaded_modules(&loaded_modules);
+            self.prepare_loaded_modules(&loaded_modules);
+            let visible_roots = Self::visible_module_roots(items);
+            self.integrate_loaded_modules(&loaded_modules, &visible_roots);
         }
 
         self.build_signatures(items);
@@ -61,7 +63,9 @@ impl TypeChecker {
         let mut loaded = loaded.to_vec();
         crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
         self.configure_capabilities(items, &loaded, None);
-        self.integrate_loaded_modules(&loaded);
+        self.prepare_loaded_modules(&loaded);
+        let visible_roots = Self::visible_module_roots(items);
+        self.integrate_loaded_modules(&loaded, &visible_roots);
         self.build_signatures(items);
         self.check_loaded_module_bodies(&loaded);
         self.check_body(items);
@@ -124,7 +128,11 @@ impl TypeChecker {
         self.capabilities = registry;
     }
 
-    fn integrate_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
+    /// Record the complete dependency graph and resolve each module's public
+    /// type surface before any single importer is checked. This is resolver
+    /// context, not visibility: a facade may re-export a type declared several
+    /// files below it without making every module in between globally visible.
+    fn prepare_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
         // Phase B (peer review round 6): track each dep module's own
         // `depends` list so the per-owner type resolver
         // (`canonicalize_named_in_module`) can walk it instead of
@@ -140,7 +148,43 @@ impl TypeChecker {
             .iter()
             .map(|m| (m.dep_name.clone(), m.items.clone()))
             .collect();
-        let registry = crate::visibility::SymbolRegistry::from_modules(&pairs);
+        self.module_type_exports = crate::visibility::collect_module_type_exports(&pairs);
+    }
+
+    /// Names visible at an importer boundary: explicit dependencies plus
+    /// source-typed standard modules pulled in by a builtin used in that
+    /// module. The latter are ordinary nominal type owners even though users
+    /// do not have to spell them in `depends [...]`.
+    fn visible_module_roots(items: &[TopLevel]) -> Vec<String> {
+        let mut roots = Self::module_decl(items)
+            .map(|module| module.depends.clone())
+            .unwrap_or_default();
+        roots.extend(crate::stdlib::implicit_stdlib_deps(items));
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    /// Integrate only the named dependency surfaces into this checker's
+    /// ordinary lookup maps. The complete module list remains available so a
+    /// type re-export can bring in the original declaration's fields and
+    /// constructors while unrelated transitive modules stay hidden.
+    fn integrate_loaded_modules(
+        &mut self,
+        modules: &[crate::source::LoadedModule],
+        visible_modules: &[String],
+    ) {
+        self.visible_module_names
+            .extend(visible_modules.iter().cloned());
+        let pairs: Vec<_> = modules
+            .iter()
+            .map(|m| (m.dep_name.clone(), m.items.clone()))
+            .collect();
+        let registry = crate::visibility::SymbolRegistry::from_visible_modules(
+            &pairs,
+            visible_modules,
+            &self.module_type_exports,
+        );
         if let Err(e) = self.integrate_registry(&registry) {
             self.error(e);
         }
@@ -197,6 +241,8 @@ impl TypeChecker {
             let mut sub = TypeChecker::new_with_symbols(self.symbol_table.clone());
             sub.self_host_mode = self.self_host_mode;
             sub.capabilities = self.capabilities.clone();
+            sub.module_depends = self.module_depends.clone();
+            sub.module_type_exports = self.module_type_exports.clone();
             // Phase B: the dep module's prefix in the symbol table is
             // its `dep_name` (the path the entry's `depends` clause
             // wrote, e.g. `Pricing.Discount`), not the interior
@@ -215,16 +261,8 @@ impl TypeChecker {
             // in `B`'s own `depends [...]` declaration so the only
             // bare-name aliases the sub-checker sees come from
             // modules `B` itself imported.
-            let own_depends: Vec<String> = TypeChecker::module_decl(&module.items)
-                .map(|m| m.depends.clone())
-                .unwrap_or_default();
-            let visible_to_sub: Vec<_> = modules
-                .iter()
-                .filter(|m| own_depends.iter().any(|d| d == &m.dep_name))
-                .cloned()
-                .collect();
-            sub.integrate_loaded_modules(&visible_to_sub);
-            sub.register_capability_sigs();
+            let own_depends = Self::visible_module_roots(&module.items);
+            sub.integrate_loaded_modules(modules, &own_depends);
             sub.build_signatures(&module.items);
             sub.check_top_level_stmts(&module.items);
             sub.check_verify_blocks(&module.items);

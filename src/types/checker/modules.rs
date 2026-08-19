@@ -321,13 +321,20 @@ impl TypeChecker {
     /// `canonicalize_named_in_module` for the three-case ordering.
     fn resolve_in_owner_context(&self, name: &str, owner_module: &str) -> Option<TypeId> {
         if let Some((prefix, n)) = name.rsplit_once('.') {
-            // Qualified form: trust the prefix, but enforce
-            // visibility unless the owner is the named module.
-            let id = self
-                .symbol_table
-                .type_id_of(&TypeKey::in_module(prefix, n))?;
-            if prefix == owner_module || self.is_type_exposed_by(prefix, n) {
-                return Some(id);
+            // Qualified self-reference resolves against the declaration table.
+            if prefix == owner_module {
+                return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
+            }
+            // A dependency-qualified reference may name either a type declared
+            // by that dependency or one it explicitly re-exports. Do not let a
+            // module elsewhere in the loaded closure become visible merely
+            // because its symbols exist in the shared table.
+            if self
+                .module_depends
+                .get(owner_module)
+                .is_some_and(|deps| deps.iter().any(|dep| dep == prefix))
+            {
+                return self.type_export_id(prefix, n);
             }
             return None;
         }
@@ -343,33 +350,19 @@ impl TypeChecker {
         // can't be satisfied by its own scope or its own depends
         // stay unresolved.
         if let Some(deps) = self.module_depends.get(owner_module) {
+            let mut resolved = None;
             for dep in deps {
-                if let Some(id) = self
-                    .symbol_table
-                    .type_id_of(&TypeKey::in_module(dep.as_str(), name))
-                    && self.is_type_exposed_by(dep, name)
-                {
-                    return Some(id);
+                let Some(id) = self.type_export_id(dep, name) else {
+                    continue;
+                };
+                if resolved.is_some_and(|existing| existing != id) {
+                    return None;
                 }
+                resolved = Some(id);
             }
+            return resolved;
         }
         None
-    }
-
-    /// `true` when `module` exposes a type named `type_name` to its
-    /// importers — i.e. the type is in `module`'s `exposes [...]`
-    /// list (or admitted by the underscore default rule).
-    /// The exposure source of truth is `visible_type_ids`, populated
-    /// from `visibility::SymbolRegistry::from_modules` entries. If
-    /// the type's `TypeId` is in that set, it was visibility-exposed.
-    fn is_type_exposed_by(&self, module: &str, type_name: &str) -> bool {
-        let Some(id) = self
-            .symbol_table
-            .type_id_of(&TypeKey::in_module(module, type_name))
-        else {
-            return false;
-        };
-        self.visible_type_ids.contains(&id)
     }
 
     pub(super) fn canonicalize_named(&self, ty: Type) -> Type {
