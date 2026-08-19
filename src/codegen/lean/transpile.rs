@@ -411,7 +411,24 @@ fn emit_capability_opaque_types(ctx: &CodegenContext, scope: Option<&str>) -> Ve
                 } else {
                     super::syntax::aver_path_to_lean(canonical)
                 };
-                format!("opaque {declaration_name} : Type")
+                // An identity, not an `opaque Type`. The handle a capability
+                // hands back HAS identity at run time — the host compares and
+                // hashes it — and the language's rule is only that a program
+                // may not compare one itself. Emitting it as `opaque` denied
+                // the model the equality it never needed to invent: a sum with
+                // a handle-carrying constructor could then derive nothing, so
+                // `Repr`, `BEq`, `Inhabited` and `DecidableEq` all failed at
+                // once and every claim in the module was lost — including the
+                // ones comparing constructors that carry no handle at all.
+                //
+                // The field is unreachable from Aver: no source can build a
+                // handle or read its identity, and nothing emitted mentions
+                // the field. Deliberately NO `Inhabited`: a default handle
+                // would be a value the runtime never produces, and a
+                // fuel-exhausted branch could return one.
+                format!(
+                    "structure {declaration_name} where\n  id : Nat\n  deriving Repr, BEq, DecidableEq"
+                )
             })
         })
         .collect()

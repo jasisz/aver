@@ -989,6 +989,105 @@ fn tick() -> Int
 }
 
 #[test]
+fn a_user_type_carrying_a_resource_handle_still_proves() {
+    let dir = temp_dir("handle-carrier");
+    fs::write(
+        dir.join("Kv.av"),
+        "\
+module Kv
+    kind = capability
+    semantics = effectful
+    exposes [open]
+    effects [Kv.open]
+
+opaque Handle
+
+operation open(path: String) -> Result<Handle, String>
+    oracle = generative
+    replay = recorded
+",
+    )
+    .expect("write Kv.av");
+    // `Backing` mixes arms; `Conn` has nothing BUT handle arms. Both used to
+    // sink the whole module: an `opaque` resource derived nothing, so the type
+    // carrying it derived nothing either and every claim in the file — the one
+    // below included, which never mentions a handle — went with it.
+    fs::write(
+        dir.join("main.av"),
+        "\
+module Store
+    depends [Kv]
+    exposes [Backing, Conn, label, twice]
+
+type Backing
+    Memory
+    Database(Kv.Handle)
+
+type Conn
+    Open(Kv.Handle)
+    Closed(Kv.Handle)
+
+fn label(backing: Backing) -> String
+    match backing
+        Backing.Memory -> \"memory\"
+        Backing.Database(_) -> \"database\"
+
+fn twice(n: Int) -> Int
+    n + n
+
+verify twice law doubling
+    given n: Int = [0, 1, 7]
+    twice(n) => n * 2
+",
+    )
+    .expect("write main.av");
+
+    let output = dir.join("lean-out");
+    let mut proof_command = Command::new(aver_bin());
+    proof_command.current_dir(&dir).args([
+        "proof",
+        "--module-root",
+        dir.to_str().expect("utf-8 dir"),
+        "--output",
+        output.to_str().expect("utf-8 output"),
+    ]);
+    if tool_available("lake") {
+        proof_command.arg("--check");
+    }
+    let proof = proof_command
+        .arg("main.av")
+        .output()
+        .expect("run handle-carrier proof");
+    let proof_report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&proof.stdout),
+        String::from_utf8_lossy(&proof.stderr)
+    );
+    assert_eq!(
+        proof.status.code().unwrap_or(-1),
+        0,
+        "a type carrying a resource handle must not cost its module every claim:\n{proof_report}"
+    );
+
+    let lean = collect_files_with_extension(&output, "lean");
+    assert!(
+        lean.contains("structure Handle where") && lean.contains("deriving Repr, BEq, DecidableEq"),
+        "the handle is modelled as an identity:\n{lean}"
+    );
+    assert!(
+        lean.contains("| database (_ : Kv.Handle)\n  deriving Repr, BEq, Inhabited, DecidableEq"),
+        "an arm that carries no handle is still a default for the type:\n{lean}"
+    );
+    // No arm of `Conn` can be built without a handle, and a handle has no
+    // default — the type gets no `Inhabited` rather than an invented one, and
+    // its module keeps building.
+    assert!(
+        lean.contains("| closed (_ : Kv.Handle)\n  deriving Repr, BEq, DecidableEq"),
+        "a type reachable only through a handle gets no invented default:\n{lean}"
+    );
+}
+
+#[test]
 fn pure_capability_is_effect_free_but_still_provider_bound_and_proof_opaque() {
     let dir = temp_dir("pure-proof");
     fs::write(dir.join("Digest.av"), VALID_PURE_CAPABILITY).expect("write Digest.av");
@@ -1042,7 +1141,22 @@ verify same law deterministicProvider
         "Lean must emit and, when lake is available, check the opaque deterministic provider model:\n{proof_report}"
     );
     let lean = collect_files_with_extension(&output, "lean");
-    assert!(lean.contains("opaque Context : Type"), "{lean}");
+    // The resource type carries an identity and nothing else — the handle is
+    // compared by the host at run time, so denying the model that equality
+    // bought nothing and cost every claim in a module that carries one.
+    assert!(
+        lean.contains("structure Context where")
+            && lean.contains("deriving Repr, BEq, DecidableEq"),
+        "a resource handle is modelled as an identity:\n{lean}"
+    );
+    assert!(
+        !lean.contains("Inhabited")
+            || !lean.contains(
+                "structure Context where\n  id : Nat\n  deriving Repr, BEq, DecidableEq, Inhabited"
+            ),
+        "a handle must have no default — the runtime never produces one:\n{lean}"
+    );
+    // The OPERATIONS stay opaque, which is the assumption the trust header states.
     assert!(lean.contains("opaque digest : String → String"), "{lean}");
     assert!(
         lean.contains("Pure operations are represented as opaque"),
