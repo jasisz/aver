@@ -21,7 +21,7 @@ pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<
         return String::new();
     }
     match td {
-        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
+        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, ctx, scope),
         TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, ctx, scope),
     }
 }
@@ -113,6 +113,89 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
     }
 }
 
+/// Can `deriving Inhabited` find a witness for a value of this annotation?
+/// Only ONE thing here says no: a capability's resource type is emitted as an
+/// identity with deliberately no `Inhabited`, because a default handle is a
+/// value the runtime never produces and a fuel-exhausted branch could return
+/// one. So a constructor carrying a handle cannot be defaulted, and a type
+/// none of whose constructors bottoms out carries no `Inhabited` at all —
+/// without which Lean fails the derive and ONE such type declines every claim
+/// in its module, the exact loss that modelling the handle removed everywhere
+/// else. A mention beneath a top-level `List`/`Option`/`Map` is inhabited by
+/// the container itself (`[]`, `none`).
+///
+/// Everything else answers yes, including a shape whose derive might fail for
+/// an unrelated reason: this decides only whether a resource is in the way,
+/// never whether Lean would otherwise succeed, so no capability-free program
+/// changes a byte.
+fn field_is_inhabitable(
+    field: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut Vec<String>,
+) -> bool {
+    let trimmed = field.trim();
+    if trimmed.ends_with('>')
+        && ["List<", "Option<", "Map<"]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+    {
+        return true;
+    }
+    let mut named = HashSet::new();
+    crate::codegen::lean::decl_order::collect_annotation_type_refs(trimmed, &mut named);
+    named
+        .iter()
+        .all(|name| named_type_is_inhabitable(name, ctx, scope, seen))
+}
+
+/// Walks user types so a carrier one level up is caught too: a record holding
+/// a sum whose every arm holds a handle has no witness either. `seen` breaks
+/// recursion — a type reached through itself is not the blocker being looked
+/// for, and `deriving` handles recursive shapes on its own.
+fn named_type_is_inhabitable(
+    name: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut Vec<String>,
+) -> bool {
+    if is_capability_resource(name, ctx, scope) {
+        return false;
+    }
+    let Some((td, td_scope)) = find_type_def_scoped(ctx, name, scope) else {
+        return true;
+    };
+    let canonical = canonical_type_name(crate::codegen::common::type_def_name(td), td_scope);
+    if seen.contains(&canonical) {
+        return true;
+    }
+    seen.push(canonical);
+    let inhabitable = match td {
+        TypeDef::Product { fields, .. } => fields
+            .iter()
+            .all(|(_, field)| field_is_inhabitable(field, ctx, td_scope, seen)),
+        TypeDef::Sum { variants, .. } => variants.iter().any(|v| {
+            v.fields
+                .iter()
+                .all(|field| field_is_inhabitable(field, ctx, td_scope, seen))
+        }),
+    };
+    seen.pop();
+    inhabitable
+}
+
+/// Is this annotation's named reference a capability's resource type? Bare
+/// inside the capability's own module, dotted everywhere else — the two
+/// spellings a dependent module and the contract itself use for one type.
+fn is_capability_resource(name: &str, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    ctx.capabilities.opaque_types().any(|canonical| {
+        canonical == name
+            || canonical
+                .rsplit_once('.')
+                .is_some_and(|(module, bare)| bare == name && scope == Some(module))
+    })
+}
+
 /// `default` for this constructor argument elaborates using only `Inhabited`
 /// instances that exist by the time the seeded sum's instance is stated:
 /// either the annotation sits beneath a top-level `List`/`Option`/`Map`,
@@ -163,6 +246,12 @@ fn named_type_defaults(
     scope: Option<&str>,
     seeding: &mut Vec<String>,
 ) -> bool {
+    // A capability resource is emitted with no `Inhabited` on purpose; an
+    // instance seeded through one would ask for the very instance the model
+    // declines to state.
+    if is_capability_resource(name, ctx, scope) {
+        return false;
+    }
     if crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some() {
         return false;
     }
@@ -242,7 +331,12 @@ fn find_type_def_scoped<'a>(
     None
 }
 
-fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
+fn emit_sum_type(
+    name: &str,
+    variants: &[TypeVariant],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     // Lean constructor spellings are first-letter-lowercased
     // (`lean_ctor_name`), so two variants of ONE type differing only in
     // first-letter case (`Accept` / `accept` — legal Aver, the parser
@@ -289,13 +383,27 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
         }
     }
 
-    if is_recursive {
-        // #14: Recursive types cannot derive DecidableEq automatically
-        lines.push("  deriving Repr, BEq, Inhabited".to_string());
-    } else {
-        lines.push("  deriving Repr, BEq, Inhabited, DecidableEq".to_string());
-    }
+    let inhabited = variants.iter().any(|v| {
+        v.fields
+            .iter()
+            .all(|field| field_is_inhabitable(field, ctx, scope, &mut Vec::new()))
+    });
+    // #14: Recursive types cannot derive DecidableEq automatically
+    lines.push(derives_line(inhabited, !is_recursive));
     lines.join("\n")
+}
+
+/// The `deriving` clause: `Repr` and `BEq` always, then the two that a shape
+/// can decline.
+fn derives_line(inhabited: bool, decidable_eq: bool) -> String {
+    let mut derives = vec!["Repr", "BEq"];
+    if inhabited {
+        derives.push("Inhabited");
+    }
+    if decidable_eq {
+        derives.push("DecidableEq");
+    }
+    format!("  deriving {}", derives.join(", "))
 }
 
 fn emit_product_type(
@@ -330,11 +438,10 @@ fn emit_product_type(
         ));
     }
 
-    if is_recursive {
-        lines.push("  deriving Repr, BEq, Inhabited".to_string());
-    } else {
-        lines.push("  deriving Repr, BEq, Inhabited, DecidableEq".to_string());
-    }
+    let inhabited = fields
+        .iter()
+        .all(|(_, field)| field_is_inhabitable(field, ctx, scope, &mut Vec::new()));
+    lines.push(derives_line(inhabited, !is_recursive));
     lines.join("\n")
 }
 

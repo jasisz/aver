@@ -152,7 +152,11 @@ pub(crate) fn generate_for_effects_with_registry(
         out.push_str("  a boundary type moves contract_hash and changing oracle/replay/hostile\n");
         out.push_str("  semantics moves model_hash. Pure operations are represented as opaque,\n");
         out.push_str("  total functions: determinism follows from function semantics, while\n");
-        out.push_str("  agreement of a concrete provider with that function remains trusted.\n\n");
+        out.push_str("  agreement of a concrete provider with that function remains trusted.\n");
+        out.push_str("  A resource handle is modelled as an identity and nothing else: two\n");
+        out.push_str("  handles are the same exactly when the host says they are, which is\n");
+        out.push_str("  what the runtime compares. Nothing else about a handle is stated,\n");
+        out.push_str("  and no Aver source can build one or read its identity.\n\n");
     }
 
     if !used.is_empty() {
