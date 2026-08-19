@@ -2277,6 +2277,7 @@ fn map_order_refusal(
             // A body's call names are written in the module that declares the
             // function, exactly like its signature's annotations above.
             push_called_names(expr, owner, &mut pending);
+            collect_observed_map_key_types(expr, ctx, &mut key_types, &mut seen_types);
             collect_compared_map_key_types(expr, ctx, &mut compared_keys, &mut compared_seen);
         }
     }
@@ -2325,8 +2326,9 @@ fn iteration_order_refusal(key_types: &[String]) -> Option<MapRefusal> {
                 .to_string()
         } else {
             format!(
-                "the runtime orders {} keys by their printed representation, which the proof \
-                 model cannot reconstruct from the value",
+                "the proof model has no ordering for {} keys, so the sequence such a map \
+                 iterates in is not carried into the export; the program itself orders them \
+                 the same way on every backend",
                 unmodelled
             )
         },
@@ -2397,6 +2399,32 @@ fn map_equality_refusal(compared_keys: &[String]) -> Option<MapRefusal> {
 /// runtime's, so that seam can only turn a TRUE claim red — never a false claim
 /// green. Gating it would refuse a large slice of legitimate export and, since
 /// a refusal is charged, cost exit codes for nothing.
+/// Map key types read by an ORDER observer inside one expression.
+///
+/// The signature-derived bag below says which map types the claim's cone
+/// mentions; this says which map is actually being iterated. The gate needs
+/// the second, because a map built in a local binding appears in no signature
+/// at all — and a claim that reads one while an unrelated `Map<String, Int>`
+/// sits in a parameter used to export against a bag that held only the
+/// parameter's key.
+fn collect_observed_map_key_types(
+    expr: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    crate::codegen::expr_walk::walk(expr, &mut |node| {
+        if let Expr::FnCall(callee, args) = &node.node
+            && args.len() == 1
+            && expr_to_dotted_name(&callee.node)
+                .as_deref()
+                .is_some_and(|name| MAP_ORDER_OBSERVERS.contains(&name))
+        {
+            collect_map_key_types_of_stamp(&args[0], ctx, out, seen);
+        }
+    });
+}
+
 fn collect_compared_map_key_types(
     expr: &Spanned<Expr>,
     ctx: &CodegenContext,

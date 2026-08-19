@@ -11,11 +11,11 @@ record Scored
 record Box
     held: Holder.Scored
 
-fn sameBox(k: Float) -> Bool
+fn sameBox(k: Tuple<Int, Int>) -> Bool
     ? "Whether two boxes holding the same pairs in a different written order differ."
-    a = Box(held = Holder.scoredOf({2.0 => 5, k => 3}))
-    b = Box(held = Holder.scoredOf({k => 3, 2.0 => 5}))
+    a = Box(held = Holder.scoredOf({(2, 0) => 5, k => 3}))
+    b = Box(held = Holder.scoredOf({k => 3, (2, 0) => 5}))
     a != b
 
 verify sameBox
-    sameBox(1.0) => true
+    sameBox((1, 0)) => true

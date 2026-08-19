@@ -218,7 +218,7 @@ Source: `src/types/map.rs`
 | Function | Signature | Notes |
 |---|---|---|
 | `{}` (literal) | — | The empty map; type from context (annotation or expected type). No `Map.empty()` builtin since 0.17 — symmetric with `[]` for List. |
-| `Map.fromList` | `List<(K, V)> -> Map<K, V>` | Keys must be hashable (Int, Float, String, Bool) |
+| `Map.fromList` | `List<(K, V)> -> Map<K, V>` | The key type must order; `Float`, `Map` and `Vector` cannot key a map |
 | `Map.set` | `(Map<K, V>, K, V) -> Map<K, V>` | Returns new map with key set |
 | `Map.get` | `(Map<K, V>, K) -> Option<V>` | |
 | `Map.has` | `(Map<K, V>, K) -> Bool` | |

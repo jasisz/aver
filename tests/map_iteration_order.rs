@@ -98,46 +98,39 @@ fn three_key_map_iterates_key_sorted_on_the_vm() {
     );
 }
 
-/// Iterating a float-keyed map holding a NaN returns, on the path `aver run`
-/// and `aver verify` take.
+/// A float-keyed map is refused, and the hazard it used to carry is gone with
+/// it.
 ///
 /// Making the key comparator the shared one routed the NaN-boxed
 /// representation through it, and it was not a total order: a NaN compared
 /// above `1.0` and below `-1.0` by raw bit pattern while `-1.0 < 1.0`. The
 /// standard library detects the cycle on an input this wide and aborts the
 /// process — `user-provided comparison function does not correctly implement
-/// a total order`, from `sort_keys_nv` — so this is a crash on a live path
-/// rather than a wrong answer. `Map.keys`, `Map.values` and `Map.entries` all
-/// sort, so all three are read here.
+/// a total order` — so it was a crash on a live path rather than a wrong
+/// answer.
+///
+/// `Float` is now the one type a map cannot be keyed on: the compiled binary
+/// cannot even build such a map (`f64` is neither `Eq` nor `Hash`) and the
+/// proof model has no faithful counterpart for the runtime's total order. The
+/// program below is the witness that used to reach the sort. The comparator
+/// itself keeps its own tests in `src/types/map.rs` — it still handles floats,
+/// because the runtime holds values the language no longer lets you key on.
 #[test]
-fn iterating_a_float_map_holding_nan_completes_on_the_vm() {
-    let run = run_aver(&["verify", NAN_KEY_FIXTURE]);
-    let stdout = String::from_utf8_lossy(&run.stdout);
-    let stderr = String::from_utf8_lossy(&run.stderr);
+fn a_float_keyed_map_is_refused_before_it_can_reach_the_sort() {
+    let run = run_aver(&["check", NAN_KEY_FIXTURE]);
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert!(
-        !stderr.contains("does not correctly implement a total order"),
-        "ordering float keys must be a total order — the sort aborted:\n{}",
+        !run.status.success(),
+        "a float-keyed map must be a type error:\n{}",
         format_output(&run)
     );
     assert!(
-        run.status.success() && stdout.contains("0 failed"),
-        "reading a float map that holds a NaN must complete and count every key:\n{}",
-        format_output(&run)
-    );
-
-    // Same map, read twice: the order a map iterates in is a function of its
-    // keys, not of which run is reading them.
-    let first = run_aver(&["run", NAN_KEY_FIXTURE]);
-    let second = run_aver(&["run", NAN_KEY_FIXTURE]);
-    assert!(
-        first.status.success(),
-        "running the float-key fixture must succeed:\n{}",
-        format_output(&first)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&first.stdout),
-        String::from_utf8_lossy(&second.stdout),
-        "two runs over the same float map must read the same sequence"
+        said.contains("the key type has to order") && said.contains("`Float`"),
+        "the refusal must name Float and say why:\n{said}"
     );
 }
 
@@ -225,37 +218,29 @@ fn iteration_order_law_over_unmodelled_key_types_is_refused() {
         "MapOrderUnmodelledKeys",
     );
     assert!(
-        !lean.contains("theorem floatKeyedValues_law_valuesFollowIterationOrder"),
-        "a Float-keyed iteration-order law must NOT be exported as a theorem:\n{lean}"
-    );
-    assert!(
-        lean.contains(
-            "-- verify law floatKeyedValues.valuesFollowIterationOrder: map iteration order \
-             is not exported — the runtime orders Float keys by IEEE 754 total order, which \
-             puts a NaN outside the finite range, and the proof model has no faithful \
-             counterpart for that"
-        ),
-        "the Float refusal must name its reason:\n{lean}"
+        !lean.contains("theorem tupleKeyedValues_law_valuesFollowIterationOrder"),
+        "a tuple-keyed iteration-order law must NOT be exported as a theorem:\n{lean}"
     );
     assert!(
         !lean.contains("theorem tupleKeyedKeys_law_keysFollowIterationOrder"),
-        "a Tuple-keyed iteration-order law must NOT be exported as a theorem:\n{lean}"
+        "a tuple-keyed iteration-order law must NOT be exported as a theorem:\n{lean}"
     );
     assert!(
         lean.contains(
             "-- verify law tupleKeyedKeys.keysFollowIterationOrder: map iteration order is not \
-             exported — the runtime orders Tuple<Int, Int> keys by their printed representation, \
-             which the proof model cannot reconstruct from the value"
+             exported — the proof model has no ordering for Tuple<Int, Int> keys, so the \
+             sequence such a map iterates in is not carried into the export; the program itself \
+             orders them the same way on every backend"
         ),
-        "the non-scalar-key refusal must name its reason:\n{lean}"
+        "the refusal must name its reason — the model's gap, not the program's:\n{lean}"
     );
 }
 
 /// The gate runs on a plain sampled case, not only on the law form.
 ///
-/// `verify plainFloatKeys: plainFloatKeys() => [1.0, 2.0]` is the commonest
+/// `verify plainTupleKeys: plainTupleKeys() => [1.0, 2.0]` is the commonest
 /// way to write this down, and it was exported ungated as
-/// `example : plainFloatKeys = [2.0, 1.0] := by native_decide` — the literal
+/// `example : plainTupleKeys = [2.0, 1.0] := by native_decide` — the literal
 /// in written order, which is not what the map iterates. `aver verify` said
 /// `1 failed` on the same source that `aver proof --check` reported `passed`.
 #[test]
@@ -266,12 +251,12 @@ fn a_plain_verify_case_reading_iteration_order_is_refused() {
         "MapOrderUnmodelledKeys",
     );
     assert!(
-        !lean.contains("example : plainFloatKeys ="),
+        !lean.contains("example : plainTupleKeys ="),
         "a plain verify case over a Float-keyed map must NOT be exported as an \
          example:\n{lean}"
     );
     assert!(
-        lean.contains("-- verify plainFloatKeys: map iteration order is not exported"),
+        lean.contains("-- verify plainTupleKeys: map iteration order is not exported"),
         "the plain-case refusal must say why it declined:\n{lean}"
     );
 }
@@ -280,8 +265,8 @@ fn a_plain_verify_case_reading_iteration_order_is_refused() {
 ///
 /// The observer test read `law.lhs`, `law.rhs` and `law.when` syntactically and
 /// returned before any key type was examined, while key types were already
-/// collected across the callee cone. So `firstFloatValue(m) => 3`, whose body
-/// calls `hiddenFloatValues` whose body calls `Map.values`, named no observer
+/// collected across the callee cone. So `firstTupleValue(m) => 3`, whose body
+/// calls `hiddenTupleValues` whose body calls `Map.values`, named no observer
 /// and exported as a theorem about an order the model does not reproduce.
 #[test]
 fn an_observer_behind_a_helper_is_still_refused() {
@@ -291,13 +276,13 @@ fn an_observer_behind_a_helper_is_still_refused() {
         "MapOrderUnmodelledKeys",
     );
     assert!(
-        !lean.contains("theorem firstFloatValue_law_firstIsLowestKeysValue"),
+        !lean.contains("theorem firstTupleValue_law_firstIsLowestKeysValue"),
         "an iteration-order law reaching its observer through a helper must NOT \
          be exported as a theorem:\n{lean}"
     );
     assert!(
         lean.contains(
-            "-- verify law firstFloatValue.firstIsLowestKeysValue: map iteration order is \
+            "-- verify law firstTupleValue.firstIsLowestKeysValue: map iteration order is \
              not exported"
         ),
         "the refusal must fire on the law that hides its observer:\n{lean}"
@@ -355,7 +340,7 @@ fn order_blind_map_laws_still_export() {
         "MapOrderUnmodelledKeys",
     );
     assert!(
-        unmodelled.contains("theorem floatKeyedSize_law_neverEmptyAfterSet : ∀"),
+        unmodelled.contains("theorem tupleKeyedSize_law_neverEmptyAfterSet : ∀"),
         "a `Map.len` law over a Float-keyed map is order-blind and must still \
          export:\n{unmodelled}"
     );
@@ -385,7 +370,7 @@ fn dafny_refuses_the_same_iteration_order_laws() {
     let _ = std::fs::remove_dir_all(&out_dir);
     assert!(
         dfy.contains(
-            "// Law floatKeyedValues.valuesFollowIterationOrder: map iteration order is not \
+            "// Law tupleKeyedValues.valuesFollowIterationOrder: map iteration order is not \
              exported"
         ),
         "Dafny must mirror the Lean refusal or the two backends disagree on the \
@@ -404,12 +389,12 @@ fn dafny_refuses_the_same_iteration_order_laws() {
     // claim at all. Pin that, because the day Dafny starts emitting sampled
     // cases it needs the gate the Lean emitter has.
     assert!(
-        !dfy.contains("plainFloatKeys()) =="),
+        !dfy.contains("plainTupleKeys()) =="),
         "Dafny emits no claim for a plain verify case today; if that changed, \
          `verify_case_map_order_refusal` has to be wired in here too:\n{dfy}"
     );
     assert!(
-        dfy.contains("function plainFloatKeys()"),
+        dfy.contains("function plainTupleKeys()"),
         "the plain-case function itself is still emitted — this test would pass \
          vacuously if the fixture stopped reaching Dafny:\n{dfy}"
     );
@@ -561,7 +546,7 @@ fn the_trust_header_carves_out_map_order_on_wasm_gc() {
 /// A module boundary does not stop the cone walk.
 ///
 /// The callee cone is resolved in the caller's scope, and `Dep.helper` is not
-/// in it — so a law over `firstFloatValue(m)` whose body calls
+/// in it — so a law over `firstTupleValue(m)` whose body calls
 /// `MapKeys.floatValues(m)` one module over would find no `FnDef`, see no
 /// observer, and export as a theorem. Dotted names are resolved under the
 /// module that defines them for that reason.
@@ -586,13 +571,13 @@ fn an_observer_in_another_module_is_still_refused() {
         .expect("expected the generated Lean module to exist");
     let _ = std::fs::remove_dir_all(&out_dir);
     assert!(
-        !lean.contains("theorem firstFloatValue_law_firstIsLowestKeysValue"),
+        !lean.contains("theorem firstTupleValue_law_firstIsLowestKeysValue"),
         "a law reaching its observer across a module boundary must NOT be \
          exported as a theorem:\n{lean}"
     );
     assert!(
         lean.contains(
-            "-- verify law firstFloatValue.firstIsLowestKeysValue: map iteration order is \
+            "-- verify law firstTupleValue.firstIsLowestKeysValue: map iteration order is \
              not exported"
         ),
         "the refusal must follow the call into the other module:\n{lean}"
@@ -660,14 +645,14 @@ fn a_declined_claim_is_counted_and_charged() {
         .unwrap_or_else(|| panic!("expected declined_claims to be an array:\n{stdout}"));
     assert!(
         claims.iter().any(|c| {
-            c["claim"] == "floatKeyedValues.valuesFollowIterationOrder" && c["kind"] == "law"
+            c["claim"] == "tupleKeyedValues.valuesFollowIterationOrder" && c["kind"] == "law"
         }),
         "each declined claim must be named by its `fn.law` identity:\n{stdout}"
     );
     assert!(
         claims
             .iter()
-            .any(|c| c["claim"] == "plainFloatKeys" && c["kind"] == "cases"),
+            .any(|c| c["claim"] == "plainTupleKeys" && c["kind"] == "cases"),
         "a declined plain `verify` block is named by its fn:\n{stdout}"
     );
     assert!(
@@ -707,11 +692,11 @@ fn a_declined_claim_is_named_on_stdout_without_check() {
         "the count belongs on stdout, next to what was compiled:\n{stdout}"
     );
     assert!(
-        stdout.contains("law floatKeyedValues.valuesFollowIterationOrder"),
+        stdout.contains("law tupleKeyedValues.valuesFollowIterationOrder"),
         "each declined claim is named:\n{stdout}"
     );
     assert!(
-        stdout.contains("IEEE 754 total order"),
+        stdout.contains("the proof model has no ordering for"),
         "the reason travels with the name — that is the advertised guarantee:\n{stdout}"
     );
 }
@@ -888,7 +873,7 @@ fn map_equality_decided_by_list_contains_is_refused() {
         "the refusal must name map equality, and name the Float key:\n{lean}"
     );
     assert!(
-        lean.contains("no ordering for Float keys"),
+        lean.contains("no ordering for Tuple<Int, Int> keys"),
         "the refusal must say which key type it could not order:\n{lean}"
     );
 }
@@ -1216,9 +1201,9 @@ fn a_field_annotation_resolves_to_the_type_it_names() {
 /// A function handed to a higher-order parameter is part of the cone.
 ///
 /// `viaHof(f, m)` applies whatever it is given, and the claim passes
-/// `floatKeys` — whose body is `Map.keys(m)` — by name. The cone was built
+/// `tupleKeys` — whose body is `Map.keys(m)` — by name. The cone was built
 /// from CALLS, and a name in argument position is a leaf: nothing called
-/// `floatKeys` syntactically, so the walk never entered it, saw no observer,
+/// `tupleKeys` syntactically, so the walk never entered it, saw no observer,
 /// and exported both the case and the law as certified claims about a
 /// key sequence the runtime never produces. `aver verify` refutes both.
 #[test]

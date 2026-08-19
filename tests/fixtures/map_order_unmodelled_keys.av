@@ -1,24 +1,24 @@
 module MapOrderUnmodelledKeys
     intent =
         "Key types whose iteration order the proof model cannot reproduce."
-        "The runtime orders Float keys by bit pattern once a NaN is involved and non-scalar keys by their printed form, so a law that reads iteration order over them is refused instead of exported."
+        "The runtime orders tuple keys by bit pattern once a NaN is involved and non-scalar keys by their printed form, so a law that reads iteration order over them is refused instead of exported."
     effects [Console]
 
-fn floatKeyedValues(m: Map<Float, Int>) -> List<Int>
-    ? "Values of a float-keyed map, in iteration order."
+fn tupleKeyedValues(m: Map<Tuple<Int, Int>, Int>) -> List<Int>
+    ? "Values of a tuple-keyed map, in iteration order."
     Map.values(m)
 
-verify floatKeyedValues law valuesFollowIterationOrder
-    given m: Map<Float, Int> = [{}, {1.0 => 1}, {2.0 => 5, 1.0 => 3}]
-    floatKeyedValues(m) => Map.values(m)
+verify tupleKeyedValues law valuesFollowIterationOrder
+    given m: Map<Tuple<Int, Int>, Int> = [{}, { (1, 0) => 1}, { (2, 0) => 5, (1, 0) => 3}]
+    tupleKeyedValues(m) => Map.values(m)
 
-fn floatKeyedSize(m: Map<Float, Int>) -> Int
-    ? "Size of a float-keyed map after writing one key."
-    Map.len(Map.set(m, 1.0, 9))
+fn tupleKeyedSize(m: Map<Tuple<Int, Int>, Int>) -> Int
+    ? "Size of a tuple-keyed map after writing one key."
+    Map.len(Map.set(m, (1, 0), 9))
 
-verify floatKeyedSize law neverEmptyAfterSet
-    given m: Map<Float, Int> = [{}, {1.0 => 1}, {2.0 => 5, 1.0 => 3}]
-    Map.len(Map.set(m, 1.0, 9)) >= 1 => true
+verify tupleKeyedSize law neverEmptyAfterSet
+    given m: Map<Tuple<Int, Int>, Int> = [{}, { (1, 0) => 1}, { (2, 0) => 5, (1, 0) => 3}]
+    Map.len(Map.set(m, (1, 0), 9)) >= 1 => true
 
 fn tupleKeyedKeys(m: Map<Tuple<Int, Int>, Int>) -> List<Tuple<Int, Int>>
     ? "Keys of a tuple-keyed map, in iteration order."
@@ -30,25 +30,25 @@ verify tupleKeyedKeys law keysFollowIterationOrder
 
 fn main() -> Unit
     ! [Console.print]
-    Console.print("{Map.len(Map.set({}, 1.0, 9))}")
+    Console.print("{Map.len(Map.set({}, (1, 0), 9))}")
 
-fn plainFloatKeys() -> List<Float>
+fn plainTupleKeys() -> List<Tuple<Int, Int>>
     ? "Keys of a float map written straight into a literal, out of key order."
-    Map.keys({2.0 => 1, 1.0 => 2})
+    Map.keys({ (2, 0) => 1, (1, 0) => 2})
 
-verify plainFloatKeys
-    plainFloatKeys() => [1.0, 2.0]
+verify plainTupleKeys
+    plainTupleKeys() => [(1, 0), (2, 0)]
 
-fn hiddenFloatValues(m: Map<Float, Int>) -> List<Int>
+fn hiddenTupleValues(m: Map<Tuple<Int, Int>, Int>) -> List<Int>
     ? "A helper that reads iteration order, called by a law that never names it."
     Map.values(m)
 
-fn firstFloatValue(m: Map<Float, Int>) -> Int
+fn firstTupleValue(m: Map<Tuple<Int, Int>, Int>) -> Int
     ? "The value paired with the lowest key, read through the helper."
-    match hiddenFloatValues(m)
+    match hiddenTupleValues(m)
         [x, ..__rest] -> x
         _ -> 0
 
-verify firstFloatValue law firstIsLowestKeysValue
-    given m: Map<Float, Int> = [{1.0 => 3, 2.0 => 5}]
-    firstFloatValue(m) => 3
+verify firstTupleValue law firstIsLowestKeysValue
+    given m: Map<Tuple<Int, Int>, Int> = [{ (1, 0) => 3, (2, 0) => 5}]
+    firstTupleValue(m) => 3

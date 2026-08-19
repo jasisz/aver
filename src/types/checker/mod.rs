@@ -1041,6 +1041,8 @@ impl TypeChecker {
                             k.display()
                         ),
                     );
+                } else {
+                    self.require_ordered_map_key(k, line, Some(source_ctx));
                 }
                 self.reject_fn_in_type(k, false, line, source_ctx);
                 self.reject_fn_in_type(v, false, line, source_ctx);
@@ -1088,6 +1090,175 @@ impl TypeChecker {
     /// provider-minted capability token. The registry precomputes represented
     /// ADTs that transitively contain a resource, while this walk covers
     /// generic containers assembled at the use site.
+    /// Refuse a map key that reaches a `Float`.
+    ///
+    /// `source_ctx` prefixes the sentence where the door knows whose
+    /// annotation it is; call sites that only hold an expression pass `None`.
+    /// The same key is often decided at two doors at once and the refusal
+    /// reads the same at each, so the sentence is reported once.
+    pub(super) fn require_ordered_map_key(
+        &mut self,
+        key: &Type,
+        line: usize,
+        source_ctx: Option<&str>,
+    ) {
+        let Some((what, via)) = self.map_key_unorderable_part(key) else {
+            return;
+        };
+        let why = match what.as_str() {
+            "Float" => {
+                "a NaN has no place in the finite range, and neither the compiled binary nor the proof model can state an order the other agrees with"
+            }
+            "Map" => {
+                "a map has no order of its own — its own entries are already ordered by ITS key"
+            }
+            _ => "a vector has no order of its own",
+        };
+        let tail = match via {
+            None => format!(
+                "a map iterates its entries sorted by key, so the key type has to order — and `{what}` does not: {why}. Key on a value that orders: Int, String, Bool, or a record, variant, list or tuple built out of them"
+            ),
+            Some(path) => format!(
+                "a map iterates its entries sorted by key, so the key type has to order — and this one reaches a `{what}` through `{path}`, which does not: {why}. Key on a value that orders"
+            ),
+        };
+        let msg = match source_ctx {
+            Some(ctx) => format!("{ctx}: {tail}"),
+            None => tail,
+        };
+        if self.errors.iter().any(|e| e.message == msg) {
+            return;
+        }
+        self.error_at_line(line, msg);
+    }
+
+    /// Refuse every unordered map key anywhere inside `ty`.
+    ///
+    /// The annotation walk reaches each `Map` on its own way down, so it calls
+    /// [`Self::require_ordered_map_key`] directly. Doors that hold a whole
+    /// type and nothing that walks it — a `verify` given, a signature
+    /// registered from a dependency — use this.
+    pub(super) fn require_ordered_map_keys_in(
+        &mut self,
+        ty: &Type,
+        line: usize,
+        source_ctx: Option<&str>,
+    ) {
+        match ty {
+            Type::Map(k, v) => {
+                self.require_ordered_map_key(k, line, source_ctx);
+                self.require_ordered_map_keys_in(k, line, source_ctx);
+                self.require_ordered_map_keys_in(v, line, source_ctx);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.require_ordered_map_keys_in(inner, line, source_ctx);
+            }
+            Type::Result(ok, err) => {
+                self.require_ordered_map_keys_in(ok, line, source_ctx);
+                self.require_ordered_map_keys_in(err, line, source_ctx);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.require_ordered_map_keys_in(item, line, source_ctx);
+                }
+            }
+            Type::Fn(params, ret, _) => {
+                for param in params {
+                    self.require_ordered_map_keys_in(param, line, source_ctx);
+                }
+                self.require_ordered_map_keys_in(ret, line, source_ctx);
+            }
+            Type::Named { .. }
+            | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+        }
+    }
+
+    /// Whether `ty`, used as a map key, reaches a `Float`.
+    ///
+    /// A map iterates its entries sorted by key, and every backend and the
+    /// proof model have to state that order the same way. `Float` is the one
+    /// type where they cannot: a NaN has no place in the finite range, the
+    /// generated Rust cannot even build the map (`f64` is neither `Eq` nor
+    /// `Hash`), and the proof model has no faithful counterpart for the
+    /// runtime's total order. Everything else — including a record, a
+    /// variant, a list or a tuple — has a canonical order built out of its
+    /// parts, so it keys a map perfectly well.
+    ///
+    /// The walk descends into named types, because a `Float` sitting in a
+    /// record's field is exactly as unsupported as one written in key
+    /// position.
+    pub(crate) fn map_key_unorderable_part(&self, ty: &Type) -> Option<(String, Option<String>)> {
+        let mut seen: Vec<String> = Vec::new();
+        self.map_key_unorderable_path(ty, &mut seen)
+    }
+
+    fn map_key_unorderable_path(
+        &self,
+        ty: &Type,
+        seen: &mut Vec<String>,
+    ) -> Option<(String, Option<String>)> {
+        match ty {
+            Type::Float => Some(("Float".to_string(), None)),
+            // A map and a vector have no order of their own — the runtime's
+            // key comparator has no arm for either, and the emitted Rust has
+            // no `Ord`. A key that reaches one is refused rather than sorted
+            // by whatever a fallback happens to do.
+            Type::Map(_, _) => Some(("Map".to_string(), None)),
+            Type::Vector(_) => Some(("Vector".to_string(), None)),
+            Type::Option(inner) | Type::List(inner) => self.map_key_unorderable_path(inner, seen),
+            Type::Result(left, right) => self
+                .map_key_unorderable_path(left, seen)
+                .or_else(|| self.map_key_unorderable_path(right, seen)),
+            Type::Tuple(items) => items
+                .iter()
+                .find_map(|item| self.map_key_unorderable_path(item, seen)),
+            Type::Named { name, .. } => {
+                let canonical = self.canonical_type_name(name);
+                if seen.contains(&canonical) {
+                    return None;
+                }
+                seen.push(canonical.clone());
+                let field_hit = self
+                    .record_field_types
+                    .iter()
+                    .filter(|(key, _)| key.type_name == canonical)
+                    .find_map(|(key, field_ty)| {
+                        self.map_key_unorderable_path(field_ty, seen)
+                            .map(|(what, _)| (what, Some(format!("{}.{}", name, key.field_name))))
+                    });
+                if field_hit.is_some() {
+                    return field_hit;
+                }
+                let variants = self
+                    .type_variants
+                    .get(&canonical)
+                    .cloned()
+                    .unwrap_or_default();
+                variants.into_iter().find_map(|variant| {
+                    let ctor = format!("{canonical}.{variant}");
+                    let params = self.find_fn_sig(&ctor).map(|sig| sig.params.clone())?;
+                    params
+                        .iter()
+                        .find_map(|param| self.map_key_unorderable_path(param, seen))
+                        .map(|(what, _)| (what, Some(format!("{}.{}", name, variant))))
+                })
+            }
+            Type::Fn(_, _, _)
+            | Type::Int
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => None,
+        }
+    }
+
     pub(crate) fn type_contains_capability_resource(&self, ty: &Type) -> bool {
         match ty {
             Type::Named { id, name } => {

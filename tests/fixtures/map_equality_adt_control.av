@@ -1,23 +1,23 @@
 module MapEqualityAdtControl
     intent =
-        "An ordinary record compared with == inside a function whose call cone also touches a float-keyed map."
+        "An ordinary record compared with == inside a function whose call cone also touches a tuple-keyed map."
         "The comparison has nothing to do with a map, so it must keep exporting — over-refusing a provable law is as bad as exporting an unprovable one, because either way --check is green and the user believes something untrue."
 
 record Point
     x: Int
     y: Int
 
-fn floatKeyCount(m: Map<Float, Int>) -> Int
-    ? "Measures a float-keyed map. Order-blind, and never compared."
+fn tupleKeyCount(m: Map<Tuple<Int, Int>, Int>) -> Int
+    ? "Measures a tuple-keyed map. Order-blind, and never compared."
     Map.len(m)
 
-fn samePoint(p: Point, q: Point, m: Map<Float, Int>) -> Bool
-    ? "Compares two points; the float-keyed map is only measured."
-    match floatKeyCount(m)
+fn samePoint(p: Point, q: Point, m: Map<Tuple<Int, Int>, Int>) -> Bool
+    ? "Compares two points; the tuple-keyed map is only measured."
+    match tupleKeyCount(m)
         0 -> p == q
         _ -> p == q
 
 verify samePoint law reflexive
     given p: Point = [Point(x = 1, y = 2), Point(x = 0, y = 0)]
-    given m: Map<Float, Int> = [{1.0 => 1}]
+    given m: Map<Tuple<Int, Int>, Int> = [{ (1, 0) => 1}]
     samePoint(p, p, m) => true
