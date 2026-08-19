@@ -130,7 +130,7 @@ fn registry_version_is_emitted_without_resolving_or_running_cargo() {
 }
 
 #[test]
-fn compile_rejects_missing_unknown_unused_and_unresolvable_bindings() {
+fn compile_rejects_missing_unknown_and_unresolvable_bindings() {
     let cases = [
         (
             MAIN_SOURCE,
@@ -140,12 +140,7 @@ fn compile_rejects_missing_unknown_unused_and_unresolvable_bindings() {
         (
             MAIN_SOURCE,
             "[providers]\nschema = 1\n[[providers.bindings]]\ncapability='Missing'\ncrate='missing_provider'\npackage='missing-provider'\nfactory='binding'\nversion='1'\n",
-            "capability 'Missing' has no capability contract in this program",
-        ),
-        (
-            "module App\n    depends [Shapes]\n\nfn main() -> Unit\n    Unit\n",
-            "[providers]\nschema = 1\n[[providers.bindings]]\ncapability='Shapes'\ncrate='shapes_provider'\npackage='shapes-provider'\nfactory='binding'\nversion='1'\n",
-            "capability 'Shapes' is not used by this program",
+            "capability 'Missing' has no capability contract in this project",
         ),
         (
             MAIN_SOURCE,
@@ -170,6 +165,28 @@ fn compile_rejects_missing_unknown_unused_and_unresolvable_bindings() {
             "case {index}: expected {expected:?} in {output}"
         );
     }
+}
+
+#[test]
+fn compile_ignores_project_binding_unused_by_entry_program() {
+    let temp = tempfile::tempdir().expect("temporary project-superset manifest root");
+    let root = temp.path().join("app");
+    write_project(
+        &root,
+        "module App\n\nfn main() -> Unit\n    Unit\n",
+        "[providers]\nschema = 1\n[[providers.bindings]]\ncapability='Shapes'\ncrate='shapes_provider'\npackage='shapes-provider'\nfactory='binding'\nversion='1'\n",
+    );
+
+    let generated = temp.path().join("generated");
+    let output = compile(&root, &generated);
+    assert!(output.status.success(), "{}", report(&output));
+
+    let cargo_toml =
+        fs::read_to_string(generated.join("Cargo.toml")).expect("generated Cargo.toml");
+    assert!(
+        !cargo_toml.contains("shapes_provider"),
+        "inactive project binding leaked into the generated program:\n{cargo_toml}"
+    );
 }
 
 #[test]

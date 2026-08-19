@@ -5412,8 +5412,17 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let provider_manifest = project_config
         .as_ref()
         .and_then(|config| config.provider_manifest.as_ref());
+    let known_provider_capabilities = super::provider_host_cmd::known_project_capabilities(
+        &module_root,
+        &ctx.capabilities,
+        provider_manifest,
+    );
     let output = match with_local_runtime_override(|| {
-        rust_codegen::transpile_with_provider_manifest(&mut ctx, provider_manifest)
+        rust_codegen::transpile_with_provider_manifest_for_project(
+            &mut ctx,
+            provider_manifest,
+            &known_provider_capabilities,
+        )
     }) {
         Ok(output) => output,
         Err(error) => {
