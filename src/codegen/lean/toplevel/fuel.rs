@@ -1308,6 +1308,11 @@ pub(super) fn emit_native_mutual_sizeof_group(
     if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
         return None;
     }
+    // A step whose shrink the emitter cannot see is not this strategy's:
+    // see `scc_passes_computed_measure_arg`.
+    if crate::codegen::recursion::detect::scc_passes_computed_measure_arg(fns) {
+        return None;
+    }
 
     let mut lines: Vec<String> = vec!["mutual".to_string()];
     for fd in fns {
