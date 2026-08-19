@@ -87,6 +87,14 @@ dispatch. Add `trace` (and a `given` for an effect that returns a generated
 value), or move a stateful/interactive flow to record/replay. Plain verify is
 never a one-shot real-world smoke test.
 
+Proof export preserves that distinction. A passing case with no `given` is
+stated against the Oracle-lifted function and quantified over the missing
+oracle, proving that the selected branch has the expected result for every
+provider implementation. A case with a `given` is stated against its selected
+stub instead. Capability paths keep their full module qualification throughout
+lifting, so an operation such as `Infra.Kv.get` becomes the corresponding
+oracle argument rather than a host call in the Lean artifact.
+
 ## Trace-aware cases
 
 Use cases-form `verify <fn> trace` when a case intentionally reaches classified

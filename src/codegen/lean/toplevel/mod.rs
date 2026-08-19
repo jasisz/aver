@@ -5,6 +5,7 @@ mod lex_list;
 mod render;
 mod type_def;
 mod verify;
+mod verify_cases;
 
 pub use fn_def::{emit_fn_def, emit_fn_def_proof, emit_mutual_group, emit_mutual_group_proof};
 pub use fuel::PROOF_FUEL_EXHAUSTED_MSG;
