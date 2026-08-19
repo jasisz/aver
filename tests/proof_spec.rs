@@ -509,3 +509,24 @@ fn a_method_application_in_argument_position_is_emitted_atomically() {
         "aver-proof-arg-atomicity",
     );
 }
+
+/// A mutual pair's termination measure counts what travels between the peers,
+/// not every list the functions happen to take.
+///
+/// `hereOrDeeper(head, tail, n)` returns `head` and forwards `tail`. Measuring
+/// `sizeOf head + sizeOf tail` against the peer's `sizeOf tail` makes the step
+/// decrease only if `head` is non-empty — true of a list, but not something
+/// `omega` has any reason to believe, so the whole mutual block failed to
+/// build. Counting only what is forwarded also lets the ranker see that the
+/// step leaves the measure unchanged, so it orders the two peers instead of
+/// assuming a strict decrease.
+///
+/// Mutation-checked: with the measure widened back to every carrier, the
+/// fixture reports a build error.
+#[test]
+fn a_mutual_measure_counts_only_what_is_forwarded() {
+    assert_proof_builds(
+        "tests/fixtures/mutual_measure_forwarded.av",
+        "aver-proof-mutual-measure",
+    );
+}

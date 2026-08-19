@@ -1592,11 +1592,45 @@ pub(crate) fn is_scalar_like_type(type_name: &str) -> bool {
 /// Dafny native `decreases` tuple so the same params drive measure
 /// inference on both backends.
 pub fn sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
-    fd.params
+    let carriers: Vec<usize> = fd
+        .params
         .iter()
         .enumerate()
         .filter_map(|(idx, (_, type_name))| (!is_scalar_like_type(type_name)).then_some(idx))
-        .collect()
+        .collect();
+
+    // A parameter that is never handed to a callee takes no part in the
+    // recursion, and counting it makes the measure depend on a fact the
+    // termination tactic does not have. `hereOrDeeper(head, tail, n)`, which
+    // returns `head` and passes `tail` on, measured `sizeOf head + sizeOf tail`
+    // against a peer's `sizeOf tail`, so the step only decreases if
+    // `sizeOf head > 0` — true, but `omega` has no reason to believe it and the
+    // whole mutual block failed to build. Measuring what actually travels also
+    // lets the ranker below see that the step leaves the measure unchanged, so
+    // it orders the peers instead of assuming a strict decrease.
+    //
+    // Falling back to every carrier keeps the shape where the measured value is
+    // destructured rather than forwarded (`itemAt(items, n)` matching on
+    // `items` and passing the tail): nothing is handed on by name, and the
+    // parameter itself is still the right measure.
+    let forwarded: Vec<usize> = carriers
+        .iter()
+        .copied()
+        .filter(|idx| {
+            let Some((name, _)) = fd.params.get(*idx) else {
+                return false;
+            };
+            collect_calls_from_body(fd.body.as_ref())
+                .iter()
+                .any(|(_, args)| args.iter().any(|arg| is_ident(arg, name)))
+        })
+        .collect();
+
+    if forwarded.is_empty() {
+        carriers
+    } else {
+        forwarded
+    }
 }
 
 /// True iff some intra-SCC call passes a non-trivially-shrinking

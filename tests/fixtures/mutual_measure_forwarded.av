@@ -1,0 +1,25 @@
+module MutualMeasureForwarded
+    intent =
+        "A mutual pair where one member RETURNS a list parameter and FORWARDS a different one."
+        "Counting both in the termination measure makes the step from the forwarding member to its peer decrease only if the returned list is non-empty — true, but not something the termination tactic has any reason to believe, and the whole mutual block then fails to build. The measure has to count what actually travels."
+    exposes [itemAt]
+    depends []
+    effects []
+
+fn hereOrDeeper(head: List<Int>, tail: List<List<Int>>, n: Int) -> List<Int>
+    ? "This position's item, or one further down."
+    match n <= 0
+        true -> head
+        false -> itemAt(tail, n - 1)
+
+fn itemAt(items: List<List<Int>>, n: Int) -> List<Int>
+    ? "The nth item down from the top, counting from nought."
+    match items
+        [] -> []
+        [head, ..tail] -> hereOrDeeper(head, tail, n)
+
+verify itemAt
+    itemAt([], 0) => []
+    itemAt([[1], [2], [3]], 0) => [1]
+    itemAt([[1], [2], [3]], 2) => [3]
+    itemAt([[1], [2], [3]], 9) => []
