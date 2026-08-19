@@ -1599,6 +1599,51 @@ pub fn sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
         .collect()
 }
 
+/// The parameters a MUTUAL group's termination measure should count.
+///
+/// [`sizeof_measure_param_indices`] takes every non-scalar parameter, which is
+/// what the single-function paths want, but too much for a mutual pair: a
+/// parameter a function only RETURNS takes no part in the recursion, and
+/// counting it makes the measure depend on a fact the tactic does not have.
+/// `hereOrDeeper(head, tail, n)`, which returns `head` and passes `tail` on,
+/// measured `sizeOf head + sizeOf tail` against a peer's `sizeOf tail`, so the
+/// step decreased only if `sizeOf head > 0` — true, but `omega` has no reason
+/// to believe it, and the whole block failed to build.
+///
+/// Measuring what actually travels also lets the ranker see that the step
+/// leaves the measure unchanged, so it orders the peers instead of assuming a
+/// strict decrease.
+///
+/// Deliberately NOT used by the single-function paths or by the
+/// growing-accumulator check: they read the selection for other purposes, and
+/// narrowing it there pushed a `drain(codes, acc)` shape off native
+/// termination and onto fuel, which then ran out.
+///
+/// Falls back to every carrier where nothing is handed on by name, which is
+/// the shape that destructures its measured parameter (`itemAt(items, n)`
+/// matching on `items` and passing the tail).
+pub(crate) fn mutual_sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
+    let carriers = sizeof_measure_param_indices(fd);
+    let forwarded: Vec<usize> = carriers
+        .iter()
+        .copied()
+        .filter(|idx| {
+            let Some((name, _)) = fd.params.get(*idx) else {
+                return false;
+            };
+            collect_calls_from_body(fd.body.as_ref())
+                .iter()
+                .any(|(_, args)| args.iter().any(|arg| is_ident(arg, name)))
+        })
+        .collect();
+
+    if forwarded.is_empty() {
+        carriers
+    } else {
+        forwarded
+    }
+}
+
 /// True iff some intra-SCC call passes a non-trivially-shrinking
 /// expression into a callee's sizeOf parameter — tail-recursive
 /// accumulator patterns like `[x] + acc` / `List.prepend(x, acc)`
@@ -1741,7 +1786,7 @@ pub(crate) fn supports_mutual_sizeof_ranked(
     let names: HashSet<String> = component.iter().map(|fd| fd.name.clone()).collect();
     let metric_indices: HashMap<String, Vec<usize>> = component
         .iter()
-        .map(|fd| (fd.name.clone(), sizeof_measure_param_indices(fd)))
+        .map(|fd| (fd.name.clone(), mutual_sizeof_measure_param_indices(fd)))
         .collect();
     if component.iter().any(|fd| {
         metric_indices

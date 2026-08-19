@@ -1191,7 +1191,7 @@ pub(super) fn emit_fuelized_mutual_int_countdown_group(
 /// (already typed by the typechecker) instead of re-parsing the
 /// AST annotation string.
 fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
-    let indices = crate::codegen::recursion::detect::sizeof_measure_param_indices(fd);
+    let indices = crate::codegen::recursion::detect::mutual_sizeof_measure_param_indices(fd);
     if indices.is_empty() {
         return None;
     }
