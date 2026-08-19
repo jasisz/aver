@@ -122,7 +122,7 @@ fn keys(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     let mut out = map.keys().cloned().collect::<Vec<_>>();
-    out.sort_by(compare_scalar_keys);
+    out.sort_by(compare_keys);
     Ok(list_from_vec(out))
 }
 
@@ -134,7 +134,7 @@ fn values(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     let mut entries = map.iter().collect::<Vec<_>>();
-    entries.sort_by(|(k1, _), (k2, _)| compare_scalar_keys(k1, k2));
+    entries.sort_by(|(k1, _), (k2, _)| compare_keys(k1, k2));
     let out = entries
         .into_iter()
         .map(|(_, v)| v.clone())
@@ -150,7 +150,7 @@ fn entries(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     let mut entries = map.iter().collect::<Vec<_>>();
-    entries.sort_by(|(k1, _), (k2, _)| compare_scalar_keys(k1, k2));
+    entries.sort_by(|(k1, _), (k2, _)| compare_keys(k1, k2));
     let out = entries
         .into_iter()
         .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
@@ -226,7 +226,7 @@ fn ensure_hashable_key(name: &str, value: &Value) -> Result<(), RuntimeError> {
 fn sort_keys_nv(keys: &mut [NanValue], arena: &Arena) {
     use crate::nan_value::NanValueConvert;
     let mut keyed: Vec<(Value, NanValue)> = keys.iter().map(|k| (k.to_value(arena), *k)).collect();
-    keyed.sort_by(|(a, _), (b, _)| compare_scalar_keys(a, b));
+    keyed.sort_by(|(a, _), (b, _)| compare_keys(a, b));
     for (slot, (_, key)) in keys.iter_mut().zip(keyed) {
         *slot = key;
     }
@@ -239,10 +239,94 @@ fn sort_entries_nv(entries: &mut [(NanValue, NanValue)], arena: &Arena) {
         .iter()
         .map(|pair| (pair.0.to_value(arena), *pair))
         .collect();
-    keyed.sort_by(|(a, _), (b, _)| compare_scalar_keys(a, b));
+    keyed.sort_by(|(a, _), (b, _)| compare_keys(a, b));
     for (slot, (_, pair)) in entries.iter_mut().zip(keyed) {
         *slot = pair;
     }
+}
+
+/// The canonical order a map iterates its keys in.
+///
+/// It has to be a function of the key's CONTENT, because every backend and
+/// the proof model state it independently and they have to agree. Ordering a
+/// composite key by its printed form — which is what this used to fall back
+/// on — is not that: it reads the renderer, so `(10, 1)` sorted below `(2, 1)`
+/// on the VM while compiled Rust, comparing componentwise, put it above.
+///
+/// A record orders by FIELD NAME, not by the order the fields were declared
+/// in. Declaration order is not observable anywhere else in the language —
+/// records are built and read by name, and there is no positional pattern —
+/// so ordering by it would make a neutral refactor change how every map on
+/// that key iterates. A variant orders by constructor name for the same
+/// reason, then by its payload.
+fn compare_keys(a: &Value, b: &Value) -> Ordering {
+    fn seq(xs: &[Value], ys: &[Value]) -> Ordering {
+        for (x, y) in xs.iter().zip(ys.iter()) {
+            let ord = compare_keys(x, y);
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        }
+        xs.len().cmp(&ys.len())
+    }
+
+    match (a, b) {
+        (Value::Unit, Value::Unit) => Ordering::Equal,
+        (Value::None, Value::None) => Ordering::Equal,
+        (Value::None, Value::Some(_)) => Ordering::Less,
+        (Value::Some(_), Value::None) => Ordering::Greater,
+        (Value::Some(x), Value::Some(y)) => compare_keys(x, y),
+        (Value::Ok(x), Value::Ok(y)) => compare_keys(x, y),
+        (Value::Err(x), Value::Err(y)) => compare_keys(x, y),
+        (Value::Ok(_), Value::Err(_)) => Ordering::Less,
+        (Value::Err(_), Value::Ok(_)) => Ordering::Greater,
+        (Value::Tuple(xs), Value::Tuple(ys)) => seq(xs, ys),
+        (Value::List(xs), Value::List(ys)) => {
+            let xs: Vec<Value> = xs.iter().cloned().collect();
+            let ys: Vec<Value> = ys.iter().cloned().collect();
+            seq(&xs, &ys)
+        }
+        (Value::Vector(xs), Value::Vector(ys)) => {
+            let xs: Vec<Value> = xs.iter().cloned().collect();
+            let ys: Vec<Value> = ys.iter().cloned().collect();
+            seq(&xs, &ys)
+        }
+        (Value::Record { fields: xs, .. }, Value::Record { fields: ys, .. }) => {
+            compare_fields_by_name(xs, ys)
+        }
+        (
+            Value::Variant {
+                variant: vx,
+                fields: xs,
+                ..
+            },
+            Value::Variant {
+                variant: vy,
+                fields: ys,
+                ..
+            },
+        ) => vx.cmp(vy).then_with(|| seq(xs, ys)),
+        _ => compare_scalar_keys(a, b),
+    }
+}
+
+/// Compare two records of the same type field by field, taking the fields in
+/// alphabetical order of their names.
+fn compare_fields_by_name(xs: &[(String, Value)], ys: &[(String, Value)]) -> Ordering {
+    // Both sides are the same record type, so they carry the same names in the
+    // same layout; one permutation orders both.
+    let mut order: Vec<usize> = (0..xs.len()).collect();
+    order.sort_by(|&i, &j| xs[i].0.cmp(&xs[j].0));
+    for i in order {
+        if i >= ys.len() {
+            return Ordering::Greater;
+        }
+        let ord = compare_keys(&xs[i].1, &ys[i].1);
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    xs.len().cmp(&ys.len())
 }
 
 fn compare_scalar_keys(a: &Value, b: &Value) -> Ordering {

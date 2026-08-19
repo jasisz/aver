@@ -92,6 +92,7 @@ impl TypeChecker {
                     let ty = self.canonicalize_named(ty);
                     let ctx = format!("Verify law given '{}'", given.name);
                     self.report_ambiguous_named(&ty, line, &ctx);
+                    self.require_ordered_map_keys_in(&ty, line, Some(&ctx));
                     self.locals.insert(given.name.clone(), ty);
                 }
                 Err(unknown) => {

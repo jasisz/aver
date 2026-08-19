@@ -11,7 +11,7 @@ For Oracle laws and trace assertions over classified effects, see [oracle.md](or
 ## Types
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`, `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` (`K` must be a type that orders — see [Map literals](#map-literals)), `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 
 Each primitive has exactly one spelling — the string type is written `String`, never abbreviated.
 
@@ -157,6 +157,10 @@ m = {"key" => value, "other" => 42}
 ```
 
 `=>` is required inside map literals; `:` stays type-only.
+
+A map iterates its entries sorted by key — when you run a program, in a compiled binary, and in the exported proof model — so its key type must be one all of those can order the same way. Most types are: `Int` numerically, `String` by codepoint, `Bool` false-first, a list or a `Bytes` lexicographically, a tuple componentwise, a record by its FIELD NAMES, a variant by its CONSTRUCTOR NAME and then its payload. Ordering a record by field name rather than by the order the fields were declared in is deliberate: declaration order is not observable anywhere else — a record is built and read by name — so ordering by it would make reordering two fields change how every map on that key iterates.
+
+`Float` is the exception and cannot be a map key: a NaN has no place in the finite range, and neither a compiled binary nor the proof model can state an order the other agrees with. Nor can a `Map` or a `Vector`, which have no order of their own. The rule reaches through your own types, so a record with a `Float` field cannot key a map either, and the error names the field it found. Float stays legal as a map *value*.
 
 ## Effects
 

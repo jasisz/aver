@@ -1096,6 +1096,22 @@ impl<T: PartialEq> PartialEq for AverList<T> {
 
 impl<T: Eq> Eq for AverList<T> {}
 
+/// Lexicographic, shorter-prefix-first — the order a map keyed on a list
+/// iterates in. It has to match what the VM's key comparator and the proof
+/// model state, because a claim about iteration order is checked against all
+/// three.
+impl<T: Ord> PartialOrd for AverList<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Ord> Ord for AverList<T> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.iter().cmp(other.iter())
+    }
+}
+
 impl<T: Hash> Hash for AverList<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         8u8.hash(state);

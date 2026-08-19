@@ -1,19 +1,19 @@
 module MapOrderFnParam
     intent =
-        "A claim that reads a float-keyed map's iteration order through a function it was handed by name."
+        "A claim that reads a tuple-keyed map's iteration order through a function it was handed by name."
         "The observer is never written inside the claim's own text: viaHof applies whatever reader it is given, and the reader arrives as an argument — so the cone has to follow the name to find the observation. Both claims below are refuted by aver verify."
 
-fn floatKeys(m: Map<Float, Int>) -> List<Float>
+fn tupleKeys(m: Map<Tuple<Int, Int>, Int>) -> List<Tuple<Int, Int>>
     ? "Reads the map's keys in iteration order."
     Map.keys(m)
 
-fn viaHof(f: Fn(Map<Float, Int>) -> List<Float>, m: Map<Float, Int>) -> List<Float>
+fn viaHof(f: Fn(Map<Tuple<Int, Int>, Int>) -> List<Tuple<Int, Int>>, m: Map<Tuple<Int, Int>, Int>) -> List<Tuple<Int, Int>>
     ? "Applies the given reader to the map."
     f(m)
 
 verify viaHof
-    viaHof(floatKeys, {2.0 => 2, 1.0 => 1}) => [2.0, 1.0]
+    viaHof(tupleKeys, { (2, 0) => 2, (1, 0) => 1}) => [(2, 0), (1, 0)]
 
 verify viaHof law keysAsWritten
-    given m: Map<Float, Int> = [{2.0 => 2, 1.0 => 1}]
-    viaHof(floatKeys, m) => [2.0, 1.0]
+    given m: Map<Tuple<Int, Int>, Int> = [{ (2, 0) => 2, (1, 0) => 1}]
+    viaHof(tupleKeys, m) => [(2, 0), (1, 0)]

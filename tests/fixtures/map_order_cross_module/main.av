@@ -5,12 +5,12 @@ module MapOrderCrossModule
     effects []
     depends [MapKeys]
 
-fn firstFloatValue(m: Map<Float, Int>) -> Int
+fn firstTupleValue(m: Map<Tuple<Int, Int>, Int>) -> Int
     ? "The value paired with the lowest key, read through another module."
     match MapKeys.floatValues(m)
         [x, ..__rest] -> x
         _ -> 0
 
-verify firstFloatValue law firstIsLowestKeysValue
-    given m: Map<Float, Int> = [{1.0 => 3, 2.0 => 5}]
-    firstFloatValue(m) => 3
+verify firstTupleValue law firstIsLowestKeysValue
+    given m: Map<Tuple<Int, Int>, Int> = [{ (1, 0) => 3, (2, 0) => 5}]
+    firstTupleValue(m) => 3

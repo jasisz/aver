@@ -165,6 +165,22 @@ fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
     rust_hash_eq_safe_named(&key, ctx, &mut visiting)
 }
 
+/// Whether the generated type can carry the canonical key order.
+///
+/// A map keyed on this type sorts by it, so every part has to order the same
+/// way on every backend. `Float` has no order the proof model can state, and
+/// `Map` and `Vector` have none in the runtime's key comparator either — the
+/// checker refuses a key that reaches any of them, and this is the other half
+/// of that agreement.
+fn type_parts_are_orderable<'a>(parts: impl Iterator<Item = &'a String>) -> bool {
+    parts.into_iter().all(|ty| {
+        !ty.contains("Float")
+            && !ty.contains("Map<")
+            && !ty.contains("Vector<")
+            && !ty.contains("Fn(")
+    })
+}
+
 fn emit_sum_type(
     name: &str,
     variants: &[TypeVariant],
@@ -208,6 +224,89 @@ fn emit_sum_type(
         }
     }
     writeln!(out, "}}").unwrap();
+
+    // A variant can key a map, and a map iterates sorted by key. The order is
+    // by CONSTRUCTOR NAME and then by payload, not by the order the
+    // constructors were declared in — for the same reason a record orders by
+    // field name: declaration order is not observable anywhere else, so
+    // ordering by it would make reordering two constructors change how every
+    // map on this key iterates.
+    if type_can_derive_hash_eq(
+        &TypeDef::Sum {
+            name: name.to_string(),
+            variants: variants.to_vec(),
+            line: 0,
+        },
+        ctx,
+    ) && type_parts_are_orderable(variants.iter().flat_map(|v| v.fields.iter()))
+    {
+        let mut by_name: Vec<&TypeVariant> = variants.iter().collect();
+        by_name.sort_by(|a, b| a.name.cmp(&b.name));
+        writeln!(out).unwrap();
+        writeln!(out, "impl {} {{", name).unwrap();
+        writeln!(out, "    fn aver_key_rank(&self) -> usize {{").unwrap();
+        writeln!(out, "        match self {{").unwrap();
+        for (rank, v) in by_name.iter().enumerate() {
+            if v.fields.is_empty() {
+                writeln!(out, "            {}::{} => {},", name, v.name, rank).unwrap();
+            } else {
+                writeln!(out, "            {}::{}(..) => {},", name, v.name, rank).unwrap();
+            }
+        }
+        writeln!(out, "        }}").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(out, "impl PartialOrd for {} {{", name).unwrap();
+        writeln!(
+            out,
+            "    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {{"
+        )
+        .unwrap();
+        writeln!(out, "        Some(self.cmp(other))").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(out, "impl Ord for {} {{", name).unwrap();
+        writeln!(
+            out,
+            "    fn cmp(&self, other: &Self) -> std::cmp::Ordering {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());"
+        )
+        .unwrap();
+        writeln!(out, "        if rank != std::cmp::Ordering::Equal {{").unwrap();
+        writeln!(out, "            return rank;").unwrap();
+        writeln!(out, "        }}").unwrap();
+        writeln!(out, "        match (self, other) {{").unwrap();
+        for v in &by_name {
+            if v.fields.is_empty() {
+                continue;
+            }
+            let binds_a: Vec<String> = (0..v.fields.len()).map(|i| format!("a{i}")).collect();
+            let binds_b: Vec<String> = (0..v.fields.len()).map(|i| format!("b{i}")).collect();
+            writeln!(
+                out,
+                "            ({0}::{1}({2}), {0}::{1}({3})) => std::cmp::Ordering::Equal",
+                name,
+                v.name,
+                binds_a.join(", "),
+                binds_b.join(", ")
+            )
+            .unwrap();
+            let chain: Vec<String> = (0..v.fields.len())
+                .map(|i| format!("                .then_with(|| a{i}.cmp(b{i}))"))
+                .collect();
+            writeln!(out, "{},", chain.join("\n")).unwrap();
+        }
+        writeln!(out, "            _ => std::cmp::Ordering::Equal,").unwrap();
+        writeln!(out, "        }}").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+    }
 
     // Generate AverDisplay impl
     writeln!(out).unwrap();
@@ -295,6 +394,54 @@ fn emit_product_type(
         .unwrap();
     }
     writeln!(out, "}}").unwrap();
+
+    // A record can key a map, and a map iterates sorted by key, so the
+    // generated type needs the same order the VM and the proof model state.
+    // Fields are compared in alphabetical order of their NAMES rather than in
+    // the order they were declared: declaration order is not observable
+    // anywhere else in Aver — a record is built and read by name, and there is
+    // no positional pattern — so ordering by it would make reordering two
+    // fields change how every map on this key iterates.
+    if type_can_derive_hash_eq(
+        &TypeDef::Product {
+            name: name.to_string(),
+            fields: fields.to_vec(),
+            line: 0,
+        },
+        ctx,
+    ) && type_parts_are_orderable(fields.iter().map(|(_, ty)| ty))
+    {
+        let mut by_name: Vec<&(String, String)> = fields.iter().collect();
+        by_name.sort_by(|a, b| a.0.cmp(&b.0));
+        writeln!(out).unwrap();
+        writeln!(out, "impl PartialOrd for {} {{", name).unwrap();
+        writeln!(
+            out,
+            "    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {{"
+        )
+        .unwrap();
+        writeln!(out, "        Some(self.cmp(other))").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(out, "impl Ord for {} {{", name).unwrap();
+        writeln!(
+            out,
+            "    fn cmp(&self, other: &Self) -> std::cmp::Ordering {{"
+        )
+        .unwrap();
+        writeln!(out, "        std::cmp::Ordering::Equal").unwrap();
+        for (field_name, _) in by_name {
+            writeln!(
+                out,
+                "            .then_with(|| self.{0}.cmp(&other.{0}))",
+                aver_name_to_rust(field_name)
+            )
+            .unwrap();
+        }
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+    }
 
     // Generate AverDisplay impl
     writeln!(out).unwrap();

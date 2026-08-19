@@ -22,7 +22,15 @@ impl TypeChecker {
                     name,
                     key_ty.display()
                 ));
+                return;
             }
+            // A map iterates sorted by key, so the key needs an order too.
+            // This has to happen on every builtin that reads a key and not
+            // only where a key type is obviously decided: `Map.has({}, 1.5)`
+            // decides `K` at the call, because an empty literal arrives with
+            // its key still unresolved.
+            let line = tc.current_fn_line.unwrap_or(1);
+            tc.require_ordered_map_key(key_ty, line, None);
         };
         let map_parts = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> (Type, Type) {
             match arg_ty {

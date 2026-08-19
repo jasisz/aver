@@ -219,6 +219,20 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         return ("type-mismatch", Some(msg.to_string()), fields, repair);
     }
 
+    // Keyed on the wording built by `TypeChecker::require_ordered_map_key`.
+    if msg.contains("the key type has to order") {
+        return (
+            "map-key-unordered",
+            Some(msg.to_string()),
+            Vec::new(),
+            Some(
+                "Key on a value that orders: Int, String, Bool, or a record, variant, list or \
+                 tuple built out of them."
+                    .to_string(),
+            ),
+        );
+    }
+
     if msg.starts_with("Unknown identifier") || msg.starts_with("Unknown function") {
         return (
             "unknown-ident",

@@ -40,7 +40,7 @@ xs: List<Int> = []
 Primitives: `Int`, `Float`, `String`, `Bool`, `Unit` — each has exactly one spelling; the string type is `String`, never abbreviated
 
 Compound:
-- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`
+- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` — `K` must be a type that orders; records, variants, lists and tuples all do, `Float` does not
 - tuples: type is `Tuple<A, B, ...>` (2+ elements). Value literal and pattern are both paren: `(a, b)`. The type spelling and the value spelling are deliberately different.
 - function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`
 
@@ -304,6 +304,7 @@ Key `Vector` API (O(1) indexed access):
 - `Vector.fromList(l)` — conversion in the other direction lives on `List`
 
 Key `Map` API:
+- a map iterates sorted by key on every backend, so the key type must order. Records (by field name), variants (by constructor name), lists, tuples and `Bytes` all key a map fine. `Float` cannot — a NaN has no place in the finite range — and neither can `Map` or `Vector`. Float stays legal as a *value*.
 - empty map literal: `{}` (type from context); non-empty: `{a => 1, b => 2}`. There is no `Map.empty()` builtin.
 - `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.values(m)`, `Map.entries(m)`, `Map.len(m)`
 
@@ -370,6 +371,7 @@ match Map.get(ages, "alice")
 20. `expr?` on an `Option<T>` — `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly — wrap the value first
 21. `(A, B)` as a tuple type — type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different so grep-for-type and grep-for-value don't collide
 22. Dispatching on a `String` or an `Int` through a chain of `match x == "lit"` with `true ->` / `false ->` helper functions — literal patterns exist: `match cmd { "verack" -> 1 ; "tx" -> 4 ; _ -> 0 }`. Only the trailing `_` arm is mandatory
+23. Keying a map on a `Float` — the key type has to order and a NaN has no place in the finite range. Key on the value that orders (`Map<String, Reading>` rather than `Map<Float, Reading>`). A `Map` or a `Vector` in key position is refused for the same reason: neither has an order of its own
 
 ### Style
 
