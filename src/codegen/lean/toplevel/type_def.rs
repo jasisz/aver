@@ -162,6 +162,9 @@ fn named_type_is_inhabitable(
     if is_capability_resource(name, ctx, scope) {
         return false;
     }
+    if crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some() {
+        return false;
+    }
     let Some((td, td_scope)) = find_type_def_scoped(ctx, name, scope) else {
         return true;
     };
