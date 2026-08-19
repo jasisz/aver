@@ -166,10 +166,12 @@ pub(super) fn emit_opaque_type(module: &str, name: &str, with_replay: bool) -> S
     let flat = canonical.replace('.', "_");
     let state = if with_replay {
         format!(
-            "#[derive(Clone)]\nenum {name}State {{\n    Live(aver_rt::provider::ProviderResourceHandle),\n    Replay(u64),\n}}\n\n#[derive(Clone)]\npub struct {name}({name}State);"
+            "#[derive(Clone, PartialEq, Eq, Hash)]\nenum {name}State {{\n    Live(aver_rt::provider::ProviderResourceHandle),\n    Replay(u64),\n}}\n\n#[derive(Clone, PartialEq, Eq, Hash)]\npub struct {name}({name}State);"
         )
     } else {
-        format!("#[derive(Clone)]\npub struct {name}(aver_rt::provider::ProviderResourceHandle);")
+        format!(
+            "#[derive(Clone, PartialEq, Eq, Hash)]\npub struct {name}(aver_rt::provider::ProviderResourceHandle);"
+        )
     };
     let live_handle = if with_replay {
         format!(
@@ -213,6 +215,11 @@ impl crate::aver_replay::ReplayValue for {name} {{
          impl std::fmt::Debug for {name} {{\n\
              fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n\
                  f.write_str(\"{canonical}(<opaque>)\")\n\
+             }}\n\
+         }}\n\n\
+         impl aver_rt::AverDisplay for {name} {{\n\
+             fn aver_display(&self) -> String {{\n\
+                 \"{canonical}(<opaque>)\".to_string()\n\
              }}\n\
          }}\n\n\
          impl aver_rt::provider::ProviderCodec for {name} {{\n\
