@@ -1,0 +1,54 @@
+module LeanArgAtomicity
+    intent =
+        "Builtins that emit as `receiver.method arg`, each with a COMPOUND receiver and each sitting where an argument is expected."
+        "The receiver arrives parenthesised, so the whole application begins with `(` — and an emitter that reads `starts with a bracket` as `already atomic` passes it through unwrapped. Lean then reads `Except.ok (xs).take n` as `Except.ok` applied to a partially applied `List.take` and then to `n`."
+    exposes [firstFour, afterFour, holds, paired, swapped]
+    depends []
+    effects []
+
+fn doubled(xs: List<Int>) -> List<Int>
+    ? "Each element twice over, as a compound receiver for the calls below."
+    match xs
+        [] -> []
+        [h, ..t] -> List.prepend(h * 2, doubled(t))
+
+verify doubled
+    doubled([]) => []
+    doubled([1, 2]) => [2, 4]
+
+fn firstFour(xs: List<Int>) -> Result<List<Int>, String>
+    ? "The first four doubled elements, wrapped."
+    Result.Ok(List.take(doubled(xs), 4))
+
+verify firstFour
+    firstFour([1, 2, 3, 4, 5]) => Result.Ok([2, 4, 6, 8])
+    firstFour([]) => Result.Ok([])
+
+fn afterFour(xs: List<Int>) -> Result<List<Int>, String>
+    ? "Everything past the first four doubled elements, wrapped."
+    Result.Ok(List.drop(doubled(xs), 4))
+
+verify afterFour
+    afterFour([1, 2, 3, 4, 5]) => Result.Ok([10])
+
+fn holds(xs: List<Int>, n: Int) -> Result<Bool, String>
+    ? "Whether the doubled list holds the value, wrapped."
+    Result.Ok(List.contains(doubled(xs), n))
+
+verify holds
+    holds([1, 2], 4) => Result.Ok(true)
+    holds([1, 2], 3) => Result.Ok(false)
+
+fn paired(xs: List<Int>, ys: List<Int>) -> Result<List<Tuple<Int, Int>>, String>
+    ? "The doubled list zipped with the other, wrapped."
+    Result.Ok(List.zip(doubled(xs), ys))
+
+verify paired
+    paired([1, 2], [3, 4]) => Result.Ok([(2, 3), (4, 4)])
+
+fn swapped(s: String) -> Result<String, String>
+    ? "One substring replaced in a joined string, wrapped."
+    Result.Ok(String.replace(String.join([s, s], "-"), "a", "b"))
+
+verify swapped
+    swapped("cat") => Result.Ok("cbt-cbt")

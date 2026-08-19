@@ -488,3 +488,24 @@ const FUEL_PROBE_AV: &str = "module FuelProbe\n\
     \n\
     verify stepSum\n\
     \x20   stepSum(20) => stepSumAcc(20)\n";
+
+/// A builtin that emits as `receiver.method arg` has to be parenthesised as a
+/// whole where an argument is expected.
+///
+/// The receiver arrives parenthesised, so the application begins with `(` —
+/// and the atomicity test used to read "begins with a bracket" as "already
+/// atomic" and pass it through unwrapped. Lean then reads
+/// `Except.ok (xs).take (Int.toNat 4)` as `Except.ok` applied to a partially
+/// applied `List.take` and then to a second argument, and refuses it with
+/// `function expected`. Measured on an external project, this one shape
+/// accounted for 86% of the claims whose emitted Lean would not elaborate.
+///
+/// The fixture puts five such builtins behind a compound receiver. With the
+/// old test in place it reports twelve build errors.
+#[test]
+fn a_method_application_in_argument_position_is_emitted_atomically() {
+    assert_proof_builds(
+        "tests/fixtures/lean_arg_atomicity.av",
+        "aver-proof-arg-atomicity",
+    );
+}
