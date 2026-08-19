@@ -1614,6 +1614,9 @@ fn run_verify_vm(
     let mut case_results = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
     let case_total = block.cases.len();
+    let plain_verify_fn =
+        (matches!(block.kind, VerifyKind::Cases) && !block.trace).then(|| block.fn_name.clone());
+    machine.set_plain_verify_fn(plain_verify_fn);
 
     let law_context_template = if let VerifyKind::Law(law) = &block.kind {
         Some(format!(
@@ -1973,6 +1976,7 @@ fn run_verify_vm(
         VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
         VerifyKind::Cases => block.fn_name.clone(),
     };
+    machine.set_plain_verify_fn(None);
     VerifyResult {
         fn_name: block.fn_name.clone(),
         is_law: matches!(&block.kind, VerifyKind::Law(_)),

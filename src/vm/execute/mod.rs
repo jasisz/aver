@@ -312,6 +312,12 @@ impl VM {
         self.runtime.clear_oracle_stubs();
     }
 
+    /// Guard a plain cases-form verify against crossing an unstubbed host
+    /// effect boundary. `None` restores normal execution semantics.
+    pub fn set_plain_verify_fn(&mut self, fn_name: Option<String>) {
+        self.runtime.set_plain_verify_fn(fn_name);
+    }
+
     /// Hostile order-axis: when `true`, the next `CALL_PAR`
     /// (`(a, b)!` independent-product) executes its branches in
     /// reverse source order but assigns each result back to its

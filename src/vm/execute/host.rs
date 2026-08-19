@@ -481,6 +481,8 @@ impl VM {
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         self.runtime
+            .ensure_plain_verify_effect_is_stubbed(&name, capability.effectful)?;
+        self.runtime
             .ensure_effects_allowed(&self.code.symbols, &name, required_effects)?;
 
         if let Some(stub_fn_id) = self.runtime.oracle_stub_for(&name) {

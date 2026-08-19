@@ -36,6 +36,10 @@ pub(super) struct VmRuntime {
     /// effectful Oracle dispatch adds its dimension-specific coordinates.
     /// Empty map means no verify-time dispatch hook.
     pub(super) oracle_stubs: std::collections::HashMap<String, u32>,
+    /// Function under a plain cases-form verify. While set, an effectful
+    /// operation must have an exact `given` stub before the VM may cross the
+    /// host boundary. A concrete path that dispatches no effect remains valid.
+    plain_verify_fn: Option<String>,
     pub(super) oracle_counter: u32,
     /// Oracle v1: during a verify-trace case, the VM collects every
     /// effect emission the LHS impl makes — effect method name + argument
@@ -110,6 +114,7 @@ impl VmRuntime {
             runtime_policy: None,
             providers: std::sync::Arc::new(crate::provider::ProviderRegistry::standard()),
             oracle_stubs: std::collections::HashMap::new(),
+            plain_verify_fn: None,
             oracle_counter: 0,
             collected_trace_events: Vec::new(),
             collected_trace_coords: Vec::new(),
@@ -137,6 +142,32 @@ impl VmRuntime {
 
     pub(super) fn reverse_independent_eval(&self) -> bool {
         self.reverse_independent_eval
+    }
+
+    pub(super) fn set_plain_verify_fn(&mut self, fn_name: Option<String>) {
+        self.plain_verify_fn = fn_name;
+    }
+
+    pub(super) fn plain_verify_active(&self) -> bool {
+        self.plain_verify_fn.is_some()
+    }
+
+    pub(super) fn ensure_plain_verify_effect_is_stubbed(
+        &self,
+        effect_name: &str,
+        is_effectful: bool,
+    ) -> Result<(), VmError> {
+        let Some(fn_name) = &self.plain_verify_fn else {
+            return Ok(());
+        };
+        if !is_effectful || self.oracle_stubs.contains_key(effect_name) {
+            return Ok(());
+        }
+        Err(VmError::runtime(format!(
+            "plain verify reached unstubbed effect '{effect_name}'. Use `verify {fn_name} trace` \
+             (with a `given` stub for generative effects), or test stateful/interactive \
+             flows via record/replay"
+        )))
     }
 
     pub(super) fn start_trace_collection(&mut self) {
@@ -642,6 +673,7 @@ impl VmRuntime {
             .get(symbol_id)
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
+        self.ensure_plain_verify_effect_is_stubbed(builtin_name, !required_effects.is_empty())?;
         self.ensure_effects_allowed(symbols, builtin_name, required_effects)
     }
 

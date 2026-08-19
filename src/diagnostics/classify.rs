@@ -292,15 +292,7 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
             Some("Add `module <Name>` as the first top-level item".to_string()),
         );
     }
-    if msg.contains("has effects") && msg.contains("plain verify block") {
-        (
-            "verify-effectful",
-            Some(
-                "Use `verify <fn> trace` with `given` stubs, or test stateful flows via replay"
-                    .to_string(),
-            ),
-        )
-    } else if msg.contains("no verify block") {
+    if msg.contains("no verify block") {
         (
             "missing-verify",
             Some("Add a verify block with representative test cases".to_string()),

@@ -1331,14 +1331,17 @@ impl VM {
 
                     // Check if recording/replaying — if so, run sequentially
                     // (replay state is thread_local, can't share across threads).
-                    // Also sequential when an oracle-stub map is installed
-                    // (verify-time substitution): the stubs + counter state
-                    // live on the parent VM's runtime, which can't be shared
-                    // across child VMs spawned in the parallel path.
+                    // Also sequential when an oracle-stub map or the plain
+                    // verify reached-effect guard is installed: both states
+                    // live on the parent VM's runtime and must own every host
+                    // boundary reached by a branch.
                     let is_tracking = self.runtime.is_effect_tracking();
                     let has_oracle_stubs = !self.runtime.oracle_stubs.is_empty();
+                    let plain_verify_active = self.runtime.plain_verify_active();
+                    let run_sequential =
+                        is_tracking || has_oracle_stubs || plain_verify_active || count <= 1;
                     let mut had_vm_error: Option<VmError> = None;
-                    let results = if is_tracking || has_oracle_stubs || count <= 1 {
+                    let results = if run_sequential {
                         // Hostile order-axis: when the verify runner has
                         // flipped `reverse_independent_eval` on for this
                         // case, execute branches right-to-left but place

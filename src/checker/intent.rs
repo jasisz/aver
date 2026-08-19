@@ -331,8 +331,6 @@ pub fn check_module_intent_with_sigs_in(
     }
 
     let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    let mut plain_case_verified_fns: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
     let mut spec_fns: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut invalid_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -428,9 +426,6 @@ pub fn check_module_intent_with_sigs_in(
                 }
                 if block_valid {
                     verified_fns.insert(v.fn_name.as_str());
-                    if matches!(v.kind, VerifyKind::Cases) && !v.trace {
-                        plain_case_verified_fns.insert(v.fn_name.as_str());
-                    }
                 } else {
                     invalid_verify_fns.insert(v.fn_name.as_str());
                 }
@@ -585,23 +580,6 @@ pub fn check_module_intent_with_sigs_in(
                         file: source_file.map(|s| s.to_string()),
                         fn_name: None,
                         message: format!("Function '{}' has no verify block", f.name),
-                        extra_spans: vec![],
-                    });
-                }
-                // Warn only for plain example-style verify on effectful code.
-                // Trace/law blocks can use Oracle with explicit stubs; plain
-                // cases risk touching the real world during verification.
-                if !f.effects.is_empty() && plain_case_verified_fns.contains(f.name.as_str()) {
-                    warnings.push(CheckFinding {
-                        line: f.line,
-                        module: module_name.clone(),
-                        file: source_file.map(|s| s.to_string()),
-                        fn_name: None,
-                        message: format!(
-                            "Function '{}' has effects and a plain verify block; use `verify {} trace` with explicit `given` stubs for classified effects, or test stateful/interactive flows via replay",
-                            f.name,
-                            f.name
-                        ),
                         extra_spans: vec![],
                     });
                 }
