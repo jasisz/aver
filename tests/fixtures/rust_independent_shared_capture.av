@@ -1,0 +1,32 @@
+module IndependentSharedCapture
+    intent =
+        "Regression fixture for recursive independent products whose branches share context."
+        "The generated Rust must give every scoped thread its own owned captures."
+    effects [Console]
+
+record Rules
+    bonus: Int
+
+fn eachInBranch(branch: Int, rules: Rules, height: Int, blockId: String) -> Result<Int, String>
+    ? "Use every shared context value while processing one branch."
+    match blockId == "block-7"
+        true -> Result.Ok(branch + rules.bonus + height)
+        false -> Result.Err(blockId)
+
+fn fanned(branches: List<Int>, rules: Rules, height: Int, blockId: String) -> Result<Int, String>
+    ? "Recursively process every branch with the same context."
+    match branches
+        [] -> Result.Ok(0)
+        [head, ..tail] -> paired(head, tail, rules, height, blockId)
+
+fn paired(branch: Int, rest: List<Int>, rules: Rules, height: Int, blockId: String) -> Result<Int, String>
+    ? "Process this branch and the recursive remainder independently."
+    data = (eachInBranch(branch, rules, height, blockId), fanned(rest, rules, height, blockId))?!
+    match data
+        (mine, others) -> Result.Ok(mine + others)
+
+fn main() -> Unit
+    ! [Console.print]
+    match fanned([1, 2, 3], Rules(bonus = 10), 100, "block-7")
+        Result.Ok(total) -> Console.print("total: {total}")
+        Result.Err(error) -> Console.print("error: {error}")

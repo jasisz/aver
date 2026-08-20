@@ -48,7 +48,7 @@
 //! that never built on the Rust backend (they hard-error at the call
 //! site).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ast::{BinOp, Spanned, Type};
 use crate::codegen::CodegenContext;
@@ -1948,14 +1948,14 @@ fn emit_mir_independent_product(
             "let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); ",
         );
         code.push_str("std::thread::scope(|_s| { ");
-        for (i, part) in parts.iter().enumerate() {
+        for (i, (item, part)) in ip.items.iter().zip(parts.iter()).enumerate() {
             if has_replay {
                 code.push_str(&format!(
                     "let __parallel_scope{i} = __parallel_scope.clone(); "
                 ));
             }
             code.push_str(&format!("let __cancel_flag{i} = __cancel_flag.clone(); "));
-            code.push_str(&format!("let _h{i} = _s.spawn(move || "));
+            let has_captures = emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
             if has_replay {
                 code.push_str(&format!(
                     "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || "
@@ -1971,7 +1971,7 @@ fn emit_mir_independent_product(
             if has_replay {
                 code.push(')');
             }
-            code.push_str("); ");
+            code.push_str(if has_captures { ") }; " } else { "); " });
         }
         for i in 0..n {
             code.push_str(&format!("let _b{i} = _h{i}.join().unwrap(); "));
@@ -1985,16 +1985,22 @@ fn emit_mir_independent_product(
             );
         }
         code.push_str("std::thread::scope(|_s| { ");
-        for (i, part) in parts.iter().enumerate() {
+        for (i, (item, part)) in ip.items.iter().zip(parts.iter()).enumerate() {
             if has_replay {
                 code.push_str(&format!(
                     "let __parallel_scope{i} = __parallel_scope.clone(); "
                 ));
+                let has_captures =
+                    emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
                 code.push_str(&format!(
-                    "let _h{i} = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || {part})); "
+                    "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || {part}))"
                 ));
+                code.push_str(if has_captures { " }; " } else { "; " });
             } else {
-                code.push_str(&format!("let _h{i} = _s.spawn(move || {part}); "));
+                let has_captures =
+                    emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
+                code.push_str(part);
+                code.push_str(if has_captures { ") }; " } else { "); " });
             }
         }
         for i in 0..n {
@@ -2008,6 +2014,136 @@ fn emit_mir_independent_product(
         code.push('}');
     }
     Some(code)
+}
+
+/// Start one scoped-thread binding and, when the branch reads source locals,
+/// shadow every free local with a branch-owned capture before `spawn(move …)`.
+///
+/// A `.clone()` written *inside* a move closure does not protect the outer
+/// value: constructing that closure has already moved the value. This was the
+/// #1019 failure mode — branch 0 called `height.clone()` but captured `height`
+/// itself, leaving branch 1 with an E0382 use-after-move. The lexical block
+/// keeps each shadow local to one spawn expression, so every closure owns an
+/// independent value while the function's original remains available for all
+/// sibling captures.
+///
+/// Returns whether a capture block was opened; the caller closes either
+/// `_s.spawn(…) };` or the capture-free `_s.spawn(…);` shape. Keeping the old
+/// shape for capture-free branches avoids churn in generated Rust.
+fn emit_parallel_capture_bindings(
+    code: &mut String,
+    branch: usize,
+    item: &MirExpr,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    let captures = mir_free_locals(item);
+    code.push_str(&format!("let _h{branch} = "));
+    if captures.is_empty() {
+        code.push_str("_s.spawn(move || ");
+        return false;
+    }
+
+    code.push_str("{ ");
+    for local in captures.values() {
+        let source_name = local.name.as_str();
+        let rust_name = aver_name_to_rust(source_name);
+        let capture = if ctx.is_borrowed_param(source_name)
+            || ctx.is_copy(source_name)
+            || ctx.bare.is_bare(local.slot)
+        {
+            rust_name.clone()
+        } else {
+            format!("{rust_name}.clone()")
+        };
+        code.push_str(&format!("let {rust_name} = {capture}; "));
+    }
+    code.push_str("_s.spawn(move || ");
+    true
+}
+
+/// Free source locals read by one independent-product branch, keyed by MIR
+/// identity for deterministic emission. `Let` and match-pattern slots are
+/// branch-internal bindings, not captures; MIR slots are unique per function,
+/// so collecting all branch-local binders first safely excludes them from the
+/// subsequent read walk even when source names shadow one another.
+fn mir_free_locals(item: &MirExpr) -> BTreeMap<LocalId, MirLocal> {
+    fn pattern_bindings(pattern: &MirPattern, bound: &mut HashSet<LocalId>) {
+        match pattern {
+            MirPattern::Bind(slot, _) => {
+                bound.insert(*slot);
+            }
+            MirPattern::Cons { head, tail, .. } => {
+                bound.insert(*head);
+                bound.insert(*tail);
+            }
+            MirPattern::Tuple(items) => {
+                for item in items {
+                    pattern_bindings(item, bound);
+                }
+            }
+            MirPattern::Ctor { bindings, .. } => {
+                bound.extend(bindings.iter().copied());
+            }
+            MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
+        }
+    }
+
+    fn collect_bound(expr: &MirExpr, bound: &mut HashSet<LocalId>) {
+        match expr {
+            MirExpr::Let(let_node) => {
+                bound.insert(let_node.node.binding);
+            }
+            MirExpr::Match(match_node) => {
+                for arm in &match_node.node.arms {
+                    pattern_bindings(&arm.pattern, bound);
+                }
+            }
+            _ => {}
+        }
+        crate::ir::mir::optimize::bare_i64::visit_children(expr, &mut |child| {
+            collect_bound(child, bound);
+        });
+    }
+
+    fn collect_reads(
+        expr: &MirExpr,
+        bound: &HashSet<LocalId>,
+        captures: &mut BTreeMap<LocalId, MirLocal>,
+    ) {
+        if let MirExpr::Local(local) = expr
+            && !local.node.name.is_empty()
+            && !bound.contains(&local.node.slot)
+        {
+            captures
+                .entry(local.node.slot)
+                .or_insert_with(|| local.node.clone());
+        }
+        if let MirExpr::Call(call) = expr
+            && let MirCallee::LocalSlot {
+                slot,
+                name,
+                last_use,
+            } = &call.node.callee
+        {
+            let slot = LocalId(u32::from(*slot));
+            if !name.is_empty() && !bound.contains(&slot) {
+                captures.entry(slot).or_insert_with(|| MirLocal {
+                    slot,
+                    last_use: *last_use,
+                    name: name.clone(),
+                });
+            }
+        }
+        crate::ir::mir::optimize::bare_i64::visit_children(expr, &mut |child| {
+            collect_reads(child, bound, captures);
+        });
+    }
+
+    let mut bound = HashSet::new();
+    collect_bound(item, &mut bound);
+    let mut captures = BTreeMap::new();
+    collect_reads(item, &bound, &mut captures);
+    captures
 }
 
 /// Emit `MirExpr::IfThenElse` byte-identical to HIR's
@@ -5575,6 +5711,41 @@ mod tests {
             "got: {emit}"
         );
         assert!(emit.trim_end().ends_with("})? }"), "got: {emit}");
+    }
+
+    #[test]
+    fn independent_product_clones_each_non_copy_capture_before_spawn() {
+        let first = span(MirExpr::Local(span(MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "height".to_string(),
+        })));
+        let second = span(MirExpr::Local(span(MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "height".to_string(),
+        })));
+        let expr = span(MirExpr::IndependentProduct(span(
+            crate::ir::mir::MirIndependentProduct {
+                items: vec![first, second],
+                unwrap_results: false,
+            },
+        )));
+
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("product should emit");
+        assert_eq!(
+            emit.matches("let height = height.clone();").count(),
+            2,
+            "every move closure needs a capture cloned outside the closure: {emit}"
+        );
+        assert!(
+            emit.contains("let _h0 = { let height = height.clone(); _s.spawn(move ||"),
+            "branch 0 capture must be scoped to its spawn: {emit}"
+        );
+        assert!(
+            emit.contains("let _h1 = { let height = height.clone(); _s.spawn(move ||"),
+            "branch 1 capture must be scoped to its spawn: {emit}"
+        );
     }
 
     #[test]
