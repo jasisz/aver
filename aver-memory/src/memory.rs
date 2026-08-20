@@ -387,8 +387,16 @@ impl<T: ArenaTypes> Arena<T> {
                 map,
                 all_immediate,
                 scan_receipt,
+                pending_scan_keys,
                 held_elsewhere,
-            } => self.rewrite_map_with(map, all_immediate, scan_receipt, held_elsewhere, rewrite),
+            } => self.rewrite_map_with(
+                map,
+                all_immediate,
+                scan_receipt,
+                pending_scan_keys,
+                held_elsewhere,
+                rewrite,
+            ),
             ArenaEntry::Record {
                 type_id,
                 mut fields,
@@ -460,13 +468,18 @@ impl<T: ArenaTypes> Arena<T> {
         mut map: T::Map,
         all_immediate: bool,
         scan_receipt: LaneMark,
+        mut pending_scan_keys: Vec<u64>,
         held_elsewhere: bool,
         rewrite: &mut F,
     ) -> ArenaEntry<T>
     where
         F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
     {
-        if all_immediate {
+        debug_assert!(
+            !all_immediate || pending_scan_keys.is_empty(),
+            "an all-immediate map cannot need remembered heap rewrites"
+        );
+        if all_immediate && pending_scan_keys.is_empty() {
             debug_assert!(
                 crate::map_all_immediate(&map),
                 "map marked all-immediate holds a heap-backed key or value; \
@@ -476,14 +489,32 @@ impl<T: ArenaTypes> Arena<T> {
                 map,
                 all_immediate: true,
                 scan_receipt,
+                pending_scan_keys,
                 held_elsewhere,
             };
         }
         if self.lane_receipt_can_skip(scan_receipt) {
+            if !pending_scan_keys.is_empty() {
+                for key in pending_scan_keys.drain(..) {
+                    let found = map.rewrite_value_mut(&key, |pair| {
+                        pair.0 = rewrite(self, pair.0);
+                        pair.1 = rewrite(self, pair.1);
+                    });
+                    self.note_map_entries_scanned(usize::from(found));
+                }
+                return ArenaEntry::Map {
+                    map,
+                    all_immediate: false,
+                    scan_receipt: self.renewed_lane_receipt(),
+                    pending_scan_keys,
+                    held_elsewhere,
+                };
+            }
             return ArenaEntry::Map {
                 map,
                 all_immediate: false,
                 scan_receipt,
+                pending_scan_keys,
                 held_elsewhere,
             };
         }
@@ -499,6 +530,7 @@ impl<T: ArenaTypes> Arena<T> {
             map,
             all_immediate: false,
             scan_receipt: self.renewed_lane_receipt(),
+            pending_scan_keys: Vec::new(),
             held_elsewhere,
         }
     }
@@ -1980,7 +2012,12 @@ impl<T: ArenaTypes> Arena<T> {
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> ArenaEntry<T> {
-        if let ArenaEntry::Map { scan_receipt, .. } = &entry
+        if let ArenaEntry::Map {
+            scan_receipt,
+            pending_scan_keys,
+            ..
+        } = &entry
+            && pending_scan_keys.is_empty()
             && self.lane_receipt_can_skip(*scan_receipt)
         {
             return entry;
@@ -2006,8 +2043,9 @@ impl<T: ArenaTypes> Arena<T> {
             ArenaEntry::Map {
                 map,
                 all_immediate: true,
+                pending_scan_keys,
                 ..
-            } => {
+            } if pending_scan_keys.is_empty() => {
                 debug_assert!(
                     crate::map_all_immediate(map),
                     "map marked all-immediate holds a heap-backed key or value; \
@@ -2015,12 +2053,16 @@ impl<T: ArenaTypes> Arena<T> {
                 );
                 return entry;
             }
-            ArenaEntry::Map { map, .. }
-                if !map.is_empty()
-                    && !map.values().any(|(k, v)| {
-                        Self::value_needs_young_promotion(*k, mark)
-                            || Self::value_needs_young_promotion(*v, mark)
-                    }) =>
+            ArenaEntry::Map {
+                map,
+                pending_scan_keys,
+                ..
+            } if pending_scan_keys.is_empty()
+                && !map.is_empty()
+                && !map.values().any(|(k, v)| {
+                    Self::value_needs_young_promotion(*k, mark)
+                        || Self::value_needs_young_promotion(*v, mark)
+                }) =>
             {
                 // Reaching here means the guard read every entry to establish
                 // that none of them moves. The entry itself is then moved as-is

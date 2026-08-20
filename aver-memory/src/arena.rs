@@ -887,6 +887,7 @@ impl<T: ArenaTypes> Arena<T> {
             map,
             all_immediate,
             scan_receipt,
+            pending_scan_keys: Vec::new(),
             held_elsewhere: false,
         })
     }
@@ -1111,8 +1112,10 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
-    /// Upper bound on the logical age of every reference stored in `map`.
-    /// Empty maps carry no references and therefore need no receipt.
+    /// Upper bound on the logical age of the bulk references stored in `map`.
+    /// Entries named by the map's remembered set may be newer; callers that
+    /// transfer this receipt must transfer those exceptions with it. Empty maps
+    /// carry no references and therefore need no receipt.
     pub fn map_scan_receipt_value(&self, map: NanValue) -> LaneMark {
         if map.is_empty_map_immediate() {
             INVALID_LANE_MARK
@@ -1195,22 +1198,28 @@ impl<T: ArenaTypes> Arena<T> {
             _ => panic!("Arena: expected Map at {}", map.arena_index()),
         }
     }
-    /// Take ownership of a map value, replacing it with an empty map in the arena.
+    /// Take ownership of a map and its relocation state, replacing it with an
+    /// empty map in the arena.
     /// Use when the caller is the sole owner (reuse analysis says `owned = true`).
     /// Avoids the O(n) clone — the original slot becomes empty.
     ///
     /// Read [`Arena::map_all_immediate_value`] before this if the caller needs
-    /// the taken map's flag: the emptied slot is left claiming immediacy, which
-    /// is the truth about an empty table and not about what came out of it.
+    /// the taken map's flag. The scan receipt and remembered keys travel in the
+    /// returned [`TakenMap`]; the emptied slot is reset to a fully scanned empty
+    /// table.
     ///
     /// `held_elsewhere` is deliberately left alone. Emptying the table does not
     /// discharge a holder — whoever held the slot still holds it, and now reads
     /// an empty map through it. The flag stays true so that a second take over
     /// the same slot is refused for the same reason the first one should have
     /// been.
-    pub fn take_map_value(&mut self, map: NanValue) -> T::Map {
+    pub fn take_map_value(&mut self, map: NanValue) -> TakenMap<T::Map> {
         if map.is_empty_map_immediate() {
-            T::Map::new()
+            TakenMap {
+                map: T::Map::new(),
+                scan_receipt: INVALID_LANE_MARK,
+                pending_scan_keys: Vec::new(),
+            }
         } else {
             let index = map.arena_index();
             let empty_receipt = self.lane_mark();
@@ -1219,11 +1228,17 @@ impl<T: ArenaTypes> Arena<T> {
                     map,
                     all_immediate,
                     scan_receipt,
+                    pending_scan_keys,
                     ..
                 } => {
                     *all_immediate = true;
+                    let taken = TakenMap {
+                        map: core::mem::replace(map, T::Map::new()),
+                        scan_receipt: *scan_receipt,
+                        pending_scan_keys: core::mem::take(pending_scan_keys),
+                    };
                     *scan_receipt = empty_receipt;
-                    core::mem::replace(map, T::Map::new())
+                    taken
                 }
                 _ => panic!("Arena: expected Map at {}", index),
             }

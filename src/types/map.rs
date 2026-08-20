@@ -21,6 +21,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
+use aver_memory::TakenMap;
+
 use crate::nan_value::{Arena, LaneMark, NanValue};
 use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_view};
 
@@ -448,8 +450,9 @@ fn nv_key_bits(v: NanValue, arena: &Arena) -> u64 {
 
 /// Transient proof supplied by the VM frame that owns the next destructive
 /// boundary. It is never stored in an arena entry: it only lets an owned map
-/// update retain the logical age of references that demonstrably predate that
-/// frame instead of stamping the age of the fresh container slot.
+/// update retain the logical age of the table bulk that predates that frame.
+/// A newly inserted pair that does not predate it is recorded separately in
+/// the map's remembered set instead of making the entire table look young.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OwnedMapFrameProof {
     pub arena_mark: u32,
@@ -472,24 +475,22 @@ impl OwnedMapFrameProof {
             })
     }
 
-    fn receipt_for_owned_set(self, args: &[NanValue], arena: &Arena) -> Option<LaneMark> {
-        if args.len() != 3
-            || self.inplace_write_escaped
-            || !arena.lane_mark_is_valid(self.lane_mark)
-        {
+    fn receipt_for_owned_source(self, source: NanValue, arena: &Arena) -> Option<LaneMark> {
+        if self.inplace_write_escaped || !arena.lane_mark_is_valid(self.lane_mark) {
             return None;
         }
 
-        let source = args[0];
         let source_receipt = arena.map_scan_receipt_value(source);
         let source_is_clean = source.is_empty_map_immediate()
             || arena.map_all_immediate_value(source)
             || (arena.lane_mark_is_valid(source_receipt) && source_receipt <= self.lane_mark);
 
-        (source_is_clean
-            && self.direct_value_predates_frame(args[1], arena)
-            && self.direct_value_predates_frame(args[2], arena))
-        .then_some(self.lane_mark)
+        source_is_clean.then_some(self.lane_mark)
+    }
+
+    fn pair_predates_frame(self, key: NanValue, value: NanValue, arena: &Arena) -> bool {
+        self.direct_value_predates_frame(key, arena)
+            && self.direct_value_predates_frame(value, arena)
     }
 }
 
@@ -520,22 +521,43 @@ pub(crate) fn set_nv_owned(
     // the two arguments decide the new flag between them.
     let all_immediate =
         arena.map_all_immediate_value(source) && args[1].is_immediate() && args[2].is_immediate();
-    let inherited_receipt = frame_proof.and_then(|proof| proof.receipt_for_owned_set(args, arena));
+    let inherited_provenance = frame_proof.and_then(|proof| {
+        proof
+            .receipt_for_owned_source(source, arena)
+            .map(|receipt| (receipt, proof.pair_predates_frame(args[1], args[2], arena)))
+    });
     // The one pair `push_map`'s pass would have marked, marked here instead:
     // the new entry holds this key and this value, and if either is a map, this
     // entry is a holder of its slot from now on. Everything else in the table
     // was marked when it went in.
     arena.note_held_elsewhere(args[1]);
     arena.note_held_elsewhere(args[2]);
-    let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
+    let TakenMap {
+        map: old_map,
+        scan_receipt: _,
+        mut pending_scan_keys,
+    } = arena.take_map_value(source);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
-    let scan_receipt = inherited_receipt.unwrap_or_else(|| arena.lane_mark());
+    let scan_receipt = if let Some((receipt, pair_predates_frame)) = inherited_provenance {
+        if pair_predates_frame {
+            pending_scan_keys.retain(|pending| *pending != key_hash);
+        } else if !pending_scan_keys.contains(&key_hash) {
+            pending_scan_keys.push(key_hash);
+        }
+        receipt
+    } else {
+        // The current mark covers the entire table, including the inserted
+        // pair, so any older remembered exceptions are subsumed by it.
+        pending_scan_keys.clear();
+        arena.lane_mark()
+    };
     let map_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Map {
             map: new_map,
             all_immediate,
             scan_receipt,
+            pending_scan_keys,
             // A fresh entry nobody has been handed. The table it carries came
             // out of a slot the caller proved nothing else reaches, so nothing
             // reaches this one either until somebody stores it.
@@ -568,10 +590,14 @@ pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue,
     ensure_hashable_nv("Map.remove", args[1])?;
     let source = args[0];
     let all_immediate = arena.map_all_immediate_value(source);
-    let scan_receipt = arena.map_scan_receipt_value(source);
-    let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
+    let TakenMap {
+        map: old_map,
+        scan_receipt,
+        mut pending_scan_keys,
+    } = arena.take_map_value(source);
     let new_map = old_map.remove_owned(&key_hash);
+    pending_scan_keys.retain(|pending| *pending != key_hash);
     if new_map.is_empty() {
         return Ok(NanValue::EMPTY_MAP);
     }
@@ -580,6 +606,7 @@ pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue,
             map: new_map,
             all_immediate,
             scan_receipt,
+            pending_scan_keys,
             held_elsewhere: false,
         },
         source,
@@ -860,6 +887,13 @@ mod tests {
             proof.lane_mark,
             "the fresh container slot must retain the age of its references",
         );
+        let aver_memory::ArenaEntry::Map {
+            pending_scan_keys, ..
+        } = arena.get(result.arena_index())
+        else {
+            panic!("expected owned map result");
+        };
+        assert!(pending_scan_keys.is_empty());
     }
 
     #[test]
@@ -898,15 +932,29 @@ mod tests {
     }
 
     #[test]
-    fn owned_set_refuses_post_frame_values_and_invalid_source_receipts() {
+    fn owned_set_remembers_post_frame_values_and_refuses_invalid_source_receipts() {
         let mut arena = Arena::new();
         let proof = frame_proof(&arena);
         let (fresh_key, fresh_value) = heap_pair(&mut arena, "fresh");
+        let fresh_hash = fresh_key.map_key_hash(&arena);
+        let result = set_nv_owned(
+            &[NanValue::EMPTY_MAP, fresh_key, fresh_value],
+            &mut arena,
+            Some(proof),
+        )
+        .expect("a fresh pair should use a remembered entry");
         assert_eq!(
-            proof.receipt_for_owned_set(&[NanValue::EMPTY_MAP, fresh_key, fresh_value], &arena,),
-            None,
-            "a key and value allocated inside the frame cannot inherit its entry receipt",
+            arena.map_scan_receipt_value(result),
+            proof.lane_mark,
+            "the old bulk remains covered by the frame receipt",
         );
+        let aver_memory::ArenaEntry::Map {
+            pending_scan_keys, ..
+        } = arena.get(result.arena_index())
+        else {
+            panic!("expected owned map result");
+        };
+        assert_eq!(pending_scan_keys, &[fresh_hash]);
 
         let (old_key, old_value) = heap_pair(&mut arena, "invalid-source");
         let mut table = crate::nan_value::PersistentMap::new();
@@ -915,38 +963,69 @@ mod tests {
             map: table,
             all_immediate: false,
             scan_receipt: 0,
+            pending_scan_keys: Vec::new(),
             held_elsewhere: false,
         }));
         let proof = frame_proof(&arena);
         assert_eq!(
-            proof.receipt_for_owned_set(
-                &[
-                    source,
-                    NanValue::new_int_inline(7),
-                    NanValue::new_int_inline(9)
-                ],
-                &arena,
-            ),
+            proof.receipt_for_owned_source(source, &arena),
             None,
             "an invalid source receipt cannot be upgraded by an owned insert",
         );
     }
 
     #[test]
+    fn promotion_rewrites_only_the_remembered_map_pair() {
+        let mut arena = Arena::new();
+        let (old_key, old_value) = heap_pair(&mut arena, "old-bulk");
+        let old_hash = old_key.map_key_hash(&arena);
+        let mut table = crate::nan_value::PersistentMap::new();
+        table = table.insert_owned(old_hash, (old_key, old_value));
+        let source = NanValue::new_map(arena.push_map(table));
+        let proof = frame_proof(&arena);
+
+        let (fresh_key, fresh_value) = heap_pair(&mut arena, "fresh-exception");
+        let fresh_hash = fresh_key.map_key_hash(&arena);
+        let result = set_nv_owned(&[source, fresh_key, fresh_value], &mut arena, Some(proof))
+            .expect("owned insert should remember its fresh pair");
+
+        let mut roots = [result];
+        arena.promote_young_roots_to_yard(proof.arena_mark, proof.lane_mark, &mut roots);
+
+        assert_eq!(arena.map_entries_scanned(), 1);
+        let map = arena.map_ref_value(roots[0]);
+        assert_eq!(map.len(), 2);
+        let (rewritten_key, rewritten_value) = map.get(&fresh_hash).expect("fresh pair survived");
+        assert_eq!(
+            arena.get_string_value(*rewritten_key),
+            "proof-key-fresh-exception"
+        );
+        assert_eq!(
+            arena.get_string_value(*rewritten_value),
+            "proof-value-fresh-exception"
+        );
+        assert!(map.get(&old_hash).is_some(), "old bulk entry survived");
+        let aver_memory::ArenaEntry::Map {
+            pending_scan_keys, ..
+        } = arena.get(roots[0].arena_index())
+        else {
+            panic!("expected promoted map");
+        };
+        assert!(pending_scan_keys.is_empty());
+    }
+
+    #[test]
     fn inplace_vector_escape_blocks_owned_map_receipt_inheritance() {
         let mut arena = Arena::new();
         let old_item = NanValue::new_string_value("old-vector-item", &mut arena);
-        let vector = NanValue::new_vector(arena.push_vector(vec![old_item]));
+        let _vector = NanValue::new_vector(arena.push_vector(vec![old_item]));
         let escaped = OwnedMapFrameProof {
             inplace_write_escaped: true,
             ..frame_proof(&arena)
         };
         arena.push_string("post-mark-padding");
         assert_eq!(
-            escaped.receipt_for_owned_set(
-                &[NanValue::EMPTY_MAP, NanValue::new_int_inline(1), vector],
-                &arena,
-            ),
+            escaped.receipt_for_owned_source(NanValue::EMPTY_MAP, &arena),
             None,
             "a nested mutable vector may contain a post-mark child after its in-place write",
         );
@@ -972,6 +1051,29 @@ mod tests {
             source_receipt,
             "removing a reference must not make every retained reference look newer",
         );
+    }
+
+    #[test]
+    fn owned_remove_discards_the_removed_remembered_pair() {
+        let mut arena = Arena::new();
+        let (old_key, old_value) = heap_pair(&mut arena, "kept");
+        let mut table = crate::nan_value::PersistentMap::new();
+        table = table.insert_owned(old_key.map_key_hash(&arena), (old_key, old_value));
+        let source = NanValue::new_map(arena.push_map(table));
+        let proof = frame_proof(&arena);
+        let (fresh_key, fresh_value) = heap_pair(&mut arena, "removed");
+        let with_fresh = set_nv_owned(&[source, fresh_key, fresh_value], &mut arena, Some(proof))
+            .expect("owned insert should remember its fresh pair");
+
+        let result = remove_nv_owned(&[with_fresh, fresh_key], &mut arena)
+            .expect("owned removal should retain the old pair");
+        let aver_memory::ArenaEntry::Map {
+            pending_scan_keys, ..
+        } = arena.get(result.arena_index())
+        else {
+            panic!("expected owned map result");
+        };
+        assert!(pending_scan_keys.is_empty());
     }
 
     /// Every float a program can put in a map key position, including the

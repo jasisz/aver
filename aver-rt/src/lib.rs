@@ -264,6 +264,19 @@ where
         }
     }
 
+    /// Rewrite one value in place using `Rc::make_mut`.
+    ///
+    /// Returns `false` when the key is absent, so remembered-set consumers can
+    /// safely discard a stale key left behind by a removal.
+    pub fn rewrite_value_in_place(&mut self, key: &K, f: impl FnOnce(&mut V)) -> bool {
+        let inner = Rc::make_mut(&mut self.inner);
+        let Some(value) = inner.get_mut(key) else {
+            return false;
+        };
+        f(value);
+        true
+    }
+
     /// O(n) because `&self` preserves the original map.
     pub fn remove(&self, key: &K) -> Self {
         self.clone().remove_owned(key)
