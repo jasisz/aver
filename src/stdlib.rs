@@ -32,6 +32,10 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/random.av",
             source: include_str!("../stdlib/capabilities/random.av"),
         }),
+        "Disk" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/disk.av",
+            source: include_str!("../stdlib/capabilities/disk.av"),
+        }),
         _ => None,
     }
 }
@@ -39,7 +43,7 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// Provider-backed standard capability modules. Operation identities and
 /// semantics are derived from their embedded Aver contracts rather than
 /// repeated in a Rust table.
-pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Random", "Time"];
+pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Time"];
 
 /// Builtins whose signatures cross nominal record types owned by embedded
 /// standard modules, paired with the modules those types live in.
@@ -114,8 +118,8 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
 /// Parse the standard capability contracts shipped by the compiler.
 ///
 /// They are globally reserved and automatically visible; callers do not need
-/// a `depends [Time]` or `depends [Random]` merely to use a built-in standard
-/// capability.
+/// a `depends [Time]`, `depends [Random]`, or `depends [Disk]` merely to use
+/// a built-in standard capability.
 pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
     STANDARD_CAPABILITY_MODULES
         .iter()
@@ -336,6 +340,13 @@ mod tests {
             embedded.virtual_path,
             "<aver-stdlib>/capabilities/random.av"
         );
+
+        let items = parse(
+            "module FileUser\n    effects [Disk.readText]\n\nfn read() -> Result<String, String>\n    ! [Disk.readText]\n    Disk.readText(\"data.txt\")\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Disk"]);
+        let embedded = find("Disk").expect("reserved Disk module");
+        assert_eq!(embedded.virtual_path, "<aver-stdlib>/capabilities/disk.av");
     }
 
     #[test]
@@ -391,6 +402,46 @@ mod tests {
         assert_eq!(
             standard_hostile_profile_label("Random.float", "Random.floatAlwaysOne"),
             Some("always_one")
+        );
+    }
+
+    #[test]
+    fn standard_disk_contract_model_and_profiles_are_stable() {
+        let registry = standard_capability_registry();
+        let contract = registry.contract("Disk").expect("Disk contract");
+        assert_eq!(
+            contract.contract_hash,
+            "sha256:d134b487a92f2094eb6ad478bff0984c5a481577df07a7f993652e9bc1f9d537"
+        );
+        assert_eq!(
+            contract.model_hash,
+            "sha256:06f28c8acc428e9c55ecba571f96e1d23e2300a8ac307b8b6d6d0771fd18e604"
+        );
+        // The nineteen contract profiles carry the exact diagnostic labels
+        // the handwritten Rust table used before the flip, so hostile-run
+        // outputs do not move for existing programs.
+        for (method, labels) in [
+            ("Disk.readText", vec!["normal", "always_err", "empty_ok"]),
+            ("Disk.writeText", vec!["normal_ok", "always_err"]),
+            ("Disk.appendText", vec!["normal_ok", "always_err"]),
+            ("Disk.exists", vec!["normal", "never", "always"]),
+            ("Disk.delete", vec!["normal_ok", "always_err"]),
+            ("Disk.deleteDir", vec!["normal_ok", "always_err"]),
+            ("Disk.listDir", vec!["normal", "empty", "always_err"]),
+            ("Disk.makeDir", vec!["normal_ok", "always_err"]),
+        ] {
+            assert_eq!(
+                standard_hostile_profiles(method)
+                    .into_iter()
+                    .map(|(label, _, _)| label)
+                    .collect::<Vec<_>>(),
+                labels,
+                "hostile labels for {method}"
+            );
+        }
+        assert_eq!(
+            standard_hostile_profile_label("Disk.writeText", "Disk.writeTextAlwaysErr"),
+            Some("always_err")
         );
     }
 }

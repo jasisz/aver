@@ -1508,6 +1508,14 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
 
 /// Emit one program-defined or standard capability call through the
 /// native provider registry generated for this Rust artifact.
+///
+/// Policy parity with builtins: when the project carries an `aver.toml`
+/// policy (and the replay runtime is not the active door), an operation
+/// in a policy-guarded namespace (`Http.`/`Disk.`/`Env.`) checks its
+/// first String argument through `aver_policy` BEFORE the provider
+/// invoke — the same seam `compose_effectful_builtin` applies to the
+/// builtin table. The check runs on the encoded `ProviderValue` so the
+/// argument is still evaluated exactly once.
 fn emit_mir_capability_call(
     operation: &crate::capability::CapabilityOperation,
     args: &[Spanned<MirExpr>],
@@ -1520,6 +1528,14 @@ fn emit_mir_capability_call(
         .map(|name| format!("Some({name:?})"))
         .unwrap_or_else(|| "None".to_string());
     let expected = operation.return_type.display();
+
+    // Mirror of `emit_mir_effectful_builtin_call`'s flag: the policy door
+    // only exists when the project renders `aver_policy` and the replay
+    // runtime is not the active wrap.
+    let policy_helper = ctx
+        .codegen
+        .filter(|codegen| codegen.policy.is_some() && !codegen.emit_replay_runtime)
+        .and_then(|_| super::builtins::policy_check_helper(&operation.canonical_name));
 
     let mut owned_args = Vec::with_capacity(args.len());
     for arg in args {
@@ -1543,6 +1559,48 @@ fn emit_mir_capability_call(
         )
     };
 
+    if let Some(helper) = policy_helper.filter(|_| !owned_args.is_empty()) {
+        // Argument 0 is evaluated, encoded once, policy-checked as the
+        // encoded String, then moved into the invoke vec — one value
+        // from one evaluation, exactly like the builtin seam's shared
+        // temp. It skips `encode` on the invoke because it is already
+        // a `ProviderValue`.
+        let names = (0..owned_args.len())
+            .map(|index| format!("__provider_arg{index}"))
+            .collect::<Vec<_>>();
+        let mut lines = vec!["{".to_string()];
+        lines.push("    crate::cancel_checkpoint();".to_string());
+        for (name, value) in names.iter().zip(&owned_args) {
+            lines.push(format!("    let {name} = {value};"));
+        }
+        lines.push(format!(
+            "    let {} = crate::provider_support::encode({}, {:?});",
+            names[0], names[0], operation.module
+        ));
+        lines.push(format!(
+            "    if let aver_rt::provider::ProviderValue::String(__policy_path) = &{} {{ {}({:?}, __policy_path).expect(\"aver.toml policy violation\"); }}",
+            names[0], helper, operation.canonical_name
+        ));
+        let mut invoke_args = vec![names[0].clone()];
+        invoke_args.extend(names[1..].iter().map(|name| {
+            format!(
+                "crate::provider_support::encode({name}, {:?})",
+                operation.module
+            )
+        }));
+        lines.push(format!(
+            "    crate::provider_support::invoke::<{}>({:?}, {:?}, vec![{}], {}, {:?})",
+            return_type,
+            operation.module,
+            operation.canonical_name,
+            invoke_args.join(", "),
+            minted,
+            expected
+        ));
+        lines.push("}".to_string());
+        return Some(lines.join("\n"));
+    }
+
     if !operation.is_effectful()
         || !ctx
             .codegen
@@ -1552,6 +1610,13 @@ fn emit_mir_capability_call(
             .map(|index| format!("__provider_arg{index}"))
             .collect::<Vec<_>>();
         let mut lines = vec!["{".to_string()];
+        // Effectful provider calls cross a host boundary, so they take
+        // the same cancel checkpoint every effectful builtin takes —
+        // without it, a cancelled `!`/`?!` branch could no longer
+        // interrupt a service that moved onto a provider.
+        if operation.is_effectful() {
+            lines.push("    crate::cancel_checkpoint();".to_string());
+        }
         for (name, value) in names.iter().zip(&owned_args) {
             lines.push(format!("    let {name} = {value};"));
         }

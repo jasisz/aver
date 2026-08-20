@@ -689,6 +689,13 @@ impl VmRuntime {
             .get(symbol_id)
             .ok_or_else(|| VmError::runtime("unknown capability symbol"))?;
         self.ensure_effects_allowed(symbols, &info.name, &info.required_effects)?;
+        // Sandbox parity with builtins: a provider-bound operation crosses
+        // the same host boundary `invoke_builtin` guards, so `aver.toml`
+        // Disk/Http/Env restrictions must hold after the capability flip
+        // too. Without this, moving a service onto a provider silently
+        // unstitched the policy seam (untestable before any standard
+        // capability lived in a policy-gated namespace).
+        self.check_runtime_policy(&info.name, args, arena)?;
 
         let operation = self
             .providers

@@ -34,13 +34,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "String.fromBool"
             | "String.chars"
             | "Char.fromCode"
-            | "Disk.readText"
-            | "Disk.writeText"
-            | "Disk.appendText"
-            | "Disk.delete"
-            | "Disk.deleteDir"
-            | "Disk.listDir"
-            | "Disk.makeDir"
             | "Env.get"
             | "Terminal.readKey"
             | "Http.get"
@@ -148,14 +141,6 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             "crate::self_host_support::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {})",
             args[0], args[1], args[2]
         )),
-        "Disk.readText" => Some(format!("aver_rt::read_text(&{})", args[0])),
-        "Disk.writeText" => Some(format!("aver_rt::write_text(&{}, &{})", args[0], args[1])),
-        "Disk.appendText" => Some(format!("aver_rt::append_text(&{}, &{})", args[0], args[1])),
-        "Disk.exists" => Some(format!("aver_rt::path_exists(&{})", args[0])),
-        "Disk.delete" => Some(format!("aver_rt::delete_file(&{})", args[0])),
-        "Disk.deleteDir" => Some(format!("aver_rt::delete_dir(&{})", args[0])),
-        "Disk.listDir" => Some(format!("aver_rt::list_dir(&{})", args[0])),
-        "Disk.makeDir" => Some(format!("aver_rt::make_dir(&{})", args[0])),
         "Env.get" => Some(format!("aver_rt::env_get(&{})", args[0])),
         "Env.set" => Some(format!(
             "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
@@ -302,8 +287,11 @@ fn emit_replay_effect_arg_json(name: &str, temp_names: &[String]) -> Vec<String>
 /// Returns the helper name for `Http.` / `Disk.` / `Env.` prefixes,
 /// `None` for every other (effectful or pure) builtin. Shared between
 /// the HIR oracle and the MIR walker so the policy-prefix decision is
-/// made in exactly one place.
-fn policy_check_helper(name: &str) -> Option<&'static str> {
+/// made in exactly one place. Capability-bound operations go through
+/// the same decision: a provider call crosses the identical host
+/// boundary, so the flip off the builtin table must not unstitch
+/// `aver.toml` enforcement.
+pub(super) fn policy_check_helper(name: &str) -> Option<&'static str> {
     if name.starts_with("Http.") {
         Some("aver_policy::check_http")
     } else if name.starts_with("Disk.") {
@@ -511,14 +499,6 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
         )),
 
         // ---- Disk ----
-        "Disk.readText" => Some(format!("aver_rt::read_text(&{})", a(0))),
-        "Disk.writeText" => Some(format!("aver_rt::write_text(&{}, &{})", a(0), a(1))),
-        "Disk.appendText" => Some(format!("aver_rt::append_text(&{}, &{})", a(0), a(1))),
-        "Disk.exists" => Some(format!("aver_rt::path_exists(&{})", a(0))),
-        "Disk.delete" => Some(format!("aver_rt::delete_file(&{})", a(0))),
-        "Disk.deleteDir" => Some(format!("aver_rt::delete_dir(&{})", a(0))),
-        "Disk.listDir" => Some(format!("aver_rt::list_dir(&{})", a(0))),
-        "Disk.makeDir" => Some(format!("aver_rt::make_dir(&{})", a(0))),
 
         // ---- Env ----
         "Env.get" => Some(format!("aver_rt::env_get(&{})", a(0))),

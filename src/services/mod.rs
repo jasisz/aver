@@ -1,6 +1,6 @@
 /// Built-in platform services available to Aver programs.
 ///
-/// Each service is a named namespace (`Args`, `Console`, `Http`, `Disk`, `Tcp`, `HttpServer`, `Env`, `Random`, `Terminal`) that must
+/// Each service is a named namespace (`Args`, `Console`, `Http`, `Tcp`, `HttpServer`, `Env`, `Terminal`) that must
 /// be declared as an effect in order to be called:
 ///
 /// ```aver
@@ -21,7 +21,6 @@ pub fn all_effect_names() -> Vec<&'static str> {
     let mut out = Vec::new();
     out.extend_from_slice(args::DECLARED_EFFECTS);
     out.extend_from_slice(console::DECLARED_EFFECTS);
-    out.extend_from_slice(disk::DECLARED_EFFECTS);
     out.extend_from_slice(env::DECLARED_EFFECTS);
     // The Http and Terminal names are written out literally rather than read
     // from their modules, because those modules only exist in builds that
@@ -67,7 +66,6 @@ pub fn all_effect_names() -> Vec<&'static str> {
 
 pub mod args;
 pub mod console;
-pub mod disk;
 pub mod env;
 #[cfg(feature = "runtime-net")]
 pub mod http;
@@ -158,7 +156,10 @@ mod tests {
     fn standard_capability_effect_names_come_from_the_contract_registry() {
         let listed: Vec<&str> = super::all_effect_names()
             .into_iter()
-            .filter(|name| name.starts_with("Time.") || name.starts_with("Random."))
+            .filter(|name| {
+                let namespace = name.split('.').next().unwrap_or(name);
+                crate::stdlib::is_standard_capability(namespace)
+            })
             .collect();
         let canonical: Vec<&str> = crate::stdlib::standard_capability_registry_ref()
             .operations()

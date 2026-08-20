@@ -1,0 +1,128 @@
+module Disk
+    kind = capability
+    semantics = effectful
+    exposes [readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir]
+
+operation readText(file: String) -> Result<String, String>
+    ? "Reads a whole file as UTF-8 text."
+    oracle = generative
+    replay = recorded
+    hostile = [readTextNormal, readTextAlwaysErr, readTextEmptyOk]
+
+operation writeText(file: String, content: String) -> Result<Unit, String>
+    ? "Replaces a file's contents with UTF-8 text, creating it if absent."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [writeTextNormalOk, writeTextAlwaysErr]
+
+operation appendText(file: String, content: String) -> Result<Unit, String>
+    ? "Appends UTF-8 text to a file, creating it if absent."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [appendTextNormalOk, appendTextAlwaysErr]
+
+operation exists(file: String) -> Bool
+    ? "Reports whether a path is present."
+    oracle = generative
+    replay = recorded
+    hostile = [existsNormal, existsNever, existsAlways]
+
+operation delete(file: String) -> Result<Unit, String>
+    ? "Removes one file."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [deleteNormalOk, deleteAlwaysErr]
+
+operation deleteDir(file: String) -> Result<Unit, String>
+    ? "Removes one directory and everything under it."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [deleteDirNormalOk, deleteDirAlwaysErr]
+
+operation listDir(dir: String) -> Result<List<String>, String>
+    ? "Lists the entries of a directory."
+    oracle = generative
+    replay = recorded
+    hostile = [listDirNormal, listDirEmpty, listDirAlwaysErr]
+
+operation makeDir(file: String) -> Result<Unit, String>
+    ? "Creates a directory, and the directories above it."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [makeDirNormalOk, makeDirAlwaysErr]
+
+fn readTextNormal(branch: BranchPath, call: Int, file: String) -> Result<String, String>
+    ? "honest: file reads back a plausible payload"
+    Result.Ok("hello\n")
+
+fn readTextAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<String, String>
+    ? "hostile: every read fails — disk is on fire"
+    Result.Err("hostile: disk read failed")
+
+fn readTextEmptyOk(branch: BranchPath, call: Int, file: String) -> Result<String, String>
+    ? "hostile: file exists but content is empty"
+    Result.Ok("")
+
+fn writeTextNormalOk(branch: BranchPath, call: Int, file: String, content: String) -> Result<Unit, String>
+    ? "honest: write succeeds"
+    Result.Ok(Unit)
+
+fn writeTextAlwaysErr(branch: BranchPath, call: Int, file: String, content: String) -> Result<Unit, String>
+    ? "hostile: write fails — disk full or permission denied"
+    Result.Err("hostile: write failed")
+
+fn appendTextNormalOk(branch: BranchPath, call: Int, file: String, content: String) -> Result<Unit, String>
+    ? "honest: append succeeds"
+    Result.Ok(Unit)
+
+fn appendTextAlwaysErr(branch: BranchPath, call: Int, file: String, content: String) -> Result<Unit, String>
+    ? "hostile: append fails — disk full or permission denied"
+    Result.Err("hostile: write failed")
+
+fn existsNormal(branch: BranchPath, call: Int, file: String) -> Bool
+    ? "honest: file exists"
+    true
+
+fn existsNever(branch: BranchPath, call: Int, file: String) -> Bool
+    ? "hostile: nothing exists on the filesystem"
+    false
+
+fn existsAlways(branch: BranchPath, call: Int, file: String) -> Bool
+    ? "hostile: every path exists — every cleanup deletes something"
+    true
+
+fn deleteNormalOk(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "honest: filesystem op succeeds"
+    Result.Ok(Unit)
+
+fn deleteAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "hostile: filesystem op fails"
+    Result.Err("hostile: op failed")
+
+fn deleteDirNormalOk(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "honest: filesystem op succeeds"
+    Result.Ok(Unit)
+
+fn deleteDirAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "hostile: filesystem op fails"
+    Result.Err("hostile: op failed")
+
+fn listDirNormal(branch: BranchPath, call: Int, dir: String) -> Result<List<String>, String>
+    ? "honest: directory has a few entries"
+    Result.Ok(["a.txt", "b.txt"])
+
+fn listDirEmpty(branch: BranchPath, call: Int, dir: String) -> Result<List<String>, String>
+    ? "hostile: directory is empty"
+    Result.Ok([])
+
+fn listDirAlwaysErr(branch: BranchPath, call: Int, dir: String) -> Result<List<String>, String>
+    ? "hostile: directory listing fails"
+    Result.Err("hostile: listdir failed")
+
+fn makeDirNormalOk(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "honest: filesystem op succeeds"
+    Result.Ok(Unit)
+
+fn makeDirAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "hostile: filesystem op fails"
+    Result.Err("hostile: op failed")

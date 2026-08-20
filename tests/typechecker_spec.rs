@@ -1009,7 +1009,7 @@ fn valid_network_all_methods_with_effect() {
 }
 
 // ---------------------------------------------------------------------------
-// Disk service effect checking
+// Disk capability effect checking
 // ---------------------------------------------------------------------------
 
 #[test]

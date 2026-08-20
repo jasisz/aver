@@ -93,13 +93,6 @@ impl TypeChecker {
 
         let net_ret = || Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str));
         let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
-        let disk_str = || Type::Result(Box::new(Type::Str), Box::new(Type::Str));
-        let disk_list = || {
-            Type::Result(
-                Box::new(Type::List(Box::new(Type::Str))),
-                Box::new(Type::Str),
-            )
-        };
         // Http.post/put/patch headers param: same shape as the
         // record fields above (`Map<String, List<String>>`).
         let header_list = header_map;
@@ -116,14 +109,6 @@ impl TypeChecker {
                 "Http.post".to_string(),
                 "Http.put".to_string(),
                 "Http.patch".to_string(),
-                "Disk.readText".to_string(),
-                "Disk.writeText".to_string(),
-                "Disk.appendText".to_string(),
-                "Disk.exists".to_string(),
-                "Disk.delete".to_string(),
-                "Disk.deleteDir".to_string(),
-                "Disk.listDir".to_string(),
-                "Disk.makeDir".to_string(),
                 "Env.get".to_string(),
                 "Env.set".to_string(),
                 "Tcp.connect".to_string(),
@@ -251,34 +236,6 @@ impl TypeChecker {
                 disk_unit(),
                 &["HttpServer.listenWith"],
             ),
-            (
-                "Disk.readText",
-                &[Type::Str],
-                disk_str(),
-                &["Disk.readText"],
-            ),
-            (
-                "Disk.writeText",
-                &[Type::Str, Type::Str],
-                disk_unit(),
-                &["Disk.writeText"],
-            ),
-            (
-                "Disk.appendText",
-                &[Type::Str, Type::Str],
-                disk_unit(),
-                &["Disk.appendText"],
-            ),
-            ("Disk.exists", &[Type::Str], Type::Bool, &["Disk.exists"]),
-            ("Disk.delete", &[Type::Str], disk_unit(), &["Disk.delete"]),
-            (
-                "Disk.deleteDir",
-                &[Type::Str],
-                disk_unit(),
-                &["Disk.deleteDir"],
-            ),
-            ("Disk.listDir", &[Type::Str], disk_list(), &["Disk.listDir"]),
-            ("Disk.makeDir", &[Type::Str], disk_unit(), &["Disk.makeDir"]),
             (
                 "Env.get",
                 &[Type::Str],

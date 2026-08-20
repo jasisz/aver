@@ -139,84 +139,6 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
-        "Disk.readText" => vec![
-            HostileProfile {
-                name: "normal",
-                stub_fn_name: stub_name("normal"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Result<String, String>\n    ? \"honest: file reads back a plausible payload\"\n    Result.Ok(\"hello\\n\")\n",
-                    stub_name("normal")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Result<String, String>\n    ? \"hostile: every read fails — disk is on fire\"\n    Result.Err(\"hostile: disk read failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-            HostileProfile {
-                name: "empty_ok",
-                stub_fn_name: stub_name("empty_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Result<String, String>\n    ? \"hostile: file exists but content is empty\"\n    Result.Ok(\"\")\n",
-                    stub_name("empty_ok")
-                ),
-            },
-        ],
-        "Disk.exists" => vec![
-            HostileProfile {
-                name: "normal",
-                stub_fn_name: stub_name("normal"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Bool\n    ? \"honest: file exists\"\n    true\n",
-                    stub_name("normal")
-                ),
-            },
-            HostileProfile {
-                name: "never",
-                stub_fn_name: stub_name("never"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Bool\n    ? \"hostile: nothing exists on the filesystem\"\n    false\n",
-                    stub_name("never")
-                ),
-            },
-            HostileProfile {
-                name: "always",
-                stub_fn_name: stub_name("always"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Bool\n    ? \"hostile: every path exists — every cleanup deletes something\"\n    true\n",
-                    stub_name("always")
-                ),
-            },
-        ],
-        "Disk.listDir" => vec![
-            HostileProfile {
-                name: "normal",
-                stub_fn_name: stub_name("normal"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, dir: String) -> Result<List<String>, String>\n    ? \"honest: directory has a few entries\"\n    Result.Ok([\"a.txt\", \"b.txt\"])\n",
-                    stub_name("normal")
-                ),
-            },
-            HostileProfile {
-                name: "empty",
-                stub_fn_name: stub_name("empty"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, dir: String) -> Result<List<String>, String>\n    ? \"hostile: directory is empty\"\n    Result.Ok([])\n",
-                    stub_name("empty")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, dir: String) -> Result<List<String>, String>\n    ? \"hostile: directory listing fails\"\n    Result.Err(\"hostile: listdir failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
         "Console.readLine" => vec![
             HostileProfile {
                 name: "normal",
@@ -278,42 +200,6 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 stub_fn_name: stub_name("always_err"),
                 stub_body: format!(
                     "fn {}(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<HttpResponse, String>\n    ? \"hostile: write request fails — server unreachable\"\n    Result.Err(\"hostile: connection refused\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Disk.writeText" | "Disk.appendText" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>\n    ? \"honest: write succeeds\"\n    Result.Ok(Unit)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>\n    ? \"hostile: write fails — disk full or permission denied\"\n    Result.Err(\"hostile: write failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Disk.delete" | "Disk.deleteDir" | "Disk.makeDir" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Result<Unit, String>\n    ? \"honest: filesystem op succeeds\"\n    Result.Ok(Unit)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, file: String) -> Result<Unit, String>\n    ? \"hostile: filesystem op fails\"\n    Result.Err(\"hostile: op failed\")\n",
                     stub_name("always_err")
                 ),
             },

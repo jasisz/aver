@@ -5,7 +5,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::services::http;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
-use crate::services::{args, console, disk, env, tcp};
+use crate::services::{args, console, env, tcp};
 use crate::types::{
     bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
 };
@@ -52,15 +52,6 @@ vm_builtins! {
     HttpServerListenWith => "HttpServer.listenWith",
     SelfHostRuntimeHttpServerListen => "SelfHostRuntime.httpServerListen",
     SelfHostRuntimeHttpServerListenWith => "SelfHostRuntime.httpServerListenWith",
-
-    DiskReadText => "Disk.readText",
-    DiskWriteText => "Disk.writeText",
-    DiskAppendText => "Disk.appendText",
-    DiskExists => "Disk.exists",
-    DiskDelete => "Disk.delete",
-    DiskDeleteDir => "Disk.deleteDir",
-    DiskListDir => "Disk.listDir",
-    DiskMakeDir => "Disk.makeDir",
 
     EnvGet => "Env.get",
     EnvSet => "Env.set",
@@ -267,15 +258,6 @@ impl VmBuiltin {
                 crate::services::http_server::effects(self.name())
             }
 
-            Self::DiskReadText
-            | Self::DiskWriteText
-            | Self::DiskAppendText
-            | Self::DiskExists
-            | Self::DiskDelete
-            | Self::DiskDeleteDir
-            | Self::DiskListDir
-            | Self::DiskMakeDir => disk::effects(self.name()),
-
             Self::ArgsGet => args::effects(self.name()),
 
             Self::EnvGet | Self::EnvSet => env::effects(self.name()),
@@ -351,15 +333,6 @@ impl VmBuiltin {
                 "{}: HTTP effects not available in this build",
                 self.name()
             )))),
-
-            Self::DiskReadText
-            | Self::DiskWriteText
-            | Self::DiskAppendText
-            | Self::DiskExists
-            | Self::DiskDelete
-            | Self::DiskDeleteDir
-            | Self::DiskListDir
-            | Self::DiskMakeDir => disk::call_nv(self.name(), args, arena),
 
             Self::EnvGet | Self::EnvSet => env::call_nv(self.name(), args, arena),
             Self::TcpSend

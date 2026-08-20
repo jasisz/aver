@@ -1,7 +1,6 @@
 //! Oracle v1 effect classification.
 //!
-//! For each built-in effect method covered by `aver proof`, this module
-//! records:
+//! For each effect method covered by `aver proof`, this module records:
 //!
 //! - Which proof dimension(s) it belongs to (snapshot / generative / output,
 //!   and the combination `generative + output` used by e.g. `Http.get`).
@@ -20,17 +19,19 @@
 //! - Lifting of effectful function bodies at proof-export time.
 //! - Rejection diagnostics for unclassified effects.
 //!
-//! Source of runtime signatures: `src/services/*.rs` and `docs/services.md`.
+//! Source of runtime signatures: builtin registrations for legacy services,
+//! and capability declarations for provider-backed standard/project effects.
 //!
-//! The parameter and return types below are cross-checked against the
-//! signatures `builtins.rs` actually registers — see
-//! `every_classified_entry_matches_the_registered_builtin_signature`. The
+//! The parameter and return types below are cross-checked against either the
+//! signatures `builtins.rs` registers or the canonical standard capability
+//! contracts — see
+//! `every_classified_entry_matches_its_builtin_or_standard_contract_signature`. The
 //! agreement used to rest on a comment asking the reader to keep the two in
 //! sync, and that had already failed: `Console.print` carried a printable type
 //! variable here for twelve minor releases after 0.16 gave it a plain string.
-//! What is still hand-authored, and cannot be derived, is the DIMENSION —
-//! `FnSig` records no such thing, so adding an effect to `builtins.rs` still
-//! means deciding here how a proof is allowed to model it.
+//! What is still hand-authored for legacy builtins, and cannot be derived from
+//! `FnSig`, is the DIMENSION. Standard and project capabilities instead derive
+//! it from their source-owned Oracle declaration.
 
 use super::super::Type;
 use crate::types::branch_path;
@@ -63,9 +64,10 @@ pub struct EffectClassification {
     pub ret: Type,
 }
 
-/// Owned classification returned by a whole-program registry lookup. Standard
-/// services are cloned from the static table; program-defined capability
-/// operations are derived from their canonical declaration.
+/// Owned classification returned by a whole-program registry lookup. Legacy
+/// builtins and source-derived standard capabilities are cloned from the
+/// process registry; program-defined capability operations are derived from
+/// their canonical declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegisteredEffectClassification {
     pub method: String,
@@ -121,24 +123,6 @@ fn classifications() -> &'static [EffectClassification] {
                 ret: Type::named("Terminal.Size"),
             },
             // Generative
-            EffectClassification {
-                method: "Disk.readText",
-                dimension: EffectDimension::Generative,
-                params: vec![Type::Str],
-                ret: err_str(Type::Str),
-            },
-            EffectClassification {
-                method: "Disk.exists",
-                dimension: EffectDimension::Generative,
-                params: vec![Type::Str],
-                ret: Type::Bool,
-            },
-            EffectClassification {
-                method: "Disk.listDir",
-                dimension: EffectDimension::Generative,
-                params: vec![Type::Str],
-                ret: err_str(Type::List(Box::new(Type::Str))),
-            },
             EffectClassification {
                 method: "Console.readLine",
                 dimension: EffectDimension::Generative,
@@ -206,39 +190,6 @@ fn classifications() -> &'static [EffectClassification] {
                     ),
                 ],
                 ret: err_str(Type::named("HttpResponse")),
-            },
-            // Disk writes/deletes are modelled like HTTP writes: the operation is
-            // emitted to the trace, and success/failure comes from the oracle. Oracle
-            // does not assert persistent filesystem state after the operation.
-            EffectClassification {
-                method: "Disk.writeText",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Disk.appendText",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Disk.delete",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Disk.deleteDir",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Disk.makeDir",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::Unit),
             },
             // One-shot TCP operations — request is trace output, response comes from oracle.
             EffectClassification {
@@ -423,7 +374,7 @@ fn classifications() -> &'static [EffectClassification] {
     })
 }
 
-/// Classify a built-in effect method, if it's in Oracle v1's closed set.
+/// Classify a builtin or standard-capability effect method, if Oracle v1 knows it.
 pub fn classify(method: &str) -> Option<&'static EffectClassification> {
     classifications().iter().find(|c| c.method == method)
 }
@@ -661,7 +612,7 @@ mod tests {
         // next drift need not be so lucky, hence a mechanical cross-check
         // rather than a stricter comment.
         let items = crate::source::parse_source(
-            "module TableCrossCheck\n    intent = \"Cross-check the classification table against the registered builtins.\"\n",
+            "module TableCrossCheck\n    intent = \"Cross-check effect classifications against builtins and standard capability contracts.\"\n",
         )
         .expect("the cross-check module must parse");
         let checked = super::super::run_type_check_full(&items, None);
