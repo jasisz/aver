@@ -16,12 +16,12 @@
 use super::RunWasmGcHost;
 use super::imports::{
     host_http_response_make, host_map_string_list_string_empty, host_option_string_none,
-    host_option_string_some, host_result_err_bytes, host_result_err_list_string,
-    host_result_err_string, host_result_err_unit_string, host_result_http_response_err,
-    host_result_http_response_ok, host_result_ok_bytes, host_result_ok_list_string,
-    host_result_ok_string, host_result_ok_unit, host_result_tcp_connection_err,
-    host_result_tcp_connection_ok, host_tcp_connection_make, host_terminal_size_make,
-    lm_string_from_host,
+    host_option_string_some, host_result_err_bytes, host_result_err_int,
+    host_result_err_list_string, host_result_err_string, host_result_err_unit_string,
+    host_result_http_response_err, host_result_http_response_ok, host_result_ok_bytes,
+    host_result_ok_int, host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
+    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_make,
+    host_terminal_size_make, lm_string_from_host,
 };
 
 pub(crate) fn decode_main_return_typed(
@@ -507,6 +507,20 @@ pub(crate) fn decode_result_bytes(
         ("$err", aver::replay::JsonValue::String(s)) => host_result_err_bytes(caller, s),
         _ => Err(wasmtime::Error::msg(
             "replay decode Result<Bytes, String>: unexpected payload",
+        )),
+    }
+}
+
+pub(crate) fn decode_result_int(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, inner) = expect_marker(json, &["$ok", "$err"])?;
+    match (marker, inner) {
+        ("$ok", aver::replay::JsonValue::Int(value)) => host_result_ok_int(caller, *value),
+        ("$err", aver::replay::JsonValue::String(message)) => host_result_err_int(caller, message),
+        _ => Err(wasmtime::Error::msg(
+            "replay decode Result<Int, String>: unexpected payload",
         )),
     }
 }

@@ -68,6 +68,11 @@ pub(super) fn to_provider_value(
             to_provider_value(value, inner, scope, contracts, native)?,
         ))),
         (Type::Option(_), Value::None) => Ok(ProviderValue::OptionNone),
+        (Type::Named { name, .. }, value) if is_standard_bytes(name) => {
+            crate::types::bytes::project(value, "capability provider boundary")
+                .map(ProviderValue::Bytes)
+                .map_err(|error| error.to_string())
+        }
         (Type::Named { name, .. }, Value::CapabilityResource(handle)) => {
             let canonical = canonical_type(scope, name);
             if !contracts.opaque_types().any(|known| known == &canonical) {
@@ -165,6 +170,10 @@ pub(super) fn from_provider_value(
             from_provider_value(*value, inner, scope, contracts, minted_resource, native)?,
         ))),
         (Type::Option(_), ProviderValue::OptionNone) => Ok(Value::None),
+        (Type::Named { name, .. }, value) if is_standard_bytes(name) => match value {
+            ProviderValue::Bytes(bytes) => Ok(crate::types::bytes::from_host(&bytes)),
+            other => Err(format!("expected Bytes, got {}", other.shape())),
+        },
         (Type::Named { name, .. }, ProviderValue::Resource(resource)) => {
             let canonical = canonical_type(scope, name);
             if minted_resource != Some(canonical.as_str()) {
@@ -198,6 +207,10 @@ pub(super) fn from_provider_value(
             actual.shape()
         )),
     }
+}
+
+fn is_standard_bytes(name: &str) -> bool {
+    matches!(name, "Bytes" | "Bytes.Bytes")
 }
 
 #[allow(clippy::too_many_arguments)]

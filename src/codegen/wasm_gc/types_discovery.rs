@@ -115,7 +115,16 @@ pub(super) fn collect_results_from_builtin_uses(
                             intern("Result<Int,String>")
                         }
                         "Console.readLine" | "Disk.readText" => intern("Result<String,String>"),
-                        "Disk.writeText" | "Disk.appendText" | "Disk.delete" | "Disk.deleteDir"
+                        "Disk.readBytes" => {
+                            // wasip2 reuses the raw-octet Disk.readText helper
+                            // internally, then adapts its carrier to Bytes.
+                            intern("Result<String,String>");
+                            intern("Result<Bytes,String>");
+                        }
+                        "Disk.readBytesAt" => intern("Result<Bytes,String>"),
+                        "Disk.size" => intern("Result<Int,String>"),
+                        "Disk.writeText" | "Disk.appendText" | "Disk.writeBytes"
+                        | "Disk.appendBytes" | "Disk.delete" | "Disk.deleteDir"
                         | "Disk.makeDir" => intern("Result<Unit,String>"),
                         "Disk.listDir" => intern("Result<List<String>,String>"),
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),

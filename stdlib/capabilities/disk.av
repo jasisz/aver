@@ -1,7 +1,8 @@
 module Disk
     kind = capability
     semantics = effectful
-    exposes [readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir]
+    depends [Bytes]
+    exposes [readText, writeText, appendText, readBytes, readBytesAt, writeBytes, appendBytes, size, exists, delete, deleteDir, listDir, makeDir]
 
 operation readText(file: String) -> Result<String, String>
     ? "Reads a whole file as UTF-8 text."
@@ -20,6 +21,36 @@ operation appendText(file: String, content: String) -> Result<Unit, String>
     oracle = generativeOutput
     replay = recorded
     hostile = [appendTextNormalOk, appendTextAlwaysErr]
+
+operation readBytes(file: String) -> Result<Bytes, String>
+    ? "Reads a whole file without interpreting its bytes as text."
+    oracle = generative
+    replay = recorded
+    hostile = [readBytesNormal, readBytesAlwaysErr, readBytesEmptyOk]
+
+operation readBytesAt(file: String, offset: Int, length: Int) -> Result<Bytes, String>
+    ? "Reads at most length bytes from offset; EOF may return fewer bytes, including none."
+    oracle = generative
+    replay = recorded
+    hostile = [readBytesAtNormal, readBytesAtAlwaysErr, readBytesAtShortOk]
+
+operation writeBytes(file: String, content: Bytes) -> Result<Unit, String>
+    ? "Replaces a file with the exact bytes supplied, creating it if absent."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [writeBytesNormalOk, writeBytesAlwaysErr]
+
+operation appendBytes(file: String, content: Bytes) -> Result<Unit, String>
+    ? "Appends the exact bytes supplied, creating the file if absent."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [appendBytesNormalOk, appendBytesAlwaysErr]
+
+operation size(file: String) -> Result<Int, String>
+    ? "Returns a file's length in bytes."
+    oracle = generative
+    replay = recorded
+    hostile = [sizeNormal, sizeZero, sizeAlwaysErr]
 
 operation exists(file: String) -> Bool
     ? "Reports whether a path is present."
@@ -78,6 +109,58 @@ fn appendTextNormalOk(branch: BranchPath, call: Int, file: String, content: Stri
 fn appendTextAlwaysErr(branch: BranchPath, call: Int, file: String, content: String) -> Result<Unit, String>
     ? "hostile: append fails — disk full or permission denied"
     Result.Err("hostile: write failed")
+
+fn readBytesNormal(branch: BranchPath, call: Int, file: String) -> Result<Bytes, String>
+    ? "honest: binary reads return a plausible non-UTF-8 payload"
+    Result.Ok(Bytes.fromList([0, 127, 128, 255]))
+
+fn readBytesAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Bytes, String>
+    ? "hostile: every binary read fails"
+    Result.Err("hostile: disk byte read failed")
+
+fn readBytesEmptyOk(branch: BranchPath, call: Int, file: String) -> Result<Bytes, String>
+    ? "hostile: the file is present but empty"
+    Result.Ok(Bytes.fromList([]))
+
+fn readBytesAtNormal(branch: BranchPath, call: Int, file: String, offset: Int, length: Int) -> Result<Bytes, String>
+    ? "honest: positional reads return a plausible binary slice"
+    Result.Ok(Bytes.fromList([128, 255]))
+
+fn readBytesAtAlwaysErr(branch: BranchPath, call: Int, file: String, offset: Int, length: Int) -> Result<Bytes, String>
+    ? "hostile: every positional binary read fails"
+    Result.Err("hostile: positional byte read failed")
+
+fn readBytesAtShortOk(branch: BranchPath, call: Int, file: String, offset: Int, length: Int) -> Result<Bytes, String>
+    ? "hostile: EOF is reached before the requested length"
+    Result.Ok(Bytes.fromList([]))
+
+fn writeBytesNormalOk(branch: BranchPath, call: Int, file: String, content: Bytes) -> Result<Unit, String>
+    ? "honest: binary write succeeds"
+    Result.Ok(Unit)
+
+fn writeBytesAlwaysErr(branch: BranchPath, call: Int, file: String, content: Bytes) -> Result<Unit, String>
+    ? "hostile: binary write fails"
+    Result.Err("hostile: byte write failed")
+
+fn appendBytesNormalOk(branch: BranchPath, call: Int, file: String, content: Bytes) -> Result<Unit, String>
+    ? "honest: binary append succeeds"
+    Result.Ok(Unit)
+
+fn appendBytesAlwaysErr(branch: BranchPath, call: Int, file: String, content: Bytes) -> Result<Unit, String>
+    ? "hostile: binary append fails"
+    Result.Err("hostile: byte append failed")
+
+fn sizeNormal(branch: BranchPath, call: Int, file: String) -> Result<Int, String>
+    ? "honest: file metadata reports a plausible byte length"
+    Result.Ok(4096)
+
+fn sizeZero(branch: BranchPath, call: Int, file: String) -> Result<Int, String>
+    ? "hostile: the file is empty"
+    Result.Ok(0)
+
+fn sizeAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Int, String>
+    ? "hostile: file metadata cannot be read"
+    Result.Err("hostile: size failed")
 
 fn existsNormal(branch: BranchPath, call: Int, file: String) -> Bool
     ? "honest: file exists"

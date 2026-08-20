@@ -198,14 +198,20 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // Disk.exists graduated in Phase 1.5.1; Disk.readText in
     // 1.5.2; Disk.writeText in 1.5.3; Disk.delete / deleteDir /
     // makeDir in 1.5.4 (single-call wasi ops sharing
-    // `emit_disk_simple_path_op`). Remaining (`appendText` /
-    // `listDir`) still pending.
+    // `emit_disk_simple_path_op`), appendText in 1.5.5, and listDir
+    // in 1.5.6. Binary whole/positional reads, writes/appends, and
+    // metadata size bind the same contract directly to WASI here.
     if matches!(
         effect,
         "Disk.exists"
             | "Disk.readText"
             | "Disk.writeText"
             | "Disk.appendText"
+            | "Disk.readBytes"
+            | "Disk.readBytesAt"
+            | "Disk.writeBytes"
+            | "Disk.appendBytes"
+            | "Disk.size"
             | "Disk.delete"
             | "Disk.deleteDir"
             | "Disk.makeDir"
@@ -318,6 +324,11 @@ mod tests {
         assert!(classify("Disk.readText").is_none());
         assert!(classify("Disk.writeText").is_none());
         assert!(classify("Disk.appendText").is_none());
+        assert!(classify("Disk.readBytes").is_none());
+        assert!(classify("Disk.readBytesAt").is_none());
+        assert!(classify("Disk.writeBytes").is_none());
+        assert!(classify("Disk.appendBytes").is_none());
+        assert!(classify("Disk.size").is_none());
         assert!(classify("Disk.delete").is_none());
         assert!(classify("Disk.deleteDir").is_none());
         assert!(classify("Disk.makeDir").is_none());

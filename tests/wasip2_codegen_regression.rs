@@ -240,6 +240,54 @@ fn write(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
 }
 
 #[test]
+fn disk_binary_contract_compiles_and_validates_as_component() {
+    let source = r#"module Probe
+    intent = "Compile every binary Disk capability binding."
+    depends [Bytes]
+    exposes [readAll, readAt, write, append, size]
+    effects [Disk.readBytes, Disk.readBytesAt, Disk.writeBytes, Disk.appendBytes, Disk.size]
+
+fn readAll(path: String) -> Result<Bytes, String>
+    ? "Read all file octets."
+    ! [Disk.readBytes]
+    Disk.readBytes(path)
+
+fn readAt(path: String, offset: Int, length: Int) -> Result<Bytes, String>
+    ? "Read at most length octets from offset."
+    ! [Disk.readBytesAt]
+    Disk.readBytesAt(path, offset, length)
+
+fn write(path: String, payload: Bytes) -> Result<Unit, String>
+    ? "Replace a file with exact octets."
+    ! [Disk.writeBytes]
+    Disk.writeBytes(path, payload)
+
+fn append(path: String, payload: Bytes) -> Result<Unit, String>
+    ? "Append exact octets to a file."
+    ! [Disk.appendBytes]
+    Disk.appendBytes(path, payload)
+
+fn size(path: String) -> Result<Int, String>
+    ? "Read file size metadata."
+    ! [Disk.size]
+    Disk.size(path)
+"#;
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
 fn wasip2_codegen_emits_valid_component_for_every_single_file_example() {
     let files = single_file_examples();
     assert!(

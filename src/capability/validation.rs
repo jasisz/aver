@@ -376,6 +376,7 @@ pub(super) fn validate_boundary_type_ownership(
     scope: &str,
     operations: &[CapabilityOperation],
     locally_declared: &BTreeSet<String>,
+    dependencies: &[String],
     errors: &mut Vec<CapabilityError>,
 ) {
     fn visit(
@@ -384,6 +385,7 @@ pub(super) fn validate_boundary_type_ownership(
         position: &str,
         ty: &Type,
         locally_declared: &BTreeSet<String>,
+        dependencies: &[String],
         seen: &mut BTreeSet<(String, String)>,
         errors: &mut Vec<CapabilityError>,
     ) {
@@ -393,7 +395,18 @@ pub(super) fn validate_boundary_type_ownership(
                     Some((owner, _)) => owner == scope,
                     None => locally_declared.contains(name),
                 };
-                if !belongs_to_capability && seen.insert((position.to_string(), name.to_string())) {
+                // `Bytes` is a compiler-owned semantic wire type: Aver keeps
+                // its source representation nominal and opaque, while the
+                // provider ABI carries canonical octets. A capability must
+                // still name the dependency explicitly so a coincidental
+                // foreign `Bytes` spelling cannot acquire this privilege.
+                let is_standard_bytes = !locally_declared.contains("Bytes")
+                    && dependencies.iter().any(|dependency| dependency == "Bytes")
+                    && matches!(name.as_str(), "Bytes" | "Bytes.Bytes");
+                if !belongs_to_capability
+                    && !is_standard_bytes
+                    && seen.insert((position.to_string(), name.to_string()))
+                {
                     errors.push(CapabilityError::at(
                         operation.line,
                         format!(
@@ -410,6 +423,7 @@ pub(super) fn validate_boundary_type_ownership(
                     position,
                     left,
                     locally_declared,
+                    dependencies,
                     seen,
                     errors,
                 );
@@ -419,6 +433,7 @@ pub(super) fn validate_boundary_type_ownership(
                     position,
                     right,
                     locally_declared,
+                    dependencies,
                     seen,
                     errors,
                 );
@@ -429,6 +444,7 @@ pub(super) fn validate_boundary_type_ownership(
                 position,
                 inner,
                 locally_declared,
+                dependencies,
                 seen,
                 errors,
             ),
@@ -440,6 +456,7 @@ pub(super) fn validate_boundary_type_ownership(
                         position,
                         item,
                         locally_declared,
+                        dependencies,
                         seen,
                         errors,
                     );
@@ -451,6 +468,7 @@ pub(super) fn validate_boundary_type_ownership(
                         position,
                         ret,
                         locally_declared,
+                        dependencies,
                         seen,
                         errors,
                     );
@@ -475,6 +493,7 @@ pub(super) fn validate_boundary_type_ownership(
                 &format!("parameter {index}"),
                 ty,
                 locally_declared,
+                dependencies,
                 &mut seen,
                 errors,
             );
@@ -485,6 +504,7 @@ pub(super) fn validate_boundary_type_ownership(
             "result",
             &operation.return_type,
             locally_declared,
+            dependencies,
             &mut seen,
             errors,
         );

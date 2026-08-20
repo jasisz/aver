@@ -925,6 +925,144 @@ pub(super) fn emit_disk_read_text_wasip2(
     Ok(())
 }
 
+pub(super) fn emit_disk_read_bytes_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.readBytes on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.readBytes on `--target wasip2` expects 1 arg (path: String), got {}",
+            args.len()
+        )));
+    }
+    let read_fn = lowering.disk_read_bytes_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.readBytes on wasip2: __rt_disk_read_bytes fn idx missing".into(),
+        )
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(read_fn));
+    Ok(())
+}
+
+pub(super) fn emit_disk_read_bytes_at_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.readBytesAt on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 3 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.readBytesAt on `--target wasip2` expects 3 args (path, offset, length), got {}",
+            args.len()
+        )));
+    }
+    let read_fn = lowering.disk_read_bytes_at_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.readBytesAt on wasip2: __rt_disk_read_bytes_at fn idx missing".into(),
+        )
+    })?;
+    for arg in args {
+        emit_mir_expr(func, arg, slots, ctx)?;
+    }
+    func.instruction(&Instruction::Call(read_fn));
+    Ok(())
+}
+
+pub(super) fn emit_disk_size_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.size on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.size on `--target wasip2` expects 1 path arg, got {}",
+            args.len()
+        )));
+    }
+    let size_fn = lowering.disk_size_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Disk.size on wasip2: __rt_disk_size fn idx missing".into())
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(size_fn));
+    Ok(())
+}
+
+fn emit_disk_write_bytes_like_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    effect: &'static str,
+    fn_idx: Option<u32>,
+) -> Result<(), WasmGcError> {
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "{effect} on `--target wasip2` expects 2 args (path, content), got {}",
+            args.len()
+        )));
+    }
+    let helper = fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "{effect} on wasip2: binary Disk helper fn idx missing"
+        ))
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(helper));
+    Ok(())
+}
+
+pub(super) fn emit_disk_write_bytes_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.writeBytes on wasip2: lowering ctx missing".into())
+    })?;
+    emit_disk_write_bytes_like_wasip2(
+        func,
+        args,
+        slots,
+        ctx,
+        "Disk.writeBytes",
+        lowering.disk_write_bytes_fn_idx,
+    )
+}
+
+pub(super) fn emit_disk_append_bytes_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.appendBytes on wasip2: lowering ctx missing".into())
+    })?;
+    emit_disk_write_bytes_like_wasip2(
+        func,
+        args,
+        slots,
+        ctx,
+        "Disk.appendBytes",
+        lowering.disk_append_bytes_fn_idx,
+    )
+}
+
 /// Phase 1.4 — `Random.int(min: Int, max: Int) -> Int` on
 /// `--target wasip2`.
 ///

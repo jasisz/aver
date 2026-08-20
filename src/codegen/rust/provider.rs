@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::ast::{TypeDef, TypeVariant};
+use crate::ast::{Type, TypeDef, TypeVariant};
 use crate::capability::CapabilityRegistry;
 use crate::provider::required_capability_operations;
 
@@ -159,6 +159,73 @@ pub(super) fn opaque_types_by_module(
         names.sort();
     }
     out
+}
+
+pub(super) fn uses_standard_bytes(contracts: &CapabilityRegistry) -> bool {
+    fn mentions(ty: &Type) -> bool {
+        match ty {
+            Type::Named { name, .. } => matches!(name.as_str(), "Bytes" | "Bytes.Bytes"),
+            Type::Result(left, right) | Type::Map(left, right) => mentions(left) || mentions(right),
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => mentions(inner),
+            Type::Tuple(items) => items.iter().any(mentions),
+            Type::Fn(params, ret, _) => params.iter().any(mentions) || mentions(ret),
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => false,
+        }
+    }
+
+    contracts.operations().any(|operation| {
+        operation.params.iter().any(|(_, ty)| mentions(ty)) || mentions(&operation.return_type)
+    })
+}
+
+/// `Bytes` is nominal source data but canonical octets at a provider boundary.
+/// Emit this inside the generated `Bytes` module so it can project the opaque
+/// record without exposing that representation to providers.
+pub(super) fn emit_standard_bytes_codec() -> String {
+    r#"impl aver_rt::provider::ProviderCodec for Bytes {
+    fn into_provider_value(
+        self,
+        _registry: &aver_rt::provider::NativeProviderRegistry,
+        _capability: &str,
+    ) -> Result<aver_rt::provider::ProviderValue, String> {
+        let mut bytes = Vec::with_capacity(self.values.len());
+        for (index, value) in self.values.iter().enumerate() {
+            let Some(value) = value.to_i64() else {
+                return Err(format!("Bytes value at index {} is outside the host integer range", index));
+            };
+            let byte = u8::try_from(value)
+                .map_err(|_| format!("byte {} at index {} is outside 0..=255", value, index))?;
+            bytes.push(byte);
+        }
+        Ok(aver_rt::provider::ProviderValue::Bytes(bytes))
+    }
+
+    fn from_provider_value(
+        value: aver_rt::provider::ProviderValue,
+        _registry: &aver_rt::provider::NativeProviderRegistry,
+        _capability: &str,
+        _minted_resource: Option<&str>,
+    ) -> Result<Self, String> {
+        match value {
+            aver_rt::provider::ProviderValue::Bytes(bytes) => Ok(Self {
+                values: aver_rt::AverList::from_vec(
+                    bytes
+                        .into_iter()
+                        .map(|byte| aver_rt::AverInt::from(i64::from(byte)))
+                        .collect(),
+                ),
+            }),
+            other => Err(format!("expected Bytes, got {}", other.shape())),
+        }
+    }
+}"#
+        .to_string()
 }
 
 pub(super) fn emit_opaque_type(module: &str, name: &str, with_replay: bool) -> String {

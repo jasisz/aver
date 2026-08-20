@@ -38,6 +38,8 @@ The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host w
 | `Console.warn` | ✅ | ✅ | ✅ wasmtime / `console.warn` | ✅ `wasi:cli/stderr` (warn → stderr) | Oracle | Oracle |
 | `Console.readLine` | ✅ | ✅ | ✅ wasmtime / host stdin | ✅ `wasi:cli/stdin` + `blocking-read` line loop | Oracle | Oracle |
 | `Disk.readText` / `writeText` / `appendText` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/preopens` + `open-at` + via-stream | Oracle | Oracle |
+| `Disk.readBytes` / `readBytesAt` / `writeBytes` / `appendBytes` | ✅ exact octets | ✅ exact octets | ✅ wasmtime / host wires | ✅ raw WASI streams; positional reads are bounded and EOF-short | Oracle | Oracle |
+| `Disk.size` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ descriptor `stat-at` metadata | Oracle | Oracle |
 | `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/types` (stat-at / unlink-file-at / etc.) | Oracle | Oracle |
 | `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ `wasi:cli/environment.get-environment` + linear search | Oracle | Oracle |
 | `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | n/a — WASI 0.2 environment is read-only by design | Oracle | Oracle |

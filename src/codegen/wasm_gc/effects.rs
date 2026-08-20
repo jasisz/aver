@@ -142,6 +142,11 @@ pub(super) enum EffectName {
     DiskReadText,
     DiskWriteText,
     DiskAppendText,
+    DiskReadBytes,
+    DiskReadBytesAt,
+    DiskWriteBytes,
+    DiskAppendBytes,
+    DiskSize,
     DiskExists,
     DiskDelete,
     DiskDeleteDir,
@@ -229,6 +234,11 @@ impl EffectName {
         Self::DiskReadText,
         Self::DiskWriteText,
         Self::DiskAppendText,
+        Self::DiskReadBytes,
+        Self::DiskReadBytesAt,
+        Self::DiskWriteBytes,
+        Self::DiskAppendBytes,
+        Self::DiskSize,
         Self::DiskExists,
         Self::DiskDelete,
         Self::DiskDeleteDir,
@@ -305,6 +315,11 @@ impl EffectName {
             "Disk.readText" => Some(Self::DiskReadText),
             "Disk.writeText" => Some(Self::DiskWriteText),
             "Disk.appendText" => Some(Self::DiskAppendText),
+            "Disk.readBytes" => Some(Self::DiskReadBytes),
+            "Disk.readBytesAt" => Some(Self::DiskReadBytesAt),
+            "Disk.writeBytes" => Some(Self::DiskWriteBytes),
+            "Disk.appendBytes" => Some(Self::DiskAppendBytes),
+            "Disk.size" => Some(Self::DiskSize),
             "Disk.exists" => Some(Self::DiskExists),
             "Disk.delete" => Some(Self::DiskDelete),
             "Disk.deleteDir" => Some(Self::DiskDeleteDir),
@@ -378,6 +393,11 @@ impl EffectName {
             Self::DiskReadText => "Disk.readText",
             Self::DiskWriteText => "Disk.writeText",
             Self::DiskAppendText => "Disk.appendText",
+            Self::DiskReadBytes => "Disk.readBytes",
+            Self::DiskReadBytesAt => "Disk.readBytesAt",
+            Self::DiskWriteBytes => "Disk.writeBytes",
+            Self::DiskAppendBytes => "Disk.appendBytes",
+            Self::DiskSize => "Disk.size",
             Self::DiskExists => "Disk.exists",
             Self::DiskDelete => "Disk.delete",
             Self::DiskDeleteDir => "Disk.deleteDir",
@@ -453,6 +473,11 @@ impl EffectName {
             Self::DiskReadText => ("aver", "disk_read_text"),
             Self::DiskWriteText => ("aver", "disk_write_text"),
             Self::DiskAppendText => ("aver", "disk_append_text"),
+            Self::DiskReadBytes => ("aver", "disk_read_bytes"),
+            Self::DiskReadBytesAt => ("aver", "disk_read_bytes_at"),
+            Self::DiskWriteBytes => ("aver", "disk_write_bytes"),
+            Self::DiskAppendBytes => ("aver", "disk_append_bytes"),
+            Self::DiskSize => ("aver", "disk_size"),
             Self::DiskExists => ("aver", "disk_exists"),
             Self::DiskDelete => ("aver", "disk_delete"),
             Self::DiskDeleteDir => ("aver", "disk_delete_dir"),
@@ -546,12 +571,18 @@ impl EffectName {
             // soon as a setColor call site appears.
             Self::TerminalSetColor => Ok(vec![any_ref_ty()]),
             Self::DiskReadText
+            | Self::DiskReadBytes
+            | Self::DiskSize
             | Self::DiskExists
             | Self::DiskDelete
             | Self::DiskDeleteDir
             | Self::DiskListDir
             | Self::DiskMakeDir => Ok(vec![any_ref_ty()]),
-            Self::DiskWriteText | Self::DiskAppendText => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::DiskWriteText
+            | Self::DiskAppendText
+            | Self::DiskWriteBytes
+            | Self::DiskAppendBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::DiskReadBytesAt => Ok(vec![any_ref_ty(), any_ref_ty(), any_ref_ty()]),
             // Tcp.connect: (host, port). Returns Result<Tcp.Connection, String>.
             Self::TcpConnect => Ok(vec![any_ref_ty(), ValType::I64]),
             // Tcp.writeLine / readLine / close all take a Connection as
@@ -670,8 +701,13 @@ impl EffectName {
                 })])
             }
             Self::DiskReadText => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
+            Self::DiskReadBytes => Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?]),
+            Self::DiskReadBytesAt => Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?]),
+            Self::DiskSize => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::DiskWriteText
             | Self::DiskAppendText
+            | Self::DiskWriteBytes
+            | Self::DiskAppendBytes
             | Self::DiskDelete
             | Self::DiskDeleteDir
             | Self::DiskMakeDir => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
@@ -846,6 +882,11 @@ impl EffectName {
                 | EffectName::DiskReadText
                 | EffectName::DiskWriteText
                 | EffectName::DiskAppendText
+                | EffectName::DiskReadBytes
+                | EffectName::DiskReadBytesAt
+                | EffectName::DiskWriteBytes
+                | EffectName::DiskAppendBytes
+                | EffectName::DiskSize
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir

@@ -100,6 +100,11 @@ use super::maps::MapHelperRegistry;
 use super::types::{
     TypeRegistry, fn_uses_bits, param_types_with_repr, record_struct_type, return_results_with_repr,
 };
+use super::wasip2_disk_bytes::{
+    DiskReadBytesIndices, DiskSizeIndices, DiskWriteBytesIndices, emit_disk_read_bytes,
+    emit_disk_size, emit_disk_write_bytes,
+};
+use super::wasip2_disk_read_at::{DiskReadBytesAtIndices, emit_disk_read_bytes_at};
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
     DiskListDirIndices, DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices,
@@ -826,11 +831,13 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
-                    EffectName::DiskExists => {
+                    EffectName::DiskExists | EffectName::DiskSize => {
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesStatAt);
                     }
-                    EffectName::DiskReadText => {
+                    EffectName::DiskReadText
+                    | EffectName::DiskReadBytes
+                    | EffectName::DiskReadBytesAt => {
                         // Shares the preopens cache with Disk.exists.
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
@@ -840,7 +847,7 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor);
                         wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                     }
-                    EffectName::DiskWriteText => {
+                    EffectName::DiskWriteText | EffectName::DiskWriteBytes => {
                         // Shares preopens / open-at / blocking-write-and-flush
                         // / drop-descriptor with earlier phases; adds
                         // write-via-stream and the output-stream drop.
@@ -854,7 +861,7 @@ pub(super) fn emit_module_with(
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
-                    EffectName::DiskAppendText => {
+                    EffectName::DiskAppendText | EffectName::DiskAppendBytes => {
                         // Same shape as writeText, but uses
                         // append-via-stream + open-flags=CREATE only.
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
@@ -1607,6 +1614,46 @@ pub(super) fn emit_module_with(
         None
     };
 
+    let disk_size: Option<DiskSizeIndices> = if effect_registry
+        .iter()
+        .any(|effect| effect == EffectName::DiskSize)
+        && cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesStatAt)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(aint_idx) = registry.aint_struct_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<Int,String>")
+    {
+        let string_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let result_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        types.ty().function([string_ref], [result_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskSizeIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            aint_struct_type_idx: aint_idx,
+            result_int_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     // Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
     // ref null $result_string_string`. Lazy-fetches the preopen,
     // calls `open-at` to obtain a per-call file descriptor,
@@ -1794,6 +1841,168 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
+
+    // Whole-file binary Disk operations reuse the filesystem helpers above as
+    // raw-octet engines and adapt only the guest carrier. The positional read
+    // allocated below has its own bounded stream loop so it can pass an offset
+    // to WASI and stop at the requested upper bound.
+    let disk_read_bytes: Option<DiskReadBytesIndices> = if effect_registry
+        .iter()
+        .any(|effect| effect == EffectName::DiskReadBytes)
+        && disk_read_text.is_some()
+        && registry.aint_struct_idx.is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_string_idx) = registry.result_type_idx("Result<String,String>")
+        && let Some(result_bytes_idx) = registry.result_type_idx("Result<Bytes,String>")
+        && let Some(list_int_idx) = registry.list_type_idx("List<Int>")
+    {
+        let string_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let result_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_bytes_idx),
+        });
+        types.ty().function([string_ref], [result_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskReadBytesIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_string_string_type_idx: result_string_idx,
+            list_int_type_idx: list_int_idx,
+        })
+    } else {
+        None
+    };
+
+    let disk_read_bytes_at: Option<DiskReadBytesAtIndices> = if effect_registry
+        .iter()
+        .any(|effect| effect == EffectName::DiskReadBytesAt)
+        && cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadViaStream,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(aint_idx) = registry.aint_struct_idx
+        && let Some(list_int_idx) = registry.list_type_idx("List<Int>")
+        && let Some(result_idx) = registry.result_type_idx("Result<Bytes,String>")
+    {
+        let string_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let int_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(aint_idx),
+        });
+        let result_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        types
+            .ty()
+            .function([string_ref, int_ref, int_ref], [result_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskReadBytesAtIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            aint_struct_type_idx: aint_idx,
+            list_int_type_idx: list_int_idx,
+        })
+    } else {
+        None
+    };
+
+    let allocate_disk_write_bytes = |types: &mut wasm_encoder::TypeSection,
+                                     next_type_idx: &mut u32,
+                                     next_builtin_fn_idx: &mut u32,
+                                     effect: EffectName,
+                                     text_helper_present: bool|
+     -> Option<DiskWriteBytesIndices> {
+        if !effect_registry.iter().any(|used| used == effect) || !text_helper_present {
+            return None;
+        }
+        let string_idx = registry.string_array_type_idx?;
+        let bytes_idx = registry
+            .packed_sequence("Bytes")
+            .map(|packed| packed.type_idx)
+            .or_else(|| registry.record_type_idx("Bytes"))?;
+        let list_int_idx = registry.list_type_idx("List<Int>")?;
+        let aint_idx = registry.aint_struct_idx?;
+        let result_idx = registry.result_type_idx("Result<Unit,String>")?;
+        let string_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let bytes_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(bytes_idx),
+        });
+        let result_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        types.ty().function([string_ref, bytes_ref], [result_ref]);
+        let fn_type = *next_type_idx;
+        *next_type_idx += 1;
+        let fn_idx = *next_builtin_fn_idx;
+        *next_builtin_fn_idx += 1;
+        Some(DiskWriteBytesIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            bytes_type_idx: bytes_idx,
+            list_int_type_idx: list_int_idx,
+            aint_struct_type_idx: aint_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    };
+    let disk_write_bytes = allocate_disk_write_bytes(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        EffectName::DiskWriteBytes,
+        disk_write_text.is_some(),
+    );
+    let disk_append_bytes = allocate_disk_write_bytes(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        EffectName::DiskAppendBytes,
+        disk_append_text.is_some(),
+    );
 
     // Phase 1.5.4 — `Disk.delete`, `Disk.deleteDir`, `Disk.makeDir`
     // share a generic helper: lazy-init preopen, marshal path,
@@ -2289,6 +2498,9 @@ pub(super) fn emit_module_with(
     if let Some(d) = &disk_exists {
         funcs.function(d.fn_type);
     }
+    if let Some(d) = &disk_size {
+        funcs.function(d.fn_type);
+    }
     if let Some(d) = &disk_read_text {
         funcs.function(d.fn_type);
     }
@@ -2296,6 +2508,18 @@ pub(super) fn emit_module_with(
         funcs.function(d.fn_type);
     }
     if let Some(d) = &disk_append_text {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_read_bytes {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_read_bytes_at {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_write_bytes {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_append_bytes {
         funcs.function(d.fn_type);
     }
     if let Some(d) = &disk_delete {
@@ -2633,9 +2857,14 @@ pub(super) fn emit_module_with(
                 console_read_line_fn_idx: console_read_line.as_ref().map(|c| c.fn_idx),
                 time_sleep_fn_idx: time_sleep.as_ref().map(|t| t.fn_idx),
                 disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
+                disk_size_fn_idx: disk_size.as_ref().map(|d| d.fn_idx),
                 disk_read_text_fn_idx: disk_read_text.as_ref().map(|d| d.fn_idx),
                 disk_write_text_fn_idx: disk_write_text.as_ref().map(|d| d.fn_idx),
                 disk_append_text_fn_idx: disk_append_text.as_ref().map(|d| d.fn_idx),
+                disk_read_bytes_fn_idx: disk_read_bytes.as_ref().map(|d| d.fn_idx),
+                disk_read_bytes_at_fn_idx: disk_read_bytes_at.as_ref().map(|d| d.fn_idx),
+                disk_write_bytes_fn_idx: disk_write_bytes.as_ref().map(|d| d.fn_idx),
+                disk_append_bytes_fn_idx: disk_append_bytes.as_ref().map(|d| d.fn_idx),
                 disk_delete_fn_idx: disk_delete.as_ref().map(|d| d.fn_idx),
                 disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
@@ -3697,6 +3926,40 @@ pub(super) fn emit_module_with(
             stat_at,
         ));
     }
+    if let Some(indices) = &disk_size {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|globals| globals.disk_preopen_handle)
+            .expect("disk_size emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_size emit requires cabi_realloc")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_size emit requires string bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_size emit requires get-directories");
+        let stat_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesStatAt)
+            .expect("disk_size emit requires stat-at");
+        let aint_from_i64 = registry
+            .aint_from_i64_fn_idx
+            .expect("disk_size emit requires __aint_from_i64");
+        codes.function(&emit_disk_size(
+            indices,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            stat_at,
+            aint_from_i64,
+        ));
+    }
     if let Some(rt) = &disk_read_text {
         let preopen_global = wasip2_globals
             .as_ref()
@@ -3860,6 +4123,124 @@ pub(super) fn emit_module_with(
             drop_descriptor,
             drop_output_stream,
             true, // is_append: CREATE only + append-via-stream (no offset arg)
+        ));
+    }
+    if let Some(rb) = &disk_read_bytes {
+        let read_text_fn = disk_read_text
+            .as_ref()
+            .expect("disk_read_bytes allocation requires disk_read_text")
+            .fn_idx;
+        let result_ok_fn = factory_exports
+            .result_bytes_string_ok
+            .expect("disk_read_bytes requires Result<Bytes,String> Ok factory")
+            .fn_idx;
+        let result_err_fn = factory_exports
+            .result_bytes_string_err
+            .expect("disk_read_bytes requires Result<Bytes,String> Err factory")
+            .fn_idx;
+        let aint_from_i64_fn = registry
+            .aint_from_i64_fn_idx
+            .expect("disk_read_bytes requires __aint_from_i64");
+        codes.function(&emit_disk_read_bytes(
+            rb,
+            read_text_fn,
+            result_ok_fn,
+            result_err_fn,
+            aint_from_i64_fn,
+        ));
+    }
+    if let Some(read_at) = &disk_read_bytes_at {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|globals| globals.disk_preopen_handle)
+            .expect("disk_read_bytes_at requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_read_bytes_at requires cabi_realloc")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_read_bytes_at requires string bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_read_bytes_at requires get-directories");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_read_bytes_at requires open-at");
+        let read_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadViaStream,
+            )
+            .expect("disk_read_bytes_at requires read-via-stream");
+        let blocking_read = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("disk_read_bytes_at requires blocking-read");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_read_bytes_at requires drop-descriptor");
+        let drop_input_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("disk_read_bytes_at requires drop-input-stream");
+        let result_ok = factory_exports
+            .result_bytes_string_ok
+            .expect("disk_read_bytes_at requires Result<Bytes,String> Ok factory")
+            .fn_idx;
+        let result_err = factory_exports
+            .result_bytes_string_err
+            .expect("disk_read_bytes_at requires Result<Bytes,String> Err factory")
+            .fn_idx;
+        let aint_from_i64 = registry
+            .aint_from_i64_fn_idx
+            .expect("disk_read_bytes_at requires __aint_from_i64");
+        codes.function(&emit_disk_read_bytes_at(
+            read_at,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            read_via_stream,
+            blocking_read,
+            drop_descriptor,
+            drop_input_stream,
+            result_ok,
+            result_err,
+            aint_from_i64,
+        ));
+    }
+    if let Some(wb) = &disk_write_bytes {
+        let write_text_fn = disk_write_text
+            .as_ref()
+            .expect("disk_write_bytes allocation requires disk_write_text")
+            .fn_idx;
+        codes.function(&emit_disk_write_bytes(
+            wb,
+            write_text_fn,
+            packed_sequence_helpers
+                .ops_for("Bytes")
+                .map(|ops| ops.unpack),
+            "Disk.writeBytes",
+        ));
+    }
+    if let Some(ab) = &disk_append_bytes {
+        let append_text_fn = disk_append_text
+            .as_ref()
+            .expect("disk_append_bytes allocation requires disk_append_text")
+            .fn_idx;
+        codes.function(&emit_disk_write_bytes(
+            ab,
+            append_text_fn,
+            packed_sequence_helpers
+                .ops_for("Bytes")
+                .map(|ops| ops.unpack),
+            "Disk.appendBytes",
         ));
     }
     // Three single-call ops share `emit_disk_simple_path_op` —
@@ -6800,6 +7181,9 @@ struct FactoryExports {
     /// `Result<String, String>`, e.g. `Disk.readText`) is registered.
     result_string_string_ok: Option<FactorySlot>,
     result_string_string_err: Option<FactorySlot>,
+    /// `Disk.size` host/replay builders for `Result<Int, String>`.
+    result_int_string_ok: Option<FactorySlot>,
+    result_int_string_err: Option<FactorySlot>,
     /// `__rt_result_unit_string_ok()` / `_err(s)` — emitted when any
     /// effect with a `Result<Unit, String>` return shape is registered
     /// (e.g. `Disk.writeText`, `Disk.delete`, `Tcp.close`).
@@ -6935,6 +7319,7 @@ fn allocate_factory_exports(
             e,
             EffectName::ConsoleReadLine
                 | EffectName::DiskReadText
+                | EffectName::DiskReadBytes
                 | EffectName::TcpReadLine
                 | EffectName::TcpSend
         )
@@ -6971,6 +7356,38 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
+    if effect_registry.iter().any(|e| e == EffectName::DiskSize) {
+        let result_idx =
+            registry
+                .result_type_idx("Result<Int,String>")
+                .ok_or(WasmGcError::Validation(
+                    "Disk.size factory requires Result<Int,String> slot".into(),
+                ))?;
+        let int_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+            "Disk.size factory requires AverInt slot".into(),
+        ))?;
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Disk.size factory requires String slot".into(),
+            ))?;
+        let result_ref = ref_null(result_idx);
+        types.ty().function([ref_null(int_idx)], [result_ref]);
+        fx.result_int_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+        types.ty().function([ref_null(string_idx)], [result_ref]);
+        fx.result_int_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
     // Result<Unit, String> factories — Disk.{writeText, appendText,
     // delete, deleteDir, makeDir} all yield this shape; same for the
     // shape-equivalent Tcp.{writeLine, writeBytes, close, ping} effects.
@@ -6982,6 +7399,8 @@ fn allocate_factory_exports(
             e,
             EffectName::DiskWriteText
                 | EffectName::DiskAppendText
+                | EffectName::DiskWriteBytes
+                | EffectName::DiskAppendBytes
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir
@@ -7250,11 +7669,16 @@ fn allocate_factory_exports(
     }
 
     // Result<Bytes, String> + Bytes' private List<Int> carrier builders —
-    // shared by the byte-clean TCP effects.
-    if effect_registry
-        .iter()
-        .any(|e| matches!(e, EffectName::TcpSendBytes | EffectName::TcpReadBytes))
-    {
+    // shared by the byte-clean TCP and Disk effects.
+    if effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::TcpSendBytes
+                | EffectName::TcpReadBytes
+                | EffectName::DiskReadBytes
+                | EffectName::DiskReadBytesAt
+        )
+    }) {
         let res_idx =
             registry
                 .result_type_idx("Result<Bytes,String>")
@@ -7351,6 +7775,12 @@ impl FactoryExports {
         }
         if let Some(s) = self.result_string_string_err {
             exports.export("__rt_result_string_string_err", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_int_string_ok {
+            exports.export("__rt_result_int_string_ok", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_int_string_err {
+            exports.export("__rt_result_int_string_err", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.result_unit_string_ok {
             exports.export("__rt_result_unit_string_ok", ExportKind::Func, s.fn_idx);
@@ -7460,6 +7890,12 @@ impl FactoryExports {
         if self.result_string_string_err.is_some() {
             codes.function(&emit_factory_result_string_string_err(registry)?);
         }
+        if self.result_int_string_ok.is_some() {
+            codes.function(&emit_factory_result_int_string_ok(registry)?);
+        }
+        if self.result_int_string_err.is_some() {
+            codes.function(&emit_factory_result_int_string_err(registry)?);
+        }
         if self.result_unit_string_ok.is_some() {
             codes.function(&emit_factory_result_unit_string_ok(registry)?);
         }
@@ -7527,6 +7963,8 @@ impl FactoryExports {
             self.terminal_size_make,
             self.result_string_string_ok,
             self.result_string_string_err,
+            self.result_int_string_ok,
+            self.result_int_string_err,
             self.result_unit_string_ok,
             self.result_unit_string_err,
             self.result_list_string_string_ok,
@@ -7653,6 +8091,44 @@ fn emit_factory_result_string_string_err(
     )));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_int_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx("Result<Int,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        string_idx,
+    )));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_int_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx("Result<Int,String>")
+        .expect("checked at allocation");
+    let int_idx = registry.aint_struct_idx.expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        int_idx,
+    )));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(result_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }

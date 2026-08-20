@@ -72,6 +72,8 @@ pub(crate) use types::{OPTION_SOME_TAG, RESULT_OK_TAG};
 mod types_discovery;
 mod view;
 mod wasip2_capability_imports;
+mod wasip2_disk_bytes;
+mod wasip2_disk_read_at;
 mod wasip2_helpers;
 mod wasip2_http;
 mod wasip2_http_server;

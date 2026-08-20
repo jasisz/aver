@@ -71,6 +71,9 @@ pub enum ProviderValue {
     Int(AverInt),
     Float(f64),
     String(String),
+    /// Canonical octets carried by Aver's nominal `Bytes` refinement.
+    /// The source record layout never crosses the provider boundary.
+    Bytes(Vec<u8>),
     Bool(bool),
     Unit,
     Tuple(Vec<ProviderValue>),
@@ -101,6 +104,7 @@ impl ProviderValue {
             Self::Int(_) => "Int".to_string(),
             Self::Float(_) => "Float".to_string(),
             Self::String(_) => "String".to_string(),
+            Self::Bytes(_) => "Bytes".to_string(),
             Self::Bool(_) => "Bool".to_string(),
             Self::Unit => "Unit".to_string(),
             Self::Tuple(values) => format!("Tuple({})", values.len()),

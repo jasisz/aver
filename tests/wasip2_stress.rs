@@ -27,6 +27,9 @@
 //! 6. `time_sleep_at_least_requested` — 10×50 ms sleep loop
 //!    completes in >= 500 ms (pollable model is real, not
 //!    busy-waiting / no-op).
+//! 7. `binary_disk_short_read_and_size` — byte-exact whole/positional
+//!    reads, write/append, EOF shortening, metadata size, and a large
+//!    requested upper bound that must not be preallocated eagerly.
 //!
 //! All fixtures run in a per-test tempdir which we preopen as the
 //! component's working directory (the embedded runner in
@@ -170,6 +173,52 @@ fn main() -> Unit
     assert!(
         s.contains("write_len=50000 read_len=50000"),
         "expected matched write_len / read_len, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn binary_disk_short_read_and_size() {
+    let dir = tempdir("disk-bytes");
+    std::fs::write(dir.join("source.bin"), [0, 127, 128, 255, 1, 2])
+        .expect("write binary source fixture");
+    std::fs::write(
+        dir.join("large.bin"),
+        (0..50_000)
+            .map(|index| (index % 256) as u8)
+            .collect::<Vec<_>>(),
+    )
+    .expect("write large binary source fixture");
+    let src = r#"module Probe
+    intent = "Exercise byte-exact Disk operations through direct WASI bindings."
+    depends [Bytes]
+    exposes [main]
+    effects [Console.print, Disk.readBytes, Disk.readBytesAt, Disk.writeBytes, Disk.appendBytes, Disk.size]
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.readBytes, Disk.readBytesAt, Disk.writeBytes, Disk.appendBytes, Disk.size]
+    all = Disk.readBytes("source.bin")?
+    part = Disk.readBytesAt("source.bin", 2, 99)?
+    past = Disk.readBytesAt("source.bin", 99, 4)?
+    Disk.writeBytes("copy.bin", all)?
+    Disk.appendBytes("copy.bin", part)?
+    length = Disk.size("source.bin")?
+    large = Disk.readBytesAt("large.bin", 100, 5000000000)?
+    largeLength = List.len(Bytes.toList(large))
+    Console.print("{Bytes.toHex(all)}:{Bytes.toHex(part)}:{Bytes.toHex(past)}:{length}:{largeLength}")
+    Result.Ok(Unit)
+"#;
+    let fixture = write_fixture(&dir, "disk_bytes.av", src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "disk_bytes.av");
+    let s = stdout(&out);
+    assert!(
+        s.contains("007f80ff0102:80ff0102::6:49900"),
+        "expected byte-exact whole/short reads and metadata size, got:\n{s}"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("copy.bin")).expect("read binary copy"),
+        [0, 127, 128, 255, 1, 2, 128, 255, 1, 2]
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

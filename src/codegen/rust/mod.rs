@@ -799,6 +799,9 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             module.prefix,
             crate::codegen::common::type_def_name(td)
         );
+        if canonical == "Bytes.Bytes" && provider::uses_standard_bytes(&ctx.capabilities) {
+            sections.push(provider::emit_standard_bytes_codec());
+        }
         if ctx.capabilities.boundary_type(&canonical).is_some() {
             sections.push(provider::emit_represented_type_codec(&module.prefix, td));
         }

@@ -1887,6 +1887,50 @@ fn main() -> Unit
 }
 
 #[test]
+fn rust_disk_bytes_build_and_preserve_non_utf8_octets() {
+    let data_root = temp_dir("disk_bytes_data");
+    let data_file = data_root.join("payload.bin");
+    let path = aver_path_literal(&data_file);
+    let src = format!(
+        r#"module DiskBytes
+    intent = "Generated Rust must carry nominal Bytes through the Disk provider"
+    depends [Bytes]
+    effects [Console.print, Disk.writeBytes, Disk.appendBytes, Disk.readBytesAt, Disk.readBytes, Disk.size]
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.writeBytes, Disk.appendBytes, Disk.readBytesAt, Disk.readBytes, Disk.size]
+    written = Disk.writeBytes("{path}", Bytes.fromList([0, 127, 128, 255]))?
+    appended = Disk.appendBytes("{path}", Bytes.fromList([1, 2]))?
+    slice = Disk.readBytesAt("{path}", 2, 99)?
+    past = Disk.readBytesAt("{path}", 99, 4)?
+    content = Disk.readBytes("{path}")?
+    size = Disk.size("{path}")?
+    shown = Console.print("{{Bytes.toHex(content)}}:{{Bytes.toHex(slice)}}:{{Bytes.toHex(past)}}:{{size}}")
+    Result.Ok(Unit)
+"#
+    );
+
+    let result = (|| -> Result<(), String> {
+        let vm = run_vm_inline("disk_bytes", &src)?;
+        let rust = build_run_rust_inline("disk_bytes", &src)?;
+        if vm != "007f80ff0102:80ff0102::6" {
+            return Err(format!("VM Disk byte result changed: {vm}"));
+        }
+        if rust != vm {
+            return Err(format!("Rust Disk byte result diverged: {rust}"));
+        }
+        let bytes = fs::read(&data_file).map_err(|error| format!("read payload: {error}"))?;
+        if bytes != [0, 127, 128, 255, 1, 2] {
+            return Err(format!("Disk payload changed: {bytes:?}"));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&data_root);
+    result.expect("VM/Rust Disk byte parity");
+}
+
+#[test]
 fn rust_tcp_write_bytes_builds_with_nominal_bytes() {
     let src = r#"module TcpWriteBytesBuild
     intent = "Rust codegen must render Tcp.writeBytes with nominal Bytes"

@@ -45,8 +45,8 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// repeated in a Rust table.
 pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Time"];
 
-/// Builtins whose signatures cross nominal record types owned by embedded
-/// standard modules, paired with the modules those types live in.
+/// Host-backed calls whose signatures cross nominal record types owned by
+/// embedded standard modules, paired with the modules those types live in.
 ///
 /// Two consumers keep the builtin ↔ standard-module mapping in one place:
 /// - `TypeChecker::canonicalize_source_typed_builtin_sigs` re-stamps these
@@ -59,6 +59,10 @@ pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] = &[
     ("Tcp.sendBytes", &["Bytes"]),
     ("Tcp.readBytes", &["Bytes"]),
     ("Tcp.writeBytes", &["Bytes"]),
+    ("Disk.readBytes", &["Bytes"]),
+    ("Disk.readBytesAt", &["Bytes"]),
+    ("Disk.writeBytes", &["Bytes"]),
+    ("Disk.appendBytes", &["Bytes"]),
 ];
 
 /// Standard modules `items` implicitly depends on because a function body,
@@ -179,17 +183,41 @@ pub(crate) fn append_required_standard_capability_modules(
             }
         }
     }
-    for name in required {
-        if modules.iter().any(|loaded| loaded.dep_name == name) {
-            continue;
+    let mut pending = required.into_iter().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < pending.len() {
+        let name = pending[index].clone();
+        index += 1;
+        if !modules.iter().any(|loaded| loaded.dep_name == name) {
+            let module = find(&name).expect("required standard capability must be embedded");
+            modules.push(crate::source::LoadedModule {
+                dep_name: name.clone(),
+                items: crate::source::parse_source(module.source)
+                    .expect("embedded standard capability must parse"),
+                path: std::path::PathBuf::from(module.virtual_path),
+            });
         }
-        let module = find(&name).expect("required standard capability must be embedded");
-        modules.push(crate::source::LoadedModule {
-            dep_name: name,
-            items: crate::source::parse_source(module.source)
-                .expect("embedded standard capability must parse"),
-            path: std::path::PathBuf::from(module.virtual_path),
+
+        // Embedded capability contracts may themselves use a source-defined
+        // standard boundary type. Pull that ordinary module into the same
+        // closure even in callers (playground/tests) that supplied no module
+        // root for `load_module_tree` to recurse through.
+        let loaded = modules
+            .iter()
+            .find(|loaded| loaded.dep_name == name)
+            .expect("just loaded or already present");
+        let dependencies = loaded.items.iter().find_map(|item| match item {
+            crate::ast::TopLevel::Module(module) => Some(module.depends.as_slice()),
+            _ => None,
         });
+        for dependency in dependencies.into_iter().flatten() {
+            if find(dependency).is_some()
+                && !modules.iter().any(|loaded| loaded.dep_name == *dependency)
+                && !pending.iter().any(|queued| queued == dependency)
+            {
+                pending.push(dependency.clone());
+            }
+        }
     }
 }
 
@@ -323,6 +351,14 @@ mod tests {
     }
 
     #[test]
+    fn disk_read_bytes_implies_the_contract_and_bytes_without_depends() {
+        let items = parse(
+            "module Reader\n    intent = \"read a binary file\"\n    depends []\n    effects [Disk.readBytes]\n\nfn read(path: String) -> Result<Bytes, String>\n    ? \"Read exact octets.\"\n    ! [Disk.readBytes]\n    Disk.readBytes(path)\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Bytes", "Disk"]);
+    }
+
+    #[test]
     fn standard_capability_calls_implicitly_load_reserved_contracts() {
         let items = parse(
             "module ClockUser\n    effects [Time.now]\n\nfn stamp() -> String\n    ! [Time.now]\n    Time.now()\n",
@@ -411,19 +447,23 @@ mod tests {
         let contract = registry.contract("Disk").expect("Disk contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:d134b487a92f2094eb6ad478bff0984c5a481577df07a7f993652e9bc1f9d537"
+            "sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:06f28c8acc428e9c55ecba571f96e1d23e2300a8ac307b8b6d6d0771fd18e604"
+            "sha256:cf55979e264c3a26a246bb77663422011efb71e6ce2ba973ad4b267195f25570"
         );
-        // The nineteen contract profiles carry the exact diagnostic labels
-        // the handwritten Rust table used before the flip, so hostile-run
-        // outputs do not move for existing programs.
+        // Existing text-operation labels remain stable while the binary and
+        // metadata profiles make short reads and zero-length files explicit.
         for (method, labels) in [
             ("Disk.readText", vec!["normal", "always_err", "empty_ok"]),
             ("Disk.writeText", vec!["normal_ok", "always_err"]),
             ("Disk.appendText", vec!["normal_ok", "always_err"]),
+            ("Disk.readBytes", vec!["normal", "always_err", "empty_ok"]),
+            ("Disk.readBytesAt", vec!["normal", "always_err", "short_ok"]),
+            ("Disk.writeBytes", vec!["normal_ok", "always_err"]),
+            ("Disk.appendBytes", vec!["normal_ok", "always_err"]),
+            ("Disk.size", vec!["normal", "zero", "always_err"]),
             ("Disk.exists", vec!["normal", "never", "always"]),
             ("Disk.delete", vec!["normal_ok", "always_err"]),
             ("Disk.deleteDir", vec!["normal_ok", "always_err"]),

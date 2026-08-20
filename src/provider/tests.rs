@@ -885,13 +885,18 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
         (
             "Disk",
             &[
+                "Disk.appendBytes",
                 "Disk.appendText",
                 "Disk.delete",
                 "Disk.deleteDir",
                 "Disk.exists",
                 "Disk.listDir",
                 "Disk.makeDir",
+                "Disk.readBytes",
+                "Disk.readBytesAt",
                 "Disk.readText",
+                "Disk.size",
+                "Disk.writeBytes",
                 "Disk.writeText",
             ][..],
             "Disk.readText",

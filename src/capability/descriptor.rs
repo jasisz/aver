@@ -75,6 +75,12 @@ pub(super) fn render_contract_descriptor(
         .cloned()
         .collect();
 
+    let uses_standard_bytes =
+        reachable_names.contains("Bytes") || reachable_names.contains("Bytes.Bytes");
+    if uses_standard_bytes && !local_names.contains("Bytes") {
+        descriptor.field("type", "Aver::Bytes = octets");
+    }
+
     let mut reachable_opaque = opaque
         .iter()
         .filter(|name| reachable_names.contains(name.as_str()))
@@ -186,6 +192,8 @@ fn canonical_type(scope: &str, ty: &Type, local_names: &BTreeSet<String>) -> Str
             let local = name.rsplit('.').next().unwrap_or(name);
             if local_names.contains(local) {
                 format!("{}::{local}", descriptor_path(scope))
+            } else if matches!(name.as_str(), "Bytes" | "Bytes.Bytes") {
+                "Aver::Bytes".to_string()
             } else {
                 descriptor_path(name)
             }

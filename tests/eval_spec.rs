@@ -1729,6 +1729,58 @@ mod disk_tests {
     }
 
     #[test]
+    fn disk_byte_operations_preserve_non_utf8_octets_exactly() {
+        let path = tmp_path("bytes.bin");
+        let path_str = path.to_string_lossy().replace('\\', "\\\\");
+
+        let write = format!(
+            "record Bytes\n    values: List<Int>\n\nfn run() -> Result<Unit, String>\n    ! [Disk.writeBytes]\n    Disk.writeBytes(\"{}\", Bytes(values = [0, 127, 128, 255]))\n",
+            path_str
+        );
+        assert_eq!(run_disk_fn(&write, "run"), Value::Ok(Box::new(Value::Unit)));
+        assert_eq!(std::fs::read(&path).unwrap(), vec![0, 127, 128, 255]);
+
+        let append = format!(
+            "record Bytes\n    values: List<Int>\n\nfn run() -> Result<Unit, String>\n    ! [Disk.appendBytes]\n    Disk.appendBytes(\"{}\", Bytes(values = [1, 2]))\n",
+            path_str
+        );
+        assert_eq!(
+            run_disk_fn(&append, "run"),
+            Value::Ok(Box::new(Value::Unit))
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), vec![0, 127, 128, 255, 1, 2]);
+
+        let read = format!(
+            "record Bytes\n    values: List<Int>\n\nfn run() -> Result<Bytes, String>\n    ! [Disk.readBytes]\n    Disk.readBytes(\"{}\")\n",
+            path_str
+        );
+        let Value::Ok(payload) = run_disk_fn(&read, "run") else {
+            panic!("expected successful byte read");
+        };
+        let Value::Record { fields, .. } = *payload else {
+            panic!("expected Bytes record");
+        };
+        let values = fields
+            .iter()
+            .find_map(|(name, value)| (name == "values").then_some(value))
+            .and_then(list_to_vec)
+            .expect("Bytes.values list");
+        assert_eq!(
+            values,
+            vec![
+                Value::int(0),
+                Value::int(127),
+                Value::int(128),
+                Value::int(255),
+                Value::int(1),
+                Value::int(2),
+            ]
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn disk_exists_true_and_false() {
         let path = tmp_path("exists.txt");
         let path_str = path.to_string_lossy().replace('\\', "\\\\");
@@ -2140,6 +2192,30 @@ paths = ["./data/**"]
         let msg = err.to_string();
         assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
         assert!(msg.contains("Disk.writeText"), "got: {}", msg);
+    }
+
+    #[test]
+    fn runtime_policy_blocks_disk_byte_path_through_the_capability_door() {
+        let src = "record Bytes\n    values: List<Int>\n\nfn run() -> Result<Unit, String>\n    ! [Disk.writeBytes]\n    Disk.writeBytes(\"/definitely/outside/allow.bin\", Bytes(values = [0, 255]))\n";
+        let items = parse(src);
+        let mut machine = vm_compile(&items);
+        machine.set_runtime_policy(
+            ProjectConfig::parse(
+                r#"
+[effects.Disk]
+paths = ["./data/**"]
+"#,
+            )
+            .expect("parse policy"),
+        );
+        machine.run_top_level().expect("top-level failed");
+
+        let err = machine
+            .run_named_function("run", &[])
+            .expect_err("expected policy denial");
+        let msg = err.to_string();
+        assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
+        assert!(msg.contains("Disk.writeBytes"), "got: {}", msg);
     }
 }
 

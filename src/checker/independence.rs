@@ -347,6 +347,8 @@ fn is_disk_mutating(effect: &str) -> bool {
     [
         "Disk.writeText",
         "Disk.appendText",
+        "Disk.writeBytes",
+        "Disk.appendBytes",
         "Disk.delete",
         "Disk.deleteDir",
         "Disk.makeDir",
@@ -449,6 +451,15 @@ fn demo() -> Tuple<Bool, Option<String>>
             warnings.is_empty(),
             "did not expect independence warning, got {warnings:?}"
         );
+    }
+
+    #[test]
+    fn binary_writes_are_disk_mutations_but_binary_reads_and_size_are_not() {
+        assert!(is_disk_mutating("Disk.writeBytes"));
+        assert!(is_disk_mutating("Disk.appendBytes"));
+        assert!(!is_disk_mutating("Disk.readBytes"));
+        assert!(!is_disk_mutating("Disk.readBytesAt"));
+        assert!(!is_disk_mutating("Disk.size"));
     }
 
     #[test]
