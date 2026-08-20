@@ -34,6 +34,13 @@ rand = { version = "0.9", optional = true }
 sha2 = "0.10"
 ureq = { version = "2", optional = true }
 
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "list_concat"
+harness = false
+
 # On wasm32-unknown-unknown:
 # - `rand` pulls in `getrandom`, which needs the `js` feature to use
 #   the browser's crypto API. Configuring getrandom here (not behind

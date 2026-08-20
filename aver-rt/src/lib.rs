@@ -467,14 +467,65 @@ const LIST_APPEND_CHUNK_LIMIT: usize = 128;
 
 pub struct AverList<T> {
     inner: Rc<AverListInner<T>>,
-    /// How many elements at the front of a flat body this list starts past.
+    /// How many elements at the front of a shared flat or segmented body this
+    /// list starts past.
     ///
     /// It lives on the list rather than in the shared node so that the rest of
     /// a flat list is the very same node read from one element further in —
-    /// stepping is a reference count and an offset, with nothing built. Only a
-    /// flat body carries a non-zero offset; the other shapes step the way they
-    /// always have, by rebuilding the node the step lands on.
+    /// stepping is a reference count and an offset, with nothing built. Flat
+    /// and indexed bodies carry an offset. The other shapes are whole nodes.
     start: usize,
+    /// Segment containing `start`, when `inner` is `Indexed`.
+    ///
+    /// Keeping the cursor on the cheap list wrapper makes the next `uncons`
+    /// O(1): a tail shares the segment table and advances these two integers.
+    segment_index: usize,
+}
+
+struct TraversalSegment<T> {
+    source: TraversalSource<T>,
+    /// Number of visible elements in this constant-time segment.
+    len: usize,
+    /// Exclusive cumulative element offset in the segment table.
+    end: usize,
+}
+
+enum TraversalSource<T> {
+    Flat { items: Rc<Vec<T>>, start: usize },
+    PrependHead { node: Rc<AverListInner<T>> },
+}
+
+impl<T> Clone for TraversalSegment<T> {
+    fn clone(&self) -> Self {
+        Self {
+            source: match &self.source {
+                TraversalSource::Flat { items, start } => TraversalSource::Flat {
+                    items: Rc::clone(items),
+                    start: *start,
+                },
+                TraversalSource::PrependHead { node } => TraversalSource::PrependHead {
+                    node: Rc::clone(node),
+                },
+            },
+            len: self.len,
+            end: self.end,
+        }
+    }
+}
+
+impl<T> TraversalSegment<T> {
+    fn get(&self, index: usize) -> Option<&T> {
+        if index >= self.len {
+            return None;
+        }
+        match &self.source {
+            TraversalSource::Flat { items, start } => items.get(start + index),
+            TraversalSource::PrependHead { node } => match node.as_ref() {
+                AverListInner::Prepend { head, .. } if index == 0 => Some(head),
+                _ => None,
+            },
+        }
+    }
 }
 
 enum AverListInner<T> {
@@ -497,6 +548,10 @@ enum AverListInner<T> {
         start: usize,
         len: usize,
     },
+    Indexed {
+        parts: Rc<Vec<TraversalSegment<T>>>,
+        len: usize,
+    },
 }
 
 fn empty_list_inner<T>() -> Rc<AverListInner<T>> {
@@ -509,6 +564,7 @@ fn empty_list<T>(inner: &Rc<AverListInner<T>>) -> AverList<T> {
     AverList {
         inner: Rc::clone(inner),
         start: 0,
+        segment_index: 0,
     }
 }
 
@@ -543,6 +599,16 @@ fn detach_unique_children<T>(
                 }
             }
         }
+        AverListInner::Indexed { parts, .. } => {
+            let parts_rc = std::mem::replace(parts, Rc::new(Vec::new()));
+            if let Ok(parts_vec) = Rc::try_unwrap(parts_rc) {
+                for part in parts_vec {
+                    if let TraversalSource::PrependHead { node } = part.source {
+                        pending.push(node);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -571,7 +637,9 @@ impl<T> Drop for AverListInner<T> {
 enum ListCursor<'a, T> {
     Node(&'a AverList<T>),
     Slice(&'a [T], usize),
-    SegmentSlice(&'a [AverList<T>], usize),
+    ListSlice(&'a [AverList<T>], usize),
+    TraversalSlice(&'a [TraversalSegment<T>], usize),
+    TraversalSegment(&'a TraversalSegment<T>, usize),
 }
 
 pub struct AverListIter<'a, T> {
@@ -584,6 +652,7 @@ impl<T> Clone for AverList<T> {
         Self {
             inner: Rc::clone(&self.inner),
             start: self.start,
+            segment_index: self.segment_index,
         }
     }
 }
@@ -594,6 +663,7 @@ impl<T> AverList<T> {
         Self {
             inner: Rc::new(inner),
             start: 0,
+            segment_index: 0,
         }
     }
 
@@ -602,6 +672,71 @@ impl<T> AverList<T> {
             left: left.clone(),
             right: right.clone(),
             len: left.len() + right.len(),
+        })
+    }
+
+    fn next_segment_end(parts: &[TraversalSegment<T>], len: usize) -> usize {
+        parts.last().map_or(len, |part| part.end + len)
+    }
+
+    fn push_flat_segment(
+        parts: &mut Vec<TraversalSegment<T>>,
+        items: Rc<Vec<T>>,
+        start: usize,
+        len: usize,
+    ) {
+        if len == 0 {
+            return;
+        }
+        let end = Self::next_segment_end(parts, len);
+        parts.push(TraversalSegment {
+            source: TraversalSource::Flat { items, start },
+            len,
+            end,
+        });
+    }
+
+    fn push_prepend_head(parts: &mut Vec<TraversalSegment<T>>, node: Rc<AverListInner<T>>) {
+        let end = Self::next_segment_end(parts, 1);
+        parts.push(TraversalSegment {
+            source: TraversalSource::PrependHead { node },
+            len: 1,
+            end,
+        });
+    }
+
+    fn push_indexed_segment(
+        parts: &mut Vec<TraversalSegment<T>>,
+        segment: &TraversalSegment<T>,
+        skip: usize,
+    ) {
+        if skip >= segment.len {
+            return;
+        }
+        let len = segment.len - skip;
+        let end = Self::next_segment_end(parts, len);
+        let source = match &segment.source {
+            TraversalSource::Flat { items, start } => TraversalSource::Flat {
+                items: Rc::clone(items),
+                start: start + skip,
+            },
+            TraversalSource::PrependHead { node } => {
+                debug_assert_eq!(skip, 0);
+                TraversalSource::PrependHead {
+                    node: Rc::clone(node),
+                }
+            }
+        };
+        parts.push(TraversalSegment { source, len, end });
+    }
+
+    fn from_indexed(parts: Vec<TraversalSegment<T>>) -> Self {
+        let Some(len) = parts.last().map(|part| part.end) else {
+            return Self::empty();
+        };
+        Self::node(AverListInner::Indexed {
+            parts: Rc::new(parts),
+            len,
         })
     }
 
@@ -628,11 +763,120 @@ impl<T> AverList<T> {
         })
     }
 
-    fn rebuild_from_rights(mut base: Self, mut rights: Vec<Self>) -> Self {
-        while let Some(right) = rights.pop() {
-            base = Self::concat(&base, &right);
+    /// Compile a structural rope into a table of shared, ordered pieces.
+    ///
+    /// Values are never copied. `Concat` nodes are traversed once and each
+    /// piece keeps an `Rc` to the storage it already had. Every table entry is
+    /// constant-time: either a range in one flat body or one `Prepend` head.
+    /// No entry may hide an arbitrary list, which would merely move the same
+    /// shape-dependent traversal cost one level down.
+    fn indexed(&self) -> Self {
+        if matches!(self.inner.as_ref(), AverListInner::Indexed { .. }) {
+            return self.clone();
         }
-        base
+
+        let mut parts = Vec::new();
+        let mut pending = vec![self.clone()];
+        while let Some(list) = pending.pop() {
+            if list.is_empty() {
+                continue;
+            }
+            match list.inner.as_ref() {
+                AverListInner::Flat { items } => {
+                    Self::push_flat_segment(&mut parts, Rc::clone(items), list.start, list.len());
+                }
+                AverListInner::Prepend { tail, .. } => {
+                    pending.push(tail.clone());
+                    Self::push_prepend_head(&mut parts, Rc::clone(&list.inner));
+                }
+                AverListInner::Concat { left, right, .. } => {
+                    pending.push(right.clone());
+                    pending.push(left.clone());
+                }
+                AverListInner::Segments {
+                    current,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    for part in rest[*start..].iter().rev() {
+                        pending.push(part.clone());
+                    }
+                    pending.push(current.clone());
+                }
+                AverListInner::Indexed {
+                    parts: indexed_parts,
+                    ..
+                } => {
+                    let previous_end = list
+                        .segment_index
+                        .checked_sub(1)
+                        .map_or(0, |index| indexed_parts[index].end);
+                    for (index, segment) in indexed_parts[list.segment_index..].iter().enumerate() {
+                        let skip = if index == 0 {
+                            list.start.saturating_sub(previous_end)
+                        } else {
+                            0
+                        };
+                        Self::push_indexed_segment(&mut parts, segment, skip);
+                    }
+                }
+            }
+        }
+        Self::from_indexed(parts)
+    }
+
+    fn segment_for_offset(parts: &[TraversalSegment<T>], offset: usize) -> usize {
+        parts.partition_point(|part| part.end <= offset)
+    }
+
+    fn indexed_tail(&self, len: usize, parts: &[TraversalSegment<T>]) -> Option<Self> {
+        if self.start >= len {
+            return None;
+        }
+        if self.start + 1 >= len {
+            return Some(Self::empty());
+        }
+
+        let start = self.start + 1;
+        let segment_index = if parts[self.segment_index].end <= start {
+            self.segment_index + 1
+        } else {
+            self.segment_index
+        };
+        Some(Self {
+            inner: Rc::clone(&self.inner),
+            start,
+            segment_index,
+        })
+    }
+
+    fn indexed_head<'a>(&'a self, parts: &'a [TraversalSegment<T>]) -> Option<&'a T> {
+        let previous_end = self
+            .segment_index
+            .checked_sub(1)
+            .map_or(0, |index| parts[index].end);
+        parts
+            .get(self.segment_index)?
+            .get(self.start.saturating_sub(previous_end))
+    }
+
+    fn indexed_drop(&self, n: usize, len: usize, parts: &[TraversalSegment<T>]) -> Self {
+        if n == 0 {
+            return self.clone();
+        }
+        if n == 1 {
+            return self.indexed_tail(len, parts).unwrap_or_else(Self::empty);
+        }
+        let start = self.start.saturating_add(n);
+        if start >= len {
+            return Self::empty();
+        }
+        Self {
+            inner: Rc::clone(&self.inner),
+            start,
+            segment_index: Self::segment_for_offset(parts, start),
+        }
     }
 
     /// The rest of a flat body of `len` elements: the same node, read from one
@@ -652,106 +896,80 @@ impl<T> AverList<T> {
         Some(Self {
             inner: Rc::clone(&self.inner),
             start: self.start + 1,
+            segment_index: 0,
         })
     }
 
     fn uncons(&self) -> Option<(&T, Self)> {
-        let mut rights = Vec::new();
-        let mut current = self;
-
-        loop {
-            match current.inner.as_ref() {
-                AverListInner::Flat { items } => {
-                    let head = items.get(current.start)?;
-                    let tail = current.flat_tail(items.len())?;
-                    return Some((head, Self::rebuild_from_rights(tail, rights)));
-                }
-                AverListInner::Prepend { head, tail, .. } => {
-                    return Some((head, Self::rebuild_from_rights(tail.clone(), rights)));
-                }
-                AverListInner::Concat { left, right, .. } => {
-                    if left.is_empty() {
-                        current = right;
-                        continue;
-                    }
-                    rights.push(right.clone());
-                    current = left;
-                }
-                AverListInner::Segments {
-                    current: head_segment,
-                    rest,
-                    start,
-                    ..
-                } => {
-                    let (head, tail) = head_segment.uncons()?;
-                    if rights.is_empty() {
-                        return Some((head, Self::segments_rc(tail, Rc::clone(rest), *start)));
-                    }
-                    // This Segments node was reached down the left spine of a
-                    // Concat, so right-siblings were accumulated in `rights`
-                    // (in reverse order). They must follow this node's own
-                    // remaining segments — the Flat / Prepend arms fold
-                    // `rights` in the same way; omitting it here silently
-                    // drops every element to the right of the Segments node.
-                    let mut parts: Vec<Self> = rest[*start..].to_vec();
-                    rights.reverse();
-                    parts.extend(rights);
-                    return Some((head, Self::segments_rc(tail, Rc::new(parts), 0)));
-                }
+        match self.inner.as_ref() {
+            AverListInner::Flat { items } => {
+                let head = items.get(self.start)?;
+                Some((head, self.flat_tail(items.len())?))
+            }
+            AverListInner::Prepend { head, tail, .. } => Some((head, tail.clone())),
+            AverListInner::Concat { .. } => {
+                let head = self.first()?;
+                let indexed = self.indexed();
+                let AverListInner::Indexed { parts, len } = indexed.inner.as_ref() else {
+                    unreachable!("a structural list produces a traversal index")
+                };
+                let tail = indexed.indexed_tail(*len, parts)?;
+                Some((head, tail))
+            }
+            AverListInner::Segments {
+                current,
+                rest,
+                start,
+                ..
+            } => {
+                let (head, tail) = current.uncons()?;
+                Some((head, Self::segments_rc(tail, Rc::clone(rest), *start)))
+            }
+            AverListInner::Indexed { parts, len } => {
+                Some((self.indexed_head(parts)?, self.indexed_tail(*len, parts)?))
             }
         }
     }
 
     /// Skip the first `n` elements.
     ///
-    /// Costs what it steps over rather than what is left: a flat body is
-    /// handed back as a view over the same allocation with the offset
-    /// advanced — the slice `uncons` already hands out — and the other shapes
-    /// are walked exactly the way repeated `uncons` walks them. Nothing is
-    /// copied, so stepping through a list is linear rather than quadratic
-    /// (issue #913).
+    /// A flat body is handed back as a view over the same allocation with the
+    /// offset advanced — the slice `uncons` already hands out. Prepend and
+    /// append-segment shapes cost what is stepped over. A concat rope first
+    /// pays once to compile its nodes into a shared traversal index, then this
+    /// and every later step only advance the constant-size cursor. Nothing is
+    /// copied, so repeated stepping stays linear rather than quadratic (issues
+    /// #913 and #1020).
     ///
     /// Sharing the body keeps the stepped-over elements alive for as long as
     /// the view is, which is the same trade `uncons` already makes.
     pub fn drop_first(&self, n: usize) -> Self {
-        let mut rights: Vec<Self> = Vec::new();
         let mut current = self.clone();
         let mut remaining = n;
 
         loop {
             if remaining == 0 {
-                return Self::rebuild_from_rights(current, rights);
+                return current;
             }
             if remaining >= current.len() {
-                // The whole node is stepped over; continue into whatever the
-                // concat spine left waiting to its right.
-                remaining -= current.len();
-                match rights.pop() {
-                    Some(next) => {
-                        current = next;
-                        continue;
-                    }
-                    None => return Self::empty(),
-                }
+                return Self::empty();
             }
 
-            // The step lands strictly inside `current`.
             let node = Rc::clone(&current.inner);
             match node.as_ref() {
                 AverListInner::Flat { .. } => {
-                    let view = Self {
+                    return Self {
                         inner: Rc::clone(&current.inner),
                         start: current.start + remaining,
+                        segment_index: 0,
                     };
-                    return Self::rebuild_from_rights(view, rights);
                 }
                 AverListInner::Prepend { tail, .. } => {
                     remaining -= 1;
                     current = tail.clone();
                 }
-                AverListInner::Concat { left, right, .. } => {
-                    rights.push(right.clone());
-                    current = left.clone();
+                AverListInner::Concat { .. } => {
+                    current = current.indexed();
                 }
                 AverListInner::Segments {
                     current: head_segment,
@@ -768,27 +986,17 @@ impl<T> AverList<T> {
                                 segment = next.clone();
                                 index += 1;
                             }
-                            // Only reachable if a `len` field disagreed with
-                            // the parts it counts; step over what is there.
-                            None => {
-                                segment = Self::empty();
-                                break;
-                            }
+                            None => return Self::empty(),
                         }
                     }
-                    let stepped = segment.drop_first(remaining);
-                    let tail = if rights.is_empty() {
-                        Self::segments_rc(stepped, Rc::clone(rest), index)
-                    } else {
-                        // Same fold as `uncons`: the right-siblings collected
-                        // down the concat spine follow this node's remaining
-                        // segments.
-                        let mut parts: Vec<Self> = rest[index..].to_vec();
-                        rights.reverse();
-                        parts.extend(rights);
-                        Self::segments_rc(stepped, Rc::new(parts), 0)
-                    };
-                    return tail;
+                    return Self::segments_rc(
+                        segment.drop_first(remaining),
+                        Rc::clone(rest),
+                        index,
+                    );
+                }
+                AverListInner::Indexed { parts, len } => {
+                    return current.indexed_drop(remaining, *len, parts);
                 }
             }
         }
@@ -833,6 +1041,7 @@ impl<T> AverList<T> {
             AverListInner::Prepend { len, .. }
             | AverListInner::Concat { len, .. }
             | AverListInner::Segments { len, .. } => *len,
+            AverListInner::Indexed { len, .. } => len.saturating_sub(self.start),
         }
     }
 
@@ -888,6 +1097,15 @@ impl<T> AverList<T> {
                         current = found?;
                     }
                 }
+                AverListInner::Indexed { parts, len } => {
+                    let offset = current.start.checked_add(remaining)?;
+                    if offset >= *len {
+                        return None;
+                    }
+                    let segment = Self::segment_for_offset(parts, offset);
+                    let previous_end = segment.checked_sub(1).map_or(0, |index| parts[index].end);
+                    return parts[segment].get(offset - previous_end);
+                }
             }
         }
     }
@@ -901,7 +1119,8 @@ impl<T> AverList<T> {
             AverListInner::Flat { items } => Some(items.get(self.start..).unwrap_or(&[])),
             AverListInner::Prepend { .. }
             | AverListInner::Concat { .. }
-            | AverListInner::Segments { .. } => None,
+            | AverListInner::Segments { .. }
+            | AverListInner::Indexed { .. } => None,
         }
     }
 
@@ -916,9 +1135,9 @@ impl<T> AverList<T> {
         match self.inner.as_ref() {
             AverListInner::Flat { items } => self.flat_tail(items.len()),
             AverListInner::Prepend { tail, .. } => Some(tail.clone()),
-            AverListInner::Concat { .. } | AverListInner::Segments { .. } => {
-                self.uncons().map(|(_, tail)| tail)
-            }
+            AverListInner::Concat { .. }
+            | AverListInner::Segments { .. }
+            | AverListInner::Indexed { .. } => self.uncons().map(|(_, tail)| tail),
         }
     }
 
@@ -1036,15 +1255,43 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                     } => {
                         let slice = rest.get(*start..).unwrap_or(&[]);
                         if !slice.is_empty() {
-                            self.stack.push(ListCursor::SegmentSlice(slice, 0));
+                            self.stack.push(ListCursor::ListSlice(slice, 0));
                         }
                         self.stack.push(ListCursor::Node(current));
                     }
+                    AverListInner::Indexed { parts, .. } => {
+                        let previous_end = list
+                            .segment_index
+                            .checked_sub(1)
+                            .map_or(0, |index| parts[index].end);
+                        let offset = list.start.saturating_sub(previous_end);
+                        if let Some(segment) = parts.get(list.segment_index) {
+                            self.stack
+                                .push(ListCursor::TraversalSlice(parts, list.segment_index + 1));
+                            self.stack
+                                .push(ListCursor::TraversalSegment(segment, offset));
+                        }
+                    }
                 },
-                ListCursor::SegmentSlice(items, index) => {
+                ListCursor::ListSlice(items, index) => {
                     if let Some(item) = items.get(index) {
-                        self.stack.push(ListCursor::SegmentSlice(items, index + 1));
+                        self.stack.push(ListCursor::ListSlice(items, index + 1));
                         self.stack.push(ListCursor::Node(item));
+                    }
+                }
+                ListCursor::TraversalSlice(items, index) => {
+                    if let Some(item) = items.get(index) {
+                        self.stack
+                            .push(ListCursor::TraversalSlice(items, index + 1));
+                        self.stack.push(ListCursor::TraversalSegment(item, 0));
+                    }
+                }
+                ListCursor::TraversalSegment(segment, index) => {
+                    if let Some(item) = segment.get(index) {
+                        self.stack
+                            .push(ListCursor::TraversalSegment(segment, index + 1));
+                        self.remaining = self.remaining.saturating_sub(1);
+                        return Some(item);
                     }
                 }
             }
@@ -1415,6 +1662,162 @@ mod tests {
         assert_eq!(joined.to_vec(), vec![1, 2, 3, 4]);
     }
 
+    /// The first destructuring step compiles either concat topology into one
+    /// traversal index. Every later tail advances the constant-size cursor on
+    /// that same table instead of rebuilding any part of the rope (#1020).
+    #[test]
+    fn concat_walks_share_one_traversal_index() {
+        let part = AverList::from_vec(vec![1, 2, 3, 4]);
+        let mut right = AverList::empty();
+        let mut left = AverList::empty();
+        for _ in 0..32 {
+            right = AverList::concat(&part, &right);
+            left = AverList::concat(&left, &part);
+        }
+
+        for list in [right, left] {
+            let (_, first_tail) = super::list_uncons(&list).expect("concat unconses");
+            let table = match first_tail.inner.as_ref() {
+                AverListInner::Indexed { parts, .. } => super::Rc::clone(parts),
+                other => panic!("concat tail was not indexed: {}", aver_display_shape(other)),
+            };
+
+            let mut rest = first_tail;
+            while let Some((_, tail)) = super::list_uncons(&rest) {
+                if !tail.is_empty() {
+                    let AverListInner::Indexed { parts, .. } = tail.inner.as_ref() else {
+                        panic!("indexed traversal changed representation")
+                    };
+                    assert!(
+                        super::Rc::ptr_eq(&table, parts),
+                        "a tail rebuilt the traversal table",
+                    );
+                }
+                rest = tail;
+            }
+        }
+    }
+
+    #[test]
+    fn drop_first_advances_the_same_concat_traversal_index() {
+        let mut list = AverList::empty();
+        for value in 0..64 {
+            list = AverList::concat(&list, &AverList::from_vec(vec![value]));
+        }
+        let (_, tail) = super::list_uncons(&list).expect("concat unconses");
+        let table = match tail.inner.as_ref() {
+            AverListInner::Indexed { parts, .. } => super::Rc::clone(parts),
+            other => panic!("expected Indexed, got {}", aver_display_shape(other)),
+        };
+
+        let dropped = tail.drop_first(30);
+        let AverListInner::Indexed { parts, .. } = dropped.inner.as_ref() else {
+            panic!("drop_first changed the indexed representation")
+        };
+        assert!(super::Rc::ptr_eq(&table, parts));
+        assert_eq!(dropped.first(), Some(&31));
+        assert_eq!(dropped.len(), 33);
+    }
+
+    /// A traversal view can participate in another O(1) concat. Compiling the
+    /// new rope copies its atomic descriptors, not the values and not one
+    /// descriptor per remaining element.
+    #[test]
+    fn concat_over_an_indexed_tail_reuses_its_segments() {
+        let part = AverList::from_vec(vec![1, 2, 3, 4]);
+        let mut list = AverList::empty();
+        for _ in 0..16 {
+            list = AverList::concat(&list, &part);
+        }
+        let (_, indexed_tail) = super::list_uncons(&list).expect("concat unconses");
+        let old_segment_count = match indexed_tail.inner.as_ref() {
+            AverListInner::Indexed { parts, .. } => parts.len(),
+            other => panic!("expected Indexed, got {}", aver_display_shape(other)),
+        };
+
+        let suffix = AverList::from_vec(vec![9, 10]);
+        let joined = AverList::concat(&indexed_tail, &suffix);
+        let (_, joined_tail) = super::list_uncons(&joined).expect("joined view unconses");
+        let new_segment_count = match joined_tail.inner.as_ref() {
+            AverListInner::Indexed { parts, .. } => parts.len(),
+            other => panic!("expected Indexed, got {}", aver_display_shape(other)),
+        };
+
+        assert!(new_segment_count <= old_segment_count + 1);
+        let expected = indexed_tail
+            .iter()
+            .copied()
+            .chain([9, 10])
+            .skip(1)
+            .collect::<Vec<_>>();
+        assert_eq!(joined_tail.to_vec(), expected);
+    }
+
+    /// Index construction is an explicit-stack DFS. Both adversarial rope
+    /// spines must survive a depth that would overflow a recursive walk.
+    #[test]
+    fn indexing_deep_concat_spines_does_not_use_the_call_stack() {
+        let singleton = AverList::from_vec(vec![7]);
+        let mut left = AverList::empty();
+        let mut right = AverList::empty();
+        for _ in 0..20_000 {
+            left = AverList::concat(&left, &singleton);
+            right = AverList::concat(&singleton, &right);
+        }
+
+        for list in [left, right] {
+            let (head, tail) = super::list_uncons(&list).expect("deep concat unconses");
+            assert_eq!(*head, 7);
+            assert_eq!(tail.len(), 19_999);
+            assert!(matches!(tail.inner.as_ref(), AverListInner::Indexed { .. }));
+        }
+    }
+
+    /// A `PrependHead` descriptor owns its prepend node, and that node owns its
+    /// tail. The traversal table therefore deliberately retains the original
+    /// prepend topology (including the consumed prefix) until the indexed view
+    /// dies. Those overlapping suffix references must form no cycle or leak,
+    /// and releasing them must use the iterative teardown path.
+    #[test]
+    fn indexed_prepend_retention_releases_every_value_iteratively() {
+        struct Counted(super::Rc<std::sync::atomic::AtomicUsize>);
+
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+
+        const PREPENDED: usize = 50_000;
+        let drops = super::Rc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut prepended = AverList::empty();
+        for _ in 0..PREPENDED {
+            prepended = AverList::prepend(Counted(super::Rc::clone(&drops)), &prepended);
+        }
+        let suffix = AverList::from_vec(vec![Counted(super::Rc::clone(&drops))]);
+        let joined = AverList::concat(&prepended, &suffix);
+        let indexed_tail = {
+            let (_, tail) = super::list_uncons(&joined).expect("joined prepend unconses");
+            tail
+        };
+
+        drop(joined);
+        drop(prepended);
+        drop(suffix);
+        assert_eq!(
+            drops.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "the indexed view should retain every shared source node",
+        );
+
+        drop(indexed_tail);
+        assert_eq!(
+            drops.load(std::sync::atomic::Ordering::Relaxed),
+            PREPENDED + 1,
+            "dropping the indexed view leaked a retained value",
+        );
+    }
+
     #[test]
     fn dropping_deep_prepend_chain_does_not_overflow() {
         let mut list = AverList::empty();
@@ -1575,6 +1978,7 @@ mod tests {
             AverListInner::Prepend { .. } => "Prepend",
             AverListInner::Concat { .. } => "Concat",
             AverListInner::Segments { .. } => "Segments",
+            AverListInner::Indexed { .. } => "Indexed",
         }
     }
 }
