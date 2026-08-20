@@ -708,8 +708,9 @@ fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>, String> {
         return Err(format!("hex byte string has odd length: `{raw}`"));
     }
     let mut bytes = Vec::with_capacity(raw.len() / 2);
-    let mut chars = raw.as_bytes().chunks_exact(2);
-    for pair in &mut chars {
+    let (pairs, remainder) = raw.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    for pair in pairs {
         let hi = hex_nibble(pair[0])
             .ok_or_else(|| format!("hex byte string contains non-hex digit: `{raw}`"))?;
         let lo = hex_nibble(pair[1])
