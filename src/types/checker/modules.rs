@@ -325,6 +325,22 @@ impl TypeChecker {
             if prefix == owner_module {
                 return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
             }
+            // Compiler-shipped capability resources are implicit language
+            // atoms: a module does not need `depends [Tcp]` merely to thread
+            // `Tcp.Connection` through one of its public signatures.  Stamp
+            // that reference with the capability module's one canonical
+            // TypeId even while resolving the signature in its owner's
+            // isolated dependency context.  Ordinary module types (and
+            // project-defined capabilities) still follow the explicit
+            // dependency gate below.
+            if crate::stdlib::is_standard_capability(prefix)
+                && self
+                    .capabilities
+                    .resource_types()
+                    .any(|resource| resource == name)
+            {
+                return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
+            }
             // A dependency-qualified reference may name either a type declared
             // by that dependency or one it explicitly re-exports. Do not let a
             // module elsewhere in the loaded closure become visible merely

@@ -3876,6 +3876,41 @@ fn caller() -> Float
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Standard capability resources are implicit language atoms, so a regular
+/// module may expose a signature containing `Tcp.Connection` without spelling
+/// `depends [Tcp]`. The importer and the exported signature must receive the
+/// same nominal TypeId; equal display names are not enough.
+#[test]
+fn standard_capability_resource_identity_crosses_imported_signatures() {
+    let root = temp_module_root("standard_resource_identity");
+    std::fs::write(
+        root.join("Relay.av"),
+        r#"module Relay
+    exposes [forward]
+    intent = "Threads a standard capability resource through its API."
+
+fn forward(connection: Tcp.Connection) -> Tcp.Connection
+    connection
+"#,
+    )
+    .expect("write Relay.av failed");
+
+    let src = r#"module Main
+    depends [Relay]
+    intent = "Passes one canonical Tcp.Connection across a module boundary."
+
+fn forward(connection: Tcp.Connection) -> Tcp.Connection
+    Relay.forward(connection)
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected Tcp.Connection to retain one capability-owned identity across the imported signature, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Phase B (#138, peer review round 5 F1, soundness counterpart):
 /// even when both dep modules hide their own `Shape` from `exposes`,
 /// the typechecker must still distinguish `C.Shape` from `D.Shape`
