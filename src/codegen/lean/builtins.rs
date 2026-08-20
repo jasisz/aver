@@ -189,7 +189,7 @@ pub fn emit_builtin_call(
         ListZip => format!("{}.zip {}", p(&a[0]), p(&a[1])),
 
         // ---- Vector (Lean Array) ----
-        VectorNew => format!("Array.mkArray {} {}", p(&a[0]), p(&a[1])),
+        VectorNew => format!("Array.replicate (Int.toNat {}) {}", p(&a[0]), p(&a[1])),
         // `Array.get?` was removed in Lean 4.31 in favour of the `GetElem?`
         // bracket notation `arr[i]?`, which reduces under kernel `decide`
         // (so a finite-domain table law over a `Vector` enumerates cleanly).
@@ -311,5 +311,21 @@ mod tests {
         // `(… : Int)` ascription (the `↑`/Nat.cast form the prelude uses), not a bare
         // Lean `Nat`; the empty-list subject still carries its `: List Unit` annotation.
         assert_eq!(emitted, "((([] : List Unit)).length : Int)");
+    }
+
+    #[test]
+    fn vector_new_uses_the_lean_432_array_constructor() {
+        let ctx = empty_ctx();
+        let emitted = emit_builtin_call(
+            "Vector.new",
+            &[
+                Spanned::bare(ResolvedExpr::Literal(Literal::Int(3))),
+                Spanned::bare(ResolvedExpr::Literal(Literal::Int(0))),
+            ],
+            &ctx,
+        )
+        .expect("Vector.new should be emitted");
+
+        assert_eq!(emitted, "Array.replicate (Int.toNat 3) 0");
     }
 }

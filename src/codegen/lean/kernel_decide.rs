@@ -546,6 +546,12 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // the guard does not cover it: on an EMPTY array `-1 < 0` holds, so
         // the model calls `Array.set!` out of bounds and panics.
         VectorSet => NarrowsPastVm,
+        // `Vector.new` lowers its `Int` size through `Int.toNat`. Negative
+        // sizes therefore become an empty model array, while the VM rejects
+        // them; values beyond the host's machine-sized range are rejected by
+        // the VM too. The lowering builds and is useful under explicit source
+        // guards, but an unrestricted claim cannot use kernel evaluation.
+        VectorNew => NarrowsPastVm,
 
         // The four total `Bits` operations are total in the model too:
         // infinite two's complement is defined for every pair of integers,
@@ -627,9 +633,7 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         | ListZip | ListFind | ListAny => Total,
 
         // `Array.size` / `List.toArray` / `Array.toList` are total.
-        // `Array.mkArray` is gone in Lean 4.32, which the kernel table below
-        // catches; a missing constant is a build error, not a silent default.
-        VectorLen | VectorFromList | ListFromVector | VectorNew => Total,
+        VectorLen | VectorFromList | ListFromVector => Total,
 
         // `AverMap.*` is a total association-list API (`get` returns `Option`,
         // `remove` is `filter`, `len` is `length`) — no partial accessor.
@@ -704,9 +708,7 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
 
         // All reduce; `Vector.get` / `Vector.set` are nevertheless declined,
         // by the faithfulness table (their `Int.toNat` index narrowing).
-        VectorGet | VectorSet | VectorLen | VectorFromList | ListFromVector => true,
-        // Lowers to `Array.mkArray`, which Lean 4.32 no longer defines.
-        VectorNew => false,
+        VectorGet | VectorSet | VectorLen | VectorFromList | ListFromVector | VectorNew => true,
 
         MapGet | MapSet | MapHas | MapRemove | MapKeys | MapValues | MapEntries | MapLen
         | MapFromList => true,
