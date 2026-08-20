@@ -88,6 +88,7 @@ fn clone_static_preserves_the_clock_and_stable_receipts_by_value() {
         all_immediate: true,
         held_elsewhere: false,
         scan_receipt: entry_receipt,
+        pending_scan_keys: Vec::new(),
     });
 
     let child = arena.clone_static();

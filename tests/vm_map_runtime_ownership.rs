@@ -90,6 +90,8 @@ struct Run {
     /// Entries duplicated because a builtin had to preserve the map it was
     /// handed.
     copied: u64,
+    /// Entries inspected while rebasing heap-backed map keys and values.
+    scanned: u64,
     decisions: VmRuntimeOwnershipStats,
 }
 
@@ -99,6 +101,7 @@ fn run(src: &str) -> Run {
     Run {
         answer: result.as_int(&machine.arena),
         copied: machine.arena.map_entries_copied(),
+        scanned: machine.arena.map_entries_scanned(),
         decisions: machine.runtime_ownership_stats(),
     }
 }
@@ -244,6 +247,7 @@ fn run_recording(src: &str) -> Run {
     Run {
         answer: result.as_int(&machine.arena),
         copied: machine.arena.map_entries_copied(),
+        scanned: machine.arena.map_entries_scanned(),
         decisions: machine.runtime_ownership_stats(),
     }
 }
@@ -275,6 +279,46 @@ fn main() -> Int
     Map.len(build({steps}, {seed}))
 "#
     )
+}
+
+fn interpolated_key_fold(steps: i64) -> String {
+    format!(
+        r#"module InterpolatedMapKeyFold
+    intent = "the exact fresh-key fold from #963"
+    depends []
+    effects []
+
+fn build(n: Int, acc: Map<String, String>) -> Map<String, String>
+    ? "insert a freshly interpolated key once per step"
+    match n > 0
+        true -> build(n - 1, Map.set(acc, "k{{n}}", "v"))
+        false -> acc
+
+fn main() -> Int
+    ? "size of what the fold built"
+    Map.len(build({steps}, Map.fromList([])))
+"#
+    )
+}
+
+#[test]
+fn interpolated_map_keys_rebase_only_the_new_entries() {
+    // Strings longer than five bytes are heap-backed. Starting just above
+    // 10,000 keeps this regression small while exercising the same knee as the
+    // report: the first 201 `"k{n}"` keys are fresh arena values.
+    let run = run(&interpolated_key_fold(10_200));
+
+    assert_eq!(run.answer, 10_200);
+    assert_eq!(run.copied, 0);
+    assert!(
+        // One terminal pass may still inspect the completed table. Above that,
+        // the budget leaves O(1) work for each fresh heap-backed key, not one
+        // pass over every older entry.
+        run.scanned <= 10_700,
+        "interpolated keys made tail-call evacuation rescan old map entries: \
+         n=10200 scanned {}",
+        run.scanned,
+    );
 }
 
 /// The fold from #890 itself: every insert routed through a helper whose whole

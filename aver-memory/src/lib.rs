@@ -80,6 +80,20 @@ pub trait MapLike: Sized {
     /// Rewrite NanValue pairs in place — avoids rebuilding the hash table.
     /// Uses copy-on-write: O(1) when sole owner, O(n) clone when shared.
     fn rewrite_values_mut(&mut self, f: impl FnMut(&mut (NanValue, NanValue)));
+    /// Rewrite one pair selected by its already-computed map hash.
+    ///
+    /// Returns whether the pair still exists. Arena maps use this to rebase the
+    /// handful of entries added since their bulk scan receipt without walking
+    /// the table that receipt already covers.
+    fn rewrite_value_mut(&mut self, key: &u64, f: impl FnOnce(&mut (NanValue, NanValue))) -> bool {
+        let Some(mut value) = self.get(key).copied() else {
+            return false;
+        };
+        f(&mut value);
+        let owned = core::mem::replace(self, Self::new());
+        *self = owned.insert_owned(*key, value);
+        true
+    }
     /// Identity of the backing table, for callers that need to tell an in-place
     /// update from a copy-on-write duplication: a value that changes across an
     /// update means the whole table was rebuilt. The default answers "cannot
@@ -123,6 +137,18 @@ pub struct MapSlot {
     pub held_elsewhere: bool,
     /// How many entries a copy of the table would move.
     pub entries: usize,
+}
+
+/// The complete relocation state moved out by an owned map update.
+///
+/// Keeping this state beside the table is what lets `Map.set` remain O(1): the
+/// source slot is emptied once, and neither its scan receipt nor its remembered
+/// exceptions have to be rediscovered by reading the table.
+#[derive(Debug)]
+pub struct TakenMap<M> {
+    pub map: M,
+    pub scan_receipt: LaneMark,
+    pub pending_scan_keys: Vec<u64>,
 }
 
 /// What a caller deciding whether to mutate a vector's arena slot in place
@@ -1495,9 +1521,19 @@ pub enum ArenaEntry<T: ArenaTypes> {
         map: T::Map,
         all_immediate: bool,
         /// Snapshot of the owning arena's lane clock after every key and value
-        /// currently in `map` had been allocated or rewritten. Zero is the
-        /// invalid, always-scan receipt.
+        /// not named by `pending_scan_keys` had been allocated or rewritten.
+        /// Zero is the invalid, always-scan receipt.
         scan_receipt: LaneMark,
+        /// Hashes of entries added after `scan_receipt` and therefore not
+        /// covered by it yet.
+        ///
+        /// This is a GC remembered set, not a second map index. An owned
+        /// `Map.set` can inherit the old table's receipt even when its new key
+        /// or value was allocated in the current frame: it records that one
+        /// hash here. At the next boundary the collector rewrites only these
+        /// pairs, clears the set, and renews the bulk receipt. A full rewrite
+        /// also clears it. The set is empty for every from-scratch builder.
+        pending_scan_keys: Vec<u64>,
         /// Whether anything OTHER than a handle in the consumer's own working
         /// set holds this slot: another arena entry, or a root the consumer
         /// registered through [`Arena::note_held_elsewhere`] — a global, a
@@ -1770,6 +1806,10 @@ impl MapLike for aver_rt::AverMap<u64, (NanValue, NanValue)> {
 
     fn rewrite_values_mut(&mut self, f: impl FnMut(&mut (NanValue, NanValue))) {
         self.rewrite_values_in_place(f)
+    }
+
+    fn rewrite_value_mut(&mut self, key: &u64, f: impl FnOnce(&mut (NanValue, NanValue))) -> bool {
+        self.rewrite_value_in_place(key, f)
     }
 
     fn table_id(&self) -> usize {
