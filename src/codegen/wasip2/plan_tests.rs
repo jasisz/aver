@@ -285,7 +285,7 @@ module Echo
     semantics = pure
     exposes [read]
 
-opaque Token
+resource Token
 
 operation read(token: Token) -> String
 ",

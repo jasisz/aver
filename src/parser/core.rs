@@ -202,12 +202,12 @@ impl Parser {
             // Three contextual words, recognised only here in item
             // position. Without these arms all three fall through to
             // `parse_expr` below, and because Aver has no juxtaposition
-            // `operation open` and `opaque Token` become two adjacent
+            // `operation open` and `resource Token` become two adjacent
             // expression statements — a SILENT MISPARSE, not a failure.
             //
             // The `peek(1)` guards keep every one of them an ordinary
             // identifier in every other position: a file that binds
-            // `operation = 1` or writes `opaque` as a bare expression
+            // `operation = 1` or writes `resource` as a bare expression
             // still parses exactly as it did before.
             TokenKind::Ident(s)
                 if s == "operation" && matches!(&self.peek(1).kind, TokenKind::Ident(_)) =>
@@ -217,9 +217,24 @@ impl Parser {
                 ))))
             }
             TokenKind::Ident(s)
+                if s == "resource" && matches!(&self.peek(1).kind, TokenKind::Ident(_)) =>
+            {
+                Ok(Some(TopLevel::Capability(self.parse_resource_decl()?)))
+            }
+            // Capability `opaque T` used to overload the same word as
+            // `exposes opaque [T]`, despite describing a fundamentally
+            // different kind of value. Refuse the old spelling with a repair
+            // instead of letting it fall through as two expressions.
+            TokenKind::Ident(s)
                 if s == "opaque" && matches!(&self.peek(1).kind, TokenKind::Ident(_)) =>
             {
-                Ok(Some(TopLevel::Capability(self.parse_opaque_decl()?)))
+                let name = match &self.peek(1).kind {
+                    TokenKind::Ident(n) => n,
+                    _ => unreachable!(),
+                };
+                Err(self.error(format!(
+                    "Capability provider values use `resource {name}`. `opaque` is reserved for represented types hidden by `exposes opaque [...]`."
+                )))
             }
             // There is exactly one way to declare a capability, and it
             // is not this one. A `capability Foo` block would duplicate

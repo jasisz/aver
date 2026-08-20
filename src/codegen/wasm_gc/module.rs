@@ -1027,9 +1027,17 @@ pub(super) fn emit_module_with(
                     EffectName::TcpWriteLine | EffectName::TcpWriteBytes => {
                         wasip2_imports
                             .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                     }
                     EffectName::TcpReadLine | EffectName::TcpReadBytes => {
                         wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                     }
                     EffectName::TcpClose => {
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
@@ -4783,6 +4791,21 @@ pub(super) fn emit_module_with(
                 super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
             )
             .expect("tcp.write_line gate requires blocking-write slot");
+        let drop_input_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp.write_line gate requires drop-input-stream slot");
+        let drop_output_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp.write_line gate requires drop-output-stream slot");
+        let drop_tcp_socket_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            )
+            .expect("tcp.write_line gate requires drop-tcp-socket slot");
         let result_ok_fn = factory_exports
             .result_unit_string_ok
             .ok_or_else(|| {
@@ -4815,6 +4838,9 @@ pub(super) fn emit_module_with(
             result_ok_fn,
             result_err_fn,
             tcp_pool_global,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            drop_tcp_socket_fn,
             bump_alloc_ptr_global: wasip2_globals
                 .as_ref()
                 .map(|g| g.bump_alloc_ptr)
@@ -4834,6 +4860,21 @@ pub(super) fn emit_module_with(
                 super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
             )
             .expect("tcp.write_bytes gate requires blocking-write slot");
+        let drop_input_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp.write_bytes gate requires drop-input-stream slot");
+        let drop_output_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp.write_bytes gate requires drop-output-stream slot");
+        let drop_tcp_socket_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            )
+            .expect("tcp.write_bytes gate requires drop-tcp-socket slot");
         let result_ok_fn = factory_exports
             .result_unit_string_ok
             .ok_or_else(|| {
@@ -4865,6 +4906,9 @@ pub(super) fn emit_module_with(
             result_ok_fn,
             result_err_fn,
             tcp_pool_global,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            drop_tcp_socket_fn,
             bump_alloc_ptr_global: wasip2_globals
                 .as_ref()
                 .map(|g| g.bump_alloc_ptr)
@@ -4885,6 +4929,21 @@ pub(super) fn emit_module_with(
         let blocking_read_fn = wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
             .expect("tcp.read_line gate requires blocking-read slot");
+        let drop_input_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp.read_line gate requires drop-input-stream slot");
+        let drop_output_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp.read_line gate requires drop-output-stream slot");
+        let drop_tcp_socket_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            )
+            .expect("tcp.read_line gate requires drop-tcp-socket slot");
         let tcp_pool_global = wasip2_globals
             .as_ref()
             .and_then(|g| g.tcp_pool)
@@ -4898,6 +4957,9 @@ pub(super) fn emit_module_with(
             cabi_realloc_fn,
             blocking_read_fn,
             tcp_pool_global,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            drop_tcp_socket_fn,
             bump_alloc_ptr_global: wasip2_globals
                 .as_ref()
                 .map(|g| g.bump_alloc_ptr)
@@ -4915,6 +4977,21 @@ pub(super) fn emit_module_with(
         let blocking_read_fn = wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
             .expect("tcp.read_bytes gate requires blocking-read slot");
+        let drop_input_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp.read_bytes gate requires drop-input-stream slot");
+        let drop_output_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp.read_bytes gate requires drop-output-stream slot");
+        let drop_tcp_socket_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            )
+            .expect("tcp.read_bytes gate requires drop-tcp-socket slot");
         let result_ok_fn = factory_exports
             .result_bytes_string_ok
             .ok_or_else(|| {
@@ -4952,6 +5029,9 @@ pub(super) fn emit_module_with(
             result_err_fn,
             aint_from_i64_fn,
             tcp_pool_global,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            drop_tcp_socket_fn,
             bump_alloc_ptr_global: wasip2_globals
                 .as_ref()
                 .map(|g| g.bump_alloc_ptr)

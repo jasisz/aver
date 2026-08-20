@@ -149,11 +149,11 @@ impl TypeChecker {
     /// outside the `FnId` table because they have no Aver body; the resolver
     /// classifies them through `SymbolTable::capability_operation` instead.
     pub(super) fn register_capability_sigs(&mut self) {
-        let opaque_types: Vec<_> = self.capabilities.opaque_types().cloned().collect();
-        for opaque in opaque_types {
-            self.opaque_types.insert(opaque.clone());
+        let resource_types: Vec<_> = self.capabilities.resource_types().cloned().collect();
+        for resource in resource_types {
+            self.opaque_types.insert(resource.clone());
 
-            let Some((module, name)) = opaque.rsplit_once('.') else {
+            let Some((module, name)) = resource.rsplit_once('.') else {
                 continue;
             };
             let module_id = self
@@ -163,7 +163,7 @@ impl TypeChecker {
             let id = module_id.or(entry_id);
             if let Some(id) = id {
                 // A representation-less resource is nameable because its
-                // operation signature exposes it, but the opaque-access gates
+                // operation signature exposes it, but the resource-access gates
                 // still forbid construction, field access, and matching.
                 self.mark_type_visible(id);
                 let is_own_scope = self.current_module_prefix.as_deref() == Some(module)

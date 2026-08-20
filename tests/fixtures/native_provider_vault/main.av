@@ -1,5 +1,5 @@
 module NativeProviderVault
-    intent = "Exercise native opaque resources across direct and parallel calls."
+    intent = "Exercise native capability resources across direct and parallel calls."
     depends [Vault]
     exposes [TokenBox, TokenBag, openAndRead, openPair, consume, boxToken, bagToken, main]
     effects [Vault.open, Vault.read]

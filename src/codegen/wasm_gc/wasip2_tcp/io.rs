@@ -8,6 +8,50 @@ use wasm_encoder::{Function, Instruction, ValType};
 
 use super::restore_bump;
 
+/// Invalidate and release a persistent WASI TCP slot after real session I/O
+/// has started and failed. Argument validation and stale-handle errors never
+/// call this helper. This mirrors `aver_rt::tcp::with_connection_io`: after a
+/// partial read or write, the protocol position is unknowable and the handle
+/// must not remain usable.
+fn emit_poison_slot(
+    f: &mut Function,
+    slot_local: u32,
+    tcp_slot_type_idx: u32,
+    drop_input_stream_fn: u32,
+    drop_output_stream_fn: u32,
+    drop_tcp_socket_fn: u32,
+) {
+    // Mark stale before releasing host resources. Every later operation scans
+    // for `id_value && in_use`, so it will report unknown connection.
+    f.instruction(&Instruction::LocalGet(slot_local));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::StructSet {
+        struct_type_index: tcp_slot_type_idx,
+        field_index: 3,
+    });
+
+    f.instruction(&Instruction::LocalGet(slot_local));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: tcp_slot_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(drop_input_stream_fn));
+
+    f.instruction(&Instruction::LocalGet(slot_local));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: tcp_slot_type_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::Call(drop_output_stream_fn));
+
+    f.instruction(&Instruction::LocalGet(slot_local));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: tcp_slot_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(drop_tcp_socket_fn));
+}
+
 /// Phase 4.4a — `__rt_tcp_write_line(conn, line) -> ref Result<Unit, String>`
 /// slot bundle. Reuses the close-side `parse_id` plus the
 /// connection-pool globals/types; adds the output-stream side
@@ -58,16 +102,17 @@ pub(in crate::codegen::wasm_gc) struct TcpWriteLineHelperFns {
     pub result_err_fn: u32,
     /// `tcp_pool: ref null $tcp_pool` global.
     pub tcp_pool_global: u32,
+    pub drop_input_stream_fn: u32,
+    pub drop_output_stream_fn: u32,
+    pub drop_tcp_socket_fn: u32,
     /// Phase 4.2.2f — see `TcpConnectHelperFns::bump_alloc_ptr_global`.
     pub bump_alloc_ptr_global: u32,
 }
 
-/// Phase 4.4a emit — `__rt_tcp_write_line` body. Trust contract
-/// matches `Tcp.close`: `conn` came out of `Tcp.connect`, so the
-/// pool slot is live. v1 ignores the `in_use == 0` case and
-/// writes regardless; `Tcp.writeLine` after `Tcp.close` is a
-/// program bug that surfaces as a wasi `last-operation-failed`
-/// stream error and becomes `Result.Err("tcp: write failed")`.
+/// Phase 4.4a emit — `__rt_tcp_write_line` body. The live slot is
+/// found by full resource id; stale handles return `unknown connection`.
+/// A real WASI write failure releases the slot resources and poisons the
+/// handle before returning `Result.Err("tcp: write failed")`.
 pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     indices: &TcpWriteLineIndices,
     helpers: &TcpWriteLineHelperFns,
@@ -287,6 +332,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
             f.instruction(&Instruction::LocalGet(l_retptr));
         },
         Some(&|f| {
+            emit_poison_slot(
+                f,
+                l_slot,
+                tcp_slot_type_idx,
+                helpers.drop_input_stream_fn,
+                helpers.drop_output_stream_fn,
+                helpers.drop_tcp_socket_fn,
+            );
             f.instruction(&Instruction::I32Const(0));
             f.instruction(&Instruction::I32Const(write_err_len as i32));
             f.instruction(&Instruction::ArrayNewData {
@@ -322,6 +375,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::LocalGet(l_retptr));
     f.instruction(&Instruction::I32Load8U(mem1));
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_poison_slot(
+        &mut f,
+        l_slot,
+        indices.tcp_slot_type_idx,
+        helpers.drop_input_stream_fn,
+        helpers.drop_output_stream_fn,
+        helpers.drop_tcp_socket_fn,
+    );
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(indices.write_err_len as i32));
     f.instruction(&Instruction::ArrayNewData {
@@ -368,6 +429,9 @@ pub(in crate::codegen::wasm_gc) struct TcpWriteBytesHelperFns {
     pub result_ok_fn: u32,
     pub result_err_fn: u32,
     pub tcp_pool_global: u32,
+    pub drop_input_stream_fn: u32,
+    pub drop_output_stream_fn: u32,
+    pub drop_tcp_socket_fn: u32,
     pub bump_alloc_ptr_global: u32,
     pub bytes_unpack_fn: Option<u32>,
 }
@@ -638,6 +702,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_bytes(
             f.instruction(&Instruction::LocalGet(l_retptr));
         },
         Some(&|f| {
+            emit_poison_slot(
+                f,
+                l_slot,
+                tcp_slot_type_idx,
+                helpers.drop_input_stream_fn,
+                helpers.drop_output_stream_fn,
+                helpers.drop_tcp_socket_fn,
+            );
             f.instruction(&Instruction::I32Const(0));
             f.instruction(&Instruction::I32Const(write_err_len as i32));
             f.instruction(&Instruction::ArrayNewData {
@@ -693,6 +765,9 @@ pub(in crate::codegen::wasm_gc) struct TcpReadLineHelperFns {
     /// `wasi:io/streams.[method]input-stream.blocking-read`.
     pub blocking_read_fn: u32,
     pub tcp_pool_global: u32,
+    pub drop_input_stream_fn: u32,
+    pub drop_output_stream_fn: u32,
+    pub drop_tcp_socket_fn: u32,
     /// Phase 4.2.2f — see `TcpConnectHelperFns::bump_alloc_ptr_global`.
     pub bump_alloc_ptr_global: u32,
 }
@@ -1014,6 +1089,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(BlockType::Empty));
+    emit_poison_slot(
+        &mut f,
+        l_slot,
+        indices.tcp_slot_type_idx,
+        helpers.drop_input_stream_fn,
+        helpers.drop_output_stream_fn,
+        helpers.drop_tcp_socket_fn,
+    );
     f.instruction(&Instruction::I32Const(0)); // result tag = 0 (Err)
     f.instruction(&Instruction::RefNull(HeapType::Concrete(
         indices.string_type_idx,
@@ -1136,6 +1219,9 @@ pub(in crate::codegen::wasm_gc) struct TcpReadBytesHelperFns {
     pub result_err_fn: u32,
     pub aint_from_i64_fn: u32,
     pub tcp_pool_global: u32,
+    pub drop_input_stream_fn: u32,
+    pub drop_output_stream_fn: u32,
+    pub drop_tcp_socket_fn: u32,
     pub bump_alloc_ptr_global: u32,
 }
 
@@ -1357,6 +1443,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_bytes(
     f.instruction(&Instruction::LocalGet(l_retptr));
     f.instruction(&Instruction::I32Load8U(mem1));
     f.instruction(&Instruction::If(BlockType::Empty));
+    emit_poison_slot(
+        &mut f,
+        l_slot,
+        indices.tcp_slot_type_idx,
+        helpers.drop_input_stream_fn,
+        helpers.drop_output_stream_fn,
+        helpers.drop_tcp_socket_fn,
+    );
     emit_err(
         &mut f,
         indices.short_read_segment_idx,
@@ -1372,6 +1466,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_bytes(
     f.instruction(&Instruction::LocalGet(l_data_len));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
+    emit_poison_slot(
+        &mut f,
+        l_slot,
+        indices.tcp_slot_type_idx,
+        helpers.drop_input_stream_fn,
+        helpers.drop_output_stream_fn,
+        helpers.drop_tcp_socket_fn,
+    );
     emit_err(
         &mut f,
         indices.short_read_segment_idx,
@@ -1455,6 +1557,9 @@ mod tests {
             cabi_realloc_fn: 8,
             blocking_read_fn: 9,
             tcp_pool_global: 0,
+            drop_input_stream_fn: 10,
+            drop_output_stream_fn: 11,
+            drop_tcp_socket_fn: 12,
             bump_alloc_ptr_global: 1,
         };
         let _f = emit_tcp_read_line(&indices, &helpers);
@@ -1490,6 +1595,9 @@ mod tests {
             result_err_fn: 15,
             aint_from_i64_fn: 16,
             tcp_pool_global: 0,
+            drop_input_stream_fn: 17,
+            drop_output_stream_fn: 18,
+            drop_tcp_socket_fn: 19,
             bump_alloc_ptr_global: 1,
         };
         let _f = emit_tcp_read_bytes(&indices, &helpers);
@@ -1517,6 +1625,9 @@ mod tests {
             result_ok_fn: 10,
             result_err_fn: 11,
             tcp_pool_global: 0,
+            drop_input_stream_fn: 12,
+            drop_output_stream_fn: 13,
+            drop_tcp_socket_fn: 14,
             bump_alloc_ptr_global: 1,
         };
         let _f = emit_tcp_write_line(&indices, &helpers);

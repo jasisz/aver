@@ -111,7 +111,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     fn capability_declarations(ctx: &CodegenContext, module: &str) -> Vec<String> {
         let mut declarations = ctx
             .capabilities
-            .opaque_types()
+            .resource_types()
             .filter_map(|canonical| {
                 let (owner, name) = canonical.rsplit_once('.')?;
                 (owner == module).then(|| {

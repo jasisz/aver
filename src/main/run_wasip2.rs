@@ -161,6 +161,23 @@ fn build_component(
         .capabilities;
     let required =
         aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
+    let project_config =
+        aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root))?;
+    if project_config
+        .as_ref()
+        .is_some_and(|config| config.tcp_settings_configured)
+        && required
+            .iter()
+            .any(|operation| operation.starts_with("Tcp."))
+    {
+        eprintln!(
+            "{}",
+            "warning[tcp-timeout-unsupported]: `--wasip2` cannot honour explicit \
+             [effects.Tcp] connect/request timeout settings; the component uses the host's \
+             WASI socket timing instead"
+                .yellow()
+        );
+    }
     let capability_wit_plan =
         aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required).map_err(
             |unsupported| {

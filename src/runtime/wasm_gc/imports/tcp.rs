@@ -26,6 +26,7 @@ pub(super) fn dispatch(
     caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
+    let tcp_settings = caller.data().tcp_settings;
     match name {
         "tcp_connect" => {
             let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
@@ -39,32 +40,34 @@ pub(super) fn dispatch(
                 results[0] = Val::AnyRef(r);
                 return Ok(true);
             }
-            let (result_ref, outcome) = match aver_rt::tcp::connect(&host, port) {
-                Ok(conn) => {
-                    let id_ref = lm_string_from_host(caller, conn.id.as_ref())?;
-                    let host_ref = lm_string_from_host(caller, conn.host.as_ref())?;
-                    let rec_ref = host_tcp_connection_make(caller, id_ref, host_ref, conn.port)?;
-                    let conn_json = json_record(
-                        "Tcp.Connection",
-                        vec![
-                            (
-                                "id",
-                                aver::replay::JsonValue::String(conn.id.as_ref().to_string()),
-                            ),
-                            (
-                                "host",
-                                aver::replay::JsonValue::String(conn.host.as_ref().to_string()),
-                            ),
-                            ("port", aver::replay::JsonValue::Int(conn.port)),
-                        ],
-                    );
-                    (
-                        host_result_tcp_connection_ok(caller, rec_ref)?,
-                        json_ok(conn_json),
-                    )
-                }
-                Err(e) => (host_result_tcp_connection_err(caller, &e)?, json_err(&e)),
-            };
+            let (result_ref, outcome) =
+                match aver_rt::tcp::connect_with_settings(&host, port, tcp_settings) {
+                    Ok(conn) => {
+                        let id_ref = lm_string_from_host(caller, conn.id.as_ref())?;
+                        let host_ref = lm_string_from_host(caller, conn.host.as_ref())?;
+                        let rec_ref =
+                            host_tcp_connection_make(caller, id_ref, host_ref, conn.port)?;
+                        let conn_json = json_record(
+                            "Tcp.Connection",
+                            vec![
+                                (
+                                    "id",
+                                    aver::replay::JsonValue::String(conn.id.as_ref().to_string()),
+                                ),
+                                (
+                                    "host",
+                                    aver::replay::JsonValue::String(conn.host.as_ref().to_string()),
+                                ),
+                                ("port", aver::replay::JsonValue::Int(conn.port)),
+                            ],
+                        );
+                        (
+                            host_result_tcp_connection_ok(caller, rec_ref)?,
+                            json_ok(conn_json),
+                        )
+                    }
+                    Err(e) => (host_result_tcp_connection_err(caller, &e)?, json_err(&e)),
+                };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.connect", args, outcome, caller_fn);
             Ok(true)
@@ -291,13 +294,14 @@ pub(super) fn dispatch(
                 results[0] = Val::AnyRef(r);
                 return Ok(true);
             }
-            let (result_ref, outcome) = match aver_rt::tcp::send(&host, port, &msg) {
-                Ok(text) => (
-                    host_result_ok_string(caller, &text)?,
-                    json_ok(aver::replay::JsonValue::String(text)),
-                ),
-                Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
-            };
+            let (result_ref, outcome) =
+                match aver_rt::tcp::send_with_settings(&host, port, &msg, tcp_settings) {
+                    Ok(text) => (
+                        host_result_ok_string(caller, &text)?,
+                        json_ok(aver::replay::JsonValue::String(text)),
+                    ),
+                    Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
+                };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.send", args, outcome, caller_fn);
             Ok(true)
@@ -319,7 +323,12 @@ pub(super) fn dispatch(
             }
             let (result_ref, outcome) = match payload {
                 Err(e) => (host_result_err_bytes(caller, &e)?, json_err(&e)),
-                Ok(payload) => match aver_rt::tcp::send_bytes(&host, port, &payload) {
+                Ok(payload) => match aver_rt::tcp::send_bytes_with_settings(
+                    &host,
+                    port,
+                    &payload,
+                    tcp_settings,
+                ) {
                     Ok(bytes) => {
                         let ints: Vec<i64> = bytes.iter().map(|b| i64::from(*b)).collect();
                         let json = ints
@@ -354,13 +363,14 @@ pub(super) fn dispatch(
                 results[0] = Val::AnyRef(r);
                 return Ok(true);
             }
-            let (result_ref, outcome) = match aver_rt::tcp::ping(&host, port) {
-                Ok(()) => (
-                    host_result_ok_unit(caller)?,
-                    json_ok(aver::replay::JsonValue::Null),
-                ),
-                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
-            };
+            let (result_ref, outcome) =
+                match aver_rt::tcp::ping_with_settings(&host, port, tcp_settings) {
+                    Ok(()) => (
+                        host_result_ok_unit(caller)?,
+                        json_ok(aver::replay::JsonValue::Null),
+                    ),
+                    Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
+                };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.ping", args, outcome, caller_fn);
             Ok(true)

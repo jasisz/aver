@@ -364,13 +364,17 @@ paths = ["./data/**"]
 [effects.Env]
 keys = ["APP_*", "TOKEN"]
 
+[effects.Tcp]
+connect_timeout_secs = 5
+request_idle_timeout_secs = 30
+
 [[check.suppress]]
 slug = "non-tail-recursion"
 files = ["**/eval/**"]
 reason = "Tree-walking interpreter — CPS would destroy correspondence."
 ```
 
-Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment and one-shot request idle timeouts; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
 
 Disk path patterns have deliberately small, explicit semantics:
 

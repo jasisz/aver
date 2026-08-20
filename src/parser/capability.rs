@@ -1,11 +1,11 @@
 //! Grammar for the two declarations only a capability module carries:
 //! `operation` (a signature with no body, plus model attributes) and
-//! `opaque NAME` (a type with no representation).
+//! `resource NAME` (a provider-owned value with no Aver representation).
 //!
 //! Both words are CONTEXTUAL. Neither is in the lexer's keyword table,
-//! because both are live identifiers in the corpus — `opaque` already
-//! modifies `exposes`, and nothing stops a program from binding a value
-//! called `operation`. They are recognised only in top-level item
+//! because both are live identifiers in the corpus, and nothing stops a
+//! program from binding a value called `operation` or `resource`. They are
+//! recognised only in top-level item
 //! position, by `Parser::parse_top_level`.
 //!
 //! Why `operation` is not a body-less `fn`: `parse_fn` accepts a `fn`
@@ -138,16 +138,16 @@ impl Parser {
         })
     }
 
-    /// `opaque ConnectionToken` — no fields, ever. An indented block
+    /// `resource ConnectionToken` — no fields, ever. An indented block
     /// under it is refused rather than ignored: a representation would
     /// bind every provider to one implementation's internals.
-    pub(super) fn parse_opaque_decl(&mut self) -> Result<CapabilityItem, ParseError> {
+    pub(super) fn parse_resource_decl(&mut self) -> Result<CapabilityItem, ParseError> {
         let line = self.current().line;
-        self.advance(); // consume the contextual `opaque`
+        self.advance(); // consume the contextual `resource`
 
         let name_tok = self.expect_kind(
             &TokenKind::Ident(String::new()),
-            "Expected a type name after 'opaque'",
+            "Expected a type name after 'resource'",
         )?;
         let name = match name_tok.kind {
             TokenKind::Ident(s) => s,
@@ -158,7 +158,7 @@ impl Parser {
 
         if self.is_indent() {
             return Err(self.error(format!(
-                "An opaque capability type has no representation, so '{}' cannot have fields. \
+                "A capability resource has no Aver representation, so '{}' cannot have fields. \
                  Its layout is a provider detail; naming it here would bind every provider to \
                  one implementation's internals. Use `record {}` if you wanted an ordinary type \
                  with hidden fields, and list it under `exposes opaque [...]`.",
@@ -166,7 +166,7 @@ impl Parser {
             )));
         }
 
-        Ok(CapabilityItem::Opaque { name, line })
+        Ok(CapabilityItem::Resource { name, line })
     }
 
     /// A single identifier on the right of an operation attribute.

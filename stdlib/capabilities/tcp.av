@@ -4,7 +4,7 @@ module Tcp
     depends [Bytes]
     exposes [Connection, send, sendBytes, ping, connect, writeLine, writeBytes, readLine, readBytes, close]
 
-opaque Connection
+resource Connection
 
 operation send(host: String, port: Int, data: String) -> Result<String, String>
     ? "Opens a connection, writes text, reads the response to EOF, and closes."
@@ -25,7 +25,7 @@ operation ping(host: String, port: Int) -> Result<Unit, String>
     hostile = [pingNormalOk, pingAlwaysErr]
 
 operation connect(host: String, port: Int) -> Result<Tcp.Connection, String>
-    ? "Opens a persistent TCP session and returns its opaque provider-owned handle."
+    ? "Opens a persistent TCP session and returns its provider-owned resource handle."
     oracle = generativeOutput
     replay = recorded
     hostile = [connectNormalOk, connectAlwaysErr]

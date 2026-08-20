@@ -93,7 +93,7 @@ pub struct CapabilityOperation {
     pub semantics: CapabilitySemantics,
     pub oracle: Option<OracleDimension>,
     pub replay: Option<ReplaySemantics>,
-    /// Canonical capability-owned opaque type minted in the success payload,
+    /// Canonical capability-owned resource type minted in the success payload,
     /// if any. The verifier passes an unconstrained value of this type to the
     /// operation's oracle; no distinctness between calls is assumed.
     pub minted_resource: Option<String>,
@@ -133,7 +133,7 @@ pub struct CapabilityContract {
 pub struct CapabilityRegistry {
     contracts: BTreeMap<String, CapabilityContract>,
     operations: BTreeMap<String, CapabilityOperation>,
-    opaque_types: BTreeSet<String>,
+    resource_types: BTreeSet<String>,
     resource_tainted_types: BTreeSet<String>,
     /// Capability-owned represented boundary types, keyed canonically.
     boundary_types: BTreeMap<String, TypeDef>,
@@ -178,8 +178,8 @@ impl CapabilityRegistry {
         })
     }
 
-    pub fn opaque_types(&self) -> impl Iterator<Item = &String> {
-        self.opaque_types.iter()
+    pub fn resource_types(&self) -> impl Iterator<Item = &String> {
+        self.resource_types.iter()
     }
 
     /// Capability resources, plus represented types whose value transitively
@@ -225,7 +225,7 @@ impl CapabilityRegistry {
     pub fn merge(&mut self, other: CapabilityRegistry) {
         self.contracts.extend(other.contracts);
         self.operations.extend(other.operations);
-        self.opaque_types.extend(other.opaque_types);
+        self.resource_types.extend(other.resource_types);
         self.resource_tainted_types
             .extend(other.resource_tainted_types);
         self.boundary_types.extend(other.boundary_types);
@@ -329,7 +329,7 @@ impl CapabilityRegistry {
         };
 
         let mut operations = Vec::new();
-        let mut opaque = Vec::new();
+        let mut resources = Vec::new();
         let mut seen = BTreeSet::new();
         let ordinary_fn_names: BTreeSet<&str> = items
             .iter()
@@ -358,17 +358,17 @@ impl CapabilityRegistry {
                 continue;
             }
             match item {
-                CapabilityItem::Opaque { name, .. } => {
+                CapabilityItem::Resource { name, .. } => {
                     if ordinary_type_names.contains(name.as_str()) {
                         errors.push(CapabilityError::at(
                             item.line(),
                             format!(
-                                "capability opaque type '{}.{}' conflicts with a represented type of the same name",
+                                "capability resource '{}.{}' conflicts with a represented type of the same name",
                                 scope, name
                             ),
                         ));
                     }
-                    opaque.push(name.clone())
+                    resources.push(name.clone())
                 }
                 CapabilityItem::Operation(op) => {
                     if ordinary_fn_names.contains(op.name.as_str()) {
@@ -396,7 +396,7 @@ impl CapabilityRegistry {
             })
             .collect();
         let mut locally_declared: BTreeSet<String> = type_defs.keys().cloned().collect();
-        locally_declared.extend(opaque.iter().cloned());
+        locally_declared.extend(resources.iter().cloned());
         validate_boundary_type_ownership(
             scope,
             &operations,
@@ -405,18 +405,23 @@ impl CapabilityRegistry {
             &mut errors,
         );
         let reachable_types = reachable_type_defs(&operations, &type_defs);
-        let resource_tainted = resource_tainted_type_names(&opaque, &type_defs);
+        let resource_tainted = resource_tainted_type_names(&resources, &type_defs);
         validate_operation_boundaries(
             scope,
             &mut operations,
-            &opaque,
+            &resources,
             &resource_tainted,
             &mut errors,
         );
         validate_resource_map_keys(&operations, &resource_tainted, &mut errors);
         validate_hostile_profiles(&operations, items, &mut errors);
-        let contract_descriptor =
-            render_contract_descriptor(scope, &module.name, &operations, &opaque, &reachable_types);
+        let contract_descriptor = render_contract_descriptor(
+            scope,
+            &module.name,
+            &operations,
+            &resources,
+            &reachable_types,
+        );
         let contract_hash = hash_descriptor(&contract_descriptor);
         let model_descriptor =
             render_model_descriptor(scope, &contract_hash, &operations, items, &mut errors);
@@ -429,9 +434,9 @@ impl CapabilityRegistry {
             model_descriptor,
         };
 
-        for name in opaque {
+        for name in resources {
             let canonical = format!("{scope}.{name}");
-            registry.opaque_types.insert(canonical.clone());
+            registry.resource_types.insert(canonical.clone());
             registry.resource_tainted_types.insert(canonical);
         }
         for name in resource_tainted {

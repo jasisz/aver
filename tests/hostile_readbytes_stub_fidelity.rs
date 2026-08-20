@@ -129,7 +129,7 @@ fn real_read_bytes_error(count: Value) -> String {
         contract_hash: "test-contract".to_string(),
         model_hash: "test-model".to_string(),
     };
-    let result = StandardTcpProvider
+    let result = StandardTcpProvider::default()
         .invoke(&context, &[fake_conn_resource(), ProviderValue::Int(count)])
         .expect("Tcp.readBytes provider boundary must accept the canonical arguments");
     let ProviderValue::ResultErr(message) = result else {

@@ -1,15 +1,54 @@
 use crate::{AverStr, TcpConnection};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 5;
+pub const DEFAULT_REQUEST_IDLE_TIMEOUT_SECS: u64 = 30;
 const BODY_LIMIT: usize = 10 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 256;
+
+/// Deployment settings for the standard native Tcp provider.
+///
+/// These deadlines apply only while opening a socket and to the bounded
+/// one-shot request/response operations. Persistent session I/O deliberately
+/// has no deadline: timing out after consuming part of a frame would leave the
+/// caller with a silently desynchronised stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpSettings {
+    pub connect_timeout: Duration,
+    pub request_idle_timeout: Duration,
+}
+
+impl TcpSettings {
+    pub fn from_secs(
+        connect_timeout_secs: u64,
+        request_idle_timeout_secs: u64,
+    ) -> Result<Self, String> {
+        if connect_timeout_secs == 0 {
+            return Err("Tcp connect timeout must be greater than zero".to_string());
+        }
+        if request_idle_timeout_secs == 0 {
+            return Err("Tcp request idle timeout must be greater than zero".to_string());
+        }
+        Ok(Self {
+            connect_timeout: Duration::from_secs(connect_timeout_secs),
+            request_idle_timeout: Duration::from_secs(request_idle_timeout_secs),
+        })
+    }
+}
+
+impl Default for TcpSettings {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
+            request_idle_timeout: Duration::from_secs(DEFAULT_REQUEST_IDLE_TIMEOUT_SECS),
+        }
+    }
+}
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -33,6 +72,14 @@ fn validate_port(port: i64) -> Result<u16, String> {
 }
 
 pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
+    connect_with_settings(host, port, TcpSettings::default())
+}
+
+pub fn connect_with_settings(
+    host: &str,
+    port: i64,
+    settings: TcpSettings,
+) -> Result<TcpConnection, String> {
     validate_port(port)?;
     let count = CONNECTIONS.with(|map| map.borrow().len());
     if count >= MAX_CONNECTIONS {
@@ -43,10 +90,12 @@ pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
     }
 
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    let stream =
-        TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
+    let stream = TcpStream::connect_timeout(&socket_addr, settings.connect_timeout)
+        .map_err(|error| format_io_error("Tcp.connect", &error))?;
+
+    // A persistent session has no read/write deadline. Any later I/O error
+    // poisons the handle instead of letting a caller continue after an
+    // unknown partial read or write.
 
     let id = format!("tcp-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
     CONNECTIONS.with(|map| {
@@ -61,19 +110,9 @@ pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
 }
 
 pub fn write_line(conn: &TcpConnection, line: &str) -> Result<(), String> {
-    CONNECTIONS.with(|map| {
-        let mut borrow = map.borrow_mut();
-        let id: &str = &conn.id;
-        match borrow.get_mut(id) {
-            None => Err(format!("Tcp.writeLine: unknown connection '{}'", conn.id)),
-            Some(reader) => {
-                let msg = format!("{}\r\n", line);
-                reader
-                    .get_mut()
-                    .write_all(msg.as_bytes())
-                    .map_err(|e| e.to_string())
-            }
-        }
+    let msg = format!("{}\r\n", line);
+    with_connection_io(conn, "Tcp.writeLine", |reader| {
+        reader.get_mut().write_all(msg.as_bytes())
     })
 }
 
@@ -88,37 +127,22 @@ pub fn write_line(conn: &TcpConnection, line: &str) -> Result<(), String> {
 /// This writes `payload` exactly as given: nothing appended, nothing encoded.
 /// An empty payload is a no-op.
 pub fn write_bytes(conn: &TcpConnection, payload: &[u8]) -> Result<(), String> {
-    CONNECTIONS.with(|map| {
-        let mut borrow = map.borrow_mut();
-        let id: &str = &conn.id;
-        match borrow.get_mut(id) {
-            None => Err(format!("Tcp.writeBytes: unknown connection '{}'", conn.id)),
-            Some(reader) => reader
-                .get_mut()
-                .write_all(payload)
-                .map_err(|e| e.to_string()),
-        }
+    with_connection_io(conn, "Tcp.writeBytes", |reader| {
+        reader.get_mut().write_all(payload)
     })
 }
 
 pub fn read_line(conn: &TcpConnection) -> Result<String, String> {
-    CONNECTIONS.with(|map| {
-        let mut borrow = map.borrow_mut();
-        let id: &str = &conn.id;
-        match borrow.get_mut(id) {
-            None => Err(format!("Tcp.readLine: unknown connection '{}'", conn.id)),
-            Some(reader) => {
-                let mut line = String::new();
-                reader.read_line(&mut line).map_err(|e| e.to_string())?;
-                if line.ends_with('\n') {
-                    line.pop();
-                    if line.ends_with('\r') {
-                        line.pop();
-                    }
-                }
-                Ok(line)
+    with_connection_io(conn, "Tcp.readLine", |reader| {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
             }
         }
+        Ok(line)
     })
 }
 
@@ -147,17 +171,10 @@ pub fn read_bytes(conn: &TcpConnection, n: i64) -> Result<Vec<u8>, String> {
             "Tcp.readBytes: count {n} exceeds the {BODY_LIMIT} byte limit"
         ));
     }
-    CONNECTIONS.with(|map| {
-        let mut borrow = map.borrow_mut();
-        let id: &str = &conn.id;
-        match borrow.get_mut(id) {
-            None => Err(format!("Tcp.readBytes: unknown connection '{}'", conn.id)),
-            Some(reader) => {
-                let mut buf = vec![0u8; want];
-                reader.read_exact(&mut buf).map_err(|e| e.to_string())?;
-                Ok(buf)
-            }
-        }
+    with_connection_io(conn, "Tcp.readBytes", |reader| {
+        let mut buf = vec![0u8; want];
+        reader.read_exact(&mut buf)?;
+        Ok(buf)
     })
 }
 
@@ -171,22 +188,28 @@ pub fn close(conn: &TcpConnection) -> Result<(), String> {
 }
 
 pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
+    send_with_settings(host, port, message, TcpSettings::default())
+}
+
+pub fn send_with_settings(
+    host: &str,
+    port: i64,
+    message: &str,
+    settings: TcpSettings,
+) -> Result<String, String> {
     validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    let mut stream =
-        TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
+    let mut stream = request_stream(&socket_addr, settings, "Tcp.send")?;
     stream
         .write_all(message.as_bytes())
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| format_io_error("Tcp.send", &error))?;
     stream.shutdown(std::net::Shutdown::Write).ok();
 
     let mut buf = Vec::new();
     Read::by_ref(&mut stream)
         .take(BODY_LIMIT as u64 + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| format_io_error("Tcp.send", &error))?;
     if buf.len() > BODY_LIMIT {
         return Err("Tcp.send: response exceeds 10 MB limit".to_string());
     }
@@ -202,20 +225,28 @@ pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
 /// protocols whose framing bytes are not valid UTF-8. This function performs no
 /// encoding or decoding, so the caller sees exactly what the peer sent.
 pub fn send_bytes(host: &str, port: i64, payload: &[u8]) -> Result<Vec<u8>, String> {
+    send_bytes_with_settings(host, port, payload, TcpSettings::default())
+}
+
+pub fn send_bytes_with_settings(
+    host: &str,
+    port: i64,
+    payload: &[u8],
+    settings: TcpSettings,
+) -> Result<Vec<u8>, String> {
     validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    let mut stream =
-        TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
-    stream.write_all(payload).map_err(|e| e.to_string())?;
+    let mut stream = request_stream(&socket_addr, settings, "Tcp.sendBytes")?;
+    stream
+        .write_all(payload)
+        .map_err(|error| format_io_error("Tcp.sendBytes", &error))?;
     stream.shutdown(std::net::Shutdown::Write).ok();
 
     let mut buf = Vec::new();
     Read::by_ref(&mut stream)
         .take(BODY_LIMIT as u64 + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| format_io_error("Tcp.sendBytes", &error))?;
     if buf.len() > BODY_LIMIT {
         return Err("Tcp.sendBytes: response exceeds 10 MB limit".to_string());
     }
@@ -223,10 +254,66 @@ pub fn send_bytes(host: &str, port: i64, payload: &[u8]) -> Result<Vec<u8>, Stri
 }
 
 pub fn ping(host: &str, port: i64) -> Result<(), String> {
+    ping_with_settings(host, port, TcpSettings::default())
+}
+
+pub fn ping_with_settings(host: &str, port: i64, settings: TcpSettings) -> Result<(), String> {
     validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
-    TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
+    TcpStream::connect_timeout(&socket_addr, settings.connect_timeout)
+        .map_err(|error| format_io_error("Tcp.ping", &error))?;
     Ok(())
+}
+
+fn request_stream(
+    socket_addr: &std::net::SocketAddr,
+    settings: TcpSettings,
+    operation: &str,
+) -> Result<TcpStream, String> {
+    let stream = TcpStream::connect_timeout(socket_addr, settings.connect_timeout)
+        .map_err(|error| format_io_error(operation, &error))?;
+    stream
+        .set_read_timeout(Some(settings.request_idle_timeout))
+        .map_err(|error| format_io_error(operation, &error))?;
+    stream
+        .set_write_timeout(Some(settings.request_idle_timeout))
+        .map_err(|error| format_io_error(operation, &error))?;
+    Ok(stream)
+}
+
+fn with_connection_io<T>(
+    conn: &TcpConnection,
+    operation: &str,
+    io: impl FnOnce(&mut BufReader<TcpStream>) -> io::Result<T>,
+) -> Result<T, String> {
+    CONNECTIONS.with(|map| {
+        let mut connections = map.borrow_mut();
+        let id: &str = &conn.id;
+        let Some(reader) = connections.get_mut(id) else {
+            return Err(format!("{operation}: unknown connection '{}'", conn.id));
+        };
+        match io(reader) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                // A failed read may already have consumed bytes and a failed write
+                // may already have sent bytes. The stream position is unknowable;
+                // keeping the handle would permit silent protocol corruption.
+                connections.remove(id);
+                Err(format_io_error(operation, &error))
+            }
+        }
+    })
+}
+
+fn format_io_error(operation: &str, error: &io::Error) -> String {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) {
+        format!("{operation}: I/O timed out")
+    } else {
+        format!("{operation}: {error}")
+    }
 }
 
 fn resolve(addr: &str) -> Result<std::net::SocketAddr, String> {
@@ -234,4 +321,77 @@ fn resolve(addr: &str) -> Result<std::net::SocketAddr, String> {
         .map_err(|e| format!("Tcp: DNS resolution failed for {}: {}", addr, e))?
         .next()
         .ok_or_else(|| format!("Tcp: no address found for {}", addr))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Shutdown, TcpListener};
+    use std::thread;
+
+    fn loopback_connection(
+        server: impl FnOnce(TcpStream) + Send + 'static,
+    ) -> (TcpConnection, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept loopback connection");
+            server(stream);
+        });
+        let connection = connect("127.0.0.1", i64::from(port)).expect("connect loopback client");
+        (connection, server)
+    }
+
+    #[test]
+    fn persistent_connections_have_no_read_or_write_deadline() {
+        let (connection, server) = loopback_connection(|_| {});
+        CONNECTIONS.with(|map| {
+            let connections = map.borrow();
+            let reader = connections
+                .get(connection.id.as_ref())
+                .expect("live handle");
+            assert_eq!(reader.get_ref().read_timeout().unwrap(), None);
+            assert_eq!(reader.get_ref().write_timeout().unwrap(), None);
+        });
+        close(&connection).expect("close client");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn failed_exact_read_poisons_the_connection() {
+        let (connection, server) = loopback_connection(|mut stream| {
+            stream.write_all(&[1, 2, 3]).expect("write partial frame");
+            stream
+                .shutdown(Shutdown::Write)
+                .expect("finish partial frame");
+        });
+
+        let first = read_bytes(&connection, 10).expect_err("short frame must fail");
+        assert!(first.starts_with("Tcp.readBytes:"), "{first}");
+        let second = read_bytes(&connection, 1).expect_err("failed handle must be gone");
+        assert!(second.contains("unknown connection"), "{second}");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn argument_validation_does_not_poison_the_connection() {
+        let (connection, server) = loopback_connection(|_| {});
+        assert!(read_bytes(&connection, -1).is_err());
+        CONNECTIONS.with(|map| {
+            assert!(map.borrow().contains_key(connection.id.as_ref()));
+        });
+        close(&connection).expect("close client");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn timeout_error_text_is_platform_independent() {
+        for kind in [io::ErrorKind::TimedOut, io::ErrorKind::WouldBlock] {
+            let error = io::Error::from(kind);
+            assert_eq!(
+                format_io_error("Tcp.readBytes", &error),
+                "Tcp.readBytes: I/O timed out"
+            );
+        }
+    }
 }

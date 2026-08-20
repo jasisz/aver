@@ -115,10 +115,17 @@ impl TypeChecker {
                 let type_prefix = name.split('.').next().unwrap_or(name);
                 let canon_prefix = self.canonical_type_name(type_prefix);
                 if !self.self_host_mode && self.opaque_types.contains(&canon_prefix) {
-                    self.error(format!(
-                        "Cannot pattern match on opaque type '{}'",
-                        type_prefix
-                    ));
+                    if self.is_capability_resource_type(type_prefix) {
+                        self.error(format!(
+                            "Cannot pattern match on capability resource '{}'",
+                            type_prefix
+                        ));
+                    } else {
+                        self.error(format!(
+                            "Cannot pattern match on opaque type '{}'",
+                            type_prefix
+                        ));
+                    }
                     for bind_name in bindings {
                         if bind_name != "_" {
                             out.push((bind_name.clone(), Type::Invalid));

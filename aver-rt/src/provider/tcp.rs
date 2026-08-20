@@ -1,9 +1,22 @@
 use super::{CapabilityProvider, ProviderContext, ProviderFault, ProviderResource, ProviderValue};
 
 /// Standard native Tcp provider shared by the bytecode VM and generated Rust.
-/// The capability boundary carries a `Tcp.Connection` as an opaque resource;
-/// only this adapter can recover the host-side connection token.
-pub struct StandardTcpProvider;
+/// The capability boundary carries a `Tcp.Connection` as a provider-owned
+/// resource; only this adapter can recover the host-side connection token.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StandardTcpProvider {
+    settings: crate::tcp::TcpSettings,
+}
+
+impl StandardTcpProvider {
+    pub fn new(settings: crate::tcp::TcpSettings) -> Self {
+        Self { settings }
+    }
+
+    pub fn settings(&self) -> crate::tcp::TcpSettings {
+        self.settings
+    }
+}
 
 pub const STANDARD_TCP_NATIVE_IDENTITY: &str = "aver.standard.Tcp/native";
 pub const STANDARD_TCP_FINGERPRINT: &str = concat!("aver-rt/", env!("CARGO_PKG_VERSION"));
@@ -100,7 +113,10 @@ impl CapabilityProvider for StandardTcpProvider {
                         "Tcp.send: port must fit a 64-bit integer",
                     )
                 })?;
-                tcp_result(crate::tcp::send(host, port, data), ProviderValue::String)
+                tcp_result(
+                    crate::tcp::send_with_settings(host, port, data, self.settings),
+                    ProviderValue::String,
+                )
             }
             "Tcp.sendBytes" => {
                 let [
@@ -122,19 +138,23 @@ impl CapabilityProvider for StandardTcpProvider {
                     )
                 })?;
                 tcp_result(
-                    crate::tcp::send_bytes(host, port, payload),
+                    crate::tcp::send_bytes_with_settings(host, port, payload, self.settings),
                     ProviderValue::Bytes,
                 )
             }
             "Tcp.ping" => {
                 let (host, port) = host_port(operation, args)?;
-                tcp_result(crate::tcp::ping(host, port), |_| ProviderValue::Unit)
+                tcp_result(
+                    crate::tcp::ping_with_settings(host, port, self.settings),
+                    |_| ProviderValue::Unit,
+                )
             }
             "Tcp.connect" => {
                 let (host, port) = host_port(operation, args)?;
-                tcp_result(crate::tcp::connect(host, port), |connection| {
-                    ProviderValue::Resource(ProviderResource::new(connection))
-                })
+                tcp_result(
+                    crate::tcp::connect_with_settings(host, port, self.settings),
+                    |connection| ProviderValue::Resource(ProviderResource::new(connection)),
+                )
             }
             "Tcp.writeLine" => {
                 let [connection_value, ProviderValue::String(line)] = args else {

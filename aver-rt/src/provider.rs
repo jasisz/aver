@@ -233,7 +233,7 @@ impl ProviderBinding {
         self.provider.fingerprint()
     }
 
-    /// Process-local binding identity used to validate opaque resource
+    /// Process-local binding identity used to validate capability-resource
     /// handles. It is runtime metadata and must never be serialized.
     pub fn runtime_id(&self) -> u64 {
         self.id

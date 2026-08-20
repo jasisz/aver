@@ -5470,7 +5470,7 @@ mod tests {
             index_in_module: 0,
             variants: vec![],
             is_product: true,
-            is_capability_opaque: false,
+            is_capability_resource: false,
         });
         st
     }
@@ -5583,7 +5583,7 @@ mod tests {
             index_in_module: 0,
             variants: vec![],
             is_product: true,
-            is_capability_opaque: false,
+            is_capability_resource: false,
         });
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
@@ -5620,7 +5620,7 @@ mod tests {
             index_in_module: 0,
             variants: vec![],
             is_product: true,
-            is_capability_opaque: false,
+            is_capability_resource: false,
         });
         let mut prefixes = HashSet::new();
         prefixes.insert("Apps.Notepad.Store".to_string());
@@ -6002,7 +6002,7 @@ mod tests {
             index_in_module: 0,
             variants: vec![crate::ir::CtorId(0)],
             is_product: false,
-            is_capability_opaque: false,
+            is_capability_resource: false,
         });
         st.ctors.push(CtorEntry {
             owning_type: crate::ir::TypeId(0),

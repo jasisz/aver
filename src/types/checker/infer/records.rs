@@ -14,19 +14,17 @@ impl TypeChecker {
         // qualified form would be.
         let canonical_type = self.canonical_type_name(type_name);
         if !self.self_host_mode && self.opaque_types.contains(canonical_type.as_str()) {
-            let guidance = if self
-                .capabilities
-                .opaque_types()
-                .any(|resource| resource == &canonical_type)
-            {
-                "obtain it from its capability provider"
+            if self.is_capability_resource_type(type_name) {
+                self.error(format!(
+                    "Cannot construct capability resource '{}' — obtain it from its provider",
+                    type_name,
+                ));
             } else {
-                "use its module's constructor function"
-            };
-            self.error(format!(
-                "Cannot construct opaque type '{}' — {guidance}",
-                type_name,
-            ));
+                self.error(format!(
+                    "Cannot construct opaque type '{}' — use its module's constructor function",
+                    type_name,
+                ));
+            }
             return self.canonicalize_named(Type::named(canonical_type));
         }
 
@@ -102,10 +100,17 @@ impl TypeChecker {
         // bare-named reference to an imported opaque type is caught.
         let canon = self.canonical_type_name(type_name);
         if !self.self_host_mode && self.opaque_types.contains(&canon) {
-            self.error(format!(
-                "Cannot update opaque type '{}' — use its module's API",
-                type_name
-            ));
+            if self.is_capability_resource_type(type_name) {
+                self.error(format!(
+                    "Cannot update capability resource '{}' — pass it to its capability operations",
+                    type_name
+                ));
+            } else {
+                self.error(format!(
+                    "Cannot update opaque type '{}' — use its module's API",
+                    type_name
+                ));
+            }
             return self.canonicalize_named(Type::named(type_name.to_string()));
         }
         let base_ty = self.infer_type(base);

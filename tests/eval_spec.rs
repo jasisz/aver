@@ -2377,7 +2377,7 @@ mod tcp_tests {
 
     #[test]
     #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
-    fn tcp_connect_returns_opaque_provider_resource() {
+    fn tcp_connect_returns_provider_resource() {
         use std::net::TcpListener;
         use std::thread;
 

@@ -1436,6 +1436,17 @@ impl TypeChecker {
         }
     }
 
+    /// Whether `name` resolves to a representation-less type owned and minted
+    /// by a capability provider. Capability resources share the access gates
+    /// used by module-level opaque types, but they are a distinct language
+    /// concept and diagnostics must not describe them as `exposes opaque`.
+    pub(crate) fn is_capability_resource_type(&self, name: &str) -> bool {
+        let canonical = self.canonical_type_name(name);
+        self.capabilities
+            .resource_types()
+            .any(|resource| resource == &canonical)
+    }
+
     /// Render the two types of a "expected X, got Y" diagnostic.
     ///
     /// Aver lets a module declare a type whose bare name a dependency

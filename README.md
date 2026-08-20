@@ -362,6 +362,10 @@ paths = ["./data/**"]
 
 [effects.Env]
 keys = ["APP_*", "PUBLIC_*"]
+
+[effects.Tcp]
+connect_timeout_secs = 5
+request_idle_timeout_secs = 30
 ```
 
 Disk paths accept concrete subtrees, `./**` for the project-relative subtree, and `/**` for the filesystem root. Bare `**`, empty entries, unsupported glob spellings, and `..`-rooted entries are rejected when `aver.toml` loads; see [the CLI reference](docs/cli.md#avertoml) for the full grammar and string-only matching limitation.
@@ -370,6 +374,11 @@ Think of this as two separate controls:
 
 - code answers: what kind of I/O is allowed?
 - policy answers: which concrete destinations are allowed?
+
+Tcp's two values configure the standard capability provider rather than grant
+additional effects. They apply to connection establishment and one-shot
+request calls; persistent session reads and writes intentionally have no
+deadline.
 
 Generated Rust can use the same scoped runtime machinery when you compile with `--with-replay`; see [docs/rust.md](docs/rust.md).
 

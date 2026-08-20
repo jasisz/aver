@@ -889,7 +889,7 @@ fn uses_runtime_handle(fd: &ResolvedFnDef) -> bool {
 fn is_runtime_handle_type(t: &Type) -> bool {
     walk_type_named(t, &|name| {
         crate::stdlib::standard_capability_registry_ref()
-            .opaque_types()
+            .resource_types()
             .any(|resource| resource == name)
     })
 }

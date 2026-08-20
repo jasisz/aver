@@ -555,10 +555,10 @@ pub struct Module {
 /// forms are refused by the same rule today.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CapabilityItem {
-    /// `opaque ConnectionToken` — a type with no representation
-    /// anywhere. Distinct from `exposes opaque [T]`, which hides a
+    /// `resource ConnectionToken` — a provider-owned value with no Aver
+    /// representation. Distinct from `exposes opaque [T]`, which hides a
     /// representation that exists inside the module.
-    Opaque { name: String, line: usize },
+    Resource { name: String, line: usize },
     /// `operation open(host: String, port: Int) -> Result<T, E>` with
     /// an indented block of `name = value` attributes.
     Operation(Operation),
@@ -567,14 +567,14 @@ pub enum CapabilityItem {
 impl CapabilityItem {
     pub fn name(&self) -> &str {
         match self {
-            CapabilityItem::Opaque { name, .. } => name,
+            CapabilityItem::Resource { name, .. } => name,
             CapabilityItem::Operation(op) => &op.name,
         }
     }
 
     pub fn line(&self) -> usize {
         match self {
-            CapabilityItem::Opaque { line, .. } => *line,
+            CapabilityItem::Resource { line, .. } => *line,
             CapabilityItem::Operation(op) => op.line,
         }
     }
@@ -582,7 +582,7 @@ impl CapabilityItem {
     /// The word that introduces the declaration, for diagnostics.
     pub fn keyword(&self) -> &'static str {
         match self {
-            CapabilityItem::Opaque { .. } => "opaque",
+            CapabilityItem::Resource { .. } => "resource",
             CapabilityItem::Operation(_) => "operation",
         }
     }
@@ -802,7 +802,7 @@ pub enum TopLevel {
     Decision(DecisionBlock),
     Stmt(Stmt),
     TypeDef(TypeDef),
-    /// `operation` / `opaque` — declarations that belong to a module
+    /// `operation` / `resource` — declarations that belong to a module
     /// whose header says `kind = capability`.
     Capability(CapabilityItem),
 }

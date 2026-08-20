@@ -191,7 +191,7 @@ fn named_type_is_inhabitable(
 /// inside the capability's own module, dotted everywhere else — the two
 /// spellings a dependent module and the contract itself use for one type.
 fn is_capability_resource(name: &str, ctx: &CodegenContext, scope: Option<&str>) -> bool {
-    ctx.capabilities.opaque_types().any(|canonical| {
+    ctx.capabilities.resource_types().any(|canonical| {
         canonical == name
             || canonical
                 .rsplit_once('.')

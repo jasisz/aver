@@ -1,5 +1,5 @@
 //! The capability grammar: `kind = capability` in a module header,
-//! `operation` and `opaque` as top-level declarations.
+//! `operation` and `resource` as top-level declarations.
 //!
 //! Three properties are pinned here, and they point in different
 //! directions on purpose.
@@ -7,10 +7,10 @@
 //! 1. **The silent-misparse trap, both halves.** Before this grammar
 //!    existed, an unknown word at top level was not a parse error:
 //!    `parse_top_level` fell through to `parse_expr`, and because Aver
-//!    has no juxtaposition, `opaque Token` became two adjacent
+//!    has no juxtaposition, `resource Token` became two adjacent
 //!    expression statements with no diagnostic beyond an
 //!    `unknown-ident` anchored on the wrong line. `operation` and
-//!    `opaque` must now PARSE. `capability Foo` must now be a HARD
+//!    `resource` must now PARSE. `capability Foo` must now be a HARD
 //!    ERROR, because a capability is a kind of module and there is
 //!    exactly one way to declare one.
 //!
@@ -103,7 +103,7 @@ module Net
     exposes [greet]
     effects []
 
-opaque ConnectionToken
+resource ConnectionToken
 
 operation open(host: String, port: Int) -> Result<ConnectionToken, Int>
     ? \"Establish a stream connection.\"
@@ -123,18 +123,18 @@ fn greet(x: Int) -> Int
 ";
 
 // ---------------------------------------------------------------------------
-// 1a. `operation` and `opaque` PARSE — the half that must now succeed
+// 1a. `operation` and `resource` PARSE — the half that must now succeed
 // ---------------------------------------------------------------------------
 
 #[test]
-fn opaque_declaration_parses_as_a_capability_item() {
+fn resource_declaration_parses_as_a_capability_item() {
     // Before: two `TopLevel::Stmt(Expr(Ident))` items and no parse
     // error at all — the declaration vanished into expression position.
-    let items = parse("opaque ConnectionToken\n");
+    let items = parse("resource ConnectionToken\n");
     assert_eq!(items.len(), 1, "expected exactly one item, got {items:?}");
     assert_eq!(
         items[0],
-        TopLevel::Capability(CapabilityItem::Opaque {
+        TopLevel::Capability(CapabilityItem::Resource {
             name: "ConnectionToken".to_string(),
             line: 1,
         })
@@ -238,19 +238,26 @@ fn capability_block_at_top_level_is_a_parse_error() {
 }
 
 #[test]
-fn opaque_with_fields_is_a_parse_error() {
-    // An opaque capability type has no representation anywhere. A field
+fn resource_with_fields_is_a_parse_error() {
+    // A capability resource has no Aver representation. A field
     // list would enter the contract hash and bind every provider to one
     // implementation's internals.
-    let msg = parse_error("opaque ConnectionToken\n    fd: Int\n");
+    let msg = parse_error("resource ConnectionToken\n    fd: Int\n");
     assert!(
-        msg.contains("no representation"),
+        msg.contains("no Aver representation"),
         "expected the representation-less rule, got: {msg}"
     );
     assert!(
         msg.contains("ConnectionToken"),
         "the error must name the type, got: {msg}"
     );
+}
+
+#[test]
+fn old_capability_opaque_spelling_has_a_targeted_repair() {
+    let msg = parse_error("opaque ConnectionToken\n");
+    assert!(msg.contains("resource ConnectionToken"), "{msg}");
+    assert!(msg.contains("exposes opaque"), "{msg}");
 }
 
 #[test]
@@ -338,6 +345,9 @@ fn operation(x: Int) -> Int
 fn opaque(x: Int) -> Int
     x
 
+fn resource(x: Int) -> Int
+    x
+
 fn capability(x: Int) -> Int
     x
 
@@ -350,10 +360,11 @@ fn semantics(x: Int) -> Int
 fn replay(output: Int) -> Int
     operation = 1
     opaque = 2
-    capability = 3
-    kind = 4
-    semantics = 5
-    output + operation + opaque + capability + kind + semantics
+    resource = 3
+    capability = 4
+    kind = 5
+    semantics = 6
+    output + operation + opaque + resource + capability + kind + semantics
 ";
     let items = parse(src);
     let names: Vec<&str> = items
@@ -368,6 +379,7 @@ fn replay(output: Int) -> Int
         vec![
             "operation",
             "opaque",
+            "resource",
             "capability",
             "kind",
             "semantics",
@@ -385,9 +397,16 @@ fn replay(output: Int) -> Int
 
 #[test]
 fn contextual_words_still_bind_at_top_level() {
-    // `opaque = 1` has `Assign` at peek(1), so the guarded arms above
+    // `resource = 1` has `Assign` at peek(1), so the guarded arms above
     // must not claim it.
-    for word in ["operation", "opaque", "capability", "kind", "semantics"] {
+    for word in [
+        "operation",
+        "opaque",
+        "resource",
+        "capability",
+        "kind",
+        "semantics",
+    ] {
         let items = parse(&format!("{word} = 1\n"));
         assert_eq!(
             items.len(),
@@ -422,7 +441,7 @@ fn capability_declarations_survive_unparse_and_reparse() {
     assert_eq!(
         capability_items.len(),
         3,
-        "expected `opaque` + two `operation`s, got {capability_items:?}"
+        "expected `resource` + two `operation`s, got {capability_items:?}"
     );
     assert_eq!(
         capability_items
@@ -442,8 +461,8 @@ fn capability_declarations_survive_unparse_and_reparse() {
         "the mandatory semantics must survive unparse:\n{text}"
     );
     assert!(
-        text.contains("opaque ConnectionToken"),
-        "the opaque declaration must survive unparse:\n{text}"
+        text.contains("resource ConnectionToken"),
+        "the resource declaration must survive unparse:\n{text}"
     );
     assert!(
         text.contains("operation open(host: String, port: Int) -> Result<ConnectionToken, Int>"),
@@ -508,7 +527,7 @@ module Digest
     exposes [digest]
     effects []
 
-opaque Context
+resource Context
 
 operation digest(text: String) -> String
 ";
@@ -1000,7 +1019,7 @@ module Kv
     exposes [open]
     effects [Kv.open]
 
-opaque Handle
+resource Handle
 
 operation open(path: String) -> Result<Handle, String>
     oracle = generative
@@ -1009,7 +1028,7 @@ operation open(path: String) -> Result<Handle, String>
     )
     .expect("write Kv.av");
     // `Backing` mixes arms; `Conn` has nothing BUT handle arms. Both used to
-    // sink the whole module: an `opaque` resource derived nothing, so the type
+    // sink the whole module: a resource derived nothing, so the type
     // carrying it derived nothing either and every claim in the file — the one
     // below included, which never mentions a handle — went with it.
     fs::write(
@@ -1299,7 +1318,7 @@ module Tokens
     exposes opaque [Connection]
     effects [Tokens.mint]
 
-opaque Token
+resource Token
 
 type Connection
     Open(Token)
@@ -1364,7 +1383,7 @@ module Mint
     exposes [succeeds]
     effects [Mint.mint]
 
-opaque Token
+resource Token
 
 operation mint() -> Result<Token, String>
     oracle = generative

@@ -240,7 +240,7 @@ where
 }
 
 /// Emit the self-host compatibility carrier for `Tcp.Connection`.
-/// Ordinary programs use the standard capability's opaque provider resource.
+/// Ordinary programs use the standard capability's provider resource.
 ///
 /// The Aver typechecker types `Tcp.Connection.port` as `Int`, which now
 /// lowers to `aver_rt::AverInt` — but the shared host struct

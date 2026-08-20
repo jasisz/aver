@@ -251,7 +251,12 @@ fn transpile_project(
     if has_provider_runtime {
         files.push((
             "src/provider_support.rs".to_string(),
-            provider::generate_provider_runtime(&ctx.capabilities, &required_provider_operations),
+            provider::generate_provider_runtime(
+                &ctx.capabilities,
+                &required_provider_operations,
+                ctx.policy.as_ref().map(|config| config.tcp_settings),
+                ctx.runtime_policy_from_env,
+            ),
         ));
         files.push((
             "src/lib.rs".to_string(),
@@ -815,11 +820,11 @@ fn entry_module_sections(
 fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) -> Vec<String> {
     let mut sections = Vec::new();
 
-    if let Some(opaque_types) =
-        provider::opaque_types_by_module(&ctx.capabilities).get(&module.prefix)
+    if let Some(resource_types) =
+        provider::resource_types_by_module(&ctx.capabilities).get(&module.prefix)
     {
-        for name in opaque_types {
-            sections.push(provider::emit_opaque_type(
+        for name in resource_types {
+            sections.push(provider::emit_resource_type(
                 &module.prefix,
                 name,
                 ctx.emit_replay_runtime,
@@ -2561,6 +2566,57 @@ fn main() -> Result<String, String>
     }
 
     #[test]
+    fn runtime_policy_configures_the_generated_tcp_provider() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<Unit, String>
+    ! [Tcp.ping]
+    Tcp.ping("127.0.0.1", 1)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.runtime_policy_from_env = true;
+
+        let out = transpile(&mut ctx);
+        let provider_support = generated_file(&out, "src/provider_support.rs");
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+
+        assert!(provider_support.contains("crate::aver_replay::tcp_provider_settings_from_env()?"));
+        assert!(provider_support.contains("StandardTcpProvider::new(standard_tcp_settings)"));
+        assert!(replay_support.contains("pub(crate) fn tcp_provider_settings_from_env()"));
+        assert!(replay_support.contains("validate_effect_section_keys(name, section)"));
+    }
+
+    #[test]
+    fn embedded_policy_configures_the_generated_tcp_provider() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<Unit, String>
+    ! [Tcp.ping]
+    Tcp.ping("127.0.0.1", 1)
+"#,
+            "demo",
+        );
+        ctx.policy = Some(
+            crate::config::ProjectConfig::parse(
+                "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\n",
+            )
+            .expect("Tcp policy"),
+        );
+
+        let out = transpile(&mut ctx);
+        let provider_support = generated_file(&out, "src/provider_support.rs");
+
+        assert!(provider_support.contains("TcpSettings::from_secs(7, 45)?"));
+        assert!(provider_support.contains("StandardTcpProvider::new(standard_tcp_settings)"));
+    }
+
+    #[test]
     fn replay_codegen_can_keep_embedded_policy_when_requested() {
         let mut ctx = ctx_from_source(
             r#"
@@ -2575,6 +2631,8 @@ fn main() -> Result<String, String>
         ctx.emit_replay_runtime = true;
         ctx.policy = Some(crate::config::ProjectConfig {
             effect_policies: std::collections::HashMap::new(),
+            tcp_settings: crate::config::TcpEffectSettings::default(),
+            tcp_settings_configured: false,
             check_suppressions: Vec::new(),
             independence_mode: crate::config::IndependenceMode::default(),
             shape_layers: Vec::new(),
@@ -2667,6 +2725,8 @@ fn main() -> Result<Tuple<Int, Int>, String>
         ctx.emit_replay_runtime = true;
         ctx.policy = Some(crate::config::ProjectConfig {
             effect_policies: std::collections::HashMap::new(),
+            tcp_settings: crate::config::TcpEffectSettings::default(),
+            tcp_settings_configured: false,
             check_suppressions: Vec::new(),
             independence_mode: crate::config::IndependenceMode::Cancel,
             shape_layers: Vec::new(),

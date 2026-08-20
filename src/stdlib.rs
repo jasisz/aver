@@ -592,11 +592,11 @@ mod tests {
         let contract = registry.contract("Tcp").expect("Tcp contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:697b0b2d6ee3a698603ba763f219c2ce1eacbcf033c7e51a8a88eb2c2d626d23"
+            "sha256:5f8f81b438d3fdcf50d93597989c4653f12c63cf43a4967ed07fa2939ffe829b"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:c676f257ba3bcd764e38a853dc550b229e20b09aaacb4fc51e71b6a5c90eb8ea"
+            "sha256:de2ae49130c867187d88e18d3541e5996412cc198be3761d61b2fde19440e7c8"
         );
         for (method, labels) in [
             ("Tcp.send", vec!["normal_ok", "always_err"]),

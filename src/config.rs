@@ -4,6 +4,8 @@
 ///   [effects.Http]   hosts = ["api.example.com", "*.internal.corp"]
 ///   [effects.Disk]   paths = ["./data/**"]
 ///   [effects.Env]    keys  = ["APP_*", "TOKEN"]
+///   [effects.Tcp]    connect_timeout_secs = 5
+///                    request_idle_timeout_secs = 30
 ///
 /// And check-time warning suppression:
 ///   [[check.suppress]]
@@ -30,6 +32,34 @@ pub struct EffectPolicy {
     pub paths: Vec<String>,
     /// Allowed environment variable keys (exact or wildcard `PREFIX_*`).
     pub keys: Vec<String>,
+}
+
+/// Deployment settings consumed by the standard Tcp capability provider.
+/// Persistent session reads and writes deliberately have no timeout; these
+/// values govern only socket establishment and one-shot request calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpEffectSettings {
+    pub connect_timeout_secs: u64,
+    pub request_idle_timeout_secs: u64,
+}
+
+impl Default for TcpEffectSettings {
+    fn default() -> Self {
+        Self {
+            connect_timeout_secs: aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS,
+            request_idle_timeout_secs: aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl TcpEffectSettings {
+    pub fn native(self) -> aver_rt::tcp::TcpSettings {
+        aver_rt::tcp::TcpSettings::from_secs(
+            self.connect_timeout_secs,
+            self.request_idle_timeout_secs,
+        )
+        .expect("ProjectConfig validates positive Tcp timeout settings")
+    }
 }
 
 /// Per-project layer fingerprint, used by `aver shape` to override the
@@ -94,6 +124,12 @@ pub enum IndependenceMode {
 pub struct ProjectConfig {
     /// Effect namespace → policy.  Absence of a key means "allow all".
     pub effect_policies: HashMap<String, EffectPolicy>,
+    /// Settings forwarded to the standard Tcp provider.
+    pub tcp_settings: TcpEffectSettings,
+    /// Whether `[effects.Tcp]` explicitly contained either timeout key.
+    /// Targets that cannot honour the settings use this to warn rather than
+    /// silently pretending they applied deployment configuration.
+    pub tcp_settings_configured: bool,
     /// Check-time warning suppressions.
     pub check_suppressions: Vec<CheckSuppression>,
     /// How `?!` products handle branch failure.
@@ -133,12 +169,37 @@ impl ProjectConfig {
             .map_err(|e: toml::de::Error| format!("aver.toml parse error: {}", e))?;
 
         let mut effect_policies = HashMap::new();
+        let mut tcp_settings = TcpEffectSettings::default();
+        let mut tcp_settings_configured = false;
 
         if let Some(toml::Value::Table(effects_table)) = table.get("effects") {
             for (name, value) in effects_table {
                 let section = value
                     .as_table()
                     .ok_or_else(|| format!("aver.toml: [effects.{}] must be a table", name))?;
+
+                validate_effect_section_keys(name, section)?;
+
+                if name == "Tcp" {
+                    if section.contains_key("connect_timeout_secs") {
+                        tcp_settings_configured = true;
+                    }
+                    if section.contains_key("request_idle_timeout_secs") {
+                        tcp_settings_configured = true;
+                    }
+                    tcp_settings.connect_timeout_secs = parse_positive_timeout_secs(
+                        name,
+                        section,
+                        "connect_timeout_secs",
+                        tcp_settings.connect_timeout_secs,
+                    )?;
+                    tcp_settings.request_idle_timeout_secs = parse_positive_timeout_secs(
+                        name,
+                        section,
+                        "request_idle_timeout_secs",
+                        tcp_settings.request_idle_timeout_secs,
+                    )?;
+                }
 
                 let hosts = if let Some(val) = section.get("hosts") {
                     let arr = val.as_array().ok_or_else(|| {
@@ -217,6 +278,8 @@ impl ProjectConfig {
 
         Ok(ProjectConfig {
             effect_policies,
+            tcp_settings,
+            tcp_settings_configured,
             check_suppressions,
             independence_mode,
             shape_layers,
@@ -367,6 +430,55 @@ impl ProjectConfig {
             method_name, key
         ))
     }
+}
+
+fn validate_effect_section_keys(
+    effect: &str,
+    section: &toml::map::Map<String, toml::Value>,
+) -> Result<(), String> {
+    let namespace = effect.split('.').next().unwrap_or(effect);
+    let allowed: &[&str] = match (namespace, effect) {
+        ("Http", _) => &["hosts"],
+        ("Disk", _) => &["paths"],
+        ("Env", _) => &["keys"],
+        ("Tcp", "Tcp") => &["connect_timeout_secs", "request_idle_timeout_secs"],
+        ("Tcp", _) => &[],
+        _ => &[],
+    };
+
+    for key in section.keys() {
+        if !allowed.contains(&key.as_str()) {
+            let expected = if namespace == "Tcp" && effect != "Tcp" {
+                "Tcp timeout settings belong under [effects.Tcp], not a method section".to_string()
+            } else if allowed.is_empty() {
+                format!("[effects.{effect}] has no supported settings")
+            } else {
+                format!("expected one of: {}", allowed.join(", "))
+            };
+            return Err(format!(
+                "aver.toml: unknown or misplaced key [effects.{effect}].{key}; {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_positive_timeout_secs(
+    effect: &str,
+    section: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    default: u64,
+) -> Result<u64, String> {
+    let Some(value) = section.get(key) else {
+        return Ok(default);
+    };
+    let seconds = value
+        .as_integer()
+        .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be a positive integer"))?;
+    u64::try_from(seconds)
+        .ok()
+        .filter(|seconds| *seconds > 0)
+        .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be greater than zero"))
 }
 
 /// Check if a hostname matches an allowed pattern.
@@ -839,12 +951,96 @@ mod tests {
                 );
             }
         }
+
+        for (name, body) in [
+            (
+                "src/codegen/rust/replay.rs",
+                include_str!("codegen/rust/replay.rs"),
+            ),
+            (
+                "src/self_host/replay_support.rs",
+                include_str!("self_host/replay_support.rs"),
+            ),
+        ] {
+            for marker in [
+                "validate_effect_section_keys(name, section)",
+                "connect_timeout_secs",
+                "request_idle_timeout_secs",
+            ] {
+                assert!(
+                    body.contains(marker),
+                    "{name} is missing `{marker}` — runtime-loaded policy must mirror ProjectConfig"
+                );
+            }
+        }
     }
 
     #[test]
     fn test_parse_empty_toml() {
         let config = ProjectConfig::parse("").unwrap();
         assert!(config.effect_policies.is_empty());
+        assert_eq!(config.tcp_settings, TcpEffectSettings::default());
+        assert!(!config.tcp_settings_configured);
+    }
+
+    #[test]
+    fn test_parse_tcp_provider_settings() {
+        let config = ProjectConfig::parse(
+            "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.tcp_settings,
+            TcpEffectSettings {
+                connect_timeout_secs: 7,
+                request_idle_timeout_secs: 45,
+            }
+        );
+        assert!(config.tcp_settings_configured);
+    }
+
+    #[test]
+    fn tcp_provider_settings_must_be_positive_integers() {
+        for (key, value, phrase) in [
+            ("connect_timeout_secs", "0", "greater than zero"),
+            ("request_idle_timeout_secs", "-1", "greater than zero"),
+            ("connect_timeout_secs", "1.5", "positive integer"),
+            ("request_idle_timeout_secs", "\"30\"", "positive integer"),
+        ] {
+            let error = ProjectConfig::parse(&format!("[effects.Tcp]\n{key} = {value}\n"))
+                .expect_err("invalid Tcp setting must be rejected");
+            assert!(error.contains(key) && error.contains(phrase), "{error}");
+        }
+    }
+
+    #[test]
+    fn effect_sections_reject_unknown_and_misplaced_keys() {
+        for (source, path) in [
+            (
+                "[effects.Tcp]\npaths = [\"./data/**\"]\n",
+                "[effects.Tcp].paths",
+            ),
+            (
+                "[effects.Http]\nrequest_idle_timeout_secs = 30\n",
+                "[effects.Http].request_idle_timeout_secs",
+            ),
+            (
+                "[effects.Disk]\nhosts = [\"example.com\"]\n",
+                "[effects.Disk].hosts",
+            ),
+            (
+                "[effects.\"Tcp.readBytes\"]\nconnect_timeout_secs = 5\n",
+                "[effects.Tcp.readBytes].connect_timeout_secs",
+            ),
+            (
+                "[effects.Unknown]\nthing = true\n",
+                "[effects.Unknown].thing",
+            ),
+        ] {
+            let error = ProjectConfig::parse(source)
+                .expect_err("unknown or misplaced effect key must be rejected");
+            assert!(error.contains(path), "{error}");
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ use super::{NativeProviderRegistry, ProviderValue};
 /// Conversion implemented by native generated-Rust boundary types.
 ///
 /// Built-in first-order types implement it in `aver-rt`; generated records,
-/// sums, and opaque resource wrappers implement it in the generated crate.
+/// sums, and capability-resource wrappers implement it in the generated crate.
 /// The registry arguments are inert for ordinary data and are used only by a
 /// resource codec to resolve/store the provider-private payload.
 pub trait ProviderCodec: Sized {

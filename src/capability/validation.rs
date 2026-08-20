@@ -120,17 +120,17 @@ fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
 pub(super) fn validate_operation_boundaries(
     scope: &str,
     operations: &mut [CapabilityOperation],
-    opaque: &[String],
+    resources: &[String],
     resource_tainted: &BTreeSet<String>,
     errors: &mut Vec<CapabilityError>,
 ) {
-    let opaque: BTreeSet<String> = opaque.iter().cloned().collect();
+    let resources: BTreeSet<String> = resources.iter().cloned().collect();
     let operation_names: BTreeSet<String> = operations.iter().map(|op| op.name.clone()).collect();
 
     fn minted_resource(
         scope: &str,
         ty: &Type,
-        opaque: &BTreeSet<String>,
+        resources: &BTreeSet<String>,
         tainted: &BTreeSet<String>,
     ) -> Result<Option<String>, String> {
         match ty {
@@ -141,11 +141,11 @@ pub(super) fn validate_operation_boundaries(
                             .to_string(),
                     );
                 }
-                minted_resource(scope, ok, opaque, tainted)
+                minted_resource(scope, ok, resources, tainted)
             }
-            Type::Option(inner) => minted_resource(scope, inner, opaque, tainted),
+            Type::Option(inner) => minted_resource(scope, inner, resources, tainted),
             Type::Named { name, .. }
-                if opaque.contains(name.rsplit('.').next().unwrap_or(name)) =>
+                if resources.contains(name.rsplit('.').next().unwrap_or(name)) =>
             {
                 let local = name.rsplit('.').next().unwrap_or(name);
                 Ok(Some(format!("{scope}.{local}")))
@@ -167,7 +167,7 @@ pub(super) fn validate_operation_boundaries(
     }
 
     for operation in operations {
-        match minted_resource(scope, &operation.return_type, &opaque, resource_tainted) {
+        match minted_resource(scope, &operation.return_type, &resources, resource_tainted) {
             Ok(resource) => operation.minted_resource = resource,
             Err(reason) => errors.push(CapabilityError::at(
                 operation.line,
@@ -271,10 +271,10 @@ fn type_mentions_any_named(ty: &Type, names: &BTreeSet<String>) -> bool {
 }
 
 pub(super) fn resource_tainted_type_names(
-    opaque: &[String],
+    resources: &[String],
     defs: &BTreeMap<String, &TypeDef>,
 ) -> BTreeSet<String> {
-    let mut tainted: BTreeSet<String> = opaque.iter().cloned().collect();
+    let mut tainted: BTreeSet<String> = resources.iter().cloned().collect();
     loop {
         let mut changed = false;
         for (name, td) in defs {
@@ -369,7 +369,7 @@ pub(super) fn validate_resource_map_keys(
 /// Admitting a type from another module would print its name in an operation
 /// row without hashing that type's layout, so a dependency could mutate the
 /// provider ABI while contract_hash stayed fixed. Bare names are local only
-/// when a represented or opaque declaration proves ownership; an imported bare
+/// when a represented or resource declaration proves ownership; an imported bare
 /// alias must not be silently qualified into the capability's own scope. Fail
 /// closed until descriptors can bind cross-module identities transitively.
 pub(super) fn validate_boundary_type_ownership(

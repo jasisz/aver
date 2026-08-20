@@ -955,7 +955,7 @@ module Vault
     semantics = effectful
     exposes [open, read]
 
-opaque Token
+resource Token
 
 operation open() -> Result<Token, String>
     oracle = generative
@@ -1044,7 +1044,7 @@ module Vault
     semantics = effectful
     exposes [open, read]
 
-opaque Token
+resource Token
 
 operation open() -> Result<Token, String>
     oracle = generative

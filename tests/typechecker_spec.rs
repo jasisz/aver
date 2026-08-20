@@ -1467,8 +1467,8 @@ fn valid_tcp_close_with_connection() {
 }
 
 #[test]
-fn error_tcp_connection_field_access_is_opaque() {
-    // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque. Field reads
+fn error_tcp_connection_resource_has_no_fields() {
+    // Phase 4.7+ fix #11 — `Tcp.Connection` is a capability resource. Field reads
     // and destructuring are rejected; the record is a stateful
     // handle, not a value with public metadata. Programs pass it
     // back to `Tcp.{close, writeLine, readLine}` and never inspect
@@ -1477,12 +1477,12 @@ fn error_tcp_connection_field_access_is_opaque() {
         "fn getId(conn: Tcp.Connection) -> String\n",
         "    conn.id\n",
     );
-    assert_error_containing(src, "opaque type 'Tcp.Connection'");
+    assert_error_containing(src, "capability resource 'Tcp.Connection'");
 }
 
 #[test]
-fn error_tcp_connection_manual_construction_is_opaque() {
-    // Same opaque check, construction path. A hand-crafted record
+fn error_tcp_connection_resource_cannot_be_constructed() {
+    // Same resource check, construction path. A hand-crafted record
     // with a forged `id` string would otherwise alias an unrelated
     // live pool slot at runtime (`aver-rt::tcp` keys its HashMap by
     // id; wasip2 parses the digits as the slot index).
@@ -1490,13 +1490,13 @@ fn error_tcp_connection_manual_construction_is_opaque() {
         "fn fake() -> Tcp.Connection\n",
         "    Tcp.Connection(id = \"tcp-0\", host = \"x\", port = 80)\n",
     );
-    assert_error_containing(src, "opaque type 'Tcp.Connection'");
+    assert_error_containing(src, "capability resource 'Tcp.Connection'");
 }
 
 #[test]
 fn verify_trace_cannot_fabricate_tcp_connection_resource() {
     // Capability resources stay provider-owned even in verify traces. A
-    // `Tcp.connect` oracle receives the fresh opaque token it may return;
+    // `Tcp.connect` oracle receives the fresh resource token it may return;
     // arbitrary record syntax must never forge one.
     let src = concat!(
         "fn fakeWrite(p: BranchPath, n: Int, c: Tcp.Connection, line: String) -> Result<Unit, String>\n",
@@ -1520,7 +1520,7 @@ fn verify_trace_cannot_fabricate_tcp_connection_resource() {
         "    pinged = ping(conn)\n",
         "    pinged.trace.contains(Tcp.writeLine) => true\n",
     );
-    assert_error_containing(src, "Cannot construct opaque type 'Tcp.Connection'");
+    assert_error_containing(src, "Cannot construct capability resource 'Tcp.Connection'");
 }
 
 #[test]
@@ -1535,7 +1535,7 @@ fn error_tcp_connection_fabrication_still_rejected_outside_verify() {
         "fn forgeOutsideVerify() -> Tcp.Connection\n",
         "    Tcp.Connection(id = \"forged\", host = \"x\", port = 80)\n",
     );
-    assert_error_containing(src, "opaque type 'Tcp.Connection'");
+    assert_error_containing(src, "capability resource 'Tcp.Connection'");
 }
 
 #[test]

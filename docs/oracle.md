@@ -421,7 +421,7 @@ user already wrote is not re-run.
 | `Tcp.{send,sendBytes,ping,readLine,writeLine,close}` | `normal_ok`, `always_err` |
 | `Tcp.readBytes` | `normal_ok`, `short_read`, `always_err` |
 | `Tcp.writeBytes` | `normal_ok`, `always_err` |
-| `Tcp.connect` | `normal_ok` (fresh opaque connection resource), `always_err` |
+| `Tcp.connect` | `normal_ok` (fresh connection resource), `always_err` |
 
 User-given pins are **not** a pre-empt: hostile profiles always layer
 on top, since the user's stub is itself an assumption. The runtime stub

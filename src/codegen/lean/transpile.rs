@@ -395,10 +395,10 @@ fn emit_type_sections(
     })
 }
 
-fn emit_capability_opaque_types(ctx: &CodegenContext, scope: Option<&str>) -> Vec<String> {
+fn emit_capability_resource_types(ctx: &CodegenContext, scope: Option<&str>) -> Vec<String> {
     let entry_module = ctx.entry_module_name();
     ctx.capabilities
-        .opaque_types()
+        .resource_types()
         .filter_map(|canonical| {
             let (module, name) = canonical.rsplit_once('.')?;
             let belongs = match scope {
@@ -492,6 +492,9 @@ pub(super) fn transpile_unified(
             .map(|p| p.type_name)
             .collect(),
     );
+    let _resource_guard = crate::codegen::lean::types::scope_capability_resources(
+        ctx.capabilities.resource_types().cloned().collect(),
+    );
     // Pure-fn param types + every type def's field types feed the
     // entries-measure emission scan: an entries-list spelling
     // (`Map<K, T>` / `List<Tuple<K, T>>`) may appear only in fn
@@ -561,7 +564,7 @@ pub(super) fn transpile_unified(
     let dep_theorem_order_keys = super::law_auto::dep_theorem_order_keys(ctx);
 
     for module in &ctx.modules {
-        let mut body_sections = emit_capability_opaque_types(ctx, Some(&module.prefix));
+        let mut body_sections = emit_capability_resource_types(ctx, Some(&module.prefix));
         let scope = Some(module.prefix.as_str());
         let decl_plan = super::decl_order::plan_scoped_declarations(
             ctx,
@@ -727,7 +730,7 @@ pub(super) fn transpile_unified(
     }
 
     // ---- Entry sections ----
-    let mut entry_body_sections = emit_capability_opaque_types(ctx, None);
+    let mut entry_body_sections = emit_capability_resource_types(ctx, None);
     let entry_plan =
         super::decl_order::plan_scoped_declarations(ctx, &ctx.type_defs, &ctx.fn_defs, None);
     for decl in &entry_plan.order {

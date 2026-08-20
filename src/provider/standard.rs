@@ -33,7 +33,7 @@ impl StandardCapabilityBinding {
         match self {
             Self::Disk => Arc::new(aver_rt::provider::StandardDiskProvider),
             Self::Random => Arc::new(aver_rt::provider::StandardRandomProvider),
-            Self::Tcp => Arc::new(aver_rt::provider::StandardTcpProvider),
+            Self::Tcp => Arc::new(aver_rt::provider::StandardTcpProvider::default()),
             Self::Time => Arc::new(aver_rt::provider::StandardTimeProvider),
         }
     }

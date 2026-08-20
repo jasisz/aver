@@ -293,8 +293,8 @@ fn main() {{
     let bagged = generated::aver_generated::entry::bagToken(&left_token);
     assert_eq!(boxed, boxed.clone());
     assert_eq!(bagged, bagged.clone());
-    assert_eq!(boxed.aver_display(), "TokenBox(token: Vault.Token(<opaque>))");
-    assert_eq!(bagged.aver_display(), "Stored(Vault.Token(<opaque>))");
+    assert_eq!(boxed.aver_display(), "TokenBox(token: Vault.Token(<resource>))");
+    assert_eq!(bagged.aver_display(), "Stored(Vault.Token(<resource>))");
     let left = generated::aver_generated::entry::consume(&left_token).expect("consume left token");
     let right = generated::aver_generated::entry::consume(&right_token).expect("consume right token");
     println!("{{direct}}:{{left}}:{{right}}");
@@ -302,7 +302,7 @@ fn main() {{
 "#
         ),
     )
-    .expect("write opaque-resource host");
+    .expect("write capability-resource host");
 
     let run = run_host(&project, "vault_host");
     assert!(run.status.success(), "{}", command_report(&run));
@@ -310,7 +310,7 @@ fn main() {{
 }
 
 #[test]
-fn generated_rust_records_and_replays_opaque_resources_without_a_live_provider() {
+fn generated_rust_records_and_replays_capability_resources_without_a_live_provider() {
     let project = generate_project("native_provider_vault", true);
     let generated_crate = &project.crate_name;
     fs::write(
@@ -335,7 +335,7 @@ fn main() {{
 "#
         ),
     )
-    .expect("write opaque-resource replay host");
+    .expect("write capability-resource replay host");
 
     let recording = project.root.join("vault-replay.json");
     let record = Command::new("cargo")
