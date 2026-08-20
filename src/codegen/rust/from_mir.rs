@@ -263,6 +263,10 @@ impl<'a> MirEmitCtx<'a> {
     fn is_borrowed_param(&self, name: &str) -> bool {
         self.borrowed_params.contains(name)
     }
+
+    fn is_owned_param(&self, name: &str) -> bool {
+        self.owned_params.contains(name)
+    }
 }
 
 /// A shared empty `FnBareFacts` (all-`Boxed`) for the coverage / test /
@@ -426,13 +430,11 @@ impl MirFnEmitPolicy {
         }
     }
 
-    /// Apply the `own_param` MIR pass's ownership facts to this policy:
-    /// every `Vector`/`Map` param whose `MirFn.aliased_slots` bit was
-    /// CLEARED (proven uniquely owned) graduates from borrow-by-default
-    /// to **owned-by-value** — moved OUT of `borrowed_params` and INTO
-    /// `owned_params` so the signature emits `mut p: T` and the body
-    /// skips the `.clone()` at a last-use mutation site (native in-place
-    /// `Rc::make_mut`, refcount-1).
+    /// Apply the MIR ownership facts to this policy. A `Vector`/`Map` param
+    /// graduates when `own_param` cleared its alias bit. A named record param
+    /// graduates when its returned successor is a `RecordUpdate` rooted in
+    /// that param: Rust can move the record and its replaced field while the
+    /// caller still clones at a non-last-use call site.
     ///
     /// SOUNDNESS (the #383 corruption class): a collection param is
     /// graduated ONLY when `own_param` cleared its bit. `own_param`'s
@@ -457,9 +459,8 @@ impl MirFnEmitPolicy {
             let Some(ty) = self.local_types.get(&rust_name) else {
                 continue;
             };
-            if !is_owned_collection_candidate(ty) {
-                continue;
-            }
+            let returned_record_successor = matches!(ty, Type::Named { .. })
+                && result_contains_record_update_of(&mir_fn.body.node, param.local);
             // `own_param`'s `prone`/clearing both index `aliased_slots`
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
             // matching `MirParam.local = LocalId(i)`; match that exactly.
@@ -467,8 +468,9 @@ impl MirFnEmitPolicy {
             // Cleared bit ⟺ own_param proved unique ownership. Missing →
             // treat as flagged (conservative). Still-flagged → keep the
             // existing borrow-by-default decision (do not graduate).
-            let flagged = mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
-            if flagged {
+            let collection_graduated = is_owned_collection_candidate(ty)
+                && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
+            if !collection_graduated && !returned_record_successor {
                 continue;
             }
             // Graduate: owned-by-value. On the borrow-by-default path the
@@ -491,6 +493,44 @@ fn is_owned_collection_candidate(ty: &Type) -> bool {
     matches!(ty, Type::Vector(_) | Type::Map(_, _))
 }
 
+/// Does a function result contain a record successor whose base is `slot`?
+///
+/// Only result positions are transparent. A record update in a `let` value or
+/// call argument does not qualify because moving its base could invalidate a
+/// later read in the same function. `Construct` covers `Result.Ok(update)`;
+/// branches and the body side of `Let` preserve result position.
+fn result_contains_record_update_of(expr: &MirExpr, slot: LocalId) -> bool {
+    match expr {
+        MirExpr::RecordUpdate(update) => {
+            local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
+        }
+        MirExpr::Let(let_expr) => result_contains_record_update_of(&let_expr.node.body.node, slot),
+        MirExpr::Match(match_expr) => match_expr
+            .node
+            .arms
+            .iter()
+            .any(|arm| result_contains_record_update_of(&arm.body.node, slot)),
+        MirExpr::IfThenElse(branches) => {
+            result_contains_record_update_of(&branches.node.then_branch.node, slot)
+                || result_contains_record_update_of(&branches.node.else_branch.node, slot)
+        }
+        MirExpr::Return(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner)
+        | MirExpr::Neg(inner) => result_contains_record_update_of(&inner.node, slot),
+        MirExpr::Construct(construct) => construct
+            .node
+            .args
+            .iter()
+            .any(|arg| result_contains_record_update_of(&arg.node, slot)),
+        MirExpr::Tuple(items) => items
+            .iter()
+            .any(|item| result_contains_record_update_of(&item.node, slot)),
+        _ => false,
+    }
+}
+
 /// The Rust-mangled names of a fn's `Vector`/`Map` params that
 /// `own_param` PROVED uniquely owned (cleared `aliased_slots` bit) — the
 /// set the non-TCO SIGNATURE emits owned-by-value (`mut p: T`). The
@@ -506,11 +546,13 @@ pub(super) fn owned_collection_param_names(
 ) -> HashSet<String> {
     let mut out = HashSet::new();
     for (i, (name, ty)) in param_types.iter().enumerate() {
-        if !is_owned_collection_candidate(ty) {
-            continue;
-        }
-        let flagged = mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
-        if flagged {
+        let returned_record_successor = matches!(ty, Type::Named { .. })
+            && mir_fn.params.get(i).is_some_and(|param| {
+                result_contains_record_update_of(&mir_fn.body.node, param.local)
+            });
+        let collection_graduated = is_owned_collection_candidate(ty)
+            && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
+        if !collection_graduated && !returned_record_successor {
             continue;
         }
         out.insert(aver_name_to_rust(name));
@@ -1367,17 +1409,30 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `clone_arg`.
             let upd = &spanned_upd.node;
             let rust_type = mir_record_rust_type(upd.type_id, &upd.type_name, emit_ctx);
-            let base = mir_clone_arg(
-                emit_mir_expr(&upd.base, emit_ctx)?,
-                &upd.base.node,
-                emit_ctx,
-            );
             let mut parts = Vec::with_capacity(upd.updates.len());
+            let mut moved_replaced_field = false;
             for f in &upd.updates {
-                let val =
-                    mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx);
+                let val = match emit_owned_record_field_successor(upd, f, emit_ctx) {
+                    Some(val) => {
+                        moved_replaced_field = true;
+                        val
+                    }
+                    None => {
+                        mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx)
+                    }
+                };
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
+            // A specialized field successor partially moves the replaced
+            // field from an owned record. The `..base` update then moves only
+            // the remaining fields, which Rust permits. Cloning `base` here
+            // would both be unnecessary and fail after the partial move.
+            let emitted_base = emit_mir_expr(&upd.base, emit_ctx)?;
+            let base = if moved_replaced_field {
+                emitted_base
+            } else {
+                mir_clone_arg(emitted_base, &upd.base.node, emit_ctx)
+            };
             Some(format!(
                 "{} {{ {}, ..{} }}",
                 rust_type,
@@ -1501,6 +1556,74 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 "{}.to_i64().expect(\"Int out of i64 range\")",
                 boxed
             ))
+        }
+        _ => None,
+    }
+}
+
+/// Emit a persistent Map successor by partially moving the field replaced by
+/// an owned record update.
+///
+/// `Store.update(store, values = Map.set(store.values, ...))` may become
+/// `Store { values: store.values.insert_owned(...), ..store }`: the explicit
+/// `values` initializer consumes that field, while Rust's struct-update tail
+/// moves only the remaining fields. The exact same-field guard is load-bearing;
+/// moving `store.values` to initialize a *different* field would leave
+/// `..store` needing an already-moved field.
+fn emit_owned_record_field_successor(
+    update: &crate::ir::mir::MirRecordUpdate,
+    field: &crate::ir::mir::MirRecordField,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let update_base = local_of(&update.base.node)?;
+    if !ctx.is_owned_param(&update_base.name) {
+        return None;
+    }
+
+    let MirExpr::Call(call) = &field.value.node else {
+        return None;
+    };
+    let MirCallee::Builtin(builtin) = call.node.callee else {
+        return None;
+    };
+    let name = ctx
+        .mir_builtins
+        .get(builtin.0 as usize)
+        .map(String::as_str)?;
+    if !matches!(name, "Map.set" | "Map.remove") {
+        return None;
+    }
+
+    let target = call.node.args.first()?;
+    let MirExpr::Project(project) = &target.node else {
+        return None;
+    };
+    let target_base = local_of(&project.node.base.node)?;
+    if target_base.slot != update_base.slot
+        || !target_base.last_use
+        || project.node.field != field.name
+    {
+        return None;
+    }
+
+    let receiver = emit_mir_expr(target, ctx)?;
+    match name {
+        "Map.set" if call.node.args.len() == 3 => {
+            let key = mir_clone_arg(
+                emit_mir_expr(&call.node.args[1], ctx)?,
+                &call.node.args[1].node,
+                ctx,
+            );
+            let value = mir_clone_arg(
+                emit_mir_expr(&call.node.args[2], ctx)?,
+                &call.node.args[2].node,
+                ctx,
+            );
+            Some(format!("{}.insert_owned({}, {})", receiver, key, value))
+        }
+        "Map.remove" if call.node.args.len() == 2 => {
+            let key = emit_mir_expr(&call.node.args[1], ctx)?;
+            Some(format!("{}.remove_owned(&{})", receiver, key))
         }
         _ => None,
     }
