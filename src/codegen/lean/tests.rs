@@ -233,8 +233,7 @@ fn divL(n: Int, d: Int) -> Result<Int, String>
 
 #[test]
 fn a_mutual_group_passing_a_computed_value_does_not_claim_a_sizeof_measure() {
-    let mut ctx = ctx_from_source(
-        r#"
+    let source = r#"
 module Climb
     effects []
 
@@ -260,9 +259,19 @@ fn climb(level: List<Int>) -> Result<Int, String>
     ? "One level of pairing, then look again."
     next = pairsOf(level, [])
     rootFrom(next)
-"#,
-        "Climb",
-    );
+
+fn checked(level: List<Int>) -> Result<Int, String>
+    ? "Delegate to the fuel-lowered group."
+    rootFrom(level)
+
+verify checked
+    checked([7]) => Result.Ok(7)
+
+verify checked law singleton
+    given n: Int = 0..1
+    checked([n]) => Result.Ok(n)
+"#;
+    let mut ctx = ctx_from_source(source, "Climb");
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
 
@@ -278,6 +287,40 @@ fn climb(level: List<Int>) -> Result<Int, String>
         lean.contains("climb__fuel"),
         "the group must still be lowered, on the fuel path:\n{lean}"
     );
+    assert!(
+        lean.contains("-- verify checked: the Lean call cone reaches fuel-lowered function(s)"),
+        "a sampled claim over the fuel group must be refused explicitly:\n{lean}"
+    );
+    assert!(
+        !lean.contains("example : checked [7]"),
+        "the fuel-bounded sample must never reach native_decide:\n{lean}"
+    );
+    let declined = ctx.declined_claims.borrow();
+    let refusal = declined
+        .get("cases:checked")
+        .expect("the fuel refusal must reach the driver's structured channel");
+    assert!(
+        refusal.reason.contains("rootFrom") && refusal.reason.contains("default value"),
+        "the refusal must name both the fuel function and the soundness risk: {refusal:?}"
+    );
+    let law_refusal = declined
+        .get("law:checked.singleton")
+        .expect("a law over the same fuel call cone must also be refused");
+    assert!(law_refusal.reason.contains("rootFrom"));
+    assert!(
+        !lean.contains("theorem checked_law_singleton"),
+        "neither the universal nor sampled law theorem may survive the fuel gate:\n{lean}"
+    );
+
+    // Explicitly unproven modes remain useful authoring tools: they never ask
+    // native evaluation for a truth value, so the soundness refusal must not
+    // suppress the obligation a human intends to fill.
+    let mut skeleton_ctx = ctx_from_source(source, "Climb");
+    let skeleton_out = transpile_for_proof_mode(&mut skeleton_ctx, VerifyEmitMode::TheoremSkeleton);
+    let skeleton = generated_lean_file(&skeleton_out);
+    assert!(skeleton.contains("theorem checked_verify_1"));
+    assert!(skeleton.contains("theorem checked_law_singleton"));
+    assert!(skeleton_ctx.declined_claims.borrow().is_empty());
 }
 
 #[test]
@@ -3866,6 +3909,11 @@ fn json_example_uses_total_defs_and_domain_guarded_laws_in_proof_mode() {
         lean.contains(
             "| .jsonObject x0 => (averMeasureJsonEntries_String (AverMap.entries x0)) + 1"
         )
+    );
+    assert!(
+        ctx.declined_claims.borrow().is_empty(),
+        "the JSON proof's bounded parser fuel must not be classified as unbounded: {:?}",
+        ctx.declined_claims.borrow()
     );
     assert!(lean.contains("-- when jsonRoundtripSafe j"));
     assert!(!lean.contains("-- hint: verify law '"));

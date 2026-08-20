@@ -1789,6 +1789,54 @@ fn let_bound_names(body: &FnBody) -> HashSet<String> {
         .collect()
 }
 
+/// Names bound to values whose size relation to their inputs is opaque to the
+/// recursion analyser. Plain aliases and the small set of known
+/// size-preserving operations are deliberately excluded: they may prevent a
+/// particular `termination_by` template from elaborating, but they do not make
+/// the fallback fuel seed speculative.
+fn unproven_computed_bound_names(body: &FnBody) -> HashSet<String> {
+    body.stmts()
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Binding(name, _, expr) if !arg_is_non_growing(expr) => Some(name.clone()),
+            Stmt::Binding(_, _, _) | Stmt::Expr(_) => None,
+        })
+        .collect()
+}
+
+/// Does an intra-SCC call pass a value with no statically known size relation
+/// into a measured position?
+///
+/// This is intentionally narrower than [`scc_passes_computed_measure_arg`].
+/// That predicate decides whether a concrete Lean `termination_by` template is
+/// likely to elaborate and therefore rejects every non-trivial expression.
+/// This predicate guards `native_decide` soundness: it rejects only an opaque
+/// computation such as `next = pairsOf(level, [])`, for which the generated
+/// fuel seed is executable but not a proved recursion bound. Known
+/// non-growing expressions such as `Map.entries(m)` remain safe.
+pub(crate) fn scc_has_unproven_computed_measure_edge(fns: &[&FnDef]) -> bool {
+    let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    fns.iter().any(|fd| {
+        let computed = unproven_computed_bound_names(fd.body.as_ref());
+        collect_calls_from_body(fd.body.as_ref())
+            .into_iter()
+            .filter_map(|(callee_raw, args)| {
+                canonical_callee_name(&callee_raw, &names).map(|callee| (callee, args))
+            })
+            .any(|(callee, args)| {
+                let Some(peer) = fns.iter().find(|peer| peer.name == callee) else {
+                    return false;
+                };
+                mutual_sizeof_measure_param_indices(peer).iter().any(|idx| {
+                    args.get(*idx).is_some_and(|arg| match local_name_of(arg) {
+                        Some(name) => computed.contains(name),
+                        None => !arg_is_non_growing(arg),
+                    })
+                })
+            })
+    })
+}
+
 /// Does some call between members of this group hand on, at a measured
 /// position, a value the caller COMPUTED?
 ///

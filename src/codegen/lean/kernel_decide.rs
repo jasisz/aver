@@ -122,6 +122,12 @@ pub(super) struct CaseDecidability {
     /// Fns whose Lean emission in THIS transpile the kernel cannot see
     /// through (`partial def`, fuel `panic!`, `mutual`, `sorry`, `unsafe`).
     opaque_fns: HashSet<FnId>,
+    /// Fns whose declarations in this exact proof export use a fuel seed that
+    /// is executable but not a statically justified recursion bound. A ground
+    /// claim whose call cone reaches one must never be handed to
+    /// `native_decide`: Lean's `panic!` returns `default`, so exhaustion can
+    /// make a false equality evaluate to true.
+    unbounded_fuel_fns: HashSet<FnId>,
     /// Recursive user type names — they carry the `opaque` `DecidableEq` shim.
     opaque_eq_types: HashSet<String>,
     /// `false` turns every case back to `native_decide`.
@@ -129,9 +135,14 @@ pub(super) struct CaseDecidability {
 }
 
 impl CaseDecidability {
-    pub(super) fn new(opaque_fns: HashSet<FnId>, opaque_eq_types: HashSet<String>) -> Self {
+    pub(super) fn new(
+        opaque_fns: HashSet<FnId>,
+        unbounded_fuel_fns: HashSet<FnId>,
+        opaque_eq_types: HashSet<String>,
+    ) -> Self {
         Self {
             opaque_fns,
+            unbounded_fuel_fns,
             opaque_eq_types,
             enabled: true,
         }
@@ -141,9 +152,64 @@ impl CaseDecidability {
     pub(super) fn disabled() -> Self {
         Self {
             opaque_fns: HashSet::new(),
+            unbounded_fuel_fns: HashSet::new(),
             opaque_eq_types: HashSet::new(),
             enabled: false,
         }
+    }
+
+    /// Canonical names of every function with an unbounded fuel fallback
+    /// reachable from `roots`, including transitive user-function calls.
+    ///
+    /// This is deliberately separate from [`Self::closure_is_kernel_decidable`].
+    /// Kernel opacity has many causes (`mutual`, `partial`, recursive equality,
+    /// Float), and that walk stops at the first one. The soundness gate must
+    /// keep walking through all user functions so an opaque wrapper cannot
+    /// hide a fuel-lowered callee.
+    pub(super) fn unbounded_fuel_dependencies(
+        &self,
+        roots: &[&Spanned<crate::ast::Expr>],
+        ctx: &CodegenContext,
+    ) -> Vec<String> {
+        if !self.enabled || self.unbounded_fuel_fns.is_empty() {
+            return Vec::new();
+        }
+
+        let scope = ctx.active_module_scope();
+        let mut pending = HashSet::new();
+        for root in roots {
+            let resolved = ctx.resolve_expr(root, scope.as_deref());
+            super::decl_order::collect_resolved_fn_refs(&resolved, &mut pending);
+        }
+
+        let mut pending: Vec<FnId> = pending.into_iter().collect();
+        let mut seen = HashSet::new();
+        let mut hits = std::collections::BTreeSet::new();
+        while let Some(fn_id) = pending.pop() {
+            if !seen.insert(fn_id) {
+                continue;
+            }
+            if self.unbounded_fuel_fns.contains(&fn_id) {
+                hits.insert(ctx.symbol_table.fn_entry(fn_id).key.canonical());
+            }
+            let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
+                continue;
+            };
+            let body = rfd.body.clone();
+            let mut callees = HashSet::new();
+            for stmt in body.stmts() {
+                match stmt {
+                    ResolvedStmt::Expr(expr) => {
+                        super::decl_order::collect_resolved_fn_refs(expr, &mut callees)
+                    }
+                    ResolvedStmt::Binding { value, .. } => {
+                        super::decl_order::collect_resolved_fn_refs(value, &mut callees)
+                    }
+                }
+            }
+            pending.extend(callees.into_iter().filter(|id| !seen.contains(id)));
+        }
+        hits.into_iter().collect()
     }
 
     /// Tactic for one sampled case.

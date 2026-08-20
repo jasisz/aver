@@ -122,6 +122,51 @@ pub fn emit_verify_block(
     case_index_start: usize,
     decidability: &CaseDecidability,
 ) -> (String, usize) {
+    // Fail closed inside the exported artifact, not only in `aver proof
+    // --check`'s build-log panic scan. Lean's `panic!` returns `default`, so a
+    // fuel-zero branch evaluated by `native_decide` can certify a false ground
+    // equality whenever that default happens to equal the expected value.
+    // There is no honest theorem to emit until the call cone has a real
+    // termination argument; record the refusal so the driver reports and
+    // charges it instead of silently dropping the cases.
+    let roots: Vec<&Spanned<Expr>> = match &vb.kind {
+        VerifyKind::Law(law) => std::iter::once(&law.lhs)
+            .chain(std::iter::once(&law.rhs))
+            .chain(law.when.iter())
+            .collect(),
+        VerifyKind::Cases => vb.cases.iter().flat_map(|(lhs, rhs)| [lhs, rhs]).collect(),
+    };
+    let fuel_dependencies = if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
+        decidability.unbounded_fuel_dependencies(&roots, ctx)
+    } else {
+        Vec::new()
+    };
+    if !fuel_dependencies.is_empty() {
+        let functions = fuel_dependencies.join(", ");
+        let (kind, claim) = match &vb.kind {
+            VerifyKind::Law(law) => (
+                crate::codegen::DeclineKind::Law,
+                format!("{}.{}", vb.fn_name, law.name),
+            ),
+            VerifyKind::Cases => (crate::codegen::DeclineKind::Cases, vb.fn_name.clone()),
+        };
+        let reason = format!(
+            "the Lean call cone reaches fuel-lowered function(s) {functions} whose seed is not a proven recursion bound; native_decide can turn fuel exhaustion into a default value, so this claim was not exported"
+        );
+        ctx.declined_claims
+            .borrow_mut()
+            .entry(format!("{}:{claim}", kind.as_str()))
+            .or_insert_with(|| crate::codegen::DeclinedClaim {
+                kind,
+                claim,
+                reason: reason.clone(),
+            });
+        return (
+            format!("-- verify {}: {}", aver_name_to_lean(&vb.fn_name), reason),
+            case_index_start + vb.cases.len(),
+        );
+    }
+
     if let VerifyKind::Law(law) = &vb.kind {
         return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start);
     }

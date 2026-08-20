@@ -258,6 +258,50 @@ fn component_is_kernel_opaque(comp: &[&crate::ast::FnDef], emitted: &[String]) -
             .any(|code| code_has_kernel_opaque_token(code))
 }
 
+/// `true` iff this component was actually emitted through the fuel fallback.
+/// Read the compiler-owned exhaustion arm from generated code rather than the
+/// recursion plan: some planned fuel functions graduate to native
+/// `termination_by` when their whole SCC admits a stronger recognizer.
+fn component_is_fuel_lowered(emitted: &[String]) -> bool {
+    let marker = format!("panic! \"{}\"", super::toplevel::PROOF_FUEL_EXHAUSTED_MSG);
+    emitted
+        .iter()
+        .any(|code| code_has_non_comment_token(code, &marker))
+}
+
+/// `true` iff this component uses the mutual-sizeOf fuel fallback without a
+/// statically justified bound on every recursive step.
+///
+/// Fuel is not inherently approximate in Aver. Int countdown, string-position
+/// and ordinary ranked-sizeOf helpers derive a budget that bounds their exact
+/// recursion shape. The #1018 hole is the fallback used after native
+/// termination rejects a computed successor: its seed is executable, but is
+/// not a proof that evaluation cannot reach zero. Only that class must be
+/// barred from sampled native evaluation. A growing accumulator or a wrapper
+/// without its own measured parameter is not sufficient evidence: both occur
+/// in bounded mutual traversals such as the JSON parser and serializer.
+fn component_has_unbounded_fuel(
+    comp: &[&crate::ast::FnDef],
+    ctx: &CodegenContext,
+    emitted: &[String],
+) -> bool {
+    if !component_is_fuel_lowered(emitted) || comp.len() < 2 {
+        return false;
+    }
+    let is_mutual_sizeof = comp.iter().all(|fd| {
+        crate::codegen::common::find_fn_contract_for_fn(ctx, fd).is_some_and(|contract| {
+            matches!(
+                contract.recursion.as_ref(),
+                Some(crate::ir::RecursionContract::Fuel {
+                    fuel_metric: crate::ir::FuelMetric::Lex { params, .. },
+                }) if params.is_empty()
+            )
+        })
+    });
+    is_mutual_sizeof
+        && crate::codegen::recursion::detect::scc_has_unproven_computed_measure_edge(comp)
+}
+
 /// Token scan over emitted Lean, ignoring `/-- … -/` doc comments and `--`
 /// lines. The doc text is user prose lifted from the Aver `?` description, so
 /// scanning it would classify a fn whose description merely says "opaque" as
@@ -265,6 +309,15 @@ fn component_is_kernel_opaque(comp: &[&crate::ast::FnDef], emitted: &[String]) -
 /// (the word inside a Lean string literal) only routes the case back to
 /// `native_decide`, which is always safe.
 fn code_has_kernel_opaque_token(code: &str) -> bool {
+    KERNEL_OPAQUE_TOKENS
+        .iter()
+        .any(|token| code_has_non_comment_token(code, token))
+}
+
+/// Search generated Lean code while excluding doc/block and line comments.
+/// Both opacity and fuel classification are semantic facts about declarations,
+/// never about prose copied from the source function description.
+fn code_has_non_comment_token(code: &str, token: &str) -> bool {
     let mut in_doc = false;
     for raw in code.lines() {
         let line = raw.trim_start();
@@ -279,11 +332,19 @@ fn code_has_kernel_opaque_token(code: &str) -> bool {
         if line.starts_with("--") {
             continue;
         }
-        if KERNEL_OPAQUE_TOKENS.iter().any(|tok| line.contains(tok)) {
+        if line.contains(token) {
             return true;
         }
     }
     false
+}
+
+#[derive(Default)]
+struct SampledFnClassification {
+    /// Declarations the kernel cannot reduce through.
+    opaque: HashSet<crate::ir::FnId>,
+    /// Exact subset whose emitted fuel seed is not a proven recursion bound.
+    unbounded_fuel: HashSet<crate::ir::FnId>,
 }
 
 fn emit_pure_component(
@@ -293,11 +354,17 @@ fn emit_pure_component(
     emit_mode: LeanEmitMode,
     recursive_names: &HashSet<String>,
     recursive_fns: &HashSet<String>,
-    opaque_fns: &mut HashSet<crate::ir::FnId>,
+    sampled_fns: &mut SampledFnClassification,
 ) -> Vec<String> {
     let out = emit_pure_component_code(comp, scope, ctx, emit_mode, recursive_names, recursive_fns);
     if component_is_kernel_opaque(comp, &out) {
-        opaque_fns.extend(
+        sampled_fns.opaque.extend(
+            comp.iter()
+                .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
+        );
+    }
+    if component_has_unbounded_fuel(comp, ctx, &out) {
+        sampled_fns.unbounded_fuel.extend(
             comp.iter()
                 .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
         );
@@ -553,7 +620,7 @@ pub(super) fn transpile_unified(
     // it AFTER both declaration passes have run — which is why the entry
     // verify blocks are emitted at the end of this fn rather than here (their
     // position in the output is unchanged).
-    let mut opaque_fns: HashSet<crate::ir::FnId> = HashSet::new();
+    let mut sampled_fns = SampledFnClassification::default();
 
     // ---- Per-module file bodies ----
     let mut module_files: Vec<(String, String)> = Vec::new();
@@ -616,7 +683,7 @@ pub(super) fn transpile_unified(
                         emit_mode,
                         &recursive_names,
                         &recursive_fns,
-                        &mut opaque_fns,
+                        &mut sampled_fns,
                     ));
                 }
             }
@@ -682,15 +749,19 @@ pub(super) fn transpile_unified(
                     }
                     let key = verify_counter_key(vb);
                     let start_idx = *dep_verify_counters.get(&key).unwrap_or(&0);
-                    // Law blocks only (the `continue` above filters the rest),
-                    // and a law's proof never routes through the sampled-case
-                    // classifier — so no classification is available or needed.
+                    // Law blocks also need the actual unbounded-fuel set: their
+                    // sampled theorems use `native_decide`, and an exhausted
+                    // helper returns `default` just as it does in a plain case.
                     let (emitted, next_idx) = toplevel::emit_verify_block(
                         vb,
                         ctx,
                         verify_mode,
                         start_idx,
-                        &super::kernel_decide::CaseDecidability::disabled(),
+                        &super::kernel_decide::CaseDecidability::new(
+                            sampled_fns.opaque.clone(),
+                            sampled_fns.unbounded_fuel.clone(),
+                            recursive_types.clone(),
+                        ),
                     );
                     dep_verify_counters.insert(key, next_idx);
                     body_sections.push(emitted);
@@ -779,7 +850,7 @@ pub(super) fn transpile_unified(
                     emit_mode,
                     &recursive_names,
                     &recursive_fns,
-                    &mut opaque_fns,
+                    &mut sampled_fns,
                 ));
             }
         }
@@ -791,9 +862,11 @@ pub(super) fn transpile_unified(
     // proof mode is classified: the standard emit spells every recursive fn
     // `partial`, which no kernel reduction sees through anyway.
     let case_decidability = match emit_mode {
-        LeanEmitMode::Proof => {
-            super::kernel_decide::CaseDecidability::new(opaque_fns, recursive_types.clone())
-        }
+        LeanEmitMode::Proof => super::kernel_decide::CaseDecidability::new(
+            sampled_fns.opaque,
+            sampled_fns.unbounded_fuel,
+            recursive_types.clone(),
+        ),
         LeanEmitMode::Standard => super::kernel_decide::CaseDecidability::disabled(),
     };
     let mut entry_verify_sections: Vec<String> = Vec::new();
