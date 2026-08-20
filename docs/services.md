@@ -374,6 +374,8 @@ accounting derive from that source contract.
 | `Tcp.writeBytes` | `(Tcp.Connection, Bytes) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
 | `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
+| `Tcp.readSome` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads 1–N bytes without waiting to fill N; empty `Bytes` means clean EOF. |
+| `Tcp.poll` | `(Map<Int, Tcp.Connection>, Int) -> Result<List<Int>, String>` | Returns the sorted caller IDs ready for `readSome`; `[]` means timeout. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 
 `Tcp.Connection` is a capability **resource**: only the provider can mint one,
@@ -385,13 +387,14 @@ but cannot inspect its internals or manufacture a replacement.
 
 Persistent session I/O has deliberately **no read or write deadline**. A
 session operation may therefore wait indefinitely until it completes, reaches
-EOF, or gets an actual I/O error. Once `readBytes`, `readLine`, `writeBytes`, or
-`writeLine` begins touching the socket, any error removes that connection from
-the provider pool. A failed exact read may already have consumed part of a
-frame, and a failed write may already have sent part of its payload; allowing a
-retry on the same handle would silently desynchronise the protocol. Argument
-validation happens first, so a negative or oversized `readBytes` count does not
-poison the connection. Timeout errors are rendered without platform errno.
+EOF, or gets an actual I/O error. Once `readBytes`, `readSome`, `readLine`,
+`writeBytes`, or `writeLine` begins touching the socket, any error removes that
+connection from the provider pool. A failed exact read may already have
+consumed part of a frame, and a failed write may already have sent part of its
+payload; allowing a retry on the same handle would silently desynchronise the
+protocol. Argument validation happens first, so a negative or oversized
+`readBytes` count or invalid `readSome` maximum does not poison the connection.
+Timeout errors are rendered without platform errno.
 
 Socket establishment and one-shot request calls retain deployment defaults:
 
@@ -426,6 +429,21 @@ read a fixed number of bytes off a persistent connection. `readLine` frames on
 arbitrary offsets — and goes through `BufRead::read_line`, which rejects
 non-UTF-8 input outright. `readBytes` does neither: it reads exactly the
 requested count and decodes nothing.
+
+`Tcp.poll` and `Tcp.readSome` form the event-loop receive path. The caller owns
+the `Int` keys in the map, so they can also key peer metadata without making the
+provider-owned `Tcp.Connection` resource comparable. `poll` returns a sorted,
+duplicate-free subset of those keys. A key is ready when its connection has
+buffered input, the underlying stream reports readability, or EOF/error can be
+observed without waiting. Readiness is only a hint: another consumer may race
+the read, and the following operation can still fail.
+
+`readSome(connection, maxBytes)` performs one bounded read and returns as soon
+as any bytes are available instead of waiting to fill `maxBytes`. `maxBytes`
+must be positive and is capped at 10 MiB. Without a preceding `poll`, it may
+wait indefinitely for the first byte. After `poll` reports the caller's peer
+ID, a single-reader loop can call `readSome` to make progress without falling
+back to exact-count blocking. Empty `Bytes` is reserved for clean EOF.
 
 The returned payload is nominal `Bytes`; use `Bytes.toList` only when ordinary
 list operations are needed.

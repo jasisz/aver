@@ -160,6 +160,8 @@ pub(super) enum EffectName {
     TcpWriteBytes,
     TcpReadLine,
     TcpReadBytes,
+    TcpReadSome,
+    TcpPoll,
     TcpClose,
     TcpSend,
     TcpSendBytes,
@@ -249,6 +251,8 @@ impl EffectName {
         Self::TcpWriteBytes,
         Self::TcpReadLine,
         Self::TcpReadBytes,
+        Self::TcpReadSome,
+        Self::TcpPoll,
         Self::TcpClose,
         Self::TcpSend,
         Self::TcpSendBytes,
@@ -330,6 +334,8 @@ impl EffectName {
             "Tcp.writeBytes" => Some(Self::TcpWriteBytes),
             "Tcp.readLine" => Some(Self::TcpReadLine),
             "Tcp.readBytes" => Some(Self::TcpReadBytes),
+            "Tcp.readSome" => Some(Self::TcpReadSome),
+            "Tcp.poll" => Some(Self::TcpPoll),
             "Tcp.close" => Some(Self::TcpClose),
             "Tcp.send" => Some(Self::TcpSend),
             "Tcp.sendBytes" => Some(Self::TcpSendBytes),
@@ -408,6 +414,8 @@ impl EffectName {
             Self::TcpWriteBytes => "Tcp.writeBytes",
             Self::TcpReadLine => "Tcp.readLine",
             Self::TcpReadBytes => "Tcp.readBytes",
+            Self::TcpReadSome => "Tcp.readSome",
+            Self::TcpPoll => "Tcp.poll",
             Self::TcpClose => "Tcp.close",
             Self::TcpSend => "Tcp.send",
             Self::TcpSendBytes => "Tcp.sendBytes",
@@ -488,6 +496,8 @@ impl EffectName {
             Self::TcpWriteBytes => ("aver", "tcp_write_bytes"),
             Self::TcpReadLine => ("aver", "tcp_read_line"),
             Self::TcpReadBytes => ("aver", "tcp_read_bytes"),
+            Self::TcpReadSome => ("aver", "tcp_read_some"),
+            Self::TcpPoll => ("aver", "tcp_poll"),
             Self::TcpClose => ("aver", "tcp_close"),
             Self::TcpSend => ("aver", "tcp_send"),
             Self::TcpSendBytes => ("aver", "tcp_send_bytes"),
@@ -592,7 +602,8 @@ impl EffectName {
             Self::TcpClose | Self::TcpReadLine => Ok(vec![any_ref_ty()]),
             // Keep the count boxed so an arbitrary-precision Int can become a
             // catchable Result.Err instead of trapping at the host ABI.
-            Self::TcpReadBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpReadBytes | Self::TcpReadSome => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpPoll => Ok(vec![map_int_tcp_connection_ref_ty(registry)?, any_ref_ty()]),
             Self::TcpWriteLine | Self::TcpWriteBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
             // Bytes is a nominal record. Keep the import parameter as anyref,
@@ -723,9 +734,10 @@ impl EffectName {
             Self::TcpReadLine | Self::TcpSend => {
                 Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
             }
-            Self::TcpSendBytes | Self::TcpReadBytes => {
+            Self::TcpSendBytes | Self::TcpReadBytes | Self::TcpReadSome => {
                 Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?])
             }
+            Self::TcpPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpClose | Self::TcpPing => {
                 Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
             }
@@ -786,6 +798,18 @@ fn map_string_list_string_ref_ty(registry: &TypeRegistry) -> Result<ValType, Was
         .map_slots("Map<String,List<String>>")
         .ok_or(WasmGcError::Validation(
             "fetch effect requires `Map<String, List<String>>` slot but none was registered".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+    }))
+}
+
+fn map_int_tcp_connection_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let slots = registry
+        .map_slots("Map<Int,Tcp.Connection>")
+        .ok_or(WasmGcError::Validation(
+            "Tcp.poll requires `Map<Int, Tcp.Connection>` slot but none was registered".into(),
         ))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -902,6 +926,8 @@ impl EffectName {
                 | EffectName::TcpWriteBytes
                 | EffectName::TcpReadLine
                 | EffectName::TcpReadBytes
+                | EffectName::TcpReadSome
+                | EffectName::TcpPoll
                 | EffectName::TcpSend
                 | EffectName::TcpSendBytes
                 | EffectName::TcpClose

@@ -1387,6 +1387,29 @@ fn valid_tcp_read_bytes_returns_nominal_bytes() {
 }
 
 #[test]
+fn valid_tcp_poll_returns_caller_connection_ids() {
+    let src = concat!(
+        "fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>\n",
+        "    ! [Tcp.poll]\n",
+        "    Tcp.poll(connections, timeoutMs)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_read_some_returns_nominal_bytes() {
+    let src = concat!(
+        "module M\n",
+        "    depends [Bytes]\n",
+        "    effects [Tcp.readSome]\n",
+        "fn recv(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>\n",
+        "    ! [Tcp.readSome]\n",
+        "    Tcp.readSome(conn, maxBytes)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_verify_trace_given_stub_for_tcp_read_bytes() {
     // Regression: the oracle signature for the byte-carrying TCP methods
     // is built from bare source names (`Type::Named { id: None, name:

@@ -129,7 +129,8 @@ pub(super) fn collect_results_from_builtin_uses(
                         "Disk.listDir" => intern("Result<List<String>,String>"),
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
                         "Tcp.readLine" => intern("Result<String,String>"),
-                        "Tcp.readBytes" => intern("Result<Bytes,String>"),
+                        "Tcp.readBytes" | "Tcp.readSome" => intern("Result<Bytes,String>"),
+                        "Tcp.poll" => intern("Result<List<Int>,String>"),
                         "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.close" => {
                             intern("Result<Unit,String>")
                         }

@@ -649,17 +649,18 @@ mod tests {
         let contract = registry.contract("Tcp").expect("Tcp contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:5f8f81b438d3fdcf50d93597989c4653f12c63cf43a4967ed07fa2939ffe829b"
+            "sha256:29c33e54d33ef032f469b3f4543c81ea48a3c28d985f5cc4fede4acbfda18385"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:de2ae49130c867187d88e18d3541e5996412cc198be3761d61b2fde19440e7c8"
+            "sha256:fdb01a151fa1c924c15441185007066ff466abf1fd481edcbd2c06a0a34243f2"
         );
         for (method, labels) in [
             ("Tcp.send", vec!["normal_ok", "always_err"]),
             ("Tcp.sendBytes", vec!["normal_ok", "always_err"]),
             ("Tcp.ping", vec!["normal_ok", "always_err"]),
             ("Tcp.connect", vec!["normal_ok", "always_err"]),
+            ("Tcp.poll", vec!["none_ready", "always_err"]),
             ("Tcp.writeLine", vec!["normal_ok", "always_err"]),
             ("Tcp.writeBytes", vec!["normal_ok", "always_err"]),
             ("Tcp.readLine", vec!["normal_ok", "always_err"]),
@@ -667,6 +668,7 @@ mod tests {
                 "Tcp.readBytes",
                 vec!["normal_ok", "short_read", "always_err"],
             ),
+            ("Tcp.readSome", vec!["normal_ok", "eof", "always_err"]),
             ("Tcp.close", vec!["normal_ok", "always_err"]),
         ] {
             assert_eq!(

@@ -13,7 +13,7 @@ use super::restore_bump;
 /// call this helper. This mirrors `aver_rt::tcp::with_connection_io`: after a
 /// partial read or write, the protocol position is unknowable and the handle
 /// must not remain usable.
-fn emit_poison_slot(
+pub(super) fn emit_poison_slot(
     f: &mut Function,
     slot_local: u32,
     tcp_slot_type_idx: u32,

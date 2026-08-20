@@ -106,6 +106,10 @@ pub(super) enum Wasip2ImportSlot {
     /// `\n` or EOF and accumulating bytes into a `cabi_realloc`-
     /// owned buffer.
     InputStreamBlockingRead,
+    /// `wasi:io/streams.[method]input-stream.subscribe` returns a
+    /// pollable that becomes ready when a read can make progress.
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    InputStreamSubscribe,
     /// `wasi:clocks/monotonic-clock.subscribe-duration:
     /// func(when: duration) -> pollable` where
     /// `type duration = u64` (nanoseconds).
@@ -788,6 +792,9 @@ impl Wasip2ImportSlot {
                 "wasi:io/streams@0.2.4",
                 "[method]input-stream.blocking-read",
             ),
+            Wasip2ImportSlot::InputStreamSubscribe => {
+                ("wasi:io/streams@0.2.4", "[method]input-stream.subscribe")
+            }
             Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => {
                 ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration")
             }
@@ -1045,6 +1052,7 @@ impl Wasip2ImportSlot {
             // `[resource-drop]pollable(this: pollable)` — single
             // i32 handle, no return.
             Wasip2ImportSlot::IoPollResourceDropPollable => vec![ValType::I32],
+            Wasip2ImportSlot::InputStreamSubscribe => vec![ValType::I32],
             // `get-directories: () -> list<...>` — list lowered
             // via retptr (8 bytes: list_ptr + list_len).
             Wasip2ImportSlot::FilesystemPreopensGetDirectories => vec![ValType::I32],
@@ -1320,7 +1328,8 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::CliGetStdout
             | Wasip2ImportSlot::CliGetStderr
             | Wasip2ImportSlot::CliStdinGetStdin
-            | Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => vec![ValType::I32],
+            | Wasip2ImportSlot::ClocksMonotonicSubscribeDuration
+            | Wasip2ImportSlot::InputStreamSubscribe => vec![ValType::I32],
             // Result lowered via retptr — no inline return.
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
             | Wasip2ImportSlot::InputStreamBlockingRead

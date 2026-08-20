@@ -47,7 +47,7 @@ The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host w
 | `HttpServer.listen` / `listenWith` | ✅ (`runtime-net`) | ✅ (`runtime-net`) | n/a — `--handler <fn>` shape | ❌ deferred to 0.19+ (lowers via `wasi:http/proxy`) | Oracle | Oracle |
 | `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) | Oracle |
 | `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) | Oracle |
-| `Tcp.connect` / `send` / `ping` / `writeLine` / `readLine` / `close` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ❌ deferred to 0.19+ (lowers via `wasi:sockets`) | Oracle | Oracle |
+| `Tcp.*` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:sockets`; `poll` uses input-stream subscriptions + `wasi:io/poll` | Oracle | Oracle |
 | `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | n/a — WASI 0.2 has no terminal interface | Oracle | Oracle |
 | `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `wasi:clocks/wall-clock.now` + guest-side civil_from_days | Oracle | Oracle |
 | `Time.unixMs` | ✅ | ✅ | ✅ wasmtime / `Date.now()` | ✅ `wasi:clocks/wall-clock.now` → ms | Oracle (`≥ 0` lemma) | Oracle |
@@ -79,8 +79,8 @@ aver run app.av --wasip2  -- alpha beta   # embedded wasmtime + wasmtime-wasi
 
 What lands today (0.18) vs. deferred:
 
-- ✅ Console (`print`/`error`/`warn`/`readLine`), Args.get, Env.get, Time (`unixMs`/`now`/`sleep`), Random (`int`/`float`), Disk (all 7: `exists`/`readText`/`writeText`/`appendText`/`delete`/`deleteDir`/`makeDir`/`listDir`).
-- ❌ Http.*, Tcp.*, HttpServer.* — deferred to 0.19+ (Phase 2/3 of the Span follow-up); will lower via `wasi:http` and `wasi:sockets` respectively.
+- ✅ Console, Args.get, Env.get, Time, Random, Disk, outgoing Http, HttpServer.listen, and all Tcp operations including binary reads/writes, `poll`, and `readSome`.
+- ❌ `HttpServer.listenWith` remains deferred; Terminal and `Env.set` are structurally absent from WASI 0.2.
 - n/a Env.set, Terminal.* — structurally absent from WASI 0.2 (read-only environment by design; no terminal interface). Rejected at compile time.
 
 Effect calls > 4 KB on `Console.*` / `Disk.write*` chunk through `blocking-write-and-flush` (wasmtime-wasi enforces a 4096-byte limit per call); the chunked-write loop lives in `emit_chunked_blocking_write` and is shared by both call sites. `Time.sleep` uses `subscribe-duration` + `poll` + `[resource-drop]pollable` (real wait, not busy-loop).

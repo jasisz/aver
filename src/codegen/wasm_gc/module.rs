@@ -1032,12 +1032,20 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                     }
-                    EffectName::TcpReadLine | EffectName::TcpReadBytes => {
+                    EffectName::TcpReadLine
+                    | EffectName::TcpReadBytes
+                    | EffectName::TcpReadSome => {
                         wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
                         wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                    }
+                    EffectName::TcpPoll => {
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamSubscribe);
+                        wasip2_imports.register(Wasip2ImportSlot::ClocksMonotonicSubscribeDuration);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
                     EffectName::TcpClose => {
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
@@ -2884,6 +2892,8 @@ pub(super) fn emit_module_with(
                 tcp_write_bytes_fn_idx: tcp.write_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_read_line_fn_idx: tcp.read_line.as_ref().map(|t| t.fn_idx),
                 tcp_read_bytes_fn_idx: tcp.read_bytes.as_ref().map(|t| t.fn_idx),
+                tcp_read_some_fn_idx: tcp.read_some.as_ref().map(|t| t.fn_idx),
+                tcp_poll_fn_idx: tcp.poll.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp.send.as_ref().map(|t| t.fn_idx),
                 tcp_send_bytes_fn_idx: tcp.send_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_ping_fn_idx: tcp.ping.as_ref().map(|t| t.fn_idx),
@@ -5038,6 +5048,129 @@ pub(super) fn emit_module_with(
                 .expect("tcp.read_bytes emit requires bump_alloc_ptr global"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_read_bytes(tr, &helpers));
+    }
+    if let Some(tr) = &tcp.read_some {
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.read_some gated on tcp_parse_id allocation");
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.read_some emit requires cabi_realloc fn idx".into())
+        })?;
+        let blocking_read_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("tcp.read_some gate requires blocking-read slot");
+        let drop_input_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp.read_some gate requires drop-input-stream slot");
+        let drop_output_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp.read_some gate requires drop-output-stream slot");
+        let drop_tcp_socket_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            )
+            .expect("tcp.read_some gate requires drop-tcp-socket slot");
+        let result_ok_fn = factory_exports
+            .result_bytes_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.read_some emit requires Result<Bytes,String> Ok factory".into(),
+                )
+            })?
+            .fn_idx;
+        let result_err_fn = factory_exports
+            .result_bytes_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.read_some emit requires Result<Bytes,String> Err factory".into(),
+                )
+            })?
+            .fn_idx;
+        let aint_from_i64_fn = registry.aint_from_i64_fn_idx.ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp.read_some emit requires __aint_from_i64 for List<Int> result".into(),
+            )
+        })?;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp.read_some emit requires tcp_pool global".into())
+            })?;
+        let helpers = super::wasip2_tcp::TcpReadSomeHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            blocking_read_fn,
+            result_ok_fn,
+            result_err_fn,
+            aint_from_i64_fn,
+            tcp_pool_global,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            drop_tcp_socket_fn,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp.read_some emit requires bump_alloc_ptr global"),
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_read_some(tr, &helpers));
+    }
+    if let Some(tp) = &tcp.poll {
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.poll gated on tcp_parse_id allocation");
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp.poll emit requires {name} fn idx"))
+            })
+        };
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.poll emit requires cabi_realloc fn idx".into())
+        })?;
+        let aint_cmp_fn = builtin_registry
+            .lookup_wasm_fn_idx(super::builtins::BuiltinName::AintCmp)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp.poll emit requires __aint_cmp fn idx".into())
+            })?;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|globals| globals.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp.poll emit requires tcp_pool global".into())
+            })?;
+        let helpers = super::wasip2_tcp::TcpPollHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            input_subscribe_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::InputStreamSubscribe,
+                "InputStreamSubscribe",
+            )?,
+            timeout_subscribe_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
+                "ClocksMonotonicSubscribeDuration",
+            )?,
+            poll_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoPollPoll,
+                "IoPollPoll",
+            )?,
+            drop_pollable_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable,
+                "IoPollResourceDropPollable",
+            )?,
+            aint_cmp_fn,
+            tcp_pool_global,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|globals| globals.bump_alloc_ptr)
+                .expect("tcp.poll emit requires bump_alloc_ptr global"),
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_poll(tp, &helpers));
     }
     if let Some(tc) = &tcp.close {
         let (_, parse_id_fn) = tcp
@@ -7274,6 +7407,9 @@ struct FactoryExports {
     /// registered (e.g. `Disk.listDir`).
     result_list_string_string_ok: Option<FactorySlot>,
     result_list_string_string_err: Option<FactorySlot>,
+    /// `Tcp.poll` host/replay builders for `Result<List<Int>, String>`.
+    result_list_int_string_ok: Option<FactorySlot>,
+    result_list_int_string_err: Option<FactorySlot>,
     /// `__rt_list_string_cons(head, tail) -> List<String>` /
     /// `__rt_list_string_nil() -> List<String>` — emitted when the
     /// host has to materialise a `List<String>` from the outside (the
@@ -7536,6 +7672,8 @@ fn allocate_factory_exports(
                 | EffectName::TcpWriteBytes
                 | EffectName::TcpReadLine
                 | EffectName::TcpReadBytes
+                | EffectName::TcpReadSome
+                | EffectName::TcpPoll
                 | EffectName::TcpClose
         )
     });
@@ -7755,6 +7893,7 @@ fn allocate_factory_exports(
             e,
             EffectName::TcpSendBytes
                 | EffectName::TcpReadBytes
+                | EffectName::TcpReadSome
                 | EffectName::DiskReadBytes
                 | EffectName::DiskReadBytesAt
         )
@@ -7823,6 +7962,69 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
+    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+        let result_idx =
+            registry
+                .result_type_idx("Result<List<Int>,String>")
+                .ok_or(WasmGcError::Validation(
+                    "Tcp.poll factory requires Result<List<Int>,String> slot".into(),
+                ))?;
+        let list_idx = registry
+            .list_type_idx("List<Int>")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.poll factory requires List<Int> slot".into(),
+            ))?;
+        let int_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+            "Tcp.poll factory requires the AverInt slot".into(),
+        ))?;
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Tcp.poll factory requires String slot".into(),
+            ))?;
+        let result_ref = ref_null(result_idx);
+        let list_ref = ref_null(list_idx);
+        let int_ref = ref_null(int_idx);
+        let string_ref = ref_null(string_idx);
+
+        // List<Int> builders are shared with byte-returning effects. Reserve
+        // them before the poll Result factories when poll is their sole
+        // consumer, matching the common factory body/func-section order.
+        if fx.list_int_cons.is_none() {
+            types.ty().function([int_ref, list_ref], [list_ref]);
+            fx.list_int_cons = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
+
+            types.ty().function([], [list_ref]);
+            fx.list_int_nil = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
+        }
+
+        types.ty().function([list_ref], [result_ref]);
+        fx.result_list_int_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([string_ref], [result_ref]);
+        fx.result_list_int_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
     Ok(fx)
 }
 
@@ -7878,6 +8080,16 @@ impl FactoryExports {
         if let Some(s) = self.result_list_string_string_err {
             exports.export(
                 "__rt_result_list_string_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_list_int_string_ok {
+            exports.export("__rt_result_list_int_string_ok", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_list_int_string_err {
+            exports.export(
+                "__rt_result_list_int_string_err",
                 ExportKind::Func,
                 s.fn_idx,
             );
@@ -7982,18 +8194,6 @@ impl FactoryExports {
         if self.result_unit_string_err.is_some() {
             codes.function(&emit_factory_result_unit_string_err(registry)?);
         }
-        if self.result_list_string_string_ok.is_some() {
-            codes.function(&emit_factory_result_list_string_string_ok(registry)?);
-        }
-        if self.result_list_string_string_err.is_some() {
-            codes.function(&emit_factory_result_list_string_string_err(registry)?);
-        }
-        if self.list_string_cons.is_some() {
-            codes.function(&emit_factory_list_string_cons(registry)?);
-        }
-        if self.list_string_nil.is_some() {
-            codes.function(&emit_factory_list_string_nil(registry)?);
-        }
         if self.tcp_connection_make.is_some() {
             codes.function(&emit_factory_tcp_connection_make(registry)?);
         }
@@ -8018,6 +8218,18 @@ impl FactoryExports {
         if self.map_string_list_string_empty.is_some() {
             codes.function(&emit_factory_map_string_list_string_empty(registry)?);
         }
+        if self.result_list_string_string_ok.is_some() {
+            codes.function(&emit_factory_result_list_string_string_ok(registry)?);
+        }
+        if self.result_list_string_string_err.is_some() {
+            codes.function(&emit_factory_result_list_string_string_err(registry)?);
+        }
+        if self.list_string_cons.is_some() {
+            codes.function(&emit_factory_list_string_cons(registry)?);
+        }
+        if self.list_string_nil.is_some() {
+            codes.function(&emit_factory_list_string_nil(registry)?);
+        }
         if self.result_bytes_string_ok.is_some() {
             codes.function(&emit_factory_result_bytes_string_ok(
                 registry,
@@ -8033,6 +8245,12 @@ impl FactoryExports {
         if self.list_int_nil.is_some() {
             codes.function(&emit_factory_list_int_nil(registry)?);
         }
+        if self.result_list_int_string_ok.is_some() {
+            codes.function(&emit_factory_result_list_int_string_ok(registry)?);
+        }
+        if self.result_list_int_string_err.is_some() {
+            codes.function(&emit_factory_result_list_int_string_err(registry)?);
+        }
         Ok(())
     }
 
@@ -8047,10 +8265,6 @@ impl FactoryExports {
             self.result_int_string_err,
             self.result_unit_string_ok,
             self.result_unit_string_err,
-            self.result_list_string_string_ok,
-            self.result_list_string_string_err,
-            self.list_string_cons,
-            self.list_string_nil,
             self.tcp_connection_make,
             self.tcp_connection_id,
             self.result_tcp_connection_string_ok,
@@ -8059,10 +8273,16 @@ impl FactoryExports {
             self.result_http_response_string_ok,
             self.result_http_response_string_err,
             self.map_string_list_string_empty,
+            self.result_list_string_string_ok,
+            self.result_list_string_string_err,
+            self.list_string_cons,
+            self.list_string_nil,
             self.result_bytes_string_ok,
             self.result_bytes_string_err,
             self.list_int_cons,
             self.list_int_nil,
+            self.result_list_int_string_ok,
+            self.result_list_int_string_err,
         ]
         .into_iter()
         .flatten()
@@ -8292,6 +8512,46 @@ fn emit_factory_result_list_string_string_err(
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+fn emit_factory_result_list_int_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx("Result<List<Int>,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut function = Function::new([]);
+    function.instruction(&Instruction::I32Const(1));
+    function.instruction(&Instruction::LocalGet(0));
+    function.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        string_idx,
+    )));
+    function.instruction(&Instruction::StructNew(result_idx));
+    function.instruction(&Instruction::End);
+    Ok(function)
+}
+
+fn emit_factory_result_list_int_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx("Result<List<Int>,String>")
+        .expect("checked at allocation");
+    let list_idx = registry
+        .list_type_idx("List<Int>")
+        .expect("checked at allocation");
+    let mut function = Function::new([]);
+    function.instruction(&Instruction::I32Const(0));
+    function.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
+    function.instruction(&Instruction::LocalGet(0));
+    function.instruction(&Instruction::StructNew(result_idx));
+    function.instruction(&Instruction::End);
+    Ok(function)
 }
 
 /// `__rt_list_string_cons(head, tail) -> List<String>`. Same struct

@@ -235,6 +235,53 @@ fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
 }
 
 #[test]
+fn tcp_poll_and_read_some_import_host_functions_and_validate() {
+    use wasmparser::{Parser as WasmParser, Payload};
+
+    let source = r#"module Probe
+    intent = "Compile readiness polling and bounded stream reads."
+    depends [Bytes]
+    exposes [ready, chunk]
+    effects [Tcp.poll, Tcp.readSome]
+
+fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Return the caller IDs whose connections can be read without waiting."
+    ! [Tcp.poll]
+    Tcp.poll(connections, timeoutMs)
+
+fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "Read one available chunk without requiring the buffer to fill."
+    ! [Tcp.readSome]
+    Tcp.readSome(conn, maxBytes)
+"#;
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = compile_flattened(&items, &type_aliases)
+        .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|e| panic!("wasmparser validate: {e}\n--- source ---\n{source}"));
+
+    let mut poll_found = false;
+    let mut read_some_found = false;
+    for payload in WasmParser::new(0).parse_all(&bytes) {
+        if let Payload::ImportSection(reader) = payload.expect("generated module must parse") {
+            for import in reader.into_imports().flatten() {
+                if import.module == "aver" && matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                    poll_found |= import.name == "tcp_poll";
+                    read_some_found |= import.name == "tcp_read_some";
+                }
+            }
+        }
+    }
+    assert!(
+        poll_found && read_some_found,
+        "Tcp.poll/Tcp.readSome must lower to aver.tcp_poll/aver.tcp_read_some host imports"
+    );
+}
+
+#[test]
 fn tcp_write_bytes_imports_host_function_and_validates() {
     use wasmparser::{Parser as WasmParser, Payload};
 

@@ -97,6 +97,8 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "tcp_write_bytes"),
     ("aver", "tcp_read_line"),
     ("aver", "tcp_read_bytes"),
+    ("aver", "tcp_read_some"),
+    ("aver", "tcp_poll"),
     ("aver", "tcp_close"),
     ("aver", "tcp_send"),
     ("aver", "tcp_send_bytes"),

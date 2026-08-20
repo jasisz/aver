@@ -1887,6 +1887,35 @@ fn main() -> Unit
 }
 
 #[test]
+fn rust_tcp_poll_and_read_some_build_through_the_standard_provider() {
+    let src = r#"module TcpPollReadSomeBuild
+    intent = "Rust codegen must render readiness and partial binary reads through the Tcp provider"
+    depends [Bytes]
+    effects [Console, Tcp]
+
+fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Return caller-owned IDs whose connections can be read without waiting."
+    ! [Tcp.poll]
+    Tcp.poll(connections, timeoutMs)
+
+fn readChunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "Read the bytes currently available, up to the caller's bound."
+    ! [Tcp.readSome]
+    Tcp.readSome(conn, maxBytes)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("compiled")
+"#;
+
+    let vm = run_vm_inline("tcp_poll_read_some_build", src).expect("vm run");
+    let rust = build_run_rust_inline("tcp_poll_read_some_build", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "compiled");
+    assert_eq!(rust, vm, "Rust Tcp.poll/readSome codegen diverged from VM");
+}
+
+#[test]
 fn rust_disk_bytes_build_and_preserve_non_utf8_octets() {
     let data_root = temp_dir("disk_bytes_data");
     let data_file = data_root.join("payload.bin");
