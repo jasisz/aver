@@ -61,10 +61,10 @@ pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Tcp
 pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] =
     &[("Crypto.sha256", &["Bytes", "Crypto.Digest32"])];
 
-/// Standard modules `items` implicitly depends on because a function body,
-/// top-level statement, or verify case calls a builtin whose signature
-/// crosses stdlib-owned nominal types (e.g. `Crypto.sha256` produces a
-/// `Digest32` even when `depends` never names `Crypto.Digest32`).
+/// Standard modules `items` implicitly depends on because a type annotation,
+/// record expression, or call crosses a stdlib-owned nominal type (e.g.
+/// `Crypto.sha256` produces a `Digest32` even when `depends` never names
+/// `Crypto.Digest32`).
 ///
 /// Verify blocks count because backends compile them too: Rust codegen
 /// emits verify cases into a `#[cfg(test)]` module, so a program whose only
@@ -121,43 +121,89 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
 fn collect_standard_type_dependencies(item: &crate::ast::TopLevel, deps: &mut Vec<String>) {
     use crate::ast::{CapabilityItem, Stmt, TopLevel, TypeDef};
 
-    let mut note = |annotation: &str| {
-        let ty = crate::types::parse_type_str(annotation);
-        collect_standard_modules_from_type(&ty, deps);
-    };
     match item {
         TopLevel::FnDef(function) => {
             for (_, annotation) in &function.params {
-                note(annotation);
+                collect_standard_modules_from_annotation(annotation, deps);
             }
-            note(&function.return_type);
+            collect_standard_modules_from_annotation(&function.return_type, deps);
             for statement in function.body.stmts() {
-                if let Stmt::Binding(_, Some(annotation), _) = statement {
-                    note(annotation);
+                match statement {
+                    Stmt::Binding(_, annotation, expression) => {
+                        if let Some(annotation) = annotation {
+                            collect_standard_modules_from_annotation(annotation, deps);
+                        }
+                        collect_standard_modules_from_expr(expression, deps);
+                    }
+                    Stmt::Expr(expression) => {
+                        collect_standard_modules_from_expr(expression, deps);
+                    }
                 }
             }
         }
-        TopLevel::Stmt(Stmt::Binding(_, Some(annotation), _)) => note(annotation),
+        TopLevel::Stmt(statement) => match statement {
+            Stmt::Binding(_, annotation, expression) => {
+                if let Some(annotation) = annotation {
+                    collect_standard_modules_from_annotation(annotation, deps);
+                }
+                collect_standard_modules_from_expr(expression, deps);
+            }
+            Stmt::Expr(expression) => collect_standard_modules_from_expr(expression, deps),
+        },
         TopLevel::TypeDef(TypeDef::Product { fields, .. }) => {
             for (_, annotation) in fields {
-                note(annotation);
+                collect_standard_modules_from_annotation(annotation, deps);
             }
         }
         TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
             for variant in variants {
                 for annotation in &variant.fields {
-                    note(annotation);
+                    collect_standard_modules_from_annotation(annotation, deps);
                 }
             }
         }
         TopLevel::Capability(CapabilityItem::Operation(operation)) => {
             for (_, annotation) in &operation.params {
-                note(annotation);
+                collect_standard_modules_from_annotation(annotation, deps);
             }
-            note(&operation.return_type);
+            collect_standard_modules_from_annotation(&operation.return_type, deps);
+        }
+        TopLevel::Verify(verify) => {
+            for (left, right) in &verify.cases {
+                collect_standard_modules_from_expr(left, deps);
+                collect_standard_modules_from_expr(right, deps);
+            }
+            for givens in &verify.case_givens {
+                for (_, expression) in givens {
+                    collect_standard_modules_from_expr(expression, deps);
+                }
+            }
         }
         _ => {}
     }
+}
+
+fn collect_standard_modules_from_annotation(annotation: &str, deps: &mut Vec<String>) {
+    let ty = crate::types::parse_type_str(annotation);
+    collect_standard_modules_from_type(&ty, deps);
+}
+
+/// Record syntax carries a type reference even though it is not an ordinary
+/// call in the call graph. Discover it before typechecking so an attempted
+/// `Tcp.Connection(...)` forge loads the canonical capability contract and
+/// reaches the resource-construction gate instead of looking like an unknown,
+/// fieldless user record.
+fn collect_standard_modules_from_expr(
+    expression: &crate::ast::Spanned<crate::ast::Expr>,
+    deps: &mut Vec<String>,
+) {
+    crate::call_graph::walk_expr(expression, &mut |node| match node {
+        crate::ast::Expr::RecordCreate { type_name, .. }
+        | crate::ast::Expr::RecordUpdate { type_name, .. } => {
+            collect_standard_modules_from_type(&crate::types::Type::named(type_name.clone()), deps);
+        }
+        _ => {}
+    });
 }
 
 fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<String>) {
@@ -447,6 +493,17 @@ mod tests {
         // without ever naming the module: read a frame, write it back.
         let items = parse(
             "module Relay\n    intent = \"pipe frames without naming Bytes\"\n    depends []\n    effects [Tcp]\n\nfn relay(conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"Echo one 4-byte frame back to the peer.\"\n    ! [Tcp.readBytes, Tcp.writeBytes]\n    frame = Tcp.readBytes(conn, 4)?\n    Tcp.writeBytes(conn, frame)\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Tcp"]);
+    }
+
+    #[test]
+    fn standard_resource_record_syntax_loads_its_capability_contract() {
+        // The typechecker needs the Tcp contract even though this invalid
+        // program has neither a Tcp annotation nor a Tcp operation call: only
+        // then can it diagnose provider-owned resource fabrication precisely.
+        let items = parse(
+            "module Forge\n    intent = \"try to forge a provider resource\"\n    depends []\n    effects []\n\nfn fake() -> Unit\n    _ = Tcp.Connection(id = \"fake\", host = \"\", port = 0)\n    Unit\n",
         );
         assert_eq!(implicit_stdlib_deps(&items), vec!["Tcp"]);
     }
