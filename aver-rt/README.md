@@ -15,10 +15,11 @@ programs and the VM-facing adapters that rely on the same semantics.
 
 ## What it contains
 
-- `AverList<T>`: persistent list used by Aver list operations, including deep-list
-  paths such as teardown, `tail`, and `list_uncons`; append-heavy chains are
-  packed into structural segments so the VM and generated Rust share the
-  same faster behavior on `append + get(i)` workloads
+- `AverList<T>`: a multi-representation persistent sequence used by Aver list
+  operations, including deep-list paths such as teardown, `tail`, and
+  `list_uncons`; `concat` is represented as a rope, append-heavy chains are
+  packed into construction segments, and sequential reads use a lazy traversal
+  index so later tails advance without rebuilding the rope or copying values
 - `AverDisplay`: Aver-specific display formatting used by `Console.print` and string interpolation
 - shared runtime helpers for console, time, disk, env, and string operations
 - shared service types:
@@ -30,6 +31,54 @@ programs and the VM-facing adapters that rely on the same semantics.
   - `tcp`
   - `http` (behind the `http` feature)
   - `http_server`
+
+## `AverList` representation
+
+`AverList<T>` is an immutable persistent sequence with several internal
+representations. Their shape is not observable in Aver: length, indexing,
+iteration, equality, hashing, destructuring, take, and drop have the same
+meaning for all of them. The implementation calls its shared pointer `Rc`, but
+it is an alias for `Arc` because lists may be captured by parallel branches.
+
+| Inner shape | Responsibility | Important property |
+|---|---|---|
+| `Flat` | A body created from `Vec<T>` | A tail shares the same body and advances an offset. |
+| `Prepend` | Persistent `List.prepend` | Head and tail are O(1); length is cached. |
+| `Concat` | Persistent `List.concat` | Construction is O(1), copies no values, and may form an arbitrarily skewed rope. |
+| `Segments` | Construction chunks for repeated append | Keeps append-created spines in chunks of at most 128 elements. |
+| `Indexed` | Sequential consumption of a concat rope | All tails share one traversal table and advance a constant-size cursor. |
+
+The first `uncons` of a `Concat` performs an iterative, explicit-stack DFS and
+compiles its topology into `Indexed`. Values are not flattened or cloned. An
+index entry is deliberately restricted to a constant-time source: either a
+range in one shared flat body or exactly one shared `Prepend` head. It may not
+contain an arbitrary `AverList`, because that could hide another rope and move
+the same shape-dependent traversal cost down one level.
+
+After indexing, `uncons`, `tail`, and a one-element drop advance only the
+wrapper's absolute offset and segment index while retaining the same `Arc`
+table. A general `drop(n)` locates its destination through the cumulative
+segment ends in O(log segments). The one-time compilation cost is O(nodes +
+segments), extra memory is O(segments), and a complete walk is O(nodes +
+elements). Concatenating an indexed tail is still O(1); if that new rope is
+later consumed, existing index entries are reused descriptor by descriptor,
+not expanded element by element. Random `get(i)` on a raw concat intentionally
+does not build an index for a single lookup.
+
+A `PrependHead` descriptor owns the original prepend node, which in turn owns
+its tail. An index over a prepend chain therefore holds overlapping references
+to its suffixes and deliberately retains the original topology, including the
+already-consumed prefix, until the indexed view is released. This is the
+no-value-copy tradeoff, analogous to a flat tail retaining its whole backing
+vector but with more references. There are no ownership cycles; the iterative
+destructor releases every retained node without recursing through the chain.
+
+The resulting guarantees are separate: construction performs no pathological
+copying, sequential consumption performs no pathological reconstruction, and
+destruction performs no pathological recursion. `AverListInner::drop` detaches
+uniquely owned children onto an explicit work stack, including prepend heads
+retained by a traversal index, so a deep persistent structure cannot overflow
+the Rust call stack while its `Arc` chain is released.
 
 ## Features
 
