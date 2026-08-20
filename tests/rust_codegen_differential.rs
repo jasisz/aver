@@ -4016,6 +4016,89 @@ fn mir_forced_independent_product_builds_and_matches_vm() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Regression for #1019: both closures in a recursive `?!` read the
+/// same non-Copy context. The old emitter cloned call arguments in the
+/// first branch but moved their last uses into the second branch; the
+/// first `move` closure had already captured the originals, so rustc
+/// rejected the second closure with E0382.
+///
+/// Rust-on-MIR W6/Stage-3 retired the HIR Rust emitter. The successor
+/// parity gates used here are therefore (a) `mir_lowered > 0`, proving
+/// this shape went through MIR, and (b) built-Rust output equal to the
+/// VM oracle that preserves the former HIR/MIR semantic golden.
+#[test]
+fn recursive_independent_product_owns_each_shared_capture() {
+    let relative = "tests/fixtures/rust_independent_shared_capture.av";
+    let file = repo_root().join(relative);
+    if !file.exists() {
+        panic!("{relative}: regression fixture missing");
+    }
+
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+    let ws = temp_dir("shared-ip-capture");
+
+    let result = (|| -> Result<(), String> {
+        let lowered = mir_lowered_count(&file, None, &[])?;
+        if lowered == 0 {
+            return Err("recursive independent product did not reach the MIR emitter".to_string());
+        }
+
+        for (mode, extra) in [("plain", &[][..]), ("replay", &["--with-replay"][..])] {
+            let project = ws.join(mode);
+            fs::create_dir_all(&project).expect("create project dir");
+            let name = format!("shared_ip_capture_{mode}");
+            compile_rust(&file, &project, &name, None, extra)?;
+            let emitted = fs::read_to_string(
+                project
+                    .join("src")
+                    .join("aver_generated")
+                    .join("entry")
+                    .join("mod.rs"),
+            )
+            .map_err(|e| format!("read emitted module: {e}"))?;
+            if !emitted.contains("std::thread::scope") {
+                return Err(format!(
+                    "{mode}: recursive independent product lost scoped-thread emission:\n{emitted}"
+                ));
+            }
+            for capture in ["height", "blockId"] {
+                let binding = format!("let {capture} = {capture}.clone();");
+                if emitted.matches(&binding).count() < 2 {
+                    return Err(format!(
+                        "{mode}: every branch must own `{capture}` before spawn:\n{emitted}"
+                    ));
+                }
+            }
+            if mode == "replay" && !emitted.contains("capture_parallel_scope_context") {
+                return Err(format!(
+                    "replay: shared-capture path lost parallel replay scope:\n{emitted}"
+                ));
+            }
+
+            let bin = cargo_build(&project, &name)?;
+            let out = Command::new(&bin)
+                .output()
+                .map_err(|e| format!("failed to run {mode} binary: {e}"))?;
+            if !out.status.success() {
+                return Err(format!(
+                    "{mode}: shared-capture binary exited non-zero:\n{}",
+                    format_output(&out)
+                ));
+            }
+            let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if rust_stdout != vm_stdout {
+                return Err(format!(
+                    "{mode}: shared-capture output mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (g): MIR-emitted first-class fn values ──────────────────────────
 //
 // W6/Stage-0 (the final construct gap): the MIR walker now emits
