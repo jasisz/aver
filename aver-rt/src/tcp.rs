@@ -21,9 +21,9 @@ thread_local! {
 /// Phase 4.7+ fix #13 — cross-backend port validation.
 /// Returns the port as `u16` when it fits, otherwise an Aver-side
 /// error string. Lifts what used to be a VM `RuntimeError` panic
-/// into a `Result.Err` so every backend (VM via `services::tcp`,
-/// self-host via this fn, wasm-gc-bridge via this fn, wasip2 via
-/// its own up-front check) surfaces the same catchable shape.
+/// into a `Result.Err` so every backend (VM and generated Rust via the
+/// standard Tcp provider, self-host and wasm-gc bridge via this module,
+/// wasip2 via its own up-front check) surfaces the same catchable shape.
 fn validate_port(port: i64) -> Result<u16, String> {
     if (0..=65535).contains(&port) {
         Ok(port as u16)

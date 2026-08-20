@@ -1376,8 +1376,9 @@ fn valid_tcp_read_line_with_connection() {
 #[test]
 fn valid_tcp_read_bytes_returns_nominal_bytes() {
     let src = concat!(
-        "record Bytes\n",
-        "    values: List<Int>\n",
+        "module M\n",
+        "    depends [Bytes]\n",
+        "    effects [Tcp.readBytes]\n",
         "fn recv(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n",
         "    ! [Tcp.readBytes]\n",
         "    Tcp.readBytes(conn, count)\n",
@@ -1399,19 +1400,24 @@ fn valid_verify_trace_given_stub_for_tcp_read_bytes() {
         "    depends [Bytes]\n",
         "    effects [Tcp]\n",
         "\n",
+        "fn connectStub(path: BranchPath, n: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>\n",
+        "    ? \"Mint the provider-owned test connection.\"\n",
+        "    Result.Ok(fresh)\n",
+        "\n",
         "fn readStub(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n",
         "    ? \"Honest stub returning a fixed frame.\"\n",
         "    Result.Ok(Bytes.fromList([1, 2, 3, 4]))\n",
         "\n",
-        "fn readFrame(conn: Tcp.Connection) -> Result<Bytes, String>\n",
+        "fn readFrame() -> Result<Bytes, String>\n",
         "    ? \"Read one 4-byte frame.\"\n",
-        "    ! [Tcp.readBytes]\n",
+        "    ! [Tcp.connect, Tcp.readBytes]\n",
+        "    conn = Tcp.connect(\"host\", 1)?\n",
         "    Tcp.readBytes(conn, 4)\n",
         "\n",
         "verify readFrame trace\n",
-        "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"h\", port = 1)]\n",
+        "    given opener: Tcp.connect = [connectStub]\n",
         "    given reader: Tcp.readBytes = [readStub]\n",
-        "    readFrame(conn) => Result.Ok(Bytes.fromList([1, 2, 3, 4]))\n",
+        "    readFrame() => Result.Ok(Bytes.fromList([1, 2, 3, 4]))\n",
     );
     let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
     assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
@@ -1427,19 +1433,24 @@ fn valid_verify_trace_given_stub_for_tcp_write_bytes() {
         "    depends [Bytes]\n",
         "    effects [Tcp]\n",
         "\n",
+        "fn connectStub(path: BranchPath, n: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>\n",
+        "    ? \"Mint the provider-owned test connection.\"\n",
+        "    Result.Ok(fresh)\n",
+        "\n",
         "fn writeStub(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n",
         "    ? \"Honest stub accepting any frame.\"\n",
         "    Result.Ok(Unit)\n",
         "\n",
-        "fn sendFrame(conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n",
+        "fn sendFrame(payload: Bytes) -> Result<Unit, String>\n",
         "    ? \"Write one frame.\"\n",
-        "    ! [Tcp.writeBytes]\n",
+        "    ! [Tcp.connect, Tcp.writeBytes]\n",
+        "    conn = Tcp.connect(\"host\", 1)?\n",
         "    Tcp.writeBytes(conn, payload)\n",
         "\n",
         "verify sendFrame trace\n",
-        "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"h\", port = 1)]\n",
+        "    given opener: Tcp.connect = [connectStub]\n",
         "    given writer: Tcp.writeBytes = [writeStub]\n",
-        "    sendFrame(conn, Bytes.fromList([1, 2])) => Result.Ok(Unit)\n",
+        "    sendFrame(Bytes.fromList([1, 2])) => Result.Ok(Unit)\n",
     );
     let errs = errors_with_base(src, env!("CARGO_MANIFEST_DIR"));
     assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
@@ -1483,11 +1494,10 @@ fn error_tcp_connection_manual_construction_is_opaque() {
 }
 
 #[test]
-fn verify_trace_may_fabricate_tcp_connection_handle() {
-    // Verify-trace context relaxes opaque-construction for runtime
-    // handles flagged in `effect_classification::is_verify_fabricable_handle`.
-    // Tcp.Connection is the first such handle: lets Oracle stubs feed
-    // a deterministic conn into the SUT without going through Tcp.connect.
+fn verify_trace_cannot_fabricate_tcp_connection_resource() {
+    // Capability resources stay provider-owned even in verify traces. A
+    // `Tcp.connect` oracle receives the fresh opaque token it may return;
+    // arbitrary record syntax must never forge one.
     let src = concat!(
         "fn fakeWrite(p: BranchPath, n: Int, c: Tcp.Connection, line: String) -> Result<Unit, String>\n",
         "    ? \"stub\"\n",
@@ -1504,12 +1514,13 @@ fn verify_trace_may_fabricate_tcp_connection_handle() {
         "    Tcp.readLine(conn)\n",
         "\n",
         "verify ping trace\n",
+        "    given conn: Tcp.Connection = [Tcp.Connection(id = \"fake\", host = \"127.0.0.1\", port = 6379)]\n",
         "    given w: Tcp.writeLine = [fakeWrite]\n",
         "    given r: Tcp.readLine  = [fakeRead]\n",
-        "    pinged = ping(Tcp.Connection(id = \"fake\", host = \"127.0.0.1\", port = 6379))\n",
+        "    pinged = ping(conn)\n",
         "    pinged.trace.contains(Tcp.writeLine) => true\n",
     );
-    assert_no_errors(src);
+    assert_error_containing(src, "Cannot construct opaque type 'Tcp.Connection'");
 }
 
 #[test]

@@ -13,16 +13,18 @@ use super::target::CapabilityTarget;
 pub(crate) enum StandardCapabilityBinding {
     Disk,
     Random,
+    Tcp,
     Time,
 }
 
 impl StandardCapabilityBinding {
-    pub(crate) const ALL: [Self; 3] = [Self::Disk, Self::Random, Self::Time];
+    pub(crate) const ALL: [Self; 4] = [Self::Disk, Self::Random, Self::Tcp, Self::Time];
 
     pub(crate) const fn module(self) -> &'static str {
         match self {
             Self::Disk => "Disk",
             Self::Random => "Random",
+            Self::Tcp => "Tcp",
             Self::Time => "Time",
         }
     }
@@ -31,6 +33,7 @@ impl StandardCapabilityBinding {
         match self {
             Self::Disk => Arc::new(aver_rt::provider::StandardDiskProvider),
             Self::Random => Arc::new(aver_rt::provider::StandardRandomProvider),
+            Self::Tcp => Arc::new(aver_rt::provider::StandardTcpProvider),
             Self::Time => Arc::new(aver_rt::provider::StandardTimeProvider),
         }
     }
@@ -39,6 +42,7 @@ impl StandardCapabilityBinding {
         match self {
             Self::Disk => "aver_rt::provider::StandardDiskProvider",
             Self::Random => "aver_rt::provider::StandardRandomProvider",
+            Self::Tcp => "aver_rt::provider::StandardTcpProvider",
             Self::Time => "aver_rt::provider::StandardTimeProvider",
         }
     }
@@ -47,6 +51,7 @@ impl StandardCapabilityBinding {
         match self {
             Self::Disk => aver_rt::provider::STANDARD_DISK_FINGERPRINT,
             Self::Random => aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
+            Self::Tcp => aver_rt::provider::STANDARD_TCP_FINGERPRINT,
             Self::Time => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
         }
     }
@@ -63,6 +68,11 @@ impl StandardCapabilityBinding {
             }
             (Self::Random, CapabilityTarget::WasmGc) => "aver.standard.Random/wasm-gc-imports",
             (Self::Random, CapabilityTarget::Wasip2) => "aver.standard.Random/wasip2-wasi",
+            (Self::Tcp, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
+                aver_rt::provider::STANDARD_TCP_NATIVE_IDENTITY
+            }
+            (Self::Tcp, CapabilityTarget::WasmGc) => "aver.standard.Tcp/wasm-gc-imports",
+            (Self::Tcp, CapabilityTarget::Wasip2) => "aver.standard.Tcp/wasip2-wasi",
             (Self::Time, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
                 aver_rt::provider::STANDARD_TIME_NATIVE_IDENTITY
             }

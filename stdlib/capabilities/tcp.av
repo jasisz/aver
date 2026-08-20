@@ -1,0 +1,145 @@
+module Tcp
+    kind = capability
+    semantics = effectful
+    depends [Bytes]
+    exposes [Connection, send, sendBytes, ping, connect, writeLine, writeBytes, readLine, readBytes, close]
+
+opaque Connection
+
+operation send(host: String, port: Int, data: String) -> Result<String, String>
+    ? "Opens a connection, writes text, reads the response to EOF, and closes."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [sendNormalOk, sendAlwaysErr]
+
+operation sendBytes(host: String, port: Int, payload: Bytes) -> Result<Bytes, String>
+    ? "Opens a connection, writes exact bytes, reads exact response bytes to EOF, and closes."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [sendBytesNormalOk, sendBytesAlwaysErr]
+
+operation ping(host: String, port: Int) -> Result<Unit, String>
+    ? "Reports whether a TCP connection can be established."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [pingNormalOk, pingAlwaysErr]
+
+operation connect(host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "Opens a persistent TCP session and returns its opaque provider-owned handle."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [connectNormalOk, connectAlwaysErr]
+
+operation writeLine(connection: Tcp.Connection, line: String) -> Result<Unit, String>
+    ? "Writes UTF-8 text followed by CRLF to a persistent connection."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [writeLineNormalOk, writeLineAlwaysErr]
+
+operation writeBytes(connection: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
+    ? "Writes the exact bytes supplied to a persistent connection."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [writeBytesNormalOk, writeBytesAlwaysErr]
+
+operation readLine(connection: Tcp.Connection) -> Result<String, String>
+    ? "Reads through LF from a persistent connection and strips trailing CRLF."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [readLineNormalOk, readLineAlwaysErr]
+
+operation readBytes(connection: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "Reads exactly count bytes from a persistent connection without decoding."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [readBytesNormalOk, readBytesShortRead, readBytesAlwaysErr]
+
+operation close(connection: Tcp.Connection) -> Result<Unit, String>
+    ? "Closes a persistent connection and invalidates its handle."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [closeNormalOk, closeAlwaysErr]
+
+fn sendNormalOk(branch: BranchPath, call: Int, host: String, port: Int, data: String) -> Result<String, String>
+    ? "honest: tcp send succeeds with an acknowledgement"
+    Result.Ok("ack")
+
+fn sendAlwaysErr(branch: BranchPath, call: Int, host: String, port: Int, data: String) -> Result<String, String>
+    ? "hostile: tcp send fails"
+    Result.Err("hostile: send failed")
+
+fn sendBytesNormalOk(branch: BranchPath, call: Int, host: String, port: Int, payload: Bytes) -> Result<Bytes, String>
+    ? "honest: tcp sendBytes echoes the payload"
+    Result.Ok(payload)
+
+fn sendBytesAlwaysErr(branch: BranchPath, call: Int, host: String, port: Int, payload: Bytes) -> Result<Bytes, String>
+    ? "hostile: tcp sendBytes fails"
+    Result.Err("hostile: send failed")
+
+fn pingNormalOk(branch: BranchPath, call: Int, host: String, port: Int) -> Result<Unit, String>
+    ? "honest: host is reachable"
+    Result.Ok(Unit)
+
+fn pingAlwaysErr(branch: BranchPath, call: Int, host: String, port: Int) -> Result<Unit, String>
+    ? "hostile: ping fails"
+    Result.Err("hostile: unreachable")
+
+fn connectNormalOk(branch: BranchPath, call: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "honest: connection establishment succeeds"
+    Result.Ok(fresh)
+
+fn connectAlwaysErr(branch: BranchPath, call: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "hostile: cannot establish connection"
+    Result.Err("hostile: refused")
+
+fn writeLineNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, line: String) -> Result<Unit, String>
+    ? "honest: connection write succeeds"
+    Result.Ok(Unit)
+
+fn writeLineAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, line: String) -> Result<Unit, String>
+    ? "hostile: connection write fails"
+    Result.Err("hostile: dropped")
+
+fn writeBytesNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
+    ? "honest: bytes reach the peer"
+    Result.Ok(Unit)
+
+fn writeBytesAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, payload: Bytes) -> Result<Unit, String>
+    ? "hostile: byte write fails"
+    Result.Err("hostile: write failed")
+
+fn readLineNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<String, String>
+    ? "honest: peer sends a plausible line"
+    Result.Ok("hello")
+
+fn readLineAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<String, String>
+    ? "hostile: connection drops before the read"
+    Result.Err("hostile: dropped")
+
+fn readBytesNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "honest: peer sends exactly the count bytes requested"
+    match count > 9223372036854775807
+        true -> Result.Err("Tcp.readBytes: count {count} exceeds the read limit")
+        false -> match count < 0 - 9223372036854775808
+            true -> Result.Err("Tcp.readBytes: count {count} exceeds the read limit")
+            false -> match count < 0
+                true -> Result.Err("Tcp.readBytes: count {count} is negative")
+                false -> match count > 10485760
+                    true -> Result.Err("Tcp.readBytes: count {count} exceeds the 10485760 byte limit")
+                    false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)))
+
+fn readBytesShortRead(branch: BranchPath, call: Int, connection: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "hostile: peer goes away in the middle of a frame"
+    Result.Err("hostile: failed to fill whole buffer")
+
+fn readBytesAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "hostile: byte read fails"
+    Result.Err("hostile: read failed")
+
+fn closeNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<Unit, String>
+    ? "honest: close succeeds"
+    Result.Ok(Unit)
+
+fn closeAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<Unit, String>
+    ? "hostile: close sees an already-dropped connection"
+    Result.Err("hostile: dropped")

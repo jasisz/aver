@@ -1,8 +1,8 @@
 //! Fidelity of the honest (`normal_ok`) `Tcp.readBytes` hostile profile.
 //!
-//! Hostile verification runs on the VM, so the fidelity target is the VM
-//! builtin (`src/services/tcp.rs` + `aver_rt::tcp::read_bytes`). Its count
-//! handling, branch by branch:
+//! Hostile verification runs on the VM, so the fidelity target is the
+//! standard native Tcp provider (`aver_rt::provider::StandardTcpProvider`).
+//! Its count handling, branch by branch:
 //!
 //! 1. count outside i64 (positive OR very negative) →
 //!    `Err("Tcp.readBytes: count N exceeds the read limit")`
@@ -13,20 +13,23 @@
 //!
 //! The stub used to collapse branches 1 and 3 into a generic "exceeds the
 //! read limit" and sent very negative out-of-i64 counts down the "is
-//! negative" branch. These tests call the REAL builtin (count validation
-//! fires before any socket I/O, so a fabricated connection record works)
-//! and the ACTUAL stub body from `hostile_profiles_for`, compiled through
-//! the VM, and require identical messages per branch.
+//! negative" branch. These tests call the real native provider with a typed
+//! provider resource (count validation fires before any socket I/O) and the
+//! actual stub body from `hostile_profiles_for`, compiled through the VM, and
+//! require identical messages per branch.
 
 use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::types::checker::hostile_effects::hostile_profiles_for;
 use aver::value::Value;
 use aver::vm;
+use aver_rt::provider::{
+    CapabilityProvider, ProviderContext, ProviderResource, ProviderValue, StandardTcpProvider,
+};
 
 /// 2^80 — comfortably outside i64 in both directions.
 const BIG_COUNT: &str = "1208925819614629174706176";
 
-fn fake_conn() -> Value {
+fn fake_conn_value() -> Value {
     Value::Record {
         type_name: "Tcp.Connection".to_string(),
         fields: vec![
@@ -36,6 +39,14 @@ fn fake_conn() -> Value {
         ]
         .into(),
     }
+}
+
+fn fake_conn_resource() -> ProviderValue {
+    ProviderValue::Resource(ProviderResource::new(aver_rt::TcpConnection::from_parts(
+        "fidelity".to_string(),
+        "127.0.0.1".to_string(),
+        1,
+    )))
 }
 
 /// Compile a VM holding the `normal_ok` stub exactly as
@@ -88,7 +99,7 @@ fn call_stub(machine: &mut vm::VM, stub_fn: &str, count: Value) -> Value {
         variant: "Root".to_string(),
         fields: Vec::new().into(),
     };
-    let arg_values = [path, Value::int(0), fake_conn(), count];
+    let arg_values = [path, Value::int(0), fake_conn_value(), count];
     let mut args: Vec<NanValue> = Vec::with_capacity(arg_values.len());
     for value in &arg_values {
         args.push(NanValue::from_value(value, &mut machine.arena));
@@ -100,7 +111,7 @@ fn call_stub(machine: &mut vm::VM, stub_fn: &str, count: Value) -> Value {
 }
 
 /// Build an out-of-i64 count by evaluating a helper fn in the same VM, so
-/// the exact same `Int` value feeds both the stub and the real builtin.
+/// the exact same `Int` value feeds both the stub and the real provider.
 fn big_count(machine: &mut vm::VM, helper: &str) -> Value {
     let out = machine
         .run_named_function(helper, &[])
@@ -108,10 +119,26 @@ fn big_count(machine: &mut vm::VM, helper: &str) -> Value {
     out.to_value(&machine.arena)
 }
 
-fn real_read_bytes(count: Value) -> Value {
-    aver::services::tcp::call("Tcp.readBytes", &[fake_conn(), count])
-        .expect("Tcp.readBytes must dispatch")
-        .expect("count validation must be a catchable Result.Err, not a runtime error")
+fn real_read_bytes_error(count: Value) -> String {
+    let Value::Int(count) = count else {
+        panic!("test count must be an Int");
+    };
+    let context = ProviderContext {
+        capability: "Tcp".to_string(),
+        operation: "Tcp.readBytes".to_string(),
+        contract_hash: "test-contract".to_string(),
+        model_hash: "test-model".to_string(),
+    };
+    let result = StandardTcpProvider
+        .invoke(&context, &[fake_conn_resource(), ProviderValue::Int(count)])
+        .expect("Tcp.readBytes provider boundary must accept the canonical arguments");
+    let ProviderValue::ResultErr(message) = result else {
+        panic!("count validation must return Result.Err, got {result:?}");
+    };
+    let ProviderValue::String(message) = *message else {
+        panic!("Tcp.readBytes error must carry String");
+    };
+    message
 }
 
 fn err_msg(context: &str, value: Value) -> String {
@@ -128,7 +155,7 @@ fn err_msg(context: &str, value: Value) -> String {
 fn stub_matches_builtin_for_in_i64_negative_count() {
     let (mut machine, stub_fn) = stub_vm();
     let stub = err_msg("stub", call_stub(&mut machine, &stub_fn, Value::int(-1)));
-    let real = err_msg("real", real_read_bytes(Value::int(-1)));
+    let real = real_read_bytes_error(Value::int(-1));
     assert_eq!(stub, real);
     assert_eq!(real, "Tcp.readBytes: count -1 is negative");
 }
@@ -140,7 +167,7 @@ fn stub_matches_builtin_for_in_i64_over_limit_count() {
         "stub",
         call_stub(&mut machine, &stub_fn, Value::int(10485761)),
     );
-    let real = err_msg("real", real_read_bytes(Value::int(10485761)));
+    let real = real_read_bytes_error(Value::int(10485761));
     assert_eq!(stub, real);
     // The real path names the byte limit for ordinary over-limit counts —
     // pin the exact shape so a generic message can't sneak back in.
@@ -155,7 +182,7 @@ fn stub_matches_builtin_for_out_of_i64_positive_count() {
     let (mut machine, stub_fn) = stub_vm();
     let count = big_count(&mut machine, "bigPositive");
     let stub = err_msg("stub", call_stub(&mut machine, &stub_fn, count.clone()));
-    let real = err_msg("real", real_read_bytes(count));
+    let real = real_read_bytes_error(count);
     assert_eq!(stub, real);
     assert_eq!(
         real,
@@ -168,8 +195,8 @@ fn stub_matches_builtin_for_out_of_i64_negative_count() {
     let (mut machine, stub_fn) = stub_vm();
     let count = big_count(&mut machine, "bigNegative");
     let stub = err_msg("stub", call_stub(&mut machine, &stub_fn, count.clone()));
-    let real = err_msg("real", real_read_bytes(count));
-    // The real builtin checks i64-fit BEFORE sign, so a very negative
+    let real = real_read_bytes_error(count);
+    // The real provider checks i64-fit BEFORE sign, so a very negative
     // out-of-i64 count reports "exceeds the read limit", not "is negative".
     assert_eq!(stub, real);
     assert_eq!(

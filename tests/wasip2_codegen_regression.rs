@@ -542,7 +542,7 @@ fn shutdown(conn: Tcp.Connection) -> Result<Unit, String>
 }
 
 /// `Tcp.readBytes` count-error classification on native wasip2 must
-/// match the VM (`src/services/tcp.rs` `count_arg` +
+/// match the VM's standard Tcp provider (`aver-rt/src/provider/tcp.rs` +
 /// `aver_rt::tcp::read_bytes`), branch by branch:
 ///
 /// 1. count outside i64 (either sign) → "exceeds the read limit"

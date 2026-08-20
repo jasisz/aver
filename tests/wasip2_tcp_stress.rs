@@ -834,7 +834,7 @@ fn main() -> Unit
 #[test]
 fn port_out_of_range_is_rejected_upfront() {
     // Regression for Phase 4.7+ fix #7 — port validation parity
-    // with `aver-rt::services::tcp::port_arg`. Negative + >65535
+    // with the standard native Tcp provider. Negative + >65535
     // both surface `Result.Err("tcp: port out of range")` before
     // any DNS or socket work; previously wasip2 quietly truncated
     // the i64 via `i32.wrap_i64` and returned a generic connect

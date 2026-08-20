@@ -267,7 +267,7 @@ All language features are transpilable:
 | `Console` service | OK |
 | `Http` service | OK |
 | `HttpServer` service (`listen`, `listenWith`) | OK |
-| `Tcp` service (persistent connections) | OK |
+| `Tcp` capability (provider-backed persistent connections) | OK |
 | `Disk` service | OK |
 | `Env` service | OK |
 | `Random` service | OK |
@@ -300,7 +300,8 @@ This avoids the old giant single-file output and keeps medium projects reviewabl
 
 Generated Rust uses `aver-rt` as the shared runtime. The actual service implementations live there:
 
-- `Tcp`: shared `aver-rt::tcp` runtime with persistent connection map
+- `Tcp`: standard capability provider over the shared `aver-rt::tcp` runtime;
+  `Tcp.Connection` crosses generated code as a provider-owned opaque resource
 - `Http`: shared `aver-rt::http` client, enabled by the `http` feature
 - `HttpServer`: shared `aver-rt::http_server` loop and request/response types
 - `Console`, `Time`, `Disk`, `Env`, `Args`: shared helpers from `aver-rt`

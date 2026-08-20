@@ -637,6 +637,34 @@ fn main() -> Result<String, String>
 }
 
 #[test]
+fn standard_tcp_cannot_bypass_the_provider_registry() {
+    let root = temp_root("tcp-default-provider");
+    fs::write(
+        root.join("main.av"),
+        "\
+module Client
+    exposes [main]
+    effects [Tcp.ping]
+
+fn main() -> Result<Unit, String>
+    ! [Tcp.ping]
+    Tcp.ping(\"127.0.0.1\", 1)
+",
+    )
+    .expect("write entry");
+
+    let (mut machine, contracts) = compile_vm(&root, "main.av");
+    let mut providers = ProviderRegistry::for_program(contracts).expect("standard registry");
+    providers.unbind("Tcp");
+    machine.set_provider_registry(Arc::new(providers));
+
+    let error = machine.run().expect_err("Tcp must not bypass registry");
+    let message = error.to_string();
+    assert!(message.contains("error[capability-provider-missing]"));
+    assert!(message.contains("Tcp.") && message.contains("contract_hash sha256:"));
+}
+
+#[test]
 fn standard_disk_recording_replays_offline_after_the_file_disappears() {
     // The Disk-specific proof of offline replay: the recorded read is
     // served from the transcript after the file itself is gone. A live
@@ -1238,6 +1266,11 @@ fn check_and_rust_compile_report_standard_binding_identities() {
     assert!(check_text.contains("rust:aver.standard.Disk/native"));
     assert!(check_text.contains("wasm-gc:aver.standard.Disk/wasm-gc-imports"));
     assert!(check_text.contains("wasip2:aver.standard.Disk/wasip2-wasi"));
+    assert!(check_text.contains("capability Tcp: contract_hash=sha256:"));
+    assert!(check_text.contains("vm:aver.standard.Tcp/native"));
+    assert!(check_text.contains("rust:aver.standard.Tcp/native"));
+    assert!(check_text.contains("wasm-gc:aver.standard.Tcp/wasm-gc-imports"));
+    assert!(check_text.contains("wasip2:aver.standard.Tcp/wasip2-wasi"));
 
     let output = temp_root("rust-accounting");
     let compile = Command::new(aver_bin())
@@ -1265,6 +1298,7 @@ fn check_and_rust_compile_report_standard_binding_identities() {
     assert!(provider_support.contains("StandardTimeProvider"));
     assert!(provider_support.contains("StandardRandomProvider"));
     assert!(provider_support.contains("StandardDiskProvider"));
+    assert!(provider_support.contains("StandardTcpProvider"));
     assert!(
         provider_support
             .contains("sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49")

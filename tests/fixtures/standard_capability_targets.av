@@ -1,6 +1,11 @@
 module StandardCapabilityTargets
-    intent = "Exercises the standard Time, Random, and Disk contracts on every shipped execution target."
-    effects [Disk.exists, Random.int, Random.float, Time.now, Time.unixMs, Time.sleep]
+    intent = "Exercises standard capability bindings on every shipped execution target."
+    effects [Disk.exists, Random.int, Random.float, Tcp.ping, Time.now, Time.unixMs, Time.sleep]
+
+fn tcpProbe() -> Result<Unit, String>
+    ? "Keep Tcp in target accounting without opening a socket during the canary run."
+    ! [Tcp.ping]
+    Tcp.ping("127.0.0.1", 1)
 
 fn main() -> Int
     ! [Disk.exists, Random.int, Random.float, Time.now, Time.unixMs, Time.sleep]

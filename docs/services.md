@@ -351,7 +351,11 @@ Contract source: `stdlib/capabilities/disk.av`. Native VM and generated Rust sha
 
 ### `Tcp` namespace — use granular effects (`! [Tcp.send]`, `! [Tcp.ping]`, etc.)
 
-Source: `src/services/tcp.rs`
+Contract source: `stdlib/capabilities/tcp.av`. Native VM and generated Rust
+share the `aver-rt` Tcp provider; wasm-gc and wasip2 bind their existing host
+lowerings to the same exact contract. Signatures, opaque-resource ownership,
+Oracle classification, hostile profiles, replay semantics, and target
+accounting derive from that source contract.
 
 **One-shot (stateless):**
 
@@ -372,7 +376,13 @@ Source: `src/services/tcp.rs`
 | `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 
-`Tcp.Connection` is **opaque** from the surface: construction is reserved to `Tcp.connect` and field reads / pattern matches are rejected by the type checker. The handle is purely an identity token — the caller has nothing to inspect inside it. The underlying socket lives in a thread-local `HashMap` (VM / self-host / wasm-gc-bridge, keyed by `AtomicU64` "tcp-N") or a 256-slot wasm-gc array (`--target wasip2`, slot allocated via first-free scan + monotonic counter generation). Either way, manually forging an id is impossible: the type checker rejects the constructor.
+`Tcp.Connection` is **opaque** from the surface: only the provider can mint
+one, while construction, field reads, and pattern matches are rejected by the
+type checker. It is a provider-owned resource token rather than a public
+record. Native VM and generated Rust carry the provider's host token inside
+that opaque resource; backend-specific socket tables and handles remain implementation
+details. Aver code can store, pass, and return the token, but cannot inspect
+its internals or manufacture a replacement.
 
 `Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program holding 256 live `Tcp.connect` handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
 

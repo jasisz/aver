@@ -52,6 +52,18 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
   VM and generated Rust share the exact-contract `aver-rt` provider, wasm-gc uses the corresponding host imports, and wasip2 binds the same operations directly to WASI filesystem streams and metadata. Binary values cross the provider and replay boundaries as canonical octets rather than UTF-8 strings, including `0x80` through `0xff`. Record/replay carries Disk provenance and can replay binary reads offline, removing the native binding fails closed, and native path policy applies uniformly to text, binary, metadata, and directory operations before provider invocation.
 
+  `Tcp` now follows the same architecture. Its nine operations, Oracle model,
+  replay declarations, and hostile profiles live in
+  `stdlib/capabilities/tcp.av`; VM and generated Rust share the exact-contract
+  `aver-rt` provider, while wasm-gc and wasip2 register their existing network
+  lowerings against the same contract. `Tcp.Connection` is now a genuine
+  provider-owned opaque resource rather than a constructable runtime record,
+  and successful hostile `Tcp.connect` worlds receive a fresh token from the
+  Oracle boundary instead of forging an id. The handwritten checker,
+  classification, hostile-profile, VM service, and generated-Rust direct-call
+  paths are removed, so uninstalling the Tcp binding fails closed instead of
+  falling through a legacy builtin.
+
   Target binding accounting is now total rather than a positive-only list. `aver capabilities FILE` (or `--json`) emits one deterministic row for every loaded contract across VM, Rust, wasm-gc, and wasip2, separating `provided`, VM `host-bound`, and explicit `unsupported(reason)` states. The full declared operation set and the program-required subset are both present, so an unused capability remains visible without becoming a compile requirement. Generated Rust, wasm-gc, wasip2, run shortcuts, replay provenance, and `aver check` project from this same table. A missing VM installation keeps `error[capability-provider-missing]`; an artifact target with no adapter now reports `error[capability-target-unsupported]` with a stable mechanism-specific reason plus contract/model identities. This table is the direct input for later contract-to-WIT and Component Model composition.
 
 ### Changed

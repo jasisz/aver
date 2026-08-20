@@ -166,7 +166,8 @@ fn transpile_project(
     let has_http_server_runtime = used_services.contains("HttpServer");
     let has_terminal_runtime = used_services.contains("Terminal");
 
-    let has_tcp_types = has_tcp_runtime || needs_tcp_types;
+    let has_tcp_types =
+        (has_tcp_runtime || needs_tcp_types) && ctx.capabilities.contract("Tcp").is_none();
     let has_http_types = has_http_runtime || has_http_server_runtime || needs_http_types;
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
     let has_terminal_types = has_terminal_runtime || needs_terminal_types;
@@ -336,7 +337,7 @@ fn transpile_project(
     rust_modules.push((
         vec!["entry".to_string()],
         render_generated_module(
-            root_module_depends(&ctx.items),
+            codegen_depends(root_module_depends(&ctx.items), &ctx.items, None),
             entry_module_sections(ctx, main_fn, &top_level_stmts),
         ),
     ));
@@ -347,9 +348,23 @@ fn transpile_project(
         ctx.extra_fn_defs = ctx.modules[i].fn_defs.clone();
         let module = &ctx.modules[i];
         let segments = module_prefix_to_rust_segments(&module.prefix);
+        let discovery_items = module
+            .fn_defs
+            .iter()
+            .cloned()
+            .map(TopLevel::FnDef)
+            .chain(module.type_defs.iter().cloned().map(TopLevel::TypeDef))
+            .collect::<Vec<_>>();
         rust_modules.push((
             segments,
-            render_generated_module(module.depends.clone(), module_sections(module, ctx)),
+            render_generated_module(
+                codegen_depends(
+                    module.depends.clone(),
+                    &discovery_items,
+                    Some(&module.prefix),
+                ),
+                module_sections(module, ctx),
+            ),
         ));
     }
     ctx.extra_fn_defs.clear();
@@ -632,6 +647,23 @@ fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> Strin
         lines.push(String::new());
         lines.join("\n")
     }
+}
+
+fn codegen_depends(
+    mut depends: Vec<String>,
+    items: &[TopLevel],
+    current_module: Option<&str>,
+) -> Vec<String> {
+    depends.retain(|dependency| Some(dependency.as_str()) != current_module);
+    for dependency in crate::stdlib::implicit_stdlib_deps(items) {
+        if crate::stdlib::is_standard_capability(&dependency)
+            && Some(dependency.as_str()) != current_module
+            && !depends.iter().any(|existing| existing == &dependency)
+        {
+            depends.push(dependency);
+        }
+    }
+    depends
 }
 
 /// Emit one mutual-TCO block (enum + trampoline + wrappers) via the MIR

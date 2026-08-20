@@ -2377,7 +2377,7 @@ mod tcp_tests {
 
     #[test]
     #[ignore = "integration: starts a local TCP server; run with --include-ignored --test-threads=1"]
-    fn tcp_connect_returns_connection_record() {
+    fn tcp_connect_returns_opaque_provider_resource() {
         use std::net::TcpListener;
         use std::thread;
 
@@ -2393,26 +2393,7 @@ mod tcp_tests {
         );
         let val = run_tcp_fn(&src, "open");
         match val {
-            Value::Ok(inner) => match *inner {
-                Value::Record {
-                    ref type_name,
-                    ref fields,
-                } => {
-                    assert_eq!(type_name, "Tcp.Connection");
-                    assert!(fields.iter().any(|(k, _)| k == "id"));
-                    assert!(
-                        fields
-                            .iter()
-                            .any(|(k, v)| k == "host" && *v == Value::Str("127.0.0.1".to_string()))
-                    );
-                    assert!(
-                        fields
-                            .iter()
-                            .any(|(k, v)| k == "port" && *v == Value::int(port as i64))
-                    );
-                }
-                other => panic!("expected Tcp.Connection record, got {:?}", other),
-            },
+            Value::Ok(inner) => assert!(matches!(*inner, Value::CapabilityResource(_))),
             other => panic!("expected Ok(Tcp.Connection), got {:?}", other),
         }
     }
@@ -2726,30 +2707,6 @@ mod tcp_tests {
                 },
                 other => panic!("count {count}: expected Err, got {:?}", other),
             }
-        }
-    }
-
-    /// The same defensive path retains an arbitrary-precision offending value
-    /// in its error instead of truncating it at the host boundary.
-    #[test]
-    fn tcp_send_bytes_defensively_rejects_bignum_carrier() {
-        let src = concat!(
-            "record Bytes\n    values: List<Int>\n\n",
-            "fn talk() -> Result<Bytes, String>\n",
-            "    ! [Tcp.sendBytes]\n",
-            "    Tcp.sendBytes(\"127.0.0.1\", 1, Bytes(values = [65, 1208925819614629174706176]))\n",
-        );
-        match run_tcp_fn(src, "talk") {
-            Value::Err(inner) => match *inner {
-                Value::Str(msg) => {
-                    assert!(
-                        msg.contains("1208925819614629174706176") && msg.contains("index 1"),
-                        "error should name the offending byte and its index, got: {msg}"
-                    );
-                }
-                other => panic!("expected Str error, got {:?}", other),
-            },
-            other => panic!("expected Err, got {:?}", other),
         }
     }
 }

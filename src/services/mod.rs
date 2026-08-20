@@ -1,6 +1,6 @@
 /// Built-in platform services available to Aver programs.
 ///
-/// Each service is a named namespace (`Args`, `Console`, `Http`, `Tcp`, `HttpServer`, `Env`, `Terminal`) that must
+/// Each service is a named namespace (`Args`, `Console`, `Http`, `HttpServer`, `Env`, `Terminal`) that must
 /// be declared as an effect in order to be called:
 ///
 /// ```aver
@@ -40,7 +40,6 @@ pub fn all_effect_names() -> Vec<&'static str> {
         "Http.patch",
     ]);
     out.extend_from_slice(http_server::DECLARED_EFFECTS);
-    out.extend_from_slice(tcp::DECLARED_EFFECTS);
     out.extend(
         crate::stdlib::standard_capability_registry_ref()
             .operations()
@@ -70,7 +69,6 @@ pub mod env;
 #[cfg(feature = "runtime-net")]
 pub mod http;
 pub mod http_server;
-pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
 

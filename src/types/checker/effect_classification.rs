@@ -191,64 +191,6 @@ fn classifications() -> &'static [EffectClassification] {
                 ],
                 ret: err_str(Type::named("HttpResponse")),
             },
-            // One-shot TCP operations — request is trace output, response comes from oracle.
-            EffectClassification {
-                method: "Tcp.send",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Int, Type::Str],
-                ret: err_str(Type::Str),
-            },
-            EffectClassification {
-                method: "Tcp.sendBytes",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Int, Type::named("Bytes")],
-                ret: err_str(Type::named("Bytes")),
-            },
-            EffectClassification {
-                method: "Tcp.ping",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Int],
-                ret: err_str(Type::Unit),
-            },
-            // Session TCP — connection is an opaque token. Stubs are stateless: a
-            // `writeLine` does not affect a later `readLine`. If a test wants
-            // request/response symmetry, it must encode that explicitly in the stub.
-            EffectClassification {
-                method: "Tcp.connect",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Int],
-                ret: err_str(Type::named("Tcp.Connection")),
-            },
-            EffectClassification {
-                method: "Tcp.readLine",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::named("Tcp.Connection")],
-                ret: err_str(Type::Str),
-            },
-            EffectClassification {
-                method: "Tcp.readBytes",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::named("Tcp.Connection"), Type::Int],
-                ret: err_str(Type::named("Bytes")),
-            },
-            EffectClassification {
-                method: "Tcp.writeLine",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::named("Tcp.Connection"), Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Tcp.writeBytes",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::named("Tcp.Connection"), Type::named("Bytes")],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Tcp.close",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::named("Tcp.Connection")],
-                ret: err_str(Type::Unit),
-            },
             // Output-only — no oracle signature, but classified for completeness.
             // Env.set is stateless under Oracle: emitted to trace, but does NOT
             // make a later `Env.get` return the written value. If the program
@@ -464,30 +406,6 @@ pub fn classified_effects_summary() -> String {
         .join(", ")
 }
 
-/// Opaque types that are runtime handles (id + connection metadata),
-/// not domain-invariant smart-constructor types. These may be fabricated
-/// inside verify-trace context so that Oracle stubs can return them
-/// without going through the live effect that normally produces them
-/// (e.g. `Tcp.connect`). All four soundness conditions from PR 221 apply:
-///
-/// 1. Every effect that can observe/consume the fake handle must be
-///    stubbed, or the verify block is rejected (existing behavior in
-///    `flow.rs` — see "needs a `given` stub" error).
-/// 2. Pure code outside the defining module cannot inspect fields or
-///    pattern-match the value just because it was fabricated. Field
-///    access on opaque types is rejected outside the defining module
-///    regardless of this flag.
-/// 3. Verify-block bodies are not lowered to executable artifacts, so
-///    fabricated handles cannot escape to compiled programs.
-/// 4. Runtime handle identity is uninterpreted test data unless an
-///    Oracle stub assigns meaning to it.
-///
-/// User-defined opaque types are NOT eligible — their opacity protects
-/// domain invariants that this fabrication would erase.
-pub fn is_verify_fabricable_handle(canonical_type: &str) -> bool {
-    matches!(canonical_type, "Tcp.Connection")
-}
-
 /// Oracle signature for use in lifted specs.
 ///
 /// - Snapshot: capability reader — unchanged from runtime signature,
@@ -497,6 +415,9 @@ pub fn is_verify_fabricable_handle(canonical_type: &str) -> bool {
 /// - Output: `None` — output effects don't bind oracles (trace API
 ///   handles assertions about emissions).
 pub fn oracle_signature(method: &str) -> Option<Type> {
+    if let Some(operation) = crate::stdlib::standard_capability_registry_ref().operation(method) {
+        return capability_oracle_signature(operation);
+    }
     let c = classify(method)?;
     match c.dimension {
         EffectDimension::Output => None,
@@ -517,22 +438,7 @@ pub fn oracle_signature_with_registry(
     method: &str,
 ) -> Option<Type> {
     if let Some(operation) = registry.operation(method) {
-        return match operation.oracle {
-            Some(crate::capability::OracleDimension::Output) | None => None,
-            Some(crate::capability::OracleDimension::Snapshot) => Some(Type::Fn(
-                operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
-                Box::new(operation.return_type.clone()),
-                vec![],
-            )),
-            Some(
-                crate::capability::OracleDimension::Generative
-                | crate::capability::OracleDimension::GenerativeOutput,
-            ) => Some(Type::Fn(
-                operation.oracle_params(),
-                Box::new(operation.return_type.clone()),
-                vec![],
-            )),
-        };
+        return capability_oracle_signature(operation);
     }
     let c = classify_with_registry(registry, method)?;
     match c.dimension {
@@ -543,6 +449,25 @@ pub fn oracle_signature_with_registry(
             params.extend(c.params);
             Some(Type::Fn(params, Box::new(c.ret), vec![]))
         }
+    }
+}
+
+fn capability_oracle_signature(operation: &crate::capability::CapabilityOperation) -> Option<Type> {
+    match operation.oracle {
+        Some(crate::capability::OracleDimension::Output) | None => None,
+        Some(crate::capability::OracleDimension::Snapshot) => Some(Type::Fn(
+            operation.params.iter().map(|(_, ty)| ty.clone()).collect(),
+            Box::new(operation.return_type.clone()),
+            vec![],
+        )),
+        Some(
+            crate::capability::OracleDimension::Generative
+            | crate::capability::OracleDimension::GenerativeOutput,
+        ) => Some(Type::Fn(
+            operation.oracle_params(),
+            Box::new(operation.return_type.clone()),
+            vec![],
+        )),
     }
 }
 

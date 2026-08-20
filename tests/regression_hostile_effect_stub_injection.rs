@@ -8,11 +8,10 @@
 //! so hostile law verification silently ran every "adversarial" case under
 //! the user's own honest stub — the run below reported 0 failures.
 //!
-//! With injection working, the honest `normal_ok` profile hands the fn a
-//! successful read — a verdict IMPOSSIBLE while the injected stubs are
-//! absent, because without a stub the dispatched real builtin can only
-//! fail (the fabricated connection id is unknown to the runtime), so
-//! every case answers "err" and the law below reports 0 failures.
+//! With injection working, the honest `normal_ok` profiles mint a fresh
+//! connection resource and hand the fn a successful read. Without the
+//! injected read profile, the user's `alwaysErrRead` stub makes every case
+//! answer "err", so the law below reports 0 failures.
 
 use aver::checker::VerifyCaseOutcome;
 use aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode;
@@ -27,16 +26,27 @@ fn hostile_law_run_exercises_injected_tcp_read_bytes_stubs() {
     depends [Bytes]
     effects [Tcp]
 
-fn frameVerdict(conn: Tcp.Connection) -> String
+fn connectStub(path: BranchPath, n: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "Mint the provider-owned test connection."
+    Result.Ok(fresh)
+
+fn alwaysErrRead(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
+    ? "Keep the declared world distinguishable from the honest hostile profile."
+    Result.Err("declared: no frame")
+
+fn frameVerdict() -> String
     ? "Classify one exact-frame read."
-    ! [Tcp.readBytes]
-    match Tcp.readBytes(conn, 4)
-        Result.Ok(_) -> "ok"
+    ! [Tcp.connect, Tcp.readBytes]
+    match Tcp.connect("127.0.0.1", 1)
         Result.Err(_) -> "err"
+        Result.Ok(conn) -> match Tcp.readBytes(conn, 4)
+            Result.Ok(_) -> "ok"
+            Result.Err(_) -> "err"
 
 verify frameVerdict law neverReads
-    given conn: Tcp.Connection = [Tcp.Connection(id = "fake", host = "127.0.0.1", port = 1)]
-    frameVerdict(conn) => "err"
+    given opener: Tcp.connect = [connectStub]
+    given reader: Tcp.readBytes = [alwaysErrRead]
+    frameVerdict() => "err"
 "#;
     let items = parse_source(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     let results = run_verify_for_items_vm_with_mode(
@@ -50,6 +60,7 @@ verify frameVerdict law neverReads
     assert_eq!(results.len(), 1);
     let result = &results[0];
 
+    let connect_profiles = hostile_profiles_for("Tcp.connect");
     let profiles = hostile_profiles_for("Tcp.readBytes");
     assert!(
         profiles.len() >= 2,
@@ -58,8 +69,8 @@ verify frameVerdict law neverReads
     let total = result.passed + result.failed + result.skipped;
     assert_eq!(
         total,
-        1 + profiles.len(),
-        "one declared case plus one per injected Tcp.readBytes profile"
+        1 + connect_profiles.len() * profiles.len(),
+        "one declared case plus the Tcp.connect × Tcp.readBytes hostile worlds"
     );
 
     let hostile_failures: Vec<&str> = result
@@ -75,10 +86,8 @@ verify frameVerdict law neverReads
         .collect();
     assert_eq!(
         hostile_failures,
-        vec!["Tcp.readBytes/normal_ok"],
-        "exactly the honest injected profile must break the 'reads always fail' law — its \
-         successful read is impossible without the injected stub (an unstubbed dispatch can \
-         only fail on the fabricated connection); 0 hostile failures means the stubs were \
-         never injected"
+        vec!["Tcp.connect/normal_ok + Tcp.readBytes/normal_ok"],
+        "exactly the all-honest world must break the 'reads always fail' law; 0 hostile \
+         failures means the read profile was never injected"
     );
 }

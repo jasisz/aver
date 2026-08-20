@@ -196,9 +196,10 @@ impl TypeChecker {
     /// Aver modules after those modules have entered the active symbol table.
     ///
     /// Most builtins mention primitives or host-owned records and stay raw.
-    /// Crypto and binary TCP cross source-defined refinements, so their
-    /// initially unresolved names must join the same `TypeId` space as
-    /// imported values. The affected builtins live in
+    /// Crypto crosses source-defined refinements, so its initially unresolved
+    /// names must join the same `TypeId` space as imported values. Standard
+    /// capability signatures are canonicalized through their source contracts
+    /// instead. The remaining affected builtins live in
     /// `crate::stdlib::SOURCE_TYPED_BUILTINS`, shared with the compile-time
     /// implicit module loading that keeps codegen able to emit those types.
     fn canonicalize_source_typed_builtin_sigs(&mut self) {
