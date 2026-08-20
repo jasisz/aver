@@ -351,7 +351,11 @@ Contract source: `stdlib/capabilities/disk.av`. Native VM and generated Rust sha
 
 ### `Tcp` namespace — use granular effects (`! [Tcp.send]`, `! [Tcp.ping]`, etc.)
 
-Source: `src/services/tcp.rs`
+Contract source: `stdlib/capabilities/tcp.av`. Native VM and generated Rust
+share the `aver-rt` Tcp provider; wasm-gc and wasip2 bind their existing host
+lowerings to the same exact contract. Signatures, resource ownership,
+Oracle classification, hostile profiles, replay semantics, and target
+accounting derive from that source contract.
 
 **One-shot (stateless):**
 
@@ -365,14 +369,45 @@ Source: `src/services/tcp.rs`
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Opaque handle — see below. |
+| `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Provider-owned resource — see below. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.writeBytes` | `(Tcp.Connection, Bytes) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
 | `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 
-`Tcp.Connection` is **opaque** from the surface: construction is reserved to `Tcp.connect` and field reads / pattern matches are rejected by the type checker. The handle is purely an identity token — the caller has nothing to inspect inside it. The underlying socket lives in a thread-local `HashMap` (VM / self-host / wasm-gc-bridge, keyed by `AtomicU64` "tcp-N") or a 256-slot wasm-gc array (`--target wasip2`, slot allocated via first-free scan + monotonic counter generation). Either way, manually forging an id is impossible: the type checker rejects the constructor.
+`Tcp.Connection` is a capability **resource**: only the provider can mint one,
+while construction, field reads, equality, hashing, and pattern matches are
+rejected by the type checker. Native VM and generated Rust carry the provider's
+host token inside that resource; backend-specific socket tables and handles
+remain implementation details. Aver code can store, pass, and return the token,
+but cannot inspect its internals or manufacture a replacement.
+
+Persistent session I/O has deliberately **no read or write deadline**. A
+session operation may therefore wait indefinitely until it completes, reaches
+EOF, or gets an actual I/O error. Once `readBytes`, `readLine`, `writeBytes`, or
+`writeLine` begins touching the socket, any error removes that connection from
+the provider pool. A failed exact read may already have consumed part of a
+frame, and a failed write may already have sent part of its payload; allowing a
+retry on the same handle would silently desynchronise the protocol. Argument
+validation happens first, so a negative or oversized `readBytes` count does not
+poison the connection. Timeout errors are rendered without platform errno.
+
+Socket establishment and one-shot request calls retain deployment defaults:
+
+```toml
+[effects.Tcp]
+connect_timeout_secs = 5
+request_idle_timeout_secs = 30
+```
+
+`request_idle_timeout_secs` applies only to blocking operations within
+`Tcp.send` and `Tcp.sendBytes`, not to their total wall-clock duration and never
+to persistent sessions. Both settings must be positive integers. Effect
+sections reject unknown or misplaced keys, so a typo cannot silently select a
+default. Native VM, generated Rust, and the in-process wasm-gc host honour the
+settings. wasip2 currently uses host-controlled WASI socket timing and emits a
+warning when explicit Tcp timeout settings cannot be honoured.
 
 `Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program holding 256 live `Tcp.connect` handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
 

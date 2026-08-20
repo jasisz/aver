@@ -71,7 +71,7 @@ pub struct TypeEntry {
     /// constructor path.
     pub is_product: bool,
     /// Representation-less type minted only by a capability provider.
-    pub is_capability_opaque: bool,
+    pub is_capability_resource: bool,
 }
 
 /// One entry in the constructor table. A constructor belongs to
@@ -298,19 +298,19 @@ impl SymbolTable {
                     index_in_module: index_in_module as u32,
                     variants: ctor_ids,
                     is_product,
-                    is_capability_opaque: false,
+                    is_capability_resource: false,
                 });
             }
-            let capability_opaque_names = capability_items
+            let capability_resource_names = capability_items
                 .iter()
                 .filter_map(|item| match item {
-                    CapabilityItem::Opaque { name, .. } => Some(name.as_str()),
+                    CapabilityItem::Resource { name, .. } => Some(name.as_str()),
                     CapabilityItem::Operation(_) => None,
                 })
                 .collect::<std::collections::HashSet<_>>();
             for item in capability_items {
                 match item {
-                    CapabilityItem::Opaque { name, .. } => {
+                    CapabilityItem::Resource { name, .. } => {
                         let key = match prefix {
                             Some(p) => TypeKey::in_module(p.to_string(), name.clone()),
                             None => TypeKey::entry(name.clone()),
@@ -326,7 +326,7 @@ impl SymbolTable {
                             index_in_module: table.types.len() as u32,
                             variants: Vec::new(),
                             is_product: false,
-                            is_capability_opaque: true,
+                            is_capability_resource: true,
                         });
                     }
                     CapabilityItem::Operation(operation) => {
@@ -363,7 +363,7 @@ impl SymbolTable {
                                                 _ => false,
                                             }
                                         }
-                                        transparent_resource(&ty, &capability_opaque_names)
+                                        transparent_resource(&ty, &capability_resource_names)
                                     });
                             table.capability_operations.insert(
                                 format!("{prefix}.{}", operation.name),

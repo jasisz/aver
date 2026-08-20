@@ -601,8 +601,8 @@ module Vault
     semantics = effectful
     exposes [open, read, readOther]
 
-opaque Token
-opaque Other
+resource Token
+resource Other
 
 operation open() -> Result<Token, String>
     oracle = generative
@@ -694,6 +694,59 @@ fn resources_are_binding_typed_unobservable_and_trace_serializable() {
             .expect_err("stale token")
             .contains("is stale")
     );
+}
+
+#[test]
+fn tcp_settings_replace_only_the_compiler_installed_provider() {
+    let settings = aver_rt::tcp::TcpSettings::from_secs(7, 41).expect("valid settings");
+    let mut standard = ProviderRegistry::standard();
+    let initial_id = standard.binding("Tcp").expect("standard Tcp").runtime_id();
+    standard
+        .configure_standard_tcp(settings)
+        .expect("configure standard Tcp");
+    let configured_id = standard
+        .binding("Tcp")
+        .expect("configured standard Tcp")
+        .runtime_id();
+    assert_ne!(configured_id, initial_id);
+    assert_eq!(standard.standard_tcp_settings(), settings);
+
+    // Provider identity is descriptive, not authority. Even a host binding
+    // that reuses the compiler provider's public identity must not be replaced.
+    let contract = standard.contracts().contract("Tcp").expect("Tcp contract");
+    let operations = standard
+        .contracts()
+        .operations()
+        .filter(|operation| operation.module == "Tcp")
+        .map(|operation| operation.canonical_name.clone())
+        .collect::<Vec<_>>();
+    let explicit = ProviderBinding::new(
+        "Tcp",
+        contract.contract_hash.clone(),
+        operations,
+        Arc::new(FixedProvider {
+            identity: aver_rt::provider::STANDARD_TCP_NATIVE_IDENTITY,
+            fingerprint: "explicit-host-v1",
+            calls: Arc::new(AtomicUsize::new(0)),
+            value: ProviderValue::ResultOk(Box::new(ProviderValue::Unit)),
+        }),
+    );
+    let explicit_id = explicit.runtime_id();
+    standard
+        .replace_binding(explicit)
+        .expect("install explicit Tcp provider");
+    let newer_settings = aver_rt::tcp::TcpSettings::from_secs(9, 43).expect("valid settings");
+    standard
+        .configure_standard_tcp(newer_settings)
+        .expect("preserve explicit provider");
+    assert_eq!(
+        standard
+            .binding("Tcp")
+            .expect("explicit Tcp provider")
+            .runtime_id(),
+        explicit_id
+    );
+    assert_eq!(standard.standard_tcp_settings(), newer_settings);
 }
 
 #[test]
@@ -875,12 +928,13 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
     let required = [
         "Disk.readText".to_string(),
         "Random.int".to_string(),
+        "Tcp.ping".to_string(),
         "Time.now".to_string(),
     ]
     .into_iter()
     .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 12);
+    assert_eq!(manifest.rows().len(), 16);
     for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
         (
             "Disk",
@@ -913,6 +967,25 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
             "aver.standard.Random/wasm-gc-imports",
             "aver.standard.Random/wasip2-wasi",
             aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
+        ),
+        (
+            "Tcp",
+            &[
+                "Tcp.close",
+                "Tcp.connect",
+                "Tcp.ping",
+                "Tcp.readBytes",
+                "Tcp.readLine",
+                "Tcp.send",
+                "Tcp.sendBytes",
+                "Tcp.writeBytes",
+                "Tcp.writeLine",
+            ][..],
+            "Tcp.ping",
+            "aver.standard.Tcp/native",
+            "aver.standard.Tcp/wasm-gc-imports",
+            "aver.standard.Tcp/wasip2-wasi",
+            aver_rt::provider::STANDARD_TCP_FINGERPRINT,
         ),
         (
             "Time",
@@ -969,15 +1042,15 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
         let provenance = super::shipped_target_provenance(target, &registry);
         assert_eq!(
             provenance.len(),
-            3,
-            "all three standards are provided on {target}"
+            4,
+            "all four standards are provided on {target}"
         );
         assert_eq!(
             provenance
                 .iter()
                 .map(|entry| entry.capability.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Disk", "Random", "Time"]
+            vec!["Disk", "Random", "Tcp", "Time"]
         );
         assert_eq!(
             provenance[0].fingerprint,
@@ -989,6 +1062,10 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
         );
         assert_eq!(
             provenance[2].fingerprint,
+            aver_rt::provider::STANDARD_TCP_FINGERPRINT
+        );
+        assert_eq!(
+            provenance[3].fingerprint,
             aver_rt::provider::STANDARD_TIME_FINGERPRINT
         );
     }

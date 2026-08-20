@@ -14,6 +14,28 @@ thread_local! {
     /// `transpile_unified`; empty outside it, so a stray `type_to_lean` keeps
     /// the prior (no-lift) behavior.
     static CANONICAL_PEANO: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Canonical provider-owned resource names for the program currently being
+    /// emitted. A resource can share a historical builtin carrier name (today
+    /// `Tcp.Connection`); in that case it must keep its capability namespace
+    /// instead of being flattened to the legacy `Tcp_Connection` record.
+    static CAPABILITY_RESOURCES: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+pub(crate) fn scope_capability_resources(names: HashSet<String>) -> CapabilityResourceGuard {
+    CAPABILITY_RESOURCES.with(|s| *s.borrow_mut() = names);
+    CapabilityResourceGuard
+}
+
+pub(crate) struct CapabilityResourceGuard;
+
+impl Drop for CapabilityResourceGuard {
+    fn drop(&mut self) {
+        CAPABILITY_RESOURCES.with(|s| s.borrow_mut().clear());
+    }
+}
+
+fn is_capability_resource(name: &str) -> bool {
+    CAPABILITY_RESOURCES.with(|s| s.borrow().contains(name))
 }
 
 /// Mark `names` as the canonical-Peano types to lift to `Nat` for the lifetime
@@ -109,7 +131,9 @@ pub fn type_to_lean(ty: &Type) -> String {
 /// segment routed through the reserved-token guard (an Aver type or
 /// module named `Type`/`Prop` is legal but collides with Lean syntax).
 pub(crate) fn lean_named_type_name(name: &str) -> String {
-    if crate::codegen::builtin_records::find(name).is_some() {
+    if is_capability_resource(name) {
+        super::syntax::aver_path_to_lean(name)
+    } else if crate::codegen::builtin_records::find(name).is_some() {
         name.replace('.', "_")
     } else {
         super::syntax::aver_path_to_lean(name)
@@ -139,7 +163,8 @@ pub fn type_annotation_to_lean(ann: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::type_annotation_to_lean;
+    use super::{scope_capability_resources, type_annotation_to_lean};
+    use std::collections::HashSet;
 
     #[test]
     fn nested_result_type_arguments_are_parenthesized() {
@@ -147,5 +172,11 @@ mod tests {
             type_annotation_to_lean("Result<List<Cmd>, String>"),
             "Except String (List Cmd)"
         );
+    }
+
+    #[test]
+    fn capability_resource_wins_over_legacy_builtin_record_name() {
+        let _guard = scope_capability_resources(HashSet::from(["Tcp.Connection".to_string()]));
+        assert_eq!(type_annotation_to_lean("Tcp.Connection"), "Tcp.Connection");
     }
 }

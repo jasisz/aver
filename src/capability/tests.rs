@@ -140,7 +140,7 @@ module Entropy
     kind = capability
     semantics = pure
 
-opaque Unused
+resource Unused
 
 record Reply
     z: Int
@@ -347,7 +347,7 @@ fn capability_owned_bytes_is_not_the_standard_wire_type() {
 #[test]
 fn capability_resources_and_transitive_wrappers_are_not_map_keys() {
     let errors = error_messages(
-        "module Invalid\n    kind = capability\n    semantics = effectful\n\nopaque Token\n\ntype Wrapper\n    Wrapped(Token)\n\noperation index(values: Map<Wrapper, Int>) -> Int\n    oracle = generative\n    replay = recorded\n",
+        "module Invalid\n    kind = capability\n    semantics = effectful\n\nresource Token\n\ntype Wrapper\n    Wrapped(Token)\n\noperation index(values: Map<Wrapper, Int>) -> Int\n    oracle = generative\n    replay = recorded\n",
     );
     assert!(
         errors.iter().any(|error| {
@@ -356,7 +356,7 @@ fn capability_resources_and_transitive_wrappers_are_not_map_keys() {
     );
 
     let nested_source = error_messages(
-        "module Invalid\n    kind = capability\n    semantics = effectful\n\nopaque Token\n\noperation mintMany() -> List<Token>\n    oracle = generative\n    replay = recorded\n",
+        "module Invalid\n    kind = capability\n    semantics = effectful\n\nresource Token\n\noperation mintMany() -> List<Token>\n    oracle = generative\n    replay = recorded\n",
     );
     assert!(
         nested_source
@@ -365,7 +365,7 @@ fn capability_resources_and_transitive_wrappers_are_not_map_keys() {
     );
 
     let reissued_consumer = error_messages(
-        "module Invalid\n    kind = capability\n    semantics = effectful\n\nopaque Token\n\noperation flush(token: Token) -> Unit\n    oracle = output\n    replay = reissued\n",
+        "module Invalid\n    kind = capability\n    semantics = effectful\n\nresource Token\n\noperation flush(token: Token) -> Unit\n    oracle = output\n    replay = reissued\n",
     );
     assert!(
         reissued_consumer
@@ -381,7 +381,7 @@ module Entropy
     kind = capability
     semantics = effectful
 
-opaque Token
+resource Token
 
 operation mint() -> Result<Token, String>
     oracle = generative

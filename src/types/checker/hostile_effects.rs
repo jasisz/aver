@@ -204,178 +204,6 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
-        "Tcp.send" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, data: String) -> Result<String, String>\n    ? \"honest: tcp send succeeds with an ack\"\n    Result.Ok(\"ack\")\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, data: String) -> Result<String, String>\n    ? \"hostile: tcp send fails\"\n    Result.Err(\"hostile: send failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.sendBytes" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: Bytes) -> Result<Bytes, String>\n    ? \"honest: tcp sendBytes echoes the payload\"\n    Result.Ok(payload)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int, payload: Bytes) -> Result<Bytes, String>\n    ? \"hostile: tcp sendBytes fails\"\n    Result.Err(\"hostile: send failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.ping" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int) -> Result<Unit, String>\n    ? \"honest: host is reachable\"\n    Result.Ok(Unit)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, host: String, port: Int) -> Result<Unit, String>\n    ? \"hostile: ping fails\"\n    Result.Err(\"hostile: unreachable\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.connect" => vec![HostileProfile {
-            name: "always_err",
-            stub_fn_name: stub_name("always_err"),
-            stub_body: format!(
-                "fn {}(path: BranchPath, n: Int, host: String, port: Int) -> Result<Tcp.Connection, String>\n    ? \"hostile: cannot establish connection\"\n    Result.Err(\"hostile: refused\")\n",
-                stub_name("always_err")
-            ),
-        }],
-        "Tcp.readLine" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<String, String>\n    ? \"honest: peer sends a plausible line\"\n    Result.Ok(\"hello\")\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<String, String>\n    ? \"hostile: connection dropped before read\"\n    Result.Err(\"hostile: dropped\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.readBytes" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                // The real builtin is read-exact: `Ok` always carries exactly
-                // `count` bytes, and a negative / over-limit / out-of-i64
-                // count is an `Err` on every backend. The honest world must
-                // model that, or frame-length-validating user code never sees
-                // a success path. Branch order and message text mirror the
-                // VM builtin (the fidelity target — hostile verification
-                // runs on the VM): `count_arg` in `services/tcp.rs` rejects
-                // counts outside i64 FIRST (both signs, generic "read
-                // limit" text), then `aver_rt::tcp::read_bytes` rejects
-                // negative counts, then counts over the 10485760-byte
-                // `BODY_LIMIT` (named in the message). Pinned branch by
-                // branch in `tests/hostile_readbytes_stub_fidelity.rs`.
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"honest: peer sends exactly the count bytes that were asked for\"\n    match count > 9223372036854775807\n        true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the read limit\")\n        false -> match count < 0 - 9223372036854775808\n            true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the read limit\")\n            false -> match count < 0\n                true -> Result.Err(\"Tcp.readBytes: count {{count}} is negative\")\n                false -> match count > 10485760\n                    true -> Result.Err(\"Tcp.readBytes: count {{count}} exceeds the 10485760 byte limit\")\n                    false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)))\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "short_read",
-                stub_fn_name: stub_name("short_read"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"hostile: peer goes away mid-frame\"\n    Result.Err(\"hostile: failed to fill whole buffer\")\n",
-                    stub_name("short_read")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>\n    ? \"hostile: read fails\"\n    Result.Err(\"hostile: read failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.writeLine" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, line: String) -> Result<Unit, String>\n    ? \"honest: connection write succeeds\"\n    Result.Ok(Unit)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, line: String) -> Result<Unit, String>\n    ? \"hostile: connection write fails\"\n    Result.Err(\"hostile: dropped\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.writeBytes" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n    ? \"honest: bytes reach the peer\"\n    Result.Ok(Unit)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, payload: Bytes) -> Result<Unit, String>\n    ? \"hostile: write fails\"\n    Result.Err(\"hostile: write failed\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
-        "Tcp.close" => vec![
-            HostileProfile {
-                name: "normal_ok",
-                stub_fn_name: stub_name("normal_ok"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"honest: close succeeds\"\n    Result.Ok(Unit)\n",
-                    stub_name("normal_ok")
-                ),
-            },
-            HostileProfile {
-                name: "always_err",
-                stub_fn_name: stub_name("always_err"),
-                stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"hostile: close on already-dropped connection\"\n    Result.Err(\"hostile: dropped\")\n",
-                    stub_name("always_err")
-                ),
-            },
-        ],
         "Terminal.readKey" => vec![
             HostileProfile {
                 name: "normal",
@@ -634,23 +462,10 @@ mod tests {
     /// The same stubs, type-checked in the module the injector really
     /// builds instead of the one the guard above synthesizes.
     ///
-    /// The guard wraps each stub in a module carrying `depends [Bytes]`
-    /// whenever the body mentions `Bytes`. The injector supplies no such
-    /// thing: `vm_verify::inject_hostile_effect_stubs_for_blocks` appends
-    /// the stub bodies into the user's own module as plain
-    /// `TopLevel::FnDef` and adds no dependency at all. So the guard is
-    /// green over stubs that cannot in fact be injected, and a user module
-    /// that reads exact bytes off a connection without ever naming `Bytes`
-    /// itself passes `aver verify` and is refused by `aver verify
-    /// --hostile` with `error[1:0]: Unknown identifier 'Bytes'` — the whole
-    /// file skipped, no cases run. Writing `depends [Bytes]` into that same
-    /// file by hand makes the hostile run work.
-    ///
-    /// Ignored until the injector supplies what the stubs it injects need:
-    /// https://github.com/jasisz/aver/issues/877. Delete the `ignore` when
-    /// that lands.
+    /// `Tcp.readBytes` itself returns `Bytes`, but the user's module need not
+    /// spell that type: loading the Tcp capability must also load its
+    /// `depends [Bytes]` closure before the injected profiles are checked.
     #[test]
-    #[ignore = "the injector adds no dependency for the stubs it injects — issue #877"]
     fn stub_injection_typechecks_the_module_the_injector_builds() {
         use crate::checker::merge_verify_blocks;
         use crate::diagnostics::vm_verify::inject_hostile_effect_stubs_for_blocks;
@@ -659,19 +474,23 @@ mod tests {
 
         // An ordinary user module. It calls `Tcp.readBytes`, which the
         // hostile profiles model, and it never spells `Bytes` anywhere.
-        let src = "module Main\n    \
-                   intent = \"Read one exact frame and classify the outcome.\"\n    \
-                   effects [Tcp]\n\n\
-                   fn frameVerdict(conn: Tcp.Connection) -> String\n    \
-                   ? \"Classify one exact-frame read.\"\n    \
-                   ! [Tcp.readBytes]\n    \
-                   match Tcp.readBytes(conn, 4)\n        \
-                   Result.Ok(_) -> \"ok\"\n        \
-                   Result.Err(_) -> \"err\"\n\n\
-                   verify frameVerdict law neverReads\n    \
-                   given conn: Tcp.Connection = \
-                   [Tcp.Connection(id = \"fake\", host = \"127.0.0.1\", port = 1)]\n    \
-                   frameVerdict(conn) => \"err\"\n";
+        let src = r#"module Main
+    intent = "Read one exact frame and classify the outcome."
+    effects [Tcp]
+
+fn frameVerdict(seed: Int) -> String
+    ? "Classify one exact-frame read."
+    ! [Tcp.connect, Tcp.readBytes]
+    match Tcp.connect("127.0.0.1", 1)
+        Result.Err(_) -> "err"
+        Result.Ok(conn) -> match Tcp.readBytes(conn, 4)
+            Result.Ok(_) -> "ok"
+            Result.Err(_) -> "err"
+
+verify frameVerdict law neverReads
+    given seed: Int = [0]
+    frameVerdict(seed) => "err"
+"#;
 
         let mut items = parse_source(src).unwrap_or_else(|e| panic!("parse: {e:?}"));
 
@@ -708,24 +527,14 @@ mod tests {
     /// Non-emptiness is not enough on its own. One profile is one world,
     /// and a sweep across one world varies nothing: the run passes, and
     /// the pass says only that the law survived the single behaviour we
-    /// happened to write down. Two is the floor, and every effect but one
-    /// meets it.
+    /// happened to write down. Two is the floor.
     #[test]
     fn every_classified_non_output_effect_ships_enough_hostile_profiles() {
         use crate::types::checker::effect_classification::{
             EffectDimension, classifications_for_proof_subset,
         };
 
-        /// Fewest adversarial worlds an effect may ship.
         const MIN_PROFILES: usize = 2;
-        /// `Tcp.connect` is the one effect that cannot reach the floor.
-        /// Its honest world would have to return `Result.Ok(<connection>)`,
-        /// and a connection handle is opaque: only a verify-trace body may
-        /// fabricate one (`effect_classification::is_verify_fabricable_handle`),
-        /// while a hostile stub is an ordinary top-level fn. So it ships the
-        /// failure world alone, and hostile verification of a fn that
-        /// connects never sees the connection succeed.
-        const SINGLE_PROFILE_EFFECTS: [&str; 1] = ["Tcp.connect"];
 
         let mut short: Vec<String> = Vec::new();
         for c in classifications_for_proof_subset() {
@@ -733,11 +542,7 @@ mod tests {
                 continue;
             }
             let count = hostile_profiles_for(c.method).len();
-            let floor = if SINGLE_PROFILE_EFFECTS.contains(&c.method) {
-                1
-            } else {
-                MIN_PROFILES
-            };
+            let floor = MIN_PROFILES;
             if count < floor {
                 short.push(format!("{} ships {count}, needs {floor}", c.method));
             }
@@ -748,16 +553,5 @@ mod tests {
              verification would run these under fewer worlds than a sweep needs, or \
              (at zero) skip the effect entirely: {short:?}"
         );
-
-        // A stale exemption is worse than none: it would hold an effect at
-        // one profile long after the reason expired.
-        for method in SINGLE_PROFILE_EFFECTS {
-            assert!(
-                hostile_profiles_for(method).len() < MIN_PROFILES,
-                "{method} now ships {} hostile profiles — drop it from \
-                 SINGLE_PROFILE_EFFECTS so the floor applies to it again",
-                hostile_profiles_for(method).len()
-            );
-        }
     }
 }

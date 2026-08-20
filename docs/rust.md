@@ -178,7 +178,7 @@ fn main() {
 }
 ```
 
-The binding contains an `Arc<dyn aver_rt::provider::CapabilityProvider>`, the exact contract hash, and the complete operation set. Calls use the transport-neutral `ProviderValue` tree and support all contract-v1 values, represented records/sums, and opaque resources. One once-installed registry and resource store is shared by direct calls and every `!` / `?!` branch. `install_provider_bindings_exact` is available to hosts that want no compiler-shipped defaults; unlike `install_provider_bindings`, it does not add the standard `Time` provider.
+The binding contains an `Arc<dyn aver_rt::provider::CapabilityProvider>`, the exact contract hash, and the complete operation set. Calls use the transport-neutral `ProviderValue` tree and support all contract-v1 values, represented records/sums, and capability resources. One once-installed registry and resource store is shared by direct calls and every `!` / `?!` branch. `install_provider_bindings_exact` is available to hosts that want no compiler-shipped defaults; unlike `install_provider_bindings`, it does not add the standard `Time` provider.
 
 Repeated installation in one process fails rather than racing a mutable global replacement.
 
@@ -267,7 +267,7 @@ All language features are transpilable:
 | `Console` service | OK |
 | `Http` service | OK |
 | `HttpServer` service (`listen`, `listenWith`) | OK |
-| `Tcp` service (persistent connections) | OK |
+| `Tcp` capability (provider-backed persistent connections) | OK |
 | `Disk` service | OK |
 | `Env` service | OK |
 | `Random` service | OK |
@@ -300,7 +300,8 @@ This avoids the old giant single-file output and keeps medium projects reviewabl
 
 Generated Rust uses `aver-rt` as the shared runtime. The actual service implementations live there:
 
-- `Tcp`: shared `aver-rt::tcp` runtime with persistent connection map
+- `Tcp`: standard capability provider over the shared `aver-rt::tcp` runtime;
+  `Tcp.Connection` crosses generated code as a provider-owned resource
 - `Http`: shared `aver-rt::http` client, enabled by the `http` feature
 - `HttpServer`: shared `aver-rt::http_server` loop and request/response types
 - `Console`, `Time`, `Disk`, `Env`, `Args`: shared helpers from `aver-rt`

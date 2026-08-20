@@ -1512,7 +1512,7 @@ fn parse_fails_on_any_type_annotation() {
 
 #[test]
 fn parse_tcp_connection_record_constructor_is_syntactic() {
-    // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque from the
+    // Phase 4.7+ fix #11 — `Tcp.Connection` is a capability resource at the
     // typechecker's side, but the *parser* still recognises the
     // dotted record-constructor shape so the typecheck diagnostic
     // can point at the offending call site. The reject lives in

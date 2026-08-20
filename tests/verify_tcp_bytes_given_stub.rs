@@ -9,9 +9,9 @@
 //! block's stub-type check failed with an error printing two
 //! identical-looking signatures, and the block never reached the VM.
 //!
-//! The passing run below is only possible with the user stub installed:
-//! the `given` connection is fabricated, so an unstubbed dispatch of the
-//! real `Tcp.readBytes` builtin can only return `Result.Err`.
+//! The passing run below obtains a fresh provider-owned connection resource
+//! from the `Tcp.connect` Oracle stub, then proves that the byte-read stub is
+//! installed and returns the nominal `Bytes` value.
 
 use aver::diagnostics::vm_verify::run_verify_for_items_vm;
 use aver::source::parse_source;
@@ -23,19 +23,24 @@ fn user_given_stub_for_tcp_read_bytes_typechecks_and_runs_on_vm() {
     depends [Bytes]
     effects [Tcp]
 
+fn connectStub(path: BranchPath, n: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "Mint the provider-owned test connection."
+    Result.Ok(fresh)
+
 fn readStub(path: BranchPath, n: Int, conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
     ? "Honest stub returning a fixed frame."
     Result.Ok(Bytes.fromList([1, 2, 3, 4]))
 
-fn readFrame(conn: Tcp.Connection) -> Result<Bytes, String>
+fn readFrame() -> Result<Bytes, String>
     ? "Read one 4-byte frame."
-    ! [Tcp.readBytes]
+    ! [Tcp.connect, Tcp.readBytes]
+    conn = Tcp.connect("127.0.0.1", 1)?
     Tcp.readBytes(conn, 4)
 
 verify readFrame trace
-    given conn: Tcp.Connection = [Tcp.Connection(id = "fake", host = "127.0.0.1", port = 1)]
+    given opener: Tcp.connect = [connectStub]
     given reader: Tcp.readBytes = [readStub]
-    readFrame(conn) => Result.Ok(Bytes.fromList([1, 2, 3, 4]))
+    readFrame() => Result.Ok(Bytes.fromList([1, 2, 3, 4]))
 "#;
     let items = parse_source(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     let results = run_verify_for_items_vm(

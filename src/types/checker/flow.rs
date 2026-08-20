@@ -495,6 +495,46 @@ impl TypeChecker {
                     }
                 }
 
+                // A capability resource has no literal domain. In particular,
+                // verify must not resurrect the old Tcp.Connection record hack
+                // by hiding a forged constructor inside a plain-type `given`.
+                // Resource-producing operation stubs receive one fresh token
+                // from the Oracle boundary and may return that token instead.
+                {
+                    let givens: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> = match &vb.kind
+                    {
+                        crate::ast::VerifyKind::Law(law) => Box::new(law.givens.iter()),
+                        crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
+                    };
+                    for given in givens {
+                        if self.verify_given_targets_operation(&given.type_name) {
+                            continue;
+                        }
+                        let Ok(expected) = parse_type_str_strict(&given.type_name) else {
+                            continue;
+                        };
+                        let expected = self.canonicalize_named(expected);
+                        if !self.type_contains_capability_resource(&expected) {
+                            continue;
+                        }
+                        if let crate::ast::VerifyGivenDomain::Explicit(values) = &given.domain {
+                            for value in values {
+                                let actual = self.infer_type_with_expected(value, Some(&expected));
+                                if !self.compatible(&actual, &expected) {
+                                    let (want, got) = self.describe_type_pair(&expected, &actual);
+                                    self.error_at_line(
+                                        value.line,
+                                        format!(
+                                            "given '{}: {}' expects {}, got {}",
+                                            given.name, given.type_name, want, got
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Every operation-shaped `given` must select Aver fns with
                 // the callable shape that dispatch will use. Pure provider
                 // operations keep their contract signature; effectful ones

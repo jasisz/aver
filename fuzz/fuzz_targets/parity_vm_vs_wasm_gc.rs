@@ -256,6 +256,7 @@ fn run_wasm_gc(
                 &items_flat,
                 analysis,
                 aver::runtime::wasm_gc::RunConfig {
+                    tcp_settings: aver_rt::tcp::TcpSettings::default(),
                     program_args: Vec::new(),
                     entry_info: None,
                     mode: aver::runtime::wasm_gc::EffectMode::Normal,

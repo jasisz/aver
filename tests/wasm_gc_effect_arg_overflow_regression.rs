@@ -87,6 +87,7 @@ fn run_wasm_gc_with_mode(
             &items,
             result.analysis.as_ref(),
             aver::runtime::wasm_gc::RunConfig {
+                tcp_settings: aver_rt::tcp::TcpSettings::default(),
                 mode,
                 type_aliases: type_aliases.clone(),
                 ..Default::default()
@@ -411,7 +412,7 @@ fn main() -> Unit
 
 /// A count too large for i64 (2^80) must surface as a catchable
 /// `Result.Err` on wasm-gc, not a trap. Uses a real loopback listener
-/// because `Tcp.Connection` is opaque — Aver source cannot construct one
+/// because `Tcp.Connection` is a capability resource — Aver source cannot construct one
 /// (the typechecker rejects `Tcp.Connection(id = ..., ...)`).
 #[test]
 fn tcp_read_bytes_big_count_is_catchable_on_wasm_gc() {

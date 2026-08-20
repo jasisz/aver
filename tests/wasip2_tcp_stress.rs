@@ -136,6 +136,32 @@ import time
 time.sleep(60)
 "#;
 
+/// Each accepted connection yields one byte and then closes. Reading two
+/// bytes therefore exercises the exact-read failure path after session I/O
+/// has started; validating a negative count exercises the pre-I/O path.
+const SHORT_FRAME_SCRIPT: &str = r#"
+import socket, sys, threading
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    while True:
+        try:
+            c, _ = s.accept()
+            c.sendall(b"x")
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
+import time
+time.sleep(60)
+"#;
+
 /// Server replies with a fixed 500-byte ASCII line (digits cycled)
 /// followed by a `\n` terminator — forces the readLine buffer
 /// past its 256-byte initial allocation and through at least one
@@ -465,6 +491,78 @@ fn main() -> Unit
     assert!(
         s.contains(" second-err: tcp: unknown connection"),
         "expected second close to surface stale-conn Err, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn session_io_error_poisons_but_argument_validation_does_not() {
+    let dir = tempdir("session-poison");
+    let Some((mut server, port)) = spawn_python_server(&dir, SHORT_FRAME_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping session-poison stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+module SessionPoison
+    intent = "Persistent WASI TCP I/O failures poison only after I/O begins."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn observePoison(c: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Tcp.close, Console.print]
+    match Tcp.readBytes(c, 2)
+        Result.Ok(_) -> Console.print("unexpected-read-ok")
+        Result.Err(_) -> match Tcp.close(c)
+            Result.Ok(_) -> Console.print("unexpected-close-ok")
+            Result.Err(e) -> Console.print("poisoned: {{e}}")
+
+fn poison(port: Int) -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", port)
+        Result.Ok(c) -> observePoison(c)
+        Result.Err(e) -> Console.print("poison-connect-err: {{e}}")
+
+fn observeValidation(c: Tcp.Connection) -> Unit
+    ! [Tcp.readBytes, Tcp.close, Console.print]
+    match Tcp.readBytes(c, -1)
+        Result.Ok(_) -> Console.print("unexpected-validation-ok")
+        Result.Err(_) -> match Tcp.close(c)
+            Result.Ok(_) -> Console.print("validation-kept-live")
+            Result.Err(e) -> Console.print("validation-poisoned: {{e}}")
+
+fn validate(port: Int) -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", port)
+        Result.Ok(c) -> observeValidation(c)
+        Result.Err(e) -> Console.print("validation-connect-err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.readBytes, Tcp.close, Console.print]
+    _ = poison({port})
+    validate({port})
+"#
+    );
+    let fixture = write_fixture(&dir, "session_poison.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "session poison stress failed (exit {:?})\nstdout:\n{stdout}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("poisoned: tcp: unknown connection"),
+        "actual I/O error did not invalidate the wasip2 handle:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("validation-kept-live"),
+        "pre-I/O validation unexpectedly invalidated the wasip2 handle:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -834,7 +932,7 @@ fn main() -> Unit
 #[test]
 fn port_out_of_range_is_rejected_upfront() {
     // Regression for Phase 4.7+ fix #7 — port validation parity
-    // with `aver-rt::services::tcp::port_arg`. Negative + >65535
+    // with the standard native Tcp provider. Negative + >65535
     // both surface `Result.Err("tcp: port out of range")` before
     // any DNS or socket work; previously wasip2 quietly truncated
     // the i64 via `i32.wrap_i64` and returned a generic connect
@@ -905,7 +1003,7 @@ fn main() -> Unit
         "expected compile-time rejection of `Tcp.Connection(...)`, got success.\nstderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("opaque type 'Tcp.Connection'"),
+        stderr.contains("capability resource 'Tcp.Connection'"),
         "expected opaque-type diagnostic, got:\n{stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);

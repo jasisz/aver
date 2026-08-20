@@ -365,16 +365,27 @@ fn count(n: Int) -> Int
     ? "How many frames have been seen so far."
     n + 1
 
-fn frameVerdict(conn: Tcp.Connection) -> String
+fn connectStub(path: BranchPath, n: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "Mint the provider-owned test connection."
+    Result.Ok(fresh)
+
+fn alwaysErrRead(path: BranchPath, n: Int, conn: Tcp.Connection, requested: Int) -> Result<Bytes, String>
+    ? "Keep the declared world stable."
+    Result.Err("declared: no frame")
+
+fn frameVerdict() -> String
     ? "Classify one exact-frame read."
-    ! [Tcp.readBytes]
-    match Tcp.readBytes(conn, 4)
-        Result.Ok(_) -> String.fromInt(count(0))
+    ! [Tcp.connect, Tcp.readBytes]
+    match Tcp.connect("127.0.0.1", 1)
         Result.Err(_) -> "err"
+        Result.Ok(conn) -> match Tcp.readBytes(conn, 4)
+            Result.Ok(_) -> String.fromInt(count(0))
+            Result.Err(_) -> "err"
 
 verify frameVerdict law neverReads
-    given conn: Tcp.Connection = [Tcp.Connection(id = "fake", host = "127.0.0.1", port = 1)]
-    frameVerdict(conn) => "err"
+    given opener: Tcp.connect = [connectStub]
+    given reader: Tcp.readBytes = [alwaysErrRead]
+    frameVerdict() => "err"
 "#;
     let items = aver::source::parse_source(src).expect("the guard program must parse");
     let results = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(

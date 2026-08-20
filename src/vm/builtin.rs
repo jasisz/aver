@@ -5,7 +5,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::services::http;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
-use crate::services::{args, console, env, tcp};
+use crate::services::{args, console, env};
 use crate::types::{
     bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
 };
@@ -55,16 +55,6 @@ vm_builtins! {
 
     EnvGet => "Env.get",
     EnvSet => "Env.set",
-
-    TcpSend => "Tcp.send",
-    TcpSendBytes => "Tcp.sendBytes",
-    TcpPing => "Tcp.ping",
-    TcpConnect => "Tcp.connect",
-    TcpWriteLine => "Tcp.writeLine",
-    TcpWriteBytes => "Tcp.writeBytes",
-    TcpReadLine => "Tcp.readLine",
-    TcpReadBytes => "Tcp.readBytes",
-    TcpClose => "Tcp.close",
 
     TerminalEnableRawMode => "Terminal.enableRawMode",
     TerminalDisableRawMode => "Terminal.disableRawMode",
@@ -261,16 +251,6 @@ impl VmBuiltin {
             Self::ArgsGet => args::effects(self.name()),
 
             Self::EnvGet | Self::EnvSet => env::effects(self.name()),
-            Self::TcpSend
-            | Self::TcpSendBytes
-            | Self::TcpPing
-            | Self::TcpConnect
-            | Self::TcpWriteLine
-            | Self::TcpWriteBytes
-            | Self::TcpReadLine
-            | Self::TcpReadBytes
-            | Self::TcpClose => tcp::effects(self.name()),
-
             // Effects list is structural metadata — same regardless of
             // whether the runtime impl ships (crossterm doesn't build
             // on wasm32). If we gated this, Replay mode in the
@@ -335,16 +315,6 @@ impl VmBuiltin {
             )))),
 
             Self::EnvGet | Self::EnvSet => env::call_nv(self.name(), args, arena),
-            Self::TcpSend
-            | Self::TcpSendBytes
-            | Self::TcpPing
-            | Self::TcpConnect
-            | Self::TcpWriteLine
-            | Self::TcpWriteBytes
-            | Self::TcpReadLine
-            | Self::TcpReadBytes
-            | Self::TcpClose => tcp::call_nv(self.name(), args, arena),
-
             #[cfg(feature = "terminal")]
             Self::TerminalEnableRawMode
             | Self::TerminalDisableRawMode

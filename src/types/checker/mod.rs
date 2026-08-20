@@ -603,7 +603,7 @@ struct TypeChecker {
     opaque_types: HashSet<String>,
     /// Every named type the compiler itself declares — the host
     /// records effect signatures hand back (`HttpResponse`,
-    /// `Tcp.Connection`, `Terminal.Size`, …), the Oracle nominals
+    /// `Terminal.Size`, …), the Oracle nominals
     /// (`Trace`, `EffectEvent`, `BranchPath`) and the embedded
     /// standard library's refinements (`Bytes`, `Digest32`).
     ///
@@ -619,8 +619,9 @@ struct TypeChecker {
     /// When `true`, opaque-type construction + field-access + pattern-match
     /// checks are bypassed. Used only by the self-host compile path
     /// (`aver compile --with-self-host-support`) where
-    /// `self_hosted/domain/builtins.av` round-trips opaque host types
-    /// (e.g. `Tcp.Connection`) through the replay `Val` representation:
+    /// `self_hosted/domain/builtins.av` still round-trips its compatibility
+    /// carrier for opaque host types (e.g. `Tcp.Connection`) through the
+    /// replay `Val` representation:
     /// it serialises by reading `.id` / `.host` / `.port`, and
     /// reconstructs by `Tcp.Connection(id = …, host = …, port = …)` on
     /// replay deserialise. Both operations are forbidden in user code by
@@ -1433,6 +1434,17 @@ impl TypeChecker {
             }
             None => name.to_string(),
         }
+    }
+
+    /// Whether `name` resolves to a representation-less type owned and minted
+    /// by a capability provider. Capability resources share the access gates
+    /// used by module-level opaque types, but they are a distinct language
+    /// concept and diagnostics must not describe them as `exposes opaque`.
+    pub(crate) fn is_capability_resource_type(&self, name: &str) -> bool {
+        let canonical = self.canonical_type_name(name);
+        self.capabilities
+            .resource_types()
+            .any(|resource| resource == &canonical)
     }
 
     /// Render the two types of a "expected X, got Y" diagnostic.

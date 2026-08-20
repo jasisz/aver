@@ -16,6 +16,8 @@ use super::types::type_annotation_to_rust;
 pub(super) fn generate_provider_runtime(
     contracts: &CapabilityRegistry,
     required: &BTreeSet<String>,
+    embedded_tcp_settings: Option<crate::config::TcpEffectSettings>,
+    runtime_policy_from_env: bool,
 ) -> String {
     let mut out = String::new();
     out.push_str(
@@ -42,6 +44,20 @@ pub(super) fn generate_provider_runtime(
     }
     out.push_str("    ])?;\n");
 
+    if contracts.contract("Tcp").is_some() {
+        let settings = if runtime_policy_from_env {
+            "crate::aver_replay::tcp_provider_settings_from_env()?".to_string()
+        } else if let Some(settings) = embedded_tcp_settings {
+            format!(
+                "aver_rt::tcp::TcpSettings::from_secs({}, {})?",
+                settings.connect_timeout_secs, settings.request_idle_timeout_secs
+            )
+        } else {
+            "aver_rt::tcp::TcpSettings::default()".to_string()
+        };
+        writeln!(out, "    let standard_tcp_settings = {settings};").unwrap();
+    }
+
     for standard in crate::provider::standard::StandardCapabilityBinding::ALL {
         let module = standard.module();
         let Some(contract) = contracts.contract(module) else {
@@ -53,11 +69,18 @@ pub(super) fn generate_provider_runtime(
             .map(|operation| format!("{:?}.to_string()", operation.canonical_name))
             .collect::<Vec<_>>()
             .join(", ");
-        let provider_type = standard.generated_rust_provider_type();
+        let provider = if standard == crate::provider::standard::StandardCapabilityBinding::Tcp {
+            format!(
+                "{}::new(standard_tcp_settings)",
+                standard.generated_rust_provider_type()
+            )
+        } else {
+            standard.generated_rust_provider_type().to_string()
+        };
         writeln!(
             out,
             "    if include_defaults {{ registry.bind(ProviderBinding::new({:?}, {:?}, vec![{}], std::sync::Arc::new({})))?; }}",
-            module, contract.contract_hash, operations, provider_type
+            module, contract.contract_hash, operations, provider
         )
         .unwrap();
     }
@@ -142,12 +165,12 @@ pub(super) fn required_operations(ctx: &crate::codegen::CodegenContext) -> BTree
     required_capability_operations(&ctx.items, &ctx.modules, &ctx.capabilities)
 }
 
-/// Canonical capability-owned opaque types grouped by owning module.
-pub(super) fn opaque_types_by_module(
+/// Canonical capability-owned resource types grouped by owning module.
+pub(super) fn resource_types_by_module(
     contracts: &CapabilityRegistry,
 ) -> BTreeMap<String, Vec<String>> {
     let mut out = BTreeMap::<String, Vec<String>>::new();
-    for canonical in contracts.opaque_types() {
+    for canonical in contracts.resource_types() {
         let Some((module, name)) = canonical.rsplit_once('.') else {
             continue;
         };
@@ -205,7 +228,7 @@ pub(super) fn emit_standard_bytes_codec() -> String {
         .to_string()
 }
 
-pub(super) fn emit_opaque_type(module: &str, name: &str, with_replay: bool) -> String {
+pub(super) fn emit_resource_type(module: &str, name: &str, with_replay: bool) -> String {
     let canonical = format!("{module}.{name}");
     let flat = canonical.replace('.', "_");
     let state = if with_replay {
@@ -258,12 +281,12 @@ impl crate::aver_replay::ReplayValue for {name} {{
         "{state}\n\n\
          impl std::fmt::Debug for {name} {{\n\
              fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n\
-                 f.write_str(\"{canonical}(<opaque>)\")\n\
+                 f.write_str(\"{canonical}(<resource>)\")\n\
              }}\n\
          }}\n\n\
          impl aver_rt::AverDisplay for {name} {{\n\
              fn aver_display(&self) -> String {{\n\
-                 \"{canonical}(<opaque>)\".to_string()\n\
+                 \"{canonical}(<resource>)\".to_string()\n\
              }}\n\
          }}\n\n\
          impl aver_rt::provider::ProviderCodec for {name} {{\n\

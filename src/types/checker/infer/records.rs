@@ -14,20 +14,18 @@ impl TypeChecker {
         // qualified form would be.
         let canonical_type = self.canonical_type_name(type_name);
         if !self.self_host_mode && self.opaque_types.contains(canonical_type.as_str()) {
-            let fabricable_in_verify = self.in_verify_trace_context
-                && crate::types::checker::effect_classification::is_verify_fabricable_handle(
-                    canonical_type.as_str(),
-                );
-            if !fabricable_in_verify {
+            if self.is_capability_resource_type(type_name) {
+                self.error(format!(
+                    "Cannot construct capability resource '{}' — obtain it from its provider",
+                    type_name,
+                ));
+            } else {
                 self.error(format!(
                     "Cannot construct opaque type '{}' — use its module's constructor function",
-                    type_name
+                    type_name,
                 ));
-                return self.canonicalize_named(Type::named(canonical_type));
             }
-            // Fall through: verify-trace context may fabricate flagged
-            // runtime handles. Field inference below still type-checks
-            // each provided field against the record's declared types.
+            return self.canonicalize_named(Type::named(canonical_type));
         }
 
         // Iron — A5: `fields_for_type` canonicalises `type_name`
@@ -102,10 +100,17 @@ impl TypeChecker {
         // bare-named reference to an imported opaque type is caught.
         let canon = self.canonical_type_name(type_name);
         if !self.self_host_mode && self.opaque_types.contains(&canon) {
-            self.error(format!(
-                "Cannot update opaque type '{}' — use its module's API",
-                type_name
-            ));
+            if self.is_capability_resource_type(type_name) {
+                self.error(format!(
+                    "Cannot update capability resource '{}' — pass it to its capability operations",
+                    type_name
+                ));
+            } else {
+                self.error(format!(
+                    "Cannot update opaque type '{}' — use its module's API",
+                    type_name
+                ));
+            }
             return self.canonicalize_named(Type::named(type_name.to_string()));
         }
         let base_ty = self.infer_type(base);

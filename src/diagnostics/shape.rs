@@ -887,8 +887,11 @@ fn uses_runtime_handle(fd: &ResolvedFnDef) -> bool {
 }
 
 fn is_runtime_handle_type(t: &Type) -> bool {
-    use crate::types::checker::effect_classification::is_verify_fabricable_handle;
-    walk_type_named(t, &is_verify_fabricable_handle)
+    walk_type_named(t, &|name| {
+        crate::stdlib::standard_capability_registry_ref()
+            .resource_types()
+            .any(|resource| resource == name)
+    })
 }
 
 fn walk_type_named(t: &Type, pred: &dyn Fn(&str) -> bool) -> bool {

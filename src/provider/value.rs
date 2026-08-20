@@ -75,7 +75,7 @@ pub(super) fn to_provider_value(
         }
         (Type::Named { name, .. }, Value::CapabilityResource(handle)) => {
             let canonical = canonical_type(scope, name);
-            if !contracts.opaque_types().any(|known| known == &canonical) {
+            if !contracts.resource_types().any(|known| known == &canonical) {
                 return Err(format!("type '{}' is not a capability resource", canonical));
             }
             native

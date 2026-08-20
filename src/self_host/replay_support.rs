@@ -650,10 +650,23 @@ pub mod aver_replay {
         keys: Vec<String>,
     }
 
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     struct RuntimePolicy {
         effect_policies: BTreeMap<String, RuntimeEffectPolicy>,
+        tcp_connect_timeout_secs: u64,
+        tcp_request_idle_timeout_secs: u64,
         independence_mode_cancel: bool,
+    }
+
+    impl Default for RuntimePolicy {
+        fn default() -> Self {
+            Self {
+                effect_policies: BTreeMap::new(),
+                tcp_connect_timeout_secs: aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS,
+                tcp_request_idle_timeout_secs: aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS,
+                independence_mode_cancel: false,
+            }
+        }
     }
 
     impl RuntimePolicy {
@@ -673,11 +686,28 @@ pub mod aver_replay {
                 .map_err(|err: toml::de::Error| format!("aver.toml parse error: {}", err))?;
 
             let mut effect_policies = BTreeMap::new();
+            let mut tcp_connect_timeout_secs = aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS;
+            let mut tcp_request_idle_timeout_secs = aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS;
             if let Some(toml::Value::Table(effects_table)) = table.get("effects") {
                 for (name, value) in effects_table {
                     let section = value
                         .as_table()
                         .ok_or_else(|| format!("aver.toml: [effects.{}] must be a table", name))?;
+                    validate_effect_section_keys(name, section)?;
+                    if name == "Tcp" {
+                        tcp_connect_timeout_secs = parse_positive_timeout_secs(
+                            name,
+                            section,
+                            "connect_timeout_secs",
+                            tcp_connect_timeout_secs,
+                        )?;
+                        tcp_request_idle_timeout_secs = parse_positive_timeout_secs(
+                            name,
+                            section,
+                            "request_idle_timeout_secs",
+                            tcp_request_idle_timeout_secs,
+                        )?;
+                    }
                     let hosts = parse_policy_list(section, "hosts", name)?;
                     for (index, host) in hosts.iter().enumerate() {
                         validate_host_pattern(name, index, host)?;
@@ -718,6 +748,8 @@ pub mod aver_replay {
 
             Ok(Self {
                 effect_policies,
+                tcp_connect_timeout_secs,
+                tcp_request_idle_timeout_secs,
                 independence_mode_cancel,
             })
         }
@@ -790,6 +822,52 @@ pub mod aver_replay {
                 .get(method_name)
                 .or_else(|| self.effect_policies.get(namespace))
         }
+    }
+
+    fn validate_effect_section_keys(effect: &str, section: &toml::Table) -> Result<(), String> {
+        let namespace = effect.split('.').next().unwrap_or(effect);
+        let allowed: &[&str] = match (namespace, effect) {
+            ("Http", _) => &["hosts"],
+            ("Disk", _) => &["paths"],
+            ("Env", _) => &["keys"],
+            ("Tcp", "Tcp") => &["connect_timeout_secs", "request_idle_timeout_secs"],
+            ("Tcp", _) => &[],
+            _ => &[],
+        };
+        for key in section.keys() {
+            if !allowed.contains(&key.as_str()) {
+                let expected = if namespace == "Tcp" && effect != "Tcp" {
+                    "Tcp timeout settings belong under [effects.Tcp], not a method section"
+                        .to_string()
+                } else if allowed.is_empty() {
+                    format!("[effects.{effect}] has no supported settings")
+                } else {
+                    format!("expected one of: {}", allowed.join(", "))
+                };
+                return Err(format!(
+                    "aver.toml: unknown or misplaced key [effects.{effect}].{key}; {expected}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_positive_timeout_secs(
+        effect: &str,
+        section: &toml::Table,
+        key: &str,
+        default: u64,
+    ) -> Result<u64, String> {
+        let Some(value) = section.get(key) else {
+            return Ok(default);
+        };
+        let seconds = value.as_integer().ok_or_else(|| {
+            format!("aver.toml: [effects.{effect}].{key} must be a positive integer")
+        })?;
+        u64::try_from(seconds)
+            .ok()
+            .filter(|seconds| *seconds > 0)
+            .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be greater than zero"))
     }
 
     fn parse_policy_list(
@@ -904,6 +982,14 @@ pub mod aver_replay {
         let module_root = env_var("AVER_REPLAY_MODULE_ROOT").unwrap_or_else(|| ".".to_string());
         RuntimePolicy::load_from_dir(Path::new(&module_root))
             .map_err(|err| format!("aver.toml: {}", err))
+    }
+
+    pub(crate) fn tcp_provider_settings_from_env() -> Result<aver_rt::tcp::TcpSettings, String> {
+        let policy = load_runtime_policy_from_env()?.unwrap_or_default();
+        aver_rt::tcp::TcpSettings::from_secs(
+            policy.tcp_connect_timeout_secs,
+            policy.tcp_request_idle_timeout_secs,
+        )
     }
 
     fn host_matches(host: &str, pattern: &str) -> bool {

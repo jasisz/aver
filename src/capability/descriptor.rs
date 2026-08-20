@@ -46,7 +46,7 @@ pub(super) fn render_contract_descriptor(
     scope: &str,
     module_name: &str,
     operations: &[CapabilityOperation],
-    opaque: &[String],
+    resources: &[String],
     reachable_types: &[&TypeDef],
 ) -> Vec<u8> {
     let mut descriptor = CanonicalDescriptor::default();
@@ -70,7 +70,7 @@ pub(super) fn render_contract_descriptor(
     let local_names: BTreeSet<String> = reachable_names
         .iter()
         .filter(|name| {
-            opaque.contains(name) || reachable_types.iter().any(|td| type_def_name(td) == *name)
+            resources.contains(name) || reachable_types.iter().any(|td| type_def_name(td) == *name)
         })
         .cloned()
         .collect();
@@ -81,16 +81,16 @@ pub(super) fn render_contract_descriptor(
         descriptor.field("type", "Aver::Bytes = octets");
     }
 
-    let mut reachable_opaque = opaque
+    let mut reachable_resources = resources
         .iter()
         .filter(|name| reachable_names.contains(name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    reachable_opaque.sort();
-    for name in reachable_opaque {
+    reachable_resources.sort();
+    for name in reachable_resources {
         descriptor.field(
             "type",
-            &format!("{}::{name} = opaque", descriptor_path(scope)),
+            &format!("{}::{name} = resource", descriptor_path(scope)),
         );
     }
 

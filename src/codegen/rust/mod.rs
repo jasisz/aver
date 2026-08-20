@@ -166,7 +166,8 @@ fn transpile_project(
     let has_http_server_runtime = used_services.contains("HttpServer");
     let has_terminal_runtime = used_services.contains("Terminal");
 
-    let has_tcp_types = has_tcp_runtime || needs_tcp_types;
+    let has_tcp_types =
+        (has_tcp_runtime || needs_tcp_types) && ctx.capabilities.contract("Tcp").is_none();
     let has_http_types = has_http_runtime || has_http_server_runtime || needs_http_types;
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
     let has_terminal_types = has_terminal_runtime || needs_terminal_types;
@@ -250,7 +251,12 @@ fn transpile_project(
     if has_provider_runtime {
         files.push((
             "src/provider_support.rs".to_string(),
-            provider::generate_provider_runtime(&ctx.capabilities, &required_provider_operations),
+            provider::generate_provider_runtime(
+                &ctx.capabilities,
+                &required_provider_operations,
+                ctx.policy.as_ref().map(|config| config.tcp_settings),
+                ctx.runtime_policy_from_env,
+            ),
         ));
         files.push((
             "src/lib.rs".to_string(),
@@ -336,7 +342,7 @@ fn transpile_project(
     rust_modules.push((
         vec!["entry".to_string()],
         render_generated_module(
-            root_module_depends(&ctx.items),
+            codegen_depends(root_module_depends(&ctx.items), &ctx.items, None),
             entry_module_sections(ctx, main_fn, &top_level_stmts),
         ),
     ));
@@ -347,9 +353,23 @@ fn transpile_project(
         ctx.extra_fn_defs = ctx.modules[i].fn_defs.clone();
         let module = &ctx.modules[i];
         let segments = module_prefix_to_rust_segments(&module.prefix);
+        let discovery_items = module
+            .fn_defs
+            .iter()
+            .cloned()
+            .map(TopLevel::FnDef)
+            .chain(module.type_defs.iter().cloned().map(TopLevel::TypeDef))
+            .collect::<Vec<_>>();
         rust_modules.push((
             segments,
-            render_generated_module(module.depends.clone(), module_sections(module, ctx)),
+            render_generated_module(
+                codegen_depends(
+                    module.depends.clone(),
+                    &discovery_items,
+                    Some(&module.prefix),
+                ),
+                module_sections(module, ctx),
+            ),
         ));
     }
     ctx.extra_fn_defs.clear();
@@ -634,6 +654,23 @@ fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> Strin
     }
 }
 
+fn codegen_depends(
+    mut depends: Vec<String>,
+    items: &[TopLevel],
+    current_module: Option<&str>,
+) -> Vec<String> {
+    depends.retain(|dependency| Some(dependency.as_str()) != current_module);
+    for dependency in crate::stdlib::implicit_stdlib_deps(items) {
+        if crate::stdlib::is_standard_capability(&dependency)
+            && Some(dependency.as_str()) != current_module
+            && !depends.iter().any(|existing| existing == &dependency)
+        {
+            depends.push(dependency);
+        }
+    }
+    depends
+}
+
 /// Emit one mutual-TCO block (enum + trampoline + wrappers) via the MIR
 /// walker. The HIR emitter is gone (rust-on-MIR W6/Stage-3): every
 /// member resolves to a `(MirFn, ResolvedFnDef)` pair and the trampoline
@@ -783,11 +820,11 @@ fn entry_module_sections(
 fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) -> Vec<String> {
     let mut sections = Vec::new();
 
-    if let Some(opaque_types) =
-        provider::opaque_types_by_module(&ctx.capabilities).get(&module.prefix)
+    if let Some(resource_types) =
+        provider::resource_types_by_module(&ctx.capabilities).get(&module.prefix)
     {
-        for name in opaque_types {
-            sections.push(provider::emit_opaque_type(
+        for name in resource_types {
+            sections.push(provider::emit_resource_type(
                 &module.prefix,
                 name,
                 ctx.emit_replay_runtime,
@@ -2529,6 +2566,57 @@ fn main() -> Result<String, String>
     }
 
     #[test]
+    fn runtime_policy_configures_the_generated_tcp_provider() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<Unit, String>
+    ! [Tcp.ping]
+    Tcp.ping("127.0.0.1", 1)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.runtime_policy_from_env = true;
+
+        let out = transpile(&mut ctx);
+        let provider_support = generated_file(&out, "src/provider_support.rs");
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+
+        assert!(provider_support.contains("crate::aver_replay::tcp_provider_settings_from_env()?"));
+        assert!(provider_support.contains("StandardTcpProvider::new(standard_tcp_settings)"));
+        assert!(replay_support.contains("pub(crate) fn tcp_provider_settings_from_env()"));
+        assert!(replay_support.contains("validate_effect_section_keys(name, section)"));
+    }
+
+    #[test]
+    fn embedded_policy_configures_the_generated_tcp_provider() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<Unit, String>
+    ! [Tcp.ping]
+    Tcp.ping("127.0.0.1", 1)
+"#,
+            "demo",
+        );
+        ctx.policy = Some(
+            crate::config::ProjectConfig::parse(
+                "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\n",
+            )
+            .expect("Tcp policy"),
+        );
+
+        let out = transpile(&mut ctx);
+        let provider_support = generated_file(&out, "src/provider_support.rs");
+
+        assert!(provider_support.contains("TcpSettings::from_secs(7, 45)?"));
+        assert!(provider_support.contains("StandardTcpProvider::new(standard_tcp_settings)"));
+    }
+
+    #[test]
     fn replay_codegen_can_keep_embedded_policy_when_requested() {
         let mut ctx = ctx_from_source(
             r#"
@@ -2543,6 +2631,8 @@ fn main() -> Result<String, String>
         ctx.emit_replay_runtime = true;
         ctx.policy = Some(crate::config::ProjectConfig {
             effect_policies: std::collections::HashMap::new(),
+            tcp_settings: crate::config::TcpEffectSettings::default(),
+            tcp_settings_configured: false,
             check_suppressions: Vec::new(),
             independence_mode: crate::config::IndependenceMode::default(),
             shape_layers: Vec::new(),
@@ -2635,6 +2725,8 @@ fn main() -> Result<Tuple<Int, Int>, String>
         ctx.emit_replay_runtime = true;
         ctx.policy = Some(crate::config::ProjectConfig {
             effect_policies: std::collections::HashMap::new(),
+            tcp_settings: crate::config::TcpEffectSettings::default(),
+            tcp_settings_configured: false,
             check_suppressions: Vec::new(),
             independence_mode: crate::config::IndependenceMode::Cancel,
             shape_layers: Vec::new(),

@@ -5811,6 +5811,28 @@ fn cmd_compile_wasip2(
             .capabilities;
         let required =
             aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
+        let project_config = match load_runtime_policy(&module_root) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("{}", error.red());
+                process::exit(1);
+            }
+        };
+        if project_config
+            .as_ref()
+            .is_some_and(|config| config.tcp_settings_configured)
+            && required
+                .iter()
+                .any(|operation| operation.starts_with("Tcp."))
+        {
+            eprintln!(
+                "{}",
+                "warning[tcp-timeout-unsupported]: `--target wasip2` cannot honour explicit \
+                 [effects.Tcp] connect/request timeout settings; the component uses the host's \
+                 WASI socket timing instead"
+                    .yellow()
+            );
+        }
         let capability_wit_plan =
             aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required)
                 .unwrap_or_else(|unsupported| {

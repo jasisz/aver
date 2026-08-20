@@ -149,11 +149,11 @@ impl TypeChecker {
     /// outside the `FnId` table because they have no Aver body; the resolver
     /// classifies them through `SymbolTable::capability_operation` instead.
     pub(super) fn register_capability_sigs(&mut self) {
-        let opaque_types: Vec<_> = self.capabilities.opaque_types().cloned().collect();
-        for opaque in opaque_types {
-            self.opaque_types.insert(opaque.clone());
+        let resource_types: Vec<_> = self.capabilities.resource_types().cloned().collect();
+        for resource in resource_types {
+            self.opaque_types.insert(resource.clone());
 
-            let Some((module, name)) = opaque.rsplit_once('.') else {
+            let Some((module, name)) = resource.rsplit_once('.') else {
                 continue;
             };
             let module_id = self
@@ -163,7 +163,7 @@ impl TypeChecker {
             let id = module_id.or(entry_id);
             if let Some(id) = id {
                 // A representation-less resource is nameable because its
-                // operation signature exposes it, but the opaque-access gates
+                // operation signature exposes it, but the resource-access gates
                 // still forbid construction, field access, and matching.
                 self.mark_type_visible(id);
                 let is_own_scope = self.current_module_prefix.as_deref() == Some(module)
@@ -323,6 +323,22 @@ impl TypeChecker {
         if let Some((prefix, n)) = name.rsplit_once('.') {
             // Qualified self-reference resolves against the declaration table.
             if prefix == owner_module {
+                return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
+            }
+            // Compiler-shipped capability resources are implicit language
+            // atoms: a module does not need `depends [Tcp]` merely to thread
+            // `Tcp.Connection` through one of its public signatures.  Stamp
+            // that reference with the capability module's one canonical
+            // TypeId even while resolving the signature in its owner's
+            // isolated dependency context.  Ordinary module types (and
+            // project-defined capabilities) still follow the explicit
+            // dependency gate below.
+            if crate::stdlib::is_standard_capability(prefix)
+                && self
+                    .capabilities
+                    .resource_types()
+                    .any(|resource| resource == name)
+            {
                 return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
             }
             // A dependency-qualified reference may name either a type declared

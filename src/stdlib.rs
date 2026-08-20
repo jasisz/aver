@@ -36,6 +36,10 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/disk.av",
             source: include_str!("../stdlib/capabilities/disk.av"),
         }),
+        "Tcp" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/tcp.av",
+            source: include_str!("../stdlib/capabilities/tcp.av"),
+        }),
         _ => None,
     }
 }
@@ -43,7 +47,7 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// Provider-backed standard capability modules. Operation identities and
 /// semantics are derived from their embedded Aver contracts rather than
 /// repeated in a Rust table.
-pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Time"];
+pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Tcp", "Time"];
 
 /// Host-backed calls whose signatures cross nominal record types owned by
 /// embedded standard modules, paired with the modules those types live in.
@@ -54,21 +58,13 @@ pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Tim
 /// - `implicit_stdlib_deps` lets compilation load the owning modules even
 ///   when a module never names them in `depends`, so every backend can emit
 ///   the nominal records the builtin's boundary references.
-pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] = &[
-    ("Crypto.sha256", &["Bytes", "Crypto.Digest32"]),
-    ("Tcp.sendBytes", &["Bytes"]),
-    ("Tcp.readBytes", &["Bytes"]),
-    ("Tcp.writeBytes", &["Bytes"]),
-    ("Disk.readBytes", &["Bytes"]),
-    ("Disk.readBytesAt", &["Bytes"]),
-    ("Disk.writeBytes", &["Bytes"]),
-    ("Disk.appendBytes", &["Bytes"]),
-];
+pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] =
+    &[("Crypto.sha256", &["Bytes", "Crypto.Digest32"])];
 
-/// Standard modules `items` implicitly depends on because a function body,
-/// top-level statement, or verify case calls a builtin whose signature
-/// crosses stdlib-owned nominal types (e.g. `Crypto.sha256` produces a
-/// `Digest32` even when `depends` never names `Crypto.Digest32`).
+/// Standard modules `items` implicitly depends on because a type annotation,
+/// record expression, or call crosses a stdlib-owned nominal type (e.g.
+/// `Crypto.sha256` produces a `Digest32` even when `depends` never names
+/// `Crypto.Digest32`).
 ///
 /// Verify blocks count because backends compile them too: Rust codegen
 /// emits verify cases into a `#[cfg(test)]` module, so a program whose only
@@ -116,7 +112,138 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
             deps.push(operation.module.clone());
         }
     }
+    for item in items {
+        collect_standard_type_dependencies(item, &mut deps);
+    }
     deps
+}
+
+fn collect_standard_type_dependencies(item: &crate::ast::TopLevel, deps: &mut Vec<String>) {
+    use crate::ast::{CapabilityItem, Stmt, TopLevel, TypeDef};
+
+    match item {
+        TopLevel::FnDef(function) => {
+            for (_, annotation) in &function.params {
+                collect_standard_modules_from_annotation(annotation, deps);
+            }
+            collect_standard_modules_from_annotation(&function.return_type, deps);
+            for statement in function.body.stmts() {
+                match statement {
+                    Stmt::Binding(_, annotation, expression) => {
+                        if let Some(annotation) = annotation {
+                            collect_standard_modules_from_annotation(annotation, deps);
+                        }
+                        collect_standard_modules_from_expr(expression, deps);
+                    }
+                    Stmt::Expr(expression) => {
+                        collect_standard_modules_from_expr(expression, deps);
+                    }
+                }
+            }
+        }
+        TopLevel::Stmt(statement) => match statement {
+            Stmt::Binding(_, annotation, expression) => {
+                if let Some(annotation) = annotation {
+                    collect_standard_modules_from_annotation(annotation, deps);
+                }
+                collect_standard_modules_from_expr(expression, deps);
+            }
+            Stmt::Expr(expression) => collect_standard_modules_from_expr(expression, deps),
+        },
+        TopLevel::TypeDef(TypeDef::Product { fields, .. }) => {
+            for (_, annotation) in fields {
+                collect_standard_modules_from_annotation(annotation, deps);
+            }
+        }
+        TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
+            for variant in variants {
+                for annotation in &variant.fields {
+                    collect_standard_modules_from_annotation(annotation, deps);
+                }
+            }
+        }
+        TopLevel::Capability(CapabilityItem::Operation(operation)) => {
+            for (_, annotation) in &operation.params {
+                collect_standard_modules_from_annotation(annotation, deps);
+            }
+            collect_standard_modules_from_annotation(&operation.return_type, deps);
+        }
+        TopLevel::Verify(verify) => {
+            for (left, right) in &verify.cases {
+                collect_standard_modules_from_expr(left, deps);
+                collect_standard_modules_from_expr(right, deps);
+            }
+            for givens in &verify.case_givens {
+                for (_, expression) in givens {
+                    collect_standard_modules_from_expr(expression, deps);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_standard_modules_from_annotation(annotation: &str, deps: &mut Vec<String>) {
+    let ty = crate::types::parse_type_str(annotation);
+    collect_standard_modules_from_type(&ty, deps);
+}
+
+/// Record syntax carries a type reference even though it is not an ordinary
+/// call in the call graph. Discover it before typechecking so an attempted
+/// `Tcp.Connection(...)` forge loads the canonical capability contract and
+/// reaches the resource-construction gate instead of looking like an unknown,
+/// fieldless user record.
+fn collect_standard_modules_from_expr(
+    expression: &crate::ast::Spanned<crate::ast::Expr>,
+    deps: &mut Vec<String>,
+) {
+    crate::call_graph::walk_expr(expression, &mut |node| match node {
+        crate::ast::Expr::RecordCreate { type_name, .. }
+        | crate::ast::Expr::RecordUpdate { type_name, .. } => {
+            collect_standard_modules_from_type(&crate::types::Type::named(type_name.clone()), deps);
+        }
+        _ => {}
+    });
+}
+
+fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<String>) {
+    use crate::types::Type;
+
+    match ty {
+        Type::Named { name, .. } => {
+            if let Some((module, _)) = name.split_once('.')
+                && is_standard_capability(module)
+                && !deps.iter().any(|dependency| dependency == module)
+            {
+                deps.push(module.to_string());
+            }
+        }
+        Type::List(inner) | Type::Vector(inner) | Type::Option(inner) => {
+            collect_standard_modules_from_type(inner, deps);
+        }
+        Type::Map(key, value) | Type::Result(key, value) => {
+            collect_standard_modules_from_type(key, deps);
+            collect_standard_modules_from_type(value, deps);
+        }
+        Type::Tuple(items) => {
+            for item in items {
+                collect_standard_modules_from_type(item, deps);
+            }
+        }
+        Type::Fn(params, result, _) => {
+            for param in params {
+                collect_standard_modules_from_type(param, deps);
+            }
+            collect_standard_modules_from_type(result, deps);
+        }
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Invalid
+        | Type::Var(_) => {}
+    }
 }
 
 /// Parse the standard capability contracts shipped by the compiler.
@@ -167,6 +294,26 @@ pub(crate) fn standard_capability_registry_ref() -> &'static crate::capability::
 
 pub(crate) fn is_standard_capability(module: &str) -> bool {
     STANDARD_CAPABILITY_MODULES.contains(&module)
+}
+
+/// Source-module dependencies needed when a standard hostile profile is
+/// lifted into the entry module as a synthetic verify function.
+pub(crate) fn standard_capability_profile_dependencies(method: &str) -> Vec<String> {
+    let Some(operation) = standard_capability_registry_ref().operation(method) else {
+        return Vec::new();
+    };
+    let Some(module) = find(&operation.module) else {
+        return Vec::new();
+    };
+    crate::source::parse_source(module.source)
+        .ok()
+        .and_then(|items| {
+            items.into_iter().find_map(|item| match item {
+                crate::ast::TopLevel::Module(module) => Some(module.depends),
+                _ => None,
+            })
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn append_required_standard_capability_modules(
@@ -347,7 +494,18 @@ mod tests {
         let items = parse(
             "module Relay\n    intent = \"pipe frames without naming Bytes\"\n    depends []\n    effects [Tcp]\n\nfn relay(conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"Echo one 4-byte frame back to the peer.\"\n    ! [Tcp.readBytes, Tcp.writeBytes]\n    frame = Tcp.readBytes(conn, 4)?\n    Tcp.writeBytes(conn, frame)\n",
         );
-        assert_eq!(implicit_stdlib_deps(&items), vec!["Bytes"]);
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Tcp"]);
+    }
+
+    #[test]
+    fn standard_resource_record_syntax_loads_its_capability_contract() {
+        // The typechecker needs the Tcp contract even though this invalid
+        // program has neither a Tcp annotation nor a Tcp operation call: only
+        // then can it diagnose provider-owned resource fabrication precisely.
+        let items = parse(
+            "module Forge\n    intent = \"try to forge a provider resource\"\n    depends []\n    effects []\n\nfn fake() -> Unit\n    _ = Tcp.Connection(id = \"fake\", host = \"\", port = 0)\n    Unit\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Tcp"]);
     }
 
     #[test]
@@ -355,7 +513,7 @@ mod tests {
         let items = parse(
             "module Reader\n    intent = \"read a binary file\"\n    depends []\n    effects [Disk.readBytes]\n\nfn read(path: String) -> Result<Bytes, String>\n    ? \"Read exact octets.\"\n    ! [Disk.readBytes]\n    Disk.readBytes(path)\n",
         );
-        assert_eq!(implicit_stdlib_deps(&items), vec!["Bytes", "Disk"]);
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Disk"]);
     }
 
     #[test]
@@ -482,6 +640,47 @@ mod tests {
         assert_eq!(
             standard_hostile_profile_label("Disk.writeText", "Disk.writeTextAlwaysErr"),
             Some("always_err")
+        );
+    }
+
+    #[test]
+    fn standard_tcp_contract_model_and_profiles_are_stable() {
+        let registry = standard_capability_registry();
+        let contract = registry.contract("Tcp").expect("Tcp contract");
+        assert_eq!(
+            contract.contract_hash,
+            "sha256:5f8f81b438d3fdcf50d93597989c4653f12c63cf43a4967ed07fa2939ffe829b"
+        );
+        assert_eq!(
+            contract.model_hash,
+            "sha256:de2ae49130c867187d88e18d3541e5996412cc198be3761d61b2fde19440e7c8"
+        );
+        for (method, labels) in [
+            ("Tcp.send", vec!["normal_ok", "always_err"]),
+            ("Tcp.sendBytes", vec!["normal_ok", "always_err"]),
+            ("Tcp.ping", vec!["normal_ok", "always_err"]),
+            ("Tcp.connect", vec!["normal_ok", "always_err"]),
+            ("Tcp.writeLine", vec!["normal_ok", "always_err"]),
+            ("Tcp.writeBytes", vec!["normal_ok", "always_err"]),
+            ("Tcp.readLine", vec!["normal_ok", "always_err"]),
+            (
+                "Tcp.readBytes",
+                vec!["normal_ok", "short_read", "always_err"],
+            ),
+            ("Tcp.close", vec!["normal_ok", "always_err"]),
+        ] {
+            assert_eq!(
+                standard_hostile_profiles(method)
+                    .into_iter()
+                    .map(|(label, _, _)| label)
+                    .collect::<Vec<_>>(),
+                labels,
+                "hostile labels for {method}"
+            );
+        }
+        assert_eq!(
+            standard_hostile_profile_label("Tcp.connect", "Tcp.connectNormalOk"),
+            Some("normal_ok")
         );
     }
 }

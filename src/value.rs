@@ -148,7 +148,7 @@ pub enum Value {
         type_name: String,
         fields: Rc<[(String, Value)]>,
     },
-    /// Provider-owned opaque resource. The handle metadata is runtime-only;
+    /// Provider-owned capability resource. The handle metadata is runtime-only;
     /// Aver source can neither construct nor inspect this variant.
     CapabilityResource(crate::provider::CapabilityResourceHandle),
     /// Type namespace: `Shape` — provides `Shape.Circle`, `Shape.Rect`, etc.

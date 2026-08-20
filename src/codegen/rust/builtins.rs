@@ -42,12 +42,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Http.post"
             | "Http.put"
             | "Http.patch"
-            | "Tcp.send"
-            | "Tcp.ping"
-            | "Tcp.connect"
-            | "Tcp.writeLine"
-            | "Tcp.readLine"
-            | "Tcp.close"
             | "Int.mod"
             | "Int.div"
             | "Bits.shiftLeft"
@@ -62,27 +56,6 @@ fn builtin_effect_name(name: &str) -> &str {
         "SelfHostRuntime.httpServerListenWith" => "HttpServer.listenWith",
         _ => name,
     }
-}
-
-fn compose_tcp_send_bytes_call(args: &[String]) -> String {
-    format!(
-        "{{ let __host = &{}; let __port = crate::to_host_i64(&{}, \"Tcp.sendBytes: port must be an Int\"); let __payload = &{}; let __bytes: Result<Vec<u8>, crate::AverStr> = __payload.values.iter().map(|__value| __value.to_u32().and_then(|__value| u8::try_from(__value).ok()).ok_or_else(|| crate::AverStr::from(\"Tcp.sendBytes: malformed Bytes carrier\"))).collect(); match __bytes {{ Err(__error) => Err(__error), Ok(__bytes) => aver_rt::tcp::send_bytes(__host, __port, &__bytes).map(|__response| crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__response.into_iter().map(|__byte| aver_rt::AverInt::from_i64(i64::from(__byte))).collect()) }}).map_err(crate::AverStr::from) }} }}",
-        args[0], args[1], args[2]
-    )
-}
-
-fn compose_tcp_read_bytes_call(args: &[String]) -> String {
-    format!(
-        "{{ let __conn = crate::tcp_connection_to_host(&{}); let __count = &{}; match __count.to_i64() {{ None => Err(crate::AverStr::from(format!(\"Tcp.readBytes: count {{}} exceeds the read limit\", __count))), Some(__count) => aver_rt::tcp::read_bytes(&__conn, __count).map(|__response| crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__response.into_iter().map(|__byte| aver_rt::AverInt::from_i64(i64::from(__byte))).collect()) }}).map_err(crate::AverStr::from) }} }}",
-        args[0], args[1]
-    )
-}
-
-fn compose_tcp_write_bytes_call(args: &[String]) -> String {
-    format!(
-        "{{ let __conn = crate::tcp_connection_to_host(&{}); let __payload = &{}; let __bytes: Result<Vec<u8>, crate::AverStr> = __payload.values.iter().map(|__value| __value.to_u32().and_then(|__value| u8::try_from(__value).ok()).ok_or_else(|| crate::AverStr::from(\"Tcp.writeBytes: malformed Bytes carrier\"))).collect(); match __bytes {{ Err(__error) => Err(__error), Ok(__bytes) => aver_rt::tcp::write_bytes(&__conn, &__bytes).map_err(crate::AverStr::from) }} }}",
-        args[0], args[1]
-    )
 }
 
 pub(super) fn builtin_is_effectful(name: &str) -> bool {
@@ -158,33 +131,6 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1]
         )),
         "Random.float" => Some("aver_rt::provider::standard_random_float()".to_string()),
-        "Tcp.send" => Some(format!(
-            "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
-            args[0], args[1], args[2]
-        )),
-        "Tcp.sendBytes" => Some(compose_tcp_send_bytes_call(args)),
-        "Tcp.ping" => Some(format!(
-            "aver_rt::tcp::ping(&{}, crate::to_host_i64(&{}, \"Tcp.ping: port must be an Int\"))",
-            args[0], args[1]
-        )),
-        "Tcp.connect" => Some(format!(
-            "aver_rt::tcp::connect(&{}, crate::to_host_i64(&{}, \"Tcp.connect: port must be an Int\"))",
-            args[0], args[1]
-        )),
-        "Tcp.writeLine" => Some(format!(
-            "aver_rt::tcp::write_line(&crate::tcp_connection_to_host(&{}), &{})",
-            args[0], args[1]
-        )),
-        "Tcp.writeBytes" => Some(compose_tcp_write_bytes_call(args)),
-        "Tcp.readLine" => Some(format!(
-            "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
-            args[0]
-        )),
-        "Tcp.readBytes" => Some(compose_tcp_read_bytes_call(args)),
-        "Tcp.close" => Some(format!(
-            "aver_rt::tcp::close(&crate::tcp_connection_to_host(&{}))",
-            args[0]
-        )),
         "Terminal.enableRawMode" => Some("aver_rt::terminal_enable_raw_mode().unwrap()".to_string()),
         "Terminal.disableRawMode" => {
             Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
@@ -413,40 +359,6 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
             Some(format!("aver_rt::{}(&{})", helper, a(0)))
         }
         "Console.readLine" => Some("aver_rt::read_line()".to_string()),
-
-        // ---- Tcp ----
-        "Tcp.connect" => Some(format!(
-            "aver_rt::tcp::connect(&{}, crate::to_host_i64(&{}, \"Tcp.connect: port must be an Int\"))",
-            a(0),
-            a(1)
-        )),
-        "Tcp.writeLine" => Some(format!(
-            "aver_rt::tcp::write_line(&crate::tcp_connection_to_host(&{}), &{})",
-            a(0),
-            a(1)
-        )),
-        "Tcp.writeBytes" => Some(compose_tcp_write_bytes_call(args)),
-        "Tcp.readLine" => Some(format!(
-            "aver_rt::tcp::read_line(&crate::tcp_connection_to_host(&{}))",
-            a(0)
-        )),
-        "Tcp.readBytes" => Some(compose_tcp_read_bytes_call(args)),
-        "Tcp.close" => Some(format!(
-            "aver_rt::tcp::close(&crate::tcp_connection_to_host(&{}))",
-            a(0)
-        )),
-        "Tcp.send" => Some(format!(
-            "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
-            a(0),
-            a(1),
-            a(2)
-        )),
-        "Tcp.sendBytes" => Some(compose_tcp_send_bytes_call(args)),
-        "Tcp.ping" => Some(format!(
-            "aver_rt::tcp::ping(&{}, crate::to_host_i64(&{}, \"Tcp.ping: port must be an Int\"))",
-            a(0),
-            a(1)
-        )),
 
         // ---- Http ----
         "Http.get" => Some(format!("aver_rt::http::get(&{})", a(0))),

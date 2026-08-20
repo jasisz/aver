@@ -60,7 +60,7 @@ pub struct LiftConfig {
     /// Map from effect method (`"Random.int"`) → local binding name
     /// (`"rnd"`) the lifted body should call in place of the effect.
     pub oracles: HashMap<String, String>,
-    /// Resource-minting capability operation → unconstrained opaque value
+    /// Resource-minting capability operation → unconstrained identity value
     /// parameter supplied to its oracle. One value per operation is enough:
     /// resource distinctness is deliberately unobservable.
     pub fresh_resources: HashMap<String, String>,

@@ -90,14 +90,14 @@ fn write_top_level(out: &mut String, item: &TopLevel) -> Result<()> {
     }
 }
 
-/// Round-trip for `opaque` / `operation`. An ignore arm here would
+/// Round-trip for `resource` / `operation`. An ignore arm here would
 /// silently DELETE a capability declaration from any unparse, which is
 /// the worst failure available in this file — the output would still
 /// be valid Aver, just missing the boundary.
 fn write_capability(out: &mut String, item: &CapabilityItem) -> Result<()> {
     match item {
-        CapabilityItem::Opaque { name, .. } => {
-            writeln!(out, "opaque {name}")?;
+        CapabilityItem::Resource { name, .. } => {
+            writeln!(out, "resource {name}")?;
         }
         CapabilityItem::Operation(op) => {
             let params: Vec<String> = op.params.iter().map(|(n, t)| format!("{n}: {t}")).collect();

@@ -74,6 +74,8 @@ pub struct RunConfig {
     pub entry_info: Option<(String, Vec<Value>)>,
     /// Recorder / replayer state machine. See [`EffectMode`].
     pub mode: EffectMode,
+    /// Deployment settings for the native Tcp host bridge.
+    pub tcp_settings: aver_rt::tcp::TcpSettings,
     /// Identity-preserving qualified type-name aliases returned by
     /// `flatten_multimodule` when the caller flattened a multi-module
     /// program. Empty for single-file programs (the fuzz harness path).
@@ -115,6 +117,8 @@ pub struct RunWasmGcHost {
     /// `caller_fn` field. Cleared (kept empty) for modules that
     /// don't export the table.
     pub caller_fn_table: Vec<String>,
+    /// Settings applied by the native host implementation of Tcp imports.
+    pub tcp_settings: aver_rt::tcp::TcpSettings,
 }
 
 /// Compile `items` to wasm-gc bytes, instantiate inside an embedded
@@ -154,6 +158,7 @@ pub fn run_in_process(
         &bytes,
         &config.program_args,
         &config.mode,
+        config.tcp_settings,
         config.entry_info.as_ref(),
         &return_ty,
     )
@@ -250,6 +255,7 @@ fn run_wasm_gc_with_host(
     wasm_bytes: &[u8],
     program_args: &[String],
     mode: &EffectMode,
+    tcp_settings: aver_rt::tcp::TcpSettings,
     entry_info: Option<&(String, Vec<Value>)>,
     return_ty: &Type,
 ) -> Result<RunOutcome, String> {
@@ -293,6 +299,7 @@ fn run_wasm_gc_with_host(
             program_args: program_args.to_vec(),
             recorder: recorder.take(),
             caller_fn_table: Vec::new(),
+            tcp_settings,
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);

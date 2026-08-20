@@ -75,22 +75,6 @@ impl TypeChecker {
                 ty.clone(),
             );
         }
-        let tcp_conn_fields: &[(&str, Type)] =
-            &[("id", Type::Str), ("host", Type::Str), ("port", Type::Int)];
-        for (field, ty) in tcp_conn_fields {
-            self.record_field_types
-                .insert(RecordFieldKey::new("Tcp.Connection", *field), ty.clone());
-        }
-        // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque. It's a
-        // stateful handle to a pool slot: `id` is internal, `host`
-        // / `port` are inputs the caller already knows. A program
-        // never needs to read or destructure the record — only
-        // pass it back to `Tcp.{close, writeLine, readLine}`. Full
-        // opacity closes the "forge an id" hole on every backend
-        // (aver-rt + wasip2) at the type level rather than
-        // backend-by-backend runtime guards.
-        self.opaque_types.insert("Tcp.Connection".to_string());
-
         let net_ret = || Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str));
         let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
         // Http.post/put/patch headers param: same shape as the
@@ -111,15 +95,6 @@ impl TypeChecker {
                 "Http.patch".to_string(),
                 "Env.get".to_string(),
                 "Env.set".to_string(),
-                "Tcp.connect".to_string(),
-                "Tcp.send".to_string(),
-                "Tcp.sendBytes".to_string(),
-                "Tcp.ping".to_string(),
-                "Tcp.writeLine".to_string(),
-                "Tcp.writeBytes".to_string(),
-                "Tcp.readLine".to_string(),
-                "Tcp.readBytes".to_string(),
-                "Tcp.close".to_string(),
                 "HttpServer.listen".to_string(),
                 "HttpServer.listenWith".to_string(),
             ];
@@ -243,60 +218,6 @@ impl TypeChecker {
                 &["Env.get"],
             ),
             ("Env.set", &[Type::Str, Type::Str], Type::Unit, &["Env.set"]),
-            (
-                "Tcp.send",
-                &[Type::Str, Type::Int, Type::Str],
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
-                &["Tcp.send"],
-            ),
-            (
-                "Tcp.sendBytes",
-                &[Type::Str, Type::Int, Type::named("Bytes")],
-                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str)),
-                &["Tcp.sendBytes"],
-            ),
-            (
-                "Tcp.ping",
-                &[Type::Str, Type::Int],
-                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
-                &["Tcp.ping"],
-            ),
-            (
-                "Tcp.connect",
-                &[Type::Str, Type::Int],
-                Type::Result(Box::new(Type::named("Tcp.Connection")), Box::new(Type::Str)),
-                &["Tcp.connect"],
-            ),
-            (
-                "Tcp.writeLine",
-                &[Type::named("Tcp.Connection"), Type::Str],
-                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
-                &["Tcp.writeLine"],
-            ),
-            (
-                "Tcp.writeBytes",
-                &[Type::named("Tcp.Connection"), Type::named("Bytes")],
-                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
-                &["Tcp.writeBytes"],
-            ),
-            (
-                "Tcp.readLine",
-                &[Type::named("Tcp.Connection")],
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
-                &["Tcp.readLine"],
-            ),
-            (
-                "Tcp.readBytes",
-                &[Type::named("Tcp.Connection"), Type::Int],
-                Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str)),
-                &["Tcp.readBytes"],
-            ),
-            (
-                "Tcp.close",
-                &[Type::named("Tcp.Connection")],
-                Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
-                &["Tcp.close"],
-            ),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

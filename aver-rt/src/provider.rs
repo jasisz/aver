@@ -8,6 +8,7 @@
 mod codec;
 mod disk;
 mod runtime;
+mod tcp;
 
 use std::any::Any;
 use std::collections::BTreeSet;
@@ -28,6 +29,7 @@ pub use runtime::{
     STANDARD_RANDOM_FINGERPRINT, STANDARD_RANDOM_NATIVE_IDENTITY, StandardRandomProvider,
     standard_random_float, standard_random_int,
 };
+pub use tcp::{STANDARD_TCP_FINGERPRINT, STANDARD_TCP_NATIVE_IDENTITY, StandardTcpProvider};
 
 /// A host-owned payload carried by a capability resource.
 ///
@@ -231,7 +233,7 @@ impl ProviderBinding {
         self.provider.fingerprint()
     }
 
-    /// Process-local binding identity used to validate opaque resource
+    /// Process-local binding identity used to validate capability-resource
     /// handles. It is runtime metadata and must never be serialized.
     pub fn runtime_id(&self) -> u64 {
         self.id

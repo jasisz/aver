@@ -41,6 +41,11 @@ pub fn is_provider_setup_error(error: &str) -> bool {
 pub struct ProviderRegistry {
     contracts: CapabilityRegistry,
     native: NativeProviderRegistry,
+    standard_tcp_settings: aver_rt::tcp::TcpSettings,
+    /// Runtime identity of the compiler-installed Tcp binding. Provider
+    /// identity strings are host-supplied metadata and therefore cannot prove
+    /// ownership: an explicit provider may deliberately use the same label.
+    standard_tcp_binding_id: Option<u64>,
 }
 
 impl ProviderRegistry {
@@ -81,12 +86,13 @@ impl ProviderRegistry {
                 .map(|operation| operation.canonical_name.clone())
                 .collect::<Vec<_>>();
             let provider = standard.native_provider();
-            registry.bind(ProviderBinding::new(
-                module,
-                contract.contract_hash,
-                operations,
-                provider,
-            ))?;
+            let binding =
+                ProviderBinding::new(module, contract.contract_hash, operations, provider);
+            let binding_id = binding.runtime_id();
+            registry.bind(binding)?;
+            if module == "Tcp" {
+                registry.standard_tcp_binding_id = Some(binding_id);
+            }
         }
         Ok(registry)
     }
@@ -130,7 +136,58 @@ impl ProviderRegistry {
             )
         }))
         .expect("CapabilityRegistry has unique capability identities");
-        Self { contracts, native }
+        Self {
+            contracts,
+            native,
+            standard_tcp_settings: aver_rt::tcp::TcpSettings::default(),
+            standard_tcp_binding_id: None,
+        }
+    }
+
+    /// Configure the compiler-shipped Tcp provider before execution begins.
+    /// An explicitly installed host provider remains untouched: deployment
+    /// settings are inputs to that provider, not authority to replace it.
+    pub fn configure_standard_tcp(
+        &mut self,
+        settings: aver_rt::tcp::TcpSettings,
+    ) -> Result<(), String> {
+        if self.standard_tcp_settings == settings {
+            return Ok(());
+        }
+        let Some(binding) = self.binding("Tcp") else {
+            self.standard_tcp_settings = settings;
+            return Ok(());
+        };
+        if Some(binding.runtime_id()) != self.standard_tcp_binding_id {
+            self.standard_tcp_settings = settings;
+            return Ok(());
+        }
+
+        let contract = self
+            .contracts
+            .contract("Tcp")
+            .expect("an installed standard Tcp binding has a contract");
+        let operations = self
+            .contracts
+            .operations()
+            .filter(|operation| operation.module == "Tcp")
+            .map(|operation| operation.canonical_name.clone())
+            .collect::<Vec<_>>();
+        let replacement = ProviderBinding::new(
+            "Tcp",
+            contract.contract_hash.clone(),
+            operations,
+            std::sync::Arc::new(aver_rt::provider::StandardTcpProvider::new(settings)),
+        );
+        let replacement_id = replacement.runtime_id();
+        self.replace_binding(replacement)?;
+        self.standard_tcp_binding_id = Some(replacement_id);
+        self.standard_tcp_settings = settings;
+        Ok(())
+    }
+
+    pub fn standard_tcp_settings(&self) -> aver_rt::tcp::TcpSettings {
+        self.standard_tcp_settings
     }
 
     pub fn bind(&mut self, binding: ProviderBinding) -> Result<(), String> {

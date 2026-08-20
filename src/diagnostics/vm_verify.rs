@@ -552,6 +552,31 @@ pub(crate) fn inject_hostile_effect_stubs_for_blocks(
         }
     }
 
+    // Standard hostile bodies are declared inside their capability module,
+    // where that module's own dependencies are visible. Injection lifts the
+    // bodies into an internal copy of the entry module, so carry those source
+    // dependencies with them. This does not make ordinary user imports
+    // implicit; only compiler-synthesised profile functions see the expanded
+    // working module.
+    let profile_dependencies = to_inject
+        .iter()
+        .flat_map(|method| crate::stdlib::standard_capability_profile_dependencies(method))
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(module) = items.iter_mut().find_map(|item| match item {
+        TopLevel::Module(module) => Some(module),
+        _ => None,
+    }) {
+        for dependency in profile_dependencies {
+            if !module
+                .depends
+                .iter()
+                .any(|existing| existing == &dependency)
+            {
+                module.depends.push(dependency);
+            }
+        }
+    }
+
     let mut new_items: Vec<TopLevel> = Vec::new();
     for method in &to_inject {
         for profile in hostile_profiles_for(method) {
@@ -590,7 +615,11 @@ fn render_hostile_profile_label(combo: Option<&[(String, String)]>) -> Option<St
     Some(
         combo
             .iter()
-            .map(|(method, profile)| format!("{}/{}", method, profile))
+            .map(|(method, profile)| {
+                let label = crate::stdlib::standard_hostile_profile_label(method, profile)
+                    .unwrap_or(profile.as_str());
+                format!("{method}/{label}")
+            })
             .collect::<Vec<_>>()
             .join(" + "),
     )
@@ -1584,7 +1613,7 @@ fn build_case_oracle_stubs(
             // FnDef for exactly that same set before type-check — so a
             // profile that reaches this point without its stub in the
             // VM is a pipeline bug, not a user error. Silently skipping
-            // it would run the "hostile" case against the real builtin
+            // it would run the "hostile" case against the live provider
             // and report a vacuous pass.
             let Some(fn_id) = machine.find_fn_id(&stub_fn_name) else {
                 panic!(
@@ -2392,7 +2421,7 @@ verify currentYear trace
     /// keys `hostile_profiles_for` on the classified method verbatim),
     /// every profile the expansion assigns has its stub FnDef in the VM.
     /// A miss is a pipeline bug — the runner must fail loudly instead of
-    /// silently running the "hostile" case against the real builtin.
+    /// silently running the "hostile" case against the live provider.
     #[test]
     #[should_panic(
         expected = "hostile profile stub `__hostile_Time_now_frozen` for effect `Time.now` is missing"

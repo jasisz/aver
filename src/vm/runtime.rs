@@ -19,6 +19,19 @@ pub enum VmExecutionMode {
     Replay,
 }
 
+fn configure_tcp_provider(
+    providers: &mut std::sync::Arc<crate::provider::ProviderRegistry>,
+    config: &crate::config::ProjectConfig,
+) {
+    let settings = config.tcp_settings.native();
+    if providers.standard_tcp_settings() == settings {
+        return;
+    }
+    std::sync::Arc::make_mut(providers)
+        .configure_standard_tcp(settings)
+        .expect("validated Tcp settings must fit the standard provider contract");
+}
+
 /// Host/runtime bridge for builtin dispatch, effects, and record/replay.
 ///
 /// This is intentionally separate from the core execute loop so the VM stays
@@ -127,8 +140,11 @@ impl VmRuntime {
 
     pub(super) fn set_provider_registry(
         &mut self,
-        providers: std::sync::Arc<crate::provider::ProviderRegistry>,
+        mut providers: std::sync::Arc<crate::provider::ProviderRegistry>,
     ) {
+        if let Some(config) = &self.runtime_policy {
+            configure_tcp_provider(&mut providers, config);
+        }
         self.providers = providers;
     }
 
@@ -325,6 +341,7 @@ impl VmRuntime {
     }
 
     pub(super) fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
+        configure_tcp_provider(&mut self.providers, &config);
         self.runtime_policy = Some(config);
     }
 
