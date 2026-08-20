@@ -620,7 +620,11 @@ impl TypeRegistry {
             TopLevel::FnDef(fd) => fd.effects.iter().any(|e| {
                 matches!(
                     e.node.as_str(),
-                    "Tcp.sendBytes" | "Tcp.readBytes" | "Tcp.writeBytes"
+                    "Tcp.sendBytes"
+                        | "Tcp.readBytes"
+                        | "Tcp.readSome"
+                        | "Tcp.writeBytes"
+                        | "Tcp.poll"
                 )
             }),
             _ => false,
@@ -1053,6 +1057,12 @@ impl TypeRegistry {
                 // never "is negative" or the 10485760 text.
                 b"Tcp.readBytes: count exceeds the read limit".as_ref(),
                 b"failed to fill whole buffer".as_ref(),
+                b"Tcp.readSome: maxBytes must be positive".as_ref(),
+                b"Tcp.readSome: maxBytes exceeds the 10485760 byte limit".as_ref(),
+                b"Tcp.readSome: maxBytes exceeds the read limit".as_ref(),
+                b"Tcp.poll: timeoutMs is negative".as_ref(),
+                b"Tcp.poll: timeoutMs exceeds the poll limit".as_ref(),
+                b"tcp: read failed".as_ref(),
                 // Phase 4.7+ — port validation. VM message verbatim
                 // (`Tcp: port N is out of range (0\u{2013}65535)`)
                 // is parameterised on the port value; we ship a
@@ -1955,6 +1965,8 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Time.unixMs"
             | "Tcp.sendBytes"
             | "Tcp.readBytes"
+            | "Tcp.readSome"
+            | "Tcp.poll"
             | "Tcp.writeBytes"
             | "Crypto.sha256"
     )
@@ -2630,8 +2642,8 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // *consume* one through their first parameter, so even a
         // program that only reads / writes / closes still needs the
         // slot allocated.
-        "Tcp.connect" | "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.readLine" | "Tcp.readBytes"
-        | "Tcp.close" => "Tcp.Connection",
+        "Tcp.connect" | "Tcp.poll" | "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.readLine"
+        | "Tcp.readBytes" | "Tcp.readSome" | "Tcp.close" => "Tcp.Connection",
         // HTTP verb effects all return Result<HttpResponse, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.

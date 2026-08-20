@@ -521,6 +521,11 @@ pub(super) struct Wasip2Lowering {
     /// Count is passed as the nominal AverInt carrier so range failures stay
     /// catchable on the native WASI path.
     pub(super) tcp_read_bytes_fn_idx: Option<u32>,
+    /// `__rt_tcp_read_some(conn, maxBytes) -> ref Result<Bytes, String>`.
+    pub(super) tcp_read_some_fn_idx: Option<u32>,
+    /// `__rt_tcp_poll(Map<Int, Connection>, timeoutMs) ->
+    /// ref Result<List<Int>, String>`.
+    pub(super) tcp_poll_fn_idx: Option<u32>,
     /// Phase 4.5a (0.20) — `__rt_tcp_send(host, port, data) ->
     /// ref Result<String, String>` helper wasm fn idx. One-shot
     /// orchestrator: connect + writeLine + readLine + close.

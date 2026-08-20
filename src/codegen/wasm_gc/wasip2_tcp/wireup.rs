@@ -29,8 +29,9 @@ use super::super::effects::{EffectName, EffectRegistry};
 use super::super::types::TypeRegistry;
 use super::super::wasip2_imports::{Wasip2ImportRegistry, Wasip2ImportSlot};
 use super::{
-    TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpReadBytesIndices, TcpReadLineIndices,
-    TcpSendBytesIndices, TcpSendIndices, TcpWriteBytesIndices, TcpWriteLineIndices,
+    TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpPollIndices, TcpReadBytesIndices,
+    TcpReadLineIndices, TcpReadSomeIndices, TcpSendBytesIndices, TcpSendIndices,
+    TcpWriteBytesIndices, TcpWriteLineIndices,
 };
 
 /// Per-helper allocation bundle. Every field is `Option<_>`: `None`
@@ -47,6 +48,8 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
     pub write_bytes: Option<TcpWriteBytesIndices>,
     pub read_line: Option<TcpReadLineIndices>,
     pub read_bytes: Option<TcpReadBytesIndices>,
+    pub read_some: Option<TcpReadSomeIndices>,
+    pub poll: Option<TcpPollIndices>,
     pub close: Option<TcpCloseIndices>,
     pub send: Option<TcpSendIndices>,
     pub send_bytes: Option<TcpSendBytesIndices>,
@@ -109,6 +112,8 @@ pub(in crate::codegen::wasm_gc) fn allocate(
                     | EffectName::TcpWriteBytes
                     | EffectName::TcpReadLine
                     | EffectName::TcpReadBytes
+                    | EffectName::TcpReadSome
+                    | EffectName::TcpPoll
                     | EffectName::TcpClose
             )
         })
@@ -153,6 +158,30 @@ pub(in crate::codegen::wasm_gc) fn allocate(
     let read_bytes = declares(EffectName::TcpReadBytes)
         .then(|| {
             allocate_read_bytes(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let read_some = declares(EffectName::TcpReadSome)
+        .then(|| {
+            allocate_read_some(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let poll = declares(EffectName::TcpPoll)
+        .then(|| {
+            allocate_poll(
                 registry,
                 wasip2_imports,
                 parse_id,
@@ -215,6 +244,8 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         write_bytes,
         read_line,
         read_bytes,
+        read_some,
+        poll,
         close,
         send,
         send_bytes,
@@ -248,6 +279,12 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.read_bytes {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.read_some {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.poll {
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.close {
@@ -607,6 +644,146 @@ fn allocate_read_bytes(
         short_read_len: b"failed to fill whole buffer".len() as u32,
         unknown_segment_idx: unknown_seg,
         unknown_len: b"tcp: unknown connection".len() as u32,
+    })
+}
+
+fn allocate_read_some(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpReadSomeIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let connection_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
+    let int_idx = registry.aint_struct_idx?;
+    let list_int_idx = registry.list_type_idx("List<Int>")?;
+    let result_idx = registry.result_type_idx("Result<Bytes,String>")?;
+    let positive = b"Tcp.readSome: maxBytes must be positive";
+    let limit = b"Tcp.readSome: maxBytes exceeds the 10485760 byte limit";
+    let read_limit = b"Tcp.readSome: maxBytes exceeds the read limit";
+    let read_error = b"tcp: read failed";
+    let unknown = b"tcp: unknown connection";
+    let positive_segment_idx = registry.string_literal_segment(positive)?;
+    let limit_segment_idx = registry.string_literal_segment(limit)?;
+    let read_limit_segment_idx = registry.string_literal_segment(read_limit)?;
+    let read_error_segment_idx = registry.string_literal_segment(read_error)?;
+    let unknown_segment_idx = registry.string_literal_segment(unknown)?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::InputStreamBlockingRead)?;
+    parse_id?;
+
+    let connection_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(connection_idx),
+    });
+    let int_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(int_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types.ty().function([connection_ref, int_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpReadSomeIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        tcp_connection_type_idx: connection_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        aint_struct_type_idx: int_idx,
+        list_int_type_idx: list_int_idx,
+        positive_segment_idx,
+        positive_len: positive.len() as u32,
+        limit_segment_idx,
+        limit_len: limit.len() as u32,
+        read_limit_segment_idx,
+        read_limit_len: read_limit.len() as u32,
+        read_error_segment_idx,
+        read_error_len: read_error.len() as u32,
+        unknown_segment_idx,
+        unknown_len: unknown.len() as u32,
+    })
+}
+
+fn allocate_poll(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpPollIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let result_idx = registry.result_type_idx("Result<List<Int>,String>")?;
+    let list_int_idx = registry.list_type_idx("List<Int>")?;
+    let int_idx = registry.aint_struct_idx?;
+    let map = registry.map_slots("Map<Int,Tcp.Connection>")?;
+    let key_box_idx = registry.primitive_key_box_idx("Int")?;
+    let connection_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
+    let negative = b"Tcp.poll: timeoutMs is negative";
+    let poll_limit = b"Tcp.poll: timeoutMs exceeds the poll limit";
+    let unknown = b"tcp: unknown connection";
+    let negative_segment_idx = registry.string_literal_segment(negative)?;
+    let poll_limit_segment_idx = registry.string_literal_segment(poll_limit)?;
+    let unknown_segment_idx = registry.string_literal_segment(unknown)?;
+    for slot in [
+        Wasip2ImportSlot::InputStreamSubscribe,
+        Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
+        Wasip2ImportSlot::IoPollPoll,
+        Wasip2ImportSlot::IoPollResourceDropPollable,
+    ] {
+        wasip2_imports.lookup_wasm_fn_idx(slot)?;
+    }
+    parse_id?;
+
+    let map_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(map.map),
+    });
+    let int_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(int_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types.ty().function([map_ref, int_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpPollIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        result_type_idx: result_idx,
+        list_int_type_idx: list_int_idx,
+        aint_struct_type_idx: int_idx,
+        map_type_idx: map.map,
+        map_keys_array_type_idx: map.keys_array,
+        map_values_array_type_idx: map.values_array,
+        int_key_box_type_idx: key_box_idx,
+        tcp_connection_type_idx: connection_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        negative_segment_idx,
+        negative_len: negative.len() as u32,
+        poll_limit_segment_idx,
+        poll_limit_len: poll_limit.len() as u32,
+        unknown_segment_idx,
+        unknown_len: unknown.len() as u32,
     })
 }
 

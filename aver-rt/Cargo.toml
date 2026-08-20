@@ -34,6 +34,9 @@ rand = { version = "0.9", optional = true }
 sha2 = "0.10"
 ureq = { version = "2", optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+polling = "3.11"
+
 [dev-dependencies]
 criterion = "0.5"
 

@@ -1,6 +1,6 @@
 //! Wasip2 `Tcp.*` end-to-end tests (Phase 4 / 0.20 "Pulse").
 //!
-//! Eight scenarios share a tiny Python TCP server bound on an
+//! The scenarios share a tiny Python TCP server bound on an
 //! OS-assigned port (avoids fixed-port flakes in parallel runs):
 //!
 //! - `tcp_connect_close_round_trip` — connect + close, verify
@@ -14,6 +14,9 @@
 //!   echo server, assert the line round-trips byte-for-byte.
 //! - `tcp_read_bytes_exact_binary_frame` — exact non-UTF-8 read split
 //!   across two host chunks.
+//! - `tcp_poll_then_read_some_returns_caller_id_and_available_chunk` —
+//!   readiness maps back to an arbitrary-precision caller ID, then a bounded
+//!   read returns without waiting to fill its maximum.
 //! - `tcp_read_bytes_big_count_is_a_result_error` — hostile frame length
 //!   remains a catchable error.
 //! - `tcp_send_one_shot` — `Tcp.send` orchestrator: connect +
@@ -137,6 +140,31 @@ def serve():
             c.sendall(bytes([249]))
             time.sleep(0.05)
             c.sendall(bytes([190, 180, 217]))
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
+time.sleep(60)
+"#;
+
+/// Makes one short binary chunk readable and deliberately keeps the peer open,
+/// proving `readSome(maxBytes = 64)` does not wait for the remaining 60 bytes.
+const READABLE_CHUNK_SCRIPT: &str = r#"
+import socket, sys, threading, time
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    while True:
+        try:
+            c, _ = s.accept()
+            c.sendall(bytes([249, 190, 180, 217]))
+            time.sleep(60)
             c.close()
         except OSError:
             break
@@ -507,6 +535,60 @@ fn main() -> Unit
     assert!(
         s.contains("got: 249,190,180,217,"),
         "expected exact non-UTF-8 frame from Tcp.readBytes, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tcp_poll_then_read_some_returns_caller_id_and_available_chunk() {
+    let dir = tempdir("poll-readSome");
+    let Some((mut server, port)) = spawn_python_server(&dir, READABLE_CHUNK_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping wasip2_tcp poll/readSome test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+module PollReadSome
+    intent = "Poll caller-owned peer IDs and consume one bounded binary chunk on WASI."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn report(c: Tcp.Connection, ready: List<Int>, chunk: Bytes) -> Unit
+    ! [Tcp.close, Console.print]
+    Tcp.close(c)
+    Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.toList(chunk) == [249, 190, 180, 217]}}")
+
+fn pollAndRead(c: Tcp.Connection, peers: Map<Int, Tcp.Connection>) -> Unit
+    ! [Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
+    match Tcp.poll(peers, 1000)
+        Result.Err(e) -> Console.print("poll err: {{e}}")
+        Result.Ok(ready) -> match Tcp.readSome(c, 64)
+            Result.Err(e) -> Console.print("read err: {{e}}")
+            Result.Ok(chunk) -> report(c, ready, chunk)
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+        Result.Ok(c) -> pollAndRead(c, {{1208925819614629174706176 => c}})
+"#
+    );
+    let fixture = write_fixture(&dir, "poll_read_some.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wasip2_tcp poll/readSome failed (exit {:?})\nstdout:\n{stdout}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("true:true"),
+        "expected ready caller ID and short chunk, got:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

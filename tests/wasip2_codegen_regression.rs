@@ -212,6 +212,39 @@ fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
 }
 
 #[test]
+fn tcp_poll_and_read_some_compile_and_validate_as_component() {
+    let source = r#"module Probe
+    intent = "Compile readiness polling and bounded stream reads."
+    depends [Bytes]
+    exposes [ready, chunk]
+    effects [Tcp.poll, Tcp.readSome]
+
+fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Return the caller IDs whose connections can be read without waiting."
+    ! [Tcp.poll]
+    Tcp.poll(connections, timeoutMs)
+
+fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "Read one available chunk without requiring the buffer to fill."
+    ! [Tcp.readSome]
+    Tcp.readSome(conn, maxBytes)
+"#;
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
 fn tcp_write_bytes_compiles_and_validates_as_component() {
     let source = r#"module Probe
     intent = "Compile exact binary writes on a persistent connection."

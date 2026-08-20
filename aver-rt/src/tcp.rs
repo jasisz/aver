@@ -178,6 +178,115 @@ pub fn read_bytes(conn: &TcpConnection, n: i64) -> Result<Vec<u8>, String> {
     })
 }
 
+/// Read the bytes currently available from a persistent connection, up to
+/// `max_bytes`, without waiting to fill the requested maximum.
+///
+/// The first byte may still wait indefinitely when the caller did not precede
+/// this operation with [`poll`]. An empty success means clean EOF. As with the
+/// other session operations, a real I/O error poisons the connection while
+/// argument validation leaves it live.
+pub fn read_some(conn: &TcpConnection, max_bytes: i64) -> Result<Vec<u8>, String> {
+    if max_bytes <= 0 {
+        return Err(format!(
+            "Tcp.readSome: maxBytes {max_bytes} must be positive"
+        ));
+    }
+    let limit = usize::try_from(max_bytes).unwrap_or(usize::MAX);
+    if limit > BODY_LIMIT {
+        return Err(format!(
+            "Tcp.readSome: maxBytes {max_bytes} exceeds the {BODY_LIMIT} byte limit"
+        ));
+    }
+    with_connection_io(conn, "Tcp.readSome", |reader| {
+        let mut buf = vec![0u8; limit];
+        let read = reader.read(&mut buf)?;
+        buf.truncate(read);
+        Ok(buf)
+    })
+}
+
+/// Return the positions of persistent connections that can make read
+/// progress without blocking. Positions preserve duplicate handles in the
+/// input; the capability adapter maps them back to caller-owned peer IDs.
+///
+/// Bytes already held by a connection's [`BufReader`] count as readable even
+/// when the underlying socket itself is idle. Closed/broken sockets also count
+/// as readable so the following read can surface EOF or the concrete I/O
+/// failure. Polling itself never poisons a session.
+#[cfg(not(target_family = "wasm"))]
+pub fn poll(connections: &[TcpConnection], timeout_ms: i64) -> Result<Vec<usize>, String> {
+    if timeout_ms < 0 {
+        return Err(format!("Tcp.poll: timeoutMs {timeout_ms} is negative"));
+    }
+
+    CONNECTIONS.with(|map| {
+        let live = map.borrow();
+        let mut ready = vec![false; connections.len()];
+        let mut group_by_id: HashMap<String, usize> = HashMap::new();
+        let mut groups: Vec<(&TcpStream, Vec<usize>)> = Vec::new();
+
+        for (position, connection) in connections.iter().enumerate() {
+            let id: &str = &connection.id;
+            let Some(reader) = live.get(id) else {
+                return Err(format!("Tcp.poll: unknown connection '{}'", connection.id));
+            };
+            if !reader.buffer().is_empty() {
+                ready[position] = true;
+                continue;
+            }
+            if let Some(group) = group_by_id.get(id).copied() {
+                groups[group].1.push(position);
+            } else {
+                let group = groups.len();
+                group_by_id.insert(id.to_string(), group);
+                groups.push((reader.get_ref(), vec![position]));
+            }
+        }
+
+        let poller = polling::Poller::new().map_err(|error| format_io_error("Tcp.poll", &error))?;
+        for (group, (stream, _)) in groups.iter().enumerate() {
+            // SAFETY: `live` immutably borrows the connection table until
+            // after `poller` is dropped, so every registered TcpStream remains
+            // alive and at the same address for the whole registration.
+            unsafe {
+                poller
+                    .add(*stream, polling::Event::readable(group))
+                    .map_err(|error| format_io_error("Tcp.poll", &error))?;
+            }
+        }
+
+        let timeout = if ready.iter().any(|is_ready| *is_ready) {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(timeout_ms as u64)
+        };
+        let mut events = polling::Events::new();
+        poller
+            .wait(&mut events, Some(timeout))
+            .map_err(|error| format_io_error("Tcp.poll", &error))?;
+        for event in events.iter() {
+            if (event.readable || event.is_err().unwrap_or(false))
+                && let Some((_, positions)) = groups.get(event.key)
+            {
+                for position in positions {
+                    ready[*position] = true;
+                }
+            }
+        }
+
+        Ok(ready
+            .into_iter()
+            .enumerate()
+            .filter_map(|(position, is_ready)| is_ready.then_some(position))
+            .collect())
+    })
+}
+
+#[cfg(target_family = "wasm")]
+pub fn poll(_connections: &[TcpConnection], _timeout_ms: i64) -> Result<Vec<usize>, String> {
+    Err("Tcp.poll: native socket polling is unavailable on this target".to_string())
+}
+
 pub fn close(conn: &TcpConnection) -> Result<(), String> {
     let id: &str = &conn.id;
     let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(id));
@@ -327,6 +436,7 @@ fn resolve(addr: &str) -> Result<std::net::SocketAddr, String> {
 mod tests {
     use super::*;
     use std::net::{Shutdown, TcpListener};
+    use std::sync::mpsc;
     use std::thread;
 
     fn loopback_connection(
@@ -377,6 +487,7 @@ mod tests {
     fn argument_validation_does_not_poison_the_connection() {
         let (connection, server) = loopback_connection(|_| {});
         assert!(read_bytes(&connection, -1).is_err());
+        assert!(read_some(&connection, 0).is_err());
         CONNECTIONS.with(|map| {
             assert!(map.borrow().contains_key(connection.id.as_ref()));
         });
@@ -393,5 +504,72 @@ mod tests {
                 "Tcp.readBytes: I/O timed out"
             );
         }
+    }
+
+    #[test]
+    fn read_some_returns_available_bytes_without_filling_the_maximum() {
+        let (written_tx, written_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (connection, server) = loopback_connection(move |mut stream| {
+            stream.write_all(&[1, 2, 3]).expect("write available bytes");
+            written_tx.send(()).expect("announce write");
+            release_rx.recv().expect("hold peer open");
+        });
+        written_rx.recv().expect("peer wrote bytes");
+
+        assert_eq!(read_some(&connection, 64).expect("read some"), [1, 2, 3]);
+
+        close(&connection).expect("close client");
+        release_tx.send(()).expect("release peer");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn poll_sees_bytes_already_buffered_by_read_line() {
+        let (written_tx, written_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (connection, server) = loopback_connection(move |mut stream| {
+            stream
+                .write_all(b"hello\r\nrest")
+                .expect("write line and trailing bytes");
+            written_tx.send(()).expect("announce write");
+            release_rx.recv().expect("hold peer open");
+        });
+        written_rx.recv().expect("peer wrote bytes");
+
+        assert_eq!(read_line(&connection).expect("read line"), "hello");
+        assert_eq!(poll(std::slice::from_ref(&connection), 1_000).unwrap(), [0]);
+        assert_eq!(
+            read_some(&connection, 64).expect("read buffered rest"),
+            b"rest"
+        );
+
+        close(&connection).expect("close client");
+        release_tx.send(()).expect("release peer");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn poll_times_out_cleanly_and_rejects_unknown_handles() {
+        let (release_tx, release_rx) = mpsc::channel();
+        let (connection, server) = loopback_connection(move |_| {
+            release_rx.recv().expect("hold quiet peer open");
+        });
+
+        assert!(
+            poll(std::slice::from_ref(&connection), 5)
+                .expect("quiet poll")
+                .is_empty()
+        );
+        let unknown = TcpConnection::from_parts("tcp-missing".to_string(), String::new(), 0);
+        assert!(
+            poll(&[unknown], 0)
+                .expect_err("unknown handle")
+                .contains("unknown connection")
+        );
+
+        close(&connection).expect("close client");
+        release_tx.send(()).expect("release peer");
+        server.join().expect("server thread");
     }
 }

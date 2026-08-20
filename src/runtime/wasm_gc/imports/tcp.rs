@@ -4,16 +4,17 @@
 //! `id` field via `host_tcp_connection_id`.
 
 use num_bigint::{BigInt, Sign};
+use std::str::FromStr;
 
 use super::super::RunWasmGcHost;
 use super::super::decode::{
     decode_result_bytes, decode_result_string, decode_result_tcp_connection, decode_result_unit,
 };
 use super::factories::{
-    host_result_err_bytes, host_result_err_string, host_result_err_unit_string,
-    host_result_ok_bytes, host_result_ok_string, host_result_ok_unit,
-    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_id,
-    host_tcp_connection_make,
+    host_result_err_bytes, host_result_err_list_int, host_result_err_string,
+    host_result_err_unit_string, host_result_ok_bytes, host_result_ok_list_int_refs,
+    host_result_ok_string, host_result_ok_unit, host_result_tcp_connection_err,
+    host_result_tcp_connection_ok, host_tcp_connection_id, host_tcp_connection_make,
 };
 use super::lm::{lm_string_from_host, lm_string_to_host, val_i64};
 use super::replay_glue::{json_err, json_ok, json_record, record_effect_if_recording, try_replay};
@@ -70,6 +71,57 @@ pub(super) fn dispatch(
                 };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.connect", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_poll" => {
+            let mut entries = decode_poll_entries(caller, params.first())?;
+            entries.sort_by(|left, right| left.provider_order.cmp(&right.provider_order));
+            let timeout = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: missing timeoutMs"))?;
+            let timeout = decode_guest_int(caller, timeout, "Tcp.poll: malformed timeout carrier")?;
+            let args = vec![poll_map_json(&entries), guest_int_json(&timeout)];
+            if let Some(cached) = try_replay(caller, "Tcp.poll", args.clone())? {
+                let result = replay_poll_result(caller, &cached, &entries)?;
+                results[0] = Val::AnyRef(result);
+                return Ok(true);
+            }
+
+            let polled = match timeout.value {
+                Some(timeout) => aver_rt::tcp::poll(
+                    &entries
+                        .iter()
+                        .map(|entry| entry.connection.clone())
+                        .collect::<Vec<_>>(),
+                    timeout,
+                ),
+                None => Err(format!(
+                    "Tcp.poll: timeoutMs {} exceeds the poll limit",
+                    timeout.display
+                )),
+            };
+            let (result_ref, outcome) = match polled {
+                Ok(positions) => {
+                    let mut ready = positions
+                        .into_iter()
+                        .filter_map(|position| entries.get(position))
+                        .collect::<Vec<_>>();
+                    ready.sort_by(|left, right| left.numeric.cmp(&right.numeric));
+                    ready.dedup_by(|left, right| left.numeric == right.numeric);
+                    let refs = ready.iter().map(|entry| entry.key_ref).collect::<Vec<_>>();
+                    let json = ready
+                        .iter()
+                        .map(|entry| entry.key_json.clone())
+                        .collect::<Vec<_>>();
+                    (
+                        host_result_ok_list_int_refs(caller, &refs)?,
+                        json_ok(aver::replay::JsonValue::Array(json)),
+                    )
+                }
+                Err(error) => (host_result_err_list_int(caller, &error)?, json_err(&error)),
+            };
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Tcp.poll", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_write_line" => {
@@ -248,6 +300,41 @@ pub(super) fn dispatch(
             record_effect_if_recording(caller, "Tcp.readBytes", args, outcome, caller_fn);
             Ok(true)
         }
+        "tcp_read_some" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn_arg = json_connection(&id);
+            let max_bytes = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.readSome: missing maxBytes"))?;
+            let max_bytes = decode_guest_int(
+                caller,
+                max_bytes,
+                "Tcp.readSome: malformed maxBytes carrier",
+            )?;
+            let max_bytes_json = guest_int_json(&max_bytes);
+            let args = vec![conn_arg, max_bytes_json];
+            if let Some(cached) = try_replay(caller, "Tcp.readSome", args.clone())? {
+                let result = decode_result_bytes(caller, &cached)?;
+                results[0] = Val::AnyRef(result);
+                return Ok(true);
+            }
+            let conn = aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            };
+            let read = match max_bytes.value {
+                Some(value) => aver_rt::tcp::read_some(&conn, value),
+                None => Err(format!(
+                    "Tcp.readSome: maxBytes {} exceeds the read limit",
+                    max_bytes.display
+                )),
+            };
+            let (result_ref, outcome) = bytes_outcome(caller, read)?;
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Tcp.readSome", args, outcome, caller_fn);
+            Ok(true)
+        }
         "tcp_close" => {
             let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
             let conn_arg = json_record(
@@ -379,9 +466,203 @@ pub(super) fn dispatch(
     }
 }
 
+fn json_connection(id: &str) -> aver::replay::JsonValue {
+    json_record(
+        "Tcp.Connection",
+        vec![
+            ("id", aver::replay::JsonValue::String(id.to_string())),
+            ("host", aver::replay::JsonValue::String(String::new())),
+            ("port", aver::replay::JsonValue::Int(0)),
+        ],
+    )
+}
+
+struct PollEntry {
+    provider_order: Vec<u8>,
+    numeric: BigInt,
+    key_ref: wasmtime::Rooted<wasmtime::AnyRef>,
+    key_json: aver::replay::JsonValue,
+    connection: aver_rt::TcpConnection,
+    connection_json: aver::replay::JsonValue,
+}
+
+fn decode_poll_entries(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: Option<&wasmtime::Val>,
+) -> Result<Vec<PollEntry>, wasmtime::Error> {
+    use wasmtime::Val;
+    let map_ref = match value {
+        Some(Val::AnyRef(Some(value))) => *value,
+        _ => return Err(wasmtime::Error::msg("Tcp.poll: connections must be a Map")),
+    };
+    let map = map_ref
+        .as_struct(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed connections Map"))?;
+    let capacity = match map.field(&mut *caller, 1)? {
+        Val::I32(capacity) if capacity >= 0 => capacity as u32,
+        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map capacity")),
+    };
+    if capacity == 0 {
+        return Ok(Vec::new());
+    }
+    let keys_ref = match map.field(&mut *caller, 2)? {
+        Val::AnyRef(Some(value)) => value,
+        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map keys")),
+    };
+    let values_ref = match map.field(&mut *caller, 3)? {
+        Val::AnyRef(Some(value)) => value,
+        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map values")),
+    };
+    let keys = keys_ref
+        .as_array(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Map keys array"))?;
+    let values = values_ref
+        .as_array(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Map values array"))?;
+    if keys.len(&*caller)? < capacity || values.len(&*caller)? < capacity {
+        return Err(wasmtime::Error::msg(
+            "Tcp.poll: Map arrays are shorter than its capacity",
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for index in 0..capacity {
+        let key_box_ref = match keys.get(&mut *caller, index)? {
+            Val::AnyRef(Some(value)) => value,
+            Val::AnyRef(None) => continue,
+            _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Int key box")),
+        };
+        let key_box = key_box_ref
+            .as_struct(&*caller)?
+            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Int key box"))?;
+        let key = key_box.field(&mut *caller, 0)?;
+        let key_ref = match &key {
+            Val::AnyRef(Some(value)) => *value,
+            _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Int key")),
+        };
+        let key = decode_guest_int(caller, &key, "Tcp.poll: malformed Int key")?;
+        let key_value = aver_rt::AverInt::from_str(&key.display)
+            .map_err(|_| wasmtime::Error::msg("Tcp.poll: malformed Int key"))?;
+        let provider_order = aver_rt::provider::provider_value_order_key(
+            &aver_rt::provider::ProviderValue::Int(key_value),
+        )
+        .map_err(wasmtime::Error::msg)?;
+
+        let connection_value = values.get(&mut *caller, index)?;
+        let id = host_tcp_connection_id(caller, Some(&connection_value))?
+            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Tcp.Connection value"))?;
+        entries.push(PollEntry {
+            provider_order,
+            numeric: key.big.clone(),
+            key_ref,
+            key_json: guest_int_json(&key),
+            connection: aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            },
+            connection_json: json_connection(&id),
+        });
+    }
+    Ok(entries)
+}
+
+fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
+    let pairs = entries
+        .iter()
+        .map(|entry| {
+            aver::replay::JsonValue::Array(vec![
+                entry.key_json.clone(),
+                entry.connection_json.clone(),
+            ])
+        })
+        .collect();
+    let mut marker = std::collections::BTreeMap::new();
+    marker.insert("$map".to_string(), aver::replay::JsonValue::Array(pairs));
+    aver::replay::JsonValue::Object(marker)
+}
+
+fn replay_poll_result(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    cached: &aver::replay::JsonValue,
+    entries: &[PollEntry],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let aver::replay::JsonValue::Object(marker) = cached else {
+        return Err(wasmtime::Error::msg(
+            "replay decode Tcp.poll: expected Result",
+        ));
+    };
+    if let Some(aver::replay::JsonValue::String(error)) = marker.get("$err") {
+        return host_result_err_list_int(caller, error);
+    }
+    let Some(aver::replay::JsonValue::Array(keys)) = marker.get("$ok") else {
+        return Err(wasmtime::Error::msg(
+            "replay decode Tcp.poll: expected List<Int> success",
+        ));
+    };
+    let mut refs = Vec::with_capacity(keys.len());
+    for key in keys {
+        let entry = entries
+            .iter()
+            .find(|entry| &entry.key_json == key)
+            .ok_or_else(|| {
+                wasmtime::Error::msg(
+                    "replay decode Tcp.poll: ready ID is absent from the input Map",
+                )
+            })?;
+        refs.push(entry.key_ref);
+    }
+    host_result_ok_list_int_refs(caller, &refs)
+}
+
+fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
+    match value.value {
+        Some(value) => aver::replay::JsonValue::Int(value),
+        None => {
+            let mut opaque = std::collections::BTreeMap::new();
+            opaque.insert(
+                "$opaque".to_string(),
+                aver::replay::JsonValue::String(value.display.clone()),
+            );
+            aver::replay::JsonValue::Object(opaque)
+        }
+    }
+}
+
+fn bytes_outcome(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    outcome: Result<Vec<u8>, String>,
+) -> Result<
+    (
+        Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+        aver::replay::JsonValue,
+    ),
+    wasmtime::Error,
+> {
+    match outcome {
+        Ok(bytes) => {
+            let ints = bytes.iter().copied().map(i64::from).collect::<Vec<_>>();
+            let json = ints
+                .iter()
+                .copied()
+                .map(aver::replay::JsonValue::Int)
+                .collect();
+            Ok((
+                host_result_ok_bytes(caller, &ints)?,
+                json_ok(json_record(
+                    "Bytes",
+                    vec![("values", aver::replay::JsonValue::Array(json))],
+                )),
+            ))
+        }
+        Err(error) => Ok((host_result_err_bytes(caller, &error)?, json_err(&error))),
+    }
+}
+
 pub(super) struct GuestInt {
     pub(super) display: String,
     pub(super) value: Option<i64>,
+    pub(super) big: BigInt,
 }
 
 pub(super) fn decode_byte_payload(
@@ -517,6 +798,7 @@ pub(super) fn decode_guest_int(
         return Ok(GuestInt {
             display: small.to_string(),
             value: Some(small),
+            big: BigInt::from(small),
         });
     };
 
@@ -540,9 +822,11 @@ pub(super) fn decode_guest_int(
         };
         limbs.push(limb);
     }
+    let big = BigInt::from_slice(sign, &limbs);
     Ok(GuestInt {
-        display: BigInt::from_slice(sign, &limbs).to_string(),
+        display: big.to_string(),
         value: None,
+        big,
     })
 }
 

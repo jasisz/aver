@@ -339,6 +339,78 @@ fn main() -> Unit
 }
 
 #[test]
+fn tcp_poll_then_read_some_records_and_replays_caller_ids_on_wasm_gc() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept Tcp.poll client");
+        stream
+            .write_all(&[249, 190, 180, 217])
+            .expect("write readable chunk");
+    });
+
+    let src = format!(
+        r#"module M
+    intent = "Poll caller-owned peer IDs and consume one bounded binary chunk."
+    depends [Bytes]
+    effects [Tcp, Console]
+
+fn report(conn: Tcp.Connection, ready: List<Int>, chunk: Bytes) -> Unit
+    ! [Tcp.close, Console.print]
+    Tcp.close(conn)
+    Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.toList(chunk) == [249, 190, 180, 217]}}")
+
+fn pollAndRead(conn: Tcp.Connection, peers: Map<Int, Tcp.Connection>) -> Unit
+    ! [Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
+    match Tcp.poll(peers, 1000)
+        Result.Err(e) -> Console.print("poll err: {{e}}")
+        Result.Ok(ready) -> match Tcp.readSome(conn, 64)
+            Result.Err(e) -> Console.print("read err: {{e}}")
+            Result.Ok(chunk) -> report(conn, ready, chunk)
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+        Result.Ok(conn) -> pollAndRead(conn, {{1208925819614629174706176 => conn}})
+"#
+    );
+    let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
+        .expect("hosted wasm-gc Tcp.poll/readSome round-trip");
+    server.join().expect("readable chunk server");
+    assert_eq!(out, "true:true\n");
+
+    let effects = recorded
+        .recorded_effects
+        .expect("record mode must return the effect trace");
+    let recording = aver::replay::SessionRecording {
+        schema_version: 1,
+        request_id: "tcp-poll-read-some-test".to_string(),
+        timestamp: String::new(),
+        program_file: String::new(),
+        module_root: String::new(),
+        entry_fn: "main".to_string(),
+        input: aver::replay::JsonValue::Null,
+        capabilities: Vec::new(),
+        effects,
+        output: aver::replay::RecordedOutcome::Value(recorded.output),
+    };
+    let (replay_stdout, replayed) = run_wasm_gc_with_mode(
+        &src,
+        aver::runtime::wasm_gc::EffectMode::Replay(Box::new(recording), true),
+    )
+    .expect("recorded Tcp.poll/readSome results must decode during replay");
+    assert!(
+        replay_stdout.is_empty(),
+        "replay must suppress Console.print"
+    );
+    assert_eq!(replayed.effects_consumed, replayed.effects_total);
+}
+
+#[test]
 fn tcp_write_bytes_records_and_replays_nominal_bytes_on_wasm_gc() {
     use std::io::Read;
     use std::net::TcpListener;

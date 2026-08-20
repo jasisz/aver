@@ -2,7 +2,7 @@ module Tcp
     kind = capability
     semantics = effectful
     depends [Bytes]
-    exposes [Connection, send, sendBytes, ping, connect, writeLine, writeBytes, readLine, readBytes, close]
+    exposes [Connection, send, sendBytes, ping, connect, poll, writeLine, writeBytes, readLine, readBytes, readSome, close]
 
 resource Connection
 
@@ -30,6 +30,12 @@ operation connect(host: String, port: Int) -> Result<Tcp.Connection, String>
     replay = recorded
     hostile = [connectNormalOk, connectAlwaysErr]
 
+operation poll(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Returns the caller-owned IDs whose connections can make read progress without blocking."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [pollNoneReady, pollAlwaysErr]
+
 operation writeLine(connection: Tcp.Connection, line: String) -> Result<Unit, String>
     ? "Writes UTF-8 text followed by CRLF to a persistent connection."
     oracle = generativeOutput
@@ -53,6 +59,12 @@ operation readBytes(connection: Tcp.Connection, count: Int) -> Result<Bytes, Str
     oracle = generativeOutput
     replay = recorded
     hostile = [readBytesNormalOk, readBytesShortRead, readBytesAlwaysErr]
+
+operation readSome(connection: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "Reads one available chunk up to maxBytes; empty Bytes means clean EOF."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [readSomeNormalOk, readSomeEof, readSomeAlwaysErr]
 
 operation close(connection: Tcp.Connection) -> Result<Unit, String>
     ? "Closes a persistent connection and invalidates its handle."
@@ -91,6 +103,20 @@ fn connectNormalOk(branch: BranchPath, call: Int, fresh: Tcp.Connection, host: S
 fn connectAlwaysErr(branch: BranchPath, call: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
     ? "hostile: cannot establish connection"
     Result.Err("hostile: refused")
+
+fn pollNoneReady(branch: BranchPath, call: Int, connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "honest: no connection becomes readable before the timeout"
+    match timeoutMs > 9223372036854775807
+        true -> Result.Err("Tcp.poll: timeoutMs {timeoutMs} exceeds the poll limit")
+        false -> match timeoutMs < 0 - 9223372036854775808
+            true -> Result.Err("Tcp.poll: timeoutMs {timeoutMs} exceeds the poll limit")
+            false -> match timeoutMs < 0
+                true -> Result.Err("Tcp.poll: timeoutMs {timeoutMs} is negative")
+                false -> Result.Ok([])
+
+fn pollAlwaysErr(branch: BranchPath, call: Int, connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "hostile: readiness polling fails"
+    Result.Err("hostile: poll failed")
 
 fn writeLineNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, line: String) -> Result<Unit, String>
     ? "honest: connection write succeeds"
@@ -134,6 +160,26 @@ fn readBytesShortRead(branch: BranchPath, call: Int, connection: Tcp.Connection,
 
 fn readBytesAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, count: Int) -> Result<Bytes, String>
     ? "hostile: byte read fails"
+    Result.Err("hostile: read failed")
+
+fn readSomeNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "honest: one byte is available without filling the requested maximum"
+    match maxBytes > 9223372036854775807
+        true -> Result.Err("Tcp.readSome: maxBytes {maxBytes} exceeds the read limit")
+        false -> match maxBytes < 0 - 9223372036854775808
+            true -> Result.Err("Tcp.readSome: maxBytes {maxBytes} exceeds the read limit")
+            false -> match maxBytes <= 0
+                true -> Result.Err("Tcp.readSome: maxBytes {maxBytes} must be positive")
+                false -> match maxBytes > 10485760
+                    true -> Result.Err("Tcp.readSome: maxBytes {maxBytes} exceeds the 10485760 byte limit")
+                    false -> Result.Ok(Bytes.fromList([0]))
+
+fn readSomeEof(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "honest boundary: clean EOF returns empty Bytes"
+    Result.Ok(Bytes.fromList([]))
+
+fn readSomeAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
+    ? "hostile: chunk read fails"
     Result.Err("hostile: read failed")
 
 fn closeNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<Unit, String>
