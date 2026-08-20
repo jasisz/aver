@@ -65,7 +65,7 @@ pub use branch_collapse::branch_collapse;
 pub use const_fold::const_fold;
 pub use dead_code::dead_code;
 pub use inline::inline_nullary_literals;
-pub use own_param::own_param_refine;
+pub use own_param::{own_param_refine, own_param_refine_for_rust};
 
 /// The canonical Core-MIR optimization pipeline: the passes applied
 /// in dependency order

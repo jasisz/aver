@@ -2334,17 +2334,76 @@ fn main() -> Unit
     );
 }
 
-// ─── fn-result arguments never carry ownership ──────────────────────────
+/// Issue #890 on the emitted backend: extracting `Map.set` into a named
+/// Map-returning helper must not change a linear fold from an owned move into
+/// a borrowed clone. The behavioral half checks VM/Rust parity; the emitted
+/// shape is the performance regression guard, because both spellings compute
+/// the same value even when the borrowed one copies the whole table.
+#[test]
+fn rust_map_helper_result_preserves_the_owned_move() {
+    let relative = "tests/fixtures/rust_map_helper_return.av";
+    assert_plain_parity(relative, None).expect("helper-return Map must match the VM");
+
+    let file = repo_root().join(relative);
+    let ws = temp_dir("map_helper_return_emit");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("project dir");
+    compile_rust(&file, &project, "map_helper_return", None, &[]).expect("compile rust");
+    let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let _ = fs::remove_dir_all(&ws);
+
+    assert!(
+        emitted.contains("pub fn setOne(key: AverStr, mut into: aver_rt::AverMap"),
+        "setOne must take its Map by value after return-alias analysis:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("into.insert_owned(key, AverStr::from(\"v\"))"),
+        "setOne must move the owned Map into insert_owned:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("let __tco1 = setOne(head, into);"),
+        "the recursive fold must move its accumulator through setOne:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("pub fn setOneResult(key: AverStr, mut into: aver_rt::AverMap"),
+        "the Rust-only pass must graduate a Map carried by Result:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("Ok(into.insert_owned(key, AverStr::from(\"v\")))"),
+        "Result.Ok must wrap the owned Map successor without cloning:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("let __tco1 = setOneResult(head, into)?;"),
+        "Result `?` must preserve the owned accumulator move:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("pub fn setStoreOne(key: AverStr, mut store: Store)"),
+        "a returned Store successor must take the record by value:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("values: store.values.insert_owned(key, AverStr::from(\"v\"))"),
+        "the replaced Map field must move out of Store without a forced clone:\n{emitted}"
+    );
+    assert!(
+        !emitted.contains("store.values.clone().insert_owned"),
+        "the record-wrapped Map path must not force quadratic COW:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("let __tco1 = setStoreOne(head, store)?;"),
+        "the Store fold must move its accumulator through the helper:\n{emitted}"
+    );
+}
+
+// ─── fn-result alias summaries preserve caller aliases ─────────────────
 //
-// `own_param`'s `uniquely_owned` answers `false` for the result of a user
-// fn call (the `MirCallee::Fn` arm): a callee may hand back one of its own
-// arguments, so the result can share a collection the caller still holds.
-// Both shapes below feed a call result STRAIGHT into another call's
-// argument — never through a `let`, which is what keeps the decision on
-// that arm instead of on the binding rules — while the caller keeps its own
-// handle on the same collection and reads it back AFTER the call. Granting
-// ownership there lets the callee mutate the caller's collection in place,
-// so the original changes under it.
+// A named function result may grant ownership only through the complete
+// return-alias summary: every parameter whose backing it can return must have
+// received a uniquely-owned argument. A first-class fn value has no static
+// summary and remains unknown. Both shapes below feed a call result STRAIGHT
+// into another call's argument while the caller keeps its own handle and
+// reads it afterwards. The named `keepFirst` summary is `{a, b}`, and `a` is
+// not at last use; granting ownership would mutate the caller's collection.
 //
 // The VM-vs-`expected` assert is the only one that can go red for this
 // class, and it is checked FIRST: the VM is where a wrong grant corrupts

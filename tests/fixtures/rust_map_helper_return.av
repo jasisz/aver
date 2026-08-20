@@ -1,0 +1,54 @@
+module RustMapHelperReturn
+    intent = "A named Map-returning helper preserves linear ownership through a recursive fold."
+    depends []
+    effects [Console.print]
+
+record Store
+    values: Map<String, String>
+
+fn setOne(key: String, into: Map<String, String>) -> Map<String, String>
+    ? "Insert one value and return the successor Map."
+    Map.set(into, key, "v")
+
+fn viaHelper(keys: List<String>, into: Map<String, String>) -> Map<String, String>
+    ? "Build the Map while routing each insertion through setOne."
+    match keys
+        [] -> into
+        [head, ..tail] -> viaHelper(tail, setOne(head, into))
+
+fn setOneResult(key: String, into: Map<String, String>) -> Result<Map<String, String>, String>
+    ? "Insert one value and wrap the successor Map."
+    Result.Ok(Map.set(into, key, "v"))
+
+fn viaResult(keys: List<String>, into: Map<String, String>) -> Result<Map<String, String>, String>
+    ? "Build the Map through a Result-returning helper."
+    match keys
+        [] -> Result.Ok(into)
+        [head, ..tail] -> viaResult(tail, setOneResult(head, into)?)
+
+fn resultCount() -> Result<Int, String>
+    ? "Count the Map built through the Result wrapper."
+    built = viaResult(["a", "b", "c"], {})?
+    Result.Ok(Map.len(built))
+
+fn setStoreOne(key: String, store: Store) -> Result<Store, String>
+    ? "Insert one value into the Map carried by Store."
+    Result.Ok(Store.update(store, values = Map.set(store.values, key, "v")))
+
+fn viaStore(keys: List<String>, store: Store) -> Result<Store, String>
+    ? "Build a Store through a Result-returning helper."
+    match keys
+        [] -> Result.Ok(store)
+        [head, ..tail] -> viaStore(tail, setStoreOne(head, store)?)
+
+fn storeCount() -> Result<Int, String>
+    ? "Count the Map built through the Store wrapper."
+    built = viaStore(["a", "b", "c"], Store(values = {}))?
+    Result.Ok(Map.len(built.values))
+
+fn main() -> Unit
+    ! [Console.print]
+    bare = Map.len(viaHelper(["a", "b", "c"], {}))
+    wrapped = Result.withDefault(resultCount(), 0)
+    stored = Result.withDefault(storeCount(), 0)
+    Console.print("{bare}/{wrapped}/{stored}")
