@@ -376,84 +376,79 @@ pub(super) fn validate_boundary_type_ownership(
     scope: &str,
     operations: &[CapabilityOperation],
     locally_declared: &BTreeSet<String>,
+    dependencies: &[String],
     errors: &mut Vec<CapabilityError>,
 ) {
-    fn visit(
-        scope: &str,
-        operation: &CapabilityOperation,
-        position: &str,
-        ty: &Type,
-        locally_declared: &BTreeSet<String>,
-        seen: &mut BTreeSet<(String, String)>,
-        errors: &mut Vec<CapabilityError>,
-    ) {
+    for operation in operations {
+        let mut visitor = BoundaryTypeVisitor {
+            scope,
+            operation,
+            locally_declared,
+            dependencies,
+            seen: BTreeSet::new(),
+            errors,
+        };
+        for (index, (_, ty)) in operation.params.iter().enumerate() {
+            visitor.visit(&format!("parameter {index}"), ty);
+        }
+        visitor.visit("result", &operation.return_type);
+    }
+}
+
+struct BoundaryTypeVisitor<'a, 'errors> {
+    scope: &'a str,
+    operation: &'a CapabilityOperation,
+    locally_declared: &'a BTreeSet<String>,
+    dependencies: &'a [String],
+    seen: BTreeSet<(String, String)>,
+    errors: &'errors mut Vec<CapabilityError>,
+}
+
+impl BoundaryTypeVisitor<'_, '_> {
+    fn visit(&mut self, position: &str, ty: &Type) {
         match ty {
             Type::Named { name, .. } => {
                 let belongs_to_capability = match name.rsplit_once('.') {
-                    Some((owner, _)) => owner == scope,
-                    None => locally_declared.contains(name),
+                    Some((owner, _)) => owner == self.scope,
+                    None => self.locally_declared.contains(name),
                 };
-                if !belongs_to_capability && seen.insert((position.to_string(), name.to_string())) {
-                    errors.push(CapabilityError::at(
-                        operation.line,
+                // `Bytes` is a compiler-owned semantic wire type: Aver keeps
+                // its source representation nominal and opaque, while the
+                // provider ABI carries canonical octets. A capability must
+                // still name the dependency explicitly so a coincidental
+                // foreign `Bytes` spelling cannot acquire this privilege.
+                let is_standard_bytes = !self.locally_declared.contains("Bytes")
+                    && self
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency == "Bytes")
+                    && matches!(name.as_str(), "Bytes" | "Bytes.Bytes");
+                if !belongs_to_capability
+                    && !is_standard_bytes
+                    && self.seen.insert((position.to_string(), name.to_string()))
+                {
+                    self.errors.push(CapabilityError::at(
+                        self.operation.line,
                         format!(
                             "operation '{}' {} uses cross-module boundary type '{}'; capability contract v1 requires named boundary types to be declared in the capability module so their layout is bound by contract_hash",
-                            operation.canonical_name, position, name
+                            self.operation.canonical_name, position, name
                         ),
                     ));
                 }
             }
             Type::Result(left, right) | Type::Map(left, right) => {
-                visit(
-                    scope,
-                    operation,
-                    position,
-                    left,
-                    locally_declared,
-                    seen,
-                    errors,
-                );
-                visit(
-                    scope,
-                    operation,
-                    position,
-                    right,
-                    locally_declared,
-                    seen,
-                    errors,
-                );
+                self.visit(position, left);
+                self.visit(position, right);
             }
-            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => visit(
-                scope,
-                operation,
-                position,
-                inner,
-                locally_declared,
-                seen,
-                errors,
-            ),
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.visit(position, inner);
+            }
             Type::Tuple(items) | Type::Fn(items, _, _) => {
                 for item in items {
-                    visit(
-                        scope,
-                        operation,
-                        position,
-                        item,
-                        locally_declared,
-                        seen,
-                        errors,
-                    );
+                    self.visit(position, item);
                 }
                 if let Type::Fn(_, ret, _) = ty {
-                    visit(
-                        scope,
-                        operation,
-                        position,
-                        ret,
-                        locally_declared,
-                        seen,
-                        errors,
-                    );
+                    self.visit(position, ret);
                 }
             }
             Type::Int
@@ -464,29 +459,5 @@ pub(super) fn validate_boundary_type_ownership(
             | Type::Var(_)
             | Type::Invalid => {}
         }
-    }
-
-    for operation in operations {
-        let mut seen = BTreeSet::new();
-        for (index, (_, ty)) in operation.params.iter().enumerate() {
-            visit(
-                scope,
-                operation,
-                &format!("parameter {index}"),
-                ty,
-                locally_declared,
-                &mut seen,
-                errors,
-            );
-        }
-        visit(
-            scope,
-            operation,
-            "result",
-            &operation.return_type,
-            locally_declared,
-            &mut seen,
-            errors,
-        );
     }
 }

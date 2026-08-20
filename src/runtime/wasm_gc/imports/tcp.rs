@@ -369,12 +369,12 @@ pub(super) fn dispatch(
     }
 }
 
-struct GuestInt {
-    display: String,
-    value: Option<i64>,
+pub(super) struct GuestInt {
+    pub(super) display: String,
+    pub(super) value: Option<i64>,
 }
 
-fn decode_byte_payload(
+pub(super) fn decode_byte_payload(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     val: Option<&wasmtime::Val>,
     effect: &'static str,
@@ -481,7 +481,7 @@ fn decode_byte_payload(
     ))
 }
 
-fn decode_guest_int(
+pub(super) fn decode_guest_int(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     val: &wasmtime::Val,
     malformed: &str,

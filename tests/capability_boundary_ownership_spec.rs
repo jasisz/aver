@@ -19,18 +19,18 @@ fn command_report(output: &Output) -> String {
 
 fn write_fixture(root: &Path) {
     fs::write(
-        root.join("Bytes.av"),
-        "module Bytes\n    exposes [Bytes]\n\nrecord Bytes\n    values: List<Int>\n",
+        root.join("Payload.av"),
+        "module Payload\n    exposes [Blob]\n\nrecord Blob\n    values: List<Int>\n",
     )
-    .expect("write Bytes module");
+    .expect("write Payload module");
     fs::write(
         root.join("Ripemd.av"),
-        "module Ripemd\n    kind = capability\n    semantics = pure\n    exposes [hash160]\n    depends [Bytes]\n\noperation hash160(input: Bytes) -> Bytes\n    ? \"Hash bytes.\"\n",
+        "module Ripemd\n    kind = capability\n    semantics = pure\n    exposes [hash160]\n    depends [Payload]\n\noperation hash160(input: Blob) -> Blob\n    ? \"Hash bytes.\"\n",
     )
     .expect("write capability module");
     fs::write(
         root.join("main.av"),
-        "module Main\n    depends [Bytes, Ripemd]\n    exposes [main]\n\nfn main() -> Int\n    0\n",
+        "module Main\n    depends [Payload, Ripemd]\n    exposes [main]\n\nfn main() -> Int\n    0\n",
     )
     .expect("write entry module");
 }
@@ -59,12 +59,12 @@ fn imported_bare_boundary_type_is_rejected_before_contract_hash_publication() {
         );
         let report = command_report(&output);
         assert!(
-            report.contains("cross-module boundary type 'Bytes'")
+            report.contains("cross-module boundary type 'Blob'")
                 && report.contains("contract_hash"),
             "{command} missed the static contract diagnostic:\n{report}"
         );
         assert_eq!(
-            report.matches("cross-module boundary type 'Bytes'").count(),
+            report.matches("cross-module boundary type 'Blob'").count(),
             2,
             "{command} should report the parameter and result once each:\n{report}"
         );
@@ -77,7 +77,7 @@ fn imported_bare_boundary_type_is_rejected_before_contract_hash_publication() {
             let lower = report.to_lowercase();
             assert!(
                 lower.contains("at: ripemd.av:7:1")
-                    && report.contains("operation hash160(input: Bytes) -> Bytes")
+                    && report.contains("operation hash160(input: Blob) -> Blob")
                     && !lower.contains("at: main.av:7:1"),
                 "check did not render the capability module's source location:\n{report}"
             );
@@ -90,7 +90,7 @@ fn imported_bare_boundary_type_is_rejected_before_contract_hash_publication() {
             "{command} published a hash for an invalid contract:\n{report}"
         );
         assert!(
-            !report.contains("Ripemd.Bytes"),
+            !report.contains("Ripemd.Blob"),
             "{command} invented a capability-owned type name:\n{report}"
         );
     }

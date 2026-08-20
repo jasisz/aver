@@ -447,6 +447,53 @@ pub(crate) fn host_result_err_bytes(
     })
 }
 
+pub(crate) fn host_result_ok_int(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: i64,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let from_i64 = caller
+        .get_export("__rt_aint_from_i64")
+        .and_then(|export| export.into_func());
+    let factory = caller
+        .get_export("__rt_result_int_string_ok")
+        .and_then(|export| export.into_func());
+    let (Some(from_i64), Some(factory)) = (from_i64, factory) else {
+        return Ok(None);
+    };
+    let mut int = [Val::AnyRef(None)];
+    from_i64.call(&mut *caller, &[Val::I64(value)], &mut int)?;
+    let mut result = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &int, &mut result)?;
+    Ok(match &result[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_err_int(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let text = match lm_string_from_host(caller, text)? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_int_string_err")
+        .and_then(|export| export.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut result = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(text))], &mut result)?;
+    Ok(match &result[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    })
+}
+
 /// Build a `Result<String,String>::Ok(text)` ref by calling the
 /// module's exported factory `__rt_result_string_string_ok`. Returns
 /// `Ok(None)` if the factory or string bridge isn't exported (the

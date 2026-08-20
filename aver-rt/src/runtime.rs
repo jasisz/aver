@@ -132,6 +132,67 @@ pub fn append_text(path: &str, content: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| e.to_string())
+}
+
+/// Read at most `length` octets starting at `offset`.
+///
+/// Reaching EOF is successful: the returned vector may be shorter than the
+/// requested length, and an offset at or beyond EOF returns an empty vector.
+pub fn read_bytes_at(
+    path: &str,
+    offset: &crate::AverInt,
+    length: &crate::AverInt,
+) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek};
+
+    let offset = offset
+        .to_i64()
+        .ok_or_else(|| "Disk.readBytesAt: offset must fit a 64-bit integer".to_string())?;
+    let length = length
+        .to_i64()
+        .ok_or_else(|| "Disk.readBytesAt: length must fit a 64-bit integer".to_string())?;
+    if offset < 0 {
+        return Err("Disk.readBytesAt: offset must be non-negative".to_string());
+    }
+    if length < 0 {
+        return Err("Disk.readBytesAt: length must be non-negative".to_string());
+    }
+
+    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    file.seek(std::io::SeekFrom::Start(offset as u64))
+        .map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(length as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(bytes)
+}
+
+pub fn file_size(path: &str) -> Result<crate::AverInt, String> {
+    std::fs::metadata(path)
+        .map(|metadata| crate::AverInt::from_bigint(num_bigint::BigInt::from(metadata.len())))
+        .map_err(|error| error.to_string())
+}
+
+pub fn write_bytes(path: &str, content: &[u8]) -> Result<(), String> {
+    std::fs::write(path, content)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+pub fn append_bytes(path: &str, content: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(content).map_err(|e| e.to_string())
+}
+
 pub fn path_exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
 }
@@ -267,4 +328,66 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
     let month = mp + if mp < 10 { 3 } else { -9 };
     let year = y + if month <= 2 { 1 } else { 0 };
     (year as i32, month as u32, day as u32)
+}
+
+#[cfg(test)]
+mod disk_binary_tests {
+    use super::{append_bytes, file_size, read_bytes, read_bytes_at, write_bytes};
+    use crate::AverInt;
+
+    fn temp_file() -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("aver-rt-disk-bytes-{nonce}.bin"))
+    }
+
+    #[test]
+    fn positional_reads_are_bounded_and_eof_is_short() {
+        let path = temp_file();
+        let path_text = path.to_string_lossy();
+        write_bytes(&path_text, &[0, 127, 128, 255]).expect("write bytes");
+        append_bytes(&path_text, &[1, 2]).expect("append bytes");
+
+        assert_eq!(
+            read_bytes(&path_text).expect("read bytes"),
+            [0, 127, 128, 255, 1, 2]
+        );
+        assert_eq!(
+            read_bytes_at(&path_text, &AverInt::from_i64(2), &AverInt::from_i64(99))
+                .expect("short EOF read"),
+            [128, 255, 1, 2]
+        );
+        assert_eq!(
+            read_bytes_at(
+                &path_text,
+                &AverInt::from_i64(0),
+                &AverInt::from_i64(5_000_000_000),
+            )
+            .expect("large upper bound with early EOF"),
+            [0, 127, 128, 255, 1, 2]
+        );
+        assert!(
+            read_bytes_at(&path_text, &AverInt::from_i64(99), &AverInt::from_i64(4))
+                .expect("past EOF read")
+                .is_empty()
+        );
+        assert_eq!(
+            file_size(&path_text).expect("file size"),
+            AverInt::from_i64(6)
+        );
+        assert!(
+            read_bytes_at(&path_text, &AverInt::from_i64(-1), &AverInt::from_i64(1))
+                .expect_err("negative offset")
+                .contains("offset must be non-negative")
+        );
+        assert!(
+            read_bytes_at(&path_text, &AverInt::from_i64(0), &AverInt::from_i64(-1))
+                .expect_err("negative length")
+                .contains("length must be non-negative")
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
 }

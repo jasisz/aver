@@ -463,6 +463,13 @@ pub(super) struct Wasip2Lowering {
     /// `__rt_disk_write_text` flipped to append mode (no
     /// truncate, append-via-stream instead of write-via-stream).
     pub(super) disk_append_text_fn_idx: Option<u32>,
+    /// Whole-file binary Disk adapters reuse raw-octet filesystem helpers;
+    /// positional reads and metadata size have dedicated WASI bindings.
+    pub(super) disk_read_bytes_fn_idx: Option<u32>,
+    pub(super) disk_read_bytes_at_fn_idx: Option<u32>,
+    pub(super) disk_write_bytes_fn_idx: Option<u32>,
+    pub(super) disk_append_bytes_fn_idx: Option<u32>,
+    pub(super) disk_size_fn_idx: Option<u32>,
     /// Phase 1.5.4 — single-call wasi ops sharing
     /// `emit_disk_simple_path_op` (preopen + path marshalling +
     /// 4-byte retptr + tag check). One fn each per Aver effect

@@ -411,10 +411,13 @@ user already wrote is not re-run.
 | `Env.get` | `normal`, `missing`, `empty` |
 | `Terminal.size` | `normal` (80×24), `minimal` (1×1) |
 | `Disk.readText` / `exists` / `listDir` | `normal` + `always_err` + format-specific (`empty_ok`, `never`, `always`) |
+| `Disk.readBytes` | `normal`, `always_err`, `empty_ok` |
+| `Disk.readBytesAt` | `normal`, `always_err`, `short_ok` (EOF before the requested upper bound) |
+| `Disk.size` | `normal`, `zero`, `always_err` |
 | `Console.readLine` | `normal`, `eof`, `empty` |
 | `Terminal.readKey` | `normal`, `no_input` |
 | `Http.{get,head,delete,post,put,patch}` | `normal_ok`, `always_err` |
-| `Disk.{writeText,appendText,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
+| `Disk.{writeText,appendText,writeBytes,appendBytes,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
 | `Tcp.{send,sendBytes,ping,readLine,writeLine,close}` | `normal_ok`, `always_err` |
 | `Tcp.readBytes` | `normal_ok`, `short_read`, `always_err` |
 | `Tcp.writeBytes` | `normal_ok`, `always_err` |

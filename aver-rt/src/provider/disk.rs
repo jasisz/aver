@@ -1,10 +1,10 @@
 use super::{CapabilityProvider, ProviderContext, ProviderFault, ProviderValue};
 
 /// Standard native Disk provider shared by the bytecode VM and generated
-/// Rust artifacts. The eight text operations of the canonical
-/// `stdlib/capabilities/disk.av` contract lower onto the shared
-/// `aver_rt` filesystem helpers; wasm targets keep their own host/WASI
-/// adapters of the same contract.
+/// Rust artifacts. All thirteen operations of the canonical
+/// `stdlib/capabilities/disk.av` contract lower onto shared `aver_rt`
+/// filesystem helpers; wasm targets keep host/WASI adapters of the same
+/// contract.
 pub struct StandardDiskProvider;
 
 pub const STANDARD_DISK_NATIVE_IDENTITY: &str = "aver.standard.Disk/native";
@@ -69,6 +69,40 @@ impl CapabilityProvider for StandardDiskProvider {
                 )),
             }
         }
+        fn path_and_bytes<'a>(
+            operation: &str,
+            args: &'a [ProviderValue],
+        ) -> Result<(&'a str, &'a [u8]), ProviderFault> {
+            match args {
+                [ProviderValue::String(path), ProviderValue::Bytes(content)] => Ok((path, content)),
+                _ => Err(ProviderFault::new(
+                    "invalid_arguments",
+                    format!(
+                        "{operation} expects (String path, Bytes content), got {} argument(s)",
+                        args.len()
+                    ),
+                )),
+            }
+        }
+        fn path_offset_length<'a>(
+            operation: &str,
+            args: &'a [ProviderValue],
+        ) -> Result<(&'a str, &'a crate::AverInt, &'a crate::AverInt), ProviderFault> {
+            match args {
+                [
+                    ProviderValue::String(path),
+                    ProviderValue::Int(offset),
+                    ProviderValue::Int(length),
+                ] => Ok((path, offset, length)),
+                _ => Err(ProviderFault::new(
+                    "invalid_arguments",
+                    format!(
+                        "{operation} expects (String path, Int offset, Int length), got {} argument(s)",
+                        args.len()
+                    ),
+                )),
+            }
+        }
         let operation = context.operation.as_str();
         match operation {
             "Disk.readText" => disk_result(
@@ -82,6 +116,28 @@ impl CapabilityProvider for StandardDiskProvider {
             "Disk.appendText" => {
                 let (path, content) = path_and_content(operation, args)?;
                 disk_result(crate::append_text(path, content), |_| ProviderValue::Unit)
+            }
+            "Disk.readBytes" => disk_result(
+                crate::read_bytes(path(operation, args)?),
+                ProviderValue::Bytes,
+            ),
+            "Disk.readBytesAt" => {
+                let (path, offset, length) = path_offset_length(operation, args)?;
+                disk_result(
+                    crate::read_bytes_at(path, offset, length),
+                    ProviderValue::Bytes,
+                )
+            }
+            "Disk.writeBytes" => {
+                let (path, content) = path_and_bytes(operation, args)?;
+                disk_result(crate::write_bytes(path, content), |_| ProviderValue::Unit)
+            }
+            "Disk.appendBytes" => {
+                let (path, content) = path_and_bytes(operation, args)?;
+                disk_result(crate::append_bytes(path, content), |_| ProviderValue::Unit)
+            }
+            "Disk.size" => {
+                disk_result(crate::file_size(path(operation, args)?), ProviderValue::Int)
             }
             "Disk.exists" => Ok(ProviderValue::Bool(crate::path_exists(path(
                 operation, args,

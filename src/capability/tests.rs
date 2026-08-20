@@ -275,7 +275,7 @@ fn semantic_classes_reject_unsound_attribute_combinations() {
     }));
 
     let bare_external_boundary = error_messages(
-        "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Bytes]\n\noperation f(value: Bytes) -> Bytes\n",
+        "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Other]\n\noperation f(value: Blob) -> Blob\n",
     );
     assert_eq!(
         bare_external_boundary.len(),
@@ -283,30 +283,64 @@ fn semantic_classes_reject_unsound_attribute_combinations() {
         "{bare_external_boundary:?}"
     );
     assert!(bare_external_boundary.iter().any(|error| {
-        error.contains("operation 'Invalid.f' parameter 0 uses cross-module boundary type 'Bytes'")
+        error.contains("operation 'Invalid.f' parameter 0 uses cross-module boundary type 'Blob'")
             && error.contains("contract_hash")
     }));
     assert!(bare_external_boundary.iter().any(|error| {
-        error.contains("operation 'Invalid.f' result uses cross-module boundary type 'Bytes'")
+        error.contains("operation 'Invalid.f' result uses cross-module boundary type 'Blob'")
             && error.contains("contract_hash")
     }));
     assert!(
         bare_external_boundary
             .iter()
-            .all(|error| !error.contains("Invalid.Bytes")),
+            .all(|error| !error.contains("Invalid.Blob")),
         "a bare imported type must not be misqualified as capability-owned: {bare_external_boundary:?}"
     );
 
     let repeated_in_one_position = error_messages(
-        "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Bytes]\n\noperation f(value: Tuple<Bytes, Bytes>) -> Int\n",
+        "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Other]\n\noperation f(value: Tuple<Blob, Blob>) -> Int\n",
     );
     assert_eq!(
         repeated_in_one_position
             .iter()
-            .filter(|error| error.contains("cross-module boundary type 'Bytes'"))
+            .filter(|error| error.contains("cross-module boundary type 'Blob'"))
             .count(),
         1,
         "the same foreign type should be reported once per position: {repeated_in_one_position:?}"
+    );
+}
+
+#[test]
+fn standard_bytes_is_a_canonical_capability_wire_type() {
+    let source = "module Binary\n    kind = capability\n    semantics = pure\n    depends [Bytes]\n\noperation echo(value: Bytes) -> Bytes\n";
+    let items = crate::source::parse_source(source).expect("parse Bytes capability");
+    let (registry, errors) = CapabilityRegistry::from_module("Binary", &items);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(registry.uses_standard_bytes());
+
+    let contract = registry.contract("Binary").expect("Binary contract");
+    let descriptor = String::from_utf8_lossy(&contract.contract_descriptor);
+    assert!(descriptor.contains("Aver::Bytes = octets"), "{descriptor}");
+    assert!(
+        descriptor.contains("echo(Aver::Bytes) -> Aver::Bytes"),
+        "{descriptor}"
+    );
+}
+
+#[test]
+fn capability_owned_bytes_is_not_the_standard_wire_type() {
+    let source = "module Binary\n    kind = capability\n    semantics = pure\n\nrecord Bytes\n    values: List<Int>\n\noperation echo(value: Bytes) -> Bytes\n";
+    let items = crate::source::parse_source(source).expect("parse local Bytes capability");
+    let (registry, errors) = CapabilityRegistry::from_module("Binary", &items);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(!registry.uses_standard_bytes());
+
+    let contract = registry.contract("Binary").expect("Binary contract");
+    let descriptor = String::from_utf8_lossy(&contract.contract_descriptor);
+    assert!(!descriptor.contains("Aver::Bytes = octets"), "{descriptor}");
+    assert!(
+        descriptor.contains("Binary::Bytes = record"),
+        "{descriptor}"
     );
 }
 

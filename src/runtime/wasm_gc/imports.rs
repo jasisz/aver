@@ -51,11 +51,12 @@ mod time;
 
 pub(super) use factories::{
     host_http_response_make, host_map_string_list_string_empty, host_option_string_none,
-    host_option_string_some, host_result_err_bytes, host_result_err_list_string,
-    host_result_err_string, host_result_err_unit_string, host_result_http_response_err,
-    host_result_http_response_ok, host_result_ok_bytes, host_result_ok_list_string,
-    host_result_ok_string, host_result_ok_unit, host_result_tcp_connection_err,
-    host_result_tcp_connection_ok, host_tcp_connection_make, host_terminal_size_make,
+    host_option_string_some, host_result_err_bytes, host_result_err_int,
+    host_result_err_list_string, host_result_err_string, host_result_err_unit_string,
+    host_result_http_response_err, host_result_http_response_ok, host_result_ok_bytes,
+    host_result_ok_int, host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
+    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_make,
+    host_terminal_size_make,
 };
 pub(super) use lm::lm_string_from_host;
 

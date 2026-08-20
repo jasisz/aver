@@ -161,6 +161,50 @@ pub(super) fn opaque_types_by_module(
     out
 }
 
+/// `Bytes` is nominal source data but canonical octets at a provider boundary.
+/// Emit this inside the generated `Bytes` module so it can project the opaque
+/// record without exposing that representation to providers.
+pub(super) fn emit_standard_bytes_codec() -> String {
+    r#"impl aver_rt::provider::ProviderCodec for Bytes {
+    fn into_provider_value(
+        self,
+        _registry: &aver_rt::provider::NativeProviderRegistry,
+        _capability: &str,
+    ) -> Result<aver_rt::provider::ProviderValue, String> {
+        let mut bytes = Vec::with_capacity(self.values.len());
+        for (index, value) in self.values.iter().enumerate() {
+            let Some(value) = value.to_i64() else {
+                return Err(format!("Bytes value at index {} is outside the host integer range", index));
+            };
+            let byte = u8::try_from(value)
+                .map_err(|_| format!("byte {} at index {} is outside 0..=255", value, index))?;
+            bytes.push(byte);
+        }
+        Ok(aver_rt::provider::ProviderValue::Bytes(bytes))
+    }
+
+    fn from_provider_value(
+        value: aver_rt::provider::ProviderValue,
+        _registry: &aver_rt::provider::NativeProviderRegistry,
+        _capability: &str,
+        _minted_resource: Option<&str>,
+    ) -> Result<Self, String> {
+        match value {
+            aver_rt::provider::ProviderValue::Bytes(bytes) => Ok(Self {
+                values: aver_rt::AverList::from_vec(
+                    bytes
+                        .into_iter()
+                        .map(|byte| aver_rt::AverInt::from(i64::from(byte)))
+                        .collect(),
+                ),
+            }),
+            other => Err(format!("expected Bytes, got {}", other.shape())),
+        }
+    }
+}"#
+        .to_string()
+}
+
 pub(super) fn emit_opaque_type(module: &str, name: &str, with_replay: bool) -> String {
     let canonical = format!("{module}.{name}");
     let flat = canonical.replace('.', "_");

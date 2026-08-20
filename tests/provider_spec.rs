@@ -695,6 +695,72 @@ fn main() -> Result<String, String>
         .expect("Disk transcript consumed");
 }
 
+#[test]
+fn standard_disk_bytes_preserve_octets_and_replay_offline() {
+    let root = temp_root("disk-bytes-recorded-replay");
+    let file = root.join("vanishing.bin");
+    fs::write(
+        root.join("main.av"),
+        format!(
+            "\
+module Client
+    depends [Bytes]
+    exposes [main]
+    effects [Disk.writeBytes, Disk.appendBytes, Disk.readBytesAt, Disk.readBytes, Disk.size]
+
+fn main() -> Result<String, String>
+    ! [Disk.writeBytes, Disk.appendBytes, Disk.readBytesAt, Disk.readBytes, Disk.size]
+    written = Disk.writeBytes({path:?}, Bytes.fromList([0, 127, 128, 255]))?
+    appended = Disk.appendBytes({path:?}, Bytes.fromList([1, 2]))?
+    slice = Disk.readBytesAt({path:?}, 2, 99)?
+    past = Disk.readBytesAt({path:?}, 99, 4)?
+    content = Disk.readBytes({path:?})?
+    size = Disk.size({path:?})?
+    Result.Ok(\"{{Bytes.toHex(content)}}:{{Bytes.toHex(slice)}}:{{Bytes.toHex(past)}}:{{size}}\")
+",
+            path = file.to_string_lossy()
+        ),
+    )
+    .expect("write entry");
+
+    let expected = Value::Ok(Box::new(Value::Str("007f80ff0102:80ff0102::6".to_string())));
+    let (mut recording_vm, contracts) = compile_vm(&root, "main.av");
+    let providers = ProviderRegistry::for_program(contracts.clone()).expect("standard registry");
+    let provenance = providers.provenance();
+    recording_vm.set_provider_registry(Arc::new(providers));
+    recording_vm.start_recording();
+    let recorded = recording_vm
+        .run()
+        .expect("record Disk byte operations")
+        .to_value(&recording_vm.arena);
+    assert_eq!(recorded, expected);
+    assert_eq!(
+        fs::read(&file).expect("read bytes"),
+        [0, 127, 128, 255, 1, 2]
+    );
+    let effects = recording_vm.recorded_effects().to_vec();
+    assert_eq!(effects.len(), 6);
+
+    fs::remove_file(&file).expect("remove the recorded file");
+
+    let (mut replay_vm, replay_contracts) = compile_vm(&root, "main.av");
+    let replay_providers =
+        ProviderRegistry::for_program(replay_contracts).expect("standard registry");
+    replay_vm.set_provider_registry(Arc::new(replay_providers));
+    replay_vm
+        .start_replay_with_provenance(effects, &provenance, true)
+        .expect("Disk byte replay provenance");
+    let replayed = replay_vm
+        .run()
+        .expect("offline Disk byte replay")
+        .to_value(&replay_vm.arena);
+    assert_eq!(replayed, expected);
+    assert!(!file.exists(), "offline replay must not recreate the file");
+    replay_vm
+        .ensure_replay_consumed()
+        .expect("Disk byte transcript consumed");
+}
+
 struct PureCounterProvider {
     calls: Arc<AtomicUsize>,
     fingerprint: &'static str,
@@ -1209,7 +1275,7 @@ fn check_and_rust_compile_report_standard_binding_identities() {
     );
     assert!(
         provider_support
-            .contains("sha256:d134b487a92f2094eb6ad478bff0984c5a481577df07a7f993652e9bc1f9d537")
+            .contains("sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23")
     );
 }
 
@@ -1227,6 +1293,58 @@ fn wasm_gc_runs_standard_capabilities_through_registered_bindings() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert!(run.status.success(), "{report}");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn wasm_gc_disk_binary_bindings_preserve_octets_and_short_eof() {
+    let root = temp_root("wasm-gc-disk-bytes");
+    let source_path = root.join("main.av");
+    let file_path = root.join("payload.bin");
+    let source = format!(
+        r#"module Probe
+    intent = "Exercise binary Disk host bindings."
+    depends [Bytes]
+    exposes [main]
+    effects [Console.print, Disk.writeBytes, Disk.appendBytes, Disk.readBytesAt, Disk.readBytes, Disk.size]
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.writeBytes, Disk.appendBytes, Disk.readBytesAt, Disk.readBytes, Disk.size]
+    Disk.writeBytes({file_path:?}, Bytes.fromList([0, 127, 128, 255]))?
+    Disk.appendBytes({file_path:?}, Bytes.fromList([1, 2]))?
+    part = Disk.readBytesAt({file_path:?}, 2, 99)?
+    past = Disk.readBytesAt({file_path:?}, 99, 4)?
+    all = Disk.readBytes({file_path:?})?
+    length = Disk.size({file_path:?})?
+    Console.print("{{Bytes.toHex(all)}}:{{Bytes.toHex(part)}}:{{Bytes.toHex(past)}}:{{length}}")
+    Result.Ok(Unit)
+"#,
+        file_path = file_path.to_string_lossy()
+    );
+    fs::write(&source_path, source).expect("write wasm-gc byte fixture");
+
+    let run = Command::new(aver_bin())
+        .args([
+            "run",
+            source_path.to_str().expect("fixture path"),
+            "--wasm-gc",
+        ])
+        .output()
+        .expect("run Disk byte capability canary on wasm-gc");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.status.success(), "{report}");
+    assert!(
+        report.contains("007f80ff0102:80ff0102::6"),
+        "unexpected Disk byte output: {report}"
+    );
+    assert_eq!(
+        fs::read(file_path).expect("read wasm-gc byte output"),
+        [0, 127, 128, 255, 1, 2]
+    );
 }
 
 #[cfg(feature = "wasip2")]

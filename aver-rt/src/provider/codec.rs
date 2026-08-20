@@ -395,6 +395,10 @@ pub fn provider_value_order_key(value: &ProviderValue) -> Result<Vec<u8>, String
                 out.push(2);
                 push_bytes(out, value.as_bytes());
             }
+            ProviderValue::Bytes(value) => {
+                out.push(16);
+                push_bytes(out, value);
+            }
             ProviderValue::Bool(value) => out.extend_from_slice(&[3, u8::from(*value)]),
             ProviderValue::Unit => out.push(4),
             ProviderValue::Tuple(values) => sequence(5, values, out)?,

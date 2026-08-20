@@ -24,6 +24,10 @@ fn encode(value: &ProviderValue, out: &mut Vec<u8>) -> Result<(), String> {
             out.push(2);
             push_bytes(out, value.as_bytes());
         }
+        ProviderValue::Bytes(value) => {
+            out.push(16);
+            push_bytes(out, value);
+        }
         ProviderValue::Bool(value) => {
             out.extend_from_slice(&[3, u8::from(*value)]);
         }

@@ -161,6 +161,23 @@ impl CapabilityRegistry {
         self.contracts.get(module)
     }
 
+    /// Whether any validated contract uses the compiler-owned octet wire type.
+    ///
+    /// The canonical descriptor owns this distinction: a capability-local
+    /// declaration also named `Bytes` is rendered as an ordinary owned type,
+    /// while only the standard wire type emits this exact descriptor field.
+    /// Backends consume the validated contract fact instead of repeating
+    /// source-name-based type resolution.
+    pub fn uses_standard_bytes(&self) -> bool {
+        const WIRE_TYPE: &[u8] = b"Aver::Bytes = octets";
+        self.contracts.values().any(|contract| {
+            contract
+                .contract_descriptor
+                .windows(WIRE_TYPE.len())
+                .any(|window| window == WIRE_TYPE)
+        })
+    }
+
     pub fn opaque_types(&self) -> impl Iterator<Item = &String> {
         self.opaque_types.iter()
     }
@@ -380,7 +397,13 @@ impl CapabilityRegistry {
             .collect();
         let mut locally_declared: BTreeSet<String> = type_defs.keys().cloned().collect();
         locally_declared.extend(opaque.iter().cloned());
-        validate_boundary_type_ownership(scope, &operations, &locally_declared, &mut errors);
+        validate_boundary_type_ownership(
+            scope,
+            &operations,
+            &locally_declared,
+            &module.depends,
+            &mut errors,
+        );
         let reachable_types = reachable_type_defs(&operations, &type_defs);
         let resource_tainted = resource_tainted_type_names(&opaque, &type_defs);
         validate_operation_boundaries(

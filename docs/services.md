@@ -259,7 +259,7 @@ fn doubleSha(bytes: Bytes) -> Digest32
 ```
 ## Effectful namespaces
 
-**Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` is equivalent to `! [Disk.readText, Disk.writeText, Disk.appendText, Disk.exists, Disk.delete, Disk.deleteDir, Disk.listDir, Disk.makeDir]`. You can still use granular declarations like `! [Disk.readText]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.
+**Namespace effect shorthand**: declaring `! [ServiceName]` covers all methods of that service. For example, `! [Disk]` covers the complete text, binary, metadata, and directory API listed below. You can still use granular declarations like `! [Disk.readBytesAt]` when you want to be precise. `aver check` suggests narrowing when a shorthand could be more specific.
 
 The namespaces below are supplied by Aver's standard host runtime. A project can describe an additional host boundary as a [capability module](language.md#capability-modules): its operations participate in the same effect, Oracle, hostile-testing, proof-trust, provider, and replay machinery. Rust embedders can install one typed in-process `ProviderBinding` unchanged in either the VM or a generated Rust artifact. On wasip2, complete custom contracts containing only `Unit`, `Bool`, `Float`, and `String` cross as host-bound generated WIT imports; the component host, not Aver, supplies their implementation. Bare wasm-gc custom adapters remain unavailable and fail closed with a target-specific `unsupported(reason)` row. `aver capabilities FILE` shows the complete VM/Rust/wasm-gc/wasip2 matrix. `recorded` or `suppressed` replay can run without a live provider.
 
@@ -336,11 +336,18 @@ Contract source: `stdlib/capabilities/disk.av`. Native VM and generated Rust sha
 | `Disk.readText` | `String -> Result<String, String>` | |
 | `Disk.writeText` | `(String, String) -> Result<Unit, String>` | path, content |
 | `Disk.appendText` | `(String, String) -> Result<Unit, String>` | |
+| `Disk.readBytes` | `String -> Result<Bytes, String>` | Reads the whole file as exact octets |
+| `Disk.readBytesAt` | `(String, Int, Int) -> Result<Bytes, String>` | path, offset, maximum length; EOF returns a shorter `Bytes` value |
+| `Disk.writeBytes` | `(String, Bytes) -> Result<Unit, String>` | Replaces the file with exact octets |
+| `Disk.appendBytes` | `(String, Bytes) -> Result<Unit, String>` | Appends exact octets |
+| `Disk.size` | `String -> Result<Int, String>` | File length in bytes |
 | `Disk.exists` | `String -> Bool` | |
 | `Disk.delete` | `String -> Result<Unit, String>` | Files only |
 | `Disk.deleteDir` | `String -> Result<Unit, String>` | Recursive |
 | `Disk.listDir` | `String -> Result<List<String>, String>` | |
 | `Disk.makeDir` | `String -> Result<Unit, String>` | Creates parents |
+
+`Disk.readBytesAt` is a single positional effect. It reads at most the requested length, returns `Ok(Bytes.fromList([]))` when the offset is at or beyond EOF, and rejects negative offsets or lengths. Reading a whole file remains a separate `Disk.readBytes` effect, so callers do not need the racy `size`-then-`readBytesAt` sequence.
 
 ### `Tcp` namespace — use granular effects (`! [Tcp.send]`, `! [Tcp.ping]`, etc.)
 
