@@ -1018,7 +1018,7 @@ mod tests {
     fn inplace_vector_escape_blocks_owned_map_receipt_inheritance() {
         let mut arena = Arena::new();
         let old_item = NanValue::new_string_value("old-vector-item", &mut arena);
-        let vector = NanValue::new_vector(arena.push_vector(vec![old_item]));
+        let _vector = NanValue::new_vector(arena.push_vector(vec![old_item]));
         let escaped = OwnedMapFrameProof {
             inplace_write_escaped: true,
             ..frame_proof(&arena)

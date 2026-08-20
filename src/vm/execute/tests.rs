@@ -978,16 +978,11 @@ fn folding_over_a_map_of_immediates_never_reads_it() {
 }
 
 #[test]
-fn folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step() {
-    // The same-frame mutation control for the receipt optimization. Each fold
-    // step adds heap-backed keys and values after the frame watermark, so the
-    // new map's receipt is deliberately too new to skip that step's boundary.
-    // The walk therefore stays n^2/2 even though carrying an untouched map
-    // across later frames is bounded.
-    //
-    // The bounds are the retired issue-#905 tripwire's heap-backed control,
-    // unchanged. Making this linear requires a distinct proof for content
-    // created after frame entry; weakening the receipt comparison is unsound.
+fn folding_over_fresh_heap_backed_pairs_reads_each_entry_a_bounded_number_of_times() {
+    // The same-frame mutation case from #963. Each step adds heap-backed keys
+    // and values after the frame watermark. The map keeps its old bulk receipt
+    // and remembers the new pair by hash, so the boundary rewrites that pair
+    // instead of walking every older entry again.
     //
     // "String" is not the dividing line: a string of five UTF-8 bytes or fewer
     // is NaN-boxed inline and belongs with the immediates. `"k{n}"` at these
@@ -1025,29 +1020,21 @@ fn folding_over_a_map_of_heap_backed_pairs_still_reads_it_on_every_step() {
         small.scanned,
         large.scanned,
     );
-    // Doubling n doubles both the map's size and the number of collections that
-    // walk it, so the reads go up by 4. Requiring 3 leaves a third of that
-    // headroom while still excluding every linear curve, which could only
-    // reach 2.
+    const SCAN_BUDGET_PER_ENTRY: u64 = 4;
     assert!(
-        large.scanned >= 3 * small.scanned,
-        "doubling the input less than tripled the reads, so this is no longer \
-         the quadratic control this test is here to be: n=400 read {}, n=800 \
-         read {}",
+        small.scanned <= 400 * SCAN_BUDGET_PER_ENTRY
+            && large.scanned <= 800 * SCAN_BUDGET_PER_ENTRY,
+        "fresh heap-backed pairs exceeded their linear scan budget: n=400 read \
+         {}, n=800 read {}",
         small.scanned,
         large.scanned,
     );
-    // The same statement per entry, which is what makes it a claim about the
-    // walk rather than about how much the program allocates.
-    let small_per_entry = small.scanned / 400;
-    let large_per_entry = large.scanned / 800;
     assert!(
-        large_per_entry >= 3 * small_per_entry / 2,
-        "reads per entry barely grew, so the walk is no longer repeating over \
-         the whole map as it fills: n=400 read {} per entry, n=800 read {} per \
-         entry",
-        small_per_entry,
-        large_per_entry,
+        large.scanned <= 3 * small.scanned + SCAN_BUDGET_PER_ENTRY,
+        "doubling the fresh-pair fold more than tripled its reads: n=400 read \
+         {}, n=800 read {}",
+        small.scanned,
+        large.scanned,
     );
 }
 
