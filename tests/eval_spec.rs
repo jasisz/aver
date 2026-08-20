@@ -1672,7 +1672,7 @@ mod http_tests {
 }
 
 // ---------------------------------------------------------------------------
-// Disk service builtins
+// Disk capability operations
 // ---------------------------------------------------------------------------
 
 mod disk_tests {
@@ -2112,6 +2112,34 @@ keys = ["SAFE_*"]
         let msg = err.to_string();
         assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
         assert!(msg.contains("Env.set"), "got: {}", msg);
+    }
+
+    #[test]
+    fn runtime_policy_blocks_disk_path_through_the_capability_door() {
+        // Disk moved onto a provider-backed standard capability; the
+        // aver.toml sandbox must survive that move. The write below
+        // targets a path outside the allow-list, so the provider must
+        // never see it.
+        let src = "fn run() -> Result<Unit, String>\n    ! [Disk.writeText]\n    Disk.writeText(\"/definitely/outside/allow.txt\", \"x\")\n";
+        let items = parse(src);
+        let mut machine = vm_compile(&items);
+        machine.set_runtime_policy(
+            ProjectConfig::parse(
+                r#"
+[effects.Disk]
+paths = ["./data/**"]
+"#,
+            )
+            .expect("parse policy"),
+        );
+        machine.run_top_level().expect("top-level failed");
+
+        let err = machine
+            .run_named_function("run", &[])
+            .expect_err("expected policy denial");
+        let msg = err.to_string();
+        assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
+        assert!(msg.contains("Disk.writeText"), "got: {}", msg);
     }
 }
 

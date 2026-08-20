@@ -588,6 +588,113 @@ fn main() -> Int
         .expect("Random transcript consumed");
 }
 
+#[test]
+fn standard_disk_uses_the_default_provider_and_cannot_bypass_it() {
+    // Disk is the falsifier for the capability bet (#864): the first
+    // standard service whose builtin path was privileged to move onto
+    // providers. The default native provider must serve real file IO,
+    // and unbinding must fail closed with the contract identity.
+    let root = temp_root("disk-default-provider");
+    let file = root.join("data.txt");
+    fs::write(
+        root.join("main.av"),
+        format!(
+            "\
+module Client
+    exposes [main]
+    effects [Disk.writeText, Disk.readText, Disk.exists]
+
+fn main() -> Result<String, String>
+    ! [Disk.writeText, Disk.readText, Disk.exists]
+    written = Disk.writeText({path:?}, \"payload\")?
+    present = Disk.exists({path:?})
+    text = Disk.readText({path:?})?
+    Result.Ok(\"{{text}} ({{present}})\")
+",
+            path = file.to_string_lossy()
+        ),
+    )
+    .expect("write entry");
+
+    let (mut machine, _contracts) = compile_vm(&root, "main.av");
+    let value = machine
+        .run()
+        .expect("default Disk provider")
+        .to_value(&machine.arena);
+    assert_eq!(
+        value,
+        Value::Ok(Box::new(Value::Str("payload (true)".to_string())))
+    );
+
+    let (mut machine, contracts) = compile_vm(&root, "main.av");
+    let mut providers = ProviderRegistry::for_program(contracts).expect("standard registry");
+    providers.unbind("Disk");
+    machine.set_provider_registry(Arc::new(providers));
+    let error = machine.run().expect_err("Disk must not bypass registry");
+    let message = error.to_string();
+    assert!(message.contains("error[capability-provider-missing]"));
+    assert!(message.contains("Disk.") && message.contains("contract_hash sha256:"));
+}
+
+#[test]
+fn standard_disk_recording_replays_offline_after_the_file_disappears() {
+    // The Disk-specific proof of offline replay: the recorded read is
+    // served from the transcript after the file itself is gone. A live
+    // provider dispatch would return Err("..."), so passing this test
+    // means the replay door really did not touch the filesystem.
+    let root = temp_root("disk-recorded-replay");
+    let file = root.join("vanishing.txt");
+    fs::write(&file, "recorded payload").expect("seed file");
+    fs::write(
+        root.join("main.av"),
+        format!(
+            "\
+module Client
+    exposes [main]
+    effects [Disk.readText]
+
+fn main() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText({path:?})
+",
+            path = file.to_string_lossy()
+        ),
+    )
+    .expect("write entry");
+
+    let (mut recording_vm, contracts) = compile_vm(&root, "main.av");
+    let providers = ProviderRegistry::for_program(contracts.clone()).expect("standard registry");
+    let provenance = providers.provenance();
+    recording_vm.set_provider_registry(Arc::new(providers));
+    recording_vm.start_recording();
+    let recorded = recording_vm.run().expect("record Disk read");
+    assert_eq!(
+        recorded.to_value(&recording_vm.arena),
+        Value::Ok(Box::new(Value::Str("recorded payload".to_string())))
+    );
+    let effects = recording_vm.recorded_effects().to_vec();
+    assert_eq!(effects.len(), 1);
+
+    // The file is gone; only the transcript can answer now.
+    fs::remove_file(&file).expect("remove the recorded file");
+
+    let (mut replay_vm, replay_contracts) = compile_vm(&root, "main.av");
+    let replay_providers =
+        ProviderRegistry::for_program(replay_contracts).expect("standard registry");
+    replay_vm.set_provider_registry(Arc::new(replay_providers));
+    replay_vm
+        .start_replay_with_provenance(effects, &provenance, true)
+        .expect("Disk replay provenance");
+    let replayed = replay_vm.run().expect("offline Disk replay");
+    assert_eq!(
+        replayed.to_value(&replay_vm.arena),
+        Value::Ok(Box::new(Value::Str("recorded payload".to_string())))
+    );
+    replay_vm
+        .ensure_replay_consumed()
+        .expect("Disk transcript consumed");
+}
+
 struct PureCounterProvider {
     calls: Arc<AtomicUsize>,
     fingerprint: &'static str,
@@ -1036,17 +1143,17 @@ fn aver_bin() -> &'static str {
     env!("CARGO_BIN_EXE_aver")
 }
 
-fn time_target_fixture() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/time_capability_targets.av")
+fn standard_capability_target_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/standard_capability_targets.av")
 }
 
 #[test]
 fn check_and_rust_compile_report_standard_binding_identities() {
-    let fixture = time_target_fixture();
+    let fixture = standard_capability_target_fixture();
     let check = Command::new(aver_bin())
         .args(["check", fixture.to_str().expect("fixture path")])
         .output()
-        .expect("check Time canary");
+        .expect("check standard capability canary");
     let check_text = String::from_utf8_lossy(&check.stdout);
     assert!(check.status.success(), "{check_text}");
     assert!(check_text.contains("capability Time: contract_hash=sha256:"));
@@ -1060,6 +1167,11 @@ fn check_and_rust_compile_report_standard_binding_identities() {
     assert!(check_text.contains("rust:aver.standard.Random/native"));
     assert!(check_text.contains("wasm-gc:aver.standard.Random/wasm-gc-imports"));
     assert!(check_text.contains("wasip2:aver.standard.Random/wasip2-wasi"));
+    assert!(check_text.contains("capability Disk: contract_hash=sha256:"));
+    assert!(check_text.contains("vm:aver.standard.Disk/native"));
+    assert!(check_text.contains("rust:aver.standard.Disk/native"));
+    assert!(check_text.contains("wasm-gc:aver.standard.Disk/wasm-gc-imports"));
+    assert!(check_text.contains("wasip2:aver.standard.Disk/wasip2-wasi"));
 
     let output = temp_root("rust-accounting");
     let compile = Command::new(aver_bin())
@@ -1071,11 +1183,12 @@ fn check_and_rust_compile_report_standard_binding_identities() {
             output.to_str().expect("output path"),
         ])
         .output()
-        .expect("compile Time canary to Rust");
+        .expect("compile standard capability canary to Rust");
     let compile_text = String::from_utf8_lossy(&compile.stdout);
     assert!(compile.status.success(), "{compile_text}");
     assert!(compile_text.contains("aver.standard.Time/native@aver-rt/"));
     assert!(compile_text.contains("aver.standard.Random/native@aver-rt/"));
+    assert!(compile_text.contains("aver.standard.Disk/native@aver-rt/"));
     assert!(compile_text.contains("contract_hash=sha256:"));
     assert!(compile_text.contains("model_hash=sha256:"));
     let replay_support =
@@ -1085,6 +1198,7 @@ fn check_and_rust_compile_report_standard_binding_identities() {
         .expect("generated provider runtime");
     assert!(provider_support.contains("StandardTimeProvider"));
     assert!(provider_support.contains("StandardRandomProvider"));
+    assert!(provider_support.contains("StandardDiskProvider"));
     assert!(
         provider_support
             .contains("sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49")
@@ -1093,16 +1207,20 @@ fn check_and_rust_compile_report_standard_binding_identities() {
         provider_support
             .contains("sha256:3b9239af56c4e89e527a53ce6fe4a470a42f84b203b10078c8633f39a6cec5f6")
     );
+    assert!(
+        provider_support
+            .contains("sha256:d134b487a92f2094eb6ad478bff0984c5a481577df07a7f993652e9bc1f9d537")
+    );
 }
 
 #[cfg(feature = "wasm")]
 #[test]
-fn wasm_gc_runs_time_through_its_registered_standard_binding() {
-    let fixture = time_target_fixture();
+fn wasm_gc_runs_standard_capabilities_through_registered_bindings() {
+    let fixture = standard_capability_target_fixture();
     let run = Command::new(aver_bin())
         .args(["run", fixture.to_str().expect("fixture path"), "--wasm-gc"])
         .output()
-        .expect("run Time canary on wasm-gc");
+        .expect("run standard capability canary on wasm-gc");
     let report = format!(
         "{}{}",
         String::from_utf8_lossy(&run.stdout),
@@ -1113,12 +1231,12 @@ fn wasm_gc_runs_time_through_its_registered_standard_binding() {
 
 #[cfg(feature = "wasip2")]
 #[test]
-fn wasip2_runs_time_through_its_registered_standard_binding() {
-    let fixture = time_target_fixture();
+fn wasip2_runs_standard_capabilities_through_registered_bindings() {
+    let fixture = standard_capability_target_fixture();
     let run = Command::new(aver_bin())
         .args(["run", fixture.to_str().expect("fixture path"), "--wasip2"])
         .output()
-        .expect("run Time canary on wasip2");
+        .expect("run standard capability canary on wasip2");
     let report = format!(
         "{}{}",
         String::from_utf8_lossy(&run.stdout),

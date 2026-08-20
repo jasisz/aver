@@ -910,13 +910,19 @@ mod policy_tests {
         let without_standard = generate_replay_runtime(ReplayRuntimeOptions::default());
         assert!(!without_standard.contains("aver.standard.Time/native"));
         assert!(!without_standard.contains("aver.standard.Random/native"));
+        assert!(!without_standard.contains("aver.standard.Disk/native"));
 
         let with_standard = generate_replay_runtime(ReplayRuntimeOptions {
-            standard_capabilities: vec!["Random".to_string(), "Time".to_string()],
+            standard_capabilities: vec![
+                "Disk".to_string(),
+                "Random".to_string(),
+                "Time".to_string(),
+            ],
             ..ReplayRuntimeOptions::default()
         });
         assert!(with_standard.contains("aver.standard.Time/native"));
         assert!(with_standard.contains("aver.standard.Random/native"));
+        assert!(with_standard.contains("aver.standard.Disk/native"));
         assert!(with_standard.contains("contract_hash"));
         assert!(with_standard.contains("model_hash"));
     }

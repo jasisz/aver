@@ -872,12 +872,34 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
     assert!(empty.rows().is_empty());
 
     let registry = crate::stdlib::standard_capability_registry();
-    let required = ["Random.int".to_string(), "Time.now".to_string()]
-        .into_iter()
-        .collect();
+    let required = [
+        "Disk.readText".to_string(),
+        "Random.int".to_string(),
+        "Time.now".to_string(),
+    ]
+    .into_iter()
+    .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 8);
+    assert_eq!(manifest.rows().len(), 12);
     for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
+        (
+            "Disk",
+            &[
+                "Disk.appendText",
+                "Disk.delete",
+                "Disk.deleteDir",
+                "Disk.exists",
+                "Disk.listDir",
+                "Disk.makeDir",
+                "Disk.readText",
+                "Disk.writeText",
+            ][..],
+            "Disk.readText",
+            "aver.standard.Disk/native",
+            "aver.standard.Disk/wasm-gc-imports",
+            "aver.standard.Disk/wasip2-wasi",
+            aver_rt::provider::STANDARD_DISK_FINGERPRINT,
+        ),
         (
             "Random",
             &["Random.float", "Random.int"][..],
@@ -942,22 +964,26 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
         let provenance = super::shipped_target_provenance(target, &registry);
         assert_eq!(
             provenance.len(),
-            2,
-            "both standards are provided on {target}"
+            3,
+            "all three standards are provided on {target}"
         );
         assert_eq!(
             provenance
                 .iter()
                 .map(|entry| entry.capability.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Random", "Time"]
+            vec!["Disk", "Random", "Time"]
         );
         assert_eq!(
             provenance[0].fingerprint,
-            aver_rt::provider::STANDARD_RANDOM_FINGERPRINT
+            aver_rt::provider::STANDARD_DISK_FINGERPRINT
         );
         assert_eq!(
             provenance[1].fingerprint,
+            aver_rt::provider::STANDARD_RANDOM_FINGERPRINT
+        );
+        assert_eq!(
+            provenance[2].fingerprint,
             aver_rt::provider::STANDARD_TIME_FINGERPRINT
         );
     }

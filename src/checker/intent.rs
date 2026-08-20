@@ -229,8 +229,8 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
 
 fn collect_known_effect_symbols(fn_sigs: Option<&FnSigMap>) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
-    for builtin in ["Console", "Http", "Disk", "Tcp", "HttpServer"] {
-        out.insert(builtin.to_string());
+    for effect_namespace in ["Console", "Http", "Disk", "Tcp", "HttpServer"] {
+        out.insert(effect_namespace.to_string());
     }
     if let Some(sigs) = fn_sigs {
         for (_, _, effects) in sigs.values() {

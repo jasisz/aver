@@ -6,6 +6,7 @@
 //! preserve this boundary without inheriting VM representation details.
 
 mod codec;
+mod disk;
 mod runtime;
 
 use std::any::Any;
@@ -17,6 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use crate::AverInt;
 
 pub use codec::{ProviderCodec, provider_value_order_key};
+pub use disk::{STANDARD_DISK_FINGERPRINT, STANDARD_DISK_NATIVE_IDENTITY, StandardDiskProvider};
 pub use runtime::{
     NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
     StandardTimeProvider, standard_time_now, standard_time_sleep, standard_time_unix_ms,

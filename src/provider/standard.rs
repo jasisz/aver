@@ -11,15 +11,17 @@ use super::target::CapabilityTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StandardCapabilityBinding {
+    Disk,
     Random,
     Time,
 }
 
 impl StandardCapabilityBinding {
-    pub(crate) const ALL: [Self; 2] = [Self::Random, Self::Time];
+    pub(crate) const ALL: [Self; 3] = [Self::Disk, Self::Random, Self::Time];
 
     pub(crate) const fn module(self) -> &'static str {
         match self {
+            Self::Disk => "Disk",
             Self::Random => "Random",
             Self::Time => "Time",
         }
@@ -27,6 +29,7 @@ impl StandardCapabilityBinding {
 
     pub(crate) fn native_provider(self) -> Arc<dyn CapabilityProvider> {
         match self {
+            Self::Disk => Arc::new(aver_rt::provider::StandardDiskProvider),
             Self::Random => Arc::new(aver_rt::provider::StandardRandomProvider),
             Self::Time => Arc::new(aver_rt::provider::StandardTimeProvider),
         }
@@ -34,6 +37,7 @@ impl StandardCapabilityBinding {
 
     pub(crate) const fn generated_rust_provider_type(self) -> &'static str {
         match self {
+            Self::Disk => "aver_rt::provider::StandardDiskProvider",
             Self::Random => "aver_rt::provider::StandardRandomProvider",
             Self::Time => "aver_rt::provider::StandardTimeProvider",
         }
@@ -41,6 +45,7 @@ impl StandardCapabilityBinding {
 
     pub(crate) const fn fingerprint(self) -> &'static str {
         match self {
+            Self::Disk => aver_rt::provider::STANDARD_DISK_FINGERPRINT,
             Self::Random => aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
             Self::Time => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
         }
@@ -48,6 +53,11 @@ impl StandardCapabilityBinding {
 
     pub(crate) const fn target_identity(self, target: CapabilityTarget) -> &'static str {
         match (self, target) {
+            (Self::Disk, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
+                aver_rt::provider::STANDARD_DISK_NATIVE_IDENTITY
+            }
+            (Self::Disk, CapabilityTarget::WasmGc) => "aver.standard.Disk/wasm-gc-imports",
+            (Self::Disk, CapabilityTarget::Wasip2) => "aver.standard.Disk/wasip2-wasi",
             (Self::Random, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
                 aver_rt::provider::STANDARD_RANDOM_NATIVE_IDENTITY
             }

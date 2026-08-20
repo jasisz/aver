@@ -2685,7 +2685,13 @@ fn main() -> Result<String, String>
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("crate::cancel_checkpoint(); (aver_rt::read_text"));
+        // Disk is a provider-backed standard capability now, so the call
+        // goes through the typed provider door — but the cancel
+        // checkpoint must still fire before the host boundary, exactly
+        // like the builtin table always did.
+        assert!(entry.contains("crate::cancel_checkpoint();"));
+        assert!(entry.contains("crate::provider_support::invoke"));
+        assert!(!entry.contains("aver_rt::read_text"));
     }
 
     #[test]

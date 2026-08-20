@@ -3202,18 +3202,21 @@ fn policy_checked_argument_keeps_its_ownership() {
             ));
         }
         // A local the program reads again: the temp has to own a copy,
-        // not take the local.
-        if !emitted.contains("let __policy_arg = path.clone();") {
+        // not take the local. Disk is provider-bound now, so the guarded
+        // argument is the capability call's own `__provider_arg0` temp —
+        // same clone-before-bind shape the builtin seam's `__policy_arg`
+        // always had.
+        if !emitted.contains("let __provider_arg0 = path.clone();") {
             return Err(format!(
-                "the policy temp takes `path` instead of owning a copy of it — \
+                "the provider arg temp takes `path` instead of owning a copy of it — \
                  every later read of `path` is E0382:\n{emitted}"
             ));
         }
         // A field read through a `&Location` param: the temp has to own a
         // copy, not move out of the borrow.
-        if !emitted.contains("let __policy_arg = place.segment.clone();") {
+        if !emitted.contains("let __provider_arg0 = place.segment.clone();") {
             return Err(format!(
-                "the policy temp moves `place.segment` out of a shared \
+                "the provider arg temp moves `place.segment` out of a shared \
                  reference — E0507 on the first and only use:\n{emitted}"
             ));
         }
@@ -3421,11 +3424,11 @@ fn mir_forced_embedded_policy_rejects_denied_disk_write() {
 
     let result = (|| -> Result<(), String> {
         // (0) NOTE: no `mir_lowered_count` guard here. Both fns in this
-        // probe call a builtin (`Disk.writeText` / `Console.print`), and
-        // the coverage walk behind `--explain-mir-coverage` reports every
-        // `Call(Builtin)` as a fallback — its `for_test` ctx carries an
-        // empty builtin table — so it answers `mir_lowered = 0` for this
-        // program even though the production path emits both fns fine. A
+        // probe call host-backed operations (provider-bound `Disk.writeText`
+        // and builtin `Console.print`), and the coverage walk behind
+        // `--explain-mir-coverage` lacks the production capability/builtin
+        // tables. It can therefore report these calls as fallbacks even
+        // though the production path emits both fns fine. A
         // guard on that number cannot pass on an effect probe; it only
         // short-circuited the deny/allow assertions below, which is the
         // whole point of the test. The structural tripwire (the emitted

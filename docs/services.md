@@ -329,7 +329,7 @@ The caller declares only `HttpServer.listen` / `HttpServer.listenWith`. The hand
 
 ### `Disk` namespace — use granular effects (`! [Disk.readText]`, `! [Disk.writeText]`, etc.)
 
-Source: `src/services/disk.rs`
+Contract source: `stdlib/capabilities/disk.av`. Native VM and generated Rust share the `aver-rt` Disk provider; wasm-gc keeps the existing `aver.disk_*` host imports and wasip2 keeps its WASI filesystem lowering. Signatures, Oracle classification, hostile profiles, replay semantics, and target accounting all derive from the same contract and model hashes. `aver.toml` path policy is enforced before the provider boundary on native targets.
 
 | Function | Signature | Notes |
 |---|---|---|
