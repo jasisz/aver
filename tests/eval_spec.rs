@@ -2477,7 +2477,9 @@ mod tcp_tests {
     }
 
     /// Public code cannot construct this value: `Bytes.fromList` rejects it.
-    /// The TCP bridge still fails closed if a malformed carrier reaches it.
+    /// If an unchecked VM caller forges one anyway, the provider codec fails
+    /// before dispatch. That is a runtime boundary error, not a
+    /// `Tcp.sendBytes` operation-level `Result.Err`.
     #[test]
     fn tcp_send_bytes_defensively_rejects_out_of_range_carrier() {
         let src = concat!(
@@ -2486,18 +2488,14 @@ mod tcp_tests {
             "    ! [Tcp.sendBytes]\n",
             "    Tcp.sendBytes(\"127.0.0.1\", 1, Bytes(values = [65, 256]))\n",
         );
-        match run_tcp_fn(src, "talk") {
-            Value::Err(inner) => match *inner {
-                Value::Str(msg) => {
-                    assert!(
-                        msg.contains("256") && msg.contains("index 1"),
-                        "error should name the offending byte and its index, got: {msg}"
-                    );
-                }
-                other => panic!("expected Str error, got {:?}", other),
-            },
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let error = call_fn_with_effects(src, "talk", vec![])
+            .expect_err("a malformed Bytes carrier must fail at the provider boundary");
+        assert!(
+            error.contains("capability provider boundary")
+                && error.contains("256")
+                && error.contains("index 1"),
+            "error should name the boundary, offending byte, and index, got: {error}"
+        );
     }
 
     /// Regression: `Tcp.writeLine` appends `\r\n` and UTF-8-encodes its
