@@ -10,7 +10,7 @@
 //! reaches into the lowered MIR and reads the bit directly.
 
 use aver::ir::mir::lower_program;
-use aver::ir::mir::optimize::own_param_refine;
+use aver::ir::mir::optimize::{own_param_refine, own_param_refine_for_rust};
 use aver::ir::mir::program::MirProgram;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
 use aver::source::parse_source;
@@ -30,6 +30,12 @@ fn refine(source: &str) -> MirProgram {
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
     let program = lower_program(&result.resolved_items);
     own_param_refine(program)
+}
+
+/// Run the shared arena-safe pass followed by the Rust-only drop-aware
+/// refinement, exactly like the generated-Rust pipeline.
+fn refine_rust(source: &str) -> MirProgram {
+    own_param_refine_for_rust(refine(source))
 }
 
 /// Read the `aliased_slots` bit for param `idx` of fn `name`.
@@ -95,6 +101,89 @@ fn main() -> Int
     assert!(
         !param_flagged(&program, "buildMap", 1),
         "buildMap's Map param must graduate (bit cleared) — the fast path regressed"
+    );
+}
+
+/// A named helper that returns the accumulator must preserve the same linear
+/// ownership proof as spelling `Map.set` directly in the recursive argument.
+///
+/// This is the exact shape from issue #890. Treating every named-function
+/// result as potentially aliased leaves both collection params flagged, so
+/// generated Rust clones the whole backing table once per insertion.
+#[test]
+fn map_param_graduates_through_a_named_set_helper() {
+    let src = r#"module MapBuildThroughHelper
+    intent = "linearly-threaded map build through a named helper"
+    depends []
+    effects []
+
+fn setOne(key: String, into: Map<String, Int>) -> Map<String, Int>
+    ? "insert one entry and return the successor map"
+    Map.set(into, key, 1)
+
+fn build(keys: List<String>, into: Map<String, Int>) -> Map<String, Int>
+    ? "tail-recursively insert every key through setOne"
+    match keys
+        [] -> into
+        [head, ..tail] -> build(tail, setOne(head, into))
+
+fn main() -> Int
+    Map.len(build(["a", "b", "c"], {}))
+"#;
+    let program = refine(src);
+    assert!(
+        !param_flagged(&program, "setOne", 1),
+        "setOne's Map param must graduate — it returns Map.set's linear successor"
+    );
+    assert!(
+        !param_flagged(&program, "build", 1),
+        "build's Map param must graduate through the named setOne result"
+    );
+}
+
+/// `Result.Ok(Map.set(...))` is ownership-transparent only for generated
+/// Rust: `?` consumes and drops the wrapper. The VM keeps the wrapper in its
+/// arena after logical unwrapping, so the shared pass must remain conservative.
+#[test]
+fn result_wrapped_map_graduates_only_for_rust() {
+    let src = r#"module MapBuildThroughResultHelper
+    intent = "linearly-threaded map build through a Result-returning helper"
+    depends []
+    effects []
+
+fn setOne(key: String, into: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "insert one entry and wrap the successor map"
+    Result.Ok(Map.set(into, key, 1))
+
+fn build(keys: List<String>, into: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "tail-recursively insert every key through setOne"
+    match keys
+        [] -> Result.Ok(into)
+        [head, ..tail] -> build(tail, setOne(head, into)?)
+
+fn main() -> Result<Int, String>
+    built = build(["a", "b", "c"], {})?
+    Result.Ok(Map.len(built))
+"#;
+
+    let shared = refine(src);
+    assert!(
+        param_flagged(&shared, "setOne", 1),
+        "the arena-safe pass must keep the Map param flagged through Result.Ok"
+    );
+    assert!(
+        param_flagged(&shared, "build", 1),
+        "the arena-safe pass must keep recursive Result<Map> threading flagged"
+    );
+
+    let rust = refine_rust(src);
+    assert!(
+        !param_flagged(&rust, "setOne", 1),
+        "Rust may move the Map through the consumed Result wrapper"
+    );
+    assert!(
+        !param_flagged(&rust, "build", 1),
+        "Rust must preserve the owned move across the Result-returning helper"
     );
 }
 

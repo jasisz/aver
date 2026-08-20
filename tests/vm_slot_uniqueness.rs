@@ -596,21 +596,11 @@ fn main() -> Int
 }
 
 #[test]
-fn a_helper_seeded_fold_declines_every_write_the_runtime_can_see_through() {
-    // The shape the axis is for. `own_param::uniquely_owned` reads the ARGUMENT
-    // written at the call site, and a user function's result is not on its list —
-    // it cannot see what the callee did — so the accumulator parameter never
-    // graduates and EVERY insert in the fold is declined. That is the whole of
-    // the copying half of #890 in the VM, and it is the one shape where the
-    // declined-but-unique tally grows with the work rather than with the source:
-    // the map literal above leaves one per entry written, this leaves one per
-    // step taken.
-    //
-    // Nothing here is out of reach of the runtime. The seed is a fresh map, it is
-    // threaded linearly, and the count says so at every step — and since the
-    // decision reads it, every one of these is now a write that took the owned
-    // path. What that is worth in seconds is measured in
-    // `tests/vm_map_runtime_ownership.rs` as entries not duplicated.
+fn a_helper_seeded_fold_is_granted_after_return_alias_analysis() {
+    // The #890 shape. The named-return summary now proves that `seed()` returns
+    // fresh map storage, so every linearly threaded insert graduates before it
+    // reaches the runtime fallback. The directional fence must confirm those
+    // static grants, and the old declined-but-unique bucket must stay empty.
     let small = tallies(&helper_seeded_fold(40));
     let large = tallies(&helper_seeded_fold(80));
 
@@ -619,17 +609,19 @@ fn a_helper_seeded_fold_declines_every_write_the_runtime_can_see_through() {
             small.unique_slot_without_owned_grant,
             large.unique_slot_without_owned_grant
         ),
-        (40, 80),
-        "a helper-seeded fold should leave one declined-but-unique write per \
-         step: 40 steps left {}, 80 steps left {}",
+        (0, 0),
+        "return-alias analysis still declined helper-seeded writes the runtime \
+         could prove unique: 40 steps left {}, 80 steps left {}",
         small.unique_slot_without_owned_grant,
         large.unique_slot_without_owned_grant,
     );
     assert_eq!(
         (small.owned_grants, large.owned_grants),
-        (0, 0),
-        "the static mask granted something here, so the shape is no longer the \
-         one whose every write it declines",
+        (40, 80),
+        "the static mask did not grant every helper-seeded write: 40 steps \
+         confirmed {}, 80 steps confirmed {}",
+        small.owned_grants,
+        large.owned_grants,
     );
 }
 

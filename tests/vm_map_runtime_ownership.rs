@@ -92,6 +92,8 @@ struct Run {
     copied: u64,
     /// Entries inspected while rebasing heap-backed map keys and values.
     scanned: u64,
+    /// Statically granted collection writes confirmed by the runtime fence.
+    static_grants: u64,
     decisions: VmRuntimeOwnershipStats,
 }
 
@@ -102,6 +104,7 @@ fn run(src: &str) -> Run {
         answer: result.as_int(&machine.arena),
         copied: machine.arena.map_entries_copied(),
         scanned: machine.arena.map_entries_scanned(),
+        static_grants: machine.slot_uniqueness_stats().owned_grants,
         decisions: machine.runtime_ownership_stats(),
     }
 }
@@ -248,6 +251,7 @@ fn run_recording(src: &str) -> Run {
         answer: result.as_int(&machine.arena),
         copied: machine.arena.map_entries_copied(),
         scanned: machine.arena.map_entries_scanned(),
+        static_grants: machine.slot_uniqueness_stats().owned_grants,
         decisions: machine.runtime_ownership_stats(),
     }
 }
@@ -360,7 +364,7 @@ fn the_fold_that_routes_every_insert_through_a_helper_is_linear() {
     // steps used to quadruple the entries duplicated — that is the quadratic the
     // report measured, 3,400x at 40,000 keys — and now there is nothing to
     // double: the map crossing a return boundary is not a second holder, and the
-    // runtime can see that where the compiler could not.
+    // return-alias summary can now prove that statically.
     let small = run(&helper_returning_set_fold(200));
     let large = run(&helper_returning_set_fold(400));
 
@@ -372,33 +376,34 @@ fn the_fold_that_routes_every_insert_through_a_helper_is_linear() {
         small.copied,
         large.copied,
     );
-    // The receipt. Every step's insert reaches the decision and every one is
-    // granted, bar the first: `Map.fromList([])` is the empty map, an immediate
-    // with no slot to take and nothing to copy, so it is never asked about.
+    // The receipt. Every step's insert is statically granted, bar the first:
+    // `Map.fromList([])` is the empty map, an immediate with no slot to take and
+    // nothing to copy, so the runtime fence has no slot to confirm.
     assert_eq!(
-        (small.decisions.grants, large.decisions.grants),
+        (small.static_grants, large.static_grants),
         (199, 399),
-        "the helper's inserts did not all reach the decision: 200 steps granted \
-         {}, 400 steps granted {}",
-        small.decisions.grants,
-        large.decisions.grants,
+        "the helper's inserts were not statically owned: 200 steps confirmed \
+         {}, 400 steps confirmed {}",
+        small.static_grants,
+        large.static_grants,
     );
     assert_eq!(
         (
+            large.decisions.grants,
             large.decisions.refused_stack_holder,
             large.decisions.refused_off_stack_holder,
             large.decisions.unexamined_walk_too_costly,
         ),
-        (0, 0, 0),
-        "the accumulator is threaded linearly, so nothing should refuse: {:?}",
+        (0, 0, 0, 0),
+        "the statically owned writes should not reach the runtime fallback: {:?}",
         large.decisions,
     );
     // Non-vacuity: a fold that stopped inserting would copy nothing either.
     assert_eq!((small.answer, large.answer), (200, 400));
 }
 
-/// A fold seeded by a helper's return value — the other spelling the compiler
-/// cannot follow, and the one #890 does not name.
+/// A fold seeded behind a recursive result cycle — a deliberately conservative
+/// boundary the named-return summary does not try to solve as a fixpoint.
 fn helper_seeded_fold(steps: i64) -> String {
     map_fold(
         steps,
@@ -407,11 +412,13 @@ fn seedPairs() -> List<Tuple<String, String>>
     ? "one pair, built where no literal map is in reach"
     [("s", "z")]
 
-fn seed() -> Map<String, String>
-    ? "hand back a map nothing else holds"
-    Map.fromList(seedPairs())
+fn seed(n: Int) -> Map<String, String>
+    ? "build a fresh seed behind a recursive result cycle"
+    match n > 0
+        true -> seed(n - 1)
+        false -> Map.fromList(seedPairs())
 "#,
-        "seed()",
+        "seed(1)",
     )
 }
 
@@ -444,12 +451,11 @@ fn a_literal_seeded_fold_stops_paying_for_the_literals_own_entries() {
 
 #[test]
 fn a_helper_seeded_fold_is_linear_in_the_steps_it_takes() {
-    // The VM half of #890. `own_param` reads the argument written at the call
-    // site, and a user function's result is not something it can look inside, so
-    // the accumulator parameter never graduates and EVERY insert in the fold was
-    // declined — one full duplication of the table per step, which is the
-    // quadratic. Nothing about the shape is out of the runtime's reach: the seed
-    // is a fresh map and it is threaded linearly.
+    // The runtime fallback half of #890. `own_param` reads the argument written
+    // at the call site, but deliberately leaves recursive return cycles unknown,
+    // so the accumulator parameter stays conservative and every insert reaches
+    // the runtime decision. Nothing about the shape is out of the runtime's
+    // reach: the seed is a fresh map and it is threaded linearly.
     let small = run(&helper_seeded_fold(40));
     let large = run(&helper_seeded_fold(80));
 
@@ -650,9 +656,11 @@ fn seedPairs() -> List<Tuple<String, String>>
     ? "one pair, built where no literal map is in reach"
     [("s", "z")]
 
-fn seed() -> Map<String, String>
-    ? "hand back a map nothing else holds"
-    Map.fromList(seedPairs())
+fn seed(n: Int) -> Map<String, String>
+    ? "build a fresh seed behind a recursive result cycle"
+    match n > 0
+        true -> seed(n - 1)
+        false -> Map.fromList(seedPairs())
 
 fn descend(n: Int, m: Map<String, String>) -> Int
     ? "recurse first, write at the bottom, so every frame is still suspended"
@@ -662,7 +670,7 @@ fn descend(n: Int, m: Map<String, String>) -> Int
 
 fn main() -> Int
     ? "how deep the write happened"
-    descend({depth}, seed())
+    descend({depth}, seed(1))
 "#
     )
 }

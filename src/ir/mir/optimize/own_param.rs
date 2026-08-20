@@ -71,9 +71,10 @@
 //! - A call site reached through `MirCallee::LocalSlot` (a fn value) has
 //!   no statically-known target, so it never counts as a visible caller;
 //!   such fns are already pinned via the address-taken set.
-//! - An argument is uniquely-owned only when proven so (never a user-fn
-//!   result — that may alias an arg, the gap `alias.rs` RULE 2 cannot
-//!   see — and never a local that still has a live alias in the caller).
+//! - An argument is uniquely-owned only when proven so. A named user-fn
+//!   result qualifies only through a return-alias summary that identifies
+//!   every parameter backing it may carry; a fn-value result stays unknown,
+//!   and a local with a live caller-side alias is never owned.
 //! - Two alias-prone params receiving the same slot at one call site are
 //!   both rejected (the value is shared between them inside the callee).
 //!
@@ -90,6 +91,9 @@ use crate::ir::FnId;
 
 use super::super::expr::{MirCallee, MirExpr};
 use super::super::program::MirProgram;
+
+mod return_alias;
+use return_alias::{ReturnAliasSummary, compute_return_alias_summary};
 
 /// Recursion cap for the alias / ownership walks — defends against a
 /// pathological let-provenance chain; exceeding it resolves to the
@@ -131,7 +135,35 @@ struct CallSite {
     args: Vec<Spanned<MirExpr>>,
 }
 
-pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OwnershipModel {
+    /// Arena entries remain holders after a wrapper is destructured, so a
+    /// returned `Result.Ok(map)` cannot grant unique slot ownership.
+    SharedArenaSafe,
+    /// Rust consumes and drops return wrappers at `?` / projection boundaries.
+    RustDropAware,
+}
+
+impl OwnershipModel {
+    fn returned_aggregates_are_consumed(self) -> bool {
+        self == Self::RustDropAware
+    }
+}
+
+pub fn own_param_refine(program: MirProgram) -> MirProgram {
+    own_param_refine_for_model(program, OwnershipModel::SharedArenaSafe)
+}
+
+/// Rust-only second refinement. Call after the shared optimizer: it may clear
+/// additional Map/Vector param flags when ownership crosses a returned
+/// aggregate that Rust consumes and drops (`Result<Map, E>` followed by `?`).
+/// VM/wasm must never call this — arena entries remain observable holders even
+/// after logical unwrapping.
+pub fn own_param_refine_for_rust(program: MirProgram) -> MirProgram {
+    own_param_refine_for_model(program, OwnershipModel::RustDropAware)
+}
+
+fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) -> MirProgram {
     // Diagnostic / bench-differential escape hatch: skip the refinement
     // so a run keeps the conservative all-params-aliased baseline.
     if std::env::var("AVER_NO_OWN_PARAM").is_ok() {
@@ -188,7 +220,8 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
     // drives the cross-fn escape detection (a caller slot flowing into a
     // capturing callee param escapes in the caller too).
     let builtins = program.builtins.clone();
-    let captures_param = compute_capture_summary(&program, &provenance, &builtins);
+    let return_aliases = compute_return_alias_summary(&program, &provenance, &builtins, model);
+    let captures_param = compute_capture_summary(&program, &provenance, &builtins, model);
 
     // --- BODY-LOCAL PROOF -------------------------------------------------
     //
@@ -215,7 +248,14 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
     for (id, f) in program.iter() {
         let prov = provenance.get(id).cloned().unwrap_or_default();
         let mut leak: HashSet<u32> = HashSet::new();
-        scan_leaks(&f.body.node, &prov, &captures_param, &builtins, &mut leak);
+        scan_body_leaks(
+            model,
+            &f.body.node,
+            &prov,
+            &captures_param,
+            &builtins,
+            &mut leak,
+        );
         let nparams = f.params.len();
         collect_live_aliased_params(&f.body.node, &prov, &builtins, nparams, &mut leak);
         if !leak.is_empty() {
@@ -358,6 +398,8 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
                         &program,
                         &owned,
                         &provenance,
+                        &return_aliases,
+                        model,
                         &builtins,
                         0,
                     );
@@ -398,6 +440,8 @@ fn uniquely_owned(
     program: &MirProgram,
     owned: &HashMap<(FnId, usize), bool>,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
+    return_aliases: &ReturnAliasSummary,
+    model: OwnershipModel,
     builtins: &[String],
     depth: u32,
 ) -> bool {
@@ -440,17 +484,21 @@ fn uniquely_owned(
                     "Map.fromList" | "Vector.fromList" => true,
                     // set returns its (mutated) vector/map — owned iff the
                     // target is owned.
-                    "Vector.set" | "Map.set" => c.node.args.first().is_some_and(|v| {
-                        uniquely_owned(
-                            &v.node,
-                            caller,
-                            program,
-                            owned,
-                            provenance,
-                            builtins,
-                            depth + 1,
-                        )
-                    }),
+                    "Vector.set" | "Map.set" | "Map.remove" => {
+                        c.node.args.first().is_some_and(|v| {
+                            uniquely_owned(
+                                &v.node,
+                                caller,
+                                program,
+                                owned,
+                                provenance,
+                                return_aliases,
+                                model,
+                                builtins,
+                                depth + 1,
+                            )
+                        })
+                    }
                     "Option.withDefault" if c.node.args.len() == 2 => {
                         // Self-keep fusion shape:
                         // `withDefault(Vector.set(Local{s}, ..), Local{s})`
@@ -482,6 +530,8 @@ fn uniquely_owned(
                                     program,
                                     owned,
                                     provenance,
+                                    return_aliases,
+                                    model,
                                     builtins,
                                     depth + 1,
                                 );
@@ -494,6 +544,8 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
+                            return_aliases,
+                            model,
                             builtins,
                             depth + 1,
                         ) && uniquely_owned(
@@ -502,6 +554,8 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
+                            return_aliases,
+                            model,
                             builtins,
                             depth + 1,
                         )
@@ -511,45 +565,33 @@ fn uniquely_owned(
                     _ => false,
                 }
             }
-            // User-fn / fn-value / intrinsic results may alias an arg
-            // (the RULE-2 gap) — never provably owned without a
-            // returns-fresh analysis (deferred). Answering `true` here
-            // lets a callee mutate a collection its caller still holds.
-            //
-            // Two of the three constructors reach this arm from real
-            // source with a collection result, and each is pinned
-            // SEPARATELY in `tests/own_param_graduation.rs` — relaxing
-            // one alone leaves the other test green:
-            //
-            // - `Fn`: a named user function.
-            //   `named_fn_call_result_argument_keeps_the_param_flagged`,
-            //   plus the behavioural
-            //   `own_param_soundness::named_fn_result_argument_is_not_mutated_in_place`
-            //   and the end-to-end
-            //   `rust_fn_result_argument_keeps_the_callers_map_intact`
-            //   in `tests/rust_codegen_differential.rs`.
-            // - `LocalSlot`: a first-class fn value read out of a slot,
-            //   which this pass cannot see through at all.
-            //   `fn_value_call_result_argument_keeps_the_param_flagged`,
-            //   plus the behavioural
-            //   `fn_value_result_argument_is_not_mutated_in_place` in
-            //   `tests/own_param_soundness.rs`.
-            //
-            // `Intrinsic` has no pin because it cannot be reached with a
-            // collection: no member of `BuiltinIntrinsic` returns one.
-            // The full set today is `BufNew` / `BufAppend` /
-            // `BufAppendSepUnlessFirst` / `BufFinalize` (a buffer handle),
-            // `ToStr` (a String), and `IntDivEuclid` / `IntModEuclid` /
-            // `BitsShiftLeft` / `BitsShiftRight` / `BitsLow` (all
-            // `(Int, Int) -> Int`) — never a Vector or Map, so such a call
-            // is never the argument of an alias-prone param.
-            //
-            // The pinned shapes all feed a call result STRAIGHT into
-            // another call's argument and read the caller's own
-            // collection back afterwards. Going through a `let` first
-            // would settle the question on the binding rules instead —
-            // the argument would be a `MirExpr::Local`, not a `Call`.
-            MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => false,
+            // A statically named function is owned exactly when every
+            // parameter its result may carry was supplied uniquely. The
+            // summary is clear-on-proof: unknown bodies/cycles have no
+            // entry and remain conservative. This is the helper-return
+            // bridge from issue #890.
+            MirCallee::Fn(target) => return_aliases.get(target).is_some_and(|sources| {
+                sources.iter().all(|&source| {
+                    c.node.args.get(source).is_some_and(|arg| {
+                        uniquely_owned(
+                            &arg.node,
+                            caller,
+                            program,
+                            owned,
+                            provenance,
+                            return_aliases,
+                            model,
+                            builtins,
+                            depth + 1,
+                        )
+                    })
+                })
+            }),
+            // A first-class fn value has no statically-known body. Its
+            // result may alias any argument, so it never grants ownership.
+            // Intrinsics do not return Map/Vector today; keep the same safe
+            // answer if one gains such a result later.
+            MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => false,
         },
         // A live (last-use), owned slot read.
         MirExpr::Local(l) => {
@@ -560,10 +602,23 @@ fn uniquely_owned(
                     program,
                     owned,
                     provenance,
+                    return_aliases,
+                    model,
                     builtins,
                     depth + 1,
                 )
         }
+        MirExpr::Try(inner) if model.returned_aggregates_are_consumed() => uniquely_owned(
+            &inner.node,
+            caller,
+            program,
+            owned,
+            provenance,
+            return_aliases,
+            model,
+            builtins,
+            depth + 1,
+        ),
         _ => false,
     }
 }
@@ -579,6 +634,8 @@ fn slot_owned(
     program: &MirProgram,
     owned: &HashMap<(FnId, usize), bool>,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
+    return_aliases: &ReturnAliasSummary,
+    model: OwnershipModel,
     builtins: &[String],
     depth: u32,
 ) -> bool {
@@ -621,6 +678,8 @@ fn slot_owned(
             program,
             owned,
             provenance,
+            return_aliases,
+            model,
             builtins,
             depth + 1,
         ),
@@ -739,6 +798,101 @@ fn alias_roots(
         // projections, arithmetic, interpolation, tail calls: building
         // them shares no caller-visible backing slot.
         _ => {}
+    }
+}
+
+fn scan_body_leaks(
+    model: OwnershipModel,
+    e: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    captures_param: &HashMap<FnId, HashSet<usize>>,
+    builtins: &[String],
+    out: &mut HashSet<u32>,
+) {
+    if model.returned_aggregates_are_consumed() {
+        scan_result_leaks(e, prov, captures_param, builtins, out);
+    } else {
+        scan_leaks(e, prov, captures_param, builtins, out);
+    }
+}
+
+/// Rust-only scan of a function-result position. Values placed in a returned
+/// aggregate move out of the function and the wrapper is dropped when Rust
+/// destructures it. The return-alias summary carries the obligation into the
+/// caller. Arena backends must use `scan_leaks`: their wrapper entries remain
+/// holders after logical destructuring.
+fn scan_result_leaks(
+    e: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    captures_param: &HashMap<FnId, HashSet<usize>>,
+    builtins: &[String],
+    out: &mut HashSet<u32>,
+) {
+    match e {
+        MirExpr::Let(l) => {
+            scan_leaks(&l.node.value.node, prov, captures_param, builtins, out);
+            scan_result_leaks(&l.node.body.node, prov, captures_param, builtins, out);
+        }
+        MirExpr::Match(m) => {
+            scan_leaks(&m.node.subject.node, prov, captures_param, builtins, out);
+            for arm in &m.node.arms {
+                scan_result_leaks(&arm.body.node, prov, captures_param, builtins, out);
+            }
+        }
+        MirExpr::IfThenElse(ite) => {
+            scan_leaks(&ite.node.cond.node, prov, captures_param, builtins, out);
+            scan_result_leaks(
+                &ite.node.then_branch.node,
+                prov,
+                captures_param,
+                builtins,
+                out,
+            );
+            scan_result_leaks(
+                &ite.node.else_branch.node,
+                prov,
+                captures_param,
+                builtins,
+                out,
+            );
+        }
+        MirExpr::Return(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => {
+            scan_result_leaks(&inner.node, prov, captures_param, builtins, out)
+        }
+        MirExpr::Construct(construct) => {
+            for arg in &construct.node.args {
+                scan_result_leaks(&arg.node, prov, captures_param, builtins, out);
+            }
+        }
+        MirExpr::RecordCreate(record) => {
+            for field in &record.node.fields {
+                scan_result_leaks(&field.value.node, prov, captures_param, builtins, out);
+            }
+        }
+        MirExpr::RecordUpdate(update) => {
+            scan_result_leaks(&update.node.base.node, prov, captures_param, builtins, out);
+            for field in &update.node.updates {
+                scan_result_leaks(&field.value.node, prov, captures_param, builtins, out);
+            }
+        }
+        MirExpr::Tuple(items) | MirExpr::List(items) => {
+            for item in items {
+                scan_result_leaks(&item.node, prov, captures_param, builtins, out);
+            }
+        }
+        MirExpr::MapLiteral(pairs) => {
+            for (key, value) in pairs {
+                scan_result_leaks(&key.node, prov, captures_param, builtins, out);
+                scan_result_leaks(&value.node, prov, captures_param, builtins, out);
+            }
+        }
+        // Independent products retain branch inputs concurrently. All other
+        // expressions already classify their operand roles in the regular
+        // positive scan.
+        _ => scan_leaks(e, prov, captures_param, builtins, out),
     }
 }
 
@@ -1218,6 +1372,7 @@ fn compute_capture_summary(
     program: &MirProgram,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
     builtins: &[String],
+    model: OwnershipModel,
 ) -> HashMap<FnId, HashSet<usize>> {
     // Param-slot → param-index per fn (params occupy the leading slots,
     // but resolve by the declared `local` to be safe).
@@ -1242,7 +1397,7 @@ fn compute_capture_summary(
             // body given the current (monotone-growing) summary, plus
             // live-alias pins. A param leaking ⇒ it captures its arg.
             let mut leak: HashSet<u32> = HashSet::new();
-            scan_leaks(&f.body.node, &prov, &captures, builtins, &mut leak);
+            scan_body_leaks(model, &f.body.node, &prov, &captures, builtins, &mut leak);
             collect_live_aliased_params(&f.body.node, &prov, builtins, nparams, &mut leak);
             let idx_map = &param_slot_to_idx[id];
             let entry = captures.entry(*id).or_default();

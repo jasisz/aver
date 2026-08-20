@@ -120,6 +120,12 @@ fn transpile_project(
     // the explicit boundary nodes; the body emitter below then lowers those
     // nodes trivially instead of deciding representation itself.
     if let Some(prog) = ctx.mir_program.take() {
+        // Rust consumes and drops returned aggregate wrappers (`Result`,
+        // records, tuples) at projection / `?` boundaries. Refine collection
+        // ownership once more with that backend-specific fact before the Int
+        // representation rewrite. Arena backends deliberately never run this
+        // pass: a logically-unwrapped aggregate remains a live holder there.
+        let prog = crate::ir::mir::optimize::own_param_refine_for_rust(prog);
         // Mutual-TCO members are emitted with an unconditionally boxed
         // (`AverInt`) trampoline signature regardless of the unboxing
         // analysis, so the rewrite must not tag them bare (it would desync
