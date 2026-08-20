@@ -3917,11 +3917,17 @@ fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
 
     assert!(lean.contains("structure HttpResponse where"));
     assert!(lean.contains("structure HttpRequest where"));
-    // `Tcp.Connection` is opaque from the surface (Phase 4.7+
-    // fix #11), but the Lean prelude still ships its struct
-    // so functions that take/return `Tcp.Connection` typecheck.
-    assert!(lean.contains("structure Tcp_Connection where"));
-    assert!(lean.contains("port : Int"));
+    // `Tcp.Connection` is a provider-owned resource. Lean models only its
+    // identity inside the capability namespace; the old represented carrier
+    // (and its host/port fields) must not leak back into the proof model.
+    assert!(
+        lean.contains(
+            "structure Tcp.Connection where\n  id : Nat\n  deriving Repr, BEq, DecidableEq"
+        ),
+        "{lean}"
+    );
+    assert!(!lean.contains("Tcp_Connection"));
+    assert!(!lean.contains("port : Int"));
     // Headers field renders as the Map shape (Lean uses List of pairs).
     assert!(lean.contains("List (String × List String)"));
 }

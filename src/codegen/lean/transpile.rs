@@ -403,7 +403,18 @@ fn emit_capability_resource_types(ctx: &CodegenContext, scope: Option<&str>) -> 
             let (module, name) = canonical.rsplit_once('.')?;
             let belongs = match scope {
                 Some(prefix) => module == prefix,
-                None => entry_module.as_deref() == Some(module),
+                None => {
+                    // A loaded capability module owns its declaration file.
+                    // Ad-hoc/synthetic programs can still receive the
+                    // standard contract through type checking without that
+                    // module appearing in `ctx.modules`; emit the qualified
+                    // resource in the entry file so its type never vanishes.
+                    entry_module.as_deref() == Some(module)
+                        || !ctx
+                            .modules
+                            .iter()
+                            .any(|candidate| candidate.prefix == module)
+                }
             };
             belongs.then(|| {
                 let declaration_name = if scope.is_some() {
