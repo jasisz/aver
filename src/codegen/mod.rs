@@ -376,11 +376,11 @@ pub struct CodegenContext {
     /// UI and has been reworded before, so anything that greps the generated
     /// file for it zeroes silently the next time someone edits a sentence.
     ///
-    /// Written by [`common::law_map_order_refusal`] and
-    /// [`common::verify_case_map_order_refusal`]; read by `cmd_proof`. Keyed
-    /// rather than pushed because each gate is consulted several times per
-    /// claim (once to emit, once more to decide lemma-citability, and again
-    /// on each backend), and a `Vec` would multiply-count.
+    /// Written by the shared Map-order refusal gates and by proof backends'
+    /// own soundness refusals (for example Lean sampled claims whose call cone
+    /// reaches a fuel fallback without a statically justified bound); read by
+    /// `cmd_proof`. Keyed rather than pushed because each gate can be consulted
+    /// several times per claim, and a `Vec` would multiply-count.
     pub declined_claims: std::cell::RefCell<std::collections::BTreeMap<String, DeclinedClaim>>,
     /// Per-dep resolved fn defs, parallel to `modules`.
     ///

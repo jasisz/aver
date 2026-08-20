@@ -1,5 +1,35 @@
 use super::*;
 
+const UNBOUNDED_FUEL_PROBE_AV: &str = r#"module FuelProbe
+    intent = "unproven fuel-bound soundness probe"
+
+fn pairsOf(level: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Compute the next level behind a user-function boundary."
+    match level
+        [] -> List.reverse(acc)
+        [left, ..rest] -> pairsOf(rest, List.concat(acc, [left]))
+
+fn stepSum(level: List<Int>) -> Int
+    ? "Start one pass over a level."
+    match level
+        [] -> 0
+        [only, ..rest] -> stepSumPeer(only, rest, level)
+
+fn stepSumPeer(only: Int, rest: List<Int>, level: List<Int>) -> Int
+    ? "Return one item or delegate another computed pass."
+    match rest
+        [] -> only
+        [_, .._] -> stepSumAgain(level)
+
+fn stepSumAgain(level: List<Int>) -> Int
+    ? "Compute the next level before returning to the root."
+    next = pairsOf(level, [])
+    stepSum(next)
+
+verify stepSum
+    stepSum([7]) => 7
+"#;
+
 #[test]
 fn count_model_panic_lines_matches_lake_panic_lines() {
     // Unit check on the exact output shapes the real toolchain produces (see
@@ -32,33 +62,30 @@ fn count_model_panic_lines_matches_lake_panic_lines() {
     assert_eq!(old_marker_scan, 2);
 }
 
-/// FIX A revert probe (no real `lake` needed — a PATH shim plays the
-/// false-green build): a `lake` that prints the fuel-exhaustion panic line
-/// yet exits 0 with zero sorries is EXACTLY what a vacuously-certified
-/// export looks like, and `aver proof --check` must fail hard on it. With
-/// the panic gate reverted this scenario exits 0 / `passed: true` (the
-/// false green this test exists to prevent).
+/// Artifact-local fuel gate (no real `lake` needed): even a perfectly green
+/// verifier cannot make a sampled claim over a fuel-lowered function pass,
+/// because the emitter refuses to state the claim before `native_decide` can
+/// turn exhaustion into `default`. The structured refusal is charged by
+/// `--check` and names the fuel dependency.
 #[cfg(unix)]
 #[test]
-fn proof_check_charges_fuel_exhaustion_panic_as_hard_failure() {
+fn proof_check_refuses_a_fuel_lowered_sample_before_native_decide() {
     use std::os::unix::fs::PermissionsExt;
 
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let src = temp_output_dir("aver-fuel-gate-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     let av = src.join("probe.av");
-    std::fs::write(&av, FUEL_PROBE_AV).expect("write probe.av");
+    std::fs::write(&av, UNBOUNDED_FUEL_PROBE_AV).expect("write probe.av");
 
-    // PATH shim: a fake `lake` reproducing the captured false-green output
-    // (panic lines + exit 0). Prepended to PATH so it wins over any real
-    // lake; everything else aver needs is reached via absolute paths.
+    // A green fake `lake` isolates the emitter refusal: no build error, sorry,
+    // or panic is available to fail the check for us.
     let shim_dir = temp_output_dir("aver-fuel-gate-shim");
     std::fs::create_dir_all(&shim_dir).expect("create shim dir");
     let shim = shim_dir.join("lake");
     std::fs::write(
         &shim,
         "#!/bin/sh\n\
-         echo \"info: ./FuelProbe.lean:27:0: PANIC at stepSum__fuel FuelProbe:8:9: Aver proof fuel exhausted\"\n\
          echo \"Build completed successfully.\"\n\
          exit 0\n",
     )
@@ -94,36 +121,49 @@ fn proof_check_charges_fuel_exhaustion_panic_as_hard_failure() {
     let summary: serde_json::Value =
         serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
 
-    // The build "succeeded" (exit 0) with zero sorries — the OLD criteria
-    // would have passed. The panic line must flip the verdict.
     assert_eq!(
         summary["sorries"].as_u64(),
         Some(0),
-        "shim scenario must be sorry-free (that's what makes it a false green)\n{}",
+        "the refusal must not masquerade as a sorry\n{}",
         format_output(&run)
     );
     assert_eq!(
         summary["model_panicked"].as_bool(),
-        Some(true),
-        "--check-json must surface the model panic\n{}",
+        Some(false),
+        "the claim must be refused before native evaluation can panic\n{}",
         format_output(&run)
+    );
+    assert_eq!(summary["declined"].as_u64(), Some(1));
+    let declined = summary["declined_claims"]
+        .as_array()
+        .and_then(|claims| claims.first())
+        .expect("one structured fuel refusal");
+    assert_eq!(declined["kind"].as_str(), Some("cases"));
+    assert_eq!(declined["claim"].as_str(), Some("stepSum"));
+    assert!(
+        declined["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("stepSum") && reason.contains("default value")),
+        "the refusal must name the fuel dependency and risk: {declined}"
     );
     assert_eq!(
         summary["passed"].as_bool(),
         Some(false),
-        "a fuel-exhaustion panic in lake output must fail the check — \
-         the kernel-certified sample equations are vacuous\n{}",
+        "a fuel-lowered sampled claim must fail closed even against a green verifier\n{}",
         format_output(&run)
     );
     assert!(
         !run.status.success(),
-        "`aver proof --check` must exit non-zero on fuel exhaustion\n{}",
+        "`aver proof --check` must exit non-zero on the charged refusal\n{}",
         format_output(&run)
     );
+    let entry = std::fs::read_to_string(out.join("FuelProbe.lean")).expect("read emitted entry");
+    assert!(entry.contains("-- verify stepSum: the Lean call cone reaches fuel-lowered"));
+    assert!(!entry.contains("example : stepSum 20"));
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
-        stderr.contains("model panicked") && stderr.contains("Aver bug"),
-        "the failure must be reported as a compiler-model bug\n{}",
+        stderr.contains("claim(s) were declined") && !stderr.contains("model panicked"),
+        "the failure must be reported as a refusal, not a post-hoc model panic\n{}",
         format_output(&run)
     );
 
@@ -367,9 +407,10 @@ fn lake_build_false_greens_on_forced_fuel_exhaustion_and_scan_catches_it() {
     );
 
     // Force fuel 0 on the wrappers — the exhaustion scenario. Also strip the
-    // ground-truth literals Fix B pinned (`= 210` back to `= stepSumAcc 20`)
-    // so the export is the PRE-Fix-B model-vs-model shape: this test isolates
-    // the panic-line contract; Fix B's literalization is covered separately.
+    // ground-truth literal (`= 210` back to `= stepSumAcc 20`) so the export is
+    // the historical model-vs-model shape: this test isolates Lean's panic-line
+    // contract while the artifact-local gate is covered above by an actually
+    // unbounded mutual group.
     let entry = out.join("FuelProbe.lean");
     let contents = std::fs::read_to_string(&entry).expect("read emitted entry");
     let mutated = contents.replace("((Int.natAbs n) + 1)", "0").replace(

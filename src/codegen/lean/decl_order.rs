@@ -411,7 +411,10 @@ fn collect_expr_type_refs(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
     }
 }
 
-fn collect_resolved_fn_refs(expr: &Spanned<ResolvedExpr>, out: &mut HashSet<crate::ir::FnId>) {
+pub(super) fn collect_resolved_fn_refs(
+    expr: &Spanned<ResolvedExpr>,
+    out: &mut HashSet<crate::ir::FnId>,
+) {
     match &expr.node {
         ResolvedExpr::Call(callee, args) => {
             if let ResolvedCallee::Fn(fn_id) = callee {

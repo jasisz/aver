@@ -1,21 +1,31 @@
 use super::*;
 
-/// FIX B revert probe: a `verify f` case whose expected side calls another
-/// user fn (`stepSum(20) => stepSumAcc(20)`) must be emitted with the
-/// VM-computed ground-truth literal on the expected side — `stepSum 20 = 210`
-/// — not as the model-vs-model `stepSum 20 = stepSumAcc 20` (which is
-/// vacuously provable when fuel exhaustion collapses both sides to
-/// `default`). With literalization reverted the emitted Lean contains the
-/// `stepSumAcc 20` call again and this test fails. The `--check` half
-/// (lake-gated) certifies literalization changed nothing about a correct
-/// model passing.
+const LITERAL_PROBE_AV: &str = "module LiteralProbe\n\
+    \x20   intent = \"model-vs-ground-truth probe\"\n\
+    \n\
+    fn doubled(n: Int) -> Int\n\
+    \x20   ? \"Double by addition.\"\n\
+    \x20   n + n\n\
+    \n\
+    fn expected(n: Int) -> Int\n\
+    \x20   ? \"Double by multiplication.\"\n\
+    \x20   n * 2\n\
+    \n\
+    verify doubled\n\
+    \x20   doubled(20) => expected(20)\n";
+
+/// A `verify f` case whose expected side calls another user fn must be emitted
+/// with the VM-computed ground-truth literal — `doubled 20 = 40` — not as the
+/// model-vs-model `doubled 20 = expected 20`. Fuel-lowered cases now fail
+/// closed before theorem emission, so this probe deliberately uses two total,
+/// non-recursive functions and keeps literalization covered independently.
 #[test]
 fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let src = temp_output_dir("aver-fixb-literal-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     let av = src.join("probe.av");
-    std::fs::write(&av, FUEL_PROBE_AV).expect("write probe.av");
+    std::fs::write(&av, LITERAL_PROBE_AV).expect("write probe.av");
 
     let out = temp_output_dir("aver-fixb-literal-out");
     let emit = Command::new(aver_bin)
@@ -33,15 +43,14 @@ fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
         format_output(&emit)
     );
 
-    let entry = std::fs::read_to_string(out.join("FuelProbe.lean")).expect("read emitted entry");
+    let entry = std::fs::read_to_string(out.join("LiteralProbe.lean")).expect("read emitted entry");
     assert!(
-        entry.contains("example : stepSum 20 = 210"),
-        "expected side must be the VM ground-truth literal (210), got:\n{entry}"
+        entry.contains("example : doubled 20 = 40"),
+        "expected side must be the VM ground-truth literal (40), got:\n{entry}"
     );
     assert!(
-        !entry.contains("= stepSumAcc 20"),
-        "expected side must NOT remain a model call (vacuous under fuel \
-         exhaustion):\n{entry}"
+        !entry.contains("= expected 20"),
+        "expected side must not remain a second model call:\n{entry}"
     );
 
     // Lake-gated half: the literalized export still builds green and the
