@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::ast::{Type, TypeDef, TypeVariant};
+use crate::ast::{TypeDef, TypeVariant};
 use crate::capability::CapabilityRegistry;
 use crate::provider::required_capability_operations;
 
@@ -159,29 +159,6 @@ pub(super) fn opaque_types_by_module(
         names.sort();
     }
     out
-}
-
-pub(super) fn uses_standard_bytes(contracts: &CapabilityRegistry) -> bool {
-    fn mentions(ty: &Type) -> bool {
-        match ty {
-            Type::Named { name, .. } => matches!(name.as_str(), "Bytes" | "Bytes.Bytes"),
-            Type::Result(left, right) | Type::Map(left, right) => mentions(left) || mentions(right),
-            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => mentions(inner),
-            Type::Tuple(items) => items.iter().any(mentions),
-            Type::Fn(params, ret, _) => params.iter().any(mentions) || mentions(ret),
-            Type::Int
-            | Type::Float
-            | Type::Str
-            | Type::Bool
-            | Type::Unit
-            | Type::Var(_)
-            | Type::Invalid => false,
-        }
-    }
-
-    contracts.operations().any(|operation| {
-        operation.params.iter().any(|(_, ty)| mentions(ty)) || mentions(&operation.return_type)
-    })
 }
 
 /// `Bytes` is nominal source data but canonical octets at a provider boundary.

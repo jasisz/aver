@@ -316,12 +316,30 @@ fn standard_bytes_is_a_canonical_capability_wire_type() {
     let items = crate::source::parse_source(source).expect("parse Bytes capability");
     let (registry, errors) = CapabilityRegistry::from_module("Binary", &items);
     assert!(errors.is_empty(), "{errors:?}");
+    assert!(registry.uses_standard_bytes());
 
     let contract = registry.contract("Binary").expect("Binary contract");
     let descriptor = String::from_utf8_lossy(&contract.contract_descriptor);
     assert!(descriptor.contains("Aver::Bytes = octets"), "{descriptor}");
     assert!(
         descriptor.contains("echo(Aver::Bytes) -> Aver::Bytes"),
+        "{descriptor}"
+    );
+}
+
+#[test]
+fn capability_owned_bytes_is_not_the_standard_wire_type() {
+    let source = "module Binary\n    kind = capability\n    semantics = pure\n\nrecord Bytes\n    values: List<Int>\n\noperation echo(value: Bytes) -> Bytes\n";
+    let items = crate::source::parse_source(source).expect("parse local Bytes capability");
+    let (registry, errors) = CapabilityRegistry::from_module("Binary", &items);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(!registry.uses_standard_bytes());
+
+    let contract = registry.contract("Binary").expect("Binary contract");
+    let descriptor = String::from_utf8_lossy(&contract.contract_descriptor);
+    assert!(!descriptor.contains("Aver::Bytes = octets"), "{descriptor}");
+    assert!(
+        descriptor.contains("Binary::Bytes = record"),
         "{descriptor}"
     );
 }
