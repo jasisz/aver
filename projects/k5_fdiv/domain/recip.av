@@ -85,9 +85,17 @@ fn awaySlack(d: Fraction, sd: Fraction) -> Fraction
     ? "The away slack term |d*sd| * ulp(d*sd, 32) of the one-step error: the away rounding of sd*d enters the error multiplied by d*sd, and |sdd - sd*d| < ulp(sd*d, 32) by awayFracErrorBound."
     Domain.Rational.times(Domain.Rational.absFraction(Domain.Rational.times(d, sd)), Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(Domain.Rational.times(d, sd)) - 32 + 1))
 
+verify awaySlack
+    Domain.Rational.sameValue(awaySlack(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 2147483648)) => true
+    Domain.Rational.sameValue(awaySlack(Domain.Rational.Fraction(top = -3, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 2)), Domain.Rational.Fraction(top = 3, bottom = 17179869184)) => true
+
 fn truncSlack(d: Fraction, sd: Fraction) -> Fraction
     ? "The trunc slack term |d| * ulp(product, 32) of the one-step error: the trunc rounding of the Newton product enters the error multiplied by d, and |product - sd_new| < ulp(product, 32) by truncFracErrorBound."
     Domain.Rational.times(Domain.Rational.absFraction(d), Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(refineProduct(d, sd)) - 32 + 1))
+
+verify truncSlack
+    Domain.Rational.sameValue(truncSlack(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 2147483648)) => true
+    Domain.Rational.sameValue(truncSlack(Domain.Rational.Fraction(top = 3, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)), Domain.Rational.Fraction(top = 3, bottom = 8589934592)) => true
 
 fn slack(d: Fraction, sd: Fraction) -> Fraction
     ? "The total rounding slack of one refinement step: away slack + trunc slack."

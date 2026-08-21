@@ -302,6 +302,10 @@ fn allEpsilonOkFrom(i: Int) -> Bool
         true -> true
         false -> Bool.and(entryEpsilonOk(i), allEpsilonOkFrom(i + 1))
 
+verify allEpsilonOkFrom
+    allEpsilonOkFrom(127) => true
+    allEpsilonOkFrom(128) => true
+
 fn tableIsEpsilonOk() -> Bool
     ? "Table 1 is epsilon-ok: every one of the 128 buckets satisfies entryEpsilonOk."
       "This is the whole-table property the paper confirms by execution (page 26)."
@@ -316,11 +320,19 @@ fn boolToInt(b: Bool) -> Int
         true -> 1
         false -> 0
 
+verify boolToInt
+    boolToInt(true) => 1
+    boolToInt(false) => 0
+
 fn countEpsilonOkFrom(i: Int) -> Int
     ? "Number of epsilon-ok buckets among i, i + 1, ..., 127."
     match i >= 128
         true -> 0
         false -> boolToInt(entryEpsilonOk(i)) + countEpsilonOkFrom(i + 1)
+
+verify countEpsilonOkFrom
+    countEpsilonOkFrom(127) => 1
+    countEpsilonOkFrom(128) => 0
 
 fn bucketsEpsilonOk() -> Int
     ? "How many of the 128 table buckets are epsilon-ok; equals 128 exactly when the"

@@ -232,6 +232,11 @@ fn truncErrorMagnitude(f: Fp, i: Int) -> Int
     ? "The integer magnitude core of the truncation error (Lemma 7.2.2): 2^(e_x) * ((sigBits*2^(i-1) - 2^(width-1)*floor(sigBits*2^(i-1) / 2^(width-1))) * (2^(width-1)*2^(i-1))). This is exactly epsilon's numerator times its denominator with the sign sigma_x factored out, so its nonnegativity (the floor remainder is >= 0 by the Euclidean window, the powers of two are positive) is what fixes epsilon's sign."
     Domain.Fprep.pow2(f.exp) * ((f.sigBits * Domain.Fprep.pow2(i - 1) - Domain.Fprep.pow2(f.width - 1) * floorDiv(f.sigBits * Domain.Fprep.pow2(i - 1), Domain.Fprep.pow2(f.width - 1))) * (Domain.Fprep.pow2(f.width - 1) * Domain.Fprep.pow2(i - 1)))
 
+verify truncErrorMagnitude
+    truncErrorMagnitude(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => 128
+    truncErrorMagnitude(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 2) => 192
+    truncErrorMagnitude(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 2, width = 4), 3) => 0
+
 fn truncErrorMagnitudeNonneg(f: Fp, i: Int) -> Bool
     ? "The truncation-error magnitude core is nonnegative: a product of the positive powers of two and the nonnegative Euclidean floor remainder sigBits*2^(i-1) - 2^(width-1)*floor(...), which is >= 0 by truncFitsWindow's lower bound."
     truncErrorMagnitude(f, i) >= 0
@@ -254,6 +259,10 @@ verify truncErrorMagnitudeNonneg law nonneg
 fn fpValueMagnitude(f: Fp) -> Int
     ? "The magnitude of the denoted value's numerator times its denominator: sigBits * 2^(e_x) * 2^(width-1). For a normalized float (isFp) every factor is positive, so the denoted value's sign is exactly sigma_x."
     f.sigBits * Domain.Fprep.pow2(f.exp) * Domain.Fprep.pow2(f.width - 1)
+
+verify fpValueMagnitude
+    fpValueMagnitude(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4)) => 104
+    fpValueMagnitude(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)) => 176
 
 fn fpValueMagnitudePos(f: Fp) -> Bool
     ? "For a normalized float the value magnitude is strictly positive -- sigBits >= 2^(width-1) > 0 and 2^(e_x) > 0 -- so the denoted value's sign is sigma_x, which makes the truncation-error sign condition split cleanly on the sign."

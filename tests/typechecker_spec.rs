@@ -7,6 +7,7 @@
 ///
 /// The type checker is run directly via `run_type_check`, bypassing the CLI.
 use aver::ast::TopLevel;
+use aver::diagnostics::{AnalyzeOptions, analyze_source};
 use aver::lexer::Lexer;
 use aver::parser::Parser;
 use aver::types::checker::{run_type_check, run_type_check_with_base};
@@ -400,6 +401,51 @@ fn valid_services_weather_av() {
         errs.is_empty(),
         "expected no type errors for services/weather.av, got:\n  {}",
         errs.join("\n  ")
+    );
+}
+
+#[test]
+fn k5_fdiv_corpus_passes_check() {
+    const K5_FILES: &[&str] = &[
+        "projects/k5_fdiv/main.av",
+        "projects/k5_fdiv/domain/estimate.av",
+        "projects/k5_fdiv/domain/exponent.av",
+        "projects/k5_fdiv/domain/floorlaws.av",
+        "projects/k5_fdiv/domain/fprep.av",
+        "projects/k5_fdiv/domain/fracround.av",
+        "projects/k5_fdiv/domain/kernel.av",
+        "projects/k5_fdiv/domain/rational.av",
+        "projects/k5_fdiv/domain/recip.av",
+        "projects/k5_fdiv/domain/remainder.av",
+        "projects/k5_fdiv/domain/round.av",
+        "projects/k5_fdiv/domain/sticky_int.av",
+        "projects/k5_fdiv/domain/table.av",
+    ];
+
+    let mut errors = Vec::new();
+    for path in K5_FILES {
+        let source = std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("failed to read {path}: {error}"));
+        let options = AnalyzeOptions::new(*path).with_module_base_dir("projects/k5_fdiv");
+        let report = analyze_source(&source, &options);
+        errors.extend(
+            report
+                .diagnostics
+                .into_iter()
+                .filter(|diagnostic| diagnostic.is_error())
+                .map(|diagnostic| {
+                    format!(
+                        "{}:{}: error[{}]: {}",
+                        path, diagnostic.span.line, diagnostic.slug, diagnostic.summary
+                    )
+                }),
+        );
+    }
+
+    assert!(
+        errors.is_empty(),
+        "K5 division corpus failed `aver check`:\n{}",
+        errors.join("\n")
     );
 }
 

@@ -54,8 +54,8 @@ verify fracSign
     fracSign(Domain.Rational.Fraction(top = 3, bottom = -4)) => 0 - 1
 
 fn halve(p: Int) -> Int
-    ? "Floor half of p; total because the divisor is the literal 2 (Result.withDefault recovers the always-Ok Int.div)."
-    Result.withDefault(Int.div(p, 2), 0)
+    ? "Floor half of p; total because the divisor is the literal 2, which the compiler discharges to a plain Int."
+    Int.div(p, 2)
 
 verify halve
     halve(9) => 4
