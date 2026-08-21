@@ -277,6 +277,14 @@ fn compile_program_inner(
         match item {
             ResolvedTopLevel::FnDef(rfd) => {
                 compiler.ensure_global(&rfd.name);
+                let arity = operand_u8(
+                    rfd.params.len(),
+                    &format!(
+                        "function `{}` has {} parameters",
+                        rfd.name,
+                        rfd.params.len()
+                    ),
+                )?;
                 let effect_ids: Vec<u32> = rfd
                     .effects
                     .iter()
@@ -284,7 +292,7 @@ fn compile_program_inner(
                     .collect();
                 let fn_id = compiler.code.add_function(FnChunk {
                     name: rfd.name.clone(),
-                    arity: rfd.params.len() as u8,
+                    arity,
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
@@ -413,6 +421,12 @@ fn compile_program_inner(
 #[derive(Debug)]
 pub struct CompileError {
     pub msg: String,
+}
+
+pub(super) fn operand_u8(value: usize, what: &str) -> Result<u8, CompileError> {
+    u8::try_from(value).map_err(|_| CompileError {
+        msg: format!("{what}; the VM supports at most {}", u8::MAX),
+    })
 }
 
 impl std::fmt::Display for CompileError {
@@ -604,6 +618,13 @@ impl ProgramCompiler {
         for item in &dep_resolved {
             if let ResolvedTopLevel::FnDef(rfd) = item {
                 let qualified_name = visibility::qualified_name(dep_name, &rfd.name);
+                let arity = operand_u8(
+                    rfd.params.len(),
+                    &format!(
+                        "function `{qualified_name}` has {} parameters",
+                        rfd.params.len()
+                    ),
+                )?;
                 let effect_ids: Vec<u32> = rfd
                     .effects
                     .iter()
@@ -611,7 +632,7 @@ impl ProgramCompiler {
                     .collect();
                 let fn_id = self.code.add_function(FnChunk {
                     name: qualified_name.clone(),
-                    arity: rfd.params.len() as u8,
+                    arity,
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
@@ -781,6 +802,15 @@ impl ProgramCompiler {
                     .find_type_id(&arena_name)
                     .unwrap_or_else(|| panic!("type `{arena_name}` already registered in Arena"));
                 for (variant_id, variant) in variants.iter().enumerate() {
+                    let field_count = operand_u8(
+                        variant.fields.len(),
+                        &format!(
+                            "variant `{}.{}` has {} fields",
+                            arena_name,
+                            variant.name,
+                            variant.fields.len()
+                        ),
+                    )?;
                     let ctor_id = arena
                         .find_ctor_id(type_id, variant_id as u16)
                         .expect("ctor id");
@@ -791,7 +821,7 @@ impl ProgramCompiler {
                             type_id,
                             variant_id: variant_id as u16,
                             ctor_id,
-                            field_count: variant.fields.len() as u8,
+                            field_count,
                         },
                     )?;
                     let member_symbol_id = self.symbols.intern_name(&variant.name);
@@ -897,8 +927,8 @@ impl ProgramCompiler {
         // bound and underruns the frame on `STORE_LOCAL` to a temp.
         let local_count = mir_fn
             .local_count
-            .max(resolution.map_or(rfd.params.len() as u32, |r| u32::from(r.local_count)))
-            as u16;
+            .max(resolution.map_or(rfd.params.len() as u32, |r| u32::from(r.local_count)));
+        let local_count = local_count as u16;
         // `FnCompiler.local_slots` feeds exactly one consumer: the
         // `MirExpr::FnValue` path (`compile_ident`). A `FnValue` name is
         // an ident the resolver left bare — so when a resolution exists,
@@ -923,9 +953,17 @@ impl ProgramCompiler {
                 .collect(),
         };
 
+        let arity = operand_u8(
+            rfd.params.len(),
+            &format!(
+                "function `{}` has {} parameters",
+                rfd.name,
+                rfd.params.len()
+            ),
+        )?;
         let mut fc = FnCompiler::new(
             &rfd.name,
-            rfd.params.len() as u8,
+            arity,
             local_count,
             rfd.effects
                 .iter()

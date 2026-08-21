@@ -1,4 +1,4 @@
-use super::{CompileError, FnCompiler};
+use super::{CompileError, FnCompiler, operand_u8};
 use crate::ast::Literal;
 use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::*;
@@ -55,7 +55,10 @@ impl<'a> FnCompiler<'a> {
     pub(super) fn compile_ident(&mut self, name: &str) -> Result<(), CompileError> {
         if let Some(&slot) = self.local_slots.get(name) {
             self.emit_op(LOAD_LOCAL);
-            self.emit_u8(slot as u8);
+            self.emit_u8(operand_u8(
+                slot as usize,
+                &format!("function `{}` uses local slot {slot}", self.name()),
+            )?);
         } else if let Some(&idx) = self.global_names().get(name) {
             self.emit_op(LOAD_GLOBAL);
             self.emit_u16(idx);

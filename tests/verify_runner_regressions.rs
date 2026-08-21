@@ -79,6 +79,28 @@ fn verify_runner_regressions_do_not_hang() {
     eprintln!("verify_runner_regressions_do_not_hang: {} files", tested);
 }
 
+#[test]
+fn verify_runner_preserves_300_item_list_literal() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/regressions/verify_runner/list_literal_300_items.av");
+    let source = fs::read_to_string(&path).expect("read 300-item list regression");
+    let mut lexer = Lexer::new(&source);
+    let tokens = lexer.tokenize().expect("tokenize 300-item list regression");
+    let mut parser = Parser::new(tokens);
+    let items = parser.parse().expect("parse 300-item list regression");
+
+    let results = run_verify_for_items_vm(
+        items,
+        None,
+        None,
+        path.to_str().expect("regression path must be UTF-8"),
+    )
+    .expect("verify 300-item list regression");
+    let passed: usize = results.iter().map(|result| result.passed).sum();
+    let failed: usize = results.iter().map(|result| result.failed).sum();
+    assert_eq!((passed, failed), (1, 0));
+}
+
 /// Mirror of the VM regression test for the wasm-gc verify backend.
 /// `aver verify --wasm-gc` and `aver::diagnostics::wasm_gc_verify`
 /// install a wasmtime fuel cap analogous to the VM's `step_limit`;
