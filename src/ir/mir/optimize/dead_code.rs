@@ -14,7 +14,7 @@
 
 use crate::ast::{Literal, Spanned};
 
-use super::super::expr::{MirBinOp, MirExpr, MirLet};
+use super::super::expr::{MirExpr, walk_children, walk_children_mut};
 use super::super::program::{LocalId, MirProgram};
 
 pub fn dead_code(mut program: MirProgram) -> MirProgram {
@@ -54,84 +54,7 @@ fn dce_in_place(expr: &mut Spanned<MirExpr>) {
 }
 
 fn dce_walk_children(node: &mut MirExpr) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Neg(inner) => dce_in_place(inner),
-        MirExpr::BinOp(spanned_bop) => {
-            let bop: &mut MirBinOp = &mut spanned_bop.node;
-            dce_in_place(&mut bop.lhs);
-            dce_in_place(&mut bop.rhs);
-        }
-        MirExpr::Let(spanned_let) => {
-            let let_node: &mut MirLet = &mut spanned_let.node;
-            dce_in_place(&mut let_node.value);
-            dce_in_place(&mut let_node.body);
-        }
-        MirExpr::Call(spanned_call) => {
-            for arg in &mut spanned_call.node.args {
-                dce_in_place(arg);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &mut spanned_tc.node.args {
-                dce_in_place(arg);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            dce_in_place(&mut spanned_match.node.subject);
-            for arm in &mut spanned_match.node.arms {
-                dce_in_place(&mut arm.body);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            dce_in_place(&mut spanned_ite.node.cond);
-            dce_in_place(&mut spanned_ite.node.then_branch);
-            dce_in_place(&mut spanned_ite.node.else_branch);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            for arg in &mut spanned_ctor.node.args {
-                dce_in_place(arg);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &mut spanned_rec.node.fields {
-                dce_in_place(&mut f.value);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            dce_in_place(&mut spanned_upd.node.base);
-            for f in &mut spanned_upd.node.updates {
-                dce_in_place(&mut f.value);
-            }
-        }
-        MirExpr::Project(spanned_proj) => dce_in_place(&mut spanned_proj.node.base),
-        MirExpr::Try(inner) => dce_in_place(inner),
-        MirExpr::Return(inner) => dce_in_place(inner),
-        MirExpr::Box(inner) | MirExpr::Unbox(inner) => dce_in_place(inner),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                dce_in_place(item);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                dce_in_place(k);
-                dce_in_place(v);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    dce_in_place(e);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &mut spanned_ip.node.items {
-                dce_in_place(item);
-            }
-        }
-    }
+    walk_children_mut(node, &mut |child| dce_in_place(child));
 }
 
 /// `true` when `body` contains a `MirExpr::Local` whose slot
@@ -148,84 +71,10 @@ fn local_is_read(target: LocalId, body: &Spanned<MirExpr>) -> bool {
 }
 
 fn visit_locals(node: &MirExpr, visit: &mut impl FnMut(LocalId)) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Local(spanned_local) => visit(spanned_local.node.slot),
-        MirExpr::Neg(inner) => visit_locals(&inner.node, visit),
-        MirExpr::BinOp(spanned_bop) => {
-            visit_locals(&spanned_bop.node.lhs.node, visit);
-            visit_locals(&spanned_bop.node.rhs.node, visit);
-        }
-        MirExpr::Let(spanned_let) => {
-            visit_locals(&spanned_let.node.value.node, visit);
-            visit_locals(&spanned_let.node.body.node, visit);
-        }
-        MirExpr::Call(spanned_call) => {
-            for arg in &spanned_call.node.args {
-                visit_locals(&arg.node, visit);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &spanned_tc.node.args {
-                visit_locals(&arg.node, visit);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            visit_locals(&spanned_match.node.subject.node, visit);
-            for arm in &spanned_match.node.arms {
-                visit_locals(&arm.body.node, visit);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            visit_locals(&spanned_ite.node.cond.node, visit);
-            visit_locals(&spanned_ite.node.then_branch.node, visit);
-            visit_locals(&spanned_ite.node.else_branch.node, visit);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            for arg in &spanned_ctor.node.args {
-                visit_locals(&arg.node, visit);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &spanned_rec.node.fields {
-                visit_locals(&f.value.node, visit);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            visit_locals(&spanned_upd.node.base.node, visit);
-            for f in &spanned_upd.node.updates {
-                visit_locals(&f.value.node, visit);
-            }
-        }
-        MirExpr::Project(spanned_proj) => visit_locals(&spanned_proj.node.base.node, visit),
-        MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => visit_locals(&inner.node, visit),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                visit_locals(&item.node, visit);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                visit_locals(&k.node, visit);
-                visit_locals(&v.node, visit);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    visit_locals(&e.node, visit);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &spanned_ip.node.items {
-                visit_locals(&item.node, visit);
-            }
-        }
+    if let MirExpr::Local(local) = node {
+        visit(local.node.slot);
     }
+    walk_children(node, &mut |child| visit_locals(child, visit));
 }
 
 /// Whether a division divisor is provably non-zero, so the division

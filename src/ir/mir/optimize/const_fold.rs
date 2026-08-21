@@ -36,8 +36,8 @@ use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic};
 use crate::types::Type;
 
 use super::super::expr::{
-    MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor, MirExpr, MirLet, MirMatch, MirMatchArm,
-    MirPattern,
+    MirCall, MirCallee, MirConstruct, MirCtor, MirExpr, MirLet, MirMatch, MirPattern,
+    walk_children_mut,
 };
 use super::super::program::MirProgram;
 use super::dead_code::is_pure;
@@ -92,94 +92,7 @@ fn literal_span(lit: Literal, source: &Spanned<MirExpr>) -> Spanned<Literal> {
 }
 
 fn walk_children(node: &mut MirExpr, builtins: &[String]) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Neg(inner) => fold_in_place(inner, builtins),
-        MirExpr::BinOp(spanned_bop) => {
-            let bop: &mut MirBinOp = &mut spanned_bop.node;
-            fold_in_place(&mut bop.lhs, builtins);
-            fold_in_place(&mut bop.rhs, builtins);
-        }
-        MirExpr::Let(spanned_let) => {
-            let let_node: &mut MirLet = &mut spanned_let.node;
-            fold_in_place(&mut let_node.value, builtins);
-            fold_in_place(&mut let_node.body, builtins);
-        }
-        MirExpr::Call(spanned_call) => {
-            let call: &mut MirCall = &mut spanned_call.node;
-            for arg in &mut call.args {
-                fold_in_place(arg, builtins);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &mut spanned_tc.node.args {
-                fold_in_place(arg, builtins);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            fold_in_place(&mut spanned_match.node.subject, builtins);
-            for arm in &mut spanned_match.node.arms {
-                fold_arm(arm, builtins);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            fold_in_place(&mut spanned_ite.node.cond, builtins);
-            fold_in_place(&mut spanned_ite.node.then_branch, builtins);
-            fold_in_place(&mut spanned_ite.node.else_branch, builtins);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            let ctor: &mut MirConstruct = &mut spanned_ctor.node;
-            for arg in &mut ctor.args {
-                fold_in_place(arg, builtins);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &mut spanned_rec.node.fields {
-                fold_in_place(&mut f.value, builtins);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            fold_in_place(&mut spanned_upd.node.base, builtins);
-            for f in &mut spanned_upd.node.updates {
-                fold_in_place(&mut f.value, builtins);
-            }
-        }
-        MirExpr::Project(spanned_proj) => fold_in_place(&mut spanned_proj.node.base, builtins),
-        MirExpr::Try(inner) => fold_in_place(inner, builtins),
-        MirExpr::Return(inner) => fold_in_place(inner, builtins),
-        MirExpr::Box(inner) | MirExpr::Unbox(inner) => fold_in_place(inner, builtins),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                fold_in_place(item, builtins);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                fold_in_place(k, builtins);
-                fold_in_place(v, builtins);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    fold_in_place(e, builtins);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &mut spanned_ip.node.items {
-                fold_in_place(item, builtins);
-            }
-        }
-    }
-}
-
-fn fold_arm(arm: &mut MirMatchArm, builtins: &[String]) {
-    // Don't recurse into the pattern — patterns are structural
-    // and don't contain `MirExpr` subtrees.
-    let _ = &arm.pattern;
-    let _: &MirPattern = &arm.pattern;
-    fold_in_place(&mut arm.body, builtins);
+    walk_children_mut(node, &mut |child| fold_in_place(child, builtins));
 }
 
 fn try_fold(node: &MirExpr) -> Option<Literal> {
@@ -741,6 +654,7 @@ pub(super) fn literal_eq(a: &Literal, b: &Literal) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::expr::{MirBinOp, MirMatchArm};
     use super::super::test_helpers::{body_of, one_fn_program, span};
     use super::*;
 

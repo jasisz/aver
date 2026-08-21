@@ -210,6 +210,175 @@ pub enum MirExpr {
     Unbox(std::boxed::Box<Spanned<MirExpr>>),
 }
 
+/// Apply `f` to every immediate sub-expression of `e` in evaluation order.
+///
+/// The exhaustive match makes adding a `MirExpr` variant a compile error here,
+/// keeping read-only MIR traversals on one canonical child enumeration.
+pub(crate) fn walk_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
+    match e {
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
+        MirExpr::Let(l) => {
+            f(&l.node.value.node);
+            f(&l.node.body.node);
+        }
+        MirExpr::Call(c) => {
+            for a in &c.node.args {
+                f(&a.node);
+            }
+        }
+        MirExpr::TailCall(tc) => {
+            for a in &tc.node.args {
+                f(&a.node);
+            }
+        }
+        MirExpr::BinOp(b) => {
+            f(&b.node.lhs.node);
+            f(&b.node.rhs.node);
+        }
+        MirExpr::Neg(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => f(&inner.node),
+        MirExpr::Match(m) => {
+            f(&m.node.subject.node);
+            for arm in &m.node.arms {
+                f(&arm.body.node);
+            }
+        }
+        MirExpr::Construct(c) => {
+            for a in &c.node.args {
+                f(&a.node);
+            }
+        }
+        MirExpr::RecordCreate(r) => {
+            for field in &r.node.fields {
+                f(&field.value.node);
+            }
+        }
+        MirExpr::RecordUpdate(u) => {
+            f(&u.node.base.node);
+            for field in &u.node.updates {
+                f(&field.value.node);
+            }
+        }
+        MirExpr::Project(p) => f(&p.node.base.node),
+        MirExpr::IfThenElse(ite) => {
+            f(&ite.node.cond.node);
+            f(&ite.node.then_branch.node);
+            f(&ite.node.else_branch.node);
+        }
+        MirExpr::List(items) | MirExpr::Tuple(items) => {
+            for i in items {
+                f(&i.node);
+            }
+        }
+        MirExpr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                f(&k.node);
+                f(&v.node);
+            }
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let MirStrPart::Expr(e) = p {
+                    f(&e.node);
+                }
+            }
+        }
+        MirExpr::IndependentProduct(ip) => {
+            for i in &ip.node.items {
+                f(&i.node);
+            }
+        }
+    }
+}
+
+/// Apply `f` to every immediate mutable sub-expression of `e` in evaluation
+/// order.
+///
+/// Callers supply their own recursive pass so this helper only owns the
+/// exhaustive child enumeration, not traversal policy.
+pub(crate) fn walk_children_mut(e: &mut MirExpr, f: &mut dyn FnMut(&mut Spanned<MirExpr>)) {
+    match e {
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
+        MirExpr::Let(l) => {
+            f(&mut l.node.value);
+            f(&mut l.node.body);
+        }
+        MirExpr::Call(c) => {
+            for a in &mut c.node.args {
+                f(a);
+            }
+        }
+        MirExpr::TailCall(tc) => {
+            for a in &mut tc.node.args {
+                f(a);
+            }
+        }
+        MirExpr::BinOp(b) => {
+            f(&mut b.node.lhs);
+            f(&mut b.node.rhs);
+        }
+        MirExpr::Neg(inner)
+        | MirExpr::Try(inner)
+        | MirExpr::Return(inner)
+        | MirExpr::Box(inner)
+        | MirExpr::Unbox(inner) => f(inner),
+        MirExpr::Match(m) => {
+            f(&mut m.node.subject);
+            for arm in &mut m.node.arms {
+                f(&mut arm.body);
+            }
+        }
+        MirExpr::Construct(c) => {
+            for a in &mut c.node.args {
+                f(a);
+            }
+        }
+        MirExpr::RecordCreate(r) => {
+            for field in &mut r.node.fields {
+                f(&mut field.value);
+            }
+        }
+        MirExpr::RecordUpdate(u) => {
+            f(&mut u.node.base);
+            for field in &mut u.node.updates {
+                f(&mut field.value);
+            }
+        }
+        MirExpr::Project(p) => f(&mut p.node.base),
+        MirExpr::IfThenElse(ite) => {
+            f(&mut ite.node.cond);
+            f(&mut ite.node.then_branch);
+            f(&mut ite.node.else_branch);
+        }
+        MirExpr::List(items) | MirExpr::Tuple(items) => {
+            for i in items {
+                f(i);
+            }
+        }
+        MirExpr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                f(k);
+                f(v);
+            }
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let MirStrPart::Expr(e) = p {
+                    f(e);
+                }
+            }
+        }
+        MirExpr::IndependentProduct(ip) => {
+            for i in &mut ip.node.items {
+                f(i);
+            }
+        }
+    }
+}
+
 /// `let binding = value; body`.
 ///
 /// Phase 5 wave-Let foundation: `binding_name` carries the

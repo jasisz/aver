@@ -15,7 +15,7 @@
 
 use crate::ast::{Literal, Spanned};
 
-use super::super::expr::MirExpr;
+use super::super::expr::{MirExpr, walk_children_mut};
 use super::super::program::MirProgram;
 
 pub fn branch_collapse(mut program: MirProgram) -> MirProgram {
@@ -70,83 +70,7 @@ enum BranchSide {
 }
 
 fn branch_collapse_walk_children(node: &mut MirExpr) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Neg(inner) => branch_collapse_in_place(inner),
-        MirExpr::BinOp(spanned_bop) => {
-            branch_collapse_in_place(&mut spanned_bop.node.lhs);
-            branch_collapse_in_place(&mut spanned_bop.node.rhs);
-        }
-        MirExpr::Let(spanned_let) => {
-            branch_collapse_in_place(&mut spanned_let.node.value);
-            branch_collapse_in_place(&mut spanned_let.node.body);
-        }
-        MirExpr::Call(spanned_call) => {
-            for arg in &mut spanned_call.node.args {
-                branch_collapse_in_place(arg);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &mut spanned_tc.node.args {
-                branch_collapse_in_place(arg);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            branch_collapse_in_place(&mut spanned_match.node.subject);
-            for arm in &mut spanned_match.node.arms {
-                branch_collapse_in_place(&mut arm.body);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            branch_collapse_in_place(&mut spanned_ite.node.cond);
-            branch_collapse_in_place(&mut spanned_ite.node.then_branch);
-            branch_collapse_in_place(&mut spanned_ite.node.else_branch);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            for arg in &mut spanned_ctor.node.args {
-                branch_collapse_in_place(arg);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &mut spanned_rec.node.fields {
-                branch_collapse_in_place(&mut f.value);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            branch_collapse_in_place(&mut spanned_upd.node.base);
-            for f in &mut spanned_upd.node.updates {
-                branch_collapse_in_place(&mut f.value);
-            }
-        }
-        MirExpr::Project(spanned_proj) => branch_collapse_in_place(&mut spanned_proj.node.base),
-        MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => branch_collapse_in_place(inner),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                branch_collapse_in_place(item);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                branch_collapse_in_place(k);
-                branch_collapse_in_place(v);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    branch_collapse_in_place(e);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &mut spanned_ip.node.items {
-                branch_collapse_in_place(item);
-            }
-        }
-    }
+    walk_children_mut(node, &mut |child| branch_collapse_in_place(child));
 }
 
 #[cfg(test)]

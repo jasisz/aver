@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use crate::ast::{Literal, Spanned};
 use crate::ir::FnId;
 
-use super::super::expr::{MirCallee, MirExpr};
+use super::super::expr::{MirCallee, MirExpr, walk_children_mut};
 use super::super::program::MirProgram;
 
 pub fn inline_nullary_literals(mut program: MirProgram) -> MirProgram {
@@ -74,83 +74,7 @@ fn inline_in_place(expr: &mut Spanned<MirExpr>, candidates: &HashMap<FnId, Liter
 }
 
 fn inline_walk_children(node: &mut MirExpr, candidates: &HashMap<FnId, Literal>) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Neg(inner) => inline_in_place(inner, candidates),
-        MirExpr::BinOp(spanned_bop) => {
-            inline_in_place(&mut spanned_bop.node.lhs, candidates);
-            inline_in_place(&mut spanned_bop.node.rhs, candidates);
-        }
-        MirExpr::Let(spanned_let) => {
-            inline_in_place(&mut spanned_let.node.value, candidates);
-            inline_in_place(&mut spanned_let.node.body, candidates);
-        }
-        MirExpr::Call(spanned_call) => {
-            for arg in &mut spanned_call.node.args {
-                inline_in_place(arg, candidates);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &mut spanned_tc.node.args {
-                inline_in_place(arg, candidates);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            inline_in_place(&mut spanned_match.node.subject, candidates);
-            for arm in &mut spanned_match.node.arms {
-                inline_in_place(&mut arm.body, candidates);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            inline_in_place(&mut spanned_ite.node.cond, candidates);
-            inline_in_place(&mut spanned_ite.node.then_branch, candidates);
-            inline_in_place(&mut spanned_ite.node.else_branch, candidates);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            for arg in &mut spanned_ctor.node.args {
-                inline_in_place(arg, candidates);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &mut spanned_rec.node.fields {
-                inline_in_place(&mut f.value, candidates);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            inline_in_place(&mut spanned_upd.node.base, candidates);
-            for f in &mut spanned_upd.node.updates {
-                inline_in_place(&mut f.value, candidates);
-            }
-        }
-        MirExpr::Project(spanned_proj) => inline_in_place(&mut spanned_proj.node.base, candidates),
-        MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => inline_in_place(inner, candidates),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                inline_in_place(item, candidates);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                inline_in_place(k, candidates);
-                inline_in_place(v, candidates);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    inline_in_place(e, candidates);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &mut spanned_ip.node.items {
-                inline_in_place(item, candidates);
-            }
-        }
-    }
+    walk_children_mut(node, &mut |child| inline_in_place(child, candidates));
 }
 
 #[cfg(test)]

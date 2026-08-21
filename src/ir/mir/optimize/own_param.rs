@@ -89,7 +89,7 @@ use std::sync::Arc;
 use crate::ast::Spanned;
 use crate::ir::FnId;
 
-use super::super::expr::{MirCallee, MirExpr};
+use super::super::expr::{MirCallee, MirExpr, walk_children};
 use super::super::program::MirProgram;
 
 mod return_alias;
@@ -689,7 +689,7 @@ fn slot_owned(
 
 /// Collect every fn name referenced as a value (`MirExpr::FnValue`).
 fn collect_fn_values(e: &MirExpr, out: &mut HashSet<String>) {
-    visit_children(e, &mut |c| collect_fn_values(c, out));
+    walk_children(e, &mut |c| collect_fn_values(c, out));
     if let MirExpr::FnValue(name) = e {
         out.insert(name.clone());
     }
@@ -701,7 +701,7 @@ fn collect_let_bindings(e: &MirExpr, out: &mut HashMap<u32, Spanned<MirExpr>>) {
         out.entry(l.node.binding.0)
             .or_insert_with(|| (*l.node.value).clone());
     }
-    visit_children(e, &mut |c| collect_let_bindings(c, out));
+    walk_children(e, &mut |c| collect_let_bindings(c, out));
 }
 
 /// The set of source slots whose backing the value of `e` may share —
@@ -1347,7 +1347,7 @@ fn collect_local_reads(e: &MirExpr, out: &mut HashSet<u32>) {
     if let MirExpr::Local(l) = e {
         out.insert(l.node.slot.0);
     }
-    visit_children(e, &mut |c| collect_local_reads(c, out));
+    walk_children(e, &mut |c| collect_local_reads(c, out));
 }
 
 /// Interprocedural "fn captures param i" summary. `captures_param[f]`
@@ -1438,89 +1438,7 @@ fn collect_call_sites(caller: FnId, e: &MirExpr, out: &mut Vec<CallSite>) {
         }
         _ => {}
     }
-    visit_children(e, &mut |c| collect_call_sites(caller, c, out));
-}
-
-/// Apply `f` to every immediate sub-expression of `e`. Mirrors the
-/// exhaustive walk in `instantiations.rs`; keep in sync if MirExpr grows.
-fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
-    match e {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Let(l) => {
-            f(&l.node.value.node);
-            f(&l.node.body.node);
-        }
-        MirExpr::Call(c) => {
-            for a in &c.node.args {
-                f(&a.node);
-            }
-        }
-        MirExpr::TailCall(tc) => {
-            for a in &tc.node.args {
-                f(&a.node);
-            }
-        }
-        MirExpr::BinOp(b) => {
-            f(&b.node.lhs.node);
-            f(&b.node.rhs.node);
-        }
-        MirExpr::Neg(inner)
-        | MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => f(&inner.node),
-        MirExpr::Match(m) => {
-            f(&m.node.subject.node);
-            for arm in &m.node.arms {
-                f(&arm.body.node);
-            }
-        }
-        MirExpr::Construct(c) => {
-            for a in &c.node.args {
-                f(&a.node);
-            }
-        }
-        MirExpr::RecordCreate(r) => {
-            for field in &r.node.fields {
-                f(&field.value.node);
-            }
-        }
-        MirExpr::RecordUpdate(u) => {
-            f(&u.node.base.node);
-            for field in &u.node.updates {
-                f(&field.value.node);
-            }
-        }
-        MirExpr::Project(p) => f(&p.node.base.node),
-        MirExpr::IfThenElse(ite) => {
-            f(&ite.node.cond.node);
-            f(&ite.node.then_branch.node);
-            f(&ite.node.else_branch.node);
-        }
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for i in items {
-                f(&i.node);
-            }
-        }
-        MirExpr::MapLiteral(pairs) => {
-            for (k, v) in pairs {
-                f(&k.node);
-                f(&v.node);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for p in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = p {
-                    f(&e.node);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(ip) => {
-            for i in &ip.node.items {
-                f(&i.node);
-            }
-        }
-    }
+    walk_children(e, &mut |c| collect_call_sites(caller, c, out));
 }
 
 #[cfg(test)]
