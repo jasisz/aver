@@ -273,7 +273,13 @@ fn nonempty_witness(
                 core: result.core,
             })
         }
-        Type::Named { name, .. } => named_witness(name, scope, ctx, visiting),
+        // Key the lookup by the stamped type identity: the canonical key
+        // carries the owning module, so a same-bare-name type in another
+        // module can never supply the witness for this one.
+        Type::Named { .. } => {
+            let key = crate::codegen::common::backend_named_type_key(ctx, ty)?;
+            named_witness(&key, scope, ctx, visiting)
+        }
         Type::Var(_) | Type::Invalid => None,
     }
 }
