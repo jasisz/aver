@@ -106,7 +106,6 @@ fn main_impl(
             profile,
             wasm_gc,
             wasip2,
-            providers: _,
             program_args,
         } => {
             let expressions = match shared::collect_entry_expressions(expr, input_file.as_deref()) {
@@ -217,11 +216,10 @@ fn main_impl(
         Commands::Check {
             file,
             module_root,
-            deps,
             verbose,
             json,
         } => {
-            commands::cmd_check(file, module_root.as_deref(), *deps, *verbose, *json);
+            commands::cmd_check(file, module_root.as_deref(), *verbose, *json);
         }
         Commands::Capabilities {
             file,
@@ -233,17 +231,14 @@ fn main_impl(
         Commands::Verify {
             file,
             module_root,
-            deps,
             verbose,
             json,
             hostile,
             wasm_gc,
-            providers: _,
         } => {
             commands::cmd_verify(
                 file,
                 module_root.as_deref(),
-                *deps,
                 *verbose,
                 *json,
                 *hostile,
@@ -256,7 +251,6 @@ fn main_impl(
             module_root,
             json,
             hostile,
-            providers: _,
         } => {
             commands::cmd_audit(
                 path,

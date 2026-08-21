@@ -271,8 +271,10 @@ fn verify_passes_on_both_spellings_of_a_dependency_variant() {
     assert_success(&output, "aver verify");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    // `verify` walks the whole program: the dependency's two blocks are
+    // sampled alongside the entry's two.
     assert!(
-        stdout.contains("4/4 cases passed | 0 failed"),
+        stdout.contains("8/8 cases passed | 0 failed"),
         "unexpected verify output:\n{stdout}"
     );
 }

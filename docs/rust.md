@@ -123,19 +123,24 @@ cd build/app
 cargo run
 ```
 
-Or keep the ordinary bytecode VM and explicitly compose the same packages into
-a cached host:
+The same manifest is part of what the program means on the ordinary bytecode
+VM: whenever a program reaches a bound capability, these commands compose the
+same packages into a cached host without any flag:
 
 ```bash
-aver run app.av --module-root . --providers
-aver verify app.av --module-root . --providers
-aver audit . --module-root . --providers
-aver run app.av --module-root . --providers --wasip2
+aver run app.av --module-root .
+aver verify app.av --module-root .
+aver audit . --module-root .
+aver run app.av --module-root . --wasip2
 ```
 
 The first invocation builds a thin Rust binary that links `aver-lang` and the
-declared factories. Later invocations with the same checked composition reuse
-it directly. Normally the Aver program still compiles to bytecode. With
+declared factories, and says so: `Building provider host for Clock:
+clock-provider from providers/clock (cached at …)` names every package being
+built and where it comes from (a path relative to the project, or the
+registry). The consent is the `[providers]` table in the project's own
+`aver.toml`; there is no prompt. Later invocations with the same checked
+composition reuse the host silently. Normally the Aver program still compiles to bytecode. With
 `--wasip2`, the host enables the Component Model runner and adapts the same
 binding to the generated WIT import; this route currently accepts the exact WIT
 subset `Unit`, `Bool`, `Float`, and `String`. Both routes retain the checked
@@ -145,22 +150,24 @@ rebuild the host. Changing a local provider source lets Cargo perform an
 incremental rebuild. The cache defaults to the platform user cache and can be
 redirected with `AVER_PROVIDER_HOST_CACHE`.
 
-`aver verify --providers` may execute a configured pure provider in a normal
-case. An exact `given name: Capability.operation = [stub]` remains a
-case-local override and wins without mutating the process binding. A directory
-verify or audit composes the project host once, then installs only the subset
-of bindings whose capability contracts exist in each file. A single unrelated
-module likewise ignores project bindings it does not reach. The same
-project-to-program projection applies to `run` and generated Rust: `aver.toml`
-may describe more capabilities than one probe, benchmark, migration, or entry
-program uses, and inactive bindings are not linked into that artifact.
-`--providers` is opt-in: plain `run`, `verify`, and `audit` never invoke Cargo
-or execute provider package code, and a matching missing-provider diagnostic
-prints the exact command that enables it. On `run`, the flag conflicts with
-`--self-host` and bare `--wasm-gc`; it can be combined with `--wasip2`. On
-`verify`, it conflicts with `--wasm-gc`.
+`aver verify` may execute a configured pure provider in a normal case. An
+exact `given name: Capability.operation = [stub]` remains a case-local
+override and wins without mutating the process binding. A directory verify or
+audit composes the project host once, then installs only the subset of
+bindings whose capability contracts exist in each module. A single unrelated
+module likewise ignores project bindings it does not reach, and runs in
+process. The same project-to-program projection applies to `run` and
+generated Rust: `aver.toml` may describe more capabilities than one probe,
+benchmark, migration, or entry program uses, and inactive bindings are not
+linked into that artifact. A project without `[providers]` never invokes
+Cargo or executes provider package code, and its missing-provider diagnostic
+points at the `[[providers.bindings]]` entry to add. Backends are a separate
+axis: `--wasip2` adapts WIT-lowerable bindings through the same host, while
+`--wasm-gc` and `--self-host` have no provider host and refuse a program
+that reaches a bound capability with `error[capability-provider-unhosted]`,
+naming the binding and the backend, rather than running without it.
 
-`aver compile` validates the manifest, emits each reached Cargo dependency and its typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the active dependencies when the generated project is built. The separate `--providers` run/verify/audit workflow above is the only stock CLI path that builds provider code. The generated stock binary installs all active configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
+`aver compile` validates the manifest, emits each reached Cargo dependency and its typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the active dependencies when the generated project is built. The cached run/verify/audit host above is the only stock CLI path that builds provider code. The generated stock binary installs all active configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
 
 Schema 1 requires exactly one of `version` or `path` per binding. Capability names and Cargo aliases must be unique. Once `[providers]` is present, every required custom capability needs one binding. A binding whose canonical capability module exists under the project module root but is absent from the current program closure is inactive, not erroneous, and is neither built nor installed. A capability name with no project contract remains an error, so this rule does not hide typos or foreign bindings. Compiler defaults such as `Time` need no entry, but an explicit checked `Time` binding replaces the default when that program reaches it. Provider runtime configuration and secrets stay in the provider's normal host environment, not in `aver.toml`.
 

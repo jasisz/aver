@@ -282,9 +282,9 @@ was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
 Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
 and `String` compile to typed wasip2 component imports. They are host-bound: an
 external Component Model host may provide the generated interface directly, or
-`aver run app.av --wasip2 --providers` can adapt the same Rust `ProviderBinding`
-configured for the VM. Plain `aver run --wasip2` remains inert and reports the
-missing import before component linking.
+`aver run app.av --wasip2` can adapt the same Rust `ProviderBinding` the
+project's `aver.toml` binds for the VM. Without such a binding,
+`aver run --wasip2` reports the missing import before component linking.
 
 ### Native Rust
 
@@ -300,16 +300,17 @@ generated library accepts the same `aver_rt::provider::ProviderBinding` used by
 an embedded VM. A versioned `[providers]` section in `aver.toml` can name an
 explicit Cargo package/path and zero-argument binding factory; `aver compile`
 then emits the dependency and stock-binary bootstrap, while Cargo performs
-package resolution during the generated build. The same manifest can be used
-without changing program backend: `aver run app.av --providers`,
-`aver verify app.av --providers`, and `aver audit . --providers` build/reuse a
-thin cached Rust host, then run the ordinary bytecode VM with those bindings
-in-process. Project-wide verify/audit installs only the bindings relevant to
-each file, so independent modules are still executed rather than mislabeled as
-type errors. For a WIT-lowerable
-contract, `aver run app.av --providers --wasip2` uses that same host package and
-binding behind the generated Component Model import. Plain `run` and `verify`
-never invoke Cargo; plain `audit` remains equally inert. Without `[providers]`,
+package resolution during the generated build. The same manifest is part of
+what a program means on every backend: when a program reaches a bound
+capability, `aver run`, `aver verify`, and `aver audit` build a thin cached
+Rust host once (the first build names the packages it links) and run the
+ordinary bytecode VM inside it with those bindings in-process. Project-wide
+verify/audit installs only the bindings relevant to each module, so
+independent modules are still executed rather than mislabeled as type
+errors. For a WIT-lowerable contract, `aver run app.av --wasip2` uses that
+same host package and binding behind the generated Component Model import;
+`--wasm-gc` and `--self-host` have no provider host and refuse such a
+program outright. A project without `[providers]` never invokes Cargo: its
 generated artifacts remain host-bound and embedders can install bindings
 through the library API.
 
@@ -545,7 +546,7 @@ aver cert verify out/file.wasm out/cert
 aver cert explain out/file.wasm out/cert
 ```
 
-Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
+Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). Both `check` and `verify` walk the whole program — the entry plus every module it reaches through `depends [...]` — and report per module; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
 
 | Command | What it checks | Use as a gate? |
 |---|---|---|
@@ -649,9 +650,9 @@ Repository layout rule:
 Typical commands:
 
 ```bash
-aver check examples/modules/app.av --module-root examples --deps
-aver check projects/workflow_engine/main.av --module-root projects/workflow_engine --deps
-aver check projects/payment_ops/main.av --module-root projects/payment_ops --deps
+aver check examples/modules/app.av --module-root examples
+aver check projects/workflow_engine/main.av --module-root projects/workflow_engine
+aver check projects/payment_ops/main.av --module-root projects/payment_ops
 ```
 
 Curated shared examples:

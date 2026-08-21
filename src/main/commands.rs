@@ -234,29 +234,25 @@ pub(super) fn find_self_host_binary() -> Result<PathBuf, String> {
     }
 }
 
-fn module_name(items: &[TopLevel]) -> Option<String> {
-    items.iter().find_map(|item| {
-        if let TopLevel::Module(m) = item {
-            Some(m.name.clone())
-        } else {
-            None
-        }
-    })
-}
+/// One module of a report: its path as the loader spelled it, its source,
+/// and its parsed items (empty when the file failed to parse).
+type ReportUnit = (String, String, Vec<TopLevel>);
 
-fn collect_check_units(
+/// The modules `check` and `verify` report for the program named by `file`:
+/// every project module reachable through `depends [...]`, leaves-first,
+/// the entry last. Embedded standard modules are not units. Modules whose
+/// canonical path is already in `reported` are skipped and the rest are
+/// added to it, so a directory input reports each module once.
+fn collect_program_units(
     file: &str,
     module_root: &str,
-    include_deps: bool,
-) -> Result<Vec<(String, String, Vec<TopLevel>)>, String> {
+    reported: &mut HashSet<PathBuf>,
+) -> Result<Vec<ReportUnit>, String> {
     let source = read_file(file)?;
     // Parse failure shouldn't abort `check`: its analysis pass owns the
     // canonical line/column diagnostic. `verify` re-parses an empty item set
     // and still fails loudly, preserving its existing behavior.
     let items = parse_file(&source).unwrap_or_default();
-    if !include_deps {
-        return Ok(vec![(file.to_string(), source, items)]);
-    }
 
     // The tolerant walk keeps a dependency that fails to parse or lacks its
     // declaration as a unit of its own, so each file reports its diagnostics
@@ -281,21 +277,32 @@ fn collect_check_units(
         ),
         other => other.to_string(),
     })?;
-    let mut units = Vec::with_capacity(program.modules.len());
-    units.push((file.to_string(), source, items));
-    units.extend(
-        program
-            .explicit_dependencies_in_discovery_order()
-            .into_iter()
-            .map(|module| {
-                (
-                    module.path.to_string_lossy().to_string(),
-                    module.source.clone(),
-                    module.items.clone(),
-                )
-            }),
-    );
-    Ok(units)
+    Ok(program
+        .report_units()
+        .filter(|module| reported.insert(aver::source::canonicalize_path(&module.path)))
+        .map(|module| {
+            let path = if module.is_entry {
+                file.to_string()
+            } else {
+                module.path.to_string_lossy().to_string()
+            };
+            (path, module.source.clone(), module.items.clone())
+        })
+        .collect())
+}
+
+/// Canonical key of the file a diagnostic span names, resolved against the
+/// module root when the span carries a relative path.
+fn span_file_key(file: &str, module_root: &str) -> String {
+    if file.is_empty() {
+        return String::new();
+    }
+    let path = Path::new(file);
+    if path.is_absolute() {
+        canonical_path_key(file)
+    } else {
+        canonical_path_key(&Path::new(module_root).join(path).to_string_lossy())
+    }
 }
 
 fn canonical_path_key(path: &str) -> String {
@@ -314,7 +321,6 @@ struct ExposedModuleInfo {
     exposed_names: Vec<String>,
     exposed_name_set: HashSet<String>,
     exposed_type_names: HashSet<String>,
-    is_entry: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -856,12 +862,11 @@ fn collect_used_exposes_for_importer(
     used_by_target
 }
 
-fn collect_unused_exposes_findings(
-    units: &[(String, String, Vec<TopLevel>)],
-    entry_file: &str,
-    module_root: &str,
-) -> Vec<CheckFinding> {
-    let entry_canonical = canonical_path_key(entry_file);
+/// Exposed names nobody imports, judged over `units` as one program: a
+/// name counts as used when any unit imports it. A module no unit imports
+/// (an entry, or a leaf pointed at directly) is not judged, since its
+/// importers are not in view.
+fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> Vec<CheckFinding> {
     let mut module_info_by_path = HashMap::new();
 
     for (path, _source, items) in units {
@@ -905,12 +910,12 @@ fn collect_unused_exposes_findings(
                 exposed_names: module.exposes.clone(),
                 exposed_name_set,
                 exposed_type_names,
-                is_entry: canonical_path_key(path) == entry_canonical,
             },
         );
     }
 
     let mut used_by_target: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut imported: HashSet<String> = HashSet::new();
 
     for (_path, _source, items) in units {
         let Some(module) = items.iter().find_map(|item| {
@@ -940,6 +945,11 @@ fn collect_unused_exposes_findings(
         if dep_targets.is_empty() {
             continue;
         }
+        imported.extend(
+            dep_targets
+                .iter()
+                .map(|target| target.info.canonical_path.clone()),
+        );
 
         let importer_usage = collect_used_exposes_for_importer(items, &dep_targets);
         for (target_path, names) in importer_usage {
@@ -952,7 +962,7 @@ fn collect_unused_exposes_findings(
     modules.sort_by(|left, right| left.file.cmp(&right.file));
 
     for info in modules {
-        if info.is_entry {
+        if !imported.contains(&info.canonical_path) {
             continue;
         }
 
@@ -1724,32 +1734,31 @@ pub(super) fn cmd_run_self_hosted(
     }
 }
 
-fn run_check_for_file(
-    file: &str,
+/// Check and report `units` in order. `unused_exposes` carries the
+/// cross-module findings, keyed by canonical path, judged over every unit
+/// the command was pointed at. Returns `(path, has_errors)` per unit.
+fn check_units(
+    units: &[ReportUnit],
     module_root: &str,
     config: Option<&aver::config::ProjectConfig>,
-    deps: bool,
     verbose: bool,
     json: bool,
     tracker: &mut SuppressionTracker,
-) -> Result<bool, String> {
-    let units = collect_check_units(file, module_root, deps)?;
-    let _entry_module = units.first().and_then(|(_, _, items)| module_name(items));
-    let mut unused_exposes_by_file: HashMap<String, Vec<CheckFinding>> = HashMap::new();
-    if deps {
-        for finding in collect_unused_exposes_findings(&units, file, module_root) {
-            if let Some(path) = &finding.file {
-                unused_exposes_by_file
-                    .entry(canonical_path_key(path))
-                    .or_default()
-                    .push(finding);
-            }
-        }
-    }
-    let mut has_any_error = false;
+    unused_exposes: &HashMap<String, Vec<CheckFinding>>,
+) -> Vec<(String, bool)> {
+    let mut outcomes = Vec::with_capacity(units.len());
+    // A diagnostic belongs to the module whose file it points at. When that
+    // module is itself a unit of this program it reports the diagnostic, so
+    // another unit (typically the entry, whose typecheck surfaces dependency
+    // errors) must not repeat it.
+    let unit_keys: std::collections::HashSet<String> = units
+        .iter()
+        .map(|(path, _, _)| canonical_path_key(path))
+        .collect();
 
     for (idx, (path, source, items)) in units.iter().enumerate() {
         let shown_path = display_check_path(path, module_root);
+        let own_key = canonical_path_key(path);
         let suppress_key = suppression_path(path, module_root);
         tracker.note_file(config, &suppress_key);
         if !json {
@@ -1768,16 +1777,20 @@ fn run_check_for_file(
             ..Default::default()
         };
         let report = diagnostic::analyze_source(source, &opts);
-        let has_errors = report.diagnostics.iter().any(|d| d.is_error());
         let mut diagnostics = report.diagnostics;
+        diagnostics.retain(|d| {
+            let key = span_file_key(&d.span.file, module_root);
+            key == own_key || !unit_keys.contains(&key)
+        });
+        let has_errors = diagnostics.iter().any(|d| d.is_error());
 
         // --- Multi-file concerns: append unused-expose warnings computed
         //     across the whole check unit (not visible to single-file analyze)
-        let unused_exposes_warnings = unused_exposes_by_file
+        let unused_exposes_warnings = unused_exposes
             .get(&canonical_path_key(path))
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
-        for w in &unused_exposes_warnings {
+        for w in unused_exposes_warnings {
             diagnostics.push(diagnostic::from_check_finding(
                 diagnostic::Severity::Warning,
                 w,
@@ -1871,12 +1884,10 @@ fn run_check_for_file(
             }
         }
 
-        if has_errors {
-            has_any_error = true;
-        }
+        outcomes.push((path.clone(), has_errors));
     }
 
-    Ok(has_any_error)
+    outcomes
 }
 
 /// Composite: static check + verify execution + format-check in one
@@ -2111,13 +2122,7 @@ fn severity_tag(diag: &aver::diagnostics::Diagnostic) -> colored::ColoredString 
     }
 }
 
-pub(super) fn cmd_check(
-    path: &str,
-    module_root_override: Option<&str>,
-    deps: bool,
-    verbose: bool,
-    json: bool,
-) {
+pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose: bool, json: bool) {
     let module_root = resolve_module_root(module_root_override);
     let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
         Ok(c) => c,
@@ -2135,72 +2140,120 @@ pub(super) fn cmd_check(
     };
 
     let batch = Path::new(path).is_dir();
-    let mut failed_files = Vec::new();
-    let mut tracker = SuppressionTracker::new(config.as_ref());
+    // Every module of every input's program, each collected once: a module
+    // reached from an earlier input is not a unit of a later one.
+    let mut reported = HashSet::new();
+    let programs = inputs
+        .iter()
+        .map(|file| {
+            (
+                file,
+                collect_program_units(file, &module_root, &mut reported),
+            )
+        })
+        .collect::<Vec<_>>();
 
-    for (idx, file) in inputs.iter().enumerate() {
-        if !json && batch && idx > 0 {
-            println!();
+    // Unused exposes are judged over the union of those programs, so a name
+    // one input's program exports for another input's program counts as
+    // used.
+    let unused_exposes = {
+        let union = programs
+            .iter()
+            .filter_map(|(_, units)| units.as_ref().ok())
+            .flatten()
+            .collect::<Vec<_>>();
+        let mut by_file: HashMap<String, Vec<CheckFinding>> = HashMap::new();
+        for finding in collect_unused_exposes_findings(&union, &module_root) {
+            if let Some(path) = &finding.file {
+                by_file
+                    .entry(canonical_path_key(path))
+                    .or_default()
+                    .push(finding);
+            }
         }
+        by_file
+    };
 
+    let mut checked_modules = 0usize;
+    let mut failed_modules = Vec::new();
+    let mut tracker = SuppressionTracker::new(config.as_ref());
+    let mut printed_any = false;
+
+    for (file, units) in programs {
+        // An input whose every module was reported under an earlier input
+        // has no section of its own.
+        if matches!(&units, Ok(units) if units.is_empty()) {
+            continue;
+        }
         if !json && batch {
+            if printed_any {
+                println!();
+            }
             println!("Input: {}", display_check_path(file, &module_root).cyan());
         }
+        printed_any = true;
 
-        match run_check_for_file(
-            file,
-            &module_root,
-            config.as_ref(),
-            deps,
-            verbose,
-            json,
-            &mut tracker,
-        ) {
-            Ok(has_errors) => {
-                if has_errors {
-                    failed_files.push(file.clone());
-                }
+        match units {
+            Ok(units) => {
+                let outcomes = check_units(
+                    &units,
+                    &module_root,
+                    config.as_ref(),
+                    verbose,
+                    json,
+                    &mut tracker,
+                    &unused_exposes,
+                );
+                checked_modules += outcomes.len();
+                failed_modules.extend(
+                    outcomes
+                        .into_iter()
+                        .filter_map(|(path, has_errors)| has_errors.then_some(path)),
+                );
             }
             Err(e) => {
                 eprintln!("{}", e.red());
-                failed_files.push(file.clone());
+                if reported.insert(aver::source::canonicalize_path(Path::new(file))) {
+                    checked_modules += 1;
+                }
+                failed_modules.push(file.clone());
             }
         }
     }
 
     report_dead_suppressions(config.as_ref(), &tracker, batch);
 
+    let passed = checked_modules.saturating_sub(failed_modules.len());
     if json {
-        let passed = inputs.len().saturating_sub(failed_files.len());
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"passed\":{},\"failed\":{}}}",
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"passed\":{},\"failed\":{}}}",
             inputs.len(),
+            checked_modules,
             passed,
-            failed_files.len()
+            failed_modules.len()
         );
-    } else if batch {
+    } else if batch || checked_modules > 1 {
         println!();
-        let passed = inputs.len().saturating_sub(failed_files.len());
-        if failed_files.is_empty() {
+        if failed_modules.is_empty() {
             println!(
                 "{}",
-                format!("Checked {} file(s): {} passed", inputs.len(), passed).green()
+                format!("Checked {} module(s): {} passed", checked_modules, passed).green()
             );
         } else {
             println!(
                 "{}",
                 format!(
-                    "Checked {} file(s): {} passed, {} failed",
-                    inputs.len(),
+                    "Checked {} module(s): {} passed, {} failed",
+                    checked_modules,
                     passed,
-                    failed_files.len()
+                    failed_modules.len()
                 )
                 .red()
             );
-            for file in &failed_files {
+            for file in &failed_modules {
                 println!("  {}", display_check_path(file, &module_root));
             }
-            if failed_files.len() > 3 {
+            if failed_modules.len() > 3 {
                 println!(
                     "{}",
                     "hint: if these files use modules, pass --module-root <dir>".dimmed()
@@ -2209,7 +2262,7 @@ pub(super) fn cmd_check(
         }
     }
 
-    if !failed_files.is_empty() {
+    if !failed_modules.is_empty() {
         process::exit(1);
     }
 }
@@ -2220,17 +2273,19 @@ struct VerifyFileResult {
     blocks: Vec<VerifyResult>,
 }
 
+/// Verify every not-yet-reported module of the program named by `file`,
+/// leaves-first.
 fn run_verify_for_file(
     file: &str,
     module_root: &str,
-    deps: bool,
     hostile: bool,
     wasm_gc: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
+    reported: &mut HashSet<PathBuf>,
 ) -> Result<Vec<VerifyFileResult>, String> {
     use aver::verify_law::expand::ExpansionMode;
 
-    let units = collect_check_units(file, module_root, deps)?;
+    let units = collect_program_units(file, module_root, reported)?;
     let mut file_results = Vec::new();
 
     let config = load_runtime_policy(module_root)?;
@@ -2240,18 +2295,24 @@ fn run_verify_for_file(
         ExpansionMode::Declared
     };
     for (path, source, items) in units {
-        // `collect_check_units` swallows a parse error into empty `items` so that
-        // `aver check` can surface it as a canonical line/col diagnostic via its
-        // own analysis pass. `verify` has no such pass, so an unparseable file
-        // would silently report "no verify blocks" and exit 0 — hiding both the
-        // parse error and any real blocks behind it. Re-parse ONLY when there are
-        // no items (cheap and rare — an empty/comment-only file parses to no items
-        // with no error, and is left alone) and surface the real parse error so
-        // `verify` fails loudly instead of passing green.
+        // `collect_program_units` swallows a parse error into empty `items` so
+        // that `aver check` can surface it as a canonical line/col diagnostic
+        // via its own analysis pass. `verify` has no such pass, so an
+        // unparseable file would silently report "no verify blocks" and exit 0
+        // — hiding both the parse error and any real blocks behind it.
+        // Re-parse ONLY when there are no items (cheap and rare — an
+        // empty/comment-only file parses to no items with no error, and is
+        // left alone) and surface the real parse error so `verify` fails
+        // loudly instead of passing green. A dependency names itself: the
+        // caller labels the error with the input file.
         if items.is_empty()
             && let Err(e) = parse_file(&source)
         {
-            return Err(e);
+            return Err(if path == file {
+                e
+            } else {
+                format!("{}: {}", display_check_path(&path, module_root), e)
+            });
         }
         let blocks = if wasm_gc {
             #[cfg(feature = "wasm")]
@@ -2700,7 +2761,6 @@ fn render_verify_output(
 pub(super) fn cmd_verify(
     path: &str,
     module_root_override: Option<&str>,
-    deps: bool,
     verbose: bool,
     json: bool,
     hostile: bool,
@@ -2726,15 +2786,17 @@ pub(super) fn cmd_verify(
     let mut skipped_wasm_gc_backend: Vec<String> = Vec::new();
     let mut skipped_provider_setup: Vec<String> = Vec::new();
     let mut printed_any = false;
+    // Every module of every input's program, each verified once.
+    let mut reported = HashSet::new();
 
     for file in &inputs {
         match run_verify_for_file(
             file,
             &module_root,
-            deps,
             hostile,
             wasm_gc,
             provider_bindings,
+            &mut reported,
         ) {
             Ok(file_results) => {
                 // Render immediately — streaming output
@@ -2846,31 +2908,33 @@ pub(super) fn cmd_verify(
         .map(|b| b.skipped)
         .sum();
     let total_cases = total_passed + total_failed + total_skipped;
-    let total_files = all_file_results
+    // Modules that declared at least one block; `files` stays what the
+    // command was pointed at.
+    let total_modules = all_file_results
         .iter()
         .filter(|fr| !fr.blocks.is_empty())
         .count();
 
     if total_blocks == 0 {
-        let scope = if deps {
-            format!("{} or its transitive dependencies", path)
-        } else {
-            path.to_string()
-        };
         if json {
             println!(
-                "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":0,\"blocks\":0,\"cases_passed\":0,\"cases_failed\":0}}"
+                "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":0,\"blocks\":0,\"cases_passed\":0,\"cases_failed\":0}}",
+                inputs.len()
             );
         } else {
             println!(
                 "{}",
-                format!("No verify blocks found in {}.", scope).yellow()
+                format!("No verify blocks found in {}.", path).yellow()
             );
         }
     } else if json {
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}}}",
-            total_files, total_blocks, total_passed, total_failed
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}}}",
+            inputs.len(),
+            total_modules,
+            total_blocks,
+            total_passed,
+            total_failed
         );
     } else {
         println!();
@@ -2902,9 +2966,9 @@ pub(super) fn cmd_verify(
             ));
         }
         let summary = format!(
-            "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed{}",
-            total_files,
-            if total_files == 1 { "" } else { "s" },
+            "Summary: {} module{} | {} block{} | {}/{} cases passed | {} failed{}",
+            total_modules,
+            if total_modules == 1 { "" } else { "s" },
             total_blocks,
             if total_blocks == 1 { "" } else { "s" },
             total_passed,
@@ -2956,6 +3020,7 @@ fn build_codegen_context(
     run_refinement_lower: bool,
     run_contract_lower: bool,
     run_law_lower: bool,
+    dependency_cases: DependencyCases<'_>,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -3019,10 +3084,11 @@ fn build_codegen_context(
     // module-spanning call graphs). load_compile_deps only reads
     // `TopLevel::Module(m).depends`, which TCO never touches, so it's
     // safe to run pre-pipeline.
-    let modules = load_compile_deps(
+    let modules = load_compile_deps_reporting(
         &items,
         &module_root,
         DepLowering::fully_lowered(dep_lowering, with_self_host_support),
+        dependency_cases,
     );
 
     let mut pipeline_result = aver::ir::pipeline::run(
@@ -5474,6 +5540,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         false, // run_refinement_lower — runtime backend, doesn't need ProofIR
         false, // run_contract_lower — same
         false, // run_law_lower — same
+        DependencyCases::Silent,
     );
     reject_unsupported_capability_targets(
         &ctx.items,
@@ -5749,6 +5816,7 @@ fn emit_artifact_certificate(
         true,  // run_refinement_lower
         true,  // run_contract_lower
         true,  // run_law_lower
+        DependencyCases::Silent,
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
@@ -6454,6 +6522,7 @@ pub(super) fn cmd_proof(
         true,  // run_refinement_lower — proof backends need ProofIR
         true,  // run_contract_lower — same
         true,  // run_law_lower — same
+        DependencyCases::UnsampledByProof { entry: file },
     );
 
     // `--allow-mathlib` is Lean-only. On Dafny it is a no-op (Z3 already carries
@@ -10596,6 +10665,21 @@ impl DepLowering {
     }
 }
 
+/// Whether the loader should say how many dependency verify cases the
+/// caller leaves unsampled. Only `aver proof` has that gap: its export
+/// samples the entry module's cases and carries dependency laws, but
+/// dependency cases are not sampled yet. Every other command either
+/// samples them (`verify`) or samples nothing at all (`run`, `compile`).
+#[derive(Clone, Copy)]
+pub(super) enum DependencyCases<'a> {
+    Silent,
+    /// Warn once per program, naming the `aver verify` invocation that
+    /// does check them.
+    UnsampledByProof {
+        entry: &'a str,
+    },
+}
+
 /// Load dependent modules for codegen: every module of the program behind
 /// `items`, typechecked and lowered with the target's matrix. Any problem is
 /// fatal here — printed in red, exit 1 — exactly as it always was.
@@ -10603,6 +10687,16 @@ pub(super) fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
     lowering: DepLowering,
+) -> Vec<ModuleInfo> {
+    load_compile_deps_reporting(items, module_root, lowering, DependencyCases::Silent)
+}
+
+/// [`load_compile_deps`] with an explicit say on unsampled dependency cases.
+pub(super) fn load_compile_deps_reporting(
+    items: &[TopLevel],
+    module_root: &str,
+    lowering: DepLowering,
+    dependency_cases: DependencyCases<'_>,
 ) -> Vec<ModuleInfo> {
     fn fail(message: String) -> ! {
         eprintln!("{}", message.red());
@@ -10621,11 +10715,25 @@ pub(super) fn load_compile_deps(
         )),
         Err(error) => fail(error.to_string()),
     };
+    if let DependencyCases::UnsampledByProof { entry } = dependency_cases {
+        let (cases, modules) = program.unsampled_dependency_cases();
+        if cases > 0 {
+            eprintln!(
+                "{}",
+                format!(
+                    "warning: {cases} non-law verify case{} across {modules} dependency module{} are not sampled by `aver proof` yet; `aver verify {entry}` checks them",
+                    if cases == 1 { "" } else { "s" },
+                    if modules == 1 { "" } else { "s" },
+                )
+                .yellow()
+            );
+        }
+    }
     let mut lowered = BTreeMap::new();
 
     // Parent before child, the order the walk met the modules in: the first
-    // fault on the way down is the one reported, and the non-law warnings
-    // come out in that order too. The returned list stays leaves-first.
+    // fault on the way down is the one reported. The returned list stays
+    // leaves-first.
     for module in program.dependencies_in_discovery_order() {
         match &module.fault {
             Some(LoadError::Parse { error, .. }) => fail(error.clone()),
@@ -10633,7 +10741,6 @@ pub(super) fn load_compile_deps(
             None => {}
         }
         let mut module_items = module.items.clone();
-        warn_unchecked_dependency_examples(&module.dep_name, &module_items);
 
         let neutral_policy = aver::ir::NeutralAllocPolicy;
         let dep_typecheck_mode = if lowering.self_host {
@@ -10691,24 +10798,6 @@ pub(super) fn load_compile_deps(
         .iter()
         .filter_map(|module| lowered.remove(&module.discovery_index))
         .collect()
-}
-
-fn warn_unchecked_dependency_examples(name: &str, items: &[TopLevel]) {
-    let count = items
-        .iter()
-        .filter(|item| {
-            matches!(item, TopLevel::Verify(block) if !matches!(block.kind, aver::ast::VerifyKind::Law(_)))
-        })
-        .count();
-    if count > 0 {
-        eprintln!(
-            "{}",
-            format!(
-                "warning: {count} non-law verify block(s) in dependency module '{name}' are NOT checked (module-scoped sampling is not yet supported) — move them to the entry module to sample them"
-            )
-            .yellow()
-        );
-    }
 }
 
 #[cfg(test)]

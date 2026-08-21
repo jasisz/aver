@@ -461,10 +461,10 @@ result in the complete contract is `Unit`, `Bool`, `Float`, or `String`; pure
 and effectful operations use the same transport. The component import pins the
 full `contract_hash` and publishes both hashes in its sibling WIT. An external
 Component Model host may implement that interface directly. For local execution,
-`aver run app.av --wasip2 --providers` instead links the configured Rust package
-in the cached host and dynamically adapts its existing `ProviderBinding` to the
-same WIT interface. Plain `aver run --wasip2` remains inert and fails preflight
-with `error[capability-provider-missing]`. The stock generated Rust binary
+`aver run app.av --wasip2` instead links the Rust package bound in `aver.toml`
+through the cached host and dynamically adapts its existing `ProviderBinding`
+to the same WIT interface. Without a binding, `aver run --wasip2` fails
+preflight with `error[capability-provider-missing]`. The stock generated Rust binary
 likewise has no custom binding and fails preflight; a separate Rust host links
 the provider crate through Cargo and installs the binding explicitly.
 Bare wasm-gc still rejects arbitrary custom capabilities. Standard `Time` is a

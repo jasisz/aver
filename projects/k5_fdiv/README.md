@@ -62,7 +62,7 @@ bespoke proofs — the first task where the dual backend earns its keep.
 ## Verify it
 
 ```
-aver check  projects/k5_fdiv/main.av --module-root projects/k5_fdiv --deps
+aver check  projects/k5_fdiv/main.av --module-root projects/k5_fdiv
 aver verify projects/k5_fdiv/domain/rational.av --module-root projects/k5_fdiv
 aver proof  projects/k5_fdiv/domain/rational.av --check          # Lean kernel: 0 sorries, universal
 aver proof  projects/k5_fdiv/domain/rational.av --check --backend dafny

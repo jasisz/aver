@@ -202,7 +202,6 @@ fn configured_rust_binding_runs_through_the_stock_wasip2_cli_adapter() {
             root.join("main.av").into_os_string(),
             "--module-root".into(),
             root.into_os_string(),
-            "--providers".into(),
             "--wasip2".into(),
         ],
         vec![binding],
@@ -222,7 +221,6 @@ fn configured_package_factory_runs_and_then_reuses_the_cached_wasip2_host() {
             .arg(root.join("main.av"))
             .arg("--module-root")
             .arg(&root)
-            .arg("--providers")
             .arg("--wasip2")
             .env("AVER_PROVIDER_HOST_CACHE", cache.path())
             .env("CARGO_NET_OFFLINE", "true")
@@ -274,7 +272,6 @@ fn configured_pure_binding_round_trips_bool_float_and_unit() {
             root.join("probes.av").into_os_string(),
             "--module-root".into(),
             root.into_os_string(),
-            "--providers".into(),
             "--wasip2".into(),
         ],
         vec![binding],

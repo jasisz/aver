@@ -39,7 +39,7 @@ impl TypeChecker {
         self.build_signatures(items);
 
         if !loaded_modules.is_empty() {
-            self.check_loaded_module_bodies(&loaded_modules);
+            self.check_loaded_module_bodies(&loaded_modules, base_dir);
         }
 
         self.check_body(items);
@@ -67,7 +67,7 @@ impl TypeChecker {
         let visible_roots = Self::visible_module_roots(items);
         self.integrate_loaded_modules(&loaded, &visible_roots);
         self.build_signatures(items);
-        self.check_loaded_module_bodies(&loaded);
+        self.check_loaded_module_bodies(&loaded, None);
         self.check_body(items);
     }
 
@@ -232,7 +232,11 @@ impl TypeChecker {
     /// sub-checker dropping. Diagnostics from the sub-check are folded
     /// back into the parent so a real type bug in `combat.av` still
     /// surfaces alongside any error in `main.av`.
-    fn check_loaded_module_bodies(&mut self, modules: &[crate::source::LoadedModule]) {
+    fn check_loaded_module_bodies(
+        &mut self,
+        modules: &[crate::source::LoadedModule],
+        module_root: Option<&str>,
+    ) {
         for module in modules {
             // Phase B: clone the parent's `SymbolTable` into the sub-
             // checker so every module shares the same opaque
@@ -270,6 +274,34 @@ impl TypeChecker {
             for item in &module.items {
                 if let TopLevel::FnDef(f) = item {
                     sub.check_fn(f);
+                }
+            }
+            // An error found in this module's bodies points at this
+            // module's file, not at the entry being checked: stamp the
+            // origin the same way the contract errors above carry it, so
+            // the diagnostic names the dependency and can show its source.
+            if !sub.errors.is_empty() {
+                let display_path = module_root
+                    .and_then(|root| module.path.strip_prefix(root).ok())
+                    .unwrap_or(module.path.as_path())
+                    .display()
+                    .to_string();
+                let source = if module_root.is_none() {
+                    None
+                } else {
+                    crate::source::resolve_standard_module_source(&module.dep_name)
+                        .map(|module| module.source)
+                        .or_else(|| std::fs::read_to_string(&module.path).ok())
+                        .map(std::sync::Arc::<str>::from)
+                };
+                let origin = TypeErrorOrigin {
+                    file: display_path,
+                    source,
+                };
+                for error in &mut sub.errors {
+                    if error.origin.is_none() {
+                        error.origin = Some(origin.clone());
+                    }
                 }
             }
             self.errors.append(&mut sub.errors);

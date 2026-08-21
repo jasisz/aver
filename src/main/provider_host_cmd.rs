@@ -1,4 +1,10 @@
 //! CLI-side planning and repair text for the cached provider VM host.
+//!
+//! A project that binds providers in `aver.toml` has said what its programs
+//! mean. `run`, `verify` and `audit` therefore build (once) and reuse the
+//! Rust host that links those packages whenever the program reaches a bound
+//! capability; a backend that cannot host a Rust provider refuses instead of
+//! running without it.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -9,94 +15,198 @@ use aver::codegen::rust as rust_codegen;
 
 use super::cli::Commands;
 use super::commands::resolve_av_inputs;
-use super::shared::{format_type_errors, parse_file, read_file};
+use super::shared::{parse_file, read_file};
 
+/// Where a command executes the program, seen from the provider host.
+enum HostBackend {
+    Hosted(crate::provider_vm_host::ProviderHostBackend),
+    /// A backend with no provider host; bound providers are an error there.
+    Unhosted(&'static str),
+}
+
+/// Run `command` inside the cached provider host when the project binds a
+/// provider the program reaches. `None` means the command runs in this
+/// process: no `[providers]` table, or none of its bindings is active for
+/// the program.
 pub(super) fn run_if_requested(
     command: &Commands,
     raw_args: &[OsString],
 ) -> Option<Result<ExitStatus, String>> {
-    let (composition, backend) = match command {
+    let (input, files, module_root, backend, command_name) = match command {
         Commands::Run {
             file,
             module_root,
-            providers: true,
+            self_host,
+            wasm_gc,
             wasip2,
             ..
         } => {
-            let module_root = super::shared::resolve_module_root(module_root.as_deref());
             let backend = if *wasip2 {
-                crate::provider_vm_host::ProviderHostBackend::Wasip2
+                HostBackend::Hosted(crate::provider_vm_host::ProviderHostBackend::Wasip2)
+            } else if *wasm_gc {
+                HostBackend::Unhosted("wasm-gc")
+            } else if *self_host {
+                HostBackend::Unhosted("self-host")
             } else {
-                crate::provider_vm_host::ProviderHostBackend::Vm
+                HostBackend::Hosted(crate::provider_vm_host::ProviderHostBackend::Vm)
             };
-            (plan_for_run(file, &module_root), backend)
+            (
+                file.clone(),
+                vec![file.clone()],
+                module_root,
+                backend,
+                "run",
+            )
         }
         Commands::Verify {
             file,
             module_root,
-            providers: true,
+            wasm_gc,
             ..
         } => {
-            let module_root = super::shared::resolve_module_root(module_root.as_deref());
+            let backend = if *wasm_gc {
+                HostBackend::Unhosted("wasm-gc")
+            } else {
+                HostBackend::Hosted(crate::provider_vm_host::ProviderHostBackend::Vm)
+            };
             (
-                plan_for_verify(file, &module_root),
-                crate::provider_vm_host::ProviderHostBackend::Vm,
+                file.clone(),
+                resolve_av_inputs(file).ok()?,
+                module_root,
+                backend,
+                "verify",
             )
         }
         Commands::Audit {
-            path,
+            path, module_root, ..
+        } => (
+            path.clone(),
+            resolve_av_inputs(path).ok()?,
             module_root,
-            providers: true,
-            ..
-        } => {
-            let module_root = super::shared::resolve_module_root(module_root.as_deref());
-            (
-                plan_for_verify(path, &module_root),
-                crate::provider_vm_host::ProviderHostBackend::Vm,
-            )
-        }
+            HostBackend::Hosted(crate::provider_vm_host::ProviderHostBackend::Vm),
+            "audit",
+        ),
         _ => return None,
     };
-    Some(composition.and_then(|composition| {
-        crate::provider_vm_host::run_cached_host(raw_args, &composition, backend)
-    }))
+    let module_root = super::shared::resolve_module_root(module_root.as_deref());
+    // A manifest that does not load is the command's own error to report.
+    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(&module_root))
+        .ok()
+        .flatten()?
+        .provider_manifest?;
+    let plan = match plan_for_files(&files, &module_root, &manifest) {
+        Ok(plan) => plan,
+        Err(error) => return Some(Err(error)),
+    };
+    if plan.composition.bindings.is_empty() {
+        return None;
+    }
+    let binding_line = |binding: &rust_codegen::composition::ProviderCompositionBinding| {
+        format!(
+            "\n  capability '{}' -> package '{}' from {}",
+            binding.capability,
+            binding.package,
+            crate::provider_vm_host::describe_source(&binding.source, Path::new(&module_root))
+        )
+    };
+    Some(match backend {
+        HostBackend::Hosted(backend) => {
+            // The wasip2 host adapts a binding through the generated WIT
+            // import, which exists only for WIT-lowerable contracts. Say so
+            // before Cargo builds anything.
+            if backend == crate::provider_vm_host::ProviderHostBackend::Wasip2 {
+                let manifest = aver::provider::CapabilityTargetManifest::build(
+                    &plan.capabilities,
+                    &plan.required,
+                )
+                .expect("required operations came from the capability registry");
+                let unhostable = manifest
+                    .required_unsupported(aver::provider::CapabilityTarget::Wasip2)
+                    .filter_map(|row| {
+                        let binding = plan
+                            .composition
+                            .bindings
+                            .iter()
+                            .find(|binding| binding.capability == row.capability)?;
+                        let aver::provider::TargetBindingStatus::Unsupported { reason } =
+                            &row.status
+                        else {
+                            return None;
+                        };
+                        Some(format!(
+                            "{} ({}: {})",
+                            binding_line(binding),
+                            reason.code(),
+                            reason.description()
+                        ))
+                    })
+                    .collect::<String>();
+                if !unhostable.is_empty() {
+                    return Some(Err(unhosted_provider_error(
+                        &unhostable,
+                        "wasip2",
+                        command_name,
+                        &input,
+                        &module_root,
+                    )));
+                }
+            }
+            crate::provider_vm_host::run_cached_host(
+                raw_args,
+                &plan.composition,
+                backend,
+                Path::new(&module_root),
+            )
+        }
+        HostBackend::Unhosted(backend) => {
+            let bindings = plan
+                .composition
+                .bindings
+                .iter()
+                .map(binding_line)
+                .collect::<String>();
+            Err(unhosted_provider_error(
+                &bindings,
+                backend,
+                command_name,
+                &input,
+                &module_root,
+            ))
+        }
+    })
+}
+
+/// What the provider host needs to know about the program(s) a command was
+/// pointed at.
+struct ProgramPlan {
+    composition: rust_codegen::composition::ProviderComposition,
+    capabilities: aver::capability::CapabilityRegistry,
+    required: BTreeSet<String>,
 }
 
 /// Validate the complete schema-1 composition before provider code reaches
 /// Cargo. Generated Rust and the cached VM host intentionally share this plan.
-pub(super) fn plan_for_run(
-    file: &str,
-    module_root: &str,
-) -> Result<rust_codegen::composition::ProviderComposition, String> {
-    plan_for_files(&[file.to_string()], module_root)
-}
-
-pub(super) fn plan_for_verify(
-    path: &str,
-    module_root: &str,
-) -> Result<rust_codegen::composition::ProviderComposition, String> {
-    let files = resolve_av_inputs(path)?;
-    plan_for_files(&files, module_root)
-}
-
+///
+/// A file that does not parse, load, or type is left out of the plan: the
+/// command itself reports it, and no binding can be active for it.
 fn plan_for_files(
     files: &[String],
     module_root: &str,
-) -> Result<rust_codegen::composition::ProviderComposition, String> {
-    let config = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))?
-        .ok_or_else(|| missing_manifest_error(module_root))?;
-    let manifest = config
-        .provider_manifest
-        .as_ref()
-        .ok_or_else(|| missing_manifest_error(module_root))?;
-
+    manifest: &aver::config::ProviderPackageManifest,
+) -> Result<ProgramPlan, String> {
     let mut capabilities = aver::capability::CapabilityRegistry::default();
     let mut required = BTreeSet::new();
     for file in files {
-        let source = read_file(file)?;
-        let mut items = parse_file(&source)?;
+        let Ok(source) = read_file(file) else {
+            continue;
+        };
+        let Ok(mut items) = parse_file(&source) else {
+            continue;
+        };
         aver::ir::pipeline::tco(&mut items);
-        let modules = aver::source::load_compile_deps(&items, module_root)?;
+        let Ok(modules) = aver::source::load_compile_deps(&items, module_root) else {
+            continue;
+        };
         let tc = aver::ir::pipeline::typecheck_gate(
             &items,
             &aver::ir::TypecheckMode::Full {
@@ -105,7 +215,7 @@ fn plan_for_files(
             &items,
         );
         if !tc.errors.is_empty() {
-            return Err(format_type_errors(&tc.errors));
+            continue;
         }
         required.extend(aver::provider::required_capability_operations(
             &items,
@@ -116,12 +226,17 @@ fn plan_for_files(
     }
 
     let known_capabilities = known_project_capabilities(module_root, &capabilities, Some(manifest));
-    rust_codegen::composition::plan_for_project(
+    let composition = rust_codegen::composition::plan_for_project(
         &capabilities,
         &required,
         Some(manifest),
         &known_capabilities,
-    )
+    )?;
+    Ok(ProgramPlan {
+        composition,
+        capabilities,
+        required,
+    })
 }
 
 /// Resolve only the manifest capability names that are outside the current
@@ -178,10 +293,22 @@ pub(super) fn known_project_capabilities(
     known
 }
 
-fn missing_manifest_error(module_root: &str) -> String {
+/// The program reaches a capability whose provider `aver.toml` binds, on a
+/// backend that cannot host it. `bindings` lists them, one line each. Says
+/// what is bound, where it would run, and what to change; the repair
+/// command repeats `input` as the user spelled it, directory or file.
+fn unhosted_provider_error(
+    bindings: &str,
+    backend: &str,
+    command: &str,
+    input: &str,
+    module_root: &str,
+) -> String {
     format!(
-        "--providers requires [providers] schema = 1 in {}/aver.toml",
-        Path::new(module_root).display()
+        "error[capability-provider-unhosted]: the {backend} backend cannot host a Rust provider, and this program reaches a capability that aver.toml binds to one:{bindings}\n  \
+         Run it on the bytecode VM, which builds and reuses the provider host: `aver {command} {input} --module-root {module_root}`; \
+         or compile with `aver compile --target rust`, which links the same package; \
+         or remove the binding from [providers] in aver.toml."
     )
 }
 
@@ -205,27 +332,27 @@ pub(super) fn missing_provider_repair(
                 .any(|binding| binding.capability == capability)
         });
 
-    if configured {
-        let mut repair = format!(
-            "hint: capability '{capability}' has a Rust provider configured in aver.toml.\n\
-             Run the real configured provider with:\n  aver {command} {file} --module-root {module_root} --providers"
-        );
-        if command == "verify" {
-            let stub_name = operation
-                .rsplit_once('.')
-                .map(|(_, name)| name)
-                .unwrap_or("call");
-            repair.push_str(&format!(
-                "\n\nor bind a verify-local stand-in:\n  given {stub_name}: {operation} = [stub]"
-            ));
-        }
-        Some(repair)
+    let mut repair = if configured {
+        format!(
+            "hint: capability '{capability}' has a Rust provider configured in aver.toml, but this run did not install it.\n\
+             The bytecode VM builds and reuses the provider host:\n  aver {command} {file} --module-root {module_root}"
+        )
     } else {
-        Some(format!(
+        format!(
             "hint: capability '{capability}' has no Rust provider configured in aver.toml.\n\
-             Add a matching [[providers.bindings]] entry before using --providers."
-        ))
+             Add a [[providers.bindings]] entry for it under [providers]; aver {command} then builds and reuses the provider host."
+        )
+    };
+    if command == "verify" {
+        let stub_name = operation
+            .rsplit_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or("call");
+        repair.push_str(&format!(
+            "\n\nor bind a verify-local stand-in:\n  given {stub_name}: {operation} = [stub]"
+        ));
     }
+    Some(repair)
 }
 
 #[cfg(test)]

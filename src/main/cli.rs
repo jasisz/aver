@@ -226,25 +226,19 @@ pub(super) enum Commands {
         /// (see docs/wasip2.md "Why X is rejected, not stubbed").
         #[arg(long = "wasip2", conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasip2: bool,
-        /// Build/reuse the Rust provider host declared by `[providers]`.
-        /// By default it installs bindings in the ordinary VM; with
-        /// `--wasip2` it adapts WIT-lowerable bindings to component imports.
-        #[arg(long, conflicts_with_all = ["self_host", "wasm_gc"])]
-        providers: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,
     },
-    /// Static analysis (intent presence, module size)
+    /// Static analysis (intent presence, module size) of every module in
+    /// the program: the entry plus everything it reaches through
+    /// `depends [...]`
     Check {
         /// Aver file or directory
         file: String,
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Also run contract checks for transitive `depends [...]` modules
-        #[arg(long)]
-        deps: bool,
         /// Show full diagnostic detail (intent, source snippets for warnings, repair alternatives)
         #[arg(long)]
         verbose: bool,
@@ -263,16 +257,14 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Run all verify blocks
+    /// Run the verify blocks of every module in the program: the entry
+    /// plus everything it reaches through `depends [...]`
     Verify {
         /// Aver file or directory
         file: String,
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Also run verify blocks for transitive `depends [...]` modules
-        #[arg(long)]
-        deps: bool,
         /// Show full diagnostic detail (source snippets on failures)
         #[arg(long)]
         verbose: bool,
@@ -300,10 +292,6 @@ pub(super) enum Commands {
         /// back to plain `aver verify` (VM).
         #[arg(long = "wasm-gc")]
         wasm_gc: bool,
-        /// Build/reuse the Rust provider host declared by `[providers]` and
-        /// execute the ordinary VM verify runner inside that host.
-        #[arg(long, conflicts_with = "wasm_gc")]
-        providers: bool,
     },
     /// Run check + verify + format-check in one pass
     Audit {
@@ -319,10 +307,6 @@ pub(super) enum Commands {
         /// Forward `--hostile` to the verify step. See `aver verify --hostile`.
         #[arg(long)]
         hostile: bool,
-        /// Build/reuse the Rust provider host declared by `[providers]` and
-        /// use its bindings for the verify phase of the audit.
-        #[arg(long)]
-        providers: bool,
     },
     /// Format Aver source files
     Format {
@@ -844,13 +828,16 @@ mod tests {
     }
 
     #[test]
-    fn verify_accepts_deps_flag() {
-        let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--deps"]);
+    fn check_and_verify_walk_the_program_without_a_deps_flag() {
+        for args in [
+            ["aver", "check", "examples/modules/app.av", "--deps"].as_slice(),
+            ["aver", "verify", "examples/modules/app.av", "--deps"].as_slice(),
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");
+        }
+        let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av"]);
         match cli.command {
-            Commands::Verify { file, deps, .. } => {
-                assert_eq!(file, "examples/modules/app.av");
-                assert!(deps);
-            }
+            Commands::Verify { file, .. } => assert_eq!(file, "examples/modules/app.av"),
             _ => panic!("expected verify command"),
         }
     }
@@ -867,54 +854,17 @@ mod tests {
     }
 
     #[test]
-    fn run_verify_and_audit_accept_provider_host_flag() {
-        let run = Cli::parse_from(["aver", "run", "app.av", "--providers"]);
-        assert!(matches!(
-            run.command,
-            Commands::Run {
-                providers: true,
-                ..
-            }
-        ));
-
-        let verify = Cli::parse_from(["aver", "verify", "app.av", "--providers"]);
-        assert!(matches!(
-            verify.command,
-            Commands::Verify {
-                providers: true,
-                ..
-            }
-        ));
-
-        let audit = Cli::parse_from(["aver", "audit", ".", "--providers"]);
-        assert!(matches!(
-            audit.command,
-            Commands::Audit {
-                providers: true,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn provider_host_accepts_wasip2_and_rejects_incompatible_backends() {
-        let wasip2 = Cli::parse_from(["aver", "run", "app.av", "--providers", "--wasip2"]);
-        assert!(matches!(
-            wasip2.command,
-            Commands::Run {
-                providers: true,
-                wasip2: true,
-                ..
-            }
-        ));
-
+    fn providers_come_from_aver_toml_not_a_flag() {
         for args in [
-            ["aver", "run", "app.av", "--providers", "--self-host"].as_slice(),
-            ["aver", "run", "app.av", "--providers", "--wasm-gc"].as_slice(),
-            ["aver", "verify", "app.av", "--providers", "--wasm-gc"].as_slice(),
+            ["aver", "run", "app.av", "--providers"].as_slice(),
+            ["aver", "verify", "app.av", "--providers"].as_slice(),
+            ["aver", "audit", ".", "--providers"].as_slice(),
+            ["aver", "run", "app.av", "--providers", "--wasip2"].as_slice(),
         ] {
             assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");
         }
+        let wasip2 = Cli::parse_from(["aver", "run", "app.av", "--wasip2"]);
+        assert!(matches!(wasip2.command, Commands::Run { wasip2: true, .. }));
     }
 
     #[test]

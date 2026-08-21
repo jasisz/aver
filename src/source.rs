@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::ast::TopLevel;
+use crate::ast::{TopLevel, VerifyKind};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::visibility;
@@ -377,34 +377,36 @@ impl Program {
         modules
     }
 
-    /// The opt-in check/verify walk: follow only written `depends [...]`
-    /// edges (not the implicit standard-module edges) parent-before-child,
-    /// each file once — the entry included, so a cycle back to it does not
-    /// list it twice.
-    pub fn explicit_dependencies_in_discovery_order(&self) -> Vec<&ProgramModule> {
-        let by_name = self
-            .dependencies()
-            .iter()
-            .map(|module| (module.dep_name.as_str(), module))
-            .collect::<HashMap<_, _>>();
-        let mut stack = visibility::module_decl(&self.entry().items)
-            .map(|module| module.depends.iter().rev().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        let mut seen = HashSet::from([canonicalize_path(&self.entry().path)]);
-        let mut modules = Vec::new();
-        while let Some(name) = stack.pop() {
-            let Some(module) = by_name.get(name.as_str()).copied() else {
-                continue;
-            };
-            if !seen.insert(canonicalize_path(&module.path)) {
-                continue;
-            }
-            modules.push(module);
-            if let Some(declaration) = visibility::module_decl(&module.items) {
-                stack.extend(declaration.depends.iter().rev().cloned());
-            }
-        }
-        modules
+    /// The modules a report walks, leaves-first with the entry last: every
+    /// project module of the program. Embedded standard modules are typed
+    /// and compiled like any other but are not units of a report — their
+    /// own `verify` blocks are checked per release, not per program.
+    pub fn report_units(&self) -> impl Iterator<Item = &ProgramModule> {
+        self.modules.iter().filter(|module| !module.is_stdlib)
+    }
+
+    /// Non-law verify cases declared by project dependencies, with the
+    /// number of dependency modules declaring any: what a per-program export
+    /// that only samples the entry leaves unsampled.
+    pub fn unsampled_dependency_cases(&self) -> (usize, usize) {
+        self.report_units()
+            .filter(|module| !module.is_entry)
+            .map(|module| {
+                module
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        TopLevel::Verify(block) if !matches!(block.kind, VerifyKind::Law(_)) => {
+                            Some(block.cases.len())
+                        }
+                        _ => None,
+                    })
+                    .sum::<usize>()
+            })
+            .filter(|&cases| cases > 0)
+            .fold((0, 0), |(cases, modules), module_cases| {
+                (cases + module_cases, modules + 1)
+            })
     }
 }
 
