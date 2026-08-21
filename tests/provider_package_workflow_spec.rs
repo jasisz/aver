@@ -189,6 +189,38 @@ fn compile_ignores_project_binding_unused_by_entry_program() {
     );
 }
 
+/// A project may bind a capability that lives in a subdirectory and declares
+/// only the last segment of its dotted name (`infra/kv.av` with `module Kv`,
+/// bound as `Infra.Kv`), exactly as `depends [Infra.Kv]` would name it. An
+/// entry program that never reaches it must still compile, with the binding
+/// left inert, instead of being told the capability has no contract.
+#[test]
+fn compile_ignores_dotted_project_binding_declared_by_its_last_segment() {
+    let temp = tempfile::tempdir().expect("temporary dotted-binding manifest root");
+    let root = temp.path().join("app");
+    fs::create_dir_all(root.join("infra")).expect("create infra dir");
+    fs::write(
+        root.join("infra").join("kv.av"),
+        "module Kv\n    kind = capability\n    semantics = pure\n    exposes [get]\n\noperation get(key: String) -> Option<String>\n    ? \"Look a key up.\"\n",
+    )
+    .expect("write dotted capability module");
+    write_project(
+        &root,
+        "module App\n\nfn main() -> Unit\n    Unit\n",
+        "[providers]\nschema = 1\n[[providers.bindings]]\ncapability='Infra.Kv'\ncrate='kv_provider'\npackage='kv-provider'\nfactory='binding'\nversion='1'\n",
+    );
+
+    let generated = temp.path().join("generated");
+    let output = compile(&root, &generated);
+    assert!(output.status.success(), "{}", report(&output));
+    let cargo_toml =
+        fs::read_to_string(generated.join("Cargo.toml")).expect("generated Cargo.toml");
+    assert!(
+        !cargo_toml.contains("kv_provider"),
+        "inactive dotted project binding leaked into the generated program:\n{cargo_toml}"
+    );
+}
+
 #[test]
 fn rust_compiler_reports_missing_factory_and_wrong_return_type() {
     let temp = tempfile::tempdir().expect("temporary invalid factory root");

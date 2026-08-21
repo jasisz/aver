@@ -274,10 +274,19 @@ pub(super) fn known_project_capabilities(
         let Ok(items) = aver::source::parse_source(&source) else {
             continue;
         };
+        // A dotted binding such as `Infra.Kv` names the module by its path;
+        // the file itself declares only the last segment (`module Kv`), the
+        // same rule the loader applies to `depends [Infra.Kv]`.
+        let expected = binding
+            .capability
+            .rsplit('.')
+            .next()
+            .unwrap_or(binding.capability.as_str());
         let declares_expected_module = items.iter().any(|item| {
             matches!(
                 item,
-                aver::ast::TopLevel::Module(module) if module.name == binding.capability
+                aver::ast::TopLevel::Module(module)
+                    if module.name == binding.capability || module.name == expected
             )
         });
         if !declares_expected_module {
