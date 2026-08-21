@@ -5,7 +5,7 @@
 //! (`codegen::dafny::lemmas`) and the Lean renderer
 //! (`codegen::lean::law_auto::induction`) both consume these, so a single
 //! recognizer drives a proof on either backend.
-use crate::ast::{Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TailCallData, TypeDef, VerifyLaw};
+use crate::ast::{Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TypeDef, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 /// A canonical Peano ADT: EXACTLY one nullary constructor and exactly one unary
@@ -98,64 +98,29 @@ pub(crate) fn peano_ctor_role(
     }
 }
 
-/// Collect all function names called in an expression (top-level only).
+/// Collect the user functions called anywhere in `expr` — including inside
+/// interpolated strings, map literals and record updates. The descent is
+/// `expr_walk::walk`, so a new `Expr` variant cannot be skipped silently; a
+/// hand-rolled walk here once ended in `_ => {}` and a wrapper whose only call
+/// sat inside `"{f(x)}"` never entered the Dafny opaque closure.
 pub(crate) fn collect_called_fns(
     expr: &Spanned<Expr>,
     out: &mut std::collections::BTreeSet<String>,
 ) {
-    match &expr.node {
-        Expr::FnCall(f, args) => {
+    crate::codegen::expr_walk::walk(expr, &mut |node| match &node.node {
+        Expr::FnCall(f, _) => {
             if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node) {
                 // Skip builtins — only user functions need fuel
                 if !name.contains('.') {
                     out.insert(name);
                 }
             }
-            collect_called_fns(f, out);
-            for a in args {
-                collect_called_fns(a, out);
-            }
         }
-        Expr::BinOp(_, l, r) => {
-            collect_called_fns(l, out);
-            collect_called_fns(r, out);
+        Expr::TailCall(tc) if !tc.target.contains('.') => {
+            out.insert(tc.target.clone());
         }
-        Expr::Match { subject, arms, .. } => {
-            collect_called_fns(subject, out);
-            for arm in arms {
-                collect_called_fns(&arm.body, out);
-            }
-        }
-        Expr::ErrorProp(inner) => collect_called_fns(inner, out),
-        Expr::Constructor(_, Some(arg)) => collect_called_fns(arg, out),
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::List(elems) => {
-            for e in elems {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::TailCall(tc) => {
-            let TailCallData { target, args, .. } = tc.as_ref();
-            if !target.contains('.') {
-                out.insert(target.clone());
-            }
-            for a in args {
-                collect_called_fns(a, out);
-            }
-        }
-        Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
-            for e in elems {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::Attr(obj, _) => collect_called_fns(obj, out),
-        Expr::Neg(inner) => collect_called_fns(inner, out),
         _ => {}
-    }
+    });
 }
 
 pub(crate) fn collect_called_fns_in_body(

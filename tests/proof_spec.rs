@@ -24,6 +24,8 @@ mod lean_kernel;
 mod lemmas;
 #[path = "proof_spec/literalization.rs"]
 mod literalization;
+#[path = "proof_spec/opaque_closure.rs"]
+mod opaque_closure;
 #[path = "proof_spec/oracle_verify.rs"]
 mod oracle_verify;
 #[path = "proof_spec/panics.rs"]
