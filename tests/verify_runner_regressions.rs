@@ -1,4 +1,6 @@
-//! Gate every AFL hang reproducer for the verify runner.
+//! Gate every AFL hang reproducer for the verify runner, plus the
+//! ordinary verify fixtures that share the directory and are pinned by
+//! their own tests (for example `list_literal_300_items.av`).
 //!
 //! Before Iron 0.21's step-limit landed in `vm_verify.rs`, each of
 //! these `.av` files used to pin the host indefinitely — a

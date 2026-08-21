@@ -469,15 +469,27 @@ fn fold_b_match_over_ctor(expr: &mut Spanned<MirExpr>) -> Option<Spanned<MirExpr
     // effects / divergence would silently vanish. Decline the fold (leave
     // the `match`, which evaluates the subject strictly) when any dropped
     // arg is impure.
-    let drops_impure = match &spanned_match.node.arms[arm_idx].pattern {
+    //
+    // A `Ctor` arm is also declined when `binding_names` is not parallel
+    // to `bindings`: an EMPTY name is the synthetic-discard marker (the VM
+    // emits `POP` instead of `STORE_LOCAL`, wasm-gc drops the value), so
+    // a missing name must never be fabricated for a live slot.
+    let decline_fold = match &spanned_match.node.arms[arm_idx].pattern {
         MirPattern::Wildcard => subj.node.args.iter().any(|a| !is_pure(a)),
-        MirPattern::Ctor { bindings, .. } => bindings
-            .iter()
-            .zip(&subj.node.args)
-            .any(|(slot, arg)| slot.0 == WILDCARD_SLOT && !is_pure(arg)),
+        MirPattern::Ctor {
+            bindings,
+            binding_names,
+            ..
+        } => {
+            binding_names.len() != bindings.len()
+                || bindings
+                    .iter()
+                    .zip(&subj.node.args)
+                    .any(|(slot, arg)| slot.0 == WILDCARD_SLOT && !is_pure(arg))
+        }
         _ => false,
     };
-    if drops_impure {
+    if decline_fold {
         return None;
     }
 
@@ -556,9 +568,11 @@ fn arm_matches_ctor(pattern: &MirPattern, ctor: BuiltinCtor, arity: usize) -> bo
 /// `let {binding_name} = …` by source name, and the wasm-gc emitter
 /// (which keys the slot off `binding`, the `LocalId`, since #948)
 /// routes an EMPTY name down the synthetic-discard path that drops the
-/// value. The VM keys off `binding` too. Each `Let` also
-/// carries the body's value type (`match_ty`) so wasm-gc has a stamp on
-/// every node.
+/// value. The VM does the same: an EMPTY name is a synthetic statement
+/// temporary and compiles to `POP` instead of `STORE_LOCAL`, so an empty
+/// name must never reach a live slot — the caller declines the fold when
+/// the names are not parallel to the slots. Each `Let` also carries the
+/// body's value type (`match_ty`) so wasm-gc has a stamp on every node.
 fn wrap_in_lets(
     bindings: &[crate::ir::mir::LocalId],
     binding_names: &[String],
@@ -569,7 +583,6 @@ fn wrap_in_lets(
     let mut acc = body;
     // Build inside-out: fold from the last field to the first so the
     // first field ends up as the outermost (first-evaluated) `Let`.
-    let n = ctor_args.len();
     for (i, (slot, arg)) in bindings.iter().zip(ctor_args).enumerate().rev() {
         // A `_` field has no slot (the wildcard sentinel). Its arg is
         // guaranteed pure by the caller's gate, so drop it instead of
@@ -580,11 +593,8 @@ fn wrap_in_lets(
             let _ = arg;
             continue;
         }
-        // `binding_names` is parallel to `bindings`; fall back to empty
-        // (synthetic) only if it's somehow short — never for well-typed
-        // input. `_ = n` keeps the index in range for the zip.
-        let name = binding_names.get(i).cloned().unwrap_or_default();
-        debug_assert!(i < n);
+        // Parallel to `bindings` — the caller's gate guarantees it.
+        let name = binding_names[i].clone();
         acc = typed(
             MirExpr::Let(bare(MirLet {
                 binding: *slot,
@@ -1131,6 +1141,29 @@ mod tests {
         assert!(
             matches!(body_of(&folded), MirExpr::Literal(s) if matches!(s.node, Literal::Int(5)))
         );
+    }
+
+    #[test]
+    fn fold_b_match_declines_when_binding_names_not_parallel() {
+        // A `Some(v)` arm whose `binding_names` is shorter than its
+        // `bindings` is malformed: folding it would have to invent a
+        // name for a live slot, and an EMPTY name means "discard" to the
+        // VM and wasm-gc. The fold must decline and leave the `match`.
+        let subject = ctor(BuiltinCtor::OptionSome, vec![int_lit(7)]);
+        let some_arm = MirMatchArm {
+            pattern: MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+                bindings: vec![LocalId(1)],
+                binding_names: vec![],
+            },
+            body: span(MirExpr::Local(span(MirLocal::at(LocalId(1))))),
+        };
+        let body = MirExpr::Match(span(MirMatch {
+            subject: Box::new(subject),
+            arms: vec![some_arm],
+        }));
+        let folded = const_fold(one_fn_program(body));
+        assert!(matches!(body_of(&folded), MirExpr::Match(_)));
     }
 
     #[test]
