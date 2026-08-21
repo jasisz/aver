@@ -47,7 +47,7 @@ use crate::vm::opcode::*;
 use super::VmSymbolTable;
 use super::resolve_helpers::buffer_intrinsic_opcode;
 
-use super::{CompileError, FnCompiler};
+use super::{CompileError, FnCompiler, operand_u8};
 
 /// Reasons the MIR vertical slice can't compile a given MIR fn yet.
 /// The Phase 4 callers fall back to the HIR path (`super::compile_fn`)
@@ -116,7 +116,11 @@ pub(super) fn compile_mir_expr(
             } else {
                 LOAD_LOCAL
             });
-            fc.emit_u8(local.slot.0 as u8);
+            let slot = operand_u8(
+                local.slot.0 as usize,
+                &format!("function `{}` uses local slot {}", fc.name(), local.slot.0),
+            )?;
+            fc.emit_u8(slot);
             Ok(())
         }
         MirExpr::BinOp(spanned_binop) => {
@@ -148,13 +152,27 @@ pub(super) fn compile_mir_expr(
         MirExpr::Let(spanned_let) => {
             let MirLet {
                 binding,
-                binding_name: _,
+                binding_name,
                 value,
                 body,
             } = &spanned_let.node;
             compile_mir_expr(fc, value)?;
-            fc.emit_op(STORE_LOCAL);
-            fc.emit_u8(binding.0 as u8);
+            if binding_name.is_empty() {
+                // Statement-chain lowering assigns fresh, unnamed locals to
+                // non-tail expression statements only to preserve their
+                // effects. The body cannot read these synthetic bindings, so
+                // discard the value directly instead of consuming a local-slot
+                // operand (and reserving a meaningless high slot in generated
+                // functions with hundreds of sequential effects).
+                fc.emit_op(POP);
+            } else {
+                fc.emit_op(STORE_LOCAL);
+                let slot = operand_u8(
+                    binding.0 as usize,
+                    &format!("function `{}` uses local slot {}", fc.name(), binding.0),
+                )?;
+                fc.emit_u8(slot);
+            }
             compile_mir_expr(fc, body)
         }
         MirExpr::Call(spanned_call) => {
@@ -165,6 +183,10 @@ pub(super) fn compile_mir_expr(
                         compile_mir_expr(fc, arg)?;
                     }
                     let name = fc.canonical_fn_name(*fn_id)?;
+                    let argc = operand_u8(
+                        args.len(),
+                        &format!("call to `{name}` passes {} arguments", args.len()),
+                    )?;
                     let vm_fn_id = fc.resolve_fn_id_by_name(&name).ok_or_else(|| {
                         MirVmUnsupported::InnerError(CompileError {
                             msg: format!(
@@ -193,7 +215,7 @@ pub(super) fn compile_mir_expr(
                     // defense, but no longer emitted here).
                     fc.emit_op(CALL_KNOWN);
                     fc.emit_u16(vm_fn_id as u16);
-                    fc.emit_u8(args.len() as u8);
+                    fc.emit_u8(argc);
                     Ok(())
                 }
                 MirCallee::Builtin(id) => {
@@ -216,7 +238,11 @@ pub(super) fn compile_mir_expr(
                                 })?;
                         fc.emit_op(CALL_BUILTIN);
                         fc.emit_u32(symbol_id);
-                        fc.emit_u8(args.len() as u8);
+                        let argc = operand_u8(
+                            args.len(),
+                            &format!("call to `{name}` passes {} arguments", args.len()),
+                        )?;
+                        fc.emit_u8(argc);
                         return Ok(());
                     }
                     let builtin =
@@ -259,7 +285,11 @@ pub(super) fn compile_mir_expr(
                             })?;
                             fc.emit_op(CALL_BUILTIN_OWNED);
                             fc.emit_u32(symbol_id);
-                            fc.emit_u8(args.len() as u8);
+                            let argc = operand_u8(
+                                args.len(),
+                                &format!("call to `{name}` passes {} arguments", args.len()),
+                            )?;
+                            fc.emit_u8(argc);
                             fc.emit_u8(owned_mask);
                         }
                         VmBuiltin::VectorSet => fc.emit_op(VECTOR_SET),
@@ -274,12 +304,20 @@ pub(super) fn compile_mir_expr(
                             if owned_mask != 0 {
                                 fc.emit_op(CALL_BUILTIN_OWNED);
                                 fc.emit_u32(symbol_id);
-                                fc.emit_u8(args.len() as u8);
+                                let argc = operand_u8(
+                                    args.len(),
+                                    &format!("call to `{name}` passes {} arguments", args.len()),
+                                )?;
+                                fc.emit_u8(argc);
                                 fc.emit_u8(owned_mask);
                             } else {
                                 fc.emit_op(CALL_BUILTIN);
                                 fc.emit_u32(symbol_id);
-                                fc.emit_u8(args.len() as u8);
+                                let argc = operand_u8(
+                                    args.len(),
+                                    &format!("call to `{name}` passes {} arguments", args.len()),
+                                )?;
+                                fc.emit_u8(argc);
                             }
                         }
                     }
@@ -332,7 +370,7 @@ pub(super) fn compile_mir_expr(
                 MirCallee::LocalSlot {
                     slot,
                     last_use,
-                    name: _,
+                    name,
                 } => {
                     // First-class fn value: push the slot (the callee),
                     // then the args, then dynamic-dispatch via CALL_VALUE.
@@ -341,12 +379,23 @@ pub(super) fn compile_mir_expr(
                     // the callee at `stack.len() - 1 - argc`, so it must be
                     // pushed before the args.
                     fc.emit_op(if *last_use { MOVE_LOCAL } else { LOAD_LOCAL });
-                    fc.emit_u8(*slot as u8);
+                    let callee_slot = operand_u8(
+                        *slot as usize,
+                        &format!("function `{}` uses local slot {slot}", fc.name()),
+                    )?;
+                    fc.emit_u8(callee_slot);
                     for arg in args {
                         compile_mir_expr(fc, arg)?;
                     }
                     fc.emit_op(CALL_VALUE);
-                    fc.emit_u8(args.len() as u8);
+                    let argc = operand_u8(
+                        args.len(),
+                        &format!(
+                            "call through local `{name}` passes {} arguments",
+                            args.len()
+                        ),
+                    )?;
+                    fc.emit_u8(argc);
                     Ok(())
                 }
             }
@@ -431,10 +480,18 @@ pub(super) fn compile_mir_expr(
                     for arg in &c.args {
                         compile_mir_expr(fc, arg)?;
                     }
+                    let field_count = operand_u8(
+                        c.args.len(),
+                        &format!(
+                            "variant `{}.{variant_name}` has {} fields",
+                            qualified_type_name,
+                            c.args.len()
+                        ),
+                    )?;
                     fc.emit_op(VARIANT_NEW);
                     fc.emit_u16(arena_type_id as u16);
                     fc.emit_u16(variant_id);
-                    fc.emit_u8(c.args.len() as u8);
+                    fc.emit_u8(field_count);
                     Ok(())
                 }
             }
@@ -481,9 +538,16 @@ pub(super) fn compile_mir_expr(
                 compile_mir_expr(fc, arg)?;
             }
             let target_name = fc.canonical_fn_name(tc.target)?;
+            let argc = operand_u8(
+                tc.args.len(),
+                &format!(
+                    "tail call to `{target_name}` passes {} arguments",
+                    tc.args.len()
+                ),
+            )?;
             if target_name == fc.name() {
                 fc.emit_op(TAIL_CALL_SELF);
-                fc.emit_u8(tc.args.len() as u8);
+                fc.emit_u8(argc);
                 fc.emit_u8(owned_mask);
             } else {
                 let vm_fn_id = fc.resolve_fn_id_by_name(&target_name).ok_or_else(|| {
@@ -497,7 +561,7 @@ pub(super) fn compile_mir_expr(
                 })?;
                 fc.emit_op(TAIL_CALL_KNOWN);
                 fc.emit_u16(vm_fn_id as u16);
-                fc.emit_u8(tc.args.len() as u8);
+                fc.emit_u8(argc);
                 fc.emit_u8(owned_mask);
             }
             Ok(())
@@ -513,7 +577,7 @@ pub(super) fn compile_mir_expr(
                 compile_mir_expr(fc, item)?;
             }
             fc.emit_op(LIST_NEW);
-            fc.emit_u8(items.len() as u8);
+            fc.emit_u32(items.len() as u32);
             Ok(())
         }
         MirExpr::Tuple(items) => {
@@ -521,7 +585,7 @@ pub(super) fn compile_mir_expr(
                 compile_mir_expr(fc, item)?;
             }
             fc.emit_op(TUPLE_NEW);
-            fc.emit_u8(items.len() as u8);
+            fc.emit_u32(items.len() as u32);
             Ok(())
         }
         MirExpr::RecordCreate(spanned_rc) => {
@@ -560,9 +624,16 @@ pub(super) fn compile_mir_expr(
                 )?;
                 compile_mir_expr(fc, &field.value)?;
             }
+            let field_count = operand_u8(
+                field_names.len(),
+                &format!(
+                    "record literal `{qualified_type_name}` has {} fields",
+                    field_names.len()
+                ),
+            )?;
             fc.emit_op(RECORD_NEW);
             fc.emit_u16(arena_type_id as u16);
-            fc.emit_u8(field_names.len() as u8);
+            fc.emit_u8(field_count);
             Ok(())
         }
         MirExpr::RecordUpdate(spanned_ru) => {
@@ -588,12 +659,24 @@ pub(super) fn compile_mir_expr(
             for (field_idx, field_name) in field_names.iter().enumerate() {
                 if let Some(field) = ru.updates.iter().find(|f| f.name == *field_name) {
                     compile_mir_expr(fc, &field.value)?;
-                    updated_indices.push(field_idx as u8);
+                    updated_indices.push(operand_u8(
+                        field_idx,
+                        &format!(
+                            "record update `{qualified_type_name}` uses field index {field_idx}"
+                        ),
+                    )?);
                 }
             }
+            let update_count = operand_u8(
+                updated_indices.len(),
+                &format!(
+                    "record update `{qualified_type_name}` changes {} fields",
+                    updated_indices.len()
+                ),
+            )?;
             fc.emit_op(RECORD_UPDATE);
             fc.emit_u16(arena_type_id as u16);
-            fc.emit_u8(updated_indices.len() as u8);
+            fc.emit_u8(update_count);
             for idx in updated_indices {
                 fc.emit_u8(idx);
             }
@@ -782,7 +865,7 @@ pub(super) fn compile_mir_expr(
                     compile_mir_expr(fc, item)?;
                 }
                 fc.emit_op(TUPLE_NEW);
-                fc.emit_u8(ip.items.len() as u8);
+                fc.emit_u32(ip.items.len() as u32);
                 return Ok(());
             }
             let mut arg_counts: Vec<u8> = Vec::with_capacity(ip.items.len());
@@ -832,7 +915,11 @@ pub(super) fn compile_mir_expr(
                         // through a `Fn` parameter cannot bypass provider,
                         // oracle, replay, or hostile dispatch.
                         fc.emit_op(if *last_use { MOVE_LOCAL } else { LOAD_LOCAL });
-                        fc.emit_u8(*slot as u8);
+                        let callee_slot = operand_u8(
+                            *slot as usize,
+                            &format!("function `{}` uses local slot {slot}", fc.name()),
+                        )?;
+                        fc.emit_u8(callee_slot);
                     }
                     // Synthesis intrinsics are compiler-only and never
                     // first-class callable values.
@@ -843,10 +930,17 @@ pub(super) fn compile_mir_expr(
                 for arg in &call.args {
                     compile_mir_expr(fc, arg)?;
                 }
-                arg_counts.push(call.args.len() as u8);
+                arg_counts.push(operand_u8(
+                    call.args.len(),
+                    &format!("parallel call branch passes {} arguments", call.args.len()),
+                )?);
             }
+            let branch_count = operand_u8(
+                ip.items.len(),
+                &format!("independent product has {} call branches", ip.items.len()),
+            )?;
             fc.emit_op(CALL_PAR);
-            fc.emit_u8(ip.items.len() as u8);
+            fc.emit_u8(branch_count);
             fc.emit_u8(if ip.unwrap_results { 1 } else { 0 });
             for argc in arg_counts {
                 fc.emit_u8(argc);
@@ -991,25 +1085,35 @@ const WILDCARD_SLOT_SENTINEL: u32 = u16::MAX as u32;
 /// Emit either `STORE_LOCAL slot` for a real binding or `POP`
 /// for the wildcard sentinel — mirroring HIR's
 /// `bind_top_to_local`.
-fn emit_store_or_pop(fc: &mut FnCompiler<'_>, local: LocalId) {
+fn emit_store_or_pop(fc: &mut FnCompiler<'_>, local: LocalId) -> Result<(), CompileError> {
     if local.0 == WILDCARD_SLOT_SENTINEL {
         fc.emit_op(POP);
     } else {
         fc.emit_op(STORE_LOCAL);
-        fc.emit_u8(local.0 as u8);
+        let slot = operand_u8(
+            local.0 as usize,
+            &format!("function `{}` uses local slot {}", fc.name(), local.0),
+        )?;
+        fc.emit_u8(slot);
     }
+    Ok(())
 }
 
 /// DUP + (`STORE_LOCAL` or `POP`) — mirror of HIR's
 /// `dup_and_bind_top_to_local`. When the binding is the
 /// wildcard sentinel, DUP + POP is a no-op, so we emit nothing.
-fn emit_dup_and_bind(fc: &mut FnCompiler<'_>, local: LocalId) {
+fn emit_dup_and_bind(fc: &mut FnCompiler<'_>, local: LocalId) -> Result<(), CompileError> {
     if local.0 == WILDCARD_SLOT_SENTINEL {
-        return;
+        return Ok(());
     }
     fc.emit_op(DUP);
     fc.emit_op(STORE_LOCAL);
-    fc.emit_u8(local.0 as u8);
+    let slot = operand_u8(
+        local.0 as usize,
+        &format!("function `{}` uses local slot {}", fc.name(), local.0),
+    )?;
+    fc.emit_u8(slot);
+    Ok(())
 }
 
 /// Recursive predicate: every `MirPattern` variant is now
@@ -1043,7 +1147,7 @@ fn emit_pattern_check(
             // HIR's `dup_and_bind_top_to_local` on a top-level
             // ident pattern. Wildcard sentinel collapses the
             // DUP+POP to no emit.
-            emit_dup_and_bind(fc, *local);
+            emit_dup_and_bind(fc, *local)?;
             Ok(Vec::new())
         }
         MirPattern::Literal(Literal::Int(v)) => {
@@ -1079,8 +1183,8 @@ fn emit_pattern_check(
             // the slot.
             fc.emit_op(DUP);
             fc.emit_op(LIST_HEAD_TAIL);
-            emit_store_or_pop(fc, *head);
-            emit_store_or_pop(fc, *tail);
+            emit_store_or_pop(fc, *head)?;
+            emit_store_or_pop(fc, *tail)?;
             Ok(vec![patch])
         }
         MirPattern::Ctor {
@@ -1137,8 +1241,13 @@ fn emit_pattern_check(
             // `emit_store_or_pop` collapses to POP for those.
             for (i, b) in bindings.iter().enumerate() {
                 fc.emit_op(EXTRACT_FIELD);
-                fc.emit_u8(i as u8);
-                emit_store_or_pop(fc, *b);
+                fc.emit_u8(operand_u8(
+                    i,
+                    &format!(
+                        "constructor pattern `{qualified_type_name}.{variant_name}` uses field index {i}"
+                    ),
+                )?);
+                emit_store_or_pop(fc, *b)?;
             }
             Ok(vec![patch])
         }
@@ -1151,16 +1260,20 @@ fn emit_pattern_check(
             // structural patterns (Cons / Ctor / Tuple / …) get
             // a cleanup-jump if they fail mid-extraction.
             fc.emit_op(MATCH_TUPLE);
-            fc.emit_u8(items.len() as u8);
+            fc.emit_u8(operand_u8(
+                items.len(),
+                &format!("tuple pattern has {} items", items.len()),
+            )?);
             let tuple_fail = fc.offset();
             fc.emit_i16(0);
             let mut all_patches = vec![tuple_fail];
             for (i, sub) in items.iter().enumerate() {
+                let item_index = operand_u8(i, &format!("tuple pattern uses item index {i}"))?;
                 let nested = emit_nested_subpattern(
                     fc,
                     |fc| {
                         fc.emit_op(EXTRACT_TUPLE_ITEM);
-                        fc.emit_u8(i as u8);
+                        fc.emit_u8(item_index);
                     },
                     sub,
                 )?;
@@ -1195,7 +1308,7 @@ fn emit_pattern_check(
                     // emit at all, mirroring HIR's `dup_and_bind`
                     // on `_`).
                     if let Some(b) = bindings.first() {
-                        emit_dup_and_bind(fc, *b);
+                        emit_dup_and_bind(fc, *b)?;
                     }
                     Ok(vec![patch])
                 }
@@ -1282,7 +1395,10 @@ fn try_emit_match_dispatch_const(
     compile_mir_expr(fc, subject)?;
 
     fc.emit_op(MATCH_DISPATCH_CONST);
-    fc.emit_u8(entries.len() as u8);
+    fc.emit_u8(operand_u8(
+        entries.len(),
+        &format!("match dispatch table has {} entries", entries.len()),
+    )?);
     let default_offset_patch = fc.offset();
     fc.emit_i16(0); // default_offset — patched after the table
 
@@ -1310,7 +1426,7 @@ fn try_emit_match_dispatch_const(
     // opcode on miss. Bind it if the pattern is `Bind(local)`,
     // then drop it via POP before the body.
     if let Some(local) = default_local {
-        emit_dup_and_bind(fc, local);
+        emit_dup_and_bind(fc, local)?;
     }
     fc.emit_op(POP);
     compile_mir_expr(fc, &default_arm.body)?;
@@ -1384,14 +1500,14 @@ fn emit_last_arm_bindings(
     match pattern {
         MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => Ok(()),
         MirPattern::Bind(local, _name) => {
-            emit_dup_and_bind(fc, *local);
+            emit_dup_and_bind(fc, *local)?;
             Ok(())
         }
         MirPattern::Cons { head, tail, .. } => {
             fc.emit_op(DUP);
             fc.emit_op(LIST_HEAD_TAIL);
-            emit_store_or_pop(fc, *head);
-            emit_store_or_pop(fc, *tail);
+            emit_store_or_pop(fc, *head)?;
+            emit_store_or_pop(fc, *tail)?;
             Ok(())
         }
         MirPattern::Ctor {
@@ -1401,8 +1517,11 @@ fn emit_last_arm_bindings(
         } => {
             for (i, b) in bindings.iter().enumerate() {
                 fc.emit_op(EXTRACT_FIELD);
-                fc.emit_u8(i as u8);
-                emit_store_or_pop(fc, *b);
+                fc.emit_u8(operand_u8(
+                    i,
+                    &format!("constructor pattern uses field index {i}"),
+                )?);
+                emit_store_or_pop(fc, *b)?;
             }
             Ok(())
         }
@@ -1425,7 +1544,7 @@ fn emit_last_arm_bindings(
                 fc.emit_op(MATCH_UNWRAP);
                 fc.emit_u8(kind);
                 fc.emit_i16(0); // no-fail (shape known)
-                emit_dup_and_bind(fc, *b);
+                emit_dup_and_bind(fc, *b)?;
             }
             Ok(())
         }
@@ -1437,7 +1556,10 @@ fn emit_last_arm_bindings(
             // subpattern is also guaranteed to match).
             for (i, sub) in items.iter().enumerate() {
                 fc.emit_op(EXTRACT_TUPLE_ITEM);
-                fc.emit_u8(i as u8);
+                fc.emit_u8(operand_u8(
+                    i,
+                    &format!("tuple pattern uses item index {i}"),
+                )?);
                 emit_last_arm_bindings(fc, sub)?;
                 fc.emit_op(POP);
             }
@@ -1573,7 +1695,13 @@ fn try_emit_vector_compound(
             compile_mir_expr(fc, &inner_args[2])?;
             fc.emit_op(VECTOR_SET_OR_KEEP);
             fc.emit_u8(u8::from(owned));
-            fc.emit_u8(vec_slot as u8);
+            fc.emit_u8(operand_u8(
+                vec_slot as usize,
+                &format!(
+                    "function `{}` uses vector target slot {vec_slot}",
+                    fc.name()
+                ),
+            )?);
             Ok(true)
         }
         Some(VmBuiltin::VectorGet) if inner_args.len() == 2 => {

@@ -201,7 +201,7 @@ pub const LIST_NIL: u8 = 0x60;
 pub const LIST_CONS: u8 = 0x61;
 
 /// Pop `count` items, build cons list from them (first item = head), push list.
-pub const LIST_NEW: u8 = 0x62; // count:u8
+pub const LIST_NEW: u8 = 0x62; // count:u32
 
 /// Pop `count` field values, push a new record with `type_id`.
 pub const RECORD_NEW: u8 = 0x63; // type_id:u16, count:u8
@@ -219,7 +219,7 @@ pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
 pub const WRAP: u8 = 0x66; // kind:u8
 
 /// Pop `count` items, build a tuple from them, push tuple.
-pub const TUPLE_NEW: u8 = 0x68; // count:u8
+pub const TUPLE_NEW: u8 = 0x68; // count:u32
 
 /// Parallel function calls for independent products (?! / !).
 /// Pops N callable values plus their args from the stack, dispatches them via
@@ -753,8 +753,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
 
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
-        | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
-        | TAIL_CALL_SELF_THIN => 1,
+        | EXTRACT_TUPLE_ITEM | WRAP | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 1,
 
         // 2-byte (u16 or u8+u8)
         LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL
@@ -775,7 +774,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         CALL_KNOWN_OWNED => 4, // fn_id:u16 + argc:u8 + owned:u8
 
         // 4-byte
-        MATCH_VARIANT | RECORD_GET_NAMED => 4,
+        MATCH_VARIANT | RECORD_GET_NAMED | LIST_NEW | TUPLE_NEW => 4,
 
         // 5-byte
         CALL_BUILTIN | VARIANT_NEW => 5,

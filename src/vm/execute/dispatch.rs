@@ -1232,7 +1232,7 @@ impl VM {
                 }
 
                 LIST_NEW => {
-                    let count = read_u8!(code, ip) as usize;
+                    let count = read_u32!(code, ip) as usize;
                     let start = self.stack.len() - count;
                     let items: Vec<NanValue> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
@@ -1249,7 +1249,7 @@ impl VM {
                 }
 
                 TUPLE_NEW => {
-                    let count = read_u8!(code, ip) as usize;
+                    let count = read_u32!(code, ip) as usize;
                     let start = self.stack.len() - count;
                     let items: Vec<NanValue> = self.stack[start..].to_vec();
                     self.stack.truncate(start);

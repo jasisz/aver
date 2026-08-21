@@ -156,6 +156,18 @@ fn vm_compile(src: &str) -> vm::CodeStore {
     code
 }
 
+fn vm_compile_error(src: &str) -> String {
+    let mut items = parse(src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    let (resolved, symbols) = resolve_for_vm(&items);
+    vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+        .expect_err("VM compilation unexpectedly succeeded")
+        .to_string()
+}
+
 fn temp_module_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "aver_vm_spec_{}_{}_{}",
@@ -665,6 +677,21 @@ fn vm_binding_in_expression() {
     assert_eq!(result.as_int(&arena), 10);
 }
 
+#[test]
+fn vm_refuses_more_than_255_local_bindings() {
+    let mut src = String::from("fn overloaded() -> Int\n");
+    for i in 0..300 {
+        src.push_str(&format!("    local{i} = {i}\n"));
+    }
+    src.push_str("    local299\n");
+
+    let error = vm_compile_error(&src);
+    assert!(
+        error.contains("function `overloaded` uses local slot 299; the VM supports at most 255"),
+        "unexpected compile error: {error}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Tuples
 // ---------------------------------------------------------------------------
@@ -680,6 +707,25 @@ fn vm_tuple_literal() {
             aver::value::Value::Str("x".to_string())
         ])
     );
+}
+
+#[test]
+fn vm_tuple_literal_with_300_items_keeps_every_item() {
+    let all_items = (0..300)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let wrapped_suffix = (256..300)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src = format!("fn main() -> Bool\n    ({all_items}) != ({wrapped_suffix})\n");
+
+    // With an 8-bit TUPLE_NEW count, the 300-item tuple became exactly its
+    // final 44 items and compared equal to the suffix tuple on the right.
+    let result = vm_run(&src);
+    assert!(result.is_bool());
+    assert!(result.as_bool());
 }
 
 #[test]
@@ -1041,6 +1087,20 @@ fn vm_list_literal() {
 }
 
 #[test]
+fn vm_list_literals_wider_than_255_keep_every_item() {
+    for count in [256, 300, 1118] {
+        let items = (0..count)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let src = format!("fn main() -> Int\n    List.len([{items}])\n");
+        let result = vm_run(&src);
+        let arena = Arena::new();
+        assert_eq!(result.as_int(&arena), count, "list literal size {count}");
+    }
+}
+
+#[test]
 fn vm_list_match_empty() {
     let src = "fn isEmpty(xs: List<Int>) -> Bool\n    match xs\n        [] -> true\n        [h, ..t] -> false\n\nfn main() -> Bool\n    isEmpty([])\n";
     let result = vm_run(src);
@@ -1068,6 +1128,47 @@ fn vm_record_create_and_field_access() {
     assert!(result.is_int());
     let arena = Arena::new();
     assert_eq!(result.as_int(&arena), 7);
+}
+
+#[test]
+fn vm_refuses_record_literals_with_more_than_255_fields() {
+    let mut src = String::from("record Wide\n");
+    for i in 0..256 {
+        src.push_str(&format!("    f{i}: Int\n"));
+    }
+    src.push_str("\nfn main() -> Wide\n    Wide(");
+    src.push_str(
+        &(0..256)
+            .map(|i| format!("f{i} = {i}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    src.push_str(")\n");
+
+    let error = vm_compile_error(&src);
+    assert!(
+        error.contains("record literal `Wide` has 256 fields; the VM supports at most 255"),
+        "unexpected compile error: {error}"
+    );
+}
+
+#[test]
+fn vm_refuses_variant_constructors_with_more_than_255_fields() {
+    let fields = std::iter::repeat_n("Int", 256)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = (0..256)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src =
+        format!("type Wide\n    Many({fields})\n\nfn main() -> Wide\n    Wide.Many({args})\n");
+
+    let error = vm_compile_error(&src);
+    assert!(
+        error.contains("variant `Wide.Many` has 256 fields; the VM supports at most 255"),
+        "unexpected compile error: {error}"
+    );
 }
 
 #[test]
