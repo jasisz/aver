@@ -363,7 +363,7 @@ fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
 fn the_vm_adopts_string_index_workers_from_a_dependency() {
     let run = run_aver(&[
         "run",
-        "examples/data/json_bench.av",
+        "bench/scenarios/json_parse.av",
         "--module-root",
         "examples/data",
         "--profile",
