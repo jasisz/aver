@@ -141,7 +141,7 @@ pub(crate) fn lean_named_type_name(name: &str) -> String {
 }
 
 /// Like type_to_lean but wraps compound types in parens for use as type arguments.
-fn type_to_lean_atom(ty: &Type) -> String {
+pub(super) fn type_to_lean_atom(ty: &Type) -> String {
     match ty {
         Type::Result(..)
         | Type::Option(_)

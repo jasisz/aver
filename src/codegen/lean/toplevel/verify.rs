@@ -123,26 +123,42 @@ pub fn emit_verify_block(
     decidability: &CaseDecidability,
 ) -> (String, usize) {
     // Fail closed inside the exported artifact, not only in `aver proof
-    // --check`'s build-log panic scan. Lean's `panic!` returns `default`, so a
+    // --check`'s build-log panic scan.  Lean's `panic!` returns `default`, so a
     // fuel-zero branch evaluated by `native_decide` can certify a false ground
-    // equality whenever that default happens to equal the expected value.
-    // There is no honest theorem to emit until the call cone has a real
-    // termination argument; record the refusal so the driver reports and
+    // equality whenever that default happens to equal the expected value, and
+    // a provider-owned capability operation is opaque and noncomputable: no
+    // evaluator may decide a claim about it.  The roots are everything the
+    // claim evaluates — every sampled case, every `given` value, and for a
+    // law its template and `when` guard — so a guard or a domain value that
+    // reaches the boundary is refused like the claim itself.  There is no
+    // honest theorem to emit; record the refusal so the driver reports and
     // charges it instead of silently dropping the cases.
-    let roots: Vec<&Spanned<Expr>> = match &vb.kind {
-        VerifyKind::Law(law) => std::iter::once(&law.lhs)
-            .chain(std::iter::once(&law.rhs))
-            .chain(law.when.iter())
-            .collect(),
-        VerifyKind::Cases => vb.cases.iter().flat_map(|(lhs, rhs)| [lhs, rhs]).collect(),
-    };
-    let fuel_dependencies = if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
-        decidability.unbounded_fuel_dependencies(&roots, ctx)
+    let mut roots: Vec<&Spanned<Expr>> = vb
+        .cases
+        .iter()
+        .flat_map(|(lhs, rhs)| [lhs, rhs])
+        .chain(vb.case_givens.iter().flatten().map(|(_, value)| value))
+        .collect();
+    if let VerifyKind::Law(law) = &vb.kind {
+        roots.extend([&law.lhs, &law.rhs]);
+        roots.extend(law.when.iter());
+    }
+    let refusal = if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
+        decidability
+            .capability_decline_reason(&roots, ctx)
+            .or_else(|| {
+                let fuel_dependencies = decidability.unbounded_fuel_dependencies(&roots, ctx);
+                (!fuel_dependencies.is_empty()).then(|| {
+                    format!(
+                        "the Lean call cone reaches fuel-lowered function(s) {} whose seed is not a proven recursion bound; native_decide can turn fuel exhaustion into a default value, so this claim was not exported",
+                        fuel_dependencies.join(", ")
+                    )
+                })
+            })
     } else {
-        Vec::new()
+        None
     };
-    if !fuel_dependencies.is_empty() {
-        let functions = fuel_dependencies.join(", ");
+    if let Some(reason) = refusal {
         let (kind, claim) = match &vb.kind {
             VerifyKind::Law(law) => (
                 crate::codegen::DeclineKind::Law,
@@ -150,9 +166,6 @@ pub fn emit_verify_block(
             ),
             VerifyKind::Cases => (crate::codegen::DeclineKind::Cases, vb.fn_name.clone()),
         };
-        let reason = format!(
-            "the Lean call cone reaches fuel-lowered function(s) {functions} whose seed is not a proven recursion bound; native_decide can turn fuel exhaustion into a default value, so this claim was not exported"
-        );
         ctx.declined_claims
             .borrow_mut()
             .entry(format!("{}:{claim}", kind.as_str()))
@@ -162,7 +175,7 @@ pub fn emit_verify_block(
                 reason: reason.clone(),
             });
         return (
-            format!("-- verify {}: {}", aver_name_to_lean(&vb.fn_name), reason),
+            format!("-- verify {}: {reason}", aver_name_to_lean(&vb.fn_name)),
             case_index_start + vb.cases.len(),
         );
     }
