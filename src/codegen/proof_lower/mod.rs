@@ -1617,16 +1617,13 @@ fn carrier_walk_expr_with_byte_payloads(
     visit(&expr.node, byte_payloads);
     if let Expr::Match { subject, arms } = &expr.node {
         carrier_walk_expr_with_byte_payloads(subject, byte_payloads, visit);
-        let finalized_bytes = match &subject.node {
+        let finalized_bytes = matches!(
+            &subject.node,
             Expr::FnCall(callee, args)
                 if args.len() == 1
                     && crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
-                        == Some("__byt_finalize") =>
-            {
-                true
-            }
-            _ => false,
-        };
+                        == Some("__byt_finalize")
+        );
         for arm in arms {
             let mut arm_payloads = byte_payloads.clone();
             if finalized_bytes
