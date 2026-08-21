@@ -104,10 +104,15 @@ fn emit_lifted_effectful_functions(
     while !remaining.is_empty() {
         let before = remaining.len();
         remaining.retain(|&idx| {
+            let own_name = &lifted_fns[idx].0;
             let body_calls = collect_called_idents_in_body(&lifted_fns[idx].1.body);
-            let ready = body_calls
-                .iter()
-                .all(|name| !eligible_names.contains(name) || emitted.contains(name));
+            // A self call (a tail-recursive loop) is not a dependency on
+            // another lifted fn; without this a recursive helper could never
+            // become ready and the whole tail of the list would fall back to
+            // source order.
+            let ready = body_calls.iter().all(|name| {
+                name == own_name || !eligible_names.contains(name) || emitted.contains(name)
+            });
             if ready {
                 emitted.insert(lifted_fns[idx].0.clone());
                 order.push(idx);
@@ -133,69 +138,27 @@ fn emit_lifted_effectful_functions(
     }
 }
 
+/// Names of the fns a lifted body calls, tail calls included: after TCO a
+/// self- or mutual tail call is an `Expr::TailCall` whose target is a name,
+/// not a callee expression, and a hand-rolled walk here never saw it.
 fn collect_called_idents_in_body(body: &crate::ast::FnBody) -> std::collections::HashSet<String> {
-    use crate::ast::{Expr, Spanned, Stmt};
+    use crate::ast::{Expr, Stmt};
     let mut out = std::collections::HashSet::new();
-    fn walk(expr: &Spanned<Expr>, out: &mut std::collections::HashSet<String>) {
-        match &expr.node {
-            Expr::FnCall(callee, args) => {
+    for stmt in body.stmts() {
+        let expr = match stmt {
+            Stmt::Expr(e) | Stmt::Binding(_, _, e) => e,
+        };
+        crate::codegen::expr_walk::walk(expr, &mut |node| match &node.node {
+            Expr::FnCall(callee, _) => {
                 if let Expr::Ident(name) | Expr::Resolved { name, .. } = &callee.node {
                     out.insert(name.clone());
                 }
-                walk(callee, out);
-                for a in args {
-                    walk(a, out);
-                }
             }
-            Expr::BinOp(_, l, r) => {
-                walk(l, out);
-                walk(r, out);
-            }
-            Expr::Match { subject, arms } => {
-                walk(subject, out);
-                for arm in arms {
-                    walk(&arm.body, out);
-                }
-            }
-            Expr::Attr(inner, _) | Expr::ErrorProp(inner) => walk(inner, out),
-            Expr::Constructor(_, Some(inner)) => walk(inner, out),
-            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-                for i in items {
-                    walk(i, out);
-                }
-            }
-            Expr::MapLiteral(pairs) => {
-                for (k, v) in pairs {
-                    walk(k, out);
-                    walk(v, out);
-                }
-            }
-            Expr::RecordCreate { fields, .. } => {
-                for (_, v) in fields {
-                    walk(v, out);
-                }
-            }
-            Expr::RecordUpdate { base, updates, .. } => {
-                walk(base, out);
-                for (_, v) in updates {
-                    walk(v, out);
-                }
-            }
-            Expr::InterpolatedStr(parts) => {
-                for part in parts {
-                    if let crate::ast::StrPart::Parsed(inner) = part {
-                        walk(inner, out);
-                    }
-                }
+            Expr::TailCall(tc) => {
+                out.insert(tc.target.clone());
             }
             _ => {}
-        }
-    }
-    for stmt in body.stmts() {
-        match stmt {
-            Stmt::Expr(e) => walk(e, &mut out),
-            Stmt::Binding(_, _, e) => walk(e, &mut out),
-        }
+        });
     }
     out
 }
@@ -999,4 +962,34 @@ pub(super) fn transpile_unified(
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
     ProjectOutput { files }
+}
+
+#[cfg(test)]
+mod lifted_order_tests {
+    use super::collect_called_idents_in_body;
+    use crate::ast::{Expr, Stmt, TopLevel};
+
+    #[test]
+    fn a_tail_call_counts_as_a_call_for_lifted_ordering() {
+        let src = "module M\n    effects [Console.print]\n\n\
+fn loopy(n: Int) -> Unit\n    ? \"Prints then loops.\"\n    ! [Console.print]\n    match n\n        0 -> Console.print(\"done\")\n        _ -> loopy(n - 1)\n";
+        let mut items = crate::source::parse_source(src).expect("parse");
+        crate::ir::pipeline::tco(&mut items);
+        let fd = items
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == "loopy" => Some(fd),
+                _ => None,
+            })
+            .expect("loopy");
+        let has_tail_call = fd.body.stmts().iter().any(|stmt| {
+            let expr = match stmt {
+                Stmt::Expr(e) | Stmt::Binding(_, _, e) => e,
+            };
+            crate::codegen::expr_walk::any(expr, &mut |n| matches!(n.node, Expr::TailCall(_)))
+        });
+        assert!(has_tail_call, "TCO should have rewritten the self call");
+        let called = collect_called_idents_in_body(&fd.body);
+        assert!(called.contains("loopy"), "{called:?}");
+    }
 }
