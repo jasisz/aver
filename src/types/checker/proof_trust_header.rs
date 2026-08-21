@@ -87,18 +87,6 @@ pub(crate) fn generate_for_effects_with_registry(
     out.push_str("  usual NaN-not-equal-to-itself semantics.\n");
     out.push('\n');
 
-    out.push_str("Map iteration order:\n");
-    out.push_str("  `Map.keys`, `Map.values` and `Map.entries` are exported as a\n");
-    out.push_str("  model sorted by key, which is the order the VM and the compiled\n");
-    out.push_str("  Rust backend iterate in. The wasm-gc backend returns hash-bucket\n");
-    out.push_str("  order instead: on a ten-key String map the VM reads\n");
-    out.push_str("  `alpha,beta,delta,...` and wasm-gc reads `beta,iota,epsilon,...`.\n");
-    out.push_str("  It is internally consistent — `keys[i]` still pairs with\n");
-    out.push_str("  `values[i]` — but a claim about the SEQUENCE a map iterates is\n");
-    out.push_str("  not carried to wasm-gc by this artifact. Order-blind claims\n");
-    out.push_str("  (`Map.len`, `Map.get`, `Map.has`) are unaffected on every backend.\n");
-    out.push('\n');
-
     if capabilities.contracts().next().is_some() {
         out.push_str("Provider-bound capability contracts:\n");
         for contract in capabilities.contracts() {
@@ -172,8 +160,8 @@ pub(crate) fn generate_for_effects_with_registry(
         // schedule-invariance argument don't apply, skip entirely.
         out.push_str("Backend independence:\n");
         out.push_str("  Exported proofs hold uniformly across Aver backends (VM, compiled\n");
-        out.push_str("  Rust, WASM), except for the two carve-outs above: `Int` overflow\n");
-        out.push_str("  on compiled Rust and WASM, and map iteration order on wasm-gc.\n");
+        out.push_str("  Rust, WASM), except for the `Int` overflow carve-out above on\n");
+        out.push_str("  compiled Rust and WASM.\n");
         out.push_str("  No concurrency primitives (`!` / `?!`) are used in this artifact,\n");
         out.push_str("  so schedule-invariance claims do not apply here.\n");
         return out;
@@ -277,8 +265,8 @@ pub(crate) fn generate_for_effects_with_registry(
     out.push_str("Backend independence:\n");
     out.push_str("  Exported proofs hold uniformly across Aver backends (VM, compiled\n");
     out.push_str("  Rust, WASM) under the schedule-invariance compiler invariant above,\n");
-    out.push_str("  except for the two carve-outs above: `Int` overflow on compiled\n");
-    out.push_str("  Rust and WASM, and map iteration order on wasm-gc.\n");
+    out.push_str("  except for the `Int` overflow carve-out above on compiled Rust\n");
+    out.push_str("  and WASM.\n");
     out.push_str("  Sequential execution (VM) and parallel execution (compiled Rust)\n");
     out.push_str("  are both covered — both are legal schedules of the same evaluation.\n");
     out.push('\n');

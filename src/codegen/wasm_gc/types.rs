@@ -107,23 +107,24 @@ pub(super) struct TypeRegistry {
     pub(super) result_order: Vec<String>,
     /// Per-instantiation `Map<K, V>` slot triple (keys array, values
     /// array, map struct). Same monomorphisation strategy as Vector /
-    /// Option — each unique `Map<K, V>` reachable in the program
-    /// gets its own three slots and four helper bodies (empty, set,
-    /// get, len). Phase-3c MVP supports `K = String`; other K kinds
-    /// surface as Unimplemented when their hash / eq helpers would
-    /// need to be emitted.
+    /// Option — each unique `Map<K, V>` reachable in the program gets
+    /// its own three slots and table/read/ordered-iteration helpers.
     pub(super) map_types: HashMap<String, MapSlots>,
     pub(super) map_order: Vec<String>,
+    /// Shared scratch-array type used by canonical Map iteration. Each
+    /// materialisation collects occupied bucket indices, sorts those `i32`
+    /// indices by their keys, then lets `keys` / `values` / `entries` read the
+    /// same permutation. Present iff at least one Map instantiation exists.
+    pub(super) map_order_indices_type_idx: Option<u32>,
     /// Per-instantiation `Tuple<A, B>` slot. Each lowers to a
     /// `(struct (mut A) (mut B))`. Used by `Map.entries` (returns
     /// `List<Tuple<K, V>>`), `Map.fromList`, and `List.zip`.
     pub(super) tuple_types: HashMap<String, u32>,
     pub(super) tuple_order: Vec<String>,
-    /// Per-primitive-K `(struct (mut K))` slot used to box primitive
-    /// map keys. The `Map<K, V>` open-addressing layout uses
-    /// `keys[i] == null` as the empty marker, which only works for
-    /// ref types — boxing the primitive into a struct ref keeps the
-    /// marker scheme uniform across all K kinds. Helpers internally
+    /// Per-K `(struct (mut K))` slot used when raw K cannot share the
+    /// open-addressing occupancy marker. Primitives have no null;
+    /// `List<T>` uses null for the valid `[]` value. Boxing both makes
+    /// `keys[i] == null` mean only "unused bucket". Helpers internally
     /// pass raw `K_val` and box on insert / unbox on read.
     pub(super) primitive_key_box: HashMap<String, u32>,
     pub(super) primitive_key_box_order: Vec<String>,
@@ -238,6 +239,9 @@ pub(super) struct TypeRegistry {
     /// and wrong across the Small/Big boundary). Threaded via the
     /// registry (already passed to every emitter) rather than per-fn args.
     pub(super) aint_eq_fn_idx: Option<u32>,
+    /// Canonical three-way Int comparator (`-1 / 0 / 1`) used by ordered Map
+    /// iteration when Int appears in a key, directly or inside a composite.
+    pub(super) aint_cmp_fn_idx: Option<u32>,
     /// bignum slice 4 (eq+hash gap) — wasm fn idx of the `__aint_hash`
     /// helper, set alongside `aint_eq_fn_idx`. `Some` iff `bignum`.
     /// Equal `$AverInt` values hash equal (Small folds `$small`, Big
@@ -835,21 +839,28 @@ impl TypeRegistry {
             map_order.push(canonical);
         }
 
-        // Eagerly register the primitive-key box struct for every
-        // `Map<K, *>` where K ∈ {Int, Float, Bool}. The map's
-        // open-addressing layout uses ref-null as the empty marker,
-        // and primitive K can't carry that — boxing the raw value
-        // into `(struct (mut K))` lets the marker stay uniform.
+        let map_order_indices_type_idx = if map_order.is_empty() {
+            None
+        } else {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        };
+
+        // Eagerly register a key box whenever raw K cannot share the table's
+        // ref-null occupancy marker. Primitives have no null value; List has
+        // the opposite collision because its valid empty value is null.
         let mut primitive_key_box: HashMap<String, u32> = HashMap::new();
         let mut primitive_key_box_order: Vec<String> = Vec::new();
         for canonical in map_order.iter() {
             if let Some((k, _)) = parse_map_kv(canonical) {
-                let k_trim = k.trim();
-                if matches!(k_trim, "Int" | "Float" | "Bool")
-                    && !primitive_key_box.contains_key(k_trim)
+                let k_trim = normalize_compound(k);
+                if (matches!(k_trim.as_str(), "Int" | "Float" | "Bool")
+                    || k_trim.starts_with("List<"))
+                    && !primitive_key_box.contains_key(&k_trim)
                 {
-                    primitive_key_box.insert(k_trim.to_string(), next_idx);
-                    primitive_key_box_order.push(k_trim.to_string());
+                    primitive_key_box.insert(k_trim.clone(), next_idx);
+                    primitive_key_box_order.push(k_trim);
                     next_idx += 1;
                 }
             }
@@ -1129,6 +1140,7 @@ impl TypeRegistry {
             result_order,
             map_types,
             map_order,
+            map_order_indices_type_idx,
             tuple_types,
             tuple_order,
             primitive_key_box,
@@ -1166,6 +1178,7 @@ impl TypeRegistry {
             // once the `__aint_eq` / `__aint_hash` / `__aint_from_i64`
             // fn indices are known.
             aint_eq_fn_idx: None,
+            aint_cmp_fn_idx: None,
             aint_hash_fn_idx: None,
             aint_from_i64_fn_idx: None,
             aint_to_i64_checked_fn_idx: None,
@@ -1249,12 +1262,14 @@ impl TypeRegistry {
     }
 
     pub(super) fn primitive_key_box_idx(&self, k_aver: &str) -> Option<u32> {
-        self.primitive_key_box.get(k_aver.trim()).copied()
+        self.primitive_key_box
+            .get(&normalize_compound(k_aver))
+            .copied()
     }
 
-    /// True for K kinds that need to be boxed when used as a
-    /// `Map<K, *>` key (so the keys array element type stays a ref
-    /// and `keys[i] == null` works as the empty marker).
+    /// True for scalar K kinds whose map hash/eq helpers operate on raw wasm
+    /// values. They are boxed for storage, but List has a storage box too and
+    /// deliberately is not a primitive for helper dispatch.
     pub(super) fn is_primitive_map_key(k_aver: &str) -> bool {
         matches!(k_aver.trim(), "Int" | "Float" | "Bool")
     }
