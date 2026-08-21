@@ -64,11 +64,7 @@ pub fn run_scenario(manifest: &Manifest, target: BenchTarget) -> Result<BenchRep
 
 fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
     let entry_str = manifest.entry.to_string_lossy().into_owned();
-    let module_root = manifest
-        .entry
-        .parent()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let module_root = manifest.module_root.to_string_lossy().into_owned();
 
     let source = std::fs::read_to_string(&manifest.entry)
         .map_err(|e| RunError::Read(format!("{}: {}", entry_str, e)))?;
@@ -199,9 +195,7 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .arg(&manifest.name)
         .arg("-o")
         .arg(&out_dir);
-    if let Some(root) = manifest.entry.parent() {
-        compile.arg("--module-root").arg(root);
-    }
+    compile.arg("--module-root").arg(&manifest.module_root);
     let status = compile
         .status()
         .map_err(|e| RunError::Setup(format!("spawn aver compile --target=wasm-gc: {}", e)))?;
@@ -420,9 +414,7 @@ fn run_wasm_gc_v8(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .arg(&manifest.name)
         .arg("-o")
         .arg(&out_dir);
-    if let Some(root) = manifest.entry.parent() {
-        compile.arg("--module-root").arg(root);
-    }
+    compile.arg("--module-root").arg(&manifest.module_root);
     let status = compile
         .status()
         .map_err(|e| RunError::Setup(format!("spawn aver compile --target wasm-gc: {}", e)))?;
@@ -592,9 +584,7 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .arg(&manifest.name)
         .arg("-o")
         .arg(&out_dir);
-    if let Some(root) = manifest.entry.parent() {
-        compile_cmd.arg("--module-root").arg(root);
-    }
+    compile_cmd.arg("--module-root").arg(&manifest.module_root);
     if let Some(root) = manifest_dir.as_ref() {
         compile_cmd.env("AVER_RUNTIME_PATH", root.join("aver-rt"));
     }
@@ -742,11 +732,7 @@ fn build_report(
 fn compute_visible_allocs(manifest: &Manifest) -> Option<usize> {
     let source = std::fs::read_to_string(&manifest.entry).ok()?;
     let mut items: Vec<TopLevel> = parse_source(&source).ok()?;
-    let module_root = manifest
-        .entry
-        .parent()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let module_root = manifest.module_root.to_string_lossy().into_owned();
     let res = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {

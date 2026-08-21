@@ -4,6 +4,7 @@
 //! # bench/scenarios/factorial.toml
 //! name  = "factorial"             # optional, defaults to file stem
 //! entry = "/tmp/factorial.av"     # absolute or relative to manifest dir
+//! module_root = "/tmp/modules"    # optional, defaults to entry parent
 //! iterations = 50
 //! warmup     = 5
 //! args       = []                 # CLI args passed to `main`, default empty
@@ -42,6 +43,8 @@ pub struct Manifest {
     pub name: String,
     /// Absolute path to the entry `.av` file.
     pub entry: PathBuf,
+    /// Module lookup root. Defaults to the entry file's parent directory.
+    pub module_root: PathBuf,
     pub iterations: usize,
     pub warmup: usize,
     pub args: Vec<String>,
@@ -168,6 +171,30 @@ impl Manifest {
             )));
         }
 
+        let module_root = match table.get("module_root").and_then(|v| v.as_str()) {
+            Some(root_raw) => {
+                let root_path = Path::new(root_raw);
+                let root = if root_path.is_absolute() {
+                    root_path.to_path_buf()
+                } else {
+                    manifest_dir.join(root_path)
+                };
+                if !root.is_dir() {
+                    return Err(ManifestError::Validate(format!(
+                        "{}: module root '{}' is not a directory (resolved to '{}')",
+                        manifest_path.display(),
+                        root_raw,
+                        root.display()
+                    )));
+                }
+                root
+            }
+            None => entry
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
+        };
+
         let name = table
             .get("name")
             .and_then(|v| v.as_str())
@@ -241,6 +268,7 @@ impl Manifest {
         Ok(Manifest {
             name,
             entry,
+            module_root,
             iterations,
             warmup,
             args,

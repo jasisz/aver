@@ -3375,6 +3375,10 @@ fn synth_manifest_for_av(
     aver::bench::Manifest {
         name,
         entry: av_path.to_path_buf(),
+        module_root: av_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
         iterations: iterations.unwrap_or(30),
         warmup: warmup.unwrap_or(3),
         args: Vec::new(),
