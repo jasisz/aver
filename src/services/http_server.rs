@@ -1,42 +1,8 @@
 use std::collections::HashMap;
-use std::sync::Arc as Rc;
 
 use aver_rt::{AverList, AverStr, HttpHeaders, HttpRequest, HttpResponse};
 
-use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
-
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    members.insert(
-        "listen".to_string(),
-        Value::Builtin("HttpServer.listen".to_string()),
-    );
-    members.insert(
-        "listenWith".to_string(),
-        Value::Builtin("HttpServer.listenWith".to_string()),
-    );
-    global.insert(
-        "HttpServer".to_string(),
-        Value::Namespace {
-            name: "HttpServer".to_string(),
-            members,
-        },
-    );
-}
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(2);
-    let idx1 = arena.push_builtin("HttpServer.listen");
-    members.push((Rc::from("listen"), NanValue::new_builtin(idx1)));
-    let idx2 = arena.push_builtin("HttpServer.listenWith");
-    members.push((Rc::from("listenWith"), NanValue::new_builtin(idx2)));
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("HttpServer"),
-        members,
-    });
-    global.insert("HttpServer".to_string(), NanValue::new_namespace(ns_idx));
-}
 
 pub const DECLARED_EFFECTS: &[&str] = &["HttpServer.listen", "HttpServer.listenWith"];
 
@@ -48,10 +14,6 @@ pub fn effects(name: &str) -> &'static [&'static str] {
         "SelfHostRuntime.httpServerListenWith" => &["HttpServer.listenWith"],
         _ => &[],
     }
-}
-
-pub fn call(_name: &str, _args: &[Value]) -> Option<Result<Value, RuntimeError>> {
-    None
 }
 
 pub fn call_with_runtime<F>(

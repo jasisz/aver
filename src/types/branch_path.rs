@@ -16,32 +16,11 @@
 //! public member and record-literal construction of built-in types isn't
 //! available at the surface.
 
-use std::collections::HashMap;
-use std::sync::Arc as Rc;
-
-use crate::nan_value::{Arena, ArenaEntry, NanIntExt, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::RuntimeError;
 
 pub const TYPE_NAME: &str = "BranchPath";
 const FIELD: &str = "dewey";
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    // `BranchPath.Root` is a nullary value constructor (like
-    // `Option.None`) — PascalCase, no parens. `.child` / `.parse`
-    // are methods that take arguments and stay lowercase with parens.
-    let root_value = make_path("", arena);
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(3);
-    members.push((Rc::from("Root"), root_value));
-    for method in &["child", "parse"] {
-        let idx = arena.push_builtin(&format!("{}.{}", TYPE_NAME, method));
-        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
-    }
-    let ns_idx = arena.push(ArenaEntry::Namespace {
-        name: Rc::from(TYPE_NAME),
-        members,
-    });
-    global.insert(TYPE_NAME.to_string(), NanValue::new_namespace(ns_idx));
-}
 
 pub fn call_nv(
     name: &str,
