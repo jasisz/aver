@@ -21,8 +21,8 @@ This is not a mini-JVM or a universal IR. It is a runtime designed around the co
 
 The VM compiles resolved Aver AST into bytecode function chunks:
 
-- `src/vm/compiler.rs` lowers AST to bytecode
-- `src/vm/execute.rs` runs the stack machine
+- `src/vm/compiler/` lowers the program to bytecode (`mir.rs` walks MIR and emits opcodes; MIR is the only VM codegen path)
+- `src/vm/execute/` runs the stack machine (`dispatch.rs` is the opcode loop)
 - `src/vm/opcode.rs` defines the ISA
 - `src/vm/runtime.rs` handles builtins, effects, and record/replay at the host boundary
 
@@ -384,7 +384,7 @@ The VM enforces declared effects at runtime.
 
 That logic does not live in the main execute loop. Instead:
 
-- `src/vm/execute.rs` is the core machine
+- `src/vm/execute/` is the core machine (`dispatch.rs` holds the opcode loop)
 - `src/vm/runtime.rs` is the host/runtime bridge
 
 `VmRuntime` is responsible for:

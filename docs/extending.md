@@ -54,11 +54,11 @@ Only the `NanValue` half is executed. The `Value`-typed `register()` / `call()` 
    ```
 2. Add the row to the `vm_builtins!` table in `src/vm/builtin.rs` and the matching arm in `VmBuiltin::invoke_nv`. The table generates `VmBuiltin::ALL`, which `bootstrap_core_symbols` in `src/vm/compiler/mod.rs` reads for namespace membership.
 3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
-4. Add the `codegen_builtins!` row in `src/codegen/builtins.rs`. The exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms.
-5. Add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`).
+4. For a pure function, add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms. Effectful operations have no row there (`recognize_builtin` returns `None` for services).
+5. For a pure function, add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`). An effectful operation instead gets its Rust emission in `src/codegen/rust/builtins.rs`, an `EffectName` row in `src/codegen/wasm_gc/effects.rs` (plus its wasip2 lowering when the target supports it), and the matching `(module, field)` entry in `WASM_GC_CAPABILITIES` in `aver-cert/src/format.rs` — a test in `effects.rs` fails until both lists agree.
 6. Document the function in `docs/services.md`.
 
-To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register_nv()`, `effects()`, and `call_nv()`, add `pub mod` in `src/types/mod.rs`, and add the builtin rows above. For effectful namespaces, use `src/services/` instead.
+To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register_nv()`, `effects()`, and `call_nv()`, add `pub mod` in `src/types/mod.rs`, add the namespace name to `is_builtin_namespace` in `src/ir/calls.rs` (the HIR resolver reads that list; without it a dotted call never resolves as a builtin), and add the builtin rows above. For effectful namespaces, use `src/services/` instead.
 
 ## How to add a new expression type
 
