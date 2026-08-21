@@ -1,9 +1,10 @@
 //! Cached Rust host for running configured provider packages on the bytecode VM.
 //!
 //! The stock `aver` process cannot link a Cargo dependency after it starts.
-//! Instead of a dynamic Rust ABI or per-call IPC, `--providers` builds a tiny
-//! binary which links the ordinary Aver CLI/library plus the declared provider
-//! factories. That binary runs the same VM command with process-local bindings.
+//! Instead of a dynamic Rust ABI or per-call IPC, a project whose `aver.toml`
+//! binds providers gets a tiny binary which links the ordinary Aver
+//! CLI/library plus the declared provider factories. That binary runs the same
+//! VM command with process-local bindings.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -21,10 +22,14 @@ pub(crate) enum ProviderHostBackend {
     Wasip2,
 }
 
+/// Build (once) and run the host for `composition`. `project_root` is the
+/// module root the manifest was loaded from; the build notice names every
+/// provider package relative to it.
 pub(crate) fn run_cached_host(
     raw_args: &[OsString],
     composition: &ProviderComposition,
     backend: ProviderHostBackend,
+    project_root: &Path,
 ) -> Result<ExitStatus, String> {
     let source = render_host_source(composition);
     let dependency_lines = render_dependency_lines(composition, backend)?;
@@ -52,8 +57,24 @@ pub(crate) fn run_cached_host(
         } else {
             "Building"
         };
+        // The consent is the `[providers]` table in the project's own
+        // aver.toml; the notice says exactly what that table makes Cargo
+        // build, and where each package comes from.
+        let packages = composition
+            .bindings
+            .iter()
+            .map(|binding| {
+                format!(
+                    "{}: {} from {}",
+                    binding.capability,
+                    binding.package,
+                    describe_source(&binding.source, project_root)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         eprintln!(
-            "{action} provider host (cached at {})...",
+            "{action} provider host for {packages} (cached at {})...",
             project.display()
         );
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
@@ -89,6 +110,49 @@ pub(crate) fn run_cached_host(
                 binary.display()
             )
         })
+}
+
+/// Where a provider package comes from, for a reader of the project: a path
+/// relative to the project root when the package lives nearby, its absolute
+/// path otherwise, or the registry version.
+pub(crate) fn describe_source(source: &ProviderCompositionSource, project_root: &Path) -> String {
+    match source {
+        ProviderCompositionSource::Registry { version } => {
+            format!("the registry (version {version})")
+        }
+        ProviderCompositionSource::LocalPath { path } => {
+            display_relative(path, project_root).display().to_string()
+        }
+    }
+}
+
+/// `path` spelled relative to `base`, both taken canonical: `.` when they
+/// coincide, `..` segments for a sibling or a parent's sibling, and the
+/// absolute path once the climb would exceed two levels, since a long `..`
+/// chain names nothing a reader can picture.
+fn display_relative(path: &Path, base: &Path) -> PathBuf {
+    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut base_parts = base.components().peekable();
+    let mut path_parts = path.components().peekable();
+    while let (Some(left), Some(right)) = (base_parts.peek(), path_parts.peek()) {
+        if left != right {
+            break;
+        }
+        base_parts.next();
+        path_parts.next();
+    }
+    let climb = base_parts.count();
+    if climb > 2 {
+        return path;
+    }
+    let mut relative = (0..climb).map(|_| "..").collect::<PathBuf>();
+    relative.extend(path_parts);
+    if relative.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        relative
+    }
 }
 
 /// A cheap invalidation stamp for local path dependencies. The deterministic

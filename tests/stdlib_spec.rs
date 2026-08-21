@@ -65,7 +65,7 @@ fn check_warns_when_project_module_is_shadowed_by_the_stdlib() {
 /// name (`source::warn_stdlib_shadow_once`), because module resolution runs
 /// several times inside one command — the typecheck tree walk, the dep
 /// compile walk, the per-unit check pass. Without the dedup a single
-/// `aver check --deps` prints the identical paragraph four times and
+/// `aver check` prints the identical paragraph four times and
 /// drowns the signal it exists to carry. Counts the LOADER line only: the
 /// structured `warning[stdlib-shadow]:` finding is a separate channel with
 /// its own (suppressible) reporting.
@@ -86,8 +86,8 @@ fn stdlib_shadow_loader_warning_is_printed_once_per_command() {
     let root = dir.path().to_string_lossy().into_owned();
     let entry_path = entry.to_string_lossy().into_owned();
 
-    let check = run_aver(&["check", &entry_path, "--module-root", &root, "--deps"]);
-    assert_success("aver check --deps (shadowed)", &check);
+    let check = run_aver(&["check", &entry_path, "--module-root", &root]);
+    assert_success("aver check (shadowed)", &check);
     let stderr = String::from_utf8_lossy(&check.stderr);
     let loader_lines = stderr
         .lines()
@@ -134,7 +134,7 @@ fn embedded_bytes_module_works_outside_the_project_module_root() {
         .to_string_lossy()
         .into_owned();
 
-    let check = run_aver(&["check", &fixture, "--module-root", &missing_root, "--deps"]);
+    let check = run_aver(&["check", &fixture, "--module-root", &missing_root]);
     assert_success("aver check", &check);
 
     let verify = run_aver(&["verify", &fixture, "--module-root", &missing_root]);

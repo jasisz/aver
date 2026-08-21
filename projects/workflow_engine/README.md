@@ -189,8 +189,8 @@ Data is stored under `/tmp/aver_workflow_engine`.
 From the repo root:
 
 ```bash
-cargo run -- check projects/workflow_engine/main.av --module-root projects/workflow_engine --deps
-cargo run -- verify projects/workflow_engine/app/commands.av --module-root projects/workflow_engine --deps
+cargo run -- check projects/workflow_engine/main.av --module-root projects/workflow_engine
+cargo run -- verify projects/workflow_engine/app/commands.av --module-root projects/workflow_engine
 ```
 
 Useful targeted checks:

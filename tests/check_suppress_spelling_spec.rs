@@ -21,7 +21,8 @@ use std::process::{Command, Output};
 /// waiver for `check` is targeted rather than blanket.
 const VERSION_AV: &str = "module Version\n    exposes [bump]\n\nfn bump(n: Int) -> Int\n    n + 1\n\nverify bump\n    bump(1) => 2\n";
 
-/// Entry module depending on the fixture, used for the `--deps` leg.
+/// Entry module depending on the fixture, used for the dependency leg:
+/// `aver check app.av` checks every module of app.av's program.
 const APP_AV: &str = "module App\n    depends [Domain.Version]\n    intent =\n        \"Entry point for the suppression fixture.\"\n    effects []\n\nfn next(n: Int) -> Int\n    ? \"One step forward.\"\n    Domain.Version.bump(n)\n\nverify next\n    next(1) => 2\n";
 
 /// A project rooted at a fresh temp directory, removed on drop so a failing
@@ -167,7 +168,7 @@ fn deps_suppression_survives_module_root_dot() {
     project.write("aver.toml", &waiver_for("\"domain/version.av\""));
     project.write("app.av", APP_AV);
 
-    let run = project.run(&["check", "app.av", "--deps", "--module-root", "."]);
+    let run = project.run(&["check", "app.av", "--module-root", "."]);
     assert!(
         run.stdout.contains("warning(s) suppressed by aver.toml"),
         "{}",

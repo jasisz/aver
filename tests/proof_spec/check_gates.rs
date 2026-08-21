@@ -245,9 +245,9 @@ fn proof_dependency_law_verify_is_carried_not_warned() {
         .expect("expected `aver proof` to run");
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
-        !stderr.contains("NOT checked"),
+        !stderr.contains("not sampled by `aver proof`"),
         "a dependency `verify ... law` is now carried by the cross-file law \
-         pool, not dropped — the old 'NOT checked' warning must not fire:\n{}",
+         pool, not dropped — the unsampled-cases warning must not fire for it:\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
@@ -255,32 +255,41 @@ fn proof_dependency_law_verify_is_carried_not_warned() {
 }
 
 #[test]
-fn proof_warns_when_dependency_module_has_nonlaw_verify_block() {
+fn proof_warns_once_per_program_about_unsampled_dependency_cases() {
     // A NON-law (example / cases-form) `verify` block in a dependency
-    // module is still NOT carried — module-scoped sampling is a separate
-    // feature — so it would never run. The compiler must still warn loudly
-    // for those, so an unchecked dependency sample isn't mistaken for a
-    // proven one. Pure codegen, no verifier binary needed.
+    // module is still not sampled by the proof export — that is the one
+    // command which has not caught up with `aver verify`, which checks
+    // every module of the program. The export says so once, for the whole
+    // program (not once per module, and not on `run`/`compile`), counting
+    // cases and naming the command that does check them. Pure codegen, no
+    // verifier binary needed.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let src = temp_output_dir("aver-dep-verify-warn-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     std::fs::write(
         src.join("dep.av"),
         "module Dep\n    depends []\n\nfn ident(n: Int) -> Int\n    ? \"id\"\n    n\n\n\
-         verify ident\n    ident(1) => 1\n",
+         verify ident\n    ident(1) => 1\n    ident(2) => 2\n",
     )
     .expect("write dep.av");
     std::fs::write(
+        src.join("other.av"),
+        "module Other\n    depends []\n\nfn twice(n: Int) -> Int\n    ? \"2n\"\n    n + n\n\n\
+         verify twice\n    twice(1) => 2\n",
+    )
+    .expect("write other.av");
+    std::fs::write(
         src.join("app.av"),
-        "module App\n    depends [Dep]\n    effects [Console.print]\n\n\
-         fn wrap(n: Int) -> Int\n    ? \"w\"\n    Dep.ident(n)\n\n\
+        "module App\n    depends [Dep, Other]\n    effects [Console.print]\n\n\
+         fn wrap(n: Int) -> Int\n    ? \"w\"\n    Dep.ident(Other.twice(n))\n\n\
          fn main() -> Unit\n    ! [Console.print]\n    Console.print(\"x\")\n",
     )
     .expect("write app.av");
     let out = temp_output_dir("aver-dep-verify-warn-out");
+    let entry = src.join("app.av");
     let run = Command::new(aver_bin)
         .arg("proof")
-        .arg(src.join("app.av"))
+        .arg(&entry)
         .arg("--backend")
         .arg("dafny")
         .arg("--module-root")
@@ -290,11 +299,38 @@ fn proof_warns_when_dependency_module_has_nonlaw_verify_block() {
         .output()
         .expect("expected `aver proof` to run");
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        stderr.contains("verify block") && stderr.contains("Dep") && stderr.contains("NOT checked"),
-        "expected a warning that dependency module `Dep`'s non-law verify block \
-         is unchecked, got:\n{}",
+    let expected = format!(
+        "warning: 3 non-law verify cases across 2 dependency modules are not sampled by `aver proof` yet; `aver verify {}` checks them",
+        entry.display()
+    );
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.contains(&expected))
+            .count(),
+        1,
+        "expected exactly one program-level warning about unsampled dependency cases, got:\n{}",
         format_output(&run)
+    );
+    assert!(
+        !stderr.contains("NOT checked"),
+        "the old per-module warning must be gone:\n{}",
+        format_output(&run)
+    );
+
+    // `aver run` samples nothing, so it has nothing to warn about.
+    let run_cmd = Command::new(aver_bin)
+        .arg("run")
+        .arg(&entry)
+        .arg("--module-root")
+        .arg(&src)
+        .output()
+        .expect("expected `aver run` to run");
+    let run_stderr = String::from_utf8_lossy(&run_cmd.stderr);
+    assert!(
+        !run_stderr.contains("not sampled") && !run_stderr.contains("NOT checked"),
+        "`aver run` must not warn about dependency verify cases:\n{}",
+        format_output(&run_cmd)
     );
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);

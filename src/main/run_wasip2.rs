@@ -201,7 +201,7 @@ fn build_component(
             ));
         }
         error.push_str(
-            "\n  hint: configure [providers] and run with `--wasip2 --providers`, \
+            "\n  hint: bind the capability under [providers] in aver.toml so `aver run --wasip2` links it through the provider host, \
              or compile with `--target wasip2` and install the generated component import in an external host",
         );
         return Err(error);

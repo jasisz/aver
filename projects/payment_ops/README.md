@@ -155,7 +155,7 @@ aver replay recordings/payment_ops --test --diff
 From the repo root:
 
 ```bash
-aver check projects/payment_ops/main.av --module-root projects/payment_ops --deps
+aver check projects/payment_ops/main.av --module-root projects/payment_ops
 
 aver verify projects/payment_ops/domain/normalize.av --module-root projects/payment_ops
 aver verify projects/payment_ops/domain/ledger.av --module-root projects/payment_ops

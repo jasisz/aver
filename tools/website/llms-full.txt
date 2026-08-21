@@ -44,24 +44,33 @@
 aver run file.av
 aver run file.av --module-root .
 aver run file.av -- arg1 arg2 arg3
-aver run file.av --module-root . --providers
-aver run file.av --module-root . --providers --wasip2
+aver run file.av --module-root . --wasip2
 ```
 
 - Aver program args are available through `Args.get()`
 - `--record <dir>` records effect traces for replay
-- `--providers` explicitly builds/reuses the `[providers]` Rust host. It runs
-  the ordinary bytecode VM with those bindings installed in-process, or with
-  `--wasip2` adapts the WIT-lowerable bindings to Component Model imports.
-  Without the flag, `run` never invokes Cargo or provider package code
+- A file names a program: the entry module plus everything it reaches
+  through `depends [...]`, plus the `[providers]` bindings of the project's
+  `aver.toml`. When the program reaches a capability that `aver.toml` binds
+  to a Rust package, `run` builds that provider host once (the first build
+  says which packages it links and where they come from) and reuses it from
+  the cache afterwards; with `--wasip2` it adapts the WIT-lowerable bindings
+  to Component Model imports. `--wasm-gc` and `--self-host` have no provider
+  host and refuse such a program with `error[capability-provider-unhosted]`.
+  A project without `[providers]` never invokes Cargo
 
 ### Check
 
 ```bash
-aver check file-or-dir --module-root . --deps
+aver check file-or-dir --module-root .
 ```
 
-`check` handles static contract diagnostics:
+`check` reports every module of the program — the entry plus everything it
+reaches through `depends [...]` — leaves first, one `Check:` section per
+module; a directory is the union of the programs rooted at each file, each
+module reported once. Embedded standard modules are typed but not reported.
+Any module with an error fails the command. `check` handles static contract
+diagnostics:
 - missing `intent =`
 - missing `?` descriptions on relevant functions
 - missing `verify` on pure, non-trivial, non-`main` functions
@@ -92,12 +101,18 @@ reason code.
 ### Verify
 
 ```bash
-aver verify file-or-dir --module-root . --deps
+aver verify file-or-dir --module-root .
 aver verify file-or-dir --wasm-gc
-aver verify file-or-dir --module-root . --providers
 ```
 
-`verify` runs only declared `left => right` examples.
+`verify` runs the declared `left => right` examples and laws of every module
+of the program — the entry plus everything it reaches through
+`depends [...]` — leaves first, one `Verify:` section per module, and a
+`Summary: N modules | …` line. A directory is the union of the programs
+rooted at each file, each module verified once. Embedded standard modules
+are not sampled (their blocks are verified per release). A failing case in
+any module fails the command; pointing at a single module is still the fast
+way to iterate on it.
 It fails on:
 - mismatched examples
 - parse/type errors
@@ -105,11 +120,12 @@ It fails on:
 
 It is not a coverage tool.
 
-`--providers` runs configured pure providers in ordinary VM cases. An exact
-operation `given` remains a case-local override. The flag is explicit and
-mutually exclusive with `--wasm-gc`; plain verify never builds provider code.
-For file and directory targets, project bindings unrelated to a given file are
-ignored for that file instead of causing a skip or a fake type error.
+When the project's `aver.toml` binds providers and a module reaches one of
+those capabilities, the cases run inside the cached provider host, so a
+configured pure provider executes in ordinary VM cases. An exact operation
+`given` remains a case-local override. Project bindings unrelated to a module
+are ignored for that module instead of causing a skip or a fake type error.
+`--wasm-gc` has no provider host and refuses such a program.
 
 `--wasm-gc` (0.17.3+) executes the same cases via the wasm-gc backend instead of the VM — cross-target check that catches divergence between VM and wasm-gc codegen on equality. The host decodes a single Bool per case (wasm-gc lowers `==` per-type via eq_helpers natively). Failure diagnostics show the actual runtime value for primitive return types (Int/Float/Bool/String). Trace projections (`.trace.*`), classified-effect Oracle stubs (`given X: Time = stub`), and case bodies mentioning `BranchPath` are rejected upfront with a pointer back to VM verify — those features depend on namespace-value dispatch and runtime override that the wasm-gc backend doesn't have yet.
 
@@ -127,7 +143,6 @@ aver format examples --check
 
 ```bash
 aver audit file-or-dir --module-root .
-aver audit file-or-dir --module-root . --providers
 ```
 
 `audit` is the single-shot CI gate that runs all three axes at once:
@@ -136,9 +151,9 @@ aver audit file-or-dir --module-root . --providers
 2. `verify` execution (same as `verify`)
 3. `format --check` (structural compliance)
 
-`--providers` forwards the explicit project provider composition to the verify
-axis through the same cached Rust host as `aver verify --providers`. Static
-checks and formatting remain provider-neutral. Plain audit never invokes Cargo.
+When the project's `aver.toml` binds providers, the verify axis runs through
+the same cached provider host as `aver verify`. Static checks and formatting
+remain provider-neutral. A project without `[providers]` never invokes Cargo.
 
 Output is a flat list of `error[slug]:` / `warning[slug]:` lines plus a
 summary footer: `N files | X check errors | Y verify failures | Z format`.
@@ -416,7 +431,7 @@ An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a 
 
 `[[check.suppress]]` rules in detail:
 
-- `files` globs match the file's path **relative to the module root**, so a leading `./` is insignificant on either side and every spelling of the same file (`aver check domain/version.av`, `aver check ./domain/version.av`, `aver check .`, an absolute path, or a dependency pulled in by `--deps`) honours the same rule. A rule with no `files` key applies everywhere.
+- `files` globs match the file's path **relative to the module root**, so a leading `./` is insignificant on either side and every spelling of the same file (`aver check domain/version.av`, `aver check ./domain/version.av`, `aver check .`, an absolute path, or a dependency module of the program) honours the same rule. A rule with no `files` key applies everywhere.
 - `aver check` and `aver audit` apply the same rules. Both print how many warnings a file's waivers removed.
 - Suppression applies to warnings only. It can never hide an `error[...]`, a verify failure, or the `needs-format` result, so a waiver can never change a command's exit code.
 - A rule that removes nothing during a whole-directory run (`aver check .`, `aver audit .`) is reported on stderr, telling you whether its globs matched no checked file at all or matched files whose warning no longer fires. Single-file runs stay quiet, since they legitimately never exercise rules scoped to other paths.

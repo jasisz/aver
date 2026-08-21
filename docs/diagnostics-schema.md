@@ -29,8 +29,10 @@ Every multi-record CLI command (`aver check`, `aver verify`, `aver why`) emits o
 ```
 {"schema_version":1,"kind":"analysis","file_label":"a.av",...}
 {"schema_version":1,"kind":"analysis","file_label":"b.av",...}
-{"schema_version":1,"kind":"summary","files":2,"passed":1,"failed":1}
+{"schema_version":1,"kind":"summary","files":1,"modules":2,"passed":1,"failed":1}
 ```
+
+`aver check` and `aver verify` walk the whole program named by each input file (the entry plus everything it reaches through `depends [...]`), so they emit one bundle per module, leaves first. In their summaries `files` counts the inputs the command was pointed at and `modules` the modules reported: for `check` every module checked (`passed` and `failed` count modules), for `verify` every module that declared at least one verify block (`blocks`, `cases_passed`, `cases_failed` sum over them).
 
 Single-record playground calls (`aver_check`, `aver_verify`, `aver_why`, `aver_context`) emit one bundle — the same shape as a single NDJSON line above.
 
