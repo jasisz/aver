@@ -103,6 +103,11 @@ fn remainderRhs(p0: Fraction) -> Fraction
     ? "The Lemma 8.2.3 bound 2^(e(p0) - 26) = 2^(fracExpo(p0) - 26), the strict bound on the first remainder error. fracExpo(p0) is the runnable binary exponent e(p0) (Section 5.1, p.13)."
     Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(p0) - 26)
 
+verify remainderRhs
+    Domain.Rational.sameValue(remainderRhs(Domain.Rational.Fraction(top = 1, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 67108864)) => true
+    Domain.Rational.sameValue(remainderRhs(Domain.Rational.Fraction(top = 8, bottom = 1)), Domain.Rational.Fraction(top = 1, bottom = 8388608)) => true
+    Domain.Rational.sameValue(remainderRhs(Domain.Rational.Fraction(top = 3, bottom = 4)), Domain.Rational.Fraction(top = 1, bottom = 134217728)) => true
+
 fn firstRemainderHolds(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
     ? "Lemma 8.2.3 (p.29) as a runnable check on the kernel model: |p0 - sd2*d*ph0| < 2^(e(p0)-26). Sample-verified against the genuine trunc/expo of kernel.av; the universal certificate is remainderBound_8_2_3 (Z3/Dafny, cross-multiplied integer form)."
     Domain.Rational.lessThan(Domain.Rational.absFraction(firstRemainderError(p0, d, sd2)), remainderRhs(p0))
@@ -140,6 +145,10 @@ verify signsSeparated
 fn reciprocalMagnitudeRhs(p0: Fraction, sd2: Fraction) -> Fraction
     ? "The Lemma 8.2.4 (p.30) bound 2^(e(q0) - e(p0) + 2): e(q0) = fracExpo(firstQuotientDigit(p0, sd2)) is the binary exponent of the first 24-bit digit q0 = away(sd2*ph0, 24), e(p0) = fracExpo(p0). The exponent placement e(q0) - e(p0) + 2 is exactly the away/product/trunc exponent chain of the proof (Lemmas 7.2.7, 7.1.7, 7.2.6) plus the two-doubling slack the reciprocal-magnitude envelope contributes."
     Domain.Fprep.pow2Signed(Domain.Kernel.fracExpo(firstQuotientDigit(p0, sd2)) - Domain.Kernel.fracExpo(p0) + 2)
+
+verify reciprocalMagnitudeRhs
+    Domain.Rational.sameValue(reciprocalMagnitudeRhs(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 1, bottom = 2)), Domain.Rational.Fraction(top = 2, bottom = 1)) => true
+    Domain.Rational.sameValue(reciprocalMagnitudeRhs(Domain.Rational.Fraction(top = 3, bottom = 4), Domain.Rational.Fraction(top = 2, bottom = 1)), Domain.Rational.Fraction(top = 8, bottom = 1)) => true
 
 fn reciprocalMagnitudeHolds(p0: Fraction, d: Fraction, sd2: Fraction) -> Bool
     ? "Lemma 8.2.4 (p.30) as a runnable check on the kernel model: |1/d| <= 2^(e(q0)-e(p0)+2). 1/d is the exact reciprocal fraction d.bottom/d.top; the bound is reciprocalMagnitudeRhs on the genuine kernel q0. Stated as reciprocalMagnitudeRhs - |1/d| >= 0 (the non-strict <= of the lemma). Sample-verified against the genuine away/expo of kernel.av; the universal certificate is pending the pow2-monotone exponent-placement link (only this runnable model is verified so far)."

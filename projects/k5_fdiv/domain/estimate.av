@@ -118,6 +118,11 @@ fn nrOldErrSq(d: Int, x: Int, s: Int) -> Int
     ? "Square of the pre-step scaled error numerator s^2 - d*x."
     (s * s - d * x) * (s * s - d * x)
 
+verify nrOldErrSq
+    nrOldErrSq(1, 1, 1) => 0
+    nrOldErrSq(3, 2, 2) => 4
+    nrOldErrSq(-2, 3, 2) => 100
+
 verify nrNewErrNum
     nrNewErrNum(1, 1, 1) => 0
     nrNewErrNum(3, 2, 2) => 4
