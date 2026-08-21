@@ -49,20 +49,27 @@ fn fake_conn_resource() -> ProviderValue {
     )))
 }
 
-/// Compile a VM holding the `normal_ok` stub exactly as
-/// `hostile_profiles_for` emits it, plus two helper fns that build
-/// out-of-i64 counts from source literals (so the test needs no bignum
-/// constructor on the Rust side). Type checking is skipped on purpose —
-/// this harness pins runtime semantics, and the stub's typecheck is
-/// already guarded in `hostile_effects::tests`.
+/// Compile a VM holding the `normal_ok` stub body from
+/// `hostile_profiles_for`, plus two helper fns that build out-of-i64
+/// counts from source literals (so the test needs no bignum constructor
+/// on the Rust side). The compiler-reserved stub name is changed to a
+/// legal infix-`__` test name because this integration harness correctly
+/// enters through the user-source parser; production hostile injection
+/// uses the parser's private compiler-generated path. Type checking is
+/// skipped on purpose — this harness pins runtime semantics, and the
+/// stub's typecheck is already guarded in `hostile_effects::tests`.
 fn stub_vm() -> (vm::VM, String) {
     let profile = hostile_profiles_for("Tcp.readBytes")
         .into_iter()
         .find(|p| p.name == "normal_ok")
         .expect("Tcp.readBytes must ship a normal_ok profile");
+    let test_stub_name = profile.stub_fn_name.replacen("__hostile_", "hostile__", 1);
+    let test_stub_body = profile
+        .stub_body
+        .replacen(&profile.stub_fn_name, &test_stub_name, 1);
     let src = format!(
         "module M\n    intent = \"t\"\n    depends [Bytes]\n    effects []\n\n{}\nfn bigPositive() -> Int\n    {BIG_COUNT}\n\nfn bigNegative() -> Int\n    0 - {BIG_COUNT}\n",
-        profile.stub_body
+        test_stub_body
     );
     let mut lexer = aver::lexer::Lexer::new(&src);
     let tokens = lexer.tokenize().expect("lex stub program");
@@ -85,10 +92,7 @@ fn stub_vm() -> (vm::VM, String) {
         None,
     )
     .expect("VM compile of stub program");
-    (
-        vm::VM::new(code, globals, arena),
-        profile.stub_fn_name.clone(),
-    )
+    (vm::VM::new(code, globals, arena), test_stub_name)
 }
 
 /// Run the stub fn with a fabricated `BranchPath.Root` / connection and the

@@ -46,7 +46,7 @@ fn hiddenTupleValues(m: Map<Tuple<Int, Int>, Int>) -> List<Int>
 fn firstTupleValue(m: Map<Tuple<Int, Int>, Int>) -> Int
     ? "The value paired with the lowest key, read through the helper."
     match hiddenTupleValues(m)
-        [x, ..__rest] -> x
+        [x, ..rest] -> x
         _ -> 0
 
 verify firstTupleValue law firstIsLowestKeysValue

@@ -10,7 +10,7 @@ fn hiddenValues(m: Map<Tuple<Int, Int>, Int>) -> List<Int>
 fn firstValue(m: Map<Tuple<Int, Int>, Int>) -> Int
     ? "The value the map yields first."
     match hiddenValues(m)
-        [x, ..__rest] -> x
+        [x, ..rest] -> x
         _ -> 0
 
 fn describe(m: Map<Tuple<Int, Int>, Int>) -> String

@@ -1169,7 +1169,7 @@ mod tests {
     use crate::parser::Parser;
 
     fn parse_body(src: &str) -> FnBody {
-        let full = format!("fn __lift_test() -> Unit\n{}\n", src);
+        let full = format!("fn lift__test() -> Unit\n{}\n", src);
         let mut lexer = Lexer::new(&full);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);

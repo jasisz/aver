@@ -70,29 +70,19 @@ impl Parser {
                     return Ok(Pattern::EmptyList);
                 }
 
-                let head = if let TokenKind::Ident(s) = self.current().kind.clone() {
-                    self.advance();
-                    s
-                } else {
-                    return Err(self.error(format!(
-                        "Expected identifier for list head in [head, ..tail] pattern, found {}",
-                        self.current().kind
-                    )));
-                };
+                let head = self.expect_user_identifier(
+                    "Expected identifier for list head in [head, ..tail] pattern",
+                    "pattern binders",
+                )?;
 
                 self.expect_exact(&TokenKind::Comma)?;
                 self.expect_exact(&TokenKind::Dot)?;
                 self.expect_exact(&TokenKind::Dot)?;
 
-                let tail = if let TokenKind::Ident(s) = self.current().kind.clone() {
-                    self.advance();
-                    s
-                } else {
-                    return Err(self.error(format!(
-                        "Expected identifier for list tail in [head, ..tail] pattern, found {}",
-                        self.current().kind
-                    )));
-                };
+                let tail = self.expect_user_identifier(
+                    "Expected identifier for list tail in [head, ..tail] pattern",
+                    "pattern binders",
+                )?;
 
                 self.expect_exact(&TokenKind::RBracket)?;
                 Ok(Pattern::Cons(head, tail))
@@ -134,9 +124,11 @@ impl Parser {
                             self.advance();
                             continue;
                         }
-                        if let TokenKind::Ident(b) = self.current().kind.clone() {
-                            bindings.push(b);
-                            self.advance();
+                        if matches!(self.current().kind, TokenKind::Ident(_)) {
+                            bindings.push(self.expect_user_identifier(
+                                "Expected constructor pattern binding",
+                                "pattern binders",
+                            )?);
                         } else {
                             break;
                         }
@@ -145,10 +137,10 @@ impl Parser {
                 }
                 Ok(Pattern::Constructor(name, bindings))
             }
-            TokenKind::Ident(s) => {
-                self.advance();
-                Ok(Pattern::Ident(s))
-            }
+            TokenKind::Ident(_) => Ok(Pattern::Ident(self.expect_user_identifier(
+                "Expected match pattern identifier",
+                "pattern binders",
+            )?)),
             TokenKind::Int(i) => {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Int(i)))

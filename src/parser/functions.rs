@@ -4,12 +4,7 @@ impl Parser {
     pub(super) fn parse_fn(&mut self) -> Result<FnDef, ParseError> {
         let fn_line = self.current().line;
         self.expect_exact(&TokenKind::Fn)?;
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected function name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name = self.expect_user_identifier("Expected function name", "function names")?;
 
         self.expect_exact(&TokenKind::LParen)?;
         let params = self.parse_params()?;
@@ -87,12 +82,8 @@ impl Parser {
                 continue;
             }
 
-            let name_tok =
-                self.expect_kind(&TokenKind::Ident(String::new()), "Expected parameter name")?;
-            let param_name = match name_tok.kind {
-                TokenKind::Ident(s) => s,
-                _ => unreachable!(),
-            };
+            let param_name =
+                self.expect_user_identifier("Expected parameter name", "parameter names")?;
 
             if !self.check_exact(&TokenKind::Colon) {
                 return Err(self.error(format!(
@@ -155,12 +146,7 @@ impl Parser {
     // binding: `name = expr` or `name: Type = expr`
     // -------------------------------------------------------------------------
     pub(super) fn parse_binding(&mut self) -> Result<Stmt, ParseError> {
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected variable name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name = self.expect_user_identifier("Expected variable name", "binding names")?;
         let type_ann = if self.check_exact(&TokenKind::Colon) {
             self.advance();
             Some(self.parse_type()?)

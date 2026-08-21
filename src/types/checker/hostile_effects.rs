@@ -234,6 +234,13 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
 mod tests {
     use super::*;
 
+    fn parse_compiler_generated(source: &str) -> Result<Vec<crate::ast::TopLevel>, String> {
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().map_err(|error| error.to_string())?;
+        let mut parser = crate::parser::Parser::new_compiler_generated(tokens);
+        parser.parse().map_err(|error| error.to_string())
+    }
+
     #[test]
     fn time_now_has_multiple_profiles() {
         let profiles = hostile_profiles_for("Time.now");
@@ -302,13 +309,7 @@ mod tests {
             "Env.get",
         ] {
             for p in hostile_profiles_for(method) {
-                let mut lexer = crate::lexer::Lexer::new(&p.stub_body);
-                let tokens = lexer
-                    .tokenize()
-                    .unwrap_or_else(|e| panic!("{}/{}: lex failed: {}", method, p.name, e));
-                let mut parser = crate::parser::Parser::new(tokens);
-                parser
-                    .parse()
+                parse_compiler_generated(&p.stub_body)
                     .unwrap_or_else(|e| panic!("{}/{}: parse failed: {}", method, p.name, e));
             }
         }
@@ -347,7 +348,6 @@ mod tests {
     /// the guard reported success over an effect it never looked at.
     #[test]
     fn stub_bodies_typecheck_with_signature_matching_oracle_classification() {
-        use crate::source::parse_source;
         use crate::types::Type;
         use crate::types::checker::effect_classification::{
             EffectDimension, classifications_for_proof_subset, oracle_signature,
@@ -405,7 +405,7 @@ mod tests {
                     "module M\n    intent = \"t\"\n{}    effects []\n\n{}",
                     depends, p.stub_body
                 );
-                let items = parse_source(&src)
+                let items = parse_compiler_generated(&src)
                     .unwrap_or_else(|e| panic!("{}/{}: parse: {:?}", method, p.name, e));
                 let result = run_type_check_full(&items, Some(env!("CARGO_MANIFEST_DIR")));
                 if !result.errors.is_empty() {

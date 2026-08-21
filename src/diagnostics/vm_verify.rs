@@ -600,7 +600,7 @@ pub(crate) fn inject_hostile_effect_stubs_for_blocks(
 fn parse_stub_body(source: &str) -> Result<Vec<TopLevel>, String> {
     let mut lexer = crate::lexer::Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
-    let mut parser = crate::parser::Parser::new(tokens);
+    let mut parser = crate::parser::Parser::new_compiler_generated(tokens);
     parser.parse().map_err(|e| e.to_string())
 }
 

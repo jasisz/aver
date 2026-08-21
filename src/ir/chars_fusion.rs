@@ -97,20 +97,6 @@ use crate::ast::{
     Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart, TailCallData, TopLevel,
 };
 
-/// Prefix for every name this pass invents inside a function body. A
-/// loop that already uses one — reads it OR binds it — declines rather
-/// than risk capturing it.
-///
-/// A leading `__` is not reserved: `__cur_i = 3` parses, type-checks and
-/// runs, so this is a shape a program can reach and not a guard against
-/// other passes. Binding matters more than reading, and in the more
-/// dangerous direction: a binder spelled `__cur_i` shadows the cursor
-/// parameter for everything underneath it, so the emitted end test and
-/// step would read the user's number instead of the offset — an answer
-/// off the end of the string, or an infinite loop when the number is
-/// inside it.
-const CURSOR_PREFIX: &str = "__cur_";
-
 /// The synthesized cursor variant's string parameter.
 const CURSOR_STR_PARAM: &str = "__cur_s";
 
@@ -131,11 +117,9 @@ const CODE_SUFFIX: &str = "__code";
 const CODE_PARAM: &str = "code";
 
 /// Prefix of the fresh binder that holds the head's codepoint in a
-/// rewritten peel. Under `CURSOR_PREFIX`, so a loop body that could
-/// collide was already declined when its cursor variant was built, and
-/// the per-variant counter keeps the pass's own binders apart — nested
-/// peels each bind their own code, and a shared name would hand an
-/// outer classifier the INNER character's code.
+/// rewritten peel. The per-variant counter keeps the pass's own binders
+/// apart — nested peels each bind their own code, and a shared name would
+/// hand an outer classifier the INNER character's code.
 const CODE_BIND_PREFIX: &str = "__cur_c";
 
 /// The builtin namespace this pass reads `chars` / `toLower` /
@@ -143,17 +127,6 @@ const CODE_BIND_PREFIX: &str = "__cur_c";
 /// resolves to the builtin whatever else carries the name, so there is
 /// nothing here to check against the enclosing scope.
 const STRING_NAMESPACE: &str = "String";
-
-/// Prefix of every intrinsic this pass emits CALLS to —
-/// `__str_cursor_end` / `__str_cursor_head` / `__str_cursor_next` /
-/// `__str_cursor_code`, the `__str_code1*` classifiers and the
-/// `__str_fold_*` folds. Same reasoning as [`CURSOR_PREFIX`], from the
-/// other side of the call: the calls are emitted as bare identifiers
-/// and resolved later, so a user binder carrying one of these names
-/// anywhere in the function captures the emitted call — the resolver
-/// reads the callee as the local, not the intrinsic. A function that
-/// binds into this namespace is stepped around, not rewritten.
-const INTRINSIC_PREFIX: &str = "__str_";
 
 /// Why the cursor recogniser turned a loop down. Carried into the pass
 /// report so `--explain-passes` can say which loop stayed on the list
@@ -177,9 +150,8 @@ pub enum CharsFusionDecline {
     /// is not. Two cursors is a separate shape, and it can have its own
     /// recogniser when a workload asks for it.
     ConflictingProducers,
-    /// A `<fn>__cursor` name is already taken, or the body already uses
-    /// the `__cur_` namespace, or the function binds a name in the
-    /// `__str_` namespace the emitted intrinsic calls live in.
+    /// A `<fn>__cursor` name is already taken, or the function binds its
+    /// own callable name and would capture the retargeted self-call.
     NameTaken,
     /// The tracked list is read somewhere the rewrite has no cursor
     /// form for — a length, a pass to another function, a return.
@@ -207,9 +179,7 @@ impl CharsFusionDecline {
             Self::ConflictingProducers => {
                 "String.chars is handed to two different parameters of this function"
             }
-            Self::NameTaken => {
-                "the __cursor variant name or the __cur_ or __str_ namespace is already taken"
-            }
+            Self::NameTaken => "the __cursor variant or recursive callable name is already taken",
             Self::ListEscapes => "the list is read somewhere a cursor cannot stand in for",
             Self::MatchShape => "the match over the list is not the [] / [head, ..tail] pair",
             Self::RecursiveCallShape => "the recursive call does not step the list it was given",
@@ -349,15 +319,6 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     // which carry the same match sites the originals do — are covered
     // by the same walk.
     for fd in fn_defs_mut(items) {
-        // This rewrite emits bare `__str_code1*` calls into whatever
-        // function the match sits in — cursor loop or not. A function
-        // that binds a name in that namespace would hand the emitted
-        // call to its own binder, so it keeps its string matches.
-        let mut bound = HashSet::new();
-        collect_bound_names(fd, &mut bound);
-        if bound.iter().any(|n| n.starts_with(INTRINSIC_PREFIX)) {
-            continue;
-        }
         let mut count = 0;
         let body = Arc::make_mut(&mut fd.body);
         for stmt in body.stmts_mut() {
@@ -589,33 +550,12 @@ fn build_cursor_variant(
     if !is_list_of_string(list_ty) || list_name == "_" {
         return Err(CharsFusionDecline::ParamShape);
     }
-    // A body that already spells `__cur_` could have one of the
-    // generated binders captured out from under it — or, the other way
-    // round, could shadow one of them and send the cursor somewhere the
-    // rewrite never put it. Reads and binders are asked separately
-    // because they are different traversals, not because one implies the
-    // other. And a body that binds its OWN name makes the self-call
-    // recognition below a lie.
-    //
-    // A binder in the `__str_` namespace is the same capture from the
-    // call side: the variant's peels call `__str_cursor_*` by bare
-    // name, and a parameter, statement binding or pattern binder
-    // spelled like one of them is what those calls would resolve to.
-    // One whole-function answer on purpose — a bound name anywhere in
-    // the function reaches every position a later stage could put the
-    // emitted call in, the re-materialised cold read under a
-    // between-bind-and-read binder included.
+    // A body that binds its OWN function name makes the self-call
+    // recognition below a lie. Compiler-local and intrinsic names need
+    // no per-pass namespace audit: leading `__` is source-reserved.
     let mut bound = HashSet::new();
     collect_bound_names(fd, &mut bound);
-    if bound.iter().any(|n| n.starts_with(CURSOR_PREFIX))
-        || bound.iter().any(|n| n.starts_with(INTRINSIC_PREFIX))
-        || fd
-            .body
-            .stmts()
-            .iter()
-            .any(|s| mentions_prefix(stmt_expr(s), CURSOR_PREFIX))
-        || bound.contains(&fd.name)
-    {
+    if bound.contains(&fd.name) {
         return Err(CharsFusionDecline::NameTaken);
     }
 
@@ -1649,22 +1589,6 @@ fn pattern_bindings(pattern: &Pattern) -> Vec<String> {
     }
 }
 
-/// Does any identifier under `expr` start with `prefix`?
-fn mentions_prefix(expr: &Spanned<Expr>, prefix: &str) -> bool {
-    let hit = match &expr.node {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.starts_with(prefix),
-        _ => false,
-    };
-    if hit {
-        return true;
-    }
-    let mut found = false;
-    walk_children(expr, &mut |child| {
-        found = found || mentions_prefix(child, prefix);
-    });
-    found
-}
-
 /// Visit every direct sub-expression. Exhaustive so a new `Expr`
 /// variant has to be classified before this compiles.
 pub(super) fn walk_children(expr: &Spanned<Expr>, f: &mut impl FnMut(&Spanned<Expr>)) {
@@ -2077,58 +2001,6 @@ fn run(text: String) -> Int
         assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
     }
 
-    /// A statement binding spelled like the cursor parameter. It shadows
-    /// that parameter for the whole body underneath, so the emitted end
-    /// test would read the user's number — 99 is past the end of any
-    /// short string, and a number inside the string is an infinite loop.
-    #[test]
-    fn a_binding_in_the_cursor_namespace_declines() {
-        let reason = decline_reason(
-            r#"module CursorBinding
-    intent =
-        "Binds the cursor parameter's own name."
-    exposes [run]
-    effects []
-
-fn walk(chars: List<String>, acc: Int) -> Int
-    __cur_i = 99
-    match chars
-        [] -> acc
-        [head, ..tail] -> walk(tail, acc + 1)
-
-fn run(text: String) -> Int
-    walk(String.chars(text), 0)
-"#,
-            "walk",
-        );
-        assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
-    }
-
-    /// The same capture through a pattern binder. A binder is not a
-    /// read, so the identifier traversal cannot see it.
-    #[test]
-    fn a_pattern_binder_in_the_cursor_namespace_declines() {
-        let reason = decline_reason(
-            r#"module CursorPattern
-    intent =
-        "Binds the cursor parameter's own name in a pattern."
-    exposes [run]
-    effects []
-
-fn walk(chars: List<String>, acc: Int) -> Int
-    match acc + 3
-        __cur_i -> match chars
-            [] -> acc
-            [head, ..tail] -> walk(tail, acc + 1)
-
-fn run(text: String) -> Int
-    walk(String.chars(text), 0)
-"#,
-            "walk",
-        );
-        assert_eq!(reason, CharsFusionDecline::NameTaken.reason());
-    }
-
     /// The synthesized name is free at top level and bound as a LOCAL in
     /// the body whose call site would be rewritten to it. The rewritten
     /// call would read the local.
@@ -2182,132 +2054,7 @@ fn run(text: String) -> Int
         assert!(report.declined.is_empty(), "{:?}", report.declined);
     }
 
-    /// Every name the pass emits a call to. The recogniser declines the
-    /// whole `__str_` namespace, and this walk keeps the list honest:
-    /// a new intrinsic added to the pass belongs here the day it is
-    /// emitted.
-    const EMITTED_NAMES: [&str; 9] = [
-        "__str_cursor_head",
-        "__str_cursor_code",
-        "__str_cursor_next",
-        "__str_cursor_end",
-        "__str_code1",
-        "__str_code1_lower",
-        "__str_code1_upper",
-        "__str_fold_lower",
-        "__str_fold_upper",
-    ];
-
-    /// A binder spelled like ANY emitted intrinsic, in any position a
-    /// loop can bind a name — parameter, statement binding, pattern
-    /// binder — declines the loop whole. The emitted calls are bare
-    /// identifiers resolved after this pass, so a binder carrying one
-    /// of these names captures the call for everything underneath it;
-    /// the answer witnesses are in `tests/chars_fusion_declines.rs`,
-    /// what is pinned here is that the recogniser says no, and why.
-    #[test]
-    fn a_binder_spelled_like_an_emitted_intrinsic_declines() {
-        let templates = [
-            (
-                "parameter",
-                r#"module ProbeParam
-    intent =
-        "Carries a spare number under a probed name."
-    exposes [run]
-    effects []
-
-fn walk(chars: List<String>, BINDER: Int, acc: Int) -> Int
-    match chars
-        [] -> acc + BINDER
-        [head, ..tail] -> walk(tail, BINDER, acc + 1)
-
-fn run(text: String) -> Int
-    walk(String.chars(text), 100, 0)
-"#,
-            ),
-            (
-                "statement binding",
-                r#"module ProbeStmt
-    intent =
-        "Binds a spare number under a probed name."
-    exposes [run]
-    effects []
-
-fn walk(chars: List<String>, acc: Int) -> Int
-    BINDER = 100
-    match chars
-        [] -> acc + BINDER
-        [head, ..tail] -> walk(tail, acc + 1)
-
-fn run(text: String) -> Int
-    walk(String.chars(text), 0)
-"#,
-            ),
-            (
-                "pattern binder",
-                r#"module ProbePattern
-    intent =
-        "Introduces a probed name in a pattern around the list match."
-    exposes [run]
-    effects []
-
-fn walk(chars: List<String>, acc: Int) -> Int
-    match acc + 100
-        BINDER -> match chars
-            [] -> BINDER
-            [head, ..tail] -> walk(tail, acc + 1)
-
-fn run(text: String) -> Int
-    walk(String.chars(text), 0)
-"#,
-            ),
-        ];
-        for name in EMITTED_NAMES {
-            for (position, template) in &templates {
-                let reason = decline_reason(&template.replace("BINDER", name), "walk");
-                assert_eq!(
-                    reason,
-                    CharsFusionDecline::NameTaken.reason(),
-                    "a {position} binder named {name} must decline as a taken name"
-                );
-            }
-        }
-    }
-
-    /// The codepoint rewrite emits `__str_code1*` calls into whatever
-    /// function the match sits in — cursor loop or not — so a function
-    /// that binds a name in the emitted namespace keeps its string
-    /// match even when it is not a loop this pass would fuse.
-    #[test]
-    fn a_function_binding_the_emitted_namespace_keeps_its_string_match() {
-        let (items, report) = fused(
-            r#"module CodeName
-    intent =
-        "Matches characters beside a parameter carrying an intrinsic's name."
-    exposes [rank]
-    effects []
-
-fn rank(word: String, __str_code1: Int) -> Int
-    match word
-        "a" -> 1
-        _ -> __str_code1
-"#,
-        );
-        assert_eq!(report.codepoint_matches, 0, "{report:?}");
-        // The wildcard arm's read of the parameter is the program's own;
-        // what must not appear is a CALL — the body has none, so any
-        // `FnCall` here is an emitted intrinsic the parameter captures.
-        let rank = rendered_fn(&items, "rank");
-        assert!(
-            rank.contains("Str(\"a\")") && !rank.contains("FnCall"),
-            "the match stays on strings and no intrinsic call is emitted \
-             where the parameter would capture it:\n{rank}"
-        );
-    }
-
-    /// The control: the same function under an ordinary second
-    /// parameter gets its codepoint match, so what the test above pins
-    /// is the name and not the shape.
+    /// A non-recursive function can use the codepoint match rewrite too.
     #[test]
     fn the_same_function_under_an_ordinary_name_gets_its_codepoint_match() {
         let (_, report) = fused(

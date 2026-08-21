@@ -120,8 +120,7 @@ pub enum ListBuildDecline {
     /// by taking the reverse off the call site, and any path through
     /// the untouched exit would lose a reversal the program wrote.
     UntouchedExit,
-    /// The `<fn>__collected` name is already taken, or the program
-    /// already uses the `__lst_` namespace.
+    /// The `<fn>__collected` name is already taken.
     NameTaken,
 }
 
@@ -138,9 +137,7 @@ impl ListBuildDecline {
                 "an exit does not come from the accumulator, and the caller's \
                  reverse pays for the rewrite"
             }
-            Self::NameTaken => {
-                "the __collected variant name or the __lst_ or __byt_ namespace is taken"
-            }
+            Self::NameTaken => "the __collected variant name is taken",
         }
     }
 }
@@ -186,19 +183,6 @@ pub struct ListBuildPassReport {
 /// built from.
 pub(super) const COLLECTED_SUFFIX: &str = "__collected";
 
-/// Prefixes of every intrinsic and binder this pass emits — the list
-/// builder's, and the byte builder's the byte-sink retarget below
-/// rewrites it into. A leading `__` is not reserved — a program can
-/// bind `__lst_push` and a binder is exactly what would shadow the
-/// intrinsic for the code underneath it — so the pass steps aside
-/// rather than risk emitting a call to the user's name. One list for
-/// both namespaces on purpose: the retarget is a stage of this pass,
-/// and a program that binds into either namespace takes the whole pass
-/// away at once. (The guard family is slated for retirement when the
-/// language reserves `__` outright — extend this list, do not grow a
-/// second mechanism around it.)
-const BUILDER_PREFIXES: [&str; 2] = ["__lst_", "__byt_"];
-
 /// The three intrinsics, in the order they appear in a rewritten loop.
 const BUILDER_INTRINSICS: [&str; 3] = ["__lst_new", "__lst_push", "__lst_finalize"];
 
@@ -226,13 +210,12 @@ pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
     }
 
     let taken = crate::ir::chars_fusion::taken_names(items);
-    let namespace_taken = builder_namespace_taken(&taken);
 
     let mut accepted: HashMap<String, (String, ListBuildShape)> = HashMap::new();
     let mut variants: Vec<FnDef> = Vec::new();
     for (name, acc) in candidates {
         let new_name = format!("{name}{COLLECTED_SUFFIX}");
-        let outcome = if namespace_taken || taken.contains(&new_name) {
+        let outcome = if taken.contains(&new_name) {
             Err(ListBuildDecline::NameTaken)
         } else {
             let fd = crate::ir::chars_fusion::fn_defs(items)
@@ -291,19 +274,6 @@ pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
         items.push(TopLevel::FnDef(variant));
     }
     report
-}
-
-/// One name in the program's own binders is enough to take the builder
-/// namespace away from every loop at once: the intrinsics are emitted
-/// by name, and a name that means something else anywhere it is in
-/// scope is a name this pass cannot spell. Shared with the
-/// driver-and-step normalization, which must decline a pair the main
-/// pass would then refuse to fuse.
-pub(super) fn builder_namespace_taken(taken: &std::collections::HashSet<String>) -> bool {
-    taken.iter().any(|name| {
-        BUILDER_PREFIXES.iter().any(|p| name.starts_with(p))
-            || BUILDER_INTRINSICS.contains(&name.as_str())
-    })
 }
 
 /// Is there a collecting loop here at all? Read-only, so a caller that
@@ -910,17 +880,18 @@ fn fn_binds_name(fd: &FnDef, name: &str) -> bool {
         })
 }
 
-/// Does any identifier under `expr` live in a builder namespace this
-/// pass emits into?
-fn mentions_builder_namespace(expr: &Spanned<Expr>) -> bool {
+/// Does an expression mention one of the list-builder intrinsics emitted by
+/// the immediately preceding rewrite? This is an internal shape check for
+/// byte retargeting, not a user-namespace collision guard.
+fn mentions_list_builder_intrinsic(expr: &Spanned<Expr>) -> bool {
     if let Expr::Ident(n) | Expr::Resolved { name: n, .. } = &expr.node
-        && BUILDER_PREFIXES.iter().any(|p| n.starts_with(p))
+        && BUILDER_INTRINSICS.contains(&n.as_str())
     {
         return true;
     }
     let mut found = false;
     crate::ir::chars_fusion::walk_children(expr, &mut |child| {
-        found = found || mentions_builder_namespace(child);
+        found = found || mentions_list_builder_intrinsic(child);
     });
     found
 }
@@ -1554,7 +1525,7 @@ fn retarget_variant_to_bytes(
     // builder mention in a leading statement is a shape this stage
     // does not know, not a shape to improvise over.
     for stmt in leading.iter() {
-        if mentions_builder_namespace(crate::ir::chars_fusion::stmt_expr(stmt)) {
+        if mentions_list_builder_intrinsic(crate::ir::chars_fusion::stmt_expr(stmt)) {
             return Err(ByteSinkDecline::ExitShape);
         }
     }
@@ -1605,7 +1576,7 @@ fn retarget_exit_expr(
     let line = expr.line;
 
     if let Expr::Match { subject, arms } = &mut expr.node {
-        if mentions_builder_namespace(subject) {
+        if mentions_list_builder_intrinsic(subject) {
             return Err(ByteSinkDecline::ExitShape);
         }
         for arm in arms.iter_mut() {
@@ -1624,7 +1595,7 @@ fn retarget_exit_expr(
                     Some(args)
                         if args.len() == 2
                             && matches!(&args[0].node, Expr::Ident(n) if *n == meta.acc_name)
-                            && !mentions_builder_namespace(&args[1]) =>
+                            && !mentions_list_builder_intrinsic(&args[1]) =>
                     {
                         args.clone()
                     }
@@ -1643,7 +1614,7 @@ fn retarget_exit_expr(
                         elem,
                     ],
                 );
-            } else if mentions_builder_namespace(arg) {
+            } else if mentions_list_builder_intrinsic(arg) {
                 return Err(ByteSinkDecline::ExitShape);
             }
         }
@@ -1664,7 +1635,7 @@ fn retarget_exit_expr(
             return Err(ByteSinkDecline::ExitShape);
         }
         if let Some(args) = result_wrapper_payload(&expr.node, "Err") {
-            if args.len() == 1 && !mentions_builder_namespace(&args[0]) {
+            if args.len() == 1 && !mentions_list_builder_intrinsic(&args[0]) {
                 return Ok(());
             }
             return Err(ByteSinkDecline::ExitShape);

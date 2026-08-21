@@ -307,7 +307,7 @@ fn list_join(items: List<String>, sep: String) -> String
         [] -> ""
         [head, ..rest] -> match rest
             [] -> head
-            [_, ..__] -> "{{head}}{{sep}}{{list_join(rest, sep)}}"
+            [_, .._] -> "{{head}}{{sep}}{{list_join(rest, sep)}}"
 
 fn header_join(headers: Map<String, List<String>>, name: String) -> String
     match Map.get(headers, name)

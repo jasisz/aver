@@ -8,7 +8,7 @@ module MapOrderCrossModule
 fn firstTupleValue(m: Map<Tuple<Int, Int>, Int>) -> Int
     ? "The value paired with the lowest key, read through another module."
     match MapKeys.floatValues(m)
-        [x, ..__rest] -> x
+        [x, ..rest] -> x
         _ -> 0
 
 verify firstTupleValue law firstIsLowestKeysValue

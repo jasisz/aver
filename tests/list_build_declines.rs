@@ -285,47 +285,6 @@ fn main() -> Unit
     assert_eq!(out, "[2, 1]");
 }
 
-/// The program binds `__lst_push` itself. A leading `__` is not
-/// reserved — this parses, type-checks and runs — and a binder is
-/// exactly what shadows a name for the code underneath it, so emitting
-/// a call to the intrinsic here would call the user's number.
-#[test]
-fn a_program_that_binds_a_builder_name_keeps_its_unfused_answer() {
-    let out = run_program(
-        "name_taken",
-        r#"module NameTaken
-    intent =
-        "Collects a run, in a module that happens to bind one of the builder names."
-    exposes [collect]
-    effects [Console.print]
-
-fn collect(n: Int, acc: List<Int>) -> List<Int>
-    __lst_push = 3
-    match n <= 0
-        true -> List.reverse(acc)
-        false -> collect(n - 1, List.prepend(n + __lst_push, acc))
-
-fn render(values: List<Int>) -> String
-    ? "Print a list without collecting anything, so the printer is not the subject."
-    "[{renderItems(values)}]"
-
-fn renderItems(values: List<Int>) -> String
-    ? "The elements, comma-separated, built without an accumulator."
-    match values
-        [] -> ""
-        [head, ..tail] -> match tail
-            [] -> "{head}"
-            [next, ..rest] -> "{head}, {renderItems(tail)}"
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print("{render(collect(5, []))}")
-"#,
-    );
-    // Five steps, each element three more than the count it came from.
-    assert_eq!(out, "[8, 7, 6, 5, 4]");
-}
-
 /// The loop hands its accumulator back bare and the caller reverses.
 /// Only the reversing call site produces the forward list, so a caller
 /// that asked for the elements backwards has to keep getting them.
@@ -701,35 +660,4 @@ fn main() -> Unit
         out,
         "err:byte 300 at index 0 is outside 0..=255\nok:3, 2, 1"
     );
-}
-
-/// The program binds a name in the `__byt_` namespace. A leading `__`
-/// is not reserved — this parses, type-checks and runs — and a binder
-/// is exactly what shadows a name for the code underneath it, so the
-/// whole pass steps aside, list fusion included.
-#[test]
-fn a_program_that_binds_a_byte_builder_name_keeps_its_unfused_answer() {
-    let out = run_program(
-        "byte_name_taken",
-        &format!(
-            r#"module ByteNameTaken
-    intent =
-        "A module that binds a name in the byte builder's namespace keeps every list."
-    effects [Console.print]
-
-{FROM_LIST_FAMILY}
-fn collect(n: Int, acc: List<Int>) -> List<Int>
-    ? "Collect a countdown, in a module that binds one of the byte builder's names."
-    __byt_probe = 3
-    match n <= 0
-        true -> List.reverse(acc)
-        false -> collect(n - 1, List.prepend(n + __byt_probe, acc))
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print(describe(fromList(collect(4, []))))
-"#
-        ),
-    );
-    assert_eq!(out, "ok:7, 6, 5, 4");
 }

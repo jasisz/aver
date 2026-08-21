@@ -17,6 +17,9 @@ pub enum ParseError {
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Trusted compiler-owned source fragments may spell the reserved `__`
+    /// namespace. Public/user parsing always leaves this false.
+    allow_compiler_identifiers: bool,
     /// Iron — B4: monotonically-increasing recursion counter, guarded
     /// against by `enter_recursion`. Without this the parser unwinds
     /// its stack on inputs the fuzz harness routinely produces:
