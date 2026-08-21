@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::Spanned;
 use crate::ir::FnId;
-use crate::ir::mir::expr::{MirCallee, MirExpr};
+use crate::ir::mir::expr::{MirCallee, MirExpr, walk_children};
 use crate::ir::mir::program::MirProgram;
 
-use super::{MAX_DEPTH, OwnershipModel, visit_children};
+use super::{MAX_DEPTH, OwnershipModel};
 
 /// Named functions whose result has a complete alias proof, mapped to the
 /// parameter indices whose collection backing the result may carry.
@@ -255,7 +255,7 @@ fn collect_explicit_return_aliases(
     }
 
     let mut complete = true;
-    visit_children(expr, &mut |child| {
+    walk_children(expr, &mut |child| {
         complete &= collect_explicit_return_aliases(
             child,
             param_slots,

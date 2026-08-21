@@ -2235,90 +2235,10 @@ pub(crate) fn tests_visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
     visit_children(e, f)
 }
 
-/// Apply `f` to every immediate sub-expression of `e`. Kept in sync with
-/// the exhaustive walk in `own_param.rs` / `instantiations.rs`. `pub(crate)`
-/// so the sibling `bare_i64_rewrite` pass (the wasm-gc `mutual_recursion_box_set`
-/// call-graph walk) can reuse this one exhaustive child enumeration instead
-/// of forking a second copy.
-pub(crate) fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
-    match e {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Let(l) => {
-            f(&l.node.value.node);
-            f(&l.node.body.node);
-        }
-        MirExpr::Call(c) => {
-            for a in &c.node.args {
-                f(&a.node);
-            }
-        }
-        MirExpr::TailCall(tc) => {
-            for a in &tc.node.args {
-                f(&a.node);
-            }
-        }
-        MirExpr::BinOp(b) => {
-            f(&b.node.lhs.node);
-            f(&b.node.rhs.node);
-        }
-        MirExpr::Neg(inner)
-        | MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => f(&inner.node),
-        MirExpr::Match(m) => {
-            f(&m.node.subject.node);
-            for arm in &m.node.arms {
-                f(&arm.body.node);
-            }
-        }
-        MirExpr::Construct(c) => {
-            for a in &c.node.args {
-                f(&a.node);
-            }
-        }
-        MirExpr::RecordCreate(r) => {
-            for field in &r.node.fields {
-                f(&field.value.node);
-            }
-        }
-        MirExpr::RecordUpdate(u) => {
-            f(&u.node.base.node);
-            for field in &u.node.updates {
-                f(&field.value.node);
-            }
-        }
-        MirExpr::Project(p) => f(&p.node.base.node),
-        MirExpr::IfThenElse(ite) => {
-            f(&ite.node.cond.node);
-            f(&ite.node.then_branch.node);
-            f(&ite.node.else_branch.node);
-        }
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for i in items {
-                f(&i.node);
-            }
-        }
-        MirExpr::MapLiteral(pairs) => {
-            for (k, v) in pairs {
-                f(&k.node);
-                f(&v.node);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for p in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = p {
-                    f(&e.node);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(ip) => {
-            for i in &ip.node.items {
-                f(&i.node);
-            }
-        }
-    }
-}
+/// Compatibility name for the canonical exhaustive child walk beside
+/// [`MirExpr`] in `expr.rs`. The sibling `bare_i64_rewrite` pass and Rust
+/// codegen use this path without maintaining another variant match.
+pub(crate) use crate::ir::mir::expr::walk_children as visit_children;
 
 #[cfg(test)]
 mod tests {

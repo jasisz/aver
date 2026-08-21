@@ -14,7 +14,7 @@
 
 use crate::ast::{Literal, Spanned};
 
-use super::super::expr::{MirExpr, MirIfThenElse, MirMatchArm, MirPattern};
+use super::super::expr::{MirExpr, MirIfThenElse, MirMatchArm, MirPattern, walk_children_mut};
 use super::super::program::MirProgram;
 
 pub fn bool_match_to_if(mut program: MirProgram) -> MirProgram {
@@ -107,83 +107,7 @@ fn bool_pattern(p: &MirPattern) -> Option<BoolPat> {
 }
 
 fn bool_match_walk_children(node: &mut MirExpr) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Neg(inner) => bool_match_in_place(inner),
-        MirExpr::BinOp(spanned_bop) => {
-            bool_match_in_place(&mut spanned_bop.node.lhs);
-            bool_match_in_place(&mut spanned_bop.node.rhs);
-        }
-        MirExpr::Let(spanned_let) => {
-            bool_match_in_place(&mut spanned_let.node.value);
-            bool_match_in_place(&mut spanned_let.node.body);
-        }
-        MirExpr::Call(spanned_call) => {
-            for arg in &mut spanned_call.node.args {
-                bool_match_in_place(arg);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &mut spanned_tc.node.args {
-                bool_match_in_place(arg);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            bool_match_in_place(&mut spanned_match.node.subject);
-            for arm in &mut spanned_match.node.arms {
-                bool_match_in_place(&mut arm.body);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            bool_match_in_place(&mut spanned_ite.node.cond);
-            bool_match_in_place(&mut spanned_ite.node.then_branch);
-            bool_match_in_place(&mut spanned_ite.node.else_branch);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            for arg in &mut spanned_ctor.node.args {
-                bool_match_in_place(arg);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &mut spanned_rec.node.fields {
-                bool_match_in_place(&mut f.value);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            bool_match_in_place(&mut spanned_upd.node.base);
-            for f in &mut spanned_upd.node.updates {
-                bool_match_in_place(&mut f.value);
-            }
-        }
-        MirExpr::Project(spanned_proj) => bool_match_in_place(&mut spanned_proj.node.base),
-        MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => bool_match_in_place(inner),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                bool_match_in_place(item);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                bool_match_in_place(k);
-                bool_match_in_place(v);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    bool_match_in_place(e);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &mut spanned_ip.node.items {
-                bool_match_in_place(item);
-            }
-        }
-    }
+    walk_children_mut(node, &mut |child| bool_match_in_place(child));
 }
 
 #[cfg(test)]

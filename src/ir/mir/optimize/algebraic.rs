@@ -14,7 +14,7 @@
 
 use crate::ast::{BinOp, Literal, Spanned};
 
-use super::super::expr::MirExpr;
+use super::super::expr::{MirExpr, walk_children_mut};
 use super::super::program::MirProgram;
 use super::dead_code::is_pure;
 
@@ -165,83 +165,7 @@ fn int_literal(node: &MirExpr) -> Option<i64> {
 }
 
 fn algebraic_walk_children(node: &mut MirExpr) {
-    match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
-        MirExpr::Neg(inner) => algebraic_in_place(inner),
-        MirExpr::BinOp(spanned_bop) => {
-            algebraic_in_place(&mut spanned_bop.node.lhs);
-            algebraic_in_place(&mut spanned_bop.node.rhs);
-        }
-        MirExpr::Let(spanned_let) => {
-            algebraic_in_place(&mut spanned_let.node.value);
-            algebraic_in_place(&mut spanned_let.node.body);
-        }
-        MirExpr::Call(spanned_call) => {
-            for arg in &mut spanned_call.node.args {
-                algebraic_in_place(arg);
-            }
-        }
-        MirExpr::TailCall(spanned_tc) => {
-            for arg in &mut spanned_tc.node.args {
-                algebraic_in_place(arg);
-            }
-        }
-        MirExpr::Match(spanned_match) => {
-            algebraic_in_place(&mut spanned_match.node.subject);
-            for arm in &mut spanned_match.node.arms {
-                algebraic_in_place(&mut arm.body);
-            }
-        }
-        MirExpr::IfThenElse(spanned_ite) => {
-            algebraic_in_place(&mut spanned_ite.node.cond);
-            algebraic_in_place(&mut spanned_ite.node.then_branch);
-            algebraic_in_place(&mut spanned_ite.node.else_branch);
-        }
-        MirExpr::Construct(spanned_ctor) => {
-            for arg in &mut spanned_ctor.node.args {
-                algebraic_in_place(arg);
-            }
-        }
-        MirExpr::RecordCreate(spanned_rec) => {
-            for f in &mut spanned_rec.node.fields {
-                algebraic_in_place(&mut f.value);
-            }
-        }
-        MirExpr::RecordUpdate(spanned_upd) => {
-            algebraic_in_place(&mut spanned_upd.node.base);
-            for f in &mut spanned_upd.node.updates {
-                algebraic_in_place(&mut f.value);
-            }
-        }
-        MirExpr::Project(spanned_proj) => algebraic_in_place(&mut spanned_proj.node.base),
-        MirExpr::Try(inner)
-        | MirExpr::Return(inner)
-        | MirExpr::Box(inner)
-        | MirExpr::Unbox(inner) => algebraic_in_place(inner),
-        MirExpr::List(items) | MirExpr::Tuple(items) => {
-            for item in items {
-                algebraic_in_place(item);
-            }
-        }
-        MirExpr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                algebraic_in_place(k);
-                algebraic_in_place(v);
-            }
-        }
-        MirExpr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let super::super::expr::MirStrPart::Expr(e) = part {
-                    algebraic_in_place(e);
-                }
-            }
-        }
-        MirExpr::IndependentProduct(spanned_ip) => {
-            for item in &mut spanned_ip.node.items {
-                algebraic_in_place(item);
-            }
-        }
-    }
+    walk_children_mut(node, &mut |child| algebraic_in_place(child));
 }
 
 #[cfg(test)]
