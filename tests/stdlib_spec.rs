@@ -629,7 +629,10 @@ fn embedded_crypto_sha256_matches_fips_vectors_on_wasm_gc() {
         })
         .unwrap_or_else(|| panic!("no `N/M cases passed` summary in:\n{rendered}"));
     assert_eq!(passed, total, "{rendered}");
-    assert!(total >= 13, "fewer cases than the original FIPS vectors: {rendered}");
+    assert!(
+        total >= 13,
+        "fewer cases than the original FIPS vectors: {rendered}"
+    );
 }
 
 #[cfg(feature = "wasip2")]
