@@ -359,21 +359,6 @@ impl std::hash::Hash for Value {
 }
 
 // ---------------------------------------------------------------------------
-// Environment
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub enum EnvFrame {
-    Owned(HashMap<String, NanValue>),
-    Shared(Rc<HashMap<String, NanValue>>),
-    /// Slot-indexed frame for resolved function bodies — O(1) lookup.
-    Slots(Vec<NanValue>),
-}
-
-/// Scope stack: innermost scope last.
-pub type Env = Vec<EnvFrame>;
-
-// ---------------------------------------------------------------------------
 // List helpers
 // ---------------------------------------------------------------------------
 
@@ -409,23 +394,6 @@ pub fn list_len(value: &Value) -> Option<usize> {
 #[cfg(feature = "runtime")]
 pub fn list_head(value: &Value) -> Option<Value> {
     list_view(value).and_then(|items| items.first().cloned())
-}
-
-#[cfg(feature = "runtime")]
-pub(crate) fn list_prepend(item: Value, list: &Value) -> Option<Value> {
-    list_view(list).map(|items| Value::List(AverList::prepend(item, items)))
-}
-
-#[cfg(feature = "runtime")]
-pub(crate) fn list_concat(left: &Value, right: &Value) -> Option<Value> {
-    let left = list_view(left)?;
-    let right = list_view(right)?;
-    Some(Value::List(AverList::concat(left, right)))
-}
-
-#[cfg(feature = "runtime")]
-pub(crate) fn list_reverse(list: &Value) -> Option<Value> {
-    list_view(list).map(|items| Value::List(items.reverse()))
 }
 
 // ---------------------------------------------------------------------------

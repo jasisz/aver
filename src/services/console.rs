@@ -18,11 +18,9 @@
 ///   thread so a long-running aver process that spawns a verify
 ///   worker doesn't accidentally swallow the user's output.
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc as Rc;
 
 use crate::nan_value::{Arena, NanValue};
-use crate::value::{RuntimeError, Value, aver_display};
+use crate::value::RuntimeError;
 
 thread_local! {
     /// Per-thread capture buffers. `None` (default) means writes go
@@ -103,23 +101,6 @@ fn write_stderr_warn(s: &str) {
     });
 }
 
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    for method in &["print", "error", "warn", "readLine"] {
-        members.insert(
-            method.to_string(),
-            Value::Builtin(format!("Console.{}", method)),
-        );
-    }
-    global.insert(
-        "Console".to_string(),
-        Value::Namespace {
-            name: "Console".to_string(),
-            members,
-        },
-    );
-}
-
 pub const DECLARED_EFFECTS: &[&str] = &[
     "Console.print",
     "Console.error",
@@ -138,61 +119,6 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 }
 
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
-pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
-    match name {
-        "Console.print" => Some(one_msg(name, args, write_stdout)),
-        "Console.error" => Some(one_msg(name, args, write_stderr_plain)),
-        "Console.warn" => Some(one_msg(name, args, write_stderr_warn)),
-        "Console.readLine" => Some(read_line(args)),
-        _ => None,
-    }
-}
-
-// ─── Private helpers ──────────────────────────────────────────────────────────
-
-fn one_msg(name: &str, args: &[Value], emit: impl Fn(&str)) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::Error(format!(
-            "{}() takes 1 argument, got {}",
-            name,
-            args.len()
-        )));
-    }
-    if let Some(s) = aver_display(&args[0]) {
-        emit(&s);
-    }
-    Ok(Value::Unit)
-}
-
-fn read_line(args: &[Value]) -> Result<Value, RuntimeError> {
-    if !args.is_empty() {
-        return Err(RuntimeError::Error(format!(
-            "Console.readLine() takes 0 arguments, got {}",
-            args.len()
-        )));
-    }
-    match aver_rt::read_line() {
-        Ok(line) => Ok(Value::Ok(Box::new(Value::Str(line)))),
-        Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
-    }
-}
-
-// ─── NanValue-native API ─────────────────────────────────────────────────────
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["print", "error", "warn", "readLine"];
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
-    for method in methods {
-        let idx = arena.push_builtin(&format!("Console.{}", method));
-        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
-    }
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("Console"),
-        members,
-    });
-    global.insert("Console".to_string(), NanValue::new_namespace(ns_idx));
-}
-
 pub fn call_nv(
     name: &str,
     args: &[NanValue],

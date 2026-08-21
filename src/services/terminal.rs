@@ -15,41 +15,8 @@
 ///   Terminal.flush()           — flush stdout
 ///
 /// Effects are granular per method.
-use std::collections::HashMap;
-use std::sync::Arc as Rc;
-
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value};
-
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    for method in &[
-        "enableRawMode",
-        "disableRawMode",
-        "clear",
-        "moveTo",
-        "print",
-        "setColor",
-        "resetColor",
-        "readKey",
-        "size",
-        "hideCursor",
-        "showCursor",
-        "flush",
-    ] {
-        members.insert(
-            method.to_string(),
-            Value::Builtin(format!("Terminal.{}", method)),
-        );
-    }
-    global.insert(
-        "Terminal".to_string(),
-        Value::Namespace {
-            name: "Terminal".to_string(),
-            members,
-        },
-    );
-}
 
 pub const DECLARED_EFFECTS: &[&str] = &[
     "Terminal.enableRawMode",
@@ -65,24 +32,6 @@ pub const DECLARED_EFFECTS: &[&str] = &[
     "Terminal.showCursor",
     "Terminal.flush",
 ];
-
-pub fn effects(name: &str) -> &'static [&'static str] {
-    match name {
-        "Terminal.enableRawMode" => &["Terminal.enableRawMode"],
-        "Terminal.disableRawMode" => &["Terminal.disableRawMode"],
-        "Terminal.clear" => &["Terminal.clear"],
-        "Terminal.moveTo" => &["Terminal.moveTo"],
-        "Terminal.print" => &["Terminal.print"],
-        "Terminal.setColor" => &["Terminal.setColor"],
-        "Terminal.resetColor" => &["Terminal.resetColor"],
-        "Terminal.readKey" => &["Terminal.readKey"],
-        "Terminal.size" => &["Terminal.size"],
-        "Terminal.hideCursor" => &["Terminal.hideCursor"],
-        "Terminal.showCursor" => &["Terminal.showCursor"],
-        "Terminal.flush" => &["Terminal.flush"],
-        _ => &[],
-    }
-}
 
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
@@ -199,33 +148,6 @@ fn set_color(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &[
-        "enableRawMode",
-        "disableRawMode",
-        "clear",
-        "moveTo",
-        "print",
-        "setColor",
-        "resetColor",
-        "readKey",
-        "size",
-        "hideCursor",
-        "showCursor",
-        "flush",
-    ];
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
-    for method in methods {
-        let idx = arena.push_builtin(&format!("Terminal.{}", method));
-        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
-    }
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("Terminal"),
-        members,
-    });
-    global.insert("Terminal".to_string(), NanValue::new_namespace(ns_idx));
-}
 
 /// Bridge: convert NanValue args to Value, call old implementation, convert result back.
 pub fn call_nv(

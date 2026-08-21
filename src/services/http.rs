@@ -8,29 +8,11 @@
 /// for any completed HTTP exchange (including 4xx/5xx). Transport failures return
 /// `Err(String)`. Response bodies are capped at 10 MB.
 use std::collections::HashMap;
-use std::sync::Arc as Rc;
 
 use aver_rt::{AverList, AverStr, HttpResponse};
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
-
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    for method in &["get", "head", "delete", "post", "put", "patch"] {
-        members.insert(
-            method.to_string(),
-            Value::Builtin(format!("Http.{}", method)),
-        );
-    }
-    global.insert(
-        "Http".to_string(),
-        Value::Namespace {
-            name: "Http".to_string(),
-            members,
-        },
-    );
-}
 
 pub const DECLARED_EFFECTS: &[&str] = &[
     "Http.get",
@@ -40,18 +22,6 @@ pub const DECLARED_EFFECTS: &[&str] = &[
     "Http.put",
     "Http.patch",
 ];
-
-pub fn effects(name: &str) -> &'static [&'static str] {
-    match name {
-        "Http.get" => &["Http.get"],
-        "Http.head" => &["Http.head"],
-        "Http.delete" => &["Http.delete"],
-        "Http.post" => &["Http.post"],
-        "Http.put" => &["Http.put"],
-        "Http.patch" => &["Http.patch"],
-        _ => &[],
-    }
-}
 
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
@@ -151,20 +121,6 @@ fn response_value(result: Result<HttpResponse, String>) -> Result<Value, Runtime
         Ok(resp) => Ok(Value::Ok(Box::new(http_response_to_value(resp)))),
         Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
     }
-}
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["get", "head", "delete", "post", "put", "patch"];
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
-    for method in methods {
-        let idx = arena.push_builtin(&format!("Http.{}", method));
-        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
-    }
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("Http"),
-        members,
-    });
-    global.insert("Http".to_string(), NanValue::new_namespace(ns_idx));
 }
 
 /// Bridge: convert NanValue args to Value, call old implementation, convert result back.

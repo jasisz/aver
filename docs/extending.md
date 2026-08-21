@@ -41,7 +41,7 @@ fn parse_maintain(&mut self) -> Result<Expr, ParseError> {
 
 All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`). To add a new function to an existing namespace:
 
-Only the `NanValue` half is executed. The `Value`-typed `register()` / `call()` functions still present in the namespace files are legacy, are not reached by any backend, and must not be extended; removing them is a separate change.
+Each namespace has a single, `NanValue`-typed implementation: `call_nv()` plus the `<op>_nv` functions.
 
 1. Add the implementation in the namespace's file (e.g., `src/types/int.rs` for pure, `src/services/console.rs` for effectful) as `<op>_nv`, and add its arm to `call_nv()`:
    ```rust
@@ -58,7 +58,7 @@ Only the `NanValue` half is executed. The `Value`-typed `register()` / `call()` 
 5. For a pure function, add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`). An effectful operation instead gets its Rust emission in `src/codegen/rust/builtins.rs`, an `EffectName` row in `src/codegen/wasm_gc/effects.rs` (plus its wasip2 lowering when the target supports it), and the matching `(module, field)` entry in `WASM_GC_CAPABILITIES` in `aver-cert/src/format.rs` — a test in `effects.rs` fails until both lists agree.
 6. Document the function in `docs/services.md`.
 
-To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register_nv()`, `effects()`, and `call_nv()`, add `pub mod` in `src/types/mod.rs`, add the namespace name to `is_builtin_namespace` in `src/ir/calls.rs` (the HIR resolver reads that list; without it a dotted call never resolves as a builtin), and add the builtin rows above. For effectful namespaces, use `src/services/` instead.
+To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `call_nv()` (effectful services also declare `effects()` and `DECLARED_EFFECTS`), add `pub mod` in `src/types/mod.rs`, add the namespace name to `is_builtin_namespace` in `src/ir/calls.rs` (the HIR resolver reads that list; without it a dotted call never resolves as a builtin), and add the builtin rows above. For effectful namespaces, use `src/services/` instead.
 
 ## How to add a new expression type
 

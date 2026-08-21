@@ -24,143 +24,12 @@
 /// widening to Float goes through `Float.fromInt`.
 ///
 /// No effects required.
-use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc as Rc;
 
 use aver_rt::AverInt;
 
 use crate::nan_value::{Arena, NanIntExt, NanValue};
-use crate::value::{RuntimeError, Value};
-
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    for method in &["fromString", "fromFloat", "abs", "min", "max", "mod", "div"] {
-        members.insert(
-            method.to_string(),
-            Value::Builtin(format!("Int.{}", method)),
-        );
-    }
-    global.insert(
-        "Int".to_string(),
-        Value::Namespace {
-            name: "Int".to_string(),
-            members,
-        },
-    );
-}
-
-pub fn effects(_name: &str) -> &'static [&'static str] {
-    &[]
-}
-
-/// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
-pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
-    match name {
-        "Int.fromString" => Some(from_string(args)),
-        "Int.fromFloat" => Some(from_float(args)),
-        "Int.abs" => Some(abs(args)),
-        "Int.min" => Some(min(args)),
-        "Int.max" => Some(max(args)),
-        "Int.mod" => Some(modulo(args)),
-        "Int.div" => Some(divide(args)),
-        _ => None,
-    }
-}
-
-// ─── Implementations ────────────────────────────────────────────────────────
-
-fn from_string(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.fromString", args)?;
-    let Value::Str(s) = val else {
-        return Err(RuntimeError::Error(
-            "Int.fromString: argument must be a String".to_string(),
-        ));
-    };
-    // `Int` is mathematical ℤ, so parsing is unbounded (no `i64::MAX` cliff).
-    match AverInt::from_str(s) {
-        Ok(n) => Ok(Value::Ok(Box::new(Value::Int(n)))),
-        Err(_) => Ok(Value::Err(Box::new(Value::Str(format!(
-            "Cannot parse '{}' as Int",
-            s
-        ))))),
-    }
-}
-
-fn from_float(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.fromFloat", args)?;
-    let Value::Float(f) = val else {
-        return Err(RuntimeError::Error(
-            "Int.fromFloat: argument must be a Float".to_string(),
-        ));
-    };
-    Ok(Value::Int(float_to_aver_int(*f)))
-}
-
-fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.abs", args)?;
-    let Value::Int(n) = val else {
-        return Err(RuntimeError::Error(
-            "Int.abs: argument must be an Int".to_string(),
-        ));
-    };
-    // Over ℤ there is no `i64::MIN.abs()` overflow: it promotes cleanly.
-    Ok(Value::Int(n.abs()))
-}
-
-fn min(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.min", args)?;
-    let (Value::Int(x), Value::Int(y)) = (a, b) else {
-        return Err(RuntimeError::Error(
-            "Int.min: both arguments must be Int".to_string(),
-        ));
-    };
-    Ok(Value::Int(x.min_ref(y)))
-}
-
-fn max(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.max", args)?;
-    let (Value::Int(x), Value::Int(y)) = (a, b) else {
-        return Err(RuntimeError::Error(
-            "Int.max: both arguments must be Int".to_string(),
-        ));
-    };
-    Ok(Value::Int(x.max_ref(y)))
-}
-
-fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.mod", args)?;
-    let (Value::Int(x), Value::Int(y)) = (a, b) else {
-        return Err(RuntimeError::Error(
-            "Int.mod: both arguments must be Int".to_string(),
-        ));
-    };
-    match x.rem_euclid(y) {
-        Some(r) => Ok(Value::Ok(Box::new(Value::Int(r)))),
-        None => Ok(Value::Err(Box::new(Value::Str(
-            "division by zero".to_string(),
-        )))),
-    }
-}
-
-fn divide(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [a, b] = two_args("Int.div", args)?;
-    let (Value::Int(x), Value::Int(y)) = (a, b) else {
-        return Err(RuntimeError::Error(
-            "Int.div: both arguments must be Int".to_string(),
-        ));
-    };
-    // Euclidean (flooring) division, so `Int.div` is the exact partner of
-    // `Int.mod` (Euclidean): `div(a,b)*b + mod(a,b) == a` for all signs.
-    // Over ℤ the only partiality left is divisor-zero — the `i64::MIN / -1`
-    // overflow that used to error is just `i64::MAX + 1`, a valid `Result.Ok`.
-    match x.div_euclid(y) {
-        Some(q) => Ok(Value::Ok(Box::new(Value::Int(q)))),
-        None => Ok(Value::Err(Box::new(Value::Str(
-            "division by zero".to_string(),
-        )))),
-    }
-}
+use crate::value::RuntimeError;
 
 /// Truncate a finite `f64` toward zero into ℤ. Matches the runtime cast
 /// semantics (`f as i64`) for in-range values, but does not clamp huge
@@ -187,43 +56,7 @@ pub(crate) fn float_to_aver_int(f: f64) -> AverInt {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-fn one_arg<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 1], RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::Error(format!(
-            "{}() takes 1 argument, got {}",
-            name,
-            args.len()
-        )));
-    }
-    Ok([&args[0]])
-}
-
-fn two_args<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 2], RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::Error(format!(
-            "{}() takes 2 arguments, got {}",
-            name,
-            args.len()
-        )));
-    }
-    Ok([&args[0], &args[1]])
-}
-
 // ─── NanValue-native API ─────────────────────────────────────────────────────
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["fromString", "fromFloat", "abs", "min", "max", "mod", "div"];
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
-    for method in methods {
-        let idx = arena.push_builtin(&format!("Int.{}", method));
-        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
-    }
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("Int"),
-        members,
-    });
-    global.insert("Int".to_string(), NanValue::new_namespace(ns_idx));
-}
 
 pub fn call_nv(
     name: &str,

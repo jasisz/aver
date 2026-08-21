@@ -6,9 +6,6 @@
 ///
 /// `Bytes` guarantees octets and SHA-256 always returns exactly 32 of them, so
 /// the public operation is total and its result preserves that fact nominally.
-use std::collections::HashMap;
-use std::sync::Arc as Rc;
-
 // Deliberately `sha2` directly, NOT `aver_rt::crypto`: `aver-rt` is an
 // optional dependency (behind the `runtime` feature), while this module
 // compiles in every feature combination that builds `src/types`. The
@@ -18,25 +15,6 @@ use sha2::{Digest, Sha256};
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value};
-
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    members.insert(
-        "sha256".to_string(),
-        Value::Builtin("Crypto.sha256".to_string()),
-    );
-    global.insert(
-        "Crypto".to_string(),
-        Value::Namespace {
-            name: "Crypto".to_string(),
-            members,
-        },
-    );
-}
-
-pub fn effects(_name: &str) -> &'static [&'static str] {
-    &[]
-}
 
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
@@ -63,16 +41,6 @@ fn sha256(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let idx = arena.push_builtin("Crypto.sha256");
-    let members: Vec<(Rc<str>, NanValue)> = vec![(Rc::from("sha256"), NanValue::new_builtin(idx))];
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("Crypto"),
-        members,
-    });
-    global.insert("Crypto".to_string(), NanValue::new_namespace(ns_idx));
-}
 
 /// Bridge: convert NanValue args to Value, hash, convert the result back.
 /// The conversion is negligible next to the digest itself, so the shared

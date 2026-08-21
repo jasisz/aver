@@ -8,100 +8,12 @@
 ///   Char.fromCode(n: Int)     → Option<String>  — code point to 1-char string
 ///
 /// No effects required.
-use std::collections::HashMap;
-use std::sync::Arc as Rc;
-
 use crate::nan_value::{Arena, NanIntExt, NanValue};
-use crate::value::{RuntimeError, Value};
-
-pub fn register(global: &mut HashMap<String, Value>) {
-    let mut members = HashMap::new();
-    for method in &["toCode", "fromCode"] {
-        members.insert(
-            method.to_string(),
-            Value::Builtin(format!("Char.{}", method)),
-        );
-    }
-    global.insert(
-        "Char".to_string(),
-        Value::Namespace {
-            name: "Char".to_string(),
-            members,
-        },
-    );
-}
-
-pub fn effects(_name: &str) -> &'static [&'static str] {
-    &[]
-}
-
-pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
-    match name {
-        "Char.toCode" => Some(to_code(args)),
-        "Char.fromCode" => Some(from_code(args)),
-        _ => None,
-    }
-}
+use crate::value::RuntimeError;
 
 // ─── Implementations ────────────────────────────────────────────────────────
 
-fn to_code(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::Error(format!(
-            "Char.toCode() takes 1 argument, got {}",
-            args.len()
-        )));
-    }
-    let Value::Str(s) = &args[0] else {
-        return Err(RuntimeError::Error(
-            "Char.toCode: argument must be a String".to_string(),
-        ));
-    };
-    match s.chars().next() {
-        Some(c) => Ok(Value::int(c as i64)),
-        None => Err(RuntimeError::Error(
-            "Char.toCode: string is empty".to_string(),
-        )),
-    }
-}
-
-fn from_code(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::Error(format!(
-            "Char.fromCode() takes 1 argument, got {}",
-            args.len()
-        )));
-    }
-    let Value::Int(n) = &args[0] else {
-        return Err(RuntimeError::Error(
-            "Char.fromCode: argument must be an Int".to_string(),
-        ));
-    };
-    let Some(code) = n.to_u32() else {
-        // Negative or beyond a 32-bit code point: not a character.
-        return Ok(Value::None);
-    };
-    match char::from_u32(code) {
-        Some(c) => Ok(Value::Some(Box::new(Value::Str(c.to_string())))),
-        None => Ok(Value::None),
-    }
-}
-
 // ─── NanValue-native API ─────────────────────────────────────────────────────
-
-pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["toCode", "fromCode"];
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
-    for method in methods {
-        let idx = arena.push_builtin(&format!("Char.{}", method));
-        members.push((Rc::from(*method), NanValue::new_builtin(idx)));
-    }
-    let ns_idx = arena.push(crate::nan_value::ArenaEntry::Namespace {
-        name: Rc::from("Char"),
-        members,
-    });
-    global.insert("Char".to_string(), NanValue::new_namespace(ns_idx));
-}
 
 pub fn call_nv(
     name: &str,
