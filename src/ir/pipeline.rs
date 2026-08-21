@@ -287,8 +287,7 @@ pub struct PipelineConfig<'a> {
     pub dep_modules: &'a [crate::codegen::ModuleInfo],
     /// Allocation policy used by `analyze`. `None` skips the alloc-info
     /// computation; every other analysis fact is still produced.
-    /// Backends should pass their own policy (`VmAllocPolicy`,
-    /// `WasmAllocPolicy`); diagnostic tools that don't have a backend
+    /// Backends pass `NeutralAllocPolicy`; diagnostic tools that don't have a backend
     /// in mind can pass `None` or use the dump module's conservative
     /// default.
     pub alloc_policy: Option<&'a dyn AllocPolicy>,
