@@ -13,7 +13,7 @@
 //! `--explain-passes` see the same numbers the codegen does.
 //!
 //! Backend-specific bits stay backend-specific: `AllocPolicy` is provided
-//! by the caller (`VmAllocPolicy`, `WasmAllocPolicy`, or the dump's
+//! by the caller (`NeutralAllocPolicy`, or the dump's
 //! conservative `DumpAllocPolicy`). Policy-independent facts (`body_shape`,
 //! `thin_kind`, `local_count`) are computed unconditionally.
 //!
@@ -60,53 +60,55 @@ use crate::ir::{
 /// Constructors with payloads are treated as allocating; nullary
 /// constructors (`Option.None`, `Result.Ok` with primitive seed) are not.
 ///
-/// Codegen pipelines should use the backend-specific policy
-/// (`VmAllocPolicy`, `WasmAllocPolicy`); this type is for `--emit-ir`,
-/// `aver bench`, and other tools that want a sensible answer without
-/// committing to a target.
+/// The policy every driver passes today (VM, wasm-gc, `--emit-ir`,
+/// `aver bench`); there is no backend-specific one, so `[no_alloc]` reads
+/// the same everywhere.
 pub struct NeutralAllocPolicy;
+
+/// Builtins whose result never needs a fresh heap object. A name that is
+/// not a real builtin sits here silently while the real one is classified
+/// as allocating, so the list is pinned to the typechecker's builtin
+/// surface by a test below.
+pub(crate) const NON_ALLOCATING_BUILTINS: &[&str] = &[
+    "Int.abs",
+    "Int.min",
+    "Int.max",
+    "Bits.and",
+    "Bits.or",
+    "Bits.xor",
+    "Bits.not",
+    "Float.fromInt",
+    "Float.abs",
+    "Float.floor",
+    "Float.ceil",
+    "Float.round",
+    "Float.min",
+    "Float.max",
+    "Float.sin",
+    "Float.cos",
+    "Float.sqrt",
+    "Float.pow",
+    "Float.atan2",
+    "Float.pi",
+    "Char.toCode",
+    "String.len",
+    "String.byteLength",
+    "String.startsWith",
+    "String.endsWith",
+    "String.contains",
+    "List.len",
+    "List.contains",
+    "Vector.len",
+    "Map.len",
+    "Map.has",
+    "Bool.and",
+    "Bool.or",
+    "Bool.not",
+];
 
 impl AllocPolicy for NeutralAllocPolicy {
     fn builtin_allocates(&self, name: &str) -> bool {
-        !matches!(
-            name,
-            "Int.abs"
-                | "Int.min"
-                | "Int.max"
-                | "Bits.and"
-                | "Bits.or"
-                | "Bits.xor"
-                | "Bits.not"
-                | "Float.fromInt"
-                | "Float.abs"
-                | "Float.floor"
-                | "Float.ceil"
-                | "Float.round"
-                | "Float.min"
-                | "Float.max"
-                | "Float.sin"
-                | "Float.cos"
-                | "Float.sqrt"
-                | "Float.pow"
-                | "Float.atan2"
-                | "Float.pi"
-                | "Char.toCode"
-                | "String.len"
-                | "String.byteLength"
-                | "String.startsWith"
-                | "String.endsWith"
-                | "String.contains"
-                | "List.len"
-                | "List.contains"
-                | "Vector.len"
-                | "Map.size"
-                | "Map.contains"
-                | "Set.size"
-                | "Set.contains"
-                | "Bool.and"
-                | "Bool.or"
-                | "Bool.not"
-        )
+        !NON_ALLOCATING_BUILTINS.contains(&name)
     }
     fn constructor_allocates(&self, _name: &str, has_payload: bool) -> bool {
         has_payload
@@ -249,5 +251,29 @@ pub fn analyze(
         fn_analyses,
         mutual_tco_members: mutual_tco_set,
         recursive_fns: recursive_set,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NON_ALLOCATING_BUILTINS;
+
+    /// The whitelist is a list of names, not of functions: a renamed or
+    /// never-existing builtin (`Map.size`, `Set.contains`) sits in it
+    /// silently while the real one (`Map.len`) is classified as allocating.
+    #[test]
+    fn non_allocating_whitelist_names_real_builtins() {
+        let src = "module Probe\n    intent = \"t\"\n    effects []\n";
+        let items = crate::source::parse_source(src).expect("probe parses");
+        let result = crate::types::checker::run_type_check_full(&items, None);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let surface: std::collections::HashSet<&str> =
+            result.fn_sigs.keys().map(String::as_str).collect();
+        let phantoms: Vec<&&str> = NON_ALLOCATING_BUILTINS
+            .iter()
+            .filter(|name| !surface.contains(**name))
+            .collect();
+        assert!(phantoms.is_empty(), "not builtins: {phantoms:?}");
+        assert!(!NON_ALLOCATING_BUILTINS.is_empty());
     }
 }

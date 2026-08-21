@@ -23,7 +23,7 @@ pub struct FnChunk {
     /// can be called without pushing a CallFrame.
     pub leaf: bool,
     /// Pure no-alloc function (per shared `ir::compute_alloc_info` under
-    /// `VmAllocPolicy`): the body never produces a heap object. Disjoint from
+    /// `NeutralAllocPolicy`): the body never produces a heap object. Disjoint from
     /// `thin` because mutual-TCO peers can be no-alloc but not bytecode-thin.
     /// `TAIL_CALL_KNOWN` skips `finalize_frame_locals_for_tail_call` when
     /// the target chunk has this flag set — the runtime guard is guaranteed
