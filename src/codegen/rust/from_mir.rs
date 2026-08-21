@@ -1147,7 +1147,19 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 {
                     return Some(format!("({:?} {} &*{})", s, op_str, r));
                 }
-                Some(format!("({} {} {})", l, op_str, r))
+                // Borrow-by-default makes collection / wrapper / named-type
+                // parameters `&T`, while calls and constructors still produce
+                // an owned `T`. Rust does not provide `PartialEq<&T> for T`, so
+                // compare two references whenever exactly one side is a
+                // borrowed parameter. Borrowing the owned expression is
+                // temporary, allocation-free, and preserves evaluation order.
+                let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
+                let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
+                match (lhs_borrowed, rhs_borrowed) {
+                    (false, true) => Some(format!("(&({}) {} {})", l, op_str, r)),
+                    (true, false) => Some(format!("({} {} &({}))", l, op_str, r)),
+                    _ => Some(format!("({} {} {})", l, op_str, r)),
+                }
             } else {
                 Some(format!("({} {} {})", l, op_str, r))
             }
@@ -2624,7 +2636,7 @@ fn emit_mir_match_with(
         .all(|arm| crate::ir::vars::resolved_pattern_bindings(&arm.pattern).is_empty());
     let match_on_ref = no_bindings
         && !any_int_literal_pattern
-        && mir_subject_is_borrowed_param(&m.subject.node, emit_ctx);
+        && mir_expr_is_borrowed_param_read(&m.subject.node, emit_ctx);
 
     // Int unboxing: a bare-`i64` subject (a proven-bare counter) is `Copy`,
     // so it is read by value WITHOUT `.clone()` and the Int-literal guards
@@ -3013,11 +3025,13 @@ fn lower_int_literal_subpatterns(
     }
 }
 
-/// Is the match subject a read of a borrowed-param local? Mirror of
-/// `emit_match`'s `match_on_ref` subject check
-/// (`ResolvedExpr::Ident | Resolved` whose name `is_borrowed_param`).
-fn mir_subject_is_borrowed_param(subject: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
-    local_of(subject).is_some_and(|local| emit_ctx.is_borrowed_param(&local.name))
+/// Is this expression a direct read of a borrowed-param local?
+///
+/// A direct read emits as `name`, whose Rust type is `&T`. Projections and
+/// compound expressions have their own ownership rules and deliberately do
+/// not count as borrowed-param reads here.
+fn mir_expr_is_borrowed_param_read(expr: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
+    local_of(expr).is_some_and(|local| emit_ctx.is_borrowed_param(&local.name))
 }
 
 /// Emit the FULL function body the MIR walker produces, in the
@@ -6413,6 +6427,73 @@ mod tests {
             bare: &policy.bare,
             try_err_to_string: false,
         }
+    }
+
+    fn list_literal_one() -> Spanned<MirExpr> {
+        span_ty(
+            MirExpr::List(vec![int_lit(1)]),
+            Type::List(Box::new(Type::Int)),
+        )
+    }
+
+    fn borrowed_list_read(name: &str, slot: u32) -> Spanned<MirExpr> {
+        span_ty(
+            MirExpr::Local(span(MirLocal {
+                slot: LocalId(slot),
+                last_use: false,
+                name: name.to_string(),
+            })),
+            Type::List(Box::new(Type::Int)),
+        )
+    }
+
+    #[test]
+    fn equality_borrows_owned_lhs_when_rhs_is_a_borrowed_param() {
+        let policy = borrowed_param_policy("other");
+        let ctx = ctx_over(&policy);
+        let expr = span(MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Eq,
+            lhs: Box::new(list_literal_one()),
+            rhs: Box::new(borrowed_list_read("other", 0)),
+        })));
+
+        assert_eq!(
+            emit_mir_expr(&expr, &ctx).expect("equality emits"),
+            "(&(aver_rt::AverList::from_vec(vec![aver_rt::AverInt::from_i64(1)])) == other)"
+        );
+    }
+
+    #[test]
+    fn inequality_borrows_owned_rhs_when_lhs_is_a_borrowed_param() {
+        let policy = borrowed_param_policy("other");
+        let ctx = ctx_over(&policy);
+        let expr = span(MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Neq,
+            lhs: Box::new(borrowed_list_read("other", 0)),
+            rhs: Box::new(list_literal_one()),
+        })));
+
+        assert_eq!(
+            emit_mir_expr(&expr, &ctx).expect("inequality emits"),
+            "(other != &(aver_rt::AverList::from_vec(vec![aver_rt::AverInt::from_i64(1)])))"
+        );
+    }
+
+    #[test]
+    fn equality_between_two_borrowed_params_stays_direct() {
+        let mut policy = borrowed_param_policy("left");
+        policy.borrowed_params.insert("right".to_string());
+        let ctx = ctx_over(&policy);
+        let expr = span(MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Eq,
+            lhs: Box::new(borrowed_list_read("left", 0)),
+            rhs: Box::new(borrowed_list_read("right", 1)),
+        })));
+
+        assert_eq!(
+            emit_mir_expr(&expr, &ctx).expect("equality emits"),
+            "(left == right)"
+        );
     }
 
     #[test]
