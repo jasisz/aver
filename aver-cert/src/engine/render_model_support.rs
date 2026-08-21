@@ -35,7 +35,7 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
                     ctor.name
                 ));
             } else {
-                out.push_str(&format!("  | .{}, _ => False\n", ctor.name));
+                out.push_str(&render_unsupported_user_repr_arm(ctor));
             }
         }
         out.push('\n');
@@ -152,6 +152,15 @@ fn render_user_repr_defs(analysis: &Analysis, model_info: &ModelInfo) -> String 
         ));
     }
     out
+}
+
+/// A constructor outside the currently supported representation vocabulary
+/// still needs one wildcard for every payload field. Omitting those binders
+/// makes Lean interpret the constructor itself as the pattern and reject the
+/// generated Manifest before the intended fail-closed `False` can apply.
+fn render_unsupported_user_repr_arm(ctor: &CtorInfo) -> String {
+    let binders = " _".repeat(ctor.fields.len());
+    format!("  | .{}{binders}, _ => False\n", ctor.name)
 }
 
 /// For a widened Int match: the model inductive's QUALIFIED name, its
@@ -279,3 +288,34 @@ fn conjunct_proj(pos: usize, k: usize) -> String {
 }
 
 // Mutual-recursion proof rendering lives in render_mutual.rs.
+
+#[cfg(test)]
+mod render_model_support_tests {
+    use super::{CtorInfo, render_unsupported_user_repr_arm};
+
+    #[test]
+    fn unsupported_user_repr_constructor_binds_its_refined_record_payload() {
+        let ctor = CtorInfo {
+            name: "raw".to_string(),
+            fields: vec!["Natural".to_string()],
+        };
+
+        assert_eq!(
+            render_unsupported_user_repr_arm(&ctor),
+            "  | .raw _, _ => False\n"
+        );
+    }
+
+    #[test]
+    fn unsupported_user_repr_constructor_binds_every_payload_field() {
+        let ctor = CtorInfo {
+            name: "many".to_string(),
+            fields: vec!["Natural".to_string(), "String".to_string()],
+        };
+
+        assert_eq!(
+            render_unsupported_user_repr_arm(&ctor),
+            "  | .many _ _, _ => False\n"
+        );
+    }
+}
