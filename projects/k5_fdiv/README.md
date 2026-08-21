@@ -33,7 +33,12 @@ strategy for its whole class — never a one-off Lean script.
 
 Success is measured exactly one way: the corpus reports `universal` / kernel-genuine
 (`#print axioms` ⊆ `{propext, Quot.sound}`, zero `sorry`), and the repository contains
-**not one line of hand-written Lean**.
+**no hand-written Lean outside `proofs/`**. That directory is the labeled exception list:
+today two Lean sidecars (`truncSig__truncStickyInt.lean` for `sticky_int.av`, and
+`truncStickyComposes__composesThroughSticky.lean` for `round.av`, described in the trunc
+row below) and one Dafny sidecar (`sigDouble__doubleIsTwice.dfy`). Each is re-checked by
+the kernel on every build and earns the manifest credit `hand`, never `universal` — the
+rule exists precisely so that every exception stays visible.
 
 ## Stages
 
