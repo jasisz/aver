@@ -40,13 +40,13 @@ Below: implementation details relevant to development only.
 - **Static type checker** (`src/types/checker/`): internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`.
 - **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. VM handles tail calls via frame reuse. Pipeline: `parse → tco_transform → typecheck → resolve → compile → execute`.
 - **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies.
-- **Bytecode VM** (`src/vm/`): stack VM over `NanValue`, with language-shaped opcodes for lists, records, variants, wrappers, tuple literals/patterns, and tail calls. `src/vm/runtime.rs` is the host/effect bridge; `src/vm/execute.rs` is the core loop; `src/vm/compiler.rs` lowers resolved AST to bytecode.
+- **Bytecode VM** (`src/vm/`): stack VM over `NanValue`, with language-shaped opcodes for lists, records, variants, wrappers, tuple literals/patterns, and tail calls. `src/vm/runtime.rs` is the host/effect/record-replay bridge; `src/vm/execute/` is the core loop; `src/vm/compiler/` lowers the program to bytecode, and MIR is the only VM codegen path (`src/vm/compiler/mir.rs` walks `crate::ir::mir::MirExpr` and emits opcodes). Builtin dispatch is `VmBuiltin::invoke_nv` in `src/vm/builtin.rs`, whose `vm_builtins!` table is the single list of builtin names; namespace membership comes from `VmBuiltin::ALL`, read by `bootstrap_core_symbols` in `src/vm/compiler/mod.rs`.
 - **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
 - **Entry-point effect enforcement**: `main`/top-level entry calls enforce declared effects at the entry boundary.
 - **Opaque types** (`exposes opaque [T]`): module-level access control for types. An opaque type is visible in signatures (can be passed, returned, stored) but cannot be constructed, have its fields accessed, or be pattern-matched from outside the defining module. Enforced at compile time in the typechecker; `load_module_sigs` registers a dummy sig (type resolves) but omits field types, constructors, and variant info. Parser recognizes `exposes opaque` after the `Exposes` token by checking for `Ident("opaque")`.
 - **Provider-backed standard capabilities** (`stdlib/capabilities/`): `Time`, `Random`, `Disk`, and `Tcp` own their operation signatures, Oracle/replay declarations, and hostile profiles in Aver source. VM and generated Rust bind exact-contract native providers through `src/provider/standard.rs`; Disk and Tcp native adapters live in `aver-rt/src/provider/{disk,tcp}.rs`. Disk includes byte-exact whole-file, positional, write, and append methods plus metadata `size`; `readBytesAt` returns at most the requested length and treats EOF as a successful short read. `Tcp.Connection` is a provider-owned capability resource, not a surface record or an `exposes opaque` type. wasm-gc and wasip2 register host/WASI lowerings as bindings of the same contracts. These operations are not legacy service builtins.
-- **WASM-GC backend** (`src/codegen/wasm_gc/`, feature-gated behind `--features wasm`): compiles Aver to wasm modules using the WebAssembly GC + tail-call proposals (typed structs/arrays, no linear-memory heap for first-class values). Two emission modes share the lowering pipeline: (a) `--target wasm-gc` for browsers / Workers / JS hosts via the `aver/*` host import ABI; (b) `--target wasip2` (and `aver run --wasip2`) for the WASI 0.2 / Component Model story — the same backend emits canonical-ABI WIT imports (`wasi:cli/stdout`, `wasi:filesystem/preopens`, `wasi:io/streams`, ...) and `src/codegen/wasip2/wrap.rs` wraps the core module via `wit-component`, no preview-1 adapter. Effect set on wasip2: Console, Time, Random, Args, Env (read), all Disk; Terminal/Http/Tcp/HttpServer rejected (host territory). The legacy linear-memory `--target wasm` backend was deleted in 0.18 Phase 1.8. ABI table in `abi.rs` is the single source of truth for import mappings.
-- **Artifact certificates** (`aver-cert/`): `aver-cert` 0.1.x is an independently versioned verifier/process; `aver cert` is an exact subprocess shortcut. Public package version is `1` and manifest schema version is `2` (schema 2 made the subject `hostRoleTable` optional — `null` for modules without the Int box helper, pinned against a byte-derived proof of the helper's absence); `Plans.lean` is the sole authoritative plan data, while the verifier supplies the actual artifact bytes, Lean 4.32 wall, build, and witness. See [docs/certification.md](docs/certification.md) and [docs/certification-architecture.md](docs/certification-architecture.md).
+- **WASM-GC backend** (`src/codegen/wasm_gc/`, feature-gated behind `--features wasm`): compiles Aver to wasm modules using the WebAssembly GC + tail-call proposals (typed structs/arrays, no linear-memory heap for first-class values). Two emission modes share the lowering pipeline: (a) `--target wasm-gc` for browsers / Workers / JS hosts via the `aver/*` host import ABI; (b) `--target wasip2` (and `aver run --wasip2`) for the WASI 0.2 / Component Model story — the same backend emits canonical-ABI WIT imports (`wasi:cli/stdout`, `wasi:filesystem/preopens`, `wasi:io/streams`, ...) and `src/codegen/wasip2/wrap.rs` wraps the core module via `wit-component`, no preview-1 adapter. Effect set on wasip2: Console, Time, Random, Args, Env (read), all Disk, all `Http.*` verbs, `Tcp.*`, and `HttpServer.listen`; `Terminal.*`, `Env.set`, and `HttpServer.listenWith` are compile-rejected (see [docs/wasip2.md](docs/wasip2.md) for the per-effect mapping). The legacy linear-memory `--target wasm` backend was deleted in 0.18 Phase 1.8, and its `abi.rs` import table with it. The host-import surface for `--target wasm-gc` is now the `EffectName` enum in `src/codegen/wasm_gc/effects.rs`, whose `import_pair()` gives the `(module, field)` pair; `aver-cert/src/format.rs` holds an independent copy in `WASM_GC_CAPABILITIES` and a test in `effects.rs` asserts the two lists agree.
+- **Artifact certificates** (`aver-cert/`): `aver-cert` 0.1.x is an independently versioned verifier/process; `aver cert` is an exact subprocess shortcut. Public package version is `1` (`FORMAT_VERSION`) and manifest schema version is `4` (`CERT_SCHEMA_VERSION`): schema 2 made the subject `hostRoleTable` optional — `null` for modules without the Int box helper, pinned against a byte-derived proof of the helper's absence; schema 3 added the required `toIndex` key to the object form; schema 4 added the required `cmp` and `eq` keys. `Plans.lean` is the sole authoritative plan data, while the verifier supplies the actual artifact bytes, Lean 4.32 wall, build, and witness. See [docs/certification.md](docs/certification.md) and [docs/certification-architecture.md](docs/certification-architecture.md).
 - **Independent products** (`?!` / `!`): a tuple followed by `!` is a product of independent computations; `?!` adds Result unwrapping. `Expr::IndependentProduct(Vec<Spanned<Expr>>, bool)` in AST. Parser detects `?` + `!` or bare `!` after tuple in `parse_postfix`. Typechecker: `?!` verifies all elements are `Result<T, E>` with compatible error types and that elements are function calls; `!` infers as regular tuple. Interpreter: sequential evaluation with replay groups. Codegen: `std::thread::scope` with real parallelism. VM: `CALL_PAR` dispatches callable values plus per-branch arity, so aliases like `f = foo; (f(x), f(y))!` work. Replay: effects within a product share `group_id`, matched by `branch_path + effect_occurrence + effect_type + effect_args`, not execution order. See [docs/independence.md](docs/independence.md).
 
 ### Design omissions
@@ -111,13 +111,37 @@ src/
                         session.rs — EffectRecord / SessionRecording encoding
 
   vm/                 — Bytecode compiler + virtual machine:
-                        compiler.rs — lowers resolved AST into Aver-specific opcodes
-                        execute.rs  — stack VM execution loop over `NanValue`
+                        compiler/   — lowers the program into Aver-specific opcodes:
+                          mod.rs          — FnCompiler/chunk assembly, bootstrap_core_symbols
+                          mir.rs          — MIR → bytecode (the only VM codegen path)
+                          expr.rs         — literal/ident emission helpers
+                          classify.rs     — chunk classification (leaf, thin, parent-thin)
+                          resolve_helpers.rs — name/id canonicalisation for the MIR walker
+                        execute/    — stack VM execution loop over `NanValue`:
+                          mod.rs      — VM struct, frame handling, run loop
+                          dispatch.rs — opcode dispatch
+                          slots.rs    — arena slot reference accounting
+                          host.rs     — builtin/host call boundary
+                          boundary.rs — return and tail-call paths
+                          ops.rs      — arithmetic/comparison opcode helpers
+                        builtin.rs  — `vm_builtins!` table, `VmBuiltin::ALL`, `invoke_nv` dispatch
                         opcode.rs   — bytecode ISA (calls, match, records, tuples, TCO)
                         runtime.rs  — builtin/effect/record-replay host bridge
                         types.rs    — function chunks, call frames, code store
 
-  checker.rs          — Verify block runner, module intent warnings, decision index.
+  checker/            — Verify block collection, `check` warning passes, decision index:
+                        mod.rs          — CheckFinding/VerifyResult types, shared helpers, re-exports
+                        verify.rs       — verify-block merging and expr_to_str
+                        intent.rs       — module/function intent warnings
+                        coverage.rs     — verify coverage analysis
+                        coverage_flow.rs — coverage propagated along the call graph
+                        cse.rs          — repeated-subexpression warnings
+                        perf.rs         — performance-shape warnings
+                        naming.rs       — naming-convention warnings
+                        traversal.rs    — traversal antipatterns the fusion pass cannot fuse
+                        independence.rs — independent-product (`!` / `?!`) warnings
+                        module_effects.rs — module `effects [...]` vs actual usage
+                        law.rs          — missing helper-law hints
 
   value.rs            — Value, RuntimeError, Env, EnvFrame, aver_repr, aver_display.
 
@@ -224,29 +248,30 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 2. Add a match arm in the `keyword()` function in `src/lexer.rs`
 3. Add the corresponding AST node(s) to `src/ast.rs` if needed
 4. Add a `parse_*` method in the appropriate `src/parser/*.rs` submodule and call it from `parse_top_level()` in `module.rs`
-5. Add a handler in the VM compiler (`src/vm/compiler.rs`) to emit the appropriate opcodes
+5. Resolve it in `src/ir/hir/resolve.rs`, lower it in `src/ir/mir/lower.rs`, and emit opcodes for it in `src/vm/compiler/mir.rs`; the other backends (`src/codegen/rust/`, `src/codegen/wasm_gc/`, `src/codegen/lean/`, `src/codegen/dafny/`) need their own handling
 
 ### How to add a new namespace function
 
-All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`). To add a new function to an existing namespace:
+All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`). Only the `NanValue` half is executed: the `Value`-typed `register()` / `call()` functions still present in the namespace files are legacy, are not reached by any backend, and must not be extended — their removal is a separate change. To add a new function to an existing namespace:
 
-1. Add the implementation in the namespace's file (e.g., `src/types/int.rs` for pure, `src/services/console.rs` for effectful) inside `call()`:
+1. Add the implementation in the namespace's file (e.g., `src/types/int.rs` for pure, `src/services/console.rs` for effectful) as `<op>_nv` and add its arm to `call_nv()`:
    ```rust
-   "Int.yourMethod" => {
-       // validate args, return Ok(Value::...)
-   }
+   "Int.yourMethod" => Some(your_method_nv(args, arena)),
    ```
-2. Register the member name in `register()` so it appears in the namespace's `members` map.
+2. Add the row to the `vm_builtins!` table in `src/vm/builtin.rs` and the matching arm in `VmBuiltin::invoke_nv`.
 3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
+4. Add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms.
+5. Add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`).
+6. Document the function in [docs/services.md](docs/services.md).
 
-To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register()`, `effects()`, and `call()`, add `pub mod` in `types/mod.rs`, wire dispatch in `src/vm/runtime.rs`. For effectful namespaces, use `src/services/` instead.
+To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register_nv()`, `effects()`, and `call_nv()`, add `pub mod` in `types/mod.rs`, and add the builtin rows above. For effectful namespaces, use `src/services/` instead.
 
 ### How to add a new expression type
 
-1. Add a variant to `Expr` in `ast.rs`
+1. Add a variant to `Expr` in `ast.rs` and an arm in `src/codegen/expr_walk.rs`, the single exhaustive child-walk over `Expr` (a new variant fails the build there by design)
 2. Parse it in `parser/expr.rs` (typically in `parse_atom` or a new precedence level)
-3. Compile it in `src/vm/compiler.rs` to emit the appropriate opcodes
-4. If it should appear in verify cases, update `expr_to_str` in `checker.rs`
+3. Mirror it in the HIR (`src/ir/hir/`), lower it in `src/ir/mir/lower.rs`, and emit opcodes for it in `src/vm/compiler/mir.rs`
+4. If it should appear in verify cases, update `expr_to_str` in `src/checker/verify.rs`
 
 ## Known issues / edge cases
 
