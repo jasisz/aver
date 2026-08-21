@@ -4533,6 +4533,96 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Regression for #1042: dependency glob imports must not turn an Aver match
+/// binder into an ambiguous Rust name. Both dependencies expose `message`, but
+/// the entry calls only `Legacy.message`; `Result.Ok(message)` is purely local.
+#[test]
+fn colliding_dependency_function_names_do_not_conflict_with_match_binders() {
+    let ws = temp_dir("dependency_function_binder_collision");
+    fs::write(
+        ws.join("Legacy.av"),
+        r#"module Legacy
+    exposes [message]
+    intent = "Expose the legacy message calculation."
+    effects []
+
+fn message(value: Int) -> Result<Int, String>
+    ? "Return the legacy message."
+    Result.Ok(value)
+"#,
+    )
+    .expect("write Legacy module");
+    fs::write(
+        ws.join("Modern.av"),
+        r#"module Modern
+    exposes [message]
+    intent = "Expose the modern message calculation."
+    effects []
+
+fn message(value: Int) -> Result<Int, String>
+    ? "Return the modern message."
+    Result.Ok(value + 1)
+"#,
+    )
+    .expect("write Modern module");
+
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Legacy, Modern]
+    intent = "Select one qualified message without importing either short name."
+    effects [Console]
+
+fn select() -> Option<Int>
+    ? "Bind the result under the same short name exposed by both dependencies."
+    match Legacy.message(7)
+        Result.Err(why) -> Option.None
+        Result.Ok(message) -> Option.Some(message)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("picked={Option.withDefault(select(), 0)}")
+"#,
+    )
+    .expect("write entry module");
+
+    let vm_stdout = run_vm(&entry, Some(&ws)).expect("VM run");
+    assert_eq!(vm_stdout, "picked=7", "VM contract changed");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(
+            &entry,
+            &project,
+            "dependency_function_binder_collision",
+            Some(&ws),
+            &[],
+        )?;
+        let bin = cargo_build(&project, "dependency_function_binder_collision")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "dependency-function-binder generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "dependency-function-binder stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
 //
 // `Int.fromString` / `Float.fromString` return a `Result<_, String>`.
