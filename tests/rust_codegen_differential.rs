@@ -4443,6 +4443,103 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Second half of #1037: the same owned-versus-borrowed comparison as the
+/// subject of a boolean `match`, which the Rust backend lowers to an `if`
+/// through its own comparison emitter. That path skipped the borrow
+/// alignment, so `match script == made()` compiled to `(script == made())`.
+#[test]
+fn match_subject_equality_with_borrowed_param_builds_and_matches_vm() {
+    let ws = temp_dir("borrowed_match_equality");
+    let source = ws.join("main.av");
+    fs::write(
+        &source,
+        r#"module Main
+    intent = "Compare an owned call result with a borrowed parameter as a match subject."
+    effects [Console]
+
+fn made() -> List<Int>
+    ? "Return a freshly built list by value."
+    [1, 2]
+
+fn paramLeft(script: List<Int>) -> String
+    ? "Borrowed parameter on the left of the match subject."
+    match script == made()
+        true -> "same"
+        false -> "other"
+
+fn paramRight(script: List<Int>) -> String
+    ? "Borrowed parameter on the right of the match subject."
+    match made() == script
+        true -> "same"
+        false -> "other"
+
+fn differs(script: List<Int>) -> String
+    ? "Inequality as a match subject across the same boundary."
+    match script != made()
+        true -> "differs"
+        false -> "same"
+
+fn named(name: String) -> String
+    ? "A string literal on the right of a match subject."
+    match name == "anchor"
+        true -> "yes"
+        false -> "no"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("left={paramLeft([1, 2])} right={paramRight([3])} neq={differs([3])} str={named("anchor")}")
+"#,
+    )
+    .expect("write borrowed-match-equality probe source");
+
+    let vm_stdout = run_vm(&source, None).expect("VM run");
+    assert_eq!(vm_stdout, "left=same right=other neq=differs str=yes");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "borrowed_match_equality", None, &[])?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if !emitted.contains("script == &(made())")
+            || !emitted.contains("&(made()) == script")
+            || !emitted.contains("script == &(made())")
+            || !emitted.contains("&*name == \"anchor\"")
+        {
+            return Err(format!(
+                "match-subject comparisons were not aligned with the borrowed params:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, "borrowed_match_equality")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "borrowed-match-equality generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "borrowed-match-equality stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A qualified project type inside `Fn` is a module-owned Rust path, not a
 /// compiler-owned dotted record alias. Before #1033 the context-free type
 /// renderer flattened `Worker.Shape` to the nonexistent `Worker_Shape`, so
