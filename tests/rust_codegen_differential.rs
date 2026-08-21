@@ -4540,6 +4540,82 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// #1065: the same match-subject comparison, but the call returns a list the
+/// backend carries in its packed byte representation (a SHA-256 digest
+/// turned back into `List<Int>`), compared with a borrowed parameter. The
+/// borrow alignment must not depend on which Rust representation the list
+/// takes.
+#[test]
+fn packed_list_match_subject_equality_with_borrowed_param_builds_and_matches_vm() {
+    let ws = temp_dir("packed_match_equality");
+    let source = ws.join("main.av");
+    fs::write(
+        &source,
+        r#"module Main
+    intent = "Compare a packed digest list with a borrowed parameter as a match subject."
+    depends [Bytes, Crypto.Digest32]
+    effects [Console]
+
+fn sha256Of(script: List<Int>) -> List<Int>
+    ? "A single SHA-256 of the script bytes, as a list."
+    Bytes.toList(Crypto.Digest32.toBytes(Crypto.sha256(Result.withDefault(Bytes.fromList(script), Bytes.fromList([])))))
+
+fn matched(program: List<Int>, script: List<Int>) -> String
+    ? "Does the program commit to this script?"
+    match sha256Of(script) == program
+        true -> "matched"
+        false -> "other"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{matched(sha256Of([1, 2, 3]), [1, 2, 3])} {matched([0], [1, 2, 3])}")
+"#,
+    )
+    .expect("write packed-match-equality probe source");
+
+    let vm_stdout = run_vm(&source, None).expect("VM run");
+    assert_eq!(vm_stdout, "matched other");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "packed_match_equality", None, &[])?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if !emitted.contains("sha256Of(script)) == program") {
+            return Err(format!(
+                "packed match-subject comparison was not aligned with the borrowed param:\n{emitted}"
+            ));
+        }
+        let bin = cargo_build(&project, "packed_match_equality")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "packed-match-equality generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "packed-match-equality stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A qualified project type inside `Fn` is a module-owned Rust path, not a
 /// compiler-owned dotted record alias. Before #1033 the context-free type
 /// renderer flattened `Worker.Shape` to the nonexistent `Worker_Shape`, so
