@@ -928,7 +928,13 @@ impl ProgramCompiler {
         let local_count = mir_fn
             .local_count
             .max(resolution.map_or(rfd.params.len() as u32, |r| u32::from(r.local_count)));
-        let local_count = local_count as u16;
+        let local_count = u16::try_from(local_count).map_err(|_| CompileError {
+            msg: format!(
+                "function `{}` has {local_count} local bindings; the VM supports at most {}",
+                rfd.name,
+                u16::MAX
+            ),
+        })?;
         // `FnCompiler.local_slots` feeds exactly one consumer: the
         // `MirExpr::FnValue` path (`compile_ident`). A `FnValue` name is
         // an ident the resolver left bare — so when a resolution exists,
