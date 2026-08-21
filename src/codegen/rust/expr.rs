@@ -20,6 +20,17 @@ use std::collections::HashSet;
 pub use super::syntax::aver_name_to_rust;
 pub(super) use super::syntax::{has_list_patterns, has_string_literal_patterns};
 
+/// Render an identifier in a Rust pattern as an explicit binding.
+///
+/// A bare identifier in a pattern is also eligible for item resolution. When
+/// two dependency glob imports expose the same function name, rustc reports
+/// `Ok(name)` as ambiguous instead of treating `name` as the local binder that
+/// Aver declares. `name @ _` is semantically identical and syntactically
+/// unambiguous, while keeping all body references under the original name.
+fn explicit_binding_pattern(name: &str) -> String {
+    format!("{} @ _", aver_name_to_rust(name))
+}
+
 /// Predicate adapter shared by every resolved-shape classifier — the
 /// shared classifiers don't know about [`CodegenContext`] (it lives in
 /// the codegen crate, classifiers live in the IR), so they take a
@@ -420,7 +431,7 @@ where
                 SemanticDispatchPattern::WrapperTag(kind),
                 DispatchBindingPlan::WrapperPayload(name),
             ) => {
-                let binding = aver_name_to_rust(name);
+                let binding = explicit_binding_pattern(name);
                 let extractor = match kind {
                     WrapperKind::ResultOk => "Ok",
                     WrapperKind::ResultErr => "Err",
@@ -448,7 +459,7 @@ where
         let arm = &arms[default_arm.arm_index];
         let body = body_for_arm(arm);
         if let Some(name) = &default_arm.binding_name {
-            let binding = aver_name_to_rust(name);
+            let binding = explicit_binding_pattern(name);
             match_arms.push(format!("{binding} => {{ {body} }}"));
         } else {
             match_arms.push(format!("_ => {{ {body} }}"));
@@ -507,13 +518,14 @@ fn emit_dispatch_arm_body(
             DispatchBindingPlan::WrapperPayload(binding_name),
         ) => {
             let binding = aver_name_to_rust(binding_name);
+            let binding_pattern = explicit_binding_pattern(binding_name);
             let extractor = match kind {
                 WrapperKind::ResultOk => "Ok",
                 WrapperKind::ResultErr => "Err",
                 WrapperKind::OptionSome => "Some",
             };
             format!(
-                "{{ let {binding} = if let {extractor}({binding}) = &{subject_name} {{ {binding}.clone() }} else {{ unreachable!(\"Aver Rust codegen: dispatch tag mismatch\") }}; {body} }}"
+                "{{ let {binding_pattern} = if let {extractor}({binding_pattern}) = &{subject_name} {{ {binding}.clone() }} else {{ unreachable!(\"Aver Rust codegen: dispatch tag mismatch\") }}; {body} }}"
             )
         }
         _ => body,
@@ -531,7 +543,10 @@ fn emit_default_dispatch_arm(
         None => body,
         Some(name) => {
             let name = aver_name_to_rust(name);
-            format!("{{ let {} = {}.clone(); {} }}", name, subject_name, body)
+            format!(
+                "{{ let {} @ _ = {}.clone(); {} }}",
+                name, subject_name, body
+            )
         }
     }
 }

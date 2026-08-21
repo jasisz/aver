@@ -2402,7 +2402,7 @@ fn loop(r: Result<Int, String>) -> Int
         // via the full pipeline, matching the CLI) lets it move into the
         // match without a `.clone()`.
         assert!(entry.contains("match r {"));
-        assert!(entry.contains("Ok(n)"));
+        assert!(entry.contains("Ok(n @ _)"));
         assert!(!entry.contains("__dispatch_subject"));
     }
 
@@ -2433,7 +2433,7 @@ fn right(r: Result<Int, String>) -> Int
         // via the full pipeline, matching the CLI) lets it move into the
         // match without a `.clone()`.
         assert!(entry.contains("match r {"));
-        assert!(entry.contains("Ok(n)"));
+        assert!(entry.contains("Ok(n @ _)"));
         assert!(!entry.contains("__dispatch_subject"));
     }
 
