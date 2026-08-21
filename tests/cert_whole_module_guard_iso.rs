@@ -133,10 +133,24 @@ fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
         }
     }
     let (call_offset, call_target) = call.expect("jsonInt must directly call its box helper");
-    assert!(call_target < 127, "GuardIso uses a one-byte call target");
+    // The hostile artifact below adds 1 to the byte at `call_offset`, the
+    // lowest LEB128 byte of the call target, so the call lands on the next
+    // function index whatever the encoding width is. That only holds while
+    // the low seven bits do not carry into the continuation bit.
+    assert!(
+        call_target & 0x7f != 0x7f,
+        "GuardIso bumps the low LEB byte of the call target; it must not carry"
+    );
     let local_get_offset = local_get.expect("jsonEntryKey must contain local.get");
     assert_eq!(bytes[local_get_offset], 0x20);
     (call_offset, call_target, local_get_offset)
+}
+
+/// The lowest LEB128 byte of a function index: the seven low bits plus the
+/// continuation bit whenever the index needs a second byte.
+fn leb_low_byte(index: u32) -> u8 {
+    let low = (index & 0x7f) as u8;
+    if index >= 0x80 { low | 0x80 } else { low }
 }
 
 /// Five hostile artifacts leave all sibling conjuncts true, fail exactly their
@@ -279,7 +293,7 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
         .position(|window| window == b"console_print")
         .expect("json wasm must import aver.console_print");
     assert_eq!(wasm[capability_offset], b'c');
-    assert_eq!(wasm[call_offset], call_target as u8);
+    assert_eq!(wasm[call_offset], leb_low_byte(call_target));
     let lean = format!(
         r#"import Artifact
 

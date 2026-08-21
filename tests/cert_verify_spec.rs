@@ -2084,8 +2084,12 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         "json compile --certify failed:
 {compile_report}"
     );
+    // The denominator counts every function in json.wasm that carries no
+    // claim. It rose from 90 to 133 when the string-index pass started
+    // synthesizing index workers for the parser's recursive `String.charAt`
+    // walks; those workers are compiler-made and have no source-level claim.
     assert!(
-        compile_report.contains("(12 certified, 90 source-level-only)"),
+        compile_report.contains("(12 certified, 133 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
