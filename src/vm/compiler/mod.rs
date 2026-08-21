@@ -1169,6 +1169,11 @@ pub(super) struct FnCompiler<'a> {
     pub(super) required_capability_operations: &'a mut std::collections::BTreeSet<String>,
     code: Vec<u8>,
     constants: Vec<NanValue>,
+    /// Byte offset of the instruction immediately before `last_op_pos`, or
+    /// `usize::MAX` when there is no retained predecessor. Peephole recognition
+    /// must use instruction boundaries, never bytes that merely look like
+    /// opcodes inside another instruction's operands.
+    previous_op_pos: usize,
     /// Byte offset of the last emitted opcode (for superinstruction fusion).
     last_op_pos: usize,
     /// Source file path for this function.
@@ -1221,6 +1226,7 @@ impl<'a> FnCompiler<'a> {
             required_capability_operations,
             code: Vec::new(),
             constants: Vec::new(),
+            previous_op_pos: usize::MAX,
             last_op_pos: usize::MAX,
             source_file: String::new(),
             line_table: Vec::new(),
@@ -1309,7 +1315,11 @@ impl<'a> FnCompiler<'a> {
         // After:  [..., VECTOR_GET_OR, hi, lo]
         if op == UNWRAP_OR && self.code.len() >= 4 {
             let len = self.code.len();
-            if self.code[len - 4] == VECTOR_GET && self.code[len - 3] == LOAD_CONST {
+            if self.previous_op_pos == len - 4
+                && self.last_op_pos == len - 3
+                && self.code[len - 4] == VECTOR_GET
+                && self.code[len - 3] == LOAD_CONST
+            {
                 let hi = self.code[len - 2];
                 let lo = self.code[len - 1];
                 self.code[len - 4] = VECTOR_GET_OR;
@@ -1317,9 +1327,14 @@ impl<'a> FnCompiler<'a> {
                 self.code[len - 2] = lo;
                 self.code.pop(); // remove extra byte
                 self.last_op_pos = len - 4;
+                // The instruction before the old VECTOR_GET is not tracked;
+                // the next normally appended opcode will establish the pair
+                // again. No current fusion needs to look farther back.
+                self.previous_op_pos = usize::MAX;
                 return;
             }
         }
+        self.previous_op_pos = self.last_op_pos;
         self.last_op_pos = self.code.len();
         self.code.push(op);
     }
@@ -1396,12 +1411,17 @@ impl<'a> FnCompiler<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::compile_program_with_mir_fallback;
+    use super::{FnCompiler, compile_program_with_mir_fallback};
     use crate::ir::SymbolTable;
     use crate::ir::hir::resolve_program;
     use crate::nan_value::Arena;
     use crate::source::parse_source;
-    use crate::vm::opcode::{LT, VECTOR_GET_OR, VECTOR_SET_OR_KEEP};
+    use crate::vm::opcode::{
+        LOAD_CONST, LT, RECORD_GET_NAMED, UNWRAP_OR, VECTOR_GET, VECTOR_GET_OR, VECTOR_SET_OR_KEEP,
+    };
+    use crate::vm::symbol::VmSymbolTable;
+    use crate::vm::types::CodeStore;
+    use std::collections::{BTreeSet, HashMap};
 
     /// Mirror of the pre-Phase-E test helper: tco + slot-resolve +
     /// resolved-HIR lift, no typecheck. Matches the original
@@ -1439,6 +1459,58 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
             chunk.code.contains(&VECTOR_GET_OR),
             "expected VECTOR_GET_OR in bytecode, got {:?}",
             chunk.code
+        );
+    }
+
+    #[test]
+    fn unwrap_or_fusion_does_not_match_an_opcode_byte_inside_an_operand() {
+        let global_names = HashMap::new();
+        let module_scope = HashMap::new();
+        let code_store = CodeStore::new();
+        let mut vm_symbols = VmSymbolTable::default();
+        let mut arena = Arena::new();
+        let source_symbols = SymbolTable::default();
+        let mut required_capabilities = BTreeSet::new();
+        let mut compiler = FnCompiler::new(
+            "operand_boundary_probe",
+            0,
+            0,
+            Vec::new(),
+            HashMap::new(),
+            &global_names,
+            &module_scope,
+            &code_store,
+            &mut vm_symbols,
+            &mut arena,
+            &source_symbols,
+            None,
+            &mut required_capabilities,
+        );
+
+        // The low byte of this field-symbol operand is deliberately 0x82,
+        // the VECTOR_GET opcode. Before #1039, the UNWRAP_OR peephole looked
+        // four raw bytes backwards and mistook that operand byte for an
+        // instruction, changing the field id to 0x83 and deleting a byte.
+        compiler.emit_op(RECORD_GET_NAMED);
+        compiler.emit_u32(VECTOR_GET as u32);
+        compiler.emit_op(LOAD_CONST);
+        compiler.emit_u16(0);
+        compiler.emit_op(UNWRAP_OR);
+
+        let chunk = compiler.finish();
+        assert_eq!(
+            chunk.code,
+            vec![
+                RECORD_GET_NAMED,
+                0,
+                0,
+                0,
+                VECTOR_GET,
+                LOAD_CONST,
+                0,
+                0,
+                UNWRAP_OR,
+            ]
         );
     }
 
