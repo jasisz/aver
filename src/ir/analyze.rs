@@ -26,9 +26,9 @@
 //!
 //! - `module M depends [A, B, ...]` — depends is a static list of names,
 //!   no dynamic resolution.
-//! - Module loading (`load_module_recursive`) enforces a DAG via the
-//!   `loaded: HashSet` cycle guard — a re-entered module name returns
-//!   early, so the dep graph is acyclic by construction.
+//! - Module loading (`source::load_program`) refuses a cycle in `depends`
+//!   with an explicit "Circular import" error, so the dep graph is acyclic
+//!   by construction.
 //! - In a DAG, all calls flow from dependents to dependencies: module A
 //!   calls into module B if A depends on B (transitively); B never calls
 //!   back into A. Mutually-recursive call chains require a cycle in the

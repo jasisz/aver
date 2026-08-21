@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -15,7 +15,7 @@ use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::source::{require_module_declaration, resolve_module_source};
+use aver::source::{LoadError, LoadMode, require_module_declaration, resolve_module_source};
 use aver::types::{Type, parse_type_str};
 use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
@@ -249,58 +249,53 @@ fn collect_check_units(
     module_root: &str,
     include_deps: bool,
 ) -> Result<Vec<(String, String, Vec<TopLevel>)>, String> {
-    let mut out = Vec::new();
-    let mut stack = vec![(PathBuf::from(file), None)];
-    let mut visited = std::collections::HashSet::new();
-
-    while let Some((path, prefetched_source)) = stack.pop() {
-        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-        let key = canonical.to_string_lossy().to_string();
-        if !visited.insert(key) {
-            continue;
-        }
-
-        let path_str = path.to_string_lossy().to_string();
-        let source = match prefetched_source {
-            Some(source) => source,
-            None => read_file(&path_str)?,
-        };
-
-        // Parse failure shouldn't abort the whole check — let
-        // analyze_source turn it into a canonical parse-error
-        // diagnostic (with line/col + repair hint) the same way
-        // every other diagnostic flows. We still have the source so
-        // the downstream render can snippet the error line.
-        let items = parse_file(&source).unwrap_or_default();
-
-        if !items.is_empty() {
-            let _ = require_module_declaration(&items, &path_str);
-        }
-
-        if include_deps
-            && let Some(m) = items.iter().find_map(|item| {
-                if let TopLevel::Module(m) = item {
-                    Some(m)
-                } else {
-                    None
-                }
-            })
-        {
-            for dep in m.depends.iter().rev() {
-                let resolved = resolve_module_source(dep, module_root)?.ok_or_else(|| {
-                    format!(
-                        "Module '{}' not found in '{}' (required by '{}')",
-                        dep, module_root, path_str
-                    )
-                })?;
-                stack.push((resolved.path, Some(resolved.source)));
-            }
-        }
-
-        out.push((path_str, source, items));
+    let source = read_file(file)?;
+    // Parse failure shouldn't abort `check`: its analysis pass owns the
+    // canonical line/column diagnostic. `verify` re-parses an empty item set
+    // and still fails loudly, preserving its existing behavior.
+    let items = parse_file(&source).unwrap_or_default();
+    if !include_deps {
+        return Ok(vec![(file.to_string(), source, items)]);
     }
 
-    Ok(out)
+    // The tolerant walk keeps a dependency that fails to parse or lacks its
+    // declaration as a unit of its own, so each file reports its diagnostics
+    // in place; only an unresolvable dependency stops the walk.
+    let program = aver::source::load_program(
+        Path::new(file),
+        &source,
+        &items,
+        module_root,
+        LoadMode::Tolerant,
+    )
+    .map_err(|error| match error {
+        LoadError::Missing {
+            name,
+            root,
+            required_by,
+        } => format!(
+            "Module '{}' not found in '{}' (required by '{}')",
+            name,
+            root,
+            required_by.unwrap_or_default().display()
+        ),
+        other => other.to_string(),
+    })?;
+    let mut units = Vec::with_capacity(program.modules.len());
+    units.push((file.to_string(), source, items));
+    units.extend(
+        program
+            .explicit_dependencies_in_discovery_order()
+            .into_iter()
+            .map(|module| {
+                (
+                    module.path.to_string_lossy().to_string(),
+                    module.source.clone(),
+                    module.items.clone(),
+                )
+            }),
+    );
+    Ok(units)
 }
 
 fn canonical_path_key(path: &str) -> String {
@@ -10601,234 +10596,119 @@ impl DepLowering {
     }
 }
 
-/// Load dependent modules for codegen (recursive, with circular import detection).
+/// Load dependent modules for codegen: every module of the program behind
+/// `items`, typechecked and lowered with the target's matrix. Any problem is
+/// fatal here — printed in red, exit 1 — exactly as it always was.
 pub(super) fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
     lowering: DepLowering,
 ) -> Vec<ModuleInfo> {
-    let module = items.iter().find_map(|i| {
-        if let TopLevel::Module(m) = i {
-            Some(m)
-        } else {
-            None
-        }
-    });
-    let Some(module) = module else {
-        return vec![];
+    fn fail(message: String) -> ! {
+        eprintln!("{}", message.red());
+        process::exit(1);
+    }
+    let program = match aver::source::load_program(
+        Path::new("<entry>"),
+        "",
+        items,
+        module_root,
+        LoadMode::Tolerant,
+    ) {
+        Ok(program) => program,
+        Err(LoadError::Missing { name, root, .. }) => fail(format!(
+            "Cannot find module '{name}' in module root '{root}'"
+        )),
+        Err(error) => fail(error.to_string()),
     };
+    let mut lowered = BTreeMap::new();
 
-    let mut result = Vec::new();
-    let mut loaded = std::collections::HashSet::new();
+    // Parent before child, the order the walk met the modules in: the first
+    // fault on the way down is the one reported, and the non-law warnings
+    // come out in that order too. The returned list stays leaves-first.
+    for module in program.dependencies_in_discovery_order() {
+        match &module.fault {
+            Some(LoadError::Parse { error, .. }) => fail(error.clone()),
+            Some(fault) => fail(fault.to_string()),
+            None => {}
+        }
+        let mut module_items = module.items.clone();
+        warn_unchecked_dependency_examples(&module.dep_name, &module_items);
 
-    for dep_name in &module.depends {
-        load_module_recursive(dep_name, module_root, lowering, &mut result, &mut loaded);
-    }
-
-    // Builtins like `Crypto.sha256` cross nominal types owned by embedded
-    // standard modules (`Bytes`, `Digest32`). Codegen backends emit those
-    // records from the loaded module set, so the owning modules must load
-    // even when the entry never names them in `depends` — otherwise the
-    // program passes check/verify and fails late inside the generated
-    // project. `loaded` dedupes the overlap with the explicit list.
-    for dep_name in aver::stdlib::implicit_stdlib_deps(items) {
-        load_module_recursive(&dep_name, module_root, lowering, &mut result, &mut loaded);
-    }
-
-    result
-}
-
-fn load_module_recursive(
-    name: &str,
-    module_root: &str,
-    lowering: DepLowering,
-    result: &mut Vec<ModuleInfo>,
-    loaded: &mut std::collections::HashSet<String>,
-) {
-    if !loaded.insert(name.to_string()) {
-        return; // already loaded or circular
-    }
-
-    let resolved = match resolve_module_source(name, module_root) {
-        Ok(Some(module)) => module,
-        Ok(None) => {
+        let neutral_policy = aver::ir::NeutralAllocPolicy;
+        let dep_typecheck_mode = if lowering.self_host {
+            aver::ir::TypecheckMode::FullSelfHost {
+                base_dir: Some(module_root),
+            }
+        } else {
+            aver::ir::TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }
+        };
+        let pipeline_result = aver::ir::pipeline::run(
+            &mut module_items,
+            aver::ir::PipelineConfig {
+                typecheck: Some(dep_typecheck_mode),
+                run_interp_lower: lowering.interp_lower,
+                run_buffer_build: lowering.buffer_build,
+                run_chars_fusion: lowering.chars_fusion,
+                run_string_index: lowering.string_index,
+                run_list_build: lowering.list_build,
+                alloc_policy: Some(&neutral_policy),
+                ..Default::default()
+            },
+        );
+        if let Some(tc) = pipeline_result.typecheck.as_ref()
+            && !tc.errors.is_empty()
+        {
             eprintln!(
                 "{}",
                 format!(
-                    "Cannot find module '{}' in module root '{}'",
-                    name, module_root
+                    "Type errors in dependency module '{}':\n{}",
+                    module.dep_name,
+                    tc.errors
+                        .iter()
+                        .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 )
                 .red()
             );
             process::exit(1);
         }
-        Err(error) => {
-            eprintln!("{}", error.red());
-            process::exit(1);
-        }
-    };
-    let path = resolved.path;
-    let source = resolved.source;
-
-    let mut items = match parse_file(&source) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        }
-    };
-    if let Err(e) = require_module_declaration(&items, path.to_str().unwrap_or(name)) {
-        eprintln!("{}", e.red());
-        process::exit(1);
+        lowered.insert(
+            module.discovery_index,
+            ModuleInfo::from_items(
+                module.dep_name.clone(),
+                &module_items,
+                pipeline_result.analysis,
+            ),
+        );
     }
 
-    // `verify … law` blocks in a dependency module ARE carried now (the
-    // cross-file law pool): each proven dep law is emitted as a theorem
-    // in the dep's `.lean` and admitted into a consumer law's lemma pool
-    // under the same cone ∪ subject gate as in-file siblings. A dep law
-    // that does not itself prove emits only samples (no universal
-    // theorem), so it can never launder credit to a consumer. Plain
-    // example-style `verify` blocks in a dep are still NOT checked
-    // (module-scoped sampling is a separate, larger feature) — warn only
-    // for those so an unchecked dependency sample isn't mistaken for a
-    // proven one.
-    let dep_example_verify_count = items
+    program
+        .dependencies()
         .iter()
-        .filter(|i| matches!(i, TopLevel::Verify(vb) if !matches!(vb.kind, aver::ast::VerifyKind::Law(_))))
+        .filter_map(|module| lowered.remove(&module.discovery_index))
+        .collect()
+}
+
+fn warn_unchecked_dependency_examples(name: &str, items: &[TopLevel]) {
+    let count = items
+        .iter()
+        .filter(|item| {
+            matches!(item, TopLevel::Verify(block) if !matches!(block.kind, aver::ast::VerifyKind::Law(_)))
+        })
         .count();
-    if dep_example_verify_count > 0 {
+    if count > 0 {
         eprintln!(
             "{}",
             format!(
-                "warning: {dep_example_verify_count} non-law verify block(s) in dependency \
-                 module '{name}' are NOT checked (module-scoped sampling is not yet supported) — \
-                 move them to the entry module to sample them"
+                "warning: {count} non-law verify block(s) in dependency module '{name}' are NOT checked (module-scoped sampling is not yet supported) — move them to the entry module to sample them"
             )
             .yellow()
         );
     }
-
-    // Dep modules go through the same pipeline shape as the entry, AND
-    // they typecheck against the same on-disk module tree. Typecheck
-    // here populates `Spanned::ty()` on this module's expressions so
-    // type-driven codegen (legacy WASM Step 2, Rust Step 1) can read
-    // them without per-backend ad-hoc inference. The entry-level
-    // typecheck only validates cross-module references — it visits the
-    // entry's items, not dep bodies, because the items it sees are a
-    // separate parse from the ones flowing into ModuleInfo. Errors are
-    // surfaced as fatal — a dep module that fails to typecheck means
-    // the program is incoherent and codegen would emit broken output.
-    let neutral_policy = aver::ir::NeutralAllocPolicy;
-    let dep_typecheck_mode = if lowering.self_host {
-        aver::ir::TypecheckMode::FullSelfHost {
-            base_dir: Some(module_root),
-        }
-    } else {
-        aver::ir::TypecheckMode::Full {
-            base_dir: Some(module_root),
-        }
-    };
-    let pipeline_result = aver::ir::pipeline::run(
-        &mut items,
-        aver::ir::PipelineConfig {
-            typecheck: Some(dep_typecheck_mode),
-            run_interp_lower: lowering.interp_lower,
-            run_buffer_build: lowering.buffer_build,
-            run_chars_fusion: lowering.chars_fusion,
-            run_string_index: lowering.string_index,
-            run_list_build: lowering.list_build,
-            alloc_policy: Some(&neutral_policy),
-            ..Default::default()
-        },
-    );
-    if let Some(tc) = pipeline_result.typecheck.as_ref()
-        && !tc.errors.is_empty()
-    {
-        eprintln!(
-            "{}",
-            format!(
-                "Type errors in dependency module '{}':\n{}",
-                name,
-                tc.errors
-                    .iter()
-                    .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-            .red()
-        );
-        process::exit(1);
-    }
-
-    let depends = items
-        .iter()
-        .find_map(|i| {
-            if let TopLevel::Module(m) = i {
-                Some(m.depends.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    // Recursively load transitive dependencies
-    if let Some(mod_block) = items.iter().find_map(|i| {
-        if let TopLevel::Module(m) = i {
-            Some(m)
-        } else {
-            None
-        }
-    }) {
-        for dep in &mod_block.depends {
-            load_module_recursive(dep, module_root, lowering, result, loaded);
-        }
-    }
-
-    // A dependency module can also call a builtin whose signature crosses
-    // stdlib-owned nominal types without naming the owning standard module
-    // in its own `depends` — load those implied modules too (see
-    // `load_compile_deps` for the entry-level counterpart).
-    for dep in aver::stdlib::implicit_stdlib_deps(&items) {
-        load_module_recursive(&dep, module_root, lowering, result, loaded);
-    }
-
-    let type_defs: Vec<_> = items
-        .iter()
-        .filter_map(|i| {
-            if let TopLevel::TypeDef(td) = i {
-                Some(td.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let fn_defs: Vec<_> = items
-        .iter()
-        .filter_map(|i| {
-            if let TopLevel::FnDef(fd) = i {
-                if fd.name != "main" {
-                    Some(fd.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let (capability_items, capability_semantics) = aver::codegen::capability_metadata(&items);
-    result.push(ModuleInfo {
-        prefix: name.to_string(),
-        depends,
-        type_defs,
-        fn_defs,
-        capability_items,
-        capability_semantics,
-        verify_laws: aver::codegen::collect_verify_laws(&items),
-        analysis: pipeline_result.analysis,
-    });
 }
 
 #[cfg(test)]
