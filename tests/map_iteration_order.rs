@@ -514,32 +514,22 @@ fn the_exported_map_model_is_pinned() {
     );
 }
 
-/// Every exported artifact carries the wasm-gc carve-out.
-///
-/// The trust header used to end "Exported proofs hold uniformly across Aver
-/// backends (VM, compiled Rust, WASM)" with no qualification, in a build where
-/// wasm-gc returns hash-bucket order for map iteration — so the artifact
-/// asserted backend uniformity that the recommended compile target falsifies.
-/// The header states the carve-out the way it already stated the `Int`
-/// overflow one.
+/// wasm-gc now uses the same canonical key order as the VM, compiled Rust and
+/// proof model, so exported artifacts no longer need a map-specific carve-out.
 #[test]
-fn the_trust_header_carves_out_map_order_on_wasm_gc() {
+fn the_trust_header_no_longer_carves_out_map_order_on_wasm_gc() {
     let lean = emit_lean(ORDER_FIXTURE, "aver-map-order-header", "MapIterationOrder");
     assert!(
-        lean.contains("Map iteration order:"),
-        "the trust header must have a map-order section:\n{lean}"
+        !lean.contains("Map iteration order:"),
+        "the obsolete map-order section must be gone:\n{lean}"
     );
     assert!(
-        lean.contains("wasm-gc backend returns hash-bucket"),
-        "the carve-out must name the backend that diverges:\n{lean}"
+        !lean.contains("hash-bucket order"),
+        "the obsolete wasm-gc divergence must be gone:\n{lean}"
     );
     assert!(
-        !lean.contains("Rust, WASM). No concurrency primitives"),
-        "the unqualified backend-uniformity sentence must not survive:\n{lean}"
-    );
-    assert!(
-        lean.contains("map iteration order on wasm-gc"),
-        "the backend-independence claim must point at the carve-out:\n{lean}"
+        lean.contains("except for the `Int` overflow carve-out above"),
+        "backend independence should retain only the numeric carve-out:\n{lean}"
     );
 }
 

@@ -1237,6 +1237,233 @@ fn main() -> Int
     );
 }
 
+#[test]
+fn map_iteration_order_matches_the_canonical_string_key_order() {
+    let source = r#"module MapOrder
+    intent = "Map iteration has one canonical order on every backend."
+
+fn build() -> Map<String, Int>
+    m0 = Map.set({}, "z", 1)
+    m1 = Map.set(m0, "alpha", 2)
+    m2 = Map.set(m1, "m", 3)
+    m3 = Map.set(m2, "k", 4)
+    m4 = Map.set(m3, "epsilon", 5)
+    m5 = Map.set(m4, "theta", 6)
+    m6 = Map.set(m5, "beta", 7)
+    m7 = Map.set(m6, "iota", 8)
+    m8 = Map.set(m7, "delta", 9)
+    Map.set(m8, "gamma", 10)
+
+fn main() -> Int
+    m = build()
+    keysOk = Map.keys(m) == ["alpha", "beta", "delta", "epsilon", "gamma", "iota", "k", "m", "theta", "z"]
+    valuesOk = Map.values(m) == [2, 7, 9, 5, 10, 8, 4, 3, 6, 1]
+    entriesOk = Map.entries(m) == [("alpha", 2), ("beta", 7), ("delta", 9), ("epsilon", 5), ("gamma", 10), ("iota", 8), ("k", 4), ("m", 3), ("theta", 6), ("z", 1)]
+    match Bool.and(keysOk, Bool.and(valuesOk, entriesOk))
+        true -> 1
+        false -> 0
+"#;
+
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1, "VM canonical order changed");
+    assert_eq!(
+        run_int(source),
+        1,
+        "wasm-gc map iteration diverged from the canonical key order"
+    );
+}
+
+#[test]
+fn map_iteration_order_compares_record_keys_by_field_name() {
+    let source = r#"module Tmp
+    intent = "record map keys have backend-independent order"
+    depends []
+
+record Key
+    z: Int
+    a: String
+
+fn build() -> Map<Key, Int>
+    m1 = Map.set({}, Key(z = 1, a = "b"), 10)
+    m2 = Map.set(m1, Key(z = 9, a = "a"), 20)
+    Map.set(m2, Key(z = 2, a = "b"), 30)
+
+fn main() -> Int
+    m = build()
+    keysOk = Map.keys(m) == [Key(z = 9, a = "a"), Key(z = 1, a = "b"), Key(z = 2, a = "b")]
+    valuesOk = Map.values(m) == [20, 10, 30]
+    entriesOk = Map.entries(m) == [(Key(z = 9, a = "a"), 20), (Key(z = 1, a = "b"), 10), (Key(z = 2, a = "b"), 30)]
+    match keysOk
+        false -> 0
+        true -> match valuesOk
+            false -> 0
+            true -> match entriesOk
+                false -> 0
+                true -> 1
+"#;
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1, "VM reference order changed");
+    assert_eq!(run_int(source), 1, "wasm-gc must match VM record order");
+}
+
+#[test]
+fn map_iteration_order_compares_variants_by_constructor_then_payload() {
+    let source = r#"module Tmp
+    intent = "variant map keys have backend-independent order"
+    depends []
+
+type Key
+    Zebra(Int)
+    Alpha(Int)
+    Middle
+
+fn build() -> Map<Key, Int>
+    m1 = Map.set({}, Key.Zebra(0), 40)
+    m2 = Map.set(m1, Key.Alpha(2), 20)
+    m3 = Map.set(m2, Key.Middle, 30)
+    Map.set(m3, Key.Alpha(1), 10)
+
+fn main() -> Int
+    m = build()
+    keysOk = Map.keys(m) == [Key.Alpha(1), Key.Alpha(2), Key.Middle, Key.Zebra(0)]
+    valuesOk = Map.values(m) == [10, 20, 30, 40]
+    match Bool.and(keysOk, valuesOk)
+        true -> 1
+        false -> 0
+"#;
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1, "VM reference order changed");
+    assert_eq!(run_int(source), 1, "wasm-gc must match VM variant order");
+}
+
+#[test]
+fn map_iteration_order_compares_tuple_keys_componentwise() {
+    let source = r#"module Tmp
+    intent = "tuple map keys have backend-independent order"
+    depends []
+
+fn build() -> Map<Tuple<Int, String>, Int>
+    m1 = Map.set({}, (10, "a"), 40)
+    m2 = Map.set(m1, (2, "b"), 30)
+    m3 = Map.set(m2, (1, "z"), 10)
+    Map.set(m3, (2, "a"), 20)
+
+fn main() -> Int
+    m = build()
+    keysOk = Map.keys(m) == [(1, "z"), (2, "a"), (2, "b"), (10, "a")]
+    valuesOk = Map.values(m) == [10, 20, 30, 40]
+    match Bool.and(keysOk, valuesOk)
+        true -> 1
+        false -> 0
+"#;
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1, "VM reference order changed");
+    assert_eq!(run_int(source), 1, "wasm-gc must match VM tuple order");
+}
+
+#[test]
+fn map_iteration_order_compares_bool_option_and_result_keys_by_language_tags() {
+    let source = r#"module Tmp
+    intent = "generic carrier map keys have backend-independent order"
+    depends []
+
+fn noneInt() -> Option<Int>
+    Option.None
+
+fn okInt(value: Int) -> Result<Int, String>
+    Result.Ok(value)
+
+fn errInt(message: String) -> Result<Int, String>
+    Result.Err(message)
+
+fn boolMap() -> Map<Bool, Int>
+    Map.set(Map.set({}, true, 20), false, 10)
+
+fn optionMap() -> Map<Option<Int>, Int>
+    m1 = Map.set({}, Option.Some(2), 30)
+    m2 = Map.set(m1, noneInt(), 10)
+    Map.set(m2, Option.Some(1), 20)
+
+fn resultMap() -> Map<Result<Int, String>, Int>
+    m1 = Map.set({}, errInt("a"), 30)
+    m2 = Map.set(m1, okInt(2), 20)
+    Map.set(m2, okInt(1), 10)
+
+fn main() -> Int
+    boolsOk = Map.values(boolMap()) == [10, 20]
+    optionsOk = Map.values(optionMap()) == [10, 20, 30]
+    resultsOk = Map.values(resultMap()) == [10, 20, 30]
+    match Bool.and(boolsOk, Bool.and(optionsOk, resultsOk))
+        true -> 1
+        false -> 0
+"#;
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1, "VM reference order changed");
+    assert_eq!(
+        run_int(source),
+        1,
+        "wasm-gc must match VM Option/Result order"
+    );
+}
+
+#[test]
+fn map_iteration_order_compares_list_keys_lexicographically() {
+    let source = r#"module Tmp
+    intent = "list map keys have backend-independent order"
+    depends []
+
+fn noInts() -> List<Int>
+    []
+
+fn build() -> Map<List<Int>, Int>
+    m1 = Map.set({}, [2], 50)
+    m2 = Map.set(m1, [1, 2], 40)
+    m3 = Map.set(m2, noInts(), 10)
+    m4 = Map.set(m3, [1, 1], 30)
+    Map.set(m4, [1], 20)
+
+fn main() -> Int
+    m = build()
+    keysOk = Map.keys(m) == [noInts(), [1], [1, 1], [1, 2], [2]]
+    valuesOk = Map.values(m) == [10, 20, 30, 40, 50]
+    emptyLookupOk = Option.withDefault(Map.get(m, noInts()), -1) == 10
+    match Bool.and(keysOk, Bool.and(valuesOk, emptyLookupOk))
+        true -> 1
+        false -> 0
+"#;
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1, "VM reference order changed");
+    assert_eq!(run_int(source), 1, "wasm-gc must match VM list order");
+}
+
+#[test]
+fn map_iteration_order_compares_proof_packed_bytes_lexicographically() {
+    let entry = r#"module Tmp
+    intent = "packed Bytes map keys have backend-independent order"
+    depends [Bytes]
+
+fn build() -> Map<Bytes, Int>
+    k2 = Bytes.fromList([2])
+    k11 = Bytes.fromList([1, 1])
+    k0 = Bytes.fromList([])
+    k1 = Bytes.fromList([1])
+    m1 = Map.set({}, k2, 40)
+    m2 = Map.set(m1, k11, 30)
+    m3 = Map.set(m2, k0, 10)
+    Map.set(m3, k1, 20)
+
+fn main() -> Int
+    match Map.values(build()) == [10, 20, 30, 40]
+        true -> 1
+        false -> 0
+"#;
+    assert_eq!(
+        run_int_multi(entry, &[("Bytes", include_str!("../stdlib/bytes.av"))]),
+        1,
+        "wasm-gc must compare packed Bytes by their octets"
+    );
+}
+
 /// Sixteen thousand keys into a table that starts at sixteen buckets:
 /// eleven doublings, each one rehashing everything inserted so far. `len`
 /// counting them all is the cheapest statement that nothing was

@@ -1294,6 +1294,7 @@ pub(super) fn emit_module_with(
     // hash_helpers.rs. `Some` iff `bignum`.
     if registry.bignum {
         registry.aint_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq);
+        registry.aint_cmp_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintCmp);
         registry.aint_hash_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintHash);
         registry.aint_from_i64_fn_idx =
             builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintFromI64);
@@ -6282,10 +6283,19 @@ fn emit_user_types(
         ));
     }
 
-    // Primitive map-key boxes — `(struct (mut K_val))` per
-    // primitive K used as a Map<K, *>. Boxing primitive keys keeps
-    // the open-addressing layout's `keys[i] == null` empty marker
-    // uniform across all K kinds (raw i64/f64/i32 has no null).
+    if let Some(idx) = registry.map_order_indices_type_idx {
+        entries.push((
+            idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            }),
+        ));
+    }
+
+    // Map-key boxes — `(struct (mut K_val))` for primitive K and List K.
+    // Scalars have no null marker; List's valid `[]` value is null. The outer
+    // box makes `keys[i] == null` unambiguously mean an unused bucket.
     for k_aver in &registry.primitive_key_box_order {
         let k_val =
             super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(WasmGcError::Validation(

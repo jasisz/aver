@@ -1,13 +1,11 @@
 //! `Map<K, V>` helper bodies — per-instantiation hashtable primitives.
 //!
 //! Strategy: monomorphise per (K, V), same as Vector / Option. Each
-//! instantiation owns four wasm fns (`empty`, `set`, `get`, `len`)
-//! plus shares one pair of K-keyed helpers (`hash<K>`, `eq<K, K>`)
-//! across every `Map<K, *>` that uses the same K.
-//!
-//! Phase-3c MVP only emits these for `K = String` (the bench shape).
-//! Other K kinds surface as Unimplemented when their hash / eq would
-//! need writing — see `emit_hash_for` / `emit_eq_for`.
+//! instantiation owns its table/read/iteration helpers and shares K-keyed
+//! `hash`, `eq` and canonical three-way comparator bodies across every
+//! `Map<K, *>` that uses the same K. `keys`, `values` and `entries` collect
+//! occupied bucket indices once and heapsort that scratch permutation by K;
+//! none of them exposes hash-bucket topology to Aver.
 //!
 //! Open-addressing layout, small initial capacity, doubling on load:
 //!
@@ -60,13 +58,15 @@
 //! `finalize_wasm_artifact` (src/main/commands.rs) says so on stderr
 //! when it optimizes a module carrying these names.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{BlockType, CodeSection, Function, HeapType, Instruction, RefType, ValType};
 
 use super::WasmGcError;
 use super::types::{MapSlots, TypeRegistry};
 use super::wat_helper;
+
+mod order;
 
 /// Initial bucket count — power of two so masking with `cap-1`
 /// instead of `i32.rem_u` works, and every doubling keeps it one.
@@ -146,13 +146,14 @@ pub(super) struct MapKVHelpers {
     /// None -> ... }` shape. Caller pops `value` into the binding
     /// slot, then branches on `found` — no Option<V> ever allocates.
     pub(super) get_pair: u32,
-    /// `keys(m) -> List<K>`. Walks the keys array right-to-left,
-    /// cons-prepending each occupied entry. Order is hash-bucket
-    /// order, not insertion order.
+    /// Restore the max-heap property below one root in the scratch array of
+    /// occupied bucket indices used by canonical iteration.
+    pub(super) order_sift: u32,
+    /// Collect occupied bucket indices and heapsort them by canonical K order.
+    pub(super) order_slots: u32,
+    /// `keys(m) -> List<K>` in canonical key order.
     pub(super) keys: u32,
-    /// `values(m) -> List<V>`. Same shape as `keys` but pulls from
-    /// the values array, only when the corresponding key slot is
-    /// occupied (`keys[i] != null`).
+    /// `values(m) -> List<V>` in the same key-derived order as `keys`.
     pub(super) values: u32,
     /// `remove(m, k) -> m`. Linear-probe locate of `k`, then a
     /// backwards-shift scan over the rest of the probe run so every
@@ -161,8 +162,7 @@ pub(super) struct MapKVHelpers {
     /// and returns the same handle (Aver semantics: same shape as
     /// `set`, the returned ref is structurally equal).
     pub(super) remove: u32,
-    /// `entries(m) -> List<Tuple<K, V>>`. Right-to-left walk; per
-    /// occupied slot builds a Tuple and prepends onto a cons list.
+    /// `entries(m) -> List<Tuple<K, V>>` in canonical key order.
     pub(super) entries: u32,
     /// `from_list(l) -> Map<K, V>`. Walks `l`, struct.get's the
     /// (K, V) from each tuple, calls the per-(K, V) `set` helper. Read
@@ -185,14 +185,19 @@ pub(super) struct MapKVHelpers {
 pub(super) struct MapHelperRegistry {
     /// K (Aver type string) → its hash+eq fn indices.
     key: HashMap<String, KeyHelpers>,
-    /// Canonical `Map<K, V>` → its four method indices.
+    /// Canonical `Map<K, V>` → its monomorphized helper indices.
     kv: HashMap<String, MapKVHelpers>,
     /// Insertion order — drives type-section + code-section emit.
     key_order: Vec<String>,
+    /// Actual Map key types (not value-only pseudo-keys) with a canonical
+    /// three-way comparator used by the iteration-order helpers.
+    cmp: HashMap<String, u32>,
+    cmp_order: Vec<String>,
     kv_order: Vec<String>,
     /// Per-helper wasm type indices (parallel to fn indices). Stored
     /// here so the type section emit can look them up.
     key_type_indices: HashMap<String, (u32, u32)>, // (hash type idx, eq type idx)
+    cmp_type_indices: HashMap<String, u32>,
     kv_type_indices: HashMap<String, MapKVTypeIdx>,
 }
 
@@ -209,6 +214,8 @@ struct MapKVTypeIdx {
     len: u32,
     get_or_default: u32,
     get_pair: u32,
+    order_sift: u32,
+    order_slots: u32,
     keys: u32,
     values: u32,
     remove: u32,
@@ -216,6 +223,78 @@ struct MapKVTypeIdx {
     from_list: u32,
     eq: u32,
     hash: u32,
+}
+
+/// Build the transitive comparator cone for one real Map key. The order of
+/// this vector is only an emission order — every fn index is assigned before
+/// any body is emitted, so recursive records/sums can call themselves and
+/// mutually recursive shapes can call each other safely.
+fn collect_cmp_types(
+    aver_ty: &str,
+    registry: &TypeRegistry,
+    order: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) -> Result<(), WasmGcError> {
+    let canonical = super::types::normalize_compound(aver_ty);
+    if canonical == "Unit" || !seen.insert(canonical.clone()) {
+        return Ok(());
+    }
+    if canonical == "Float" || canonical.starts_with("Map<") || canonical.starts_with("Vector<") {
+        return Err(WasmGcError::Validation(format!(
+            "unordered type `{canonical}` reached a wasm-gc Map key comparator"
+        )));
+    }
+
+    order.push(canonical.clone());
+    if matches!(canonical.as_str(), "Int" | "Bool" | "String")
+        || registry.is_eligible_carrier(&canonical)
+        || registry.packed_sequence(&canonical).is_some()
+    {
+        return Ok(());
+    }
+    if let Some(underlying) = registry.newtype_underlying(&canonical) {
+        return collect_cmp_types(underlying, registry, order, seen);
+    }
+    if let Some(inner) = TypeRegistry::list_element_type(&canonical) {
+        return collect_cmp_types(inner, registry, order, seen);
+    }
+    if let Some(inner) = TypeRegistry::option_element_type(&canonical) {
+        return collect_cmp_types(inner, registry, order, seen);
+    }
+    if let Some((ok, err)) = TypeRegistry::result_te(&canonical) {
+        collect_cmp_types(ok, registry, order, seen)?;
+        return collect_cmp_types(err, registry, order, seen);
+    }
+    if let Some(elements) = TypeRegistry::tuple_elements(&canonical) {
+        for element in elements {
+            collect_cmp_types(element, registry, order, seen)?;
+        }
+        return Ok(());
+    }
+    if let Some(fields) = registry.record_fields.get(&canonical) {
+        for (_, field_ty) in fields {
+            collect_cmp_types(field_ty, registry, order, seen)?;
+        }
+        return Ok(());
+    }
+    let variants: Vec<_> = registry
+        .variants
+        .values()
+        .flat_map(|variants| variants.iter())
+        .filter(|variant| variant.parent == canonical)
+        .collect();
+    if !variants.is_empty() {
+        for variant in variants {
+            for field_ty in &variant.fields {
+                collect_cmp_types(field_ty, registry, order, seen)?;
+            }
+        }
+        return Ok(());
+    }
+
+    Err(WasmGcError::Validation(format!(
+        "ordered wasm-gc Map key component `{canonical}` has no comparator representation"
+    )))
 }
 
 impl MapHelperRegistry {
@@ -421,14 +500,35 @@ impl MapHelperRegistry {
             }
         }
 
+        // Canonical ordering is rooted only at actual Map key types. Recursively
+        // register every component comparator those roots call: unlike the
+        // hash/eq pseudo-keys above, this cone can contain only orderable types
+        // because the checker refuses Float / Map / Vector in key position.
+        let mut cmp_names = Vec::new();
+        let mut cmp_seen = HashSet::new();
+        for canonical in map_canonicals {
+            let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
+                WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
+            )?;
+            collect_cmp_types(k_aver, registry, &mut cmp_names, &mut cmp_seen)?;
+        }
+        for k_aver in cmp_names {
+            let type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let fn_idx = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            self.cmp.insert(k_aver.clone(), fn_idx);
+            self.cmp_type_indices.insert(k_aver.clone(), type_idx);
+            self.cmp_order.push(k_aver);
+        }
+
         // Second pass: per (K, V) helpers.
         for canonical in map_canonicals {
             if self.kv.contains_key(canonical) {
                 continue;
             }
-            // Nine fn type slots and nine fn idx slots:
-            // empty, set, get, len, get_or_default, get_pair, keys,
-            // values, remove.
+            // One type + function slot per per-(K,V) helper, in the same order
+            // the type, function and code sections emit below.
             let empty_type_idx = *next_type_idx;
             *next_type_idx += 1;
             let set_type_idx = *next_type_idx;
@@ -442,6 +542,10 @@ impl MapHelperRegistry {
             let god_type_idx = *next_type_idx;
             *next_type_idx += 1;
             let pair_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let order_sift_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let order_slots_type_idx = *next_type_idx;
             *next_type_idx += 1;
             let keys_type_idx = *next_type_idx;
             *next_type_idx += 1;
@@ -470,6 +574,10 @@ impl MapHelperRegistry {
             let god_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let pair_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let order_sift_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let order_slots_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let keys_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
@@ -529,6 +637,8 @@ impl MapHelperRegistry {
                     len: len_fn,
                     get_or_default: god_fn,
                     get_pair: pair_fn,
+                    order_sift: order_sift_fn,
+                    order_slots: order_slots_fn,
                     keys: keys_fn,
                     values: values_fn,
                     remove: remove_fn,
@@ -548,6 +658,8 @@ impl MapHelperRegistry {
                     len: len_type_idx,
                     get_or_default: god_type_idx,
                     get_pair: pair_type_idx,
+                    order_sift: order_sift_type_idx,
+                    order_slots: order_slots_type_idx,
                     keys: keys_type_idx,
                     values: values_type_idx,
                     remove: remove_type_idx,
@@ -618,6 +730,13 @@ impl MapHelperRegistry {
             // eq : (K, K) -> i32
             types.ty().function([k_val, k_val], [ValType::I32]);
         }
+        for k_aver in &self.cmp_order {
+            let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+                WasmGcError::Validation(format!("ordered Map K `{k_aver}` has no wasm rep")),
+            )?;
+            // cmp : (K, K) -> i32, returning -1 / 0 / 1.
+            types.ty().function([k_val, k_val], [ValType::I32]);
+        }
         for canonical in &self.kv_order {
             let slots = registry
                 .map_slots(canonical)
@@ -646,6 +765,15 @@ impl MapHelperRegistry {
                 nullable: true,
                 heap_type: HeapType::Concrete(opt_idx),
             });
+            let order_idx = registry
+                .map_order_indices_type_idx
+                .ok_or(WasmGcError::Validation(
+                    "Map order-index array type is missing".into(),
+                ))?;
+            let order_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(order_idx),
+            });
 
             // empty : () -> Map
             types.ty().function([], [map_ref]);
@@ -661,6 +789,16 @@ impl MapHelperRegistry {
             types.ty().function([map_ref, k_val, v_val], [v_val]);
             // get_pair : (Map, K) -> (i32 found, V value) — multi-result
             types.ty().function([map_ref, k_val], [ValType::I32, v_val]);
+            // order_sift : (keys, indices, root, len) -> Unit
+            let keys_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.keys_array),
+            });
+            types
+                .ty()
+                .function([keys_ref, order_ref, ValType::I32, ValType::I32], []);
+            // order_slots : (Map) -> array<i32>
+            types.ty().function([map_ref], [order_ref]);
             // keys : (Map) -> List<K>
             let list_k_idx = registry.list_type_idx(&format!("List<{k_aver}>")).ok_or(
                 WasmGcError::Validation(format!("Map.keys: List<{k_aver}> not registered")),
@@ -729,6 +867,9 @@ impl MapHelperRegistry {
             funcs.function(h);
             funcs.function(e);
         }
+        for k in &self.cmp_order {
+            funcs.function(self.cmp_type_indices[k]);
+        }
         for canonical in &self.kv_order {
             let t = self.kv_type_indices[canonical];
             funcs.function(t.empty);
@@ -738,6 +879,8 @@ impl MapHelperRegistry {
             funcs.function(t.len);
             funcs.function(t.get_or_default);
             funcs.function(t.get_pair);
+            funcs.function(t.order_sift);
+            funcs.function(t.order_slots);
             funcs.function(t.keys);
             funcs.function(t.values);
             funcs.function(t.remove);
@@ -815,6 +958,9 @@ impl MapHelperRegistry {
                 &all_key_helpers,
             )?);
         }
+        for k_aver in &self.cmp_order {
+            codes.function(&order::emit_cmp_for(k_aver, registry, &self.cmp)?);
+        }
         for canonical in &self.kv_order {
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
                 WasmGcError::Validation(format!("parse_map_kv `{canonical}`")),
@@ -824,6 +970,13 @@ impl MapHelperRegistry {
                 .ok_or(WasmGcError::Validation(format!(
                     "key helpers missing for K=`{k_aver}`"
                 )))?;
+            let cmp_key = super::types::normalize_compound(k_aver);
+            let cmp_fn = *self.cmp.get(&cmp_key).ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "canonical comparator missing for Map key `{k_aver}`"
+                ))
+            })?;
+            let helpers = self.kv[canonical];
             codes.function(&emit_map_empty(canonical, registry)?);
             codes.function(&emit_map_set(canonical, registry, key_h)?);
             codes.function(&emit_map_set_in_place(canonical, registry, key_h)?);
@@ -831,11 +984,16 @@ impl MapHelperRegistry {
             codes.function(&emit_map_len(canonical, registry)?);
             codes.function(&emit_map_get_or_default(canonical, registry, key_h)?);
             codes.function(&emit_map_get_pair(canonical, registry, key_h)?);
-            codes.function(&emit_map_keys(canonical, registry)?);
-            codes.function(&emit_map_values(canonical, registry)?);
+            codes.function(&emit_map_order_sift(canonical, registry, cmp_fn)?);
+            codes.function(&emit_map_order_slots(
+                canonical,
+                registry,
+                helpers.order_sift,
+            )?);
+            codes.function(&emit_map_keys(canonical, registry, helpers.order_slots)?);
+            codes.function(&emit_map_values(canonical, registry, helpers.order_slots)?);
             codes.function(&emit_map_remove(canonical, registry, key_h)?);
-            let helpers = self.kv[canonical];
-            codes.function(&emit_map_entries(canonical, registry)?);
+            codes.function(&emit_map_entries(canonical, registry, helpers.order_slots)?);
             codes.function(&emit_map_from_list(
                 canonical,
                 registry,
@@ -1104,10 +1262,9 @@ fn emit_eq_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, 
     Ok(f)
 }
 
-/// Wasm value type used as the `keys` array element. Primitive K
-/// stores boxed refs (`(ref null $primitive_key_box_K)`) so the
-/// open-addressing `keys[i] == null` empty marker stays uniform;
-/// ref K (String / record) stores its own ref directly.
+/// Wasm value type used as the `keys` array element. Primitive K and List K
+/// store boxed refs so the open-addressing `keys[i] == null` marker cannot
+/// collide with either an unboxable scalar or List's valid null `[]` value.
 fn key_storage_val_type(k_aver: &str, registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         Ok(ValType::Ref(RefType {
@@ -1122,8 +1279,8 @@ fn key_storage_val_type(k_aver: &str, registry: &TypeRegistry) -> Result<ValType
 }
 
 /// Append the instructions that turn a stored-key value (top of
-/// stack) into the raw K_val that `hash` / `eq` expect. For primitive
-/// K: `struct.get $box 0` to unbox; for ref K: no-op.
+/// stack) into the raw K_val that `hash` / `eq` expect. For a boxed K:
+/// `struct.get $box 0`; for every directly stored ref K: no-op.
 fn emit_unbox_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         f.instruction(&Instruction::StructGet {
@@ -1134,8 +1291,8 @@ fn emit_unbox_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
 }
 
 /// Append the instructions that turn a raw K_val (top of stack) into
-/// a stored-key value ready for `array.set`. For primitive K:
-/// `struct.new $box`; for ref K: no-op.
+/// a stored-key value ready for `array.set`. For a boxed K:
+/// `struct.new $box`; for every directly stored ref K: no-op.
 fn emit_box_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         f.instruction(&Instruction::StructNew(box_idx));
@@ -2396,20 +2553,267 @@ fn emit_eq_record(
     Ok(f)
 }
 
-/// `keys(m) -> List<K>`. Walks `m.keys` right-to-left, prepending
-/// each non-null key onto a cons-list accumulator. Returns hash-bucket
-/// order.
-///
-/// That is a DIVERGENCE, not the documented behaviour: `Map.keys` is
-/// specified to iterate sorted by key, which is what the VM, the compiled
-/// Rust backend and the exported proof model all do. On a ten-key String
-/// map the VM reads `alpha,beta,delta,...` here and wasm-gc reads
-/// `beta,iota,epsilon,...`. It is internally consistent — `values` and
-/// `entries` walk the same buckets, so `keys[i]` still pairs with
-/// `values[i]` — but it disagrees with every other backend, and
-/// `proof_trust_header` carries a carve-out saying so. Fixing it is a
-/// wasm-gc change of its own.
-fn emit_map_keys(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+/// Restore the max-heap property below `root` in an occupied-slot index
+/// array. Comparisons load keys through the indices; neither keys nor values
+/// are copied during sorting.
+fn emit_map_order_sift(
+    canonical: &str,
+    registry: &TypeRegistry,
+    cmp_fn: u32,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(WasmGcError::Validation(
+        format!("Map order: cannot parse `{canonical}`"),
+    ))?;
+    let order_idx = registry
+        .map_order_indices_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Map order-index array type is missing".into(),
+        ))?;
+    // params: 0=keys, 1=indices, 2=root, 3=len.
+    // locals: 4=child, 5=largest, 6=tmp.
+    let mut f = Function::new([(3, ValType::I32)]);
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // child = root * 2 + 1; stop at a leaf.
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalTee(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalSet(5));
+
+    // if key[indices[largest]] < key[indices[child]], largest = child.
+    for pos_local in [5u32, 4u32] {
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::LocalGet(pos_local));
+        f.instruction(&Instruction::ArrayGet(order_idx));
+        f.instruction(&Instruction::ArrayGet(slots.keys_array));
+        emit_unbox_key(&mut f, k_aver, registry);
+    }
+    f.instruction(&Instruction::Call(cmp_fn));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::End);
+
+    // If the right child exists and is larger, select it.
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalTee(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    for pos_local in [5u32, 4u32] {
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::LocalGet(pos_local));
+        f.instruction(&Instruction::ArrayGet(order_idx));
+        f.instruction(&Instruction::ArrayGet(slots.keys_array));
+        emit_unbox_key(&mut f, k_aver, registry);
+    }
+    f.instruction(&Instruction::Call(cmp_fn));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // Heap already valid when root is the largest.
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::BrIf(1));
+
+    // swap indices[root], indices[largest]
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGet(order_idx));
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(order_idx));
+    f.instruction(&Instruction::ArraySet(order_idx));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::ArraySet(order_idx));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Collect the occupied bucket indices and heapsort them by canonical key
+/// order. The returned array is dense and has exactly `map.size` elements.
+fn emit_map_order_slots(
+    canonical: &str,
+    registry: &TypeRegistry,
+    sift_fn: u32,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let order_idx = registry
+        .map_order_indices_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Map order-index array type is missing".into(),
+        ))?;
+    let keys_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.keys_array),
+    });
+    let order_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(order_idx),
+    });
+    // params: 0=map. locals: 1=keys, 2=indices, 3=count, 4=cap,
+    // 5=slot, 6=used, 7=start, 8=end, 9=tmp.
+    let mut f = Function::new([(1, keys_ref), (1, order_ref), (7, ValType::I32)]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalTee(3));
+    f.instruction(&Instruction::ArrayNewDefault(order_idx));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(6));
+
+    // Compact occupied bucket indices.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArraySet(order_idx));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // Heapify: start at the last parent and sift toward the root.
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32DivU);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::Call(sift_fn));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // Pop the maximum to the end repeatedly; the dense array finishes in
+    // ascending order.
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LeS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::ArrayGet(order_idx));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::ArrayGet(order_idx));
+    f.instruction(&Instruction::ArraySet(order_idx));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::ArraySet(order_idx));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(sift_fn));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `keys(m) -> List<K>` in canonical key order.
+fn emit_map_keys(
+    canonical: &str,
+    registry: &TypeRegistry,
+    order_slots_fn: u32,
+) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, _) = super::types::parse_map_kv(canonical).unwrap();
     let list_canonical = format!("List<{k_aver}>");
@@ -2418,12 +2822,16 @@ fn emit_map_keys(canonical: &str, registry: &TypeRegistry) -> Result<Function, W
         .ok_or(WasmGcError::Validation(format!(
             "Map.keys: `{list_canonical}` not registered"
         )))?;
-    emit_map_walk_keys_to_list(slots.map, slots.keys_array, list_idx, k_aver, registry)
+    emit_map_walk_keys_to_list(slots, list_idx, k_aver, registry, order_slots_fn)
 }
 
 /// `values(m) -> List<V>`. Same shape as `keys` but pulls from
 /// `m.values` whenever the corresponding `m.keys[i]` is non-null.
-fn emit_map_values(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+fn emit_map_values(
+    canonical: &str,
+    registry: &TypeRegistry,
+    order_slots_fn: u32,
+) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (_, v_aver) = super::types::parse_map_kv(canonical).unwrap();
     let list_canonical = format!("List<{v_aver}>");
@@ -2432,79 +2840,92 @@ fn emit_map_values(canonical: &str, registry: &TypeRegistry) -> Result<Function,
         .ok_or(WasmGcError::Validation(format!(
             "Map.values: `{list_canonical}` not registered"
         )))?;
-    emit_map_walk_values_to_list(slots, registry, list_idx)
+    emit_map_walk_values_to_list(slots, registry, list_idx, order_slots_fn)
 }
 
 /// Real impl for `Map.keys` walking the keys array. Per primitive
 /// K the stored values are boxed refs; unbox before consing onto
 /// the result list. For ref K (String / record), no unboxing.
 fn emit_map_walk_keys_to_list(
-    map_idx: u32,
-    keys_array_idx: u32,
+    slots: super::types::MapSlots,
     list_idx: u32,
     k_aver: &str,
     registry: &TypeRegistry,
+    order_slots_fn: u32,
 ) -> Result<Function, WasmGcError> {
+    let order_idx = registry
+        .map_order_indices_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Map order-index array type is missing".into(),
+        ))?;
     let keys_ref = ValType::Ref(RefType {
         nullable: true,
-        heap_type: HeapType::Concrete(keys_array_idx),
+        heap_type: HeapType::Concrete(slots.keys_array),
+    });
+    let order_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(order_idx),
     });
     let list_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
-    // params: 0=map. locals: 1=keys, 2=i, 3=acc.
-    let mut f = Function::new([(1, keys_ref), (1, ValType::I32), (1, list_ref)]);
+    // params: 0=map. locals: 1=keys, 2=ordered slots, 3=i, 4=acc.
+    let mut f = Function::new([
+        (1, keys_ref),
+        (1, order_ref),
+        (1, ValType::I32),
+        (1, list_ref),
+    ]);
     // keys = map.keys
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
-        struct_type_index: map_idx,
+        struct_type_index: slots.map,
         field_index: 2,
     });
     f.instruction(&Instruction::LocalSet(1));
-    // i = map.cap - 1
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(order_slots_fn));
+    f.instruction(&Instruction::LocalSet(2));
+    // i = map.size - 1; walk backwards while prepending so the result list is
+    // ascending.
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
-        struct_type_index: map_idx,
-        field_index: 1,
+        struct_type_index: slots.map,
+        field_index: 0,
     });
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalSet(3));
     // acc = null
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
-    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
     // if i < 0 break
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
-    // if keys[i] != null: acc = cons(unbox(keys[i]), acc)
+    // acc = cons(unbox(keys[ordered[i]]), acc)
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArrayGet(keys_array_idx));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArrayGet(keys_array_idx));
-    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(order_idx));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    emit_unbox_key(&mut f, k_aver, registry);
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::StructNew(list_idx));
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalSet(4));
     // i--
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::End);
     Ok(f)
 }
@@ -2513,44 +2934,47 @@ fn emit_map_walk_keys_to_list(
 /// array null-check for occupancy).
 fn emit_map_walk_values_to_list(
     slots: super::types::MapSlots,
-    _registry: &TypeRegistry,
+    registry: &TypeRegistry,
     list_idx: u32,
+    order_slots_fn: u32,
 ) -> Result<Function, WasmGcError> {
-    let keys_ref = ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(slots.keys_array),
-    });
+    let order_idx = registry
+        .map_order_indices_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Map order-index array type is missing".into(),
+        ))?;
     let values_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(slots.values_array),
+    });
+    let order_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(order_idx),
     });
     let list_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
-    // params: 0=map. locals: 1=keys, 2=values, 3=i, 4=acc.
+    // params: 0=map. locals: 1=values, 2=ordered slots, 3=i, 4=acc.
     let mut f = Function::new([
-        (1, keys_ref),
         (1, values_ref),
+        (1, order_ref),
         (1, ValType::I32),
         (1, list_ref),
     ]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
-        field_index: 2,
+        field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(1));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 3,
-    });
+    f.instruction(&Instruction::Call(order_slots_fn));
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
-        field_index: 1,
+        field_index: 0,
     });
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
@@ -2563,20 +2987,15 @@ fn emit_map_walk_values_to_list(
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
-    // if keys[i] != null: acc = cons(values[i], acc)
+    // acc = cons(values[ordered[i]], acc)
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayGet(slots.keys_array));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(order_idx));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(4));
-    f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
@@ -3193,11 +3612,12 @@ fn emit_map_remove(
     Ok(f)
 }
 
-/// `entries(m) -> List<Tuple<K, V>>`. Walk keys/values arrays
-/// right-to-left; for each occupied slot (`keys[i] != null`) build
-/// a `struct.new $tuple(k, v)` and prepend onto a cons-list
-/// accumulator.
-fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+/// `entries(m) -> List<Tuple<K, V>>` in canonical key order.
+fn emit_map_entries(
+    canonical: &str,
+    registry: &TypeRegistry,
+    order_slots_fn: u32,
+) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
     let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
@@ -3212,6 +3632,11 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
         .ok_or(WasmGcError::Validation(format!(
             "Map.entries: `{lt_canonical}` not registered"
         )))?;
+    let order_idx = registry
+        .map_order_indices_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Map order-index array type is missing".into(),
+        ))?;
     let keys_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(slots.keys_array),
@@ -3220,14 +3645,20 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
         nullable: true,
         heap_type: HeapType::Concrete(slots.values_array),
     });
+    let order_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(order_idx),
+    });
     let lt_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(lt_idx),
     });
-    // params: 0=map. locals: 1=keys, 2=values, 3=i, 4=acc.
+    // params: 0=map. locals: 1=keys, 2=values, 3=ordered slots, 4=i,
+    // 5=acc.
     let mut f = Function::new([
         (1, keys_ref),
         (1, values_ref),
+        (1, order_ref),
         (1, ValType::I32),
         (1, lt_ref),
     ]);
@@ -3244,49 +3675,48 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
     });
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(order_slots_fn));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
-        field_index: 1,
+        field_index: 0,
     });
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(lt_idx)));
     f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(lt_idx)));
+    f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
-    // if keys[i] != null: tup = struct.new $tuple(unbox(keys[i]),
-    // values[i]); acc = cons(tup, acc)
+    // tup = (keys[ordered[i]], values[ordered[i]]); acc = cons(tup, acc)
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayGet(slots.keys_array));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(order_idx));
     f.instruction(&Instruction::ArrayGet(slots.keys_array));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(order_idx));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::StructNew(tup_idx));
-    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::StructNew(lt_idx));
-    f.instruction(&Instruction::LocalSet(4));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::End);
     Ok(f)
 }
