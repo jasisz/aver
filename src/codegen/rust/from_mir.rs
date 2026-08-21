@@ -1644,7 +1644,14 @@ fn emit_mir_capability_call(
     args: &[Spanned<MirExpr>],
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    let return_type = super::types::type_to_rust(&operation.return_type);
+    let return_type = match ctx.codegen {
+        Some(codegen) => super::types::type_to_rust_scoped(
+            &operation.return_type,
+            codegen,
+            ctx.current_module_scope,
+        ),
+        None => super::types::type_to_rust(&operation.return_type),
+    };
     let minted = operation
         .minted_resource
         .as_deref()
@@ -3414,7 +3421,7 @@ pub(super) fn emit_mir_tco_fn(
     // the body emit applied (`apply_bare_i64`). Every caller converts at the
     // boundary, so the ABI stays self-consistent.
     let bare_facts = ctx.bare_i64.for_fn(mir_fn.fn_id);
-    let params = emit_tco_params_mir(&fd.params, &rc_indices, bare_facts);
+    let params = emit_tco_params_mir(&fd.params, &rc_indices, bare_facts, ctx, scope);
     let ret_type = bare_return_type(ret_type, bare_facts);
     let mut lines = Vec::new();
     lines.push(format!(
@@ -3446,6 +3453,8 @@ fn emit_tco_params_mir(
     params: &[(String, String)],
     rc_indices: &std::collections::HashSet<usize>,
     bare_facts: Option<&crate::ir::mir::FnBareFacts>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
     params
         .iter()
@@ -3455,7 +3464,7 @@ fn emit_tco_params_mir(
             let rust_type = if is_bare {
                 "i64".to_string()
             } else {
-                super::types::type_annotation_to_rust(type_ann)
+                super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope)
             };
             let rust_name = aver_name_to_rust(name);
             if rc_indices.contains(&i) {
@@ -3758,7 +3767,7 @@ pub(super) fn emit_mir_mutual_tco_block(
     let ret_type = if group_fns[0].return_type.is_empty() {
         "()".to_string()
     } else {
-        super::types::type_annotation_to_rust(&group_fns[0].return_type)
+        super::types::type_annotation_to_rust_scoped(&group_fns[0].return_type, ctx, scope)
     };
 
     let member_fn_ids: HashSet<crate::ir::FnId> = mir_fns.iter().map(|m| m.fn_id).collect();
@@ -3803,7 +3812,7 @@ pub(super) fn emit_mir_mutual_tco_block(
             .params
             .iter()
             .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(_, ty)| super::types::type_annotation_to_rust(ty))
+            .map(|(_, ty)| super::types::type_annotation_to_rust_scoped(ty, ctx, scope))
             .collect();
         if param_types.is_empty() {
             enum_lines.push(format!("    {},", variant));
@@ -3815,7 +3824,7 @@ pub(super) fn emit_mir_mutual_tco_block(
     sections.push(enum_lines.join("\n"));
 
     // 2. Trampoline fn — rc params are extra `&T` args.
-    let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names);
+    let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names, ctx, scope);
     let mut tramp_lines = Vec::new();
     tramp_lines.push(format!(
         "fn {}(mut __state: {}{}) -> {} {{",
@@ -3850,7 +3859,7 @@ pub(super) fn emit_mir_mutual_tco_block(
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
-        let params = super::toplevel::emit_fn_params_pub(&fd.params, false);
+        let params = super::toplevel::emit_fn_params_pub(&fd.params, false, ctx, scope);
         let variant_arg_names: Vec<String> = fd
             .params
             .iter()
@@ -3909,7 +3918,12 @@ pub(super) fn emit_mir_mutual_tco_block(
 
 /// Build the rc-param extra `&T` argument list for the mutual
 /// trampoline signature (`, x: &T, y: &U`), or empty when no rc params.
-fn mutual_rc_param_sig(fd: &crate::ast::FnDef, rc_names: &HashSet<String>) -> String {
+fn mutual_rc_param_sig(
+    fd: &crate::ast::FnDef,
+    rc_names: &HashSet<String>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     if rc_names.is_empty() {
         return String::new();
     }
@@ -3921,7 +3935,7 @@ fn mutual_rc_param_sig(fd: &crate::ast::FnDef, rc_names: &HashSet<String>) -> St
             format!(
                 "{}: &{}",
                 aver_name_to_rust(name),
-                super::types::type_annotation_to_rust(ty)
+                super::types::type_annotation_to_rust_scoped(ty, ctx, scope)
             )
         })
         .collect();

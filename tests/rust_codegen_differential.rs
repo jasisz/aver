@@ -4327,6 +4327,96 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A qualified project type inside `Fn` is a module-owned Rust path, not a
+/// compiler-owned dotted record alias. Before #1033 the context-free type
+/// renderer flattened `Worker.Shape` to the nonexistent `Worker_Shape`, so
+/// `aver compile` succeeded but the generated Cargo project failed to build.
+#[test]
+fn qualified_user_type_inside_fn_signature_builds_and_matches_vm() {
+    let ws = temp_dir("qualified_fn_type");
+    fs::write(
+        ws.join("Worker.av"),
+        r#"module Worker
+    exposes [Shape, area]
+    intent = "Expose a named type and a function over it."
+    effects []
+
+type Shape
+    Circle(Int)
+
+fn area(s: Shape) -> Int
+    ? "Read a dependency-owned shape."
+    match s
+        Shape.Circle(n) -> n * 2
+"#,
+    )
+    .expect("write Worker module");
+
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Worker]
+    intent = "Pass a dependency function through a qualified Fn signature."
+    effects [Console]
+
+fn apply(f: Fn(Worker.Shape) -> Int) -> Int
+    ? "Call a function whose argument type belongs to Worker."
+    f(Worker.Shape.Circle(5))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(apply(Worker.area)))
+"#,
+    )
+    .expect("write entry module");
+
+    let vm_stdout = run_vm(&entry, Some(&ws)).expect("VM run");
+    assert_eq!(vm_stdout, "10", "VM contract changed");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&entry, &project, "qualified_fn_type", Some(&ws), &[])?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if !emitted.contains("f: fn(crate::aver_generated::worker::Shape) -> aver_rt::AverInt")
+            || emitted.contains("Worker_Shape")
+        {
+            return Err(format!(
+                "qualified user type did not retain its module-owned Rust path:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, "qualified_fn_type")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "qualified-Fn generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "qualified-Fn stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
 //
 // `Int.fromString` / `Float.fromString` return a `Result<_, String>`.
