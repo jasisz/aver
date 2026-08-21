@@ -1757,6 +1757,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::CharsFusion,
+                PipelineStage::StringIndex,
                 PipelineStage::ListBuild,
                 PipelineStage::Escape,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
@@ -1797,6 +1798,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::CharsFusion,
+                PipelineStage::StringIndex,
                 PipelineStage::ListBuild,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
