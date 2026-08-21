@@ -415,34 +415,46 @@ pub(super) fn collect_resolved_fn_refs(
     expr: &Spanned<ResolvedExpr>,
     out: &mut HashSet<crate::ir::FnId>,
 ) {
+    for_each_resolved_callee(expr, &mut |callee| {
+        if let ResolvedCallee::Fn(fn_id) = callee {
+            out.insert(*fn_id);
+        }
+    });
+}
+
+/// Visit every callee `expr` can reach, tail calls included (reported as
+/// `ResolvedCallee::Fn`).
+pub(super) fn for_each_resolved_callee(
+    expr: &Spanned<ResolvedExpr>,
+    visit: &mut impl FnMut(&ResolvedCallee),
+) {
     match &expr.node {
         ResolvedExpr::Call(callee, args) => {
-            if let ResolvedCallee::Fn(fn_id) = callee {
-                out.insert(*fn_id);
-            } else if let ResolvedCallee::Unresolved { callee } = callee {
-                collect_resolved_fn_refs(callee, out);
+            visit(callee);
+            if let ResolvedCallee::Unresolved { callee } = callee {
+                for_each_resolved_callee(callee, visit);
             }
             for arg in args {
-                collect_resolved_fn_refs(arg, out);
+                for_each_resolved_callee(arg, visit);
             }
         }
         ResolvedExpr::TailCall { target, args } => {
-            out.insert(*target);
+            visit(&ResolvedCallee::Fn(*target));
             for arg in args {
-                collect_resolved_fn_refs(arg, out);
+                for_each_resolved_callee(arg, visit);
             }
         }
         ResolvedExpr::Attr(inner, _)
         | ResolvedExpr::Neg(inner)
-        | ResolvedExpr::ErrorProp(inner) => collect_resolved_fn_refs(inner, out),
+        | ResolvedExpr::ErrorProp(inner) => for_each_resolved_callee(inner, visit),
         ResolvedExpr::BinOp(_, left, right) => {
-            collect_resolved_fn_refs(left, out);
-            collect_resolved_fn_refs(right, out);
+            for_each_resolved_callee(left, visit);
+            for_each_resolved_callee(right, visit);
         }
         ResolvedExpr::Match { subject, arms } => {
-            collect_resolved_fn_refs(subject, out);
+            for_each_resolved_callee(subject, visit);
             for arm in arms {
-                collect_resolved_fn_refs(&arm.body, out);
+                for_each_resolved_callee(&arm.body, visit);
             }
         }
         ResolvedExpr::Ctor(_, args)
@@ -450,30 +462,30 @@ pub(super) fn collect_resolved_fn_refs(
         | ResolvedExpr::Tuple(args)
         | ResolvedExpr::IndependentProduct(args, _) => {
             for arg in args {
-                collect_resolved_fn_refs(arg, out);
+                for_each_resolved_callee(arg, visit);
             }
         }
         ResolvedExpr::MapLiteral(entries) => {
             for (key, value) in entries {
-                collect_resolved_fn_refs(key, out);
-                collect_resolved_fn_refs(value, out);
+                for_each_resolved_callee(key, visit);
+                for_each_resolved_callee(value, visit);
             }
         }
         ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, value) in fields {
-                collect_resolved_fn_refs(value, out);
+                for_each_resolved_callee(value, visit);
             }
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
-            collect_resolved_fn_refs(base, out);
+            for_each_resolved_callee(base, visit);
             for (_, value) in updates {
-                collect_resolved_fn_refs(value, out);
+                for_each_resolved_callee(value, visit);
             }
         }
         ResolvedExpr::InterpolatedStr(parts) => {
             for part in parts {
                 if let crate::ir::hir::ResolvedStrPart::Parsed(inner) = part {
-                    collect_resolved_fn_refs(inner, out);
+                    for_each_resolved_callee(inner, visit);
                 }
             }
         }

@@ -4,6 +4,7 @@
 /// verify blocks (as `example` proofs), and decision blocks (as comments).
 /// Effectful functions and `main` are skipped.
 mod builtins;
+mod capability_opaque;
 mod crypto;
 mod decl_order;
 mod expr;

@@ -1142,8 +1142,11 @@ verify same law deterministicProvider
         "--output",
         output.to_str().expect("utf-8 output"),
     ]);
+    // The law samples the provider: its cases would be decided by whatever
+    // value Lean compiled the opaque operation to, so the exporter declines
+    // the claim as a whole and `--check` charges that refusal.
     if tool_available("lake") {
-        proof_command.arg("--check");
+        proof_command.args(["--check", "--declined-budget", "1"]);
     }
     let proof = proof_command
         .arg("main.av")
@@ -1157,9 +1160,15 @@ verify same law deterministicProvider
     assert_eq!(
         proof.status.code().unwrap_or(-1),
         0,
-        "Lean must emit and, when lake is available, check the opaque deterministic provider model:\n{proof_report}"
+        "Lean must emit and, when lake is available, build the opaque provider model:\n{proof_report}"
     );
     let lean = collect_files_with_extension(&output, "lean");
+    assert!(
+        lean.contains(
+            "-- verify same: the Lean call cone reaches provider-owned capability operation(s) Digest.digest, which are opaque and noncomputable"
+        ) && !lean.contains("theorem same_law_deterministicProvider"),
+        "a law over the provider is refused, never evaluated:\n{lean}"
+    );
     // The resource type carries an identity and nothing else — the handle is
     // compared by the host at run time, so denying the model that equality
     // bought nothing and cost every claim in a module that carries one.
@@ -1175,8 +1184,12 @@ verify same law deterministicProvider
             ),
         "a handle must have no default — the runtime never produces one:\n{lean}"
     );
-    // The OPERATIONS stay opaque, which is the assumption the trust header states.
-    assert!(lean.contains("opaque digest : String → String"), "{lean}");
+    // The OPERATIONS stay opaque and uncompilable, which is the assumption the
+    // trust header states.
+    assert!(
+        lean.contains("noncomputable opaque digest : String → String"),
+        "{lean}"
+    );
     assert!(
         lean.contains("Pure operations are represented as opaque"),
         "the trust header must state the exact pure-provider assumption:\n{lean}"

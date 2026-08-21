@@ -310,16 +310,37 @@ struct SampledFnClassification {
     unbounded_fuel: HashSet<crate::ir::FnId>,
 }
 
+#[derive(Clone, Copy)]
+struct RecursiveFnNames<'a> {
+    proof: &'a HashSet<String>,
+    standard: &'a HashSet<String>,
+}
+
 fn emit_pure_component(
     comp: &[&crate::ast::FnDef],
     scope: Option<&str>,
     ctx: &CodegenContext,
     emit_mode: LeanEmitMode,
-    recursive_names: &HashSet<String>,
-    recursive_fns: &HashSet<String>,
+    recursive: RecursiveFnNames<'_>,
     sampled_fns: &mut SampledFnClassification,
+    capability_opacity: &super::capability_opaque::CapabilityOpacity,
 ) -> Vec<String> {
-    let out = emit_pure_component_code(comp, scope, ctx, emit_mode, recursive_names, recursive_fns);
+    let unsupported = capability_opacity.unsupported_component_dependencies(comp, ctx);
+    if !unsupported.is_empty() {
+        return vec![
+            format!(
+                "-- function component was not exported: capability operation(s) {} have no sound Nonempty result witness",
+                unsupported.join(", ")
+            ),
+            String::new(),
+        ];
+    }
+    let mut out = emit_pure_component_code(comp, scope, ctx, emit_mode, recursive);
+    if capability_opacity.component_is_noncomputable(comp, ctx)
+        && let Some(code) = out.first_mut()
+    {
+        *code = format!("noncomputable section\n\n{code}\n\nend");
+    }
     if component_is_kernel_opaque(comp, &out) {
         sampled_fns.opaque.extend(
             comp.iter()
@@ -340,8 +361,7 @@ fn emit_pure_component_code(
     scope: Option<&str>,
     ctx: &CodegenContext,
     emit_mode: LeanEmitMode,
-    recursive_names: &HashSet<String>,
-    recursive_fns: &HashSet<String>,
+    recursive: RecursiveFnNames<'_>,
 ) -> Vec<String> {
     ctx.with_module_scope(scope, || {
         let mut out = Vec::new();
@@ -364,7 +384,7 @@ fn emit_pure_component_code(
         } else if let Some(fd) = comp.first() {
             let emitted = match emit_mode {
                 LeanEmitMode::Proof => {
-                    let is_recursive = recursive_names.contains(&fd.name);
+                    let is_recursive = recursive.proof.contains(&fd.name);
                     // Recursive fns without a proof contract remain partial,
                     // except recognized wrapper-recursion inner loops whose
                     // law strategy needs transparent equations.
@@ -372,12 +392,12 @@ fn emit_pure_component_code(
                         && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
                         && !is_wrapper_over_recursion_inner(ctx, fd)
                     {
-                        toplevel::emit_fn_def(fd, recursive_names, ctx)
+                        toplevel::emit_fn_def(fd, recursive.proof, ctx)
                     } else {
                         toplevel::emit_fn_def_proof(fd, ctx)
                     }
                 }
-                LeanEmitMode::Standard => toplevel::emit_fn_def(fd, recursive_fns, ctx),
+                LeanEmitMode::Standard => toplevel::emit_fn_def(fd, recursive.standard, ctx),
             };
             if let Some(code) = emitted {
                 out.push(code);
@@ -399,6 +419,14 @@ fn emit_type_sections(
 ) -> Vec<String> {
     ctx.with_module_scope(scope, || {
         let mut sections = vec![toplevel::emit_type_def_in_scope(td, ctx, scope)];
+        if scope == Some("Bytes")
+            && crate::codegen::common::type_def_name(td) == "Bytes"
+            && ctx.capabilities.uses_standard_bytes()
+        {
+            sections.push(
+                "instance : Nonempty Bytes := ⟨⟨[], by simp [Bytes.allInRange]⟩⟩".to_string(),
+            );
+        }
         if cert_model {
             let inst = toplevel::emit_inhabited_instance(td, ctx, scope);
             if !inst.is_empty() {
@@ -478,6 +506,7 @@ fn emit_capability_resource_types(ctx: &CodegenContext, scope: Option<&str>) -> 
 fn emit_pure_capability_operation(
     operation: &crate::capability::CapabilityOperation,
     scope: Option<&str>,
+    ctx: &CodegenContext,
 ) -> String {
     let name = if scope.is_some() {
         super::syntax::aver_name_to_lean(&operation.name)
@@ -489,7 +518,12 @@ fn emit_pure_capability_operation(
         Box::new(operation.return_type.clone()),
         vec![],
     );
-    format!("opaque {name} : {}", super::types::type_to_lean(&ty))
+    super::capability_opaque::emit_operation(
+        operation,
+        &name,
+        &super::types::type_to_lean(&ty),
+        ctx,
+    )
 }
 
 /// Multi-file Lean output for multi-module Aver projects:
@@ -523,6 +557,10 @@ pub(super) fn transpile_unified(
         .collect();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
+    let recursive = RecursiveFnNames {
+        proof: &recursive_names,
+        standard: &recursive_fns,
+    };
     // Lift every canonical Peano ADT's type annotations to builtin `Nat` for
     // this emit, matching the value/pattern lift — so a Peano type named other
     // than `Nat` is fully consistent (its binders' types agree with the `Nat`
@@ -536,6 +574,7 @@ pub(super) fn transpile_unified(
     let _resource_guard = crate::codegen::lean::types::scope_capability_resources(
         ctx.capabilities.resource_types().cloned().collect(),
     );
+    let capability_opacity = super::capability_opaque::CapabilityOpacity::analyze(ctx);
     // Pure-fn param types + every type def's field types feed the
     // entries-measure emission scan: an entries-list spelling
     // (`Map<K, T>` / `List<Tuple<K, T>>`) may appear only in fn
@@ -635,7 +674,7 @@ pub(super) fn transpile_unified(
                         })
                         .nth(index)
                         .expect("capability operation plan index");
-                    body_sections.push(emit_pure_capability_operation(operation, scope));
+                    body_sections.push(emit_pure_capability_operation(operation, scope, ctx));
                     body_sections.push(String::new());
                 }
                 super::decl_order::ScopedDecl::FnComponent(index) => {
@@ -644,9 +683,9 @@ pub(super) fn transpile_unified(
                         scope,
                         ctx,
                         emit_mode,
-                        &recursive_names,
-                        &recursive_fns,
+                        recursive,
                         &mut sampled_fns,
+                        &capability_opacity,
                     ));
                 }
             }
@@ -724,6 +763,7 @@ pub(super) fn transpile_unified(
                             sampled_fns.opaque.clone(),
                             sampled_fns.unbounded_fuel.clone(),
                             recursive_types.clone(),
+                            capability_opacity.clone(),
                         ),
                     );
                     dep_verify_counters.insert(key, next_idx);
@@ -802,7 +842,7 @@ pub(super) fn transpile_unified(
                     })
                     .nth(index)
                     .expect("entry capability operation plan index");
-                entry_body_sections.push(emit_pure_capability_operation(operation, None));
+                entry_body_sections.push(emit_pure_capability_operation(operation, None, ctx));
                 entry_body_sections.push(String::new());
             }
             super::decl_order::ScopedDecl::FnComponent(index) => {
@@ -811,9 +851,9 @@ pub(super) fn transpile_unified(
                     None,
                     ctx,
                     emit_mode,
-                    &recursive_names,
-                    &recursive_fns,
+                    recursive,
                     &mut sampled_fns,
+                    &capability_opacity,
                 ));
             }
         }
@@ -829,6 +869,7 @@ pub(super) fn transpile_unified(
             sampled_fns.opaque,
             sampled_fns.unbounded_fuel,
             recursive_types.clone(),
+            capability_opacity,
         ),
         LeanEmitMode::Standard => super::kernel_decide::CaseDecidability::disabled(),
     };

@@ -130,6 +130,10 @@ pub(super) struct CaseDecidability {
     unbounded_fuel_fns: HashSet<FnId>,
     /// Recursive user type names — they carry the `opaque` `DecidableEq` shim.
     opaque_eq_types: HashSet<String>,
+    /// Provider-owned pure operations reached by each user function.  These
+    /// declarations are logically opaque and deliberately noncomputable, so
+    /// ground cases in their cone are refused before evaluation.
+    capability_opacity: super::capability_opaque::CapabilityOpacity,
     /// `false` turns every case back to `native_decide`.
     enabled: bool,
 }
@@ -139,11 +143,13 @@ impl CaseDecidability {
         opaque_fns: HashSet<FnId>,
         unbounded_fuel_fns: HashSet<FnId>,
         opaque_eq_types: HashSet<String>,
+        capability_opacity: super::capability_opaque::CapabilityOpacity,
     ) -> Self {
         Self {
             opaque_fns,
             unbounded_fuel_fns,
             opaque_eq_types,
+            capability_opacity,
             enabled: true,
         }
     }
@@ -154,8 +160,22 @@ impl CaseDecidability {
             opaque_fns: HashSet::new(),
             unbounded_fuel_fns: HashSet::new(),
             opaque_eq_types: HashSet::new(),
+            capability_opacity: super::capability_opaque::CapabilityOpacity::default(),
             enabled: false,
         }
+    }
+
+    /// The refusal for a claim whose `roots` reach a provider-owned capability
+    /// operation; `None` when they reach none.
+    pub(super) fn capability_decline_reason(
+        &self,
+        roots: &[&Spanned<crate::ast::Expr>],
+        ctx: &CodegenContext,
+    ) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        self.capability_opacity.decline_reason(roots, ctx)
     }
 
     /// Canonical names of every function with an unbounded fuel fallback
