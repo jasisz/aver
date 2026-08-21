@@ -1,6 +1,6 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust};
-use super::types::type_annotation_to_rust;
+use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::ir::thin_kind_is_parent_thin_candidate;
@@ -70,9 +70,13 @@ pub fn emit_public_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
 }
 
 fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContext) -> String {
+    let key = crate::codegen::common::type_key_for_decl(ctx, td);
+    let scope = key.scope_str();
     match td {
-        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public, ctx),
-        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, public, ctx),
+        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public, ctx, scope),
+        TypeDef::Product { name, fields, .. } => {
+            emit_product_type(name, fields, public, ctx, scope)
+        }
     }
 }
 
@@ -186,6 +190,7 @@ fn emit_sum_type(
     variants: &[TypeVariant],
     public: bool,
     ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -211,7 +216,7 @@ fn emit_sum_type(
                 .fields
                 .iter()
                 .map(|f| {
-                    let rust_ty = type_annotation_to_rust(f);
+                    let rust_ty = type_annotation_to_rust_scoped(f, ctx, scope);
                     if f == name {
                         // Recursive field: Rc<T> instead of Box<T> — clone is O(1) refcount bump
                         format!("std::sync::Arc<{}>", rust_ty)
@@ -366,6 +371,7 @@ fn emit_product_type(
     fields: &[(String, String)],
     public: bool,
     ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -389,7 +395,7 @@ fn emit_product_type(
             "    {}{}: {},",
             visibility,
             aver_name_to_rust(field_name),
-            type_annotation_to_rust(field_type)
+            type_annotation_to_rust_scoped(field_type, ctx, scope)
         )
         .unwrap();
     }
@@ -599,16 +605,16 @@ fn emit_fn_def_with_visibility(
 
     // Function signature
     let params = if has_tco {
-        emit_fn_params_with_owned(&fd.params, has_tco, &owned_collection_params)
+        emit_fn_params_with_owned(&fd.params, has_tco, &owned_collection_params, ctx, scope)
     } else {
-        emit_fn_params_with_bare(&fd.params, &owned_collection_params, bare_facts)
+        emit_fn_params_with_bare(&fd.params, &owned_collection_params, bare_facts, ctx, scope)
     };
     let ret_type = if fd.return_type.is_empty() {
         "()".to_string()
     } else if !has_tco && bare_facts.is_some_and(|f| f.bare_return) {
         "i64".to_string()
     } else {
-        type_annotation_to_rust(&fd.return_type)
+        type_annotation_to_rust_scoped(&fd.return_type, ctx, scope)
     };
 
     let fn_name = aver_name_to_rust(&fd.name);
@@ -816,22 +822,34 @@ fn emit_fn_def_with_visibility(
     lines.join("\n")
 }
 
-fn emit_fn_params(params: &[(String, String)], mutable: bool) -> String {
-    emit_fn_params_with_rc(params, mutable, &HashSet::new())
+fn emit_fn_params(
+    params: &[(String, String)],
+    mutable: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    emit_fn_params_with_rc(params, mutable, &HashSet::new(), ctx, scope)
 }
 
 /// `pub(super)` shim so the MIR walker's mutual-TCO wrapper emits the
 /// same borrow-by-default param signature as the HIR emitter's wrappers.
-pub(super) fn emit_fn_params_pub(params: &[(String, String)], mutable: bool) -> String {
-    emit_fn_params(params, mutable)
+pub(super) fn emit_fn_params_pub(
+    params: &[(String, String)],
+    mutable: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    emit_fn_params(params, mutable, ctx, scope)
 }
 
 fn emit_fn_params_with_rc(
     params: &[(String, String)],
     mutable: bool,
     rc_indices: &HashSet<usize>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
-    emit_fn_params_inner(params, mutable, rc_indices, &HashSet::new())
+    emit_fn_params_inner(params, mutable, rc_indices, &HashSet::new(), ctx, scope)
 }
 
 /// Emit the non-TCO param signature, graduating `own_param`-proven
@@ -844,8 +862,10 @@ fn emit_fn_params_with_owned(
     params: &[(String, String)],
     mutable: bool,
     owned_params: &HashSet<String>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
-    emit_fn_params_inner(params, mutable, &HashSet::new(), owned_params)
+    emit_fn_params_inner(params, mutable, &HashSet::new(), owned_params, ctx, scope)
 }
 
 /// Emit the non-TCO param signature with Int-unboxing applied: a param the
@@ -857,6 +877,8 @@ fn emit_fn_params_with_bare(
     params: &[(String, String)],
     owned_params: &HashSet<String>,
     bare_facts: Option<&crate::ir::mir::FnBareFacts>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
     params
         .iter()
@@ -872,6 +894,8 @@ fn emit_fn_params_with_bare(
                 false,
                 &HashSet::new(),
                 owned_params,
+                ctx,
+                scope,
             )
         })
         .collect::<Vec<_>>()
@@ -883,12 +907,14 @@ fn emit_fn_params_inner(
     mutable: bool,
     rc_indices: &HashSet<usize>,
     owned_params: &HashSet<String>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
 ) -> String {
     params
         .iter()
         .enumerate()
         .map(|(i, (name, type_ann))| {
-            let rust_type = type_annotation_to_rust(type_ann);
+            let rust_type = type_annotation_to_rust_scoped(type_ann, ctx, scope);
             let rust_name = aver_name_to_rust(name);
             if rc_indices.contains(&i) {
                 // Borrowed pass-through param: &T instead of owned T
@@ -1337,7 +1363,7 @@ fn emit_main_with_visibility(
     });
 
     if returns_result {
-        let ret_type = type_annotation_to_rust(&main_fn.unwrap().return_type);
+        let ret_type = type_annotation_to_rust_scoped(&main_fn.unwrap().return_type, ctx, None);
         writeln!(out, "{}fn main() -> {} {{", visibility, ret_type).unwrap();
     } else {
         writeln!(out, "{}fn main() {{", visibility).unwrap();
