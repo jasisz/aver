@@ -1605,22 +1605,24 @@ pub fn emit_law_samples(
         // Per-sample lemma form. Each gets fuel bumped on every
         // (transitive) callee + the matching `__fuel` helper for
         // mutual-rec SCC members.
-        let known: std::collections::HashSet<String> = ctx
-            .items
-            .iter()
-            .filter_map(|i| {
-                if let TopLevel::FnDef(fd) = i {
-                    Some(fd.name.clone())
+        let active = ctx.active_module_scope();
+        let d = |name: &str| -> String {
+            if let Some(dot) = name.rfind('.') {
+                let module_part = &name[..dot];
+                let local = &name[dot + 1..];
+                if active.as_deref() == Some(module_part) {
+                    aver_name_to_dafny(local)
                 } else {
-                    None
+                    format!(
+                        "Aver_{}.{}",
+                        module_part.replace('.', "_"),
+                        aver_name_to_dafny(local)
+                    )
                 }
-            })
-            .chain(
-                ctx.modules
-                    .iter()
-                    .flat_map(|m| m.fn_defs.iter().map(|fd| fd.name.clone())),
-            )
-            .collect();
+            } else {
+                aver_name_to_dafny(name)
+            }
+        };
         for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
             let l = emit_expr_legacy(lhs_rw, ctx, None);
             let r = emit_expr_legacy(rhs_rw, ctx, None);
@@ -1639,6 +1641,9 @@ pub fn emit_law_samples(
                 changed = false;
                 let snapshot: Vec<String> = callees.iter().cloned().collect();
                 for f in &snapshot {
+                    let Some(f_id) = crate::codegen::common::fn_id_for_dotted_name(ctx, f) else {
+                        continue;
+                    };
                     if let Some(fd) = ctx
                         .items
                         .iter()
@@ -1650,7 +1655,7 @@ pub fn emit_law_samples(
                             }
                         })
                         .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
-                        .find(|fd| &fd.name == f)
+                        .find(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd) == Some(f_id))
                     {
                         let before = callees.len();
                         crate::codegen::proof_recognize::collect_called_fns_in_body(
@@ -1665,14 +1670,13 @@ pub fn emit_law_samples(
             }
             let mut fuel_targets: Vec<String> = Vec::new();
             for f in &callees {
-                if !known.contains(f) {
+                let Some(f_id) = crate::codegen::common::fn_id_for_dotted_name(ctx, f) else {
                     continue;
-                }
-                fuel_targets.push(aver_name_to_dafny(f));
-                if crate::codegen::common::fn_id_for_dotted_name(ctx, f)
-                    .is_some_and(|id| fuel_emitted.contains(&id))
-                {
-                    fuel_targets.push(crate::codegen::recursion::fuel_helper_name(f));
+                };
+                fuel_targets.push(d(f));
+                if fuel_emitted.contains(&f_id) {
+                    let helper = crate::codegen::recursion::fuel_helper_name(f);
+                    fuel_targets.push(d(&helper));
                 }
             }
             fuel_targets.sort();

@@ -3,16 +3,26 @@ use super::*;
 /// Export `source` to Dafny (no `dafny` binary needed) and return every
 /// emitted `.dfy` file concatenated.
 fn export_dafny_inline(source: &str, prefix: &str) -> String {
+    export_dafny_modules(&[("m.av", source)], "m.av", prefix)
+}
+
+/// Export a module graph to Dafny (no `dafny` binary needed) and return every
+/// emitted `.dfy` file concatenated.
+fn export_dafny_modules(files: &[(&str, &str)], entry: &str, prefix: &str) -> String {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let src = temp_output_dir(&format!("{prefix}-src"));
     std::fs::create_dir_all(&src).expect("create src dir");
-    std::fs::write(src.join("m.av"), source).expect("write m.av");
+    for (name, source) in files {
+        std::fs::write(src.join(name), source).unwrap_or_else(|e| panic!("write {name}: {e}"));
+    }
     let out = temp_output_dir(&format!("{prefix}-out"));
     let run = Command::new(aver_bin)
         .arg("proof")
-        .arg(src.join("m.av"))
+        .arg(src.join(entry))
         .arg("--backend")
         .arg("dafny")
+        .arg("--module-root")
+        .arg(&src)
         .arg("-o")
         .arg(&out)
         .output()
@@ -43,7 +53,7 @@ fn program(module: &str, wrapper: &str) -> String {
 /// `requires` and a `{:fuel ...}` attribute for the opaque callee it reaches.
 /// Without them the exporter states an unbounded universal it has no basis
 /// for (`wrapInterp(3) == "1"`, not `"0"`).
-fn assert_lemma_is_bounded_and_fuelled(text: &str, lemma: &str) {
+fn assert_lemma_is_bounded_and_fuelled(text: &str, lemma: &str, fuel_target: &str) {
     let sig = format!("{lemma}(n: int)");
     let at = text
         .find(&sig)
@@ -52,8 +62,8 @@ fn assert_lemma_is_bounded_and_fuelled(text: &str, lemma: &str) {
     let body_open = text[at..].find("\n{").map_or(text.len(), |i| at + i);
     let lemma_text = &text[header_start..body_open];
     assert!(
-        lemma_text.contains("{:fuel pingA"),
-        "lemma `{lemma}` lost the fuel attribute for the opaque callee:\n{lemma_text}"
+        text.contains(&format!("{{:fuel {fuel_target}")),
+        "lemma `{lemma}` lost the fuel attribute for the opaque callee:\n{text}"
     );
     assert!(
         lemma_text.contains("requires n == 2"),
@@ -71,7 +81,7 @@ fn a_wrapper_reaching_a_mutual_pair_directly_gets_a_bounded_lemma() {
         ),
         "aver-opaque-direct",
     );
-    assert_lemma_is_bounded_and_fuelled(&text, "wrapDirect_wrapDirectIsStable");
+    assert_lemma_is_bounded_and_fuelled(&text, "wrapDirect_wrapDirectIsStable", "pingA");
 }
 
 #[test]
@@ -84,7 +94,7 @@ fn a_wrapper_reaching_a_mutual_pair_through_an_interpolated_string_gets_a_bounde
         ),
         "aver-opaque-interp",
     );
-    assert_lemma_is_bounded_and_fuelled(&text, "wrapInterp_wrapInterpIsStable");
+    assert_lemma_is_bounded_and_fuelled(&text, "wrapInterp_wrapInterpIsStable", "pingA");
 }
 
 #[test]
@@ -97,5 +107,30 @@ fn a_wrapper_reaching_a_mutual_pair_through_a_map_literal_gets_a_bounded_lemma()
         ),
         "aver-opaque-maplit",
     );
-    assert_lemma_is_bounded_and_fuelled(&text, "wrapMap_wrapMapIsStable");
+    assert_lemma_is_bounded_and_fuelled(&text, "wrapMap_wrapMapIsStable", "pingA");
+}
+
+#[test]
+fn a_wrapper_reaching_a_cross_module_mutual_pair_gets_a_bounded_lemma() {
+    let digits = program("Digits", "");
+    let entry = "module OpaqueCrossModule\n\
+        \x20   depends [Digits]\n\
+        \x20   intent =\n\
+        \x20       \"A wrapper reaching a dependency's fuel-encoded mutual pair.\"\n\n\
+        fn wrapCrossModule(n: Int) -> Int\n\
+        \x20   ? \"Reaches the mutual pair only through a cross-module call.\"\n\
+        \x20   Digits.pingA(n)\n\n\
+        verify wrapCrossModule law wrapCrossModuleIsStable\n\
+        \x20   given n: Int = [2]\n\
+        \x20   wrapCrossModule(n) => 0\n";
+    let text = export_dafny_modules(
+        &[("Digits.av", &digits), ("OpaqueCrossModule.av", entry)],
+        "OpaqueCrossModule.av",
+        "aver-opaque-cross-module",
+    );
+    assert_lemma_is_bounded_and_fuelled(
+        &text,
+        "wrapCrossModule_wrapCrossModuleIsStable",
+        "Aver_Digits.pingA",
+    );
 }
