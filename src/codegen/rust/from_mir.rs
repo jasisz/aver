@@ -1178,29 +1178,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 // side is a string literal, since `Rc<str>` doesn't
                 // impl `PartialEq<&str>`. Mirror that so string
                 // equality matches.
-                if let MirExpr::Literal(lit) = &bop.rhs.node
-                    && let crate::ast::Literal::Str(s) = &lit.node
-                {
-                    return Some(format!("(&*{} {} {:?})", l, op_str, s));
-                }
-                if let MirExpr::Literal(lit) = &bop.lhs.node
-                    && let crate::ast::Literal::Str(s) = &lit.node
-                {
-                    return Some(format!("({:?} {} &*{})", s, op_str, r));
-                }
-                // Borrow-by-default makes collection / wrapper / named-type
-                // parameters `&T`, while calls and constructors still produce
-                // an owned `T`. Rust does not provide `PartialEq<&T> for T`, so
-                // compare two references whenever exactly one side is a
-                // borrowed parameter. Borrowing the owned expression is
-                // temporary, allocation-free, and preserves evaluation order.
-                let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
-                let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
-                match (lhs_borrowed, rhs_borrowed) {
-                    (false, true) => Some(format!("(&({}) {} {})", l, op_str, r)),
-                    (true, false) => Some(format!("({} {} &({}))", l, op_str, r)),
-                    _ => Some(format!("({} {} {})", l, op_str, r)),
-                }
+                Some(mir_emit_equality(bop, &l, &r, op_str, emit_ctx))
             } else {
                 Some(format!("({} {} {})", l, op_str, r))
             }
@@ -3079,6 +3057,46 @@ fn lower_int_literal_subpatterns(
     }
 }
 
+/// Emit `lhs op rhs` for `==` / `!=` so that both Rust operands have the
+/// same shape. Every comparison site must go through here: the plain
+/// expression walker and the `if` lowering of a boolean `match` used to
+/// build the operator text separately, and the second site missed the
+/// borrow alignment (#1037: `match script == made()` compiled to
+/// `(script == made())`, a `&T == T` comparison Rust rejects).
+fn mir_emit_equality(
+    bop: &crate::ir::mir::MirBinOp,
+    l: &str,
+    r: &str,
+    op_str: &str,
+    emit_ctx: &MirEmitCtx<'_>,
+) -> String {
+    // `AverStr` (Rc<str>) does not implement `PartialEq<&str>`: deref the
+    // non-literal side when the other side is a string literal.
+    if let MirExpr::Literal(lit) = &bop.rhs.node
+        && let crate::ast::Literal::Str(s) = &lit.node
+    {
+        return format!("(&*{} {} {:?})", l, op_str, s);
+    }
+    if let MirExpr::Literal(lit) = &bop.lhs.node
+        && let crate::ast::Literal::Str(s) = &lit.node
+    {
+        return format!("({:?} {} &*{})", s, op_str, r);
+    }
+    // Borrow-by-default makes collection / wrapper / named-type parameters
+    // `&T`, while calls and constructors still produce an owned `T`. Rust
+    // does not provide `PartialEq<&T> for T`, so compare two references
+    // whenever exactly one side is a borrowed parameter. Borrowing the owned
+    // expression is temporary, allocation-free, and preserves evaluation
+    // order.
+    let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
+    let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
+    match (lhs_borrowed, rhs_borrowed) {
+        (false, true) => format!("(&({}) {} {})", l, op_str, r),
+        (true, false) => format!("({} {} &({}))", l, op_str, r),
+        _ => format!("({} {} {})", l, op_str, r),
+    }
+}
+
 /// Is this expression a direct read of a borrowed-param local?
 ///
 /// A direct read emits as `name`, whose Rust type is `&T`. Projections and
@@ -3788,7 +3806,13 @@ fn mir_if_cond_and_branches<'a>(
             } else {
                 (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?)
             };
-            let cond = format!("({} {} {})", l, op_str, r);
+            let cond = if matches!(bop.op, BinOp::Eq | BinOp::Neq)
+                && !(mir_expr_is_bare_i64(&bop.lhs, ctx) && mir_expr_is_bare_i64(&bop.rhs, ctx))
+            {
+                mir_emit_equality(bop, &l, &r, op_str, ctx)
+            } else {
+                format!("({} {} {})", l, op_str, r)
+            };
             if invert {
                 Some((cond, &ite.else_branch, &ite.then_branch))
             } else {
@@ -6816,11 +6840,11 @@ mod tests {
     }
 
     #[test]
-    fn if_then_else_cond_does_not_deref_string_literal() {
-        // HIR's bool-if-else condition uses a plain `emit_expr` — it
-        // does NOT apply the `BinOp` arm's `&*name == "lit"` deref. So
-        // `match name == "_"` emits `name == AverStr::from("_")` in the
-        // cond, matching HIR byte-for-byte.
+    fn if_then_else_cond_aligns_string_literal_like_expression_equality() {
+        // The `if` lowering of a boolean match goes through the same
+        // equality emitter as a plain expression (#1037 / #1060), so a
+        // string literal on one side derefs the other side exactly as
+        // `name == "_"` does outside a match subject.
         let name = MirLocal {
             slot: LocalId(0),
             last_use: false,
@@ -6842,7 +6866,7 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("if emits");
         assert_eq!(
             emit,
-            "if (name == AverStr::from(\"_\")) { aver_rt::AverInt::from_i64(1) } else { aver_rt::AverInt::from_i64(0) }"
+            "if (&*name == \"_\") { aver_rt::AverInt::from_i64(1) } else { aver_rt::AverInt::from_i64(0) }"
         );
     }
 }
