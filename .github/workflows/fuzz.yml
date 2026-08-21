@@ -80,11 +80,16 @@ jobs:
     name: Fuzz nightly (${{ matrix.target }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # 60 min (was 45) — `fuzz_codegen_wasip2` build+seed+fuzz+pack
-    # totals ~44-45 min on a GitHub-hosted runner, so the previous
-    # cap caught it at the hard limit roughly every other nightly.
-    # Other targets finish in 30-42 min and stay well under.
-    timeout-minutes: 60
+    # 90 min (was 60, before that 45). The "Fuzz (30 min)" step is
+    # `-V 1800` of fuzzing time, but AFL first calibrates every seed
+    # resumed from the previous nightly queue, and that queue grows
+    # night over night: on 2026-08-21 the step took 46 min for
+    # `fuzz_codegen_wasip2` (build 10.5 min + mutator 2 min on top),
+    # so the 60 min cap cancelled that job on six of the last seven
+    # nightlies, and `fuzz_codegen_wasm_gc` reached 57 min. If a
+    # target approaches 90, bound the resumed queue instead of
+    # raising this again.
+    timeout-minutes: 90
     permissions:
       # `gh run download` needs `actions:read` to enumerate previous
       # workflow runs and pull their artifacts.
