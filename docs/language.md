@@ -38,6 +38,11 @@ record User          // product type
 
 All bindings are immutable. No `val`/`var` keywords — they are parse errors.
 
+The leading `__` namespace is reserved for the compiler. User-written
+function names, parameter names, bindings, and match-pattern binders cannot
+begin with two underscores. Double underscores elsewhere in a name remain
+legal (`walk__cursor` is a valid name).
+
 ```aver
 name = "Alice"
 age: Int = 30

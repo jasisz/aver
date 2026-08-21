@@ -73,20 +73,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::list_build::{
-    ListBuildShape, build_collected_variant, builder_namespace_taken, list_build_acc_of,
-    try_rewrite_list_build_site,
+    ListBuildShape, build_collected_variant, list_build_acc_of, try_rewrite_list_build_site,
 };
 use super::*;
 use crate::ast::TopLevel;
 
-/// The namespace every name this stage synthesizes lives in. The
-/// names are `__stp<n>` with `n` handed out by [`FreshNames`] — one
-/// allocator per driver build, shared by binder renames and argument
-/// binders across every inline round — so no two synthesized names
-/// are ever equal, by construction. A program that binds any name
-/// starting with this prefix takes the stage away for the whole
-/// module: the check is on the prefix, so it covers every `n` at
-/// once.
+/// The namespace every name this stage synthesizes lives in. The names are
+/// `__stp<n>` with `n` handed out by [`FreshNames`] — one allocator per
+/// driver build, shared by binder renames and argument binders across every
+/// inline round. No two synthesized names are equal, and the parser reserves
+/// the prefix against user binders.
 pub(super) const STEP_PREFIX: &str = "__stp";
 
 /// The single fresh-name allocator behind every name this stage
@@ -138,8 +134,7 @@ pub(super) enum PairDecline {
     /// The step reads a name the driver binds, so the inlined body
     /// would read the driver's binder instead of what the step meant.
     Capture,
-    /// The `__stp` namespace or the `<fn>__collected` variant name is
-    /// already bound in this program.
+    /// The `<fn>__collected` variant name is already bound in this program.
     NameTaken,
     /// The merged loop is a collecting loop, but no call site starts
     /// its accumulator empty — nothing would move, so nothing is
@@ -157,7 +152,7 @@ impl PairDecline {
             Self::StepSelfRecursive => "the step fn recurses into itself",
             Self::StepShape => "the step fn's body is not a shape the inline can carry",
             Self::Capture => "the step fn reads a name the driver binds",
-            Self::NameTaken => "the __stp namespace or the __collected variant name is taken",
+            Self::NameTaken => "the __collected variant name is taken",
             Self::NoCallSite => "no call site starts the merged loop's accumulator empty",
         }
     }
@@ -195,7 +190,6 @@ pub(super) fn run_driver_step_normalize(items: &mut [TopLevel], report: &mut Lis
     // binder sets. An inline never edits a step and never adds a call,
     // so the pristine answers stay true for every driver in turn.
     let taken = crate::ir::chars_fusion::taken_names(items);
-    let stp_taken = taken.iter().any(|n| n.starts_with(STEP_PREFIX));
     let exposes: Option<Vec<String>> =
         crate::visibility::effective_exposes(items).map(|e| e.to_vec());
     let top_level = top_level_names(items);
@@ -210,11 +204,7 @@ pub(super) fn run_driver_step_normalize(items: &mut [TopLevel], report: &mut Lis
         let fd = crate::ir::chars_fusion::fn_defs(&facts.items)
             .find(|fd| fd.name == driver_name)
             .expect("driver came from this item list");
-        let outcome = if stp_taken {
-            Err(PairDecline::NameTaken.reason())
-        } else {
-            build_and_validate(fd, &facts)
-        };
+        let outcome = build_and_validate(fd, &facts);
         match outcome {
             Ok((body, steps)) => {
                 let committed = crate::ir::chars_fusion::fn_defs_mut(items)
@@ -291,7 +281,7 @@ fn build_and_validate(
         return Err(PairDecline::StepShape.reason());
     };
     let new_name = format!("{}{}", fd.name, super::list_build::COLLECTED_SUFFIX);
-    if builder_namespace_taken(&facts.taken) || facts.taken.contains(&new_name) {
+    if facts.taken.contains(&new_name) {
         return Err(PairDecline::NameTaken.reason());
     }
     let (_, kind) = build_collected_variant(&merged, &acc, &new_name).map_err(|d| d.reason())?;
@@ -1537,20 +1527,6 @@ fn entry(xs: List<Int>) -> List<Int>
         assert_eq!(
             report.pair_declined.get("drive").copied(),
             Some(PairDecline::StepSelfRecursive.reason()),
-            "{report:?}"
-        );
-    }
-
-    /// A program that binds into the `__stp` namespace takes the stage
-    /// away — the fresh names must be unspellable by the program.
-    #[test]
-    fn a_program_binding_into_the_step_namespace_declines() {
-        let source =
-            pair_program("v", false).replace("    v = sh * 2", "    __stp0_v = 1\n    v = sh * 2");
-        let report = pass_on(&source);
-        assert_eq!(
-            report.pair_declined.get("drive").copied(),
-            Some(PairDecline::NameTaken.reason()),
             "{report:?}"
         );
     }

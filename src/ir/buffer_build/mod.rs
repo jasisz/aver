@@ -823,23 +823,15 @@ pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> BufferBui
     if all_sinks.is_empty() {
         return BufferBuildPassReport::default();
     }
-    // Same namespace rule as the list-build pass beside this one: the
-    // rewrite emits `__buf_*` intrinsic calls by bare name into caller
-    // and variant bodies, and the variant binds `__buf` / `__sep` of
-    // its own. A leading `__` is not reserved, so a program can bind
-    // any of those names — a binder is exactly what would capture the
-    // emitted call (or hand the separator read the loop's element) for
-    // the code underneath it. One name anywhere in the program's own
-    // binders takes the namespace away from every site at once, and
-    // the pass steps aside.
+    // Leading `__` is source-reserved, so compiler-local buffer names
+    // need no namespace scan. Infix names remain legal, however: do not
+    // synthesize `<sink>__buffered` when that exact callable name is
+    // already present anywhere a rewritten call could resolve to it.
     let taken = crate::ir::chars_fusion::taken_names(items);
-    let namespace_taken = taken
-        .iter()
-        .any(|name| name.starts_with("__buf_") || name == "__buf" || name == "__sep");
-    if namespace_taken {
-        return BufferBuildPassReport::default();
-    }
-    let sites = find_fusion_sites(&fn_refs, &all_sinks);
+    let sites: Vec<FusionSite> = find_fusion_sites(&fn_refs, &all_sinks)
+        .into_iter()
+        .filter(|site| !taken.contains(&format!("{}__buffered", site.sink_fn)))
+        .collect();
 
     // Synthesize a buffered variant only for sinks that actually have
     // at least one rewriteable call site. The earlier shape produced

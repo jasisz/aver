@@ -188,6 +188,57 @@ fn var_keyword_is_parse_error() {
 }
 
 #[test]
+fn leading_double_underscore_is_reserved_for_compiler_identifiers() {
+    let cases = [
+        (
+            "intrinsic-shaped function",
+            "fn __str_cursor_head(text: String, index: Int) -> Int\n    index\n",
+        ),
+        (
+            "interpolation-capture parameter",
+            "fn value(__to_str: Int) -> Int\n    __to_str\n",
+        ),
+        ("buffer-capture binding", "__buf_append = 1\n"),
+        (
+            "cursor identifier pattern",
+            "fn value(x: Int) -> Int\n    match x\n        __cur_i -> __cur_i\n",
+        ),
+        (
+            "list-builder head pattern",
+            "fn value(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [__lst_push, ..tail] -> __lst_push\n",
+        ),
+        (
+            "byte-builder tail pattern",
+            "fn value(xs: List<Int>) -> List<Int>\n    match xs\n        [] -> []\n        [head, ..__byt_tail] -> __byt_tail\n",
+        ),
+        (
+            "string-index constructor pattern",
+            "fn value(x: Option<Int>) -> Int\n    match x\n        Option.None -> 0\n        Option.Some(__str_index) -> __str_index\n",
+        ),
+    ];
+
+    for (role, source) in cases {
+        let error = parse_error(source);
+        assert!(
+            error.contains("reserved for the compiler") && error.contains("cannot begin with '__'"),
+            "{role} should report the reserved namespace, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn double_underscore_inside_a_user_identifier_remains_legal() {
+    let items = parse(
+        "fn walk__cursor(value__source: Int) -> Int\n    result__value = value__source\n    match result__value\n        bound__value -> bound__value\n",
+    );
+    let TopLevel::FnDef(fd) = &items[0] else {
+        panic!("expected function")
+    };
+    assert_eq!(fd.name, "walk__cursor");
+    assert_eq!(fd.params[0].0, "value__source");
+}
+
+#[test]
 fn capability_block_is_parse_error() {
     // A capability is a KIND OF MODULE, declared solely by
     // `kind = capability` in the module header. There is exactly one

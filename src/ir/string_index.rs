@@ -117,13 +117,12 @@ pub fn run_string_index_pass(items: &mut Vec<TopLevel>) -> StringIndexPassReport
         }
         let collision = component.iter().any(|node| {
             let worker = format!("{}{WORKER_SUFFIX}", node.function);
-            taken.contains(&worker) || function_mentions_prefix(items, &node.function, INDEX_PARAM)
+            taken.contains(&worker)
         });
         if collision {
-            report.declined.insert(
-                label,
-                "the __indexed worker or __str_index namespace is already taken",
-            );
+            report
+                .declined
+                .insert(label, "the __indexed worker name is already taken");
             continue;
         }
         report.components += 1;
@@ -349,44 +348,6 @@ fn component_label(component: &BTreeSet<ParamKey>) -> String {
         .into_iter()
         .collect::<Vec<_>>()
         .join(",")
-}
-
-fn function_mentions_prefix(items: &[TopLevel], function: &str, prefix: &str) -> bool {
-    let Some(fd) = fn_defs(items).find(|fd| fd.name == function) else {
-        return false;
-    };
-    if fd.params.iter().any(|(name, _)| name.starts_with(prefix)) {
-        return true;
-    }
-    fd.body.stmts().iter().any(|stmt| {
-        if let Stmt::Binding(name, _, _) = stmt
-            && name.starts_with(prefix)
-        {
-            return true;
-        }
-        expr_mentions_prefix(crate::ir::chars_fusion::stmt_expr(stmt), prefix)
-    })
-}
-
-fn expr_mentions_prefix(expr: &Spanned<Expr>, prefix: &str) -> bool {
-    if matches!(&expr.node, Expr::Ident(name) | Expr::Resolved { name, .. } if name.starts_with(prefix))
-    {
-        return true;
-    }
-    if let Expr::Match { subject, arms } = &expr.node {
-        return expr_mentions_prefix(subject, prefix)
-            || arms.iter().any(|arm| {
-                pattern_bindings(&arm.pattern)
-                    .iter()
-                    .any(|name| name.starts_with(prefix))
-                    || expr_mentions_prefix(&arm.body, prefix)
-            });
-    }
-    let mut found = false;
-    crate::ir::chars_fusion::walk_children(expr, &mut |child| {
-        found = found || expr_mentions_prefix(child, prefix);
-    });
-    found
 }
 
 fn wrapper_body(fd: &FnDef, string_param: usize) -> FnBody {
@@ -875,18 +836,19 @@ fn walk(text: String, pos: Int, _: Int) -> Int
     }
 
     #[test]
-    fn declines_generated_index_shadowed_by_a_pattern_binding() {
+    fn declines_a_taken_infix_worker_name() {
         let mut items = prepared(
-            r#"module Shadow
-    intent = "Do not let a synthesized index collide with pattern scope."
+            r#"module Taken
+    intent = "Do not replace a legal user function with a synthesized worker."
     effects []
 
-fn walk(text: String, pos: Int, value: Option<Int>) -> Int
-    match value
+fn walk(text: String, pos: Int) -> Int
+    match String.charAt(text, pos)
         Option.None -> pos
-        Option.Some(__str_index) -> match String.charAt(text, pos)
-            Option.None -> __str_index
-            Option.Some(_) -> walk(text, pos + 1, value)
+        Option.Some(_) -> walk(text, pos + 1)
+
+fn walk__indexed(text: String, pos: Int) -> Int
+    pos
 "#,
         );
         let report = run_string_index_pass(&mut items);

@@ -5,6 +5,20 @@ impl Parser {
         Parser {
             tokens,
             pos: 0,
+            allow_compiler_identifiers: false,
+            recursion_depth: 0,
+        }
+    }
+
+    /// Parse a source fragment synthesized by the compiler itself.
+    ///
+    /// Keep this crate-private: accepting reserved names from CLI/module input
+    /// would reopen the capture class the source-level reservation closes.
+    pub(crate) fn new_compiler_generated(tokens: Vec<Token>) -> Self {
+        Parser {
+            tokens,
+            pos: 0,
+            allow_compiler_identifiers: true,
             recursion_depth: 0,
         }
     }
@@ -139,6 +153,33 @@ impl Parser {
         } else {
             Err(self.error(format!("{}, found {}", msg, self.current().kind)))
         }
+    }
+
+    /// Read a user-defined name that introduces a callable or local.
+    ///
+    /// The compiler owns the leading-double-underscore namespace for
+    /// intrinsics and synthesized binders. Rejecting it at the source
+    /// boundary makes those names hygienic by construction; compiler passes
+    /// operate on the AST after parsing and may still introduce them.
+    pub(super) fn expect_user_identifier(
+        &mut self,
+        expected: &str,
+        role: &str,
+    ) -> Result<String, ParseError> {
+        let token = self.expect_kind(&TokenKind::Ident(String::new()), expected)?;
+        let TokenKind::Ident(name) = token.kind else {
+            unreachable!("expect_kind returned an identifier")
+        };
+        if !self.allow_compiler_identifiers && name.starts_with("__") {
+            return Err(ParseError::Error {
+                msg: format!(
+                    "Identifier '{name}' is reserved for the compiler; user-written {role} cannot begin with '__'"
+                ),
+                line: token.line,
+                col: token.col,
+            });
+        }
+        Ok(name)
     }
 
     pub(super) fn expect_exact(&mut self, kind: &TokenKind) -> Result<Token, ParseError> {

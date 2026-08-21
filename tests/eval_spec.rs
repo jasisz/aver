@@ -129,12 +129,12 @@ fn call_fn_resolved(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
 /// a getter function.
 fn run_program_lookup(src: &str, var_name: &str) -> Value {
     let mut items = parse(src);
-    let getter_items = parse(&format!("fn __get()\n    {}", var_name));
+    let getter_items = parse(&format!("fn test__get()\n    {}", var_name));
     items.extend(getter_items);
     let mut machine = vm_compile(&items);
     machine.run_top_level().expect("top-level failed");
     let result = machine
-        .run_named_function("__get", &[])
+        .run_named_function("test__get", &[])
         .expect("lookup failed");
     result.to_value(&machine.arena)
 }
@@ -2716,8 +2716,7 @@ mod tcp_tests {
 #[test]
 fn verify_error_prop_ok_unwraps() {
     // `?` on Ok in a verify case should unwrap normally:  ok()? == 42
-    let src =
-        "fn ok() -> Result<Int, String>\n    Result.Ok(42)\nfn __test() -> Bool\n    ok()? == 42\n";
+    let src = "fn ok() -> Result<Int, String>\n    Result.Ok(42)\nfn test__entry() -> Bool\n    ok()? == 42\n";
     // `?` on Ok should unwrap and the value should equal 42
     // We use call_fn to evaluate the test helper
     assert_eq!(

@@ -646,6 +646,36 @@ fn parse_and_tco(src: &str) -> Vec<crate::ast::TopLevel> {
     items
 }
 
+#[test]
+fn a_taken_infix_buffered_variant_name_blocks_fusion() {
+    let mut items = parse_and_tco(
+        r#"
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(head, acc))
+
+fn parts__buffered(value: Int) -> Int
+    value + 100
+
+fn render(values: List<String>) -> String
+    String.join(parts(values, []), ",")
+"#,
+    );
+
+    let report = run_buffer_build_pass(&mut items);
+    assert_eq!(report.rewrites, 0, "{report:?}");
+    assert!(report.synthesized.is_empty(), "{report:?}");
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| matches!(item, crate::ast::TopLevel::FnDef(fd) if fd.name == "parts__buffered"))
+            .count(),
+        1,
+        "the legal user function must remain the only definition"
+    );
+}
+
 fn sinks_of(items: &[crate::ast::TopLevel]) -> HashMap<String, BufferBuildShape> {
     let fns: Vec<&FnDef> = items
         .iter()
@@ -1285,31 +1315,6 @@ fn main() -> List<Int>
     );
 }
 
-/// A binder named `__lst_push` shadows the intrinsic for everything
-/// underneath it, and a leading `__` is not reserved — the program
-/// below compiles and runs. A binder is not a read, so no traversal
-/// that looks at identifiers can see one; the guard asks the same
-/// collector chars fusion asks.
-#[test]
-fn a_program_that_binds_a_builder_name_declines() {
-    let (_, report) = list_build(
-        r#"
-fn collect(n: Int, acc: List<Int>) -> List<Int>
-    match n <= 0
-        true -> List.reverse(acc)
-        false -> collect(n - 1, List.prepend(n, acc))
-
-fn main() -> List<Int>
-    __lst_push = 3
-    collect(__lst_push, [])
-"#,
-    );
-    assert_eq!(
-        report.declined.get("collect").copied(),
-        Some(ListBuildDecline::NameTaken.reason())
-    );
-}
-
 /// So does a fn already called `<loop>__collected`.
 #[test]
 fn a_taken_variant_name_declines() {
@@ -1768,32 +1773,6 @@ fn main() -> Result<Bytes, String>
     assert_eq!(
         report.byte_declined.get("names__collected").copied(),
         Some(ByteSinkDecline::ElemShape.reason()),
-        "{report:?}"
-    );
-}
-
-/// A program that binds into the `__byt_` namespace takes the whole
-/// pass away, exactly as a `__lst_` binder always has: the retarget is
-/// a stage of this pass and both namespaces are emitted by name.
-#[test]
-fn a_program_that_binds_a_byte_builder_name_declines_the_whole_pass() {
-    let (_, report) = list_build_with_copy(
-        r#"
-fn collect(n: Int, acc: List<Int>) -> List<Int>
-    __byt_probe = 3
-    match n <= 0
-        true -> List.reverse(acc)
-        false -> collect(n - 1, List.prepend(n + __byt_probe, acc))
-
-fn main() -> Result<Bytes, String>
-    fromList(collect(5, []))
-"#,
-    );
-    assert_eq!(report.rewrites, 0, "{report:?}");
-    assert_eq!(report.byte_retargets, 0, "{report:?}");
-    assert_eq!(
-        report.declined.get("collect").copied(),
-        Some(ListBuildDecline::NameTaken.reason()),
         "{report:?}"
     );
 }
