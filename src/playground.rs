@@ -537,33 +537,7 @@ fn loaded_to_module_info(
         },
     );
 
-    let depends = module_depends(&items);
-    let type_defs = items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::TypeDef(td) => Some(td.clone()),
-            _ => None,
-        })
-        .collect();
-    let fn_defs = items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
-            _ => None,
-        })
-        .collect();
-    let (capability_items, capability_semantics) = codegen::capability_metadata(&items);
-
-    codegen::ModuleInfo {
-        prefix: m.dep_name,
-        depends,
-        type_defs,
-        fn_defs,
-        capability_items,
-        capability_semantics,
-        verify_laws: codegen::collect_verify_laws(&items),
-        analysis: pipeline_result.analysis,
-    }
+    codegen::ModuleInfo::from_items(m.dep_name, &items, pipeline_result.analysis)
 }
 
 fn format_tc_errors(errors: &[crate::types::checker::TypeError]) -> String {

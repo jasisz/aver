@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::ast::TopLevel;
@@ -215,7 +216,7 @@ pub fn canonicalize_path(path: &Path) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// Shared module loader — find, read, parse, validate, recurse
+// Program loader — the entry module plus everything reachable from it
 // ---------------------------------------------------------------------------
 
 /// A parsed module ready for backend consumption.
@@ -224,6 +225,363 @@ pub struct LoadedModule {
     pub dep_name: String,
     pub items: Vec<TopLevel>,
     pub path: PathBuf,
+}
+
+/// Why a module could not be loaded as written.
+///
+/// `Display` renders the wording [`load_module_tree`] has always used. The
+/// command wrappers that historically said things differently build their
+/// own text from the fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadError {
+    /// A project file exists but could not be read.
+    Read(String),
+    /// Neither a project file nor an embedded standard module owns `name`.
+    Missing {
+        name: String,
+        root: String,
+        /// The file whose `depends` named it, when the walk started from one.
+        required_by: Option<PathBuf>,
+    },
+    Parse {
+        name: String,
+        path: PathBuf,
+        error: String,
+    },
+    /// The file fails [`require_module_declaration`]; `message` is its verdict.
+    Declaration { path: PathBuf, message: String },
+    NameMismatch {
+        expected: String,
+        dep_name: String,
+        found: String,
+        path: PathBuf,
+    },
+    /// The modules being loaded, outermost first, closed by the one that was
+    /// re-entered.
+    Cycle { chain: Vec<PathBuf> },
+}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadError::Read(message) | LoadError::Declaration { message, .. } => {
+                f.write_str(message)
+            }
+            LoadError::Missing { name, root, .. } => {
+                write!(f, "Module '{name}' not found in '{root}'")
+            }
+            LoadError::Parse { name, error, .. } => write!(f, "Parse error in '{name}': {error}"),
+            LoadError::NameMismatch {
+                expected,
+                dep_name,
+                found,
+                path,
+            } => write!(
+                f,
+                "Module name mismatch: expected '{expected}' (from '{dep_name}'), found '{found}' in '{}'",
+                path.display()
+            ),
+            LoadError::Cycle { chain } => {
+                let stems = chain
+                    .iter()
+                    .map(|path| {
+                        path.file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| path.to_string_lossy().into_owned())
+                    })
+                    .collect::<Vec<_>>();
+                write!(f, "Circular import: {}", stems.join(" -> "))
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+impl From<LoadError> for String {
+    fn from(error: LoadError) -> Self {
+        error.to_string()
+    }
+}
+
+/// How [`load_program`] treats a module it cannot use as written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadMode {
+    /// Every module must resolve, parse, declare `module` under the name it
+    /// was imported by, and the graph must be acyclic. Typing needs all of
+    /// that, so this is what the typechecker loads with.
+    Strict,
+    /// A module that fails to parse or misdeclares itself stays in the
+    /// program with [`ProgramModule::fault`] set, for the caller to report
+    /// in walk order; name mismatches and cycles are left to the per-module
+    /// typecheck, which has always reported them. Only a dependency that
+    /// cannot be found at all stops the walk. Report walks (`check`,
+    /// `verify`) and the codegen dependency loaders use this.
+    Tolerant,
+}
+
+/// One source module in a loaded Aver program.
+#[derive(Clone, Debug)]
+pub struct ProgramModule {
+    pub dep_name: String,
+    pub source: String,
+    pub items: Vec<TopLevel>,
+    pub path: PathBuf,
+    pub is_entry: bool,
+    pub is_stdlib: bool,
+    /// Position in the dependency walk: the entry is 0, dependencies count
+    /// up in first-seen (parent-before-child) order.
+    pub discovery_index: usize,
+    /// Set only under [`LoadMode::Tolerant`]: why this module could not be
+    /// used as written. A module that failed to parse keeps no items.
+    pub fault: Option<LoadError>,
+}
+
+impl ProgramModule {
+    pub fn as_loaded(&self) -> LoadedModule {
+        LoadedModule {
+            dep_name: self.dep_name.clone(),
+            items: self.items.clone(),
+            path: self.path.clone(),
+        }
+    }
+}
+
+/// The entry module and every module reachable from it through `depends`
+/// and through the standard modules its builtin calls imply.
+///
+/// Modules are deduplicated by canonical path and stored leaves-first, with
+/// the entry last. Embedded standard-library modules participate exactly
+/// like project modules; consumers may choose not to report them.
+#[derive(Clone, Debug)]
+pub struct Program {
+    pub modules: Vec<ProgramModule>,
+}
+
+impl Program {
+    pub fn entry(&self) -> &ProgramModule {
+        self.modules
+            .last()
+            .expect("a loaded program always contains its entry")
+    }
+
+    pub fn dependencies(&self) -> &[ProgramModule] {
+        &self.modules[..self.modules.len().saturating_sub(1)]
+    }
+
+    /// Dependencies parent-before-child, the order the walk met them in.
+    pub fn dependencies_in_discovery_order(&self) -> Vec<&ProgramModule> {
+        let mut modules = self.dependencies().iter().collect::<Vec<_>>();
+        modules.sort_by_key(|module| module.discovery_index);
+        modules
+    }
+
+    /// The opt-in check/verify walk: follow only written `depends [...]`
+    /// edges (not the implicit standard-module edges) parent-before-child,
+    /// each file once — the entry included, so a cycle back to it does not
+    /// list it twice.
+    pub fn explicit_dependencies_in_discovery_order(&self) -> Vec<&ProgramModule> {
+        let by_name = self
+            .dependencies()
+            .iter()
+            .map(|module| (module.dep_name.as_str(), module))
+            .collect::<HashMap<_, _>>();
+        let mut stack = visibility::module_decl(&self.entry().items)
+            .map(|module| module.depends.iter().rev().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut seen = HashSet::from([canonicalize_path(&self.entry().path)]);
+        let mut modules = Vec::new();
+        while let Some(name) = stack.pop() {
+            let Some(module) = by_name.get(name.as_str()).copied() else {
+                continue;
+            };
+            if !seen.insert(canonicalize_path(&module.path)) {
+                continue;
+            }
+            modules.push(module);
+            if let Some(declaration) = visibility::module_decl(&module.items) {
+                stack.extend(declaration.depends.iter().rev().cloned());
+            }
+        }
+        modules
+    }
+}
+
+/// Load the program named by an already parsed entry module.
+///
+/// A file without a `module` declaration names a program of itself: it has
+/// no `depends` to follow, and its builtin calls imply nothing either.
+pub fn load_program(
+    entry_path: &Path,
+    entry_source: &str,
+    entry_items: &[TopLevel],
+    module_root: &str,
+    mode: LoadMode,
+) -> Result<Program, LoadError> {
+    let mut walk = Walk::new(module_root, mode);
+    walk.follow_edges(entry_path, entry_items)?;
+    let mut modules = walk.modules;
+    let entry_name = visibility::module_decl(entry_items)
+        .map(|module| module.name.clone())
+        .unwrap_or_else(|| {
+            entry_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("entry")
+                .to_string()
+        });
+    modules.push(ProgramModule {
+        dep_name: entry_name,
+        source: entry_source.to_string(),
+        items: entry_items.to_vec(),
+        path: entry_path.to_path_buf(),
+        is_entry: true,
+        is_stdlib: false,
+        discovery_index: 0,
+        fault: None,
+    });
+    Ok(Program { modules })
+}
+
+/// Depth-first dependency walk shared by every loader.
+struct Walk<'a> {
+    module_root: &'a str,
+    mode: LoadMode,
+    loaded: HashSet<PathBuf>,
+    loading: Vec<PathBuf>,
+    modules: Vec<ProgramModule>,
+    next_discovery_index: usize,
+}
+
+impl<'a> Walk<'a> {
+    fn new(module_root: &'a str, mode: LoadMode) -> Self {
+        Self {
+            module_root,
+            mode,
+            loaded: HashSet::new(),
+            loading: Vec::new(),
+            modules: Vec::new(),
+            next_discovery_index: 1,
+        }
+    }
+
+    fn resolve(&self, name: &str, required_by: Option<&Path>) -> Result<ModuleSource, LoadError> {
+        resolve_module_source(name, self.module_root)
+            .map_err(LoadError::Read)?
+            .ok_or_else(|| LoadError::Missing {
+                name: name.to_string(),
+                root: self.module_root.to_string(),
+                required_by: required_by.map(Path::to_path_buf),
+            })
+    }
+
+    /// Follow the edges out of one module: its written `depends`, then the
+    /// standard modules its builtin calls imply.
+    fn follow_edges(
+        &mut self,
+        parent_path: &Path,
+        parent_items: &[TopLevel],
+    ) -> Result<(), LoadError> {
+        let Some(declaration) = visibility::module_decl(parent_items) else {
+            return Ok(());
+        };
+        for name in &declaration.depends {
+            let resolved = self.resolve(name, Some(parent_path))?;
+            self.load(name, resolved)?;
+        }
+        let parent_key = canonicalize_path(parent_path);
+        for name in crate::stdlib::implicit_stdlib_deps(parent_items) {
+            if declaration.depends.contains(&name) {
+                continue;
+            }
+            let resolved = self.resolve(&name, Some(parent_path))?;
+            // A standard module's own declarations mention its own nominal
+            // types. That is ownership, not an import; a written
+            // `depends [Self]` above remains a real cycle.
+            if canonicalize_path(&resolved.path) == parent_key {
+                continue;
+            }
+            self.load(&name, resolved)?;
+        }
+        Ok(())
+    }
+
+    fn load(&mut self, dep_name: &str, resolved: ModuleSource) -> Result<(), LoadError> {
+        let key = canonicalize_path(&resolved.path);
+        if self.loaded.contains(&key) {
+            return Ok(());
+        }
+        if self.loading.contains(&key) {
+            return match self.mode {
+                LoadMode::Strict => {
+                    let mut chain = self.loading.clone();
+                    chain.push(key);
+                    Err(LoadError::Cycle { chain })
+                }
+                // The re-entered module's own typecheck reports the cycle.
+                LoadMode::Tolerant => Ok(()),
+            };
+        }
+        let discovery_index = self.next_discovery_index;
+        self.next_discovery_index += 1;
+        let ModuleSource { path, source } = resolved;
+        let is_stdlib = path.starts_with("<aver-stdlib>");
+
+        let (items, fault) = match parse_source(&source) {
+            Ok(items) => match require_module_declaration(&items, &path.to_string_lossy()) {
+                Ok(()) => (items, None),
+                Err(message) => (
+                    items,
+                    Some(LoadError::Declaration {
+                        path: path.clone(),
+                        message,
+                    }),
+                ),
+            },
+            Err(error) => (
+                Vec::new(),
+                Some(LoadError::Parse {
+                    name: dep_name.to_string(),
+                    path: path.clone(),
+                    error,
+                }),
+            ),
+        };
+        if self.mode == LoadMode::Strict {
+            if let Some(fault) = fault {
+                return Err(fault);
+            }
+            if let Some(module) = visibility::module_decl(&items) {
+                let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
+                if module.name != expected {
+                    return Err(LoadError::NameMismatch {
+                        expected: expected.to_string(),
+                        dep_name: dep_name.to_string(),
+                        found: module.name.clone(),
+                        path,
+                    });
+                }
+            }
+        }
+
+        self.loading.push(key.clone());
+        self.follow_edges(&path, &items)?;
+        self.loading.pop();
+
+        self.loaded.insert(key);
+        self.modules.push(ProgramModule {
+            dep_name: dep_name.to_string(),
+            source,
+            items,
+            path,
+            is_entry: false,
+            is_stdlib,
+            discovery_index,
+            fault,
+        });
+        Ok(())
+    }
 }
 
 /// Sibling of [`load_module_tree`] that resolves dependency modules
@@ -361,82 +719,16 @@ pub fn load_module_tree(
     root_deps: &[String],
     module_root: &str,
 ) -> Result<Vec<LoadedModule>, String> {
-    let mut result = Vec::new();
-    let mut loaded = HashSet::new();
-    let mut loading = Vec::new();
-    for dep in root_deps {
-        load_recursive(dep, module_root, &mut loaded, &mut loading, &mut result)?;
+    let mut walk = Walk::new(module_root, LoadMode::Strict);
+    for name in root_deps {
+        let resolved = walk.resolve(name, None)?;
+        walk.load(name, resolved)?;
     }
-    Ok(result)
-}
-
-fn load_recursive(
-    dep_name: &str,
-    module_root: &str,
-    loaded: &mut HashSet<String>,
-    loading: &mut Vec<String>,
-    result: &mut Vec<LoadedModule>,
-) -> Result<(), String> {
-    let resolved = resolve_module_source(dep_name, module_root)?
-        .ok_or_else(|| format!("Module '{}' not found in '{}'", dep_name, module_root))?;
-    let path = resolved.path;
-    let source = resolved.source;
-    let canon = canonicalize_path(&path).to_string_lossy().to_string();
-
-    if loaded.contains(&canon) {
-        return Ok(());
-    }
-    if loading.contains(&canon) {
-        let chain: Vec<String> = loading
-            .iter()
-            .map(|k| {
-                Path::new(k)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(k)
-                    .to_string()
-            })
-            .chain(std::iter::once(
-                Path::new(&canon)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(&canon)
-                    .to_string(),
-            ))
-            .collect();
-        return Err(format!("Circular import: {}", chain.join(" -> ")));
-    }
-    loading.push(canon.clone());
-
-    let items =
-        parse_source(&source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
-
-    require_module_declaration(&items, &path.to_string_lossy())?;
-
-    if let Some(module) = visibility::module_decl(&items) {
-        let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
-        if module.name != expected {
-            return Err(format!(
-                "Module name mismatch: expected '{}' (from '{}'), found '{}' in '{}'",
-                expected,
-                dep_name,
-                module.name,
-                path.display()
-            ));
-        }
-        for sub_dep in &module.depends {
-            load_recursive(sub_dep, module_root, loaded, loading, result)?;
-        }
-    }
-
-    loading.pop();
-    loaded.insert(canon);
-    result.push(LoadedModule {
-        dep_name: dep_name.to_string(),
-        items,
-        path,
-    });
-    Ok(())
+    Ok(walk
+        .modules
+        .into_iter()
+        .map(|module| module.as_loaded())
+        .collect())
 }
 
 /// Convert pre-loaded modules (parsed virtual-fs items from the
@@ -456,25 +748,6 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
     loaded
         .iter()
         .map(|m| {
-            let depends = visibility::module_decl(&m.items)
-                .map(|md| md.depends.clone())
-                .unwrap_or_default();
-            let type_defs: Vec<_> = m
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::TypeDef(td) => Some(td.clone()),
-                    _ => None,
-                })
-                .collect();
-            let fn_defs: Vec<_> = m
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
-                    _ => None,
-                })
-                .collect();
             // Run the canonical pipeline on a clone of this dep's
             // items, type-checking against the other loaded modules
             // as the source of cross-module references. We feed the
@@ -496,162 +769,101 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                     ..Default::default()
                 },
             );
-            let (capability_items, capability_semantics) =
-                crate::codegen::capability_metadata(&m.items);
-            crate::codegen::ModuleInfo {
-                prefix: m.dep_name.clone(),
-                depends,
-                type_defs,
-                fn_defs,
-                capability_items,
-                capability_semantics,
-                verify_laws: crate::codegen::collect_verify_laws(&m.items),
-                analysis: pipeline_result.analysis,
-            }
+            crate::codegen::ModuleInfo::from_items(
+                m.dep_name.clone(),
+                &m.items,
+                pipeline_result.analysis,
+            )
         })
         .collect()
 }
 
-/// Load every dep module declared by `items`'s `Module.depends`, plus
-/// every transitive dep, into `codegen::ModuleInfo` records ready to
-/// hand to `PipelineConfig.dep_modules`. Standard modules implied by
-/// source-typed builtins (`crate::stdlib::implicit_stdlib_deps`) load
-/// too, even when `depends` never names them.
+/// Load every dependency of the program behind `items` — written
+/// `depends`, their transitive closure, and the standard modules implied by
+/// builtin calls — into `codegen::ModuleInfo` records ready to hand to
+/// `PipelineConfig.dep_modules`.
 ///
-/// Each dep goes through the same canonical pipeline as the entry —
+/// Each dependency goes through the same canonical pipeline as the entry —
 /// `pipeline::run` with `TypecheckMode::Full { base_dir: module_root }`,
 /// the mutable builder/cursor passes disabled, String indexing enabled,
-/// and the neutral alloc policy. Type errors in any dep surface as `Err`.
+/// and the neutral alloc policy. Type errors in any dependency surface as
+/// `Err`, parent before child.
 ///
-/// Callers that need the legacy `commands.rs` shape (run_interp_lower /
-/// run_buffer_build / self_host_mode flags) still own their local copy;
-/// every other call site — `vm_verify`, `wasm_gc_verify`, `bench/runner`,
-/// the research test — should go through here so the dep-loading
-/// contract stays in one place.
+/// The CLI's `commands::load_compile_deps` is the sibling that applies a
+/// per-target lowering matrix and exits on failure; every other call site —
+/// `vm_verify`, `wasm_gc_verify`, `bench/runner`, the research test — goes
+/// through here so the dependency contract stays in one place.
 pub fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
 ) -> Result<Vec<crate::codegen::ModuleInfo>, String> {
-    let module = items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m),
-        _ => None,
-    });
-    let Some(module) = module else {
-        return Ok(vec![]);
-    };
-    let mut result = Vec::new();
-    let mut loaded = HashSet::new();
-    for dep_name in &module.depends {
-        load_module_recursive_for_compile(dep_name, module_root, &mut result, &mut loaded)?;
-    }
-    // Builtins like `Crypto.sha256` cross nominal types owned by embedded
-    // standard modules (`Bytes`, `Digest32`). Codegen backends emit those
-    // records from the loaded module set, so the owning modules must load
-    // even when the entry never names them in `depends` — otherwise the
-    // program passes check/verify and fails late inside the generated
-    // artifact. `loaded` dedupes the overlap with the explicit list.
-    for dep_name in crate::stdlib::implicit_stdlib_deps(items) {
-        load_module_recursive_for_compile(&dep_name, module_root, &mut result, &mut loaded)?;
-    }
-    Ok(result)
-}
-
-fn load_module_recursive_for_compile(
-    name: &str,
-    module_root: &str,
-    result: &mut Vec<crate::codegen::ModuleInfo>,
-    loaded: &mut HashSet<String>,
-) -> Result<(), String> {
-    if !loaded.insert(name.to_string()) {
-        return Ok(());
-    }
-    let resolved = resolve_module_source(name, module_root)?.ok_or_else(|| {
-        format!(
-            "Cannot find module '{}' in module root '{}'",
-            name, module_root
-        )
+    let program = load_program(
+        Path::new("<entry>"),
+        "",
+        items,
+        module_root,
+        LoadMode::Tolerant,
+    )
+    .map_err(|error| match error {
+        LoadError::Missing { name, root, .. } => {
+            format!("Cannot find module '{name}' in module root '{root}'")
+        }
+        other => other.to_string(),
     })?;
-    let path = resolved.path;
-    let source = resolved.source;
-    let mut items =
-        parse_source(&source).map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
-    require_module_declaration(&items, path.to_str().unwrap_or(name))?;
-
     let neutral_policy = crate::ir::NeutralAllocPolicy;
-    let pipeline_result = crate::ir::pipeline::run(
-        &mut items,
-        crate::ir::PipelineConfig {
-            typecheck: Some(crate::ir::TypecheckMode::Full {
-                base_dir: Some(module_root),
-            }),
-            run_interp_lower: false,
-            run_buffer_build: false,
-            run_chars_fusion: false,
-            run_string_index: true,
-            run_list_build: false,
-            alloc_policy: Some(&neutral_policy),
-            ..Default::default()
-        },
-    );
-    if let Some(tc) = pipeline_result.typecheck.as_ref()
-        && !tc.errors.is_empty()
-    {
-        return Err(format!(
-            "Type errors in dependency module '{}':\n{}",
-            name,
-            tc.errors
-                .iter()
-                .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
+    let mut lowered = BTreeMap::new();
+    for module in program.dependencies_in_discovery_order() {
+        if let Some(fault) = &module.fault {
+            return Err(match fault {
+                LoadError::Parse { path, error, .. } => {
+                    format!("Parse '{}': {}", path.display(), error)
+                }
+                other => other.to_string(),
+            });
+        }
+        let mut module_items = module.items.clone();
+        let pipeline_result = crate::ir::pipeline::run(
+            &mut module_items,
+            crate::ir::PipelineConfig {
+                typecheck: Some(crate::ir::TypecheckMode::Full {
+                    base_dir: Some(module_root),
+                }),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                run_chars_fusion: false,
+                run_string_index: true,
+                run_list_build: false,
+                alloc_policy: Some(&neutral_policy),
+                ..Default::default()
+            },
+        );
+        if let Some(tc) = pipeline_result.typecheck.as_ref()
+            && !tc.errors.is_empty()
+        {
+            return Err(format!(
+                "Type errors in dependency module '{}':\n{}",
+                module.dep_name,
+                tc.errors
+                    .iter()
+                    .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        lowered.insert(
+            module.discovery_index,
+            crate::codegen::ModuleInfo::from_items(
+                module.dep_name.clone(),
+                &module_items,
+                pipeline_result.analysis,
+            ),
+        );
     }
-
-    let transitive: Vec<String> = items
+    Ok(program
+        .dependencies()
         .iter()
-        .find_map(|i| match i {
-            TopLevel::Module(m) => Some(m.depends.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
-    for dep in &transitive {
-        load_module_recursive_for_compile(dep, module_root, result, loaded)?;
-    }
-    // A dependency module can also call a builtin whose signature crosses
-    // stdlib-owned nominal types without naming the owning standard module
-    // in its own `depends` — load those implied modules too (see
-    // `load_compile_deps` for the entry-level counterpart).
-    for dep in crate::stdlib::implicit_stdlib_deps(&items) {
-        load_module_recursive_for_compile(&dep, module_root, result, loaded)?;
-    }
-
-    let depends = transitive;
-    let type_defs: Vec<_> = items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::TypeDef(td) => Some(td.clone()),
-            _ => None,
-        })
-        .collect();
-    let fn_defs: Vec<_> = items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
-            _ => None,
-        })
-        .collect();
-    let (capability_items, capability_semantics) = crate::codegen::capability_metadata(&items);
-    result.push(crate::codegen::ModuleInfo {
-        prefix: name.to_string(),
-        depends,
-        type_defs,
-        fn_defs,
-        capability_items,
-        capability_semantics,
-        verify_laws: crate::codegen::collect_verify_laws(&items),
-        analysis: pipeline_result.analysis,
-    });
-    Ok(())
+        .filter_map(|module| lowered.remove(&module.discovery_index))
+        .collect())
 }
 
 #[cfg(test)]

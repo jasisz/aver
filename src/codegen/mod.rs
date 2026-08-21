@@ -73,6 +73,48 @@ pub struct ModuleInfo {
 }
 
 impl ModuleInfo {
+    /// Build the shared projection from parsed module items. Target-specific
+    /// loaders own parsing, typechecking, and lowering; this constructor owns
+    /// the stable `ModuleInfo` field selection.
+    pub fn from_items(
+        prefix: String,
+        items: &[TopLevel],
+        analysis: Option<crate::ir::AnalysisResult>,
+    ) -> Self {
+        let depends = items
+            .iter()
+            .find_map(|i| match i {
+                TopLevel::Module(m) => Some(m.depends.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let type_defs = items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::TypeDef(td) => Some(td.clone()),
+                _ => None,
+            })
+            .collect();
+        let fn_defs = items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                _ => None,
+            })
+            .collect();
+        let (capability_items, capability_semantics) = capability_metadata(items);
+        Self {
+            prefix,
+            depends,
+            type_defs,
+            fn_defs,
+            capability_items,
+            capability_semantics,
+            verify_laws: collect_verify_laws(items),
+            analysis,
+        }
+    }
+
     /// Build a [`ModuleInfo`] from a freshly-parsed [`LoadedModule`].
     /// Skips the analyze stage — callers that need per-dep analysis
     /// facts should run the pipeline themselves (see
@@ -82,41 +124,7 @@ impl ModuleInfo {
     /// dep's symbol layout to feed `SymbolTable::build` /
     /// `pipeline::run`'s `dep_modules` slot.
     pub fn from_loaded(loaded: &LoadedModule) -> Self {
-        let depends = loaded
-            .items
-            .iter()
-            .find_map(|i| match i {
-                TopLevel::Module(m) => Some(m.depends.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        let type_defs = loaded
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                TopLevel::TypeDef(td) => Some(td.clone()),
-                _ => None,
-            })
-            .collect();
-        let fn_defs = loaded
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
-                _ => None,
-            })
-            .collect();
-        let (capability_items, capability_semantics) = capability_metadata(&loaded.items);
-        Self {
-            prefix: loaded.dep_name.clone(),
-            depends,
-            type_defs,
-            fn_defs,
-            capability_items,
-            capability_semantics,
-            verify_laws: collect_verify_laws(&loaded.items),
-            analysis: None,
-        }
+        Self::from_items(loaded.dep_name.clone(), &loaded.items, None)
     }
 }
 
