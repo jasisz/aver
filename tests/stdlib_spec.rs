@@ -617,7 +617,19 @@ fn embedded_crypto_sha256_matches_fips_vectors_on_wasm_gc() {
     ]);
     assert_success("aver verify --wasm-gc", &verify);
     let rendered = String::from_utf8_lossy(&verify.stdout);
-    assert!(rendered.contains("13/13 cases passed"), "{rendered}");
+    // The fixture grows verify cases over time; pin the shape (every case
+    // passed, and at least the original FIPS vectors ran) rather than an
+    // exact count that rots silently.
+    let (passed, total) = rendered
+        .lines()
+        .find_map(|line| {
+            let (lhs, _) = line.split_once(" cases passed")?;
+            let (p, t) = lhs.rsplit(' ').next()?.split_once('/')?;
+            Some((p.parse::<u32>().ok()?, t.parse::<u32>().ok()?))
+        })
+        .unwrap_or_else(|| panic!("no `N/M cases passed` summary in:\n{rendered}"));
+    assert_eq!(passed, total, "{rendered}");
+    assert!(total >= 13, "fewer cases than the original FIPS vectors: {rendered}");
 }
 
 #[cfg(feature = "wasip2")]
