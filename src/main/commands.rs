@@ -11709,6 +11709,7 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
+            packed_sequence_layouts: HashMap::new(),
             proof_ir: aver::ir::ProofIR::default(),
             symbol_table: aver::ir::SymbolTable::default(),
             resolved_fn_defs: Vec::new(),

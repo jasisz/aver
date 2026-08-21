@@ -4210,6 +4210,7 @@ mod tests {
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
+            packed_sequence_layouts: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table,
             resolved_fn_defs: Vec::new(),

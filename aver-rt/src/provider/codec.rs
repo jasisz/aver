@@ -225,6 +225,44 @@ impl<T: ProviderCodec + Clone> ProviderCodec for crate::AverList<T> {
     }
 }
 
+impl ProviderCodec for crate::AverIntList {
+    fn into_provider_value(
+        self,
+        registry: &NativeProviderRegistry,
+        capability: &str,
+    ) -> Result<ProviderValue, String> {
+        Ok(ProviderValue::List(
+            self.iter_cloned()
+                .map(|value| value.into_provider_value(registry, capability))
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
+    }
+
+    fn from_provider_value(
+        value: ProviderValue,
+        registry: &NativeProviderRegistry,
+        capability: &str,
+        minted_resource: Option<&str>,
+    ) -> Result<Self, String> {
+        match value {
+            ProviderValue::List(values) => Ok(Self::from_vec(
+                values
+                    .into_iter()
+                    .map(|value| {
+                        crate::AverInt::from_provider_value(
+                            value,
+                            registry,
+                            capability,
+                            minted_resource,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            other => Err(format!("expected List, got {}", other.shape())),
+        }
+    }
+}
+
 impl<T: ProviderCodec + Clone> ProviderCodec for crate::AverVector<T> {
     fn into_provider_value(
         self,

@@ -55,6 +55,7 @@ fn empty_ctx() -> CodegenContext {
         buffer_build_sinks: HashMap::new(),
         buffer_fusion_sites: Vec::new(),
         synthesized_buffered_fns: Vec::new(),
+        packed_sequence_layouts: HashMap::new(),
         proof_ir: crate::ir::ProofIR::default(),
         symbol_table: crate::ir::SymbolTable::default(),
         resolved_fn_defs: Vec::new(),

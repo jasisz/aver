@@ -663,6 +663,47 @@ fn mir_record_rust_type(
     type_name.to_string()
 }
 
+fn record_uses_packed_u8(
+    type_id: Option<crate::ir::TypeId>,
+    type_name: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    let Some(codegen) = ctx.codegen else {
+        return false;
+    };
+    let bare = type_id
+        .map(|id| ctx.symbol_table.type_entry(id).key.name.as_str())
+        .unwrap_or_else(|| type_name.rsplit('.').next().unwrap_or(type_name));
+    super::uses_packed_u8(codegen, bare)
+}
+
+fn type_uses_packed_u8(ty: Option<&Type>, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(codegen) = ctx.codegen else {
+        return false;
+    };
+    let Some(Type::Named { id, name }) = ty else {
+        return false;
+    };
+    let bare = id
+        .map(|id| ctx.symbol_table.type_entry(id).key.name.as_str())
+        .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name));
+    super::uses_packed_u8(codegen, bare)
+}
+
+fn pack_u8_list(value: String) -> String {
+    format!(
+        "aver_rt::into_packed_u8({value}).expect(\"proof-packed U8 construction escaped its refinement gate\")"
+    )
+}
+
+fn type_is_int_list(ty: Option<&Type>) -> bool {
+    matches!(ty, Some(Type::List(inner)) if **inner == Type::Int)
+}
+
+fn type_is_int_vector(ty: Option<&Type>) -> bool {
+    matches!(ty, Some(Type::Vector(inner)) if **inner == Type::Int)
+}
+
 /// How many fns the MIR walker can emit
 /// standalone vs how many need HIR fallback. Pre-wire-up signal
 /// so callers can track walker reach across the shipped corpus
@@ -1208,7 +1249,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 // fn's MIR shape may not byte-match HIR — the parity
                 // gate then falls back safely.
                 MirCallee::Intrinsic(intrinsic) => {
-                    emit_mir_intrinsic_call(*intrinsic, &call.args, emit_ctx)
+                    emit_mir_intrinsic_call(*intrinsic, &call.args, expr.ty(), emit_ctx)
                 }
                 // First-class fn value held in a slot — calling a `Fn(..)`
                 // param. Post-#379 the slot holds a plain fn-pointer (no
@@ -1296,8 +1337,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // of HIR's `ResolvedExpr::List` — empty case folds
             // to `aver_rt::AverList::empty()`, non-empty to
             // `from_vec(vec![...])` with `clone_arg` elements.
+            let list_type = if type_is_int_list(expr.ty()) {
+                "aver_rt::AverIntList"
+            } else {
+                "aver_rt::AverList"
+            };
             if items.is_empty() {
-                return Some("aver_rt::AverList::empty()".to_string());
+                return Some(format!("{list_type}::empty()"));
             }
             let mut parts = Vec::with_capacity(items.len());
             for item in items {
@@ -1307,10 +1353,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     emit_ctx,
                 ));
             }
-            Some(format!(
-                "aver_rt::AverList::from_vec(vec![{}])",
-                parts.join(", ")
-            ))
+            Some(format!("{list_type}::from_vec(vec![{}])", parts.join(", ")))
         }
         MirExpr::MapLiteral(entries) => {
             // `{"k" => v, …}` map literal.
@@ -1393,7 +1436,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 return Some(emit_mir_static_ref(&dotted, emit_ctx));
             }
             let base = emit_mir_expr(&proj.base, emit_ctx)?;
-            Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
+            let projected = format!("{}.{}", base, aver_name_to_rust(&proj.field));
+            if type_uses_packed_u8(proj.base.ty(), emit_ctx) {
+                Some(format!("({projected}).to_int_list()"))
+            } else {
+                Some(projected)
+            }
         }
         MirExpr::RecordCreate(spanned_rec) => {
             // `T { field = v, … }` record literal.
@@ -1405,10 +1453,14 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // through `clone_arg`.
             let rec = &spanned_rec.node;
             let rust_type = mir_record_rust_type(rec.type_id, &rec.type_name, emit_ctx);
+            let packed_u8 = record_uses_packed_u8(rec.type_id, &rec.type_name, emit_ctx);
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
-                let val =
+                let mut val =
                     mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx);
+                if packed_u8 {
+                    val = pack_u8_list(val);
+                }
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
             Some(format!("{} {{ {} }}", rust_type, parts.join(", ")))
@@ -1421,6 +1473,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `clone_arg`.
             let upd = &spanned_upd.node;
             let rust_type = mir_record_rust_type(upd.type_id, &upd.type_name, emit_ctx);
+            let packed_u8 = record_uses_packed_u8(upd.type_id, &upd.type_name, emit_ctx);
             let mut parts = Vec::with_capacity(upd.updates.len());
             let mut moved_replaced_field = false;
             for f in &upd.updates {
@@ -1433,6 +1486,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                         mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx)
                     }
                 };
+                let val = if packed_u8 { pack_u8_list(val) } else { val };
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
             // A specialized field successor partially moves the replaced
@@ -4750,7 +4804,14 @@ fn emit_mir_builtin_call(
                 format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
             }
         }
-        "List.prepend" => format!("aver_rt::AverList::prepend({}, &{})", clone!(0), clone!(1)),
+        "List.prepend" => {
+            let list_type = if type_is_int_list(args[1].ty()) {
+                "aver_rt::AverIntList"
+            } else {
+                "aver_rt::AverList"
+            };
+            format!("{list_type}::prepend({}, &{})", clone!(0), clone!(1))
+        }
         "List.take" => {
             let list = arg!(0);
             let count = arg!(1);
@@ -4759,9 +4820,15 @@ fn emit_mir_builtin_call(
             // takes everything. Reading `to_usize().unwrap_or(usize::MAX)`
             // straight had those two backwards, so a negative count took the
             // whole list here and nothing everywhere else.
-            format!(
-                "{{ let __n = aver_rt::clamp_list_count(&({count})); aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
-            )
+            if type_is_int_list(args[0].ty()) {
+                format!(
+                    "{{ let __n = aver_rt::clamp_list_count(&({count})); ({list}).take_first(__n) }}"
+                )
+            } else {
+                format!(
+                    "{{ let __n = aver_rt::clamp_list_count(&({count})); aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
+                )
+            }
         }
         "List.drop" => {
             let list = arg!(0);
@@ -4772,7 +4839,14 @@ fn emit_mir_builtin_call(
                 "{{ let __n = aver_rt::clamp_list_count(&({count})); ({list}).drop_first(__n) }}"
             )
         }
-        "List.concat" => format!("aver_rt::AverList::concat(&{}, &{})", clone!(0), clone!(1)),
+        "List.concat" => {
+            let list_type = if type_is_int_list(args[0].ty()) {
+                "aver_rt::AverIntList"
+            } else {
+                "aver_rt::AverList"
+            };
+            format!("{list_type}::concat(&{}, &{})", clone!(0), clone!(1))
+        }
         "List.reverse" => format!("{}.reverse()", arg!(0)),
         "List.contains" => {
             let list = arg!(0);
@@ -4782,12 +4856,25 @@ fn emit_mir_builtin_call(
         "List.zip" => {
             let a = arg!(0);
             let b = arg!(1);
-            format!(
-                "aver_rt::AverList::from_vec({}.iter().zip({}.iter()).map(|(a, b)| (a.clone(), b.clone())).collect::<Vec<_>>())",
-                a, b
-            )
+            let a_iter = if type_is_int_list(args[0].ty()) {
+                format!("({a}).iter_cloned()")
+            } else {
+                format!("({a}).iter().cloned()")
+            };
+            let b_iter = if type_is_int_list(args[1].ty()) {
+                format!("({b}).iter_cloned()")
+            } else {
+                format!("({b}).iter().cloned()")
+            };
+            format!("aver_rt::AverList::from_vec({a_iter}.zip({b_iter}).collect::<Vec<_>>())")
         }
-        "List.fromVector" => format!("{}.to_list()", arg!(0)),
+        "List.fromVector" => {
+            if type_is_int_vector(args[0].ty()) {
+                format!("aver_rt::AverIntList::from_vec({}.to_vec())", arg!(0))
+            } else {
+                format!("{}.to_list()", arg!(0))
+            }
+        }
 
         // ---- Map ----
         "Map.fromList" => format!(
@@ -4814,18 +4901,34 @@ fn emit_mir_builtin_call(
             let key = arg!(1);
             format!("{}.remove_owned(&{})", map, key)
         }
-        "Map.keys" => format!(
-            "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); aver_rt::AverList::from_vec(ks) }}",
-            arg!(0)
-        ),
+        "Map.keys" => {
+            let list_type = if matches!(args[0].ty(), Some(Type::Map(key, _)) if **key == Type::Int)
+            {
+                "aver_rt::AverIntList"
+            } else {
+                "aver_rt::AverList"
+            };
+            format!(
+                "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); {list_type}::from_vec(ks) }}",
+                arg!(0)
+            )
+        }
         // Sorted by key, like `Map.keys` and `Map.entries` above and like
         // the VM. Walking `HashMap::values()` directly gave a per-process
         // order, so two runs of the same binary could disagree and
         // `keys[i]` did not pair with `values[i]`.
-        "Map.values" => format!(
-            "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); aver_rt::AverList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>()) }}",
-            arg!(0)
-        ),
+        "Map.values" => {
+            let list_type = if matches!(args[0].ty(), Some(Type::Map(_, value)) if **value == Type::Int)
+            {
+                "aver_rt::AverIntList"
+            } else {
+                "aver_rt::AverList"
+            };
+            format!(
+                "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); {list_type}::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>()) }}",
+                arg!(0)
+            )
+        }
         "Map.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
 
         // ---- Crypto ----
@@ -4838,9 +4941,18 @@ fn emit_mir_builtin_call(
         // silently truncate into a wrong digest.
         "Crypto.sha256" => {
             let bytes = arg!(0);
-            format!(
-                "{{ let __input: Vec<u8> = ({bytes}).values.iter().map(|__b| __b.to_u32().and_then(|__b| u8::try_from(__b).ok()).expect(\"Bytes invariant violated\")).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
-            )
+            if ctx
+                .codegen
+                .is_some_and(|codegen| super::uses_packed_u8(codegen, "Bytes"))
+            {
+                format!(
+                    "{{ let __digest = aver_rt::crypto::sha256(({bytes}).values.as_slice()); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverPackedU8::from_vec(__digest.to_vec()) }} }} }}"
+                )
+            } else {
+                format!(
+                    "{{ let __input: Vec<u8> = ({bytes}).values.iter_cloned().map(|__b| __b.to_u32().and_then(|__b| u8::try_from(__b).ok()).expect(\"Bytes invariant violated\")).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverIntList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
+                )
+            }
         }
 
         // ---- Bits ----
@@ -5058,6 +5170,7 @@ fn emit_mir_effectful_builtin_call(
 fn emit_mir_intrinsic_call(
     intrinsic: BuiltinIntrinsic,
     args: &[Spanned<MirExpr>],
+    result_ty: Option<&Type>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     match intrinsic {
@@ -5217,19 +5330,34 @@ fn emit_mir_intrinsic_call(
         // gives it.
         BuiltinIntrinsic::LstNew => {
             let capacity = emit_mir_expr(&args[0], ctx)?;
+            let builder = if type_is_int_list(result_ty) {
+                "int_list_builder_new"
+            } else {
+                "list_builder_new"
+            };
             Some(format!(
-                "aver_rt::list_builder_new(({}).to_usize().unwrap_or(0))",
-                capacity
+                "aver_rt::{builder}(({}).to_usize().unwrap_or(0))",
+                capacity,
             ))
         }
         BuiltinIntrinsic::LstPush => {
             let builder = emit_mir_expr(&args[0], ctx)?;
             let item = emit_mir_expr(&args[1], ctx)?;
-            Some(format!("aver_rt::list_builder_push({}, {})", builder, item))
+            let push = if type_is_int_list(result_ty) {
+                "int_list_builder_push"
+            } else {
+                "list_builder_push"
+            };
+            Some(format!("aver_rt::{push}({}, {})", builder, item))
         }
         BuiltinIntrinsic::LstFinalize => {
             let builder = emit_mir_expr(&args[0], ctx)?;
-            Some(format!("aver_rt::list_builder_finalize({})", builder))
+            let finalize = if type_is_int_list(result_ty) {
+                "int_list_builder_finalize"
+            } else {
+                "list_builder_finalize"
+            };
+            Some(format!("aver_rt::{finalize}({})", builder))
         }
         // Byte builder (byte-sink retarget). Same aver-rt routines the
         // VM's opcodes mirror, so the two backends cannot answer
@@ -6459,7 +6587,7 @@ mod tests {
 
         assert_eq!(
             emit_mir_expr(&expr, &ctx).expect("equality emits"),
-            "(&(aver_rt::AverList::from_vec(vec![aver_rt::AverInt::from_i64(1)])) == other)"
+            "(&(aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(1)])) == other)"
         );
     }
 
@@ -6475,7 +6603,7 @@ mod tests {
 
         assert_eq!(
             emit_mir_expr(&expr, &ctx).expect("inequality emits"),
-            "(other != &(aver_rt::AverList::from_vec(vec![aver_rt::AverInt::from_i64(1)])))"
+            "(other != &(aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(1)])))"
         );
     }
 

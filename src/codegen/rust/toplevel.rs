@@ -74,9 +74,14 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
     let scope = key.scope_str();
     match td {
         TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public, ctx, scope),
-        TypeDef::Product { name, fields, .. } => {
-            emit_product_type(name, fields, public, ctx, scope)
-        }
+        TypeDef::Product { name, fields, .. } => emit_product_type(
+            name,
+            fields,
+            public,
+            ctx,
+            scope,
+            super::uses_packed_u8(ctx, name),
+        ),
     }
 }
 
@@ -372,6 +377,7 @@ fn emit_product_type(
     public: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
+    packed_u8: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -390,12 +396,19 @@ fn emit_product_type(
     writeln!(out, "{}", derives).unwrap();
     writeln!(out, "{}struct {} {{", visibility, name).unwrap();
     for (field_name, field_type) in fields {
+        let rust_type = if packed_u8 {
+            debug_assert_eq!(fields.len(), 1);
+            debug_assert_eq!(parse_type_str(field_type), Type::List(Box::new(Type::Int)));
+            "aver_rt::AverPackedU8".to_string()
+        } else {
+            type_annotation_to_rust_scoped(field_type, ctx, scope)
+        };
         writeln!(
             out,
             "    {}{}: {},",
             visibility,
             aver_name_to_rust(field_name),
-            type_annotation_to_rust_scoped(field_type, ctx, scope)
+            rust_type
         )
         .unwrap();
     }
@@ -1486,9 +1499,12 @@ fn emit_main_with_visibility(
 /// trace shapes that never built on Rust on either walker), emit a hard
 /// `compile_error!` diagnostic — those examples are non-buildable on Rust
 /// and trapping here is the documented W6/Stage-3 behaviour.
-fn emit_verify_case_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let spanned = Spanned::bare(expr.clone());
-    let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
+fn emit_verify_case_expr(expr: &Spanned<Expr>, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    // Keep the typechecker's outer expression stamp. Re-wrapping only the
+    // node in `Spanned::bare` erased `List<Int>` here, which made verify RHS
+    // literals fall back to the generic AverList representation even though
+    // the generated function returned AverIntList.
+    let resolved = ctx.resolve_expr(expr, ectx.current_module_scope.as_deref());
     match super::from_mir::emit_mir_verify_expr(&resolved, ctx) {
         Some(code) => code,
         None => emit_codegen_error_expr(
@@ -1633,8 +1649,8 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
-            let left_str = emit_verify_case_expr(&left.node, ctx, &ectx);
-            let right_str = emit_verify_case_expr(&right.node, ctx, &ectx);
+            let left_str = emit_verify_case_expr(left, ctx, &ectx);
+            let right_str = emit_verify_case_expr(right, ctx, &ectx);
 
             // Defensive backstop: if the MIR walker still produced a
             // `compile_error!` placeholder for a case the source-level
@@ -1695,6 +1711,7 @@ mod tests {
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
+            packed_sequence_layouts: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
             resolved_fn_defs: Vec::new(),

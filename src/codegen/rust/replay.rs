@@ -173,22 +173,29 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     format!("{}\n", sections.join("\n\n"))
 }
 
-pub fn emit_replay_value_impl(td: &TypeDef) -> String {
+pub fn emit_replay_value_impl(td: &TypeDef, packed_u8: bool) -> String {
     match td {
-        TypeDef::Product { name, fields, .. } => emit_record_impl(name, fields),
+        TypeDef::Product { name, fields, .. } => emit_record_impl(name, fields, packed_u8),
         TypeDef::Sum { name, variants, .. } => emit_variant_impl(name, variants),
     }
 }
 
-fn emit_record_impl(name: &str, fields: &[(String, String)]) -> String {
+fn emit_record_impl(name: &str, fields: &[(String, String)], packed_u8: bool) -> String {
     let to_fields = fields
         .iter()
         .map(|(field_name, _)| {
-            format!(
-                "            fields.insert({:?}.to_string(), ReplayValue::to_replay_json(&self.{}));",
-                field_name,
-                aver_name_to_rust(field_name)
-            )
+            if packed_u8 {
+                format!(
+                    "            fields.insert({field_name:?}.to_string(), ReplayValue::to_replay_json(&self.{}.to_int_list()));",
+                    aver_name_to_rust(field_name)
+                )
+            } else {
+                format!(
+                    "            fields.insert({:?}.to_string(), ReplayValue::to_replay_json(&self.{}));",
+                    field_name,
+                    aver_name_to_rust(field_name)
+                )
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -196,13 +203,20 @@ fn emit_record_impl(name: &str, fields: &[(String, String)]) -> String {
     let from_fields = fields
         .iter()
         .map(|(field_name, field_type)| {
-            format!(
-                "                {}: <{} as ReplayValue>::from_replay_json(fields.get({:?}).ok_or_else(|| {:?}.to_string())?)?,",
-                aver_name_to_rust(field_name),
+            let decoded = format!(
+                "<{} as ReplayValue>::from_replay_json(fields.get({:?}).ok_or_else(|| {:?}.to_string())?)?",
                 type_annotation_to_rust(field_type),
                 field_name,
                 format!("$record {name} missing field '{field_name}'")
-            )
+            );
+            if packed_u8 {
+                format!(
+                    "                {}: ({decoded}).into_packed()?,",
+                    aver_name_to_rust(field_name)
+                )
+            } else {
+                format!("                {}: {decoded},", aver_name_to_rust(field_name))
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -1242,6 +1256,25 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                 items.push(T::from_replay_json(item)?);
             }
             Ok(aver_rt::AverList::from_vec(items))
+        }
+    }
+
+    impl ReplayValue for aver_rt::AverIntList {
+        fn to_replay_json(&self) -> ReplayJson {
+            ReplayJson::Array(
+                self.iter_cloned()
+                    .map(|value| ReplayValue::to_replay_json(&value))
+                    .collect(),
+            )
+        }
+
+        fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
+            let arr = expect_array(value, "list")?;
+            let mut items = Vec::with_capacity(arr.len());
+            for item in arr {
+                items.push(aver_rt::AverInt::from_replay_json(item)?);
+            }
+            Ok(aver_rt::AverIntList::from_vec(items))
         }
     }
 

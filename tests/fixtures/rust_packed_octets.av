@@ -1,0 +1,37 @@
+module M
+    intent = "generic packed sequence"
+    effects [Console]
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+
+fn toList(value: Octets) -> List<Int>
+    value.values
+
+fn wideListRoundTrip(values: List<Int>) -> List<Int>
+    List.concat(List.drop(List.prepend(-1, values), 1), [256])
+
+verify fromList
+    fromList([0, 127, 255]) => Octets(values = [0, 127, 255])
+    fromList([256]) => Result.Err("oob")
+
+verify wideListRoundTrip
+    wideListRoundTrip([1, 2]) => [1, 2, 256]
+
+fn main() -> Unit
+    ! [Console.print]
+    match fromList(List.concat([0, 1, 127], [128, 255]))
+        Result.Ok(value) -> Console.print("{List.len(toList(value))}")
+        Result.Err(error) -> Console.print(error)
