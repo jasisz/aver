@@ -6905,7 +6905,7 @@ fn discover_builtins_in_expr(
 /// anywhere in the program, insertion-order deduped. These are the
 /// "address-taken" fns — each needs a slot in the module's funcref
 /// table so a `Fn`-param can carry its dense index. Mirror of the
-/// full-tree walk shape `own_param.rs::visit_children` uses; built
+/// full-tree walk shape `ir::mir::expr::walk_children` uses; built
 /// here standalone so module assembly doesn't depend on optimizer
 /// internals.
 /// Refuse any fabricated intrinsic the wasm-gc family cannot lower.
