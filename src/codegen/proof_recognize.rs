@@ -98,25 +98,39 @@ pub(crate) fn peano_ctor_role(
     }
 }
 
-/// Collect the user functions called anywhere in `expr` — including inside
-/// interpolated strings, map literals and record updates. The descent is
-/// `expr_walk::walk`, so a new `Expr` variant cannot be skipped silently; a
-/// hand-rolled walk here once ended in `_ => {}` and a wrapper whose only call
-/// sat inside `"{f(x)}"` never entered the Dafny opaque closure.
+/// Whether a source-level call name identifies a user function rather than a
+/// builtin or constructor. Bare names are user functions; dotted names are
+/// user functions only when their head is not a builtin namespace and their
+/// leaf starts lowercase.
+fn is_user_function_call(name: &str) -> bool {
+    if !name.contains('.') {
+        return true;
+    }
+    let head = name.split('.').next().unwrap_or(name);
+    let leaf = name.rsplit('.').next().unwrap_or(name);
+    !crate::ir::is_builtin_namespace(head) && leaf.chars().next().is_some_and(|c| c.is_lowercase())
+}
+
+/// Collect the user functions called anywhere in `expr` — including
+/// cross-module calls and calls inside interpolated strings, map literals and
+/// record updates. Builtin namespace methods and constructor/type calls stay
+/// excluded. The descent is `expr_walk::walk`, so a new `Expr` variant cannot
+/// be skipped silently; a hand-rolled walk here once ended in `_ => {}` and a
+/// wrapper whose only call sat inside `"{f(x)}"` never entered the Dafny opaque
+/// closure.
 pub(crate) fn collect_called_fns(
     expr: &Spanned<Expr>,
     out: &mut std::collections::BTreeSet<String>,
 ) {
     crate::codegen::expr_walk::walk(expr, &mut |node| match &node.node {
         Expr::FnCall(f, _) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node) {
-                // Skip builtins — only user functions need fuel
-                if !name.contains('.') {
-                    out.insert(name);
-                }
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node)
+                && is_user_function_call(&name)
+            {
+                out.insert(name);
             }
         }
-        Expr::TailCall(tc) if !tc.target.contains('.') => {
+        Expr::TailCall(tc) if is_user_function_call(&tc.target) => {
             out.insert(tc.target.clone());
         }
         _ => {}
