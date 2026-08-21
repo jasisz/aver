@@ -29,8 +29,8 @@ fn export_dafny_modules(files: &[(&str, &str)], entry: &str, prefix: &str) -> St
         .expect("expected `aver proof --backend dafny` to run");
     assert!(run.status.success(), "{}", format_output(&run));
     let mut text = String::new();
-    for entry in std::fs::read_dir(&out).expect("read out dir") {
-        let path = entry.expect("dir entry").path();
+    for dir_entry in std::fs::read_dir(&out).expect("read out dir") {
+        let path = dir_entry.expect("dir entry").path();
         if path.extension().is_some_and(|e| e == "dfy") {
             text.push_str(&std::fs::read_to_string(&path).expect("read .dfy"));
         }
@@ -45,29 +45,42 @@ fn pongB(n: Int) -> Int\n    ? \"Bounces back.\"\n    match n <= 0\n        true
 
 fn program(module: &str, wrapper: &str) -> String {
     format!(
-        "module {module}\n    intent =\n        \"A wrapper reaching a fuel-encoded mutual pair.\"\n\n{MUTUAL_PAIR}{wrapper}"
+        "module {module}\n    intent =\n        \"A fuel-encoded mutual pair.\"\n\n{MUTUAL_PAIR}{wrapper}"
     )
 }
 
-/// The wrapper's law lemma must carry the law's `given` domain as a
-/// `requires` and a `{:fuel ...}` attribute for the opaque callee it reaches.
-/// Without them the exporter states an unbounded universal it has no basis
-/// for (`wrapInterp(3) == "1"`, not `"0"`).
-fn assert_lemma_is_bounded_and_fuelled(text: &str, lemma: &str, fuel_target: &str) {
-    let sig = format!("{lemma}(n: int)");
+/// The header of the lemma whose signature starts with `sig`, from the
+/// start of its line up to the body's opening brace.
+fn lemma_header<'a>(text: &'a str, sig: &str) -> &'a str {
     let at = text
-        .find(&sig)
-        .unwrap_or_else(|| panic!("no lemma `{lemma}` in emitted Dafny:\n{text}"));
+        .find(sig)
+        .unwrap_or_else(|| panic!("no lemma `{sig}` in emitted Dafny:\n{text}"));
     let header_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
     let body_open = text[at..].find("\n{").map_or(text.len(), |i| at + i);
-    let lemma_text = &text[header_start..body_open];
+    &text[header_start..body_open]
+}
+
+/// The wrapper's universal law lemma must carry the law's `given` domain as
+/// a `requires`; without it the exporter states an unbounded universal it
+/// has no basis for (`wrapInterp(3) == "1"`, not `"0"`).
+fn assert_lemma_is_bounded(text: &str, lemma: &str) {
+    let header = lemma_header(text, &format!("{lemma}(n: int)"));
     assert!(
-        text.contains(&format!("{{:fuel {fuel_target}")),
-        "lemma `{lemma}` lost the fuel attribute for the opaque callee:\n{text}"
+        header.contains("requires n == 2"),
+        "lemma `{lemma}` lost the law's given-domain bound:\n{header}"
     );
+}
+
+/// The lemma that actually unfolds the opaque callee must carry its
+/// `{:fuel ...}` attribute. In a single module that is the universal lemma
+/// itself; across modules the universal dispatches to a per-sample lemma,
+/// and the fuel sits there (the universal-lemma fuel emitters still drop
+/// dotted names — a known gap, out of scope here).
+fn assert_lemma_is_fuelled(text: &str, sig: &str, fuel_target: &str) {
+    let header = lemma_header(text, sig);
     assert!(
-        lemma_text.contains("requires n == 2"),
-        "lemma `{lemma}` lost the law's given-domain bound:\n{lemma_text}"
+        header.contains(&format!("{{:fuel {fuel_target}")),
+        "lemma `{sig}` lost the fuel attribute for the opaque callee:\n{header}"
     );
 }
 
@@ -81,7 +94,8 @@ fn a_wrapper_reaching_a_mutual_pair_directly_gets_a_bounded_lemma() {
         ),
         "aver-opaque-direct",
     );
-    assert_lemma_is_bounded_and_fuelled(&text, "wrapDirect_wrapDirectIsStable", "pingA");
+    assert_lemma_is_bounded(&text, "wrapDirect_wrapDirectIsStable");
+    assert_lemma_is_fuelled(&text, "wrapDirect_wrapDirectIsStable(n: int)", "pingA");
 }
 
 #[test]
@@ -94,7 +108,8 @@ fn a_wrapper_reaching_a_mutual_pair_through_an_interpolated_string_gets_a_bounde
         ),
         "aver-opaque-interp",
     );
-    assert_lemma_is_bounded_and_fuelled(&text, "wrapInterp_wrapInterpIsStable", "pingA");
+    assert_lemma_is_bounded(&text, "wrapInterp_wrapInterpIsStable");
+    assert_lemma_is_fuelled(&text, "wrapInterp_wrapInterpIsStable(n: int)", "pingA");
 }
 
 #[test]
@@ -107,7 +122,8 @@ fn a_wrapper_reaching_a_mutual_pair_through_a_map_literal_gets_a_bounded_lemma()
         ),
         "aver-opaque-maplit",
     );
-    assert_lemma_is_bounded_and_fuelled(&text, "wrapMap_wrapMapIsStable", "pingA");
+    assert_lemma_is_bounded(&text, "wrapMap_wrapMapIsStable");
+    assert_lemma_is_fuelled(&text, "wrapMap_wrapMapIsStable(n: int)", "pingA");
 }
 
 #[test]
@@ -128,9 +144,10 @@ fn a_wrapper_reaching_a_cross_module_mutual_pair_gets_a_bounded_lemma() {
         "OpaqueCrossModule.av",
         "aver-opaque-cross-module",
     );
-    assert_lemma_is_bounded_and_fuelled(
+    assert_lemma_is_bounded(&text, "wrapCrossModule_wrapCrossModuleIsStable");
+    assert_lemma_is_fuelled(
         &text,
-        "wrapCrossModule_wrapCrossModuleIsStable",
+        "wrapCrossModule_wrapCrossModuleIsStable__sample_1(",
         "Aver_Digits.pingA",
     );
 }
