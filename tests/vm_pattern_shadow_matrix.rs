@@ -637,10 +637,12 @@ const ESCAPE_SHADOWED_CALLEE_ERROR: &str = "the parameter 'area' shadows the fun
      defined at line 7; every name means one thing in its scope — rename one of them";
 
 /// The renamed control: a `Fn`-typed param spelled unlike any module
-/// fn must call the PASSED fn. VM-only, like the original witness: the
-/// emitted Rust for this higher-order shape does not compile
-/// (pre-existing E0308, issue #952) and the self-host parser does not
-/// accept `Fn(..)`-typed parameters yet.
+/// fn must call the PASSED fn. The compiled-Rust case is also the exact
+/// issue-#952 regression: a source `Fn(Shape) -> Int` has a canonical owned
+/// fn-pointer ABI while ordinary generated functions borrow `Shape`
+/// internally, so the function value needs a zero-state adapter.
+/// No self-host executor here: its parser does not accept `Fn(..)`-typed
+/// parameters yet.
 const ESCAPE_SHADOWED_CALLEE_SRC: &str = r#"module Tmp
 
 type Shape
@@ -824,6 +826,16 @@ fn escape_callee_param_control_vm() {
         run_vm("esc-callee-vm", ESCAPE_SHADOWED_CALLEE_SRC),
         ESCAPE_SHADOWED_CALLEE_EXPECTED,
         "a Fn-typed param must call the PASSED fn, not a spliced module-fn body"
+    );
+}
+
+#[test]
+fn escape_callee_param_control_compiled_rust() {
+    assert_eq!(
+        run_compiled_rust("esc-callee", ESCAPE_SHADOWED_CALLEE_SRC),
+        ESCAPE_SHADOWED_CALLEE_EXPECTED,
+        "compiled Rust must adapt a borrow-by-default module fn to the canonical \
+         value-taking Fn pointer ABI"
     );
 }
 

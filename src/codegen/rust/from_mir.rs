@@ -1838,12 +1838,94 @@ fn emit_mir_static_ref(name: &str, ctx: &MirEmitCtx<'_>) -> String {
             };
         }
     }
-    if let Some((prefix, bare)) = resolve_module_call(name, ctx.module_prefixes) {
+    let static_ref = if let Some((prefix, bare)) = resolve_module_call(name, ctx.module_prefixes) {
         let module_path = module_prefix_to_rust_path(prefix);
         format!("{}::{}", module_path, aver_name_to_rust(bare))
     } else {
         aver_name_to_rust(name)
+    };
+
+    adapt_first_class_fn_ref(name, static_ref, ctx)
+}
+
+/// Adapt a user function's optimized Rust ABI to Aver's canonical `Fn` ABI.
+///
+/// A source-level `Fn(Shape) -> Int` is a value-taking function pointer:
+/// `fn(Shape) -> AverInt`. Ordinary generated Rust functions deliberately use
+/// borrow-by-default and therefore expose `fn(&Shape) -> AverInt` internally.
+/// Passing that function item directly produces E0308 even though both sides
+/// have the same Aver signature (issue #952).
+///
+/// A non-capturing closure is itself coercible to a plain fn pointer, so use it
+/// as a zero-state ABI adapter whenever the target borrows at least one
+/// parameter. The closure owns canonical arguments and lends only the positions
+/// required by the target's internal signature. Scalar-only and self-TCO
+/// functions keep the bare function item fast path.
+fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>) -> String {
+    let Some(cg) = ctx.codegen else {
+        return static_ref;
+    };
+    let lookup = if name.contains('.') {
+        name.to_string()
+    } else if let Some(scope) = ctx.current_module_scope {
+        format!("{scope}.{name}")
+    } else {
+        name.to_string()
+    };
+    let Some(fn_id) = crate::codegen::common::fn_id_for_dotted_name(cg, &lookup)
+        .or_else(|| crate::codegen::common::fn_id_for_dotted_name(cg, name))
+    else {
+        return static_ref;
+    };
+    let Some(resolved) = cg.resolved_program.fn_by_id(fn_id) else {
+        return static_ref;
+    };
+
+    // A lone self-TCO function is emitted with owned mutable params, so its
+    // item already has the canonical value-taking ABI. Mutual-TCO members have
+    // borrow-by-default public wrappers and therefore still need this adapter.
+    let is_mutual_tco = cg.mutual_tco_members.contains(&fn_id);
+    let is_lone_self_tco = !is_mutual_tco
+        && cg
+            .fn_defs
+            .iter()
+            .chain(cg.extra_fn_defs.iter())
+            .chain(cg.modules.iter().flat_map(|m| m.fn_defs.iter()))
+            .find(|fd| crate::codegen::common::fn_id_for_decl(cg, fd) == Some(fn_id))
+            .is_some_and(|fd| super::toplevel::body_has_self_tailcall(&fd.body, &fd.name));
+    if is_lone_self_tco {
+        return static_ref;
     }
+
+    let borrow_mask: Vec<bool> = resolved
+        .params
+        .iter()
+        .map(|(_, ty)| should_borrow_param(ty))
+        .collect();
+    if !borrow_mask.iter().any(|borrowed| *borrowed) {
+        return static_ref;
+    }
+
+    let params: Vec<String> = (0..resolved.params.len())
+        .map(|i| format!("__aver_fn_arg{i}"))
+        .collect();
+    let args: Vec<String> = params
+        .iter()
+        .zip(borrow_mask)
+        .map(|(param, borrowed)| {
+            if borrowed {
+                format!("&{param}")
+            } else {
+                param.clone()
+            }
+        })
+        .collect();
+    format!(
+        "|{}| {}({})",
+        params.join(", "),
+        static_ref,
+        args.join(", ")
+    )
 }
 
 /// Render one free-standing `verify`-case expression through the MIR
