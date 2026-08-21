@@ -15,6 +15,7 @@ pub mod random;
 mod runtime;
 mod service_types;
 pub mod strcursor;
+mod string_index;
 pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
@@ -36,6 +37,7 @@ pub use strcursor::{
     str_code1, str_code1_lower, str_code1_upper, str_cursor_code, str_cursor_end, str_cursor_head,
     str_cursor_next, str_fold_lower, str_fold_upper,
 };
+pub use string_index::{StringIndex, string_index_build, string_index_char_at, string_index_slice};
 
 #[cfg(feature = "terminal")]
 pub use terminal::{

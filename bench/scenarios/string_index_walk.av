@@ -1,0 +1,24 @@
+module StringIndexWalk
+    intent = "Bench — recursively walk a Unicode string by codepoint index. The runtime builds one hidden UTF-8 boundary table instead of rescanning from the start for every String.charAt."
+    depends []
+    effects []
+
+fn grow(rounds: Int, text: String) -> String
+    ? "Double a mixed-width Unicode seed without making setup dominate traversal."
+    match rounds
+        0 -> text
+        _ -> grow(rounds - 1, text + text)
+
+fn count(text: String, position: Int, total: Int) -> Int
+    ? "Tail-recursively consume every codepoint through String.charAt."
+    match String.charAt(text, position)
+        Option.None -> total
+        Option.Some(_) -> count(text, position + 1, total + 1)
+
+verify count
+    count("", 0, 0) => 0
+    count("aą😀z", 0, 0) => 4
+
+fn main() -> Int
+    ? "Bench entry — returns the number of visited codepoints."
+    count(grow(13, "aą😀z"), 0, 0)

@@ -6,8 +6,8 @@
 //! A proof must not describe a program that does not exist in source.
 //! `buffer_build` replaces a `String.join(<builder>(…), sep)` pipeline
 //! with a buffer loop and synthesizes a `<sink>__buffered` fn;
-//! `interp_lower` replaces an interpolation with a `__buf_*` chain; the
-//! planned chars-fusion will do the same to traversals. An exporter
+//! `interp_lower` replaces an interpolation with a `__buf_*` chain;
+//! traversal passes add cursor, index, and builder workers. An exporter
 //! reading the post-pass AST states its theorems about entities the
 //! user never wrote. Those passes are BELOW the proof line.
 //!
@@ -53,6 +53,10 @@ const ESCAPABLE: &str = include_str!("fixtures/proof_seam_escapable.av");
 /// literals — the two shapes `chars_fusion` rewrites.
 const CHARS: &str = include_str!("fixtures/proof_seam_chars.av");
 
+/// Recursive `String.charAt(text, position)` — the shape `string_index`
+/// turns into an ABI-preserving wrapper plus a hidden indexed worker.
+const STRING_INDEX: &str = include_str!("fixtures/proof_seam_string_index.av");
+
 /// `doubled(values, [])` — a loop that collects with `List.prepend` and
 /// reverses on the way out, the shape `list_build` turns into a builder.
 const COLLECT: &str = include_str!("fixtures/proof_seam_collect.av");
@@ -69,7 +73,8 @@ struct Flags {
     /// The passes that introduce entities the source does not contain:
     /// `interp_lower` (`__buf_*`, `__to_str`), `buffer_build`
     /// (`<sink>__buffered`, `Buffer`), `chars_fusion`
-    /// (`<loop>__cursor`, `__str_*`) and `list_build`
+    /// (`<loop>__cursor`, `__str_*`), `string_index`
+    /// (`<fn>__indexed`, `String.Index`) and `list_build`
     /// (`<loop>__collected`, `__lst_*`). Below the proof line.
     fabricating: bool,
     /// The scalar-replace pass. Above the proof line — see the module
@@ -94,11 +99,15 @@ struct Run {
     /// `chars_fusion` producer sites moved onto a cursor, plus the
     /// single-character matches it turned into codepoint comparisons.
     chars_rewrites: usize,
+    /// `String.charAt` / `String.slice` sites moved onto a hidden index.
+    string_index_rewrites: usize,
     /// Did the runtime-facing AST end up carrying a synthesized
     /// `__buffered` sink? Read off the items a backend gets.
     runtime_carries_buffered: bool,
     /// Same question for the synthesized `__cursor` loop.
     runtime_carries_cursor: bool,
+    /// Same question for the synthesized `__indexed` worker.
+    runtime_carries_indexed: bool,
     /// `list_build` call sites moved onto a builder in the runtime half.
     list_rewrites: usize,
     /// Same question again for the synthesized `__collected` loop.
@@ -119,6 +128,7 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
             run_interp_lower: flags.fabricating,
             run_buffer_build: flags.fabricating,
             run_chars_fusion: flags.fabricating,
+            run_string_index: flags.fabricating,
             run_list_build: flags.fabricating,
             run_escape: flags.escape,
             run_refinement_lower: flags.proof_stages,
@@ -136,6 +146,10 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
         .chars_fusion
         .as_ref()
         .map_or(0, |r| r.cursor_rewrites + r.codepoint_matches);
+    let string_index_rewrites = result
+        .string_index
+        .as_ref()
+        .map_or(0, |r| r.indexed_accesses);
     let carries = |suffix: &str| {
         items.iter().any(|item| match item {
             TopLevel::FnDef(fd) => fd.name.contains(suffix),
@@ -146,6 +160,7 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
     let byte_retargets = result.list_build.as_ref().map_or(0, |r| r.byte_retargets);
     let runtime_carries_buffered = carries("__buffered");
     let runtime_carries_cursor = carries("__cursor");
+    let runtime_carries_indexed = carries("__indexed");
     let runtime_carries_collected = carries("__collected");
     let escape_rewrites = escape_rewrites(&result);
     let proof_ir = result.proof_ir.take();
@@ -188,8 +203,10 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
         dafny,
         fusion_rewrites,
         chars_rewrites,
+        string_index_rewrites,
         runtime_carries_buffered,
         runtime_carries_cursor,
+        runtime_carries_indexed,
         list_rewrites,
         runtime_carries_collected,
         byte_retargets,
@@ -455,6 +472,57 @@ fn proof_view_under_chars_fusion_is_the_unfused_program() {
     assert_proof_view_is_the_unfabricated_program(
         CHARS,
         "ProofSeamChars",
+        /* fabricating */ true,
+    );
+}
+
+/// A hidden String boundary table and its `__indexed` worker are runtime
+/// implementation details. The proof must retain the source-level
+/// codepoint contract (`String.charAt`) even when the artifact uses them.
+#[test]
+fn string_index_cannot_change_what_gets_proven() {
+    let pristine = run(
+        STRING_INDEX,
+        "ProofSeamStringIndex",
+        Flags {
+            fabricating: false,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+    let indexed = run(
+        STRING_INDEX,
+        "ProofSeamStringIndex",
+        Flags {
+            fabricating: true,
+            escape: true,
+            proof_stages: true,
+        },
+    );
+
+    assert!(
+        indexed.string_index_rewrites > 0 && indexed.runtime_carries_indexed,
+        "fixture must synthesize an indexed worker in the runtime view"
+    );
+    assert!(
+        pristine.string_index_rewrites == 0 && !pristine.runtime_carries_indexed,
+        "the pristine run must retain source String access"
+    );
+    assert_eq!(pristine.lean, indexed.lean);
+    assert_eq!(pristine.dafny, indexed.dafny);
+    for (label, emitted) in [("Lean", &indexed.lean), ("Dafny", &indexed.dafny)] {
+        assert!(
+            !emitted.contains("__indexed") && !emitted.contains("__str_index"),
+            "the indexed runtime shape leaked into emitted {label}"
+        );
+    }
+}
+
+#[test]
+fn proof_view_under_string_index_is_the_unindexed_program() {
+    assert_proof_view_is_the_unfabricated_program(
+        STRING_INDEX,
+        "ProofSeamStringIndex",
         /* fabricating */ true,
     );
 }

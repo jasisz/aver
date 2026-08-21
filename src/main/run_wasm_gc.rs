@@ -143,8 +143,11 @@ pub(super) fn try_run_wasm_gc(
             });
     let source = read_file(file)?;
     let mut items = parse_file(&source)?;
-    let dep_modules =
-        load_compile_deps(&items, &module_root, super::commands::DepLowering::PRISTINE);
+    let dep_modules = load_compile_deps(
+        &items,
+        &module_root,
+        super::commands::DepLowering::STRING_INDEX_ONLY,
+    );
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
@@ -157,6 +160,7 @@ pub(super) fn try_run_wasm_gc(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             ..Default::default()
         },

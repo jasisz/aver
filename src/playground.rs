@@ -27,11 +27,12 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
             // bump-allocator backends; wasm-gc would have to emulate
             // a mutable buffer over `(struct len array)` with
             // grow-on-append, while `array.copy` x2 is the idiomatic
-            // shape. Skip both lowering passes — same as the CLI
-            // `--target wasm-gc` path in `cmd_compile_wasm_gc`.
+            // shape. Keep those mutable lowerings off, but enable the
+            // immutable String boundary index that wasm-gc lowers natively.
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             ..Default::default()
         },
@@ -79,6 +80,7 @@ pub fn compile_project_to_wasm(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             ..Default::default()
         },
@@ -90,7 +92,7 @@ pub fn compile_project_to_wasm(
 
     let modules: Vec<codegen::ModuleInfo> = loaded
         .into_iter()
-        .map(|m| loaded_to_module_info(m, false))
+        .map(|m| loaded_to_module_info(m, false, true))
         .collect();
 
     let type_aliases = codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
@@ -146,6 +148,7 @@ pub fn compile_project_to_wasm_with_entry(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             ..Default::default()
         },
@@ -157,7 +160,7 @@ pub fn compile_project_to_wasm_with_entry(
 
     let modules: Vec<codegen::ModuleInfo> = loaded
         .into_iter()
-        .map(|m| loaded_to_module_info(m, false))
+        .map(|m| loaded_to_module_info(m, false, true))
         .collect();
     let type_aliases = codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
     // `_and_reannotate`: same #950 wipe-guard as the compile path above.
@@ -309,6 +312,7 @@ fn build_ctx(
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_string_index: apply_traversal_lowering,
             run_list_build: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
@@ -395,7 +399,7 @@ fn build_project_ctx(
     let modules: Vec<codegen::ModuleInfo> = loaded
         .iter()
         .cloned()
-        .map(|m| loaded_to_module_info(m, apply_traversal_lowering))
+        .map(|m| loaded_to_module_info(m, apply_traversal_lowering, apply_traversal_lowering))
         .collect();
 
     // Multi-file pipeline. `apply_traversal_lowering` mirrors the CLI
@@ -412,6 +416,7 @@ fn build_project_ctx(
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_string_index: apply_traversal_lowering,
             run_list_build: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
@@ -506,11 +511,14 @@ fn load_roots(items: &[TopLevel]) -> Vec<String> {
     deps
 }
 
-/// Lower a single dep module from the virtual filesystem. `apply_traversal_lowering`
-/// mirrors the entry-level decision so the dep modules go through the
-/// same pipeline shape as the entry — proof exporters get source-level IR
-/// end-to-end, runtime targets get the deforested form.
-fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> codegen::ModuleInfo {
+/// Lower one virtual-fs dependency with the entry target's matrix. Mutable
+/// cursor/builder deforestation and the immutable String index are separate:
+/// wasm requests only the latter, Rust requests both, and proofs request none.
+fn loaded_to_module_info(
+    m: LoadedModule,
+    apply_traversal_lowering: bool,
+    apply_string_index: bool,
+) -> codegen::ModuleInfo {
     let mut items = m.items;
     // No typecheck — entry-level typecheck has already validated
     // cross-module refs against `loaded`. The analyze stage runs so the
@@ -522,6 +530,7 @@ fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> cod
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_string_index: apply_string_index,
             run_list_build: apply_traversal_lowering,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
@@ -1233,6 +1242,65 @@ fn main() -> Int
             helper_down_id,
             ctx.proof_ir.fn_contracts.len()
         );
+    }
+
+    #[test]
+    fn project_string_index_respects_runtime_wasm_and_proof_target_matrix() {
+        let mut files = HashMap::new();
+        files.insert(
+            "helper.av".to_string(),
+            r#"module Helper
+    intent = "recursive Unicode walk"
+    exposes [count]
+    effects []
+
+fn walk(text: String, position: Int, total: Int) -> Int
+    match String.charAt(text, position)
+        Option.None -> total
+        Option.Some(_) -> walk(text, position + 1, total + 1)
+
+fn count(text: String) -> Int
+    ? "Count codepoints."
+    walk(text, 0, 0)
+"#
+            .to_string(),
+        );
+        files.insert(
+            "main.av".to_string(),
+            r#"module Main
+    intent = "call helper"
+    depends [Helper]
+
+fn main() -> Int
+    Helper.count("aą😀z")
+"#
+            .to_string(),
+        );
+
+        let proof = super::build_project_ctx(&files, "main.av", false).expect("proof ctx");
+        assert!(
+            proof
+                .modules
+                .iter()
+                .flat_map(|module| &module.fn_defs)
+                .all(|fd| !fd.name.contains("__indexed")),
+            "proof modules must remain source-shaped"
+        );
+
+        let rust = super::build_project_ctx(&files, "main.av", true).expect("Rust ctx");
+        assert!(
+            rust.modules
+                .iter()
+                .flat_map(|module| &module.fn_defs)
+                .any(|fd| fd.name == "walk__indexed"),
+            "runtime modules must carry the indexed worker"
+        );
+
+        // The wasm virtual-fs path has its own matrix: mutable builders off,
+        // immutable String index on. A successful compile proves the hidden
+        // String.Index survives flattening and has a concrete wasm type.
+        let bytes = compile_project_to_wasm(&files, "main.av").expect("wasm project");
+        assert!(bytes.len() > 1000);
     }
 
     #[test]

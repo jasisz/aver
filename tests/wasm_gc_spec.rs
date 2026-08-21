@@ -2385,6 +2385,25 @@ fn main() -> Int
 }
 
 #[test]
+fn recursive_string_access_uses_the_hidden_unicode_index() {
+    let source = r#"module Tmp
+    intent = "recursive charAt and slice share one hidden codepoint index"
+    depends []
+
+fn walk(text: String, pos: Int, seen: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> seen + String.len(String.slice(text, 1, 3)) * 10
+        Option.Some(_) -> walk(text, pos + 1, seen + 1)
+
+fn main() -> Int
+    walk("aą😀z", 0, 0)
+"#;
+    assert_eq!(run_int(source), 24);
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 24);
+}
+
+#[test]
 fn higher_order_fn_param_via_call_indirect() {
     // First-class `Fn`-param: `inc` is passed as a value (FnValue → i32
     // funcref-table index) and applied twice through the `f` param

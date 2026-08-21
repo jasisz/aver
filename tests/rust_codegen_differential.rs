@@ -484,6 +484,38 @@ fn main() -> Unit
     assert_eq!(rust, expected, "Rust chars fusion diverged from the VM");
 }
 
+/// Recursive indexed access builds one hidden codepoint table and carries it
+/// through the loop. This is deliberately Unicode-heavy: both backends must
+/// agree that public positions are scalar-value indices rather than UTF-8 byte
+/// offsets, for both `charAt` and `slice`.
+#[test]
+fn rust_indexed_string_access_matches_vm() {
+    let src = r#"module StringIndexDifferential
+    intent = "Exercise the hidden index used by recursive string access"
+    effects [Console.print]
+
+fn walk(text: String, pos: Int, seen: Int) -> String
+    ? "Read every codepoint, then take a slice through the same hidden index."
+    match String.charAt(text, pos)
+        Option.None -> "{seen}:{String.slice(text, 1, 3)}"
+        Option.Some(_) -> walk(text, pos + 1, seen + 1)
+
+fn main() -> Unit
+    ? "Print the indexed result for backend parity."
+    ! [Console.print]
+    Console.print(walk("aą😀z", 0, 0))
+"#;
+    let expected = "4:ą😀";
+    let vm = run_vm_inline("string_index", src).expect("VM run");
+    let rust =
+        build_run_rust_inline("string_index", src).expect("Rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM indexed String contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust indexed String access diverged from the VM"
+    );
+}
+
 /// List build, on the shapes where the two backends could disagree.
 ///
 /// ORDER is the claim: `prepend` then `reverse` yields traversal order,

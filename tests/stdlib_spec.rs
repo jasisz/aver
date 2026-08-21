@@ -355,6 +355,31 @@ fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
     );
 }
 
+/// `Json` is loaded as a dependency, then parsed again by the VM compiler.
+/// The second copy must adopt the same String-index workers its symbol table
+/// learned from the first; output parity alone would not catch a silent fall
+/// back to repeated source-level `String.charAt` scans.
+#[test]
+fn the_vm_adopts_string_index_workers_from_a_dependency() {
+    let run = run_aver(&[
+        "run",
+        "bench/scenarios/json_parse.av",
+        "--module-root",
+        "examples/data",
+        "--profile",
+    ]);
+    assert_success("aver run Json benchmark --profile", &run);
+    let profile = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        profile.contains("STR_INDEX_CHAR_AT") && profile.contains("Json.parseStringChunk__indexed"),
+        "the VM must execute dependency-side indexed workers:\n{profile}"
+    );
+}
+
 /// The byte sink, pinned at the bytecode level the same way the cursor
 /// is. The VM re-parses the dependency and re-runs the fusing passes on
 /// its copy; a silent fall-back to the list spelling would still answer

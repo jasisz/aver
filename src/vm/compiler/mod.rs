@@ -131,8 +131,8 @@ fn build_optimized_mir(
     crate::ir::mir::optimize(lowered)
 }
 
-/// Run the three fabricating passes — buffer-build deforestation,
-/// chars fusion and list build — over a freshly-parsed dependency
+/// Run the four fabricating traversal passes — buffer-build deforestation,
+/// chars fusion, String indexing, and list build — over a freshly-parsed dependency
 /// module, and keep the result only when the entry's symbol table
 /// already knows every variant they synthesized.
 ///
@@ -145,15 +145,13 @@ fn build_optimized_mir(
 /// program.
 ///
 /// The symbol-table check is what makes running them here safe for every
-/// caller at once. A caller that loaded its deps pristine
-/// (`run_buffer_build` / `run_chars_fusion` / `run_list_build: false` —
-/// the proof exporters and the wasm-gc paths, which can lower none of
-/// the `Buffer`, the `__str_*` cursor or the `__lst_*` builder) never
-/// registered a `<dep>.<fn>__buffered`, `<dep>.<fn>__cursor` or
-/// `<dep>.<fn>__collected` name, and compiling a call to a fn the symbol
-/// table has never heard of would resolve to nothing. So: fuse when the
-/// caller fused, stay pristine when it didn't. Both shapes compute the
-/// same result; only the allocation count differs.
+/// caller at once. A caller only registers workers for passes its target
+/// lowers: proofs register none, wasm registers String-index workers,
+/// and VM/Rust register the full set. A synthesized name absent from the
+/// table means this freshly parsed copy must stay pristine for that pass;
+/// otherwise its call resolves to nothing. So: lower exactly when the
+/// caller lowered. Both shapes compute the same result; only their cost
+/// model differs.
 fn adopt_deforestation_if_symbols_agree(
     dep_name: &str,
     pristine: Vec<TopLevel>,
@@ -173,35 +171,52 @@ fn adopt_deforestation_if_symbols_agree(
     drop(candidates);
     if !has_sink
         && !crate::ir::has_fusable_shape(&pristine)
+        && !crate::ir::has_string_index_shape(&pristine)
         && !crate::ir::has_list_build_shape(&pristine)
     {
         return pristine;
     }
 
-    let mut fused = pristine.clone();
-    let buffered = crate::ir::pipeline::buffer_build(&mut fused);
-    let cursors = crate::ir::pipeline::chars_fusion(&mut fused);
-    let collected = crate::ir::pipeline::list_build(&mut fused);
-    let mut synthesized = buffered.synthesized;
-    synthesized.extend(cursors.synthesized);
-    synthesized.extend(collected.synthesized);
-    if synthesized.is_empty() {
-        // Nothing named was invented. The codepoint-match rewrite may
-        // still have fired, and it introduces no name for the symbol
-        // table to disagree about — it is a local rewrite of a match
-        // this module already contained.
-        return if cursors.codepoint_matches > 0 {
-            fused
-        } else {
-            pristine
-        };
+    let every_variant_known = |synthesized: &[String]| {
+        synthesized.iter().all(|name| {
+            entry_symbols
+                .fn_id_of(&crate::ir::FnKey::in_module(dep_name, name.clone()))
+                .is_some()
+        })
+    };
+    let mut lowered = pristine;
+
+    // Adopt each stage independently. String indexing is available on wasm
+    // while the older mutable builders/cursors are not, so treating all
+    // fabricated names as one all-or-nothing set would suppress a supported
+    // pass whenever the same dependency also contains an unsupported shape.
+    let mut candidate = lowered.clone();
+    let report = crate::ir::pipeline::buffer_build(&mut candidate);
+    if !report.synthesized.is_empty() && every_variant_known(&report.synthesized) {
+        lowered = candidate;
     }
-    let every_variant_known = synthesized.iter().all(|name| {
-        entry_symbols
-            .fn_id_of(&crate::ir::FnKey::in_module(dep_name, name.clone()))
-            .is_some()
-    });
-    if every_variant_known { fused } else { pristine }
+
+    let mut candidate = lowered.clone();
+    let report = crate::ir::pipeline::chars_fusion(&mut candidate);
+    if (report.synthesized.is_empty() && report.codepoint_matches > 0)
+        || (!report.synthesized.is_empty() && every_variant_known(&report.synthesized))
+    {
+        lowered = candidate;
+    }
+
+    let mut candidate = lowered.clone();
+    let report = crate::ir::pipeline::string_index(&mut candidate);
+    if !report.synthesized.is_empty() && every_variant_known(&report.synthesized) {
+        lowered = candidate;
+    }
+
+    let mut candidate = lowered.clone();
+    let report = crate::ir::pipeline::list_build(&mut candidate);
+    if !report.synthesized.is_empty() && every_variant_known(&report.synthesized) {
+        lowered = candidate;
+    }
+
+    lowered
 }
 
 fn compile_program_inner(

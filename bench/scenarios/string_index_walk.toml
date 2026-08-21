@@ -1,0 +1,5 @@
+name       = "string_index_walk"
+entry      = "string_index_walk.av"
+iterations = 30
+warmup     = 3
+args       = []

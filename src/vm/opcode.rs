@@ -547,6 +547,17 @@ pub const BYTE_BUILDER_PUSH: u8 = 0xA6;
 /// Frees the pool slot when the builder held one.
 pub const BYTE_BUILDER_FINALIZE: u8 = 0xA7;
 
+// --- Loop-scoped indexed string access --------------------------------
+
+/// Pop s → push its hidden codepoint-to-byte index.
+pub const STR_INDEX_BUILD: u8 = 0xA8;
+
+/// Pop i, pop index, pop s → push `String.charAt(s, i)`.
+pub const STR_INDEX_CHAR_AT: u8 = 0xA9;
+
+/// Pop to, pop from, pop index, pop s → push `String.slice(s, from, to)`.
+pub const STR_INDEX_SLICE: u8 = 0xAA;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -656,6 +667,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         BYTE_BUILDER_NEW => "BYTE_BUILDER_NEW",
         BYTE_BUILDER_PUSH => "BYTE_BUILDER_PUSH",
         BYTE_BUILDER_FINALIZE => "BYTE_BUILDER_FINALIZE",
+        STR_INDEX_BUILD => "STR_INDEX_BUILD",
+        STR_INDEX_CHAR_AT => "STR_INDEX_CHAR_AT",
+        STR_INDEX_SLICE => "STR_INDEX_SLICE",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -732,6 +746,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | BYTE_BUILDER_NEW
         | BYTE_BUILDER_PUSH
         | BYTE_BUILDER_FINALIZE
+        | STR_INDEX_BUILD
+        | STR_INDEX_CHAR_AT
+        | STR_INDEX_SLICE
         | NOP => 0,
 
         // 1-byte

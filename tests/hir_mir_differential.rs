@@ -47,6 +47,45 @@ fn run_mir(src: &str, entry: &str) -> Value {
     run_entry(code, globals, arena, entry)
 }
 
+fn run_mir_with_modules(
+    src: &str,
+    entry: &str,
+    source_file: &std::path::Path,
+    module_root: &std::path::Path,
+) -> Value {
+    let source_file = source_file.to_string_lossy().into_owned();
+    let module_root = module_root.to_string_lossy().into_owned();
+    let mut items = parse_source(src).expect("parse failed");
+    let dep_modules =
+        aver::source::load_compile_deps(&items, &module_root).expect("load benchmark dependencies");
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            dep_modules: &dep_modules,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck {
+        assert!(tc.errors.is_empty(), "typecheck errors: {:?}", tc.errors);
+    }
+
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) = vm::compile_program_with_modules(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        Some(&module_root),
+        &source_file,
+        result.analysis.as_ref(),
+    )
+    .expect("MIR compile failed");
+    run_entry(code, globals, arena, entry)
+}
+
 fn run_entry(code: vm::CodeStore, globals: Vec<NanValue>, arena: Arena, entry: &str) -> Value {
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_silent_console(true);
@@ -279,8 +318,23 @@ fn string_interpolation_buffer_intrinsics() {
 
 #[test]
 fn bench_scenario_corpus_runs_via_mir() {
-    // Drive the real single-module bench programs (`depends []`, entry
-    // `main`) through the MIR-default VM path. These exercise the
+    // libtest workers have a much smaller stack than the `aver` process
+    // that normally runs these workloads. JSON intentionally exercises
+    // the current recursive parser deeply, so give this production-path
+    // smoke test a main-thread-sized stack instead of testing libtest's
+    // incidental stack limit.
+    std::thread::Builder::new()
+        .name("mir-bench-corpus".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(run_bench_scenario_corpus_via_mir)
+        .expect("spawn MIR benchmark corpus worker")
+        .join()
+        .expect("MIR benchmark corpus worker panicked");
+}
+
+fn run_bench_scenario_corpus_via_mir() {
+    // Drive the real bench programs, using each scenario manifest's
+    // module root, through the MIR-default VM path. These exercise the
     // production shapes (typed numeric loops, owned Vector/Map
     // accumulators, record / newtype specialization, string
     // interpolation) on actual source: every scenario must compile and
@@ -298,11 +352,18 @@ fn bench_scenario_corpus_runs_via_mir() {
         .collect();
     entries.sort();
     for path in entries {
+        let manifest_path = path.with_extension("toml");
+        let manifest = aver::bench::Manifest::load(&manifest_path)
+            .unwrap_or_else(|err| panic!("load {}: {err}", manifest_path.display()));
+        assert_eq!(
+            manifest.entry, path,
+            "scenario manifest must point at its sibling Aver source"
+        );
         let src = std::fs::read_to_string(&path).expect("read scenario");
-        // `run_mir` asserts a clean typecheck + compile + run; a panic
-        // here is the regression signal. The returned value is ignored —
-        // this gate is about the path not failing, not a fixed output.
-        let _ = run_mir(&src, "main");
+        // The module-aware production entry still dispatches every
+        // function through the MIR-default VM path. The returned value
+        // is ignored: this gate is about clean typecheck/compile/run.
+        let _ = run_mir_with_modules(&src, "main", &path, &manifest.module_root);
         checked += 1;
     }
     assert!(

@@ -490,6 +490,7 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                     run_interp_lower: false,
                     run_buffer_build: false,
                     run_chars_fusion: false,
+                    run_string_index: true,
                     run_list_build: false,
                     alloc_policy: Some(&neutral_policy),
                     ..Default::default()
@@ -519,8 +520,8 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
 ///
 /// Each dep goes through the same canonical pipeline as the entry —
 /// `pipeline::run` with `TypecheckMode::Full { base_dir: module_root }`,
-/// `run_interp_lower: false`, `run_buffer_build: false`, and the
-/// neutral alloc policy. Type errors in any dep surface as `Err`.
+/// the mutable builder/cursor passes disabled, String indexing enabled,
+/// and the neutral alloc policy. Type errors in any dep surface as `Err`.
 ///
 /// Callers that need the legacy `commands.rs` shape (run_interp_lower /
 /// run_buffer_build / self_host_mode flags) still own their local copy;
@@ -586,6 +587,7 @@ fn load_module_recursive_for_compile(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()

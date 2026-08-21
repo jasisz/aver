@@ -2292,6 +2292,111 @@ impl VM {
                     self.stack.push(pushed);
                 }
 
+                // Loop-scoped indexed String access. The hidden index is a
+                // regular arena Vector whose entries are immediate byte
+                // offsets; generated Rust and wasm-gc use packed host arrays
+                // for the same compiler-only `String.Index` type.
+                STR_INDEX_BUILD => {
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let offsets: Vec<usize> = {
+                        let text = self.arena.get_string_value(s);
+                        text.char_indices()
+                            .map(|(byte, _)| byte)
+                            .chain(std::iter::once(text.len()))
+                            .collect()
+                    };
+                    let values = offsets
+                        .into_iter()
+                        .map(|byte| NanValue::new_int(byte as i64, &mut self.arena))
+                        .collect();
+                    let index = self.arena.push_vector(values);
+                    self.stack.push(NanValue::new_vector(index));
+                }
+
+                STR_INDEX_CHAR_AT => {
+                    let position = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let Some(position) = position.as_aver_int(&self.arena).to_usize() else {
+                        self.stack.push(NanValue::NONE);
+                        continue;
+                    };
+                    let offsets = self.arena.vector_ref_value(index);
+                    if position >= offsets.len().saturating_sub(1) {
+                        self.stack.push(NanValue::NONE);
+                        continue;
+                    }
+                    let from = offsets[position]
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .ok_or_else(|| VmError::runtime("malformed String.Index boundary"))?;
+                    let to = offsets[position + 1]
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .ok_or_else(|| VmError::runtime("malformed String.Index boundary"))?;
+                    let mut bytes = [0u8; 4];
+                    let len = {
+                        let text = self.arena.get_string_value(s);
+                        let piece = text.get(from..to).ok_or_else(|| {
+                            VmError::runtime("String.Index boundary is not valid for its string")
+                        })?;
+                        if piece.len() > bytes.len() {
+                            return Err(VmError::runtime(
+                                "String.Index character spans more than four UTF-8 bytes",
+                            ));
+                        }
+                        bytes[..piece.len()].copy_from_slice(piece.as_bytes());
+                        piece.len()
+                    };
+                    let piece = std::str::from_utf8(&bytes[..len])
+                        .expect("indexed substring came from valid UTF-8");
+                    let value = NanValue::new_string_value(piece, &mut self.arena);
+                    let some = NanValue::new_some_value(value, &mut self.arena);
+                    self.stack.push(some);
+                }
+
+                STR_INDEX_SLICE => {
+                    let to = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let from = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let offsets = self.arena.vector_ref_value(index);
+                    let char_len = offsets.len().saturating_sub(1);
+                    let clamp = |value: NanValue| {
+                        let value = value.as_aver_int(&self.arena);
+                        match value.to_usize() {
+                            Some(position) => position.min(char_len),
+                            None if value < aver_rt::AverInt::zero() => 0,
+                            None => char_len,
+                        }
+                    };
+                    let from = clamp(from);
+                    let to = clamp(to);
+                    if from >= to {
+                        let empty = NanValue::new_string_value("", &mut self.arena);
+                        self.stack.push(empty);
+                        continue;
+                    }
+                    let from_byte = offsets[from]
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .ok_or_else(|| VmError::runtime("malformed String.Index boundary"))?;
+                    let to_byte = offsets[to]
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .ok_or_else(|| VmError::runtime("malformed String.Index boundary"))?;
+                    let piece = self
+                        .arena
+                        .get_string_value(s)
+                        .get(from_byte..to_byte)
+                        .ok_or_else(|| {
+                            VmError::runtime("String.Index boundary is not valid for its string")
+                        })?
+                        .to_string();
+                    let value = NanValue::new_string_value(&piece, &mut self.arena);
+                    self.stack.push(value);
+                }
+
                 // List builder (list-build fusion). A builder is either
                 // a pool handle holding immediates or the cons chain the
                 // loop wrote before this pass existed; see the opcode

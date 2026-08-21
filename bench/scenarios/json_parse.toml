@@ -1,0 +1,6 @@
+name       = "json_parse"
+entry      = "json_parse.av"
+module_root = "../../examples/data"
+iterations = 10
+warmup     = 2
+args       = []

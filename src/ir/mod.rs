@@ -21,6 +21,7 @@ pub mod mir;
 mod pass_diag;
 pub mod pipeline;
 pub mod proof_ir;
+mod string_index;
 pub mod symbol_table;
 pub mod vars;
 
@@ -40,6 +41,7 @@ pub use proof_ir::{
     PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
     RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin, UnclassifiedFn, WrapperDriver,
 };
+pub use string_index::{StringIndexPassReport, has_string_index_shape, run_string_index_pass};
 pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 
 pub use alloc_info::{

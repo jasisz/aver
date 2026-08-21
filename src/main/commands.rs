@@ -1640,6 +1640,7 @@ pub(super) fn cmd_run_self_hosted(
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_string_index: false,
                 run_list_build: false,
                 run_resolve: false,
                 ..Default::default()
@@ -3036,6 +3037,7 @@ fn build_codegen_context(
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
+            run_string_index: !proof_facing,
             run_list_build: apply_traversal_lowering,
             run_refinement_lower,
             run_contract_lower,
@@ -3373,6 +3375,10 @@ fn synth_manifest_for_av(
     aver::bench::Manifest {
         name,
         entry: av_path.to_path_buf(),
+        module_root: av_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
         iterations: iterations.unwrap_or(30),
         warmup: warmup.unwrap_or(3),
         args: Vec::new(),
@@ -3627,6 +3633,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
         "chars_fusion" => Some(PipelineStage::CharsFusion),
+        "string_index" => Some(PipelineStage::StringIndex),
         "list_build" => Some(PipelineStage::ListBuild),
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
@@ -3642,7 +3649,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, list_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()
@@ -4061,6 +4068,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     }
     merge_dep_buffer_build(&mut result.pass_diagnostics, &dep_fusion);
     merge_dep_chars_fusion(&mut result.pass_diagnostics, &dep_fusion);
+    merge_dep_string_index(&mut result.pass_diagnostics, &dep_fusion);
     merge_dep_list_build(&mut result.pass_diagnostics, &dep_fusion);
 
     if json {
@@ -4084,6 +4092,9 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 /// asked for.
 const DEFORESTING_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
 const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
+const STRING_INDEX_TARGETS_JSON: &str = "[\"rust\",\"vm\",\"wasm-gc\",\"wasip2\"]";
+const STRING_INDEX_TARGETS_NOTE: &str =
+    "counted for every runtime pipeline — rust, VM, wasm-gc, and wasip2";
 
 /// Per-dependency deforestation reports, for `--explain-passes`.
 ///
@@ -4101,9 +4112,9 @@ const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines �
 /// `load_compile_deps` has already surfaced any dep type errors, and
 /// detection is purely syntactic.
 ///
-/// Both fabricating string passes are asked at once because both run
-/// over every dependency on the compile path and both would otherwise
-/// be reported as having done nothing.
+/// All dependency-side fabricating passes are asked at once because the
+/// runtime compile paths run their supported subset over every module;
+/// each would otherwise be reported as having done nothing.
 fn dep_fusion_reports(items: &[TopLevel], module_root: &str) -> Vec<DepFusion> {
     let Some(module) = items.iter().find_map(|i| match i {
         TopLevel::Module(m) => Some(m),
@@ -4135,10 +4146,13 @@ fn dep_fusion_reports(items: &[TopLevel], module_root: &str) -> Vec<DepFusion> {
         );
         let buffer_build = result.buffer_build.unwrap_or_default();
         let chars_fusion = result.chars_fusion.unwrap_or_default();
+        let string_index = result.string_index.unwrap_or_default();
         let list_build = result.list_build.unwrap_or_default();
         if buffer_build.rewrites > 0
             || chars_fusion.fired()
             || !chars_fusion.declined.is_empty()
+            || string_index.fired()
+            || !string_index.declined.is_empty()
             || list_build.rewrites > 0
             || !list_build.declined.is_empty()
             || !list_build.pair_declined.is_empty()
@@ -4147,6 +4161,7 @@ fn dep_fusion_reports(items: &[TopLevel], module_root: &str) -> Vec<DepFusion> {
                 prefix: m.dep_name,
                 buffer_build,
                 chars_fusion,
+                string_index,
                 list_build,
             });
         }
@@ -4159,6 +4174,7 @@ struct DepFusion {
     prefix: String,
     buffer_build: aver::ir::BufferBuildPassReport,
     chars_fusion: aver::ir::CharsFusionPassReport,
+    string_index: aver::ir::StringIndexPassReport,
     list_build: aver::ir::ListBuildPassReport,
 }
 
@@ -4236,6 +4252,47 @@ fn merge_dep_chars_fusion(diagnostics: &mut [aver::ir::PassDiagnostic], dep_repo
         }
         entry.synthesized.sort();
         entry.loop_fns.sort();
+    }
+}
+
+/// Fold indexed String workers synthesized in dependencies into the
+/// entry report. Component labels can contain several function names,
+/// so qualify the complete stable label rather than pretending it is a
+/// single symbol.
+fn merge_dep_string_index(diagnostics: &mut [aver::ir::PassDiagnostic], dep_reports: &[DepFusion]) {
+    if dep_reports.is_empty() {
+        return;
+    }
+    for diagnostic in diagnostics.iter_mut() {
+        let aver::ir::PassReport::StringIndex(entry) = &mut diagnostic.report else {
+            continue;
+        };
+        for DepFusion {
+            prefix,
+            string_index: dep,
+            ..
+        } in dep_reports
+        {
+            entry.components += dep.components;
+            entry.indexed_accesses += dep.indexed_accesses;
+            entry.indexed_fns.extend(
+                dep.indexed_fns
+                    .iter()
+                    .map(|name| format!("{prefix}.{name}")),
+            );
+            entry.synthesized.extend(
+                dep.synthesized
+                    .iter()
+                    .map(|name| format!("{prefix}.{name}")),
+            );
+            for (component, reason) in &dep.declined {
+                entry
+                    .declined
+                    .insert(format!("{prefix}.({component})"), reason);
+            }
+        }
+        entry.indexed_fns.sort();
+        entry.synthesized.sort();
     }
 }
 
@@ -4675,6 +4732,25 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     out.push_str(&format!("  • declined {fn_name}: {reason}\n"));
                 }
             }
+            PassReport::StringIndex(r) => {
+                if !r.fired() {
+                    out.push_str(&format!(
+                        "{label} no recursive String.charAt/String.slice component indexed\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {} recursive String component(s) indexed, {} access site(s) rewritten\n",
+                        r.components, r.indexed_accesses
+                    ));
+                    for fn_name in &r.synthesized {
+                        out.push_str(&format!("  • synthesized {fn_name}\n"));
+                    }
+                    out.push_str(&format!("  • {STRING_INDEX_TARGETS_NOTE}\n"));
+                }
+                for (component, reason) in &r.declined {
+                    out.push_str(&format!("  • declined {component}: {reason}\n"));
+                }
+            }
             PassReport::ListBuild(r) => {
                 if r.rewrites == 0 {
                     out.push_str(&format!(
@@ -4987,6 +5063,26 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     r.codepoint_calls,
                     declined,
                     DEFORESTING_TARGETS_JSON
+                ));
+            }
+            PassReport::StringIndex(r) => {
+                let mut declined = String::from("{");
+                for (j, (k, v)) in r.declined.iter().enumerate() {
+                    if j > 0 {
+                        declined.push(',');
+                    }
+                    declined.push_str(&format!("{}:{}", json_str(k), json_str(v)));
+                }
+                declined.push('}');
+                out.push_str(&format!(
+                    "{{\"components\":{},\"indexed_accesses\":{},\"indexed_fns\":{},\
+                     \"synthesized\":{},\"declined\":{},\"targets\":{}}}",
+                    r.components,
+                    r.indexed_accesses,
+                    json_str_array(&r.indexed_fns),
+                    json_str_array(&r.synthesized),
+                    declined,
+                    STRING_INDEX_TARGETS_JSON
                 ));
             }
             PassReport::ListBuild(r) => {
@@ -5479,7 +5575,7 @@ fn cmd_compile_wasm_gc(
     // calls remain implicitly visible. Preload them before symbol/MIR building
     // so the target sees a real capability callee rather than an unresolved
     // call that lowers to a trap.
-    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
     use aver::ir::{PipelineConfig, TypecheckMode};
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
@@ -5501,6 +5597,7 @@ fn cmd_compile_wasm_gc(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             ..Default::default()
         },
@@ -5519,9 +5616,9 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    // The wasm-gc compile path can lower neither the buffer nor the
-    // cursor the fabricating passes introduce, and does not use the
-    // self-host typecheck driver.
+    // The wasm-gc compile path lowers the immutable String index, but
+    // neither the buffers nor the cursors/builders introduced by the
+    // older passes. It does not use the self-host typecheck driver.
     reject_unsupported_capability_targets(
         &items,
         &dep_modules,
@@ -5769,7 +5866,7 @@ fn cmd_compile_wasip2(
             }
         };
 
-        let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+        let dep_modules = load_compile_deps(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
         use aver::ir::{PipelineConfig, TypecheckMode};
         let neutral_policy = aver::ir::NeutralAllocPolicy;
         let result = aver::ir::pipeline::run(
@@ -5783,6 +5880,7 @@ fn cmd_compile_wasip2(
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_string_index: true,
                 run_list_build: false,
                 ..Default::default()
             },
@@ -10447,16 +10545,16 @@ pub(super) fn flatten_multimodule(
 ///
 /// One field per pipeline gate rather than a bundled "optimise" flag, so
 /// this matches the gates 1-to-1 with no magic translation in between:
-/// proof exporters (Lean/Dafny) and the wasm-gc family ask for
-/// [`Self::PRISTINE`], because neither can represent what the
-/// fabricating passes introduce; the VM and the Rust backend turn them
-/// on so a sink or a character loop living in a dependency is fused
-/// there too.
+/// Proof exporters (Lean/Dafny) ask for [`Self::PRISTINE`]. The wasm-gc
+/// family asks for [`Self::STRING_INDEX_ONLY`] because it lowers the
+/// packed String index but not the older mutable buffers/cursors/builders.
+/// VM and Rust turn every supported pass on for dependencies too.
 #[derive(Clone, Copy)]
 pub(super) struct DepLowering {
     pub interp_lower: bool,
     pub buffer_build: bool,
     pub chars_fusion: bool,
+    pub string_index: bool,
     pub list_build: bool,
     /// Self-host typecheck driver — bypasses the opaque-type checks so
     /// `domain/builtins.av` can round-trip host types.
@@ -10469,18 +10567,26 @@ impl DepLowering {
         interp_lower: false,
         buffer_build: false,
         chars_fusion: false,
+        string_index: false,
         list_build: false,
         self_host: false,
     };
 
-    /// Every fabricating pass on or off together — they share a
-    /// lowering matrix (VM + Rust), so no caller has ever wanted one
-    /// without the others.
+    /// Runtime wasm-gc / wasip2 shape: the index is a native i32 array,
+    /// while Buffer/cursor/list-builder fabrications remain unsupported.
+    #[cfg(any(feature = "wasm", feature = "wasip2"))]
+    pub(super) const STRING_INDEX_ONLY: Self = Self {
+        string_index: true,
+        ..Self::PRISTINE
+    };
+
+    /// Every fabricating pass on or off together for VM/Rust callers.
     pub(super) const fn deforesting(on: bool, self_host: bool) -> Self {
         Self {
             interp_lower: false,
             buffer_build: on,
             chars_fusion: on,
+            string_index: on,
             list_build: on,
             self_host,
         }
@@ -10629,6 +10735,7 @@ fn load_module_recursive(
             run_interp_lower: lowering.interp_lower,
             run_buffer_build: lowering.buffer_build,
             run_chars_fusion: lowering.chars_fusion,
+            run_string_index: lowering.string_index,
             run_list_build: lowering.list_build,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
