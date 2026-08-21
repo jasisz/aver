@@ -208,6 +208,7 @@ jobs:
             cert_verify_spec \
             cross_backend_proptest \
             cross_backend_stress \
+            shadowing_ban \
             verify_runner_regressions \
             vm_self_qualified_type \
             wasm_gc_capture_output \
@@ -240,6 +241,7 @@ jobs:
         run: |
           set -euo pipefail
           for test in \
+            stdlib_spec \
             wasip2_codegen_regression \
             wasip2_http \
             wasip2_http_server \
