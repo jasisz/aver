@@ -451,6 +451,15 @@ pub enum BuiltinIntrinsic {
     /// `__str_fold_upper(<c>)` — the `__str_code1_upper` mirror of
     /// [`Self::StrFoldLower`].
     StrFoldUpper,
+    /// `__str_index_build(<s>)` — `String -> String.Index`, a packed table
+    /// of UTF-8 byte boundaries built once for an indexed-access call cone.
+    StrIndexBuild,
+    /// `__str_index_char_at(<s>, <index>, <i>)` — the public
+    /// `String.charAt` answer using an already-built codepoint index.
+    StrIndexCharAt,
+    /// `__str_index_slice(<s>, <index>, <from>, <to>)` — the public
+    /// `String.slice` answer using the same codepoint index.
+    StrIndexSlice,
     /// `__lst_new(<capacity>)` — `Int -> List<T>`, a fresh builder for a
     /// loop that collected with `List.prepend` and reversed on the way
     /// out. The list-build pass emits it where the call site wrote `[]`.
@@ -513,6 +522,9 @@ impl BuiltinIntrinsic {
             Self::StrCursorCode => "__str_cursor_code",
             Self::StrFoldLower => "__str_fold_lower",
             Self::StrFoldUpper => "__str_fold_upper",
+            Self::StrIndexBuild => "__str_index_build",
+            Self::StrIndexCharAt => "__str_index_char_at",
+            Self::StrIndexSlice => "__str_index_slice",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
             Self::LstFinalize => "__lst_finalize",
@@ -548,6 +560,9 @@ impl BuiltinIntrinsic {
             "__str_cursor_code" => Some(Self::StrCursorCode),
             "__str_fold_lower" => Some(Self::StrFoldLower),
             "__str_fold_upper" => Some(Self::StrFoldUpper),
+            "__str_index_build" => Some(Self::StrIndexBuild),
+            "__str_index_char_at" => Some(Self::StrIndexCharAt),
+            "__str_index_slice" => Some(Self::StrIndexSlice),
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),
             "__lst_finalize" => Some(Self::LstFinalize),

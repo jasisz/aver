@@ -156,6 +156,7 @@ fn main() -> Int
             "interp_lower",
             "buffer_build",
             "chars_fusion",
+            "string_index",
             "list_build",
             "resolve",
             "analyze",
@@ -538,6 +539,133 @@ fn main() -> Int
         "expected the module-qualified synthesized name: {data}"
     );
     assert_eq!(data["codepoint_matches_by_fn"]["Scan.value"], 1, "{data}");
+}
+
+#[test]
+fn string_index_stage_and_report_expose_the_hidden_unicode_index() {
+    let source = r#"
+module Indexed
+    intent = "walk Unicode by public codepoint position"
+    effects []
+
+fn count(text: String, position: Int, total: Int) -> Int
+    match String.charAt(text, position)
+        Option.None -> total
+        Option.Some(_) -> count(text, position + 1, total + 1)
+
+fn main() -> Int
+    count("aą😀z", 0, 0)
+"#;
+
+    let before = run_emit_ir_after(source, "chars_fusion");
+    assert!(
+        !before.contains("count__indexed") && !before.contains("__str_index_build"),
+        "the preceding stage must not contain the String index:\n{before}"
+    );
+    let after = run_emit_ir_after(source, "string_index");
+    assert!(
+        after.contains("count__indexed")
+            && after.contains("__str_index_build")
+            && after.contains("__str_index_char_at"),
+        "the String-index dump must expose its wrapper, worker and indexed read:\n{after}"
+    );
+
+    let json = run_explain_passes(source);
+    let data = &json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "string_index")
+        .expect("string_index pass present")["data"];
+    assert_eq!(data["components"], 1, "{data}");
+    assert_eq!(data["indexed_accesses"], 1, "{data}");
+    assert_eq!(
+        data["indexed_fns"].as_array().unwrap(),
+        &vec![serde_json::json!("count")]
+    );
+    assert_eq!(
+        data["synthesized"].as_array().unwrap(),
+        &vec![serde_json::json!("count__indexed")]
+    );
+    assert_eq!(
+        data["targets"].as_array().unwrap(),
+        &vec![
+            serde_json::json!("rust"),
+            serde_json::json!("vm"),
+            serde_json::json!("wasm-gc"),
+            serde_json::json!("wasip2")
+        ]
+    );
+}
+
+#[test]
+fn string_index_report_includes_workers_living_in_dependencies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("scan.av"),
+        r#"module Scan
+    intent = "dependency that owns indexed String traversal"
+    exposes [count]
+    effects []
+
+fn walk(text: String, position: Int, total: Int) -> Int
+    match String.charAt(text, position)
+        Option.None -> total
+        Option.Some(_) -> walk(text, position + 1, total + 1)
+
+fn count(text: String) -> Int
+    ? "Count Unicode codepoints."
+    walk(text, 0, 0)
+"#,
+    )
+    .expect("write scan.av");
+    let entry = dir.path().join("main.av");
+    std::fs::write(
+        &entry,
+        r#"module Main
+    intent = "entry without indexed access of its own"
+    depends [Scan]
+    effects []
+
+fn main() -> Int
+    Scan.count("aą😀z")
+"#,
+    )
+    .expect("write main.av");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
+        .arg(&entry)
+        .arg("--explain-passes")
+        .arg("--json")
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .expect("invoke aver");
+    assert!(
+        output.status.success(),
+        "aver compile failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse JSON output");
+    let data = &json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "string_index")
+        .expect("string_index pass present")["data"];
+    assert_eq!(data["components"], 1, "{data}");
+    assert_eq!(data["indexed_accesses"], 1, "{data}");
+    assert!(
+        data["synthesized"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "Scan.walk__indexed"),
+        "dependency worker must be module-qualified: {data}"
+    );
 }
 
 #[test]

@@ -1,0 +1,21 @@
+module JsonBench
+    intent = "Exercise the Json parser on a large mixed-width Unicode document."
+    depends [Json]
+    effects []
+
+fn grow(rounds: Int, fragment: String) -> String
+    ? "Double a valid array fragment with linear total setup work."
+    match rounds
+        0 -> fragment
+        _ -> grow(rounds - 1, fragment + fragment)
+
+fn document() -> String
+    ? "Build a JSON array whose final null absorbs the trailing comma."
+    "[" + grow(8, "\"café😀\",12345,") + "null]"
+
+fn main() -> Int
+    ? "Parse the document and return its codepoint length, or -1 on failure."
+    text = document()
+    match Json.fromString(text)
+        Result.Ok(_) -> String.len(text)
+        Result.Err(_) -> -1

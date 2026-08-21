@@ -1,0 +1,11 @@
+module ProofSeamStringIndex
+    intent = "Count Unicode codepoints through recursive indexed access."
+    effects []
+
+fn count(text: String, position: Int, total: Int) -> Int
+    match String.charAt(text, position)
+        Option.None -> total
+        Option.Some(_) -> count(text, position + 1, total + 1)
+
+fn main() -> Int
+    count("aą😀z", 0, 0)

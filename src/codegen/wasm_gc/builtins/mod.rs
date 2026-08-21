@@ -133,6 +133,12 @@ pub(super) enum BuiltinName {
     StringEndsWith,
     StringFromBool,
     StringCharAt,
+    /// Compiler-internal helpers for the loop-scoped String index. These are
+    /// never addressable from Aver source; the fabricating pass emits the
+    /// matching intrinsic names directly.
+    StringIndexBuild,
+    StringIndexCharAt,
+    StringIndexSlice,
     CharToCode,
     CharFromCode,
     StringChars,
@@ -256,6 +262,9 @@ impl BuiltinName {
             "String.endsWith" => Some(Self::StringEndsWith),
             "String.fromBool" => Some(Self::StringFromBool),
             "String.charAt" => Some(Self::StringCharAt),
+            "__str_index_build" => Some(Self::StringIndexBuild),
+            "__str_index_char_at" => Some(Self::StringIndexCharAt),
+            "__str_index_slice" => Some(Self::StringIndexSlice),
             "Char.toCode" => Some(Self::CharToCode),
             "Char.fromCode" => Some(Self::CharFromCode),
             "String.chars" => Some(Self::StringChars),
@@ -286,6 +295,9 @@ impl BuiltinName {
             Self::StringEndsWith => "String.endsWith",
             Self::StringFromBool => "String.fromBool",
             Self::StringCharAt => "String.charAt",
+            Self::StringIndexBuild => "__str_index_build",
+            Self::StringIndexCharAt => "__str_index_char_at",
+            Self::StringIndexSlice => "__str_index_slice",
             Self::CharToCode => "Char.toCode",
             Self::CharFromCode => "Char.fromCode",
             Self::StringChars => "String.chars",
@@ -344,6 +356,18 @@ impl BuiltinName {
             Self::StringEndsWith => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringFromBool => Ok(vec![ValType::I32]),
             Self::StringCharAt => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
+            Self::StringIndexBuild => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringIndexCharAt => Ok(vec![
+                string_ref_ty(registry)?,
+                string_index_ref_ty(registry)?,
+                ValType::I64,
+            ]),
+            Self::StringIndexSlice => Ok(vec![
+                string_ref_ty(registry)?,
+                string_index_ref_ty(registry)?,
+                ValType::I64,
+                ValType::I64,
+            ]),
             Self::CharToCode => Ok(vec![string_ref_ty(registry)?]),
             Self::CharFromCode => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
@@ -415,6 +439,9 @@ impl BuiltinName {
             Self::StringCharAt | Self::CharFromCode => {
                 Ok(vec![option_ref_ty(registry, "Option<String>")?])
             }
+            Self::StringIndexBuild => Ok(vec![string_index_ref_ty(registry)?]),
+            Self::StringIndexCharAt => Ok(vec![option_ref_ty(registry, "Option<String>")?]),
+            Self::StringIndexSlice => Ok(vec![string_ref_ty(registry)?]),
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
@@ -471,6 +498,9 @@ impl BuiltinName {
             Self::StringEndsWith => emit_string_ends_with(registry),
             Self::StringFromBool => emit_string_from_bool(registry),
             Self::StringCharAt => emit_string_char_at(registry),
+            Self::StringIndexBuild => emit_string_index_build(registry),
+            Self::StringIndexCharAt => emit_string_index_char_at(registry),
+            Self::StringIndexSlice => emit_string_index_slice(registry),
             Self::CharToCode => emit_char_to_code(registry),
             Self::CharFromCode => emit_char_from_code(registry),
             Self::StringChars => emit_string_chars(registry),
@@ -573,6 +603,19 @@ fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
             "builtin requires String repr but no string type slot was allocated".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// `(ref null $string_index)` — compiler-internal codepoint boundary table.
+fn string_index_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .string_index_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed String helper requires the hidden index array slot".into(),
         ))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -2584,6 +2627,234 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
             i32.const 1
             local.get $out
             struct.new $option_string)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// Build the hidden codepoint→UTF-8 byte-boundary table. The source String is
+/// valid UTF-8 by construction, so scalar starts are exactly bytes which are
+/// not continuation bytes. Two linear byte passes buy an exactly-sized i32
+/// array: one counts boundaries, the other writes them plus the final byte
+/// length sentinel.
+fn emit_string_index_build(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String index build requires String slot".into(),
+        ))?;
+    let index_idx = registry
+        .string_index_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String index build requires hidden index slot".into(),
+        ))?;
+    if index_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "String.Index type must follow String (got {index_idx} vs {string_idx})"
+        )));
+    }
+    let before_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(index_idx - string_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {before_string}
+          (type $string (array (mut i8)))
+          {between}
+          (type $string_index (array (mut i32)))
+          (func (export "helper")
+                (param $s (ref null $string))
+                (result (ref null $string_index))
+            (local $n i32)
+            (local $i i32)
+            (local $count i32)
+            (local $out (ref null $string_index))
+
+            local.get $s array.len local.set $n
+            (block $count_done
+              (loop $count_loop
+                local.get $i local.get $n i32.ge_u br_if $count_done
+                local.get $s local.get $i array.get_u $string
+                i32.const 0xC0 i32.and i32.const 0x80 i32.ne
+                (if (then
+                  local.get $count i32.const 1 i32.add local.set $count))
+                local.get $i i32.const 1 i32.add local.set $i
+                br $count_loop))
+
+            local.get $count i32.const 1 i32.add
+            array.new_default $string_index
+            local.set $out
+            i32.const 0 local.set $i
+            i32.const 0 local.set $count
+            (block $fill_done
+              (loop $fill_loop
+                local.get $i local.get $n i32.ge_u br_if $fill_done
+                local.get $s local.get $i array.get_u $string
+                i32.const 0xC0 i32.and i32.const 0x80 i32.ne
+                (if (then
+                  local.get $out local.get $count local.get $i
+                  array.set $string_index
+                  local.get $count i32.const 1 i32.add local.set $count))
+                local.get $i i32.const 1 i32.add local.set $i
+                br $fill_loop))
+            local.get $out local.get $count local.get $n
+            array.set $string_index
+            local.get $out)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// O(1) boundary lookup counterpart of `String.charAt`. It preserves the
+/// surface result (`Option<String>`) while avoiding a scan from byte zero on
+/// every recursive step.
+fn emit_string_index_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed String.charAt requires String slot".into(),
+        ))?;
+    let index_idx = registry
+        .string_index_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed String.charAt requires index slot".into(),
+        ))?;
+    let option_idx = registry
+        .option_type_idx("Option<String>")
+        .ok_or(WasmGcError::Validation(
+            "indexed String.charAt requires Option<String> slot".into(),
+        ))?;
+    if !(string_idx < index_idx && index_idx < option_idx) {
+        return Err(WasmGcError::Validation(format!(
+            "indexed String.charAt type order must be String < Index < Option (got {string_idx}, {index_idx}, {option_idx})"
+        )));
+    }
+    let before_string = wat_helper::padding_types(string_idx);
+    let before_index = wat_helper::padding_types(index_idx - string_idx - 1);
+    let before_option = wat_helper::padding_types(option_idx - index_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {before_string}
+          (type $string (array (mut i8)))
+          {before_index}
+          (type $string_index (array (mut i32)))
+          {before_option}
+          (type $option_string (struct (field $tag i32) (field $val (ref null $string))))
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $index (ref null $string_index))
+                (param $i i64)
+                (result (ref null $option_string))
+            (local $char_count i32)
+            (local $pos i32)
+            (local $from i32)
+            (local $to i32)
+            (local $len i32)
+            (local $out (ref null $string))
+
+            local.get $i i64.const 0 i64.lt_s
+            (if (then
+              i32.const 0 ref.null $string struct.new $option_string return))
+            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $i
+            local.get $char_count i64.extend_i32_u
+            i64.ge_u
+            (if (then
+              i32.const 0 ref.null $string struct.new $option_string return))
+
+            local.get $i i32.wrap_i64 local.set $pos
+            local.get $index local.get $pos array.get $string_index local.set $from
+            local.get $index local.get $pos i32.const 1 i32.add
+            array.get $string_index local.set $to
+            local.get $to local.get $from i32.sub local.set $len
+            local.get $len array.new_default $string local.set $out
+            local.get $out i32.const 0 local.get $s local.get $from local.get $len
+            array.copy $string $string
+            i32.const 1 local.get $out struct.new $option_string)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// O(1) codepoint-boundary translation for `String.slice`; the copy of the
+/// selected UTF-8 bytes remains necessarily linear in the returned substring.
+fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed String.slice requires String slot".into(),
+        ))?;
+    let index_idx = registry
+        .string_index_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed String.slice requires index slot".into(),
+        ))?;
+    if index_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "String.Index type must follow String (got {index_idx} vs {string_idx})"
+        )));
+    }
+    let before_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(index_idx - string_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {before_string}
+          (type $string (array (mut i8)))
+          {between}
+          (type $string_index (array (mut i32)))
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $index (ref null $string_index))
+                (param $start_in i64)
+                (param $end_in i64)
+                (result (ref null $string))
+            (local $char_count i32)
+            (local $char_count64 i64)
+            (local $start i64)
+            (local $end i64)
+            (local $from i32)
+            (local $to i32)
+            (local $len i32)
+            (local $out (ref null $string))
+
+            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $char_count i64.extend_i32_u local.set $char_count64
+
+            local.get $start_in i64.const 0 i64.lt_s
+            (if (result i64)
+              (then i64.const 0)
+              (else
+                local.get $start_in local.get $char_count64 i64.gt_u
+                (if (result i64)
+                  (then local.get $char_count64)
+                  (else local.get $start_in))))
+            local.set $start
+            local.get $end_in i64.const 0 i64.lt_s
+            (if (result i64)
+              (then i64.const 0)
+              (else
+                local.get $end_in local.get $char_count64 i64.gt_u
+                (if (result i64)
+                  (then local.get $char_count64)
+                  (else local.get $end_in))))
+            local.set $end
+
+            local.get $start local.get $end i64.ge_u
+            (if (then i32.const 0 array.new_default $string return))
+            local.get $index local.get $start i32.wrap_i64
+            array.get $string_index local.set $from
+            local.get $index local.get $end i32.wrap_i64
+            array.get $string_index local.set $to
+            local.get $to local.get $from i32.sub local.set $len
+            local.get $len array.new_default $string local.set $out
+            local.get $out i32.const 0 local.get $s local.get $from local.get $len
+            array.copy $string $string
+            local.get $out)
         )
     "#
     );

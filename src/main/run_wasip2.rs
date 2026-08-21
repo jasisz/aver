@@ -109,7 +109,7 @@ fn build_component(
     let dep_modules = super::commands::load_compile_deps(
         &items,
         &module_root,
-        super::commands::DepLowering::PRISTINE,
+        super::commands::DepLowering::STRING_INDEX_ONLY,
     );
 
     let neutral_policy = NeutralAllocPolicy;
@@ -132,6 +132,7 @@ fn build_component(
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
+            run_string_index: true,
             run_list_build: false,
             ..Default::default()
         },

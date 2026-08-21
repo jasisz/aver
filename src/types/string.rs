@@ -11,7 +11,7 @@
 ///   String.split(s, delim)      → List<String>
 ///   String.replace(s, old, new) → String
 ///   String.join(list, sep)      → String
-///   String.charAt(s, index)     → Option<String>  — O(1)-ish char at code-point index
+///   String.charAt(s, index)     → Option<String>  — code-point based; repeated recursive access is indexed by runtime lowering
 ///   String.chars(s)             → List<String>   — each char as 1-char string
 ///   String.fromInt(n)           → String
 ///   String.fromFloat(f)         → String

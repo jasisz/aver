@@ -155,6 +155,11 @@ pub(super) struct TypeRegistry {
     /// reachable from the program (most numeric bench scenarios).
     /// See `builtins/` README for the full repr decision.
     pub(super) string_array_type_idx: Option<u32>,
+    /// Hidden codepoint→UTF-8 byte-boundary table synthesized by the
+    /// loop-scoped String indexing pass. Represented directly as a mutable
+    /// `(array i32)` and allocated only when an indexed worker signature
+    /// carries the compiler-internal `String.Index` type.
+    pub(super) string_index_array_type_idx: Option<u32>,
     /// Internal mutable i32 arrays used by the pure `Crypto.sha256` helper:
     /// one for the padded message bytes and one for the 64-word schedule.
     /// They are allocated only when that intrinsic is reachable.
@@ -427,6 +432,21 @@ impl TypeRegistry {
             None
         };
 
+        let needs_string_index = resolved_fn_defs.iter().any(|fd| {
+            fd.return_type.display().trim() == "String.Index"
+                || fd
+                    .params
+                    .iter()
+                    .any(|(_, ty)| ty.display().trim() == "String.Index")
+        });
+        let string_index_array_type_idx = if needs_string_index {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+
         let needs_crypto_sha256 = resolved_fn_defs
             .iter()
             .any(|fd| fn_body_calls_builtin(fd, "Crypto.sha256"));
@@ -679,6 +699,25 @@ impl TypeRegistry {
                 );
             }
             collect_options_from_fn_body(fd, &mut option_types, &mut option_order, &mut next_idx);
+        }
+        // The String-index pass is intentionally below typechecking, so its
+        // freshly synthesized intrinsic node has no source type stamp for the
+        // generic body collector to read. Its result contract is nevertheless
+        // fixed: indexed charAt always needs `Option<String>`.
+        let needs_indexed_char_at = resolved_fn_defs.iter().any(|fd| {
+            fn_body_reaches(fd, &|callee| {
+                matches!(
+                    callee,
+                    crate::ir::hir::ResolvedCallee::Intrinsic(
+                        crate::ir::hir::BuiltinIntrinsic::StrIndexCharAt
+                    )
+                )
+            })
+        });
+        if needs_indexed_char_at && !option_types.contains_key("Option<String>") {
+            option_types.insert("Option<String>".to_string(), next_idx);
+            option_order.push("Option<String>".to_string());
+            next_idx += 1;
         }
         // Record field walk — `record GameState { lastAiResult:
         // Option<AiResult> }` only spells `Option<AiResult>` in the
@@ -1153,6 +1192,7 @@ impl TypeRegistry {
             type_name_aliases: HashMap::new(),
             user_type_count: next_idx,
             string_array_type_idx,
+            string_index_array_type_idx,
             crypto_byte_array_type_idx,
             crypto_word_array_type_idx,
             string_literals,
@@ -2268,6 +2308,19 @@ pub(super) fn aver_to_wasm(
         }
         return Err(WasmGcError::Validation(
             "String reachable from a fn signature but no string type slot was allocated".into(),
+        ));
+    }
+    if trimmed == "String.Index" {
+        if let Some(reg) = registry
+            && let Some(idx) = reg.string_index_array_type_idx
+        {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+        return Err(WasmGcError::Validation(
+            "String.Index reached wasm-gc without its hidden array slot".into(),
         ));
     }
     // `Vector<T>` resolves to `(ref null $vector_T)`. The registry's

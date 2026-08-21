@@ -273,6 +273,8 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
         "Char.fromCode" => &[0],
         "String.charAt" => &[1],
         "String.slice" => &[1, 2],
+        "__str_index_char_at" => &[2],
+        "__str_index_slice" => &[2, 3],
         _ => &[],
     }
 }
@@ -1080,8 +1082,11 @@ pub(crate) fn emit_mir_expr(
                     // refusal at the seam the hole was recorded on.)
                     match ctx.fn_map.builtins.get(intr.name()) {
                         Some(&wasm_idx) => {
-                            if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
-                                .is_none()
+                            let int_args = registered_builtin_int_arg_positions(intr.name());
+                            if emit_mir_args_then_call_lowering_int(
+                                func, &call.args, slots, ctx, wasm_idx, int_args,
+                            )?
+                            .is_none()
                             {
                                 return Ok(None);
                             }
@@ -1841,21 +1846,6 @@ pub(crate) fn emit_mir_int_raw(
         }
         _ => Ok(None),
     }
-}
-
-/// Emit each MIR `arg` (returning `None` if any falls outside the
-/// supported subset, propagated as a whole-fn fallback) then
-/// `call $wasm_idx`. Shared by the `Fn` / `Builtin` / `Intrinsic`
-/// callee arms; the caller adds the `produces_value` read from the
-/// call expr's own type stamp.
-pub(crate) fn emit_mir_args_then_call(
-    func: &mut Function,
-    args: &[Spanned<MirExpr>],
-    slots: &SlotTable,
-    ctx: &EmitCtx<'_>,
-    wasm_idx: u32,
-) -> Result<Option<()>, WasmGcError> {
-    emit_mir_args_then_call_lowering_int(func, args, slots, ctx, wasm_idx, &[])
 }
 
 /// ETAP-2 SLICE 2b: emit a USER `Fn` call's args honoring the CALLEE's

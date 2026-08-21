@@ -1,0 +1,5 @@
+name       = "json_parse"
+entry      = "../../examples/data/json_bench.av"
+iterations = 10
+warmup     = 2
+args       = []

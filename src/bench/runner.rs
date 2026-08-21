@@ -358,7 +358,7 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         samples.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
-    let passes = canonical_passes();
+    let passes = canonical_passes(BenchTarget::WasmGc);
     let mut report = build_report(
         manifest,
         BenchTarget::WasmGc,
@@ -512,7 +512,7 @@ fn run_wasm_gc_v8(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .skip(manifest.warmup)
         .collect();
 
-    let passes = canonical_passes();
+    let passes = canonical_passes(BenchTarget::WasmGcV8);
     let mut report = build_report(
         manifest,
         BenchTarget::WasmGcV8,
@@ -668,7 +668,7 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
     }
     let last_bytes = output.stdout.len();
 
-    let passes = canonical_passes();
+    let passes = canonical_passes(BenchTarget::Rust);
     let mut report = build_report(
         manifest,
         BenchTarget::Rust,
@@ -686,19 +686,26 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
 
 // ── Shared helpers ─────────────────────────────────────────────────────
 
-fn canonical_passes() -> Vec<String> {
-    [
-        "tco",
-        "typecheck",
-        "interp_lower",
-        "buffer_build",
+fn canonical_passes(target: BenchTarget) -> Vec<String> {
+    let mut passes = vec!["tco", "typecheck"];
+    if target == BenchTarget::Rust {
+        passes.extend(["interp_lower", "buffer_build", "chars_fusion"]);
+    }
+    // The immutable codepoint-boundary index is lowered by every runtime
+    // target, unlike the older mutable traversal builders.
+    passes.push("string_index");
+    if target == BenchTarget::Rust {
+        passes.push("list_build");
+    }
+    passes.extend([
         "resolve",
-        "last_use",
         "analyze",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+        "escape",
+        "last_use",
+        "build_symbols",
+        "name_resolve",
+    ]);
+    passes.into_iter().map(str::to_string).collect()
 }
 
 fn build_report(
@@ -756,6 +763,24 @@ fn compute_visible_allocs(manifest: &Manifest) -> Option<usize> {
     }
     let policy = crate::ir::NeutralAllocPolicy;
     Some(crate::ir::count_alloc_sites_in_program(&items, &policy))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reported_runtime_passes_match_each_targets_lowering_matrix() {
+        let rust = canonical_passes(BenchTarget::Rust);
+        assert!(rust.iter().any(|pass| pass == "chars_fusion"));
+        assert!(rust.iter().any(|pass| pass == "string_index"));
+        assert!(rust.iter().any(|pass| pass == "list_build"));
+
+        let wasm = canonical_passes(BenchTarget::WasmGc);
+        assert!(!wasm.iter().any(|pass| pass == "chars_fusion"));
+        assert!(wasm.iter().any(|pass| pass == "string_index"));
+        assert!(!wasm.iter().any(|pass| pass == "list_build"));
+    }
 }
 
 // Dependency loader is now in `crate::source::load_compile_deps`

@@ -5174,6 +5174,27 @@ fn emit_mir_intrinsic_call(
             let s = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::AverInt::from_i64(aver_rt::{f}(&{s}))"))
         }
+        BuiltinIntrinsic::StrIndexBuild => {
+            let s = emit_mir_expr(&args[0], ctx)?;
+            Some(format!("aver_rt::string_index_build(&{s})"))
+        }
+        BuiltinIntrinsic::StrIndexCharAt => {
+            let s = emit_mir_expr(&args[0], ctx)?;
+            let index = emit_mir_expr(&args[1], ctx)?;
+            let position = emit_mir_expr(&args[2], ctx)?;
+            Some(format!(
+                "aver_rt::string_index_char_at(&{s}, &{index}, &{position})"
+            ))
+        }
+        BuiltinIntrinsic::StrIndexSlice => {
+            let s = emit_mir_expr(&args[0], ctx)?;
+            let index = emit_mir_expr(&args[1], ctx)?;
+            let from = emit_mir_expr(&args[2], ctx)?;
+            let to = emit_mir_expr(&args[3], ctx)?;
+            Some(format!(
+                "aver_rt::string_index_slice(&{s}, &{index}, &{from}, &{to})"
+            ))
+        }
         // List builder (list-build fusion). The builder IS the
         // `AverList<T>` the accumulator always was, so the synthesized
         // variant keeps the signature it was built from and nothing here

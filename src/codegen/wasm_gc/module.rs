@@ -5945,6 +5945,19 @@ fn emit_user_types(
         ));
     }
 
+    // Compiler-internal codepoint→byte boundary table. It is separate from
+    // user `Vector<Int>`: offsets are machine `i32`s even when Aver `Int`
+    // uses the arbitrary-precision carrier.
+    if let Some(idx) = registry.string_index_array_type_idx {
+        entries.push((
+            idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32),
+                mutable: true,
+            }),
+        ));
+    }
+
     // Proof-derived structural refinement carriers. `i8` / `i16` are wasm
     // packed storage; wider intervals use ordinary i32/i64 array elements.
     // Signedness affects loads in the generated bridge helpers, not the array
@@ -6577,6 +6590,11 @@ fn discover_builtins_in_expr(
                     builtins.register(BuiltinName::IntDivEuclid);
                 }
             }
+            if let ResolvedCallee::Intrinsic(intrinsic) = callee
+                && let Some(name) = BuiltinName::from_dotted(intrinsic.name())
+            {
+                builtins.register(name);
+            }
             for arg in args {
                 discover_builtins_in_expr(
                     &arg.node,
@@ -6892,11 +6910,12 @@ fn discover_builtins_in_expr(
 /// internals.
 /// Refuse any fabricated intrinsic the wasm-gc family cannot lower.
 ///
-/// The fusion passes (`interp_lower` / `buffer_build` / `chars_fusion` /
-/// `list_build`) synthesize intrinsic calls (`__buf_*`, `__to_str`,
-/// `__str_*`, `__lst_*`) that only the VM and the Rust codegen can
-/// lower; every wasm-gc / wasip2 call site keeps those passes off via
-/// pipeline flags. If that exclusion ever regresses, the synthesized
+/// The older fusion passes (`interp_lower` / `buffer_build` /
+/// `chars_fusion` / `list_build`) synthesize intrinsic calls (`__buf_*`,
+/// `__to_str`, cursor-shaped `__str_*`, `__lst_*`) that only VM and Rust
+/// lower. String-index workers are the exception: wasm-gc / wasip2 lower
+/// their immutable i32 boundary array directly. If an unsupported pass's
+/// exclusion ever regresses, the synthesized
 /// nodes reach this backend — and the failure used to be silent: the
 /// body emitter's `Intrinsic` arm fell through to the per-fn trap-stub
 /// fallback (or the type reader panicked first on a synthesized node
@@ -6926,8 +6945,11 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::IntModEuclid
             | BuiltinIntrinsic::BitsShiftLeft
             | BuiltinIntrinsic::BitsShiftRight
-            | BuiltinIntrinsic::BitsLow => true,
-            // Fusion-pass fabrications — VM / Rust codegen only.
+            | BuiltinIntrinsic::BitsLow
+            | BuiltinIntrinsic::StrIndexBuild
+            | BuiltinIntrinsic::StrIndexCharAt
+            | BuiltinIntrinsic::StrIndexSlice => true,
+            // Older fusion-pass fabrications — VM / Rust codegen only.
             BuiltinIntrinsic::BufNew
             | BuiltinIntrinsic::BufAppend
             | BuiltinIntrinsic::BufAppendSepUnlessFirst

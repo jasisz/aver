@@ -24,9 +24,10 @@
 //! The pipeline carries one more invariant, cutting ACROSS the order:
 //! the **proof line**. A pass that puts entities in the AST which the
 //! source does not contain (`interp_lower`'s `__buf_*` chain,
-//! `buffer_build`'s `<sink>__buffered` sink, `chars_fusion`'s cursor loops)
-//! sits below it and must never be visible to Lean / Dafny; every other
-//! pass sits above it and the proof exporters read its output. `run`
+//! `buffer_build`'s `<sink>__buffered` sink, `chars_fusion`'s cursor loops,
+//! `string_index`'s workers, and `list_build`'s builders) sits below it and
+//! must never be visible to Lean / Dafny; every other pass sits above it
+//! and the proof exporters read its output. `run`
 //! serves both halves from one run: it snapshots the AST before the
 //! first fabricating stage and completes the copy afterwards by
 //! re-running the above-the-line stages on it — see [`AstView`]. So a
@@ -38,6 +39,7 @@ use crate::ast::TopLevel;
 use crate::ir::buffer_build::{BufferBuildPassReport, ListBuildPassReport};
 use crate::ir::chars_fusion::CharsFusionPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
+use crate::ir::string_index::StringIndexPassReport;
 use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
 use crate::types::checker::{
@@ -58,6 +60,11 @@ pub enum PipelineStage {
     /// intrinsics), so it sits BELOW the proof line next to
     /// `buffer_build` — see [`AstView`].
     CharsFusion,
+    /// Loop-scoped indexed String access. Recursive call components that
+    /// repeatedly call `String.charAt` / `String.slice` gain ABI-preserving
+    /// wrappers and workers carrying one hidden codepoint index.
+    /// Fabricating, so it sits below the proof line.
+    StringIndex,
     /// List build — a loop that collects with `List.prepend` and
     /// reverses on the way out appends to a builder instead.
     /// Fabricating (a `<fn>__collected` variant, three `__lst_*`
@@ -126,6 +133,7 @@ impl PipelineStage {
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
             Self::CharsFusion => "chars_fusion",
+            Self::StringIndex => "string_index",
             Self::ListBuild => "list_build",
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
@@ -191,6 +199,10 @@ pub struct PipelineConfig<'a> {
     /// Also below the proof line, so — like `run_buffer_build` — what
     /// you pass here cannot change what gets proven (see [`AstView`]).
     pub run_chars_fusion: bool,
+    /// Whether to index repeated `String.charAt` / `String.slice` access in
+    /// recursive call components. Unlike the older cursor/builder passes,
+    /// every runtime backend lowers this pass's `String.Index` contract.
+    pub run_string_index: bool,
     /// Whether to run the list-build pass. Same target matrix as
     /// `run_buffer_build` and `run_chars_fusion`, and for the same
     /// reason: the `__lst_*` intrinsics are lowered by the VM and by the
@@ -297,6 +309,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_interp_lower: true,
             run_buffer_build: true,
             run_chars_fusion: true,
+            run_string_index: true,
             run_list_build: true,
             run_resolve: true,
             run_last_use: true,
@@ -346,6 +359,7 @@ pub enum PassReport {
     },
     BufferBuild(BufferBuildPassReport),
     CharsFusion(CharsFusionPassReport),
+    StringIndex(StringIndexPassReport),
     ListBuild(ListBuildPassReport),
     Resolve {
         slots_resolved: usize,
@@ -517,6 +531,8 @@ pub struct PipelineResult {
     /// recogniser turned down with its reason. `None` when the pass was
     /// disabled.
     pub chars_fusion: Option<CharsFusionPassReport>,
+    /// Loop-scoped String indexing report. `None` when disabled.
+    pub string_index: Option<StringIndexPassReport>,
     /// List-build pass report — collected variants synthesized, call
     /// sites moved, and every collecting loop the recogniser turned down
     /// with its reason. `None` when the pass was disabled.
@@ -738,6 +754,11 @@ pub fn chars_fusion(items: &mut Vec<TopLevel>) -> CharsFusionPassReport {
     crate::ir::run_chars_fusion_pass(items)
 }
 
+/// Build ABI-preserving indexed workers for recursive String access.
+pub fn string_index(items: &mut Vec<TopLevel>) -> StringIndexPassReport {
+    crate::ir::run_string_index_pass(items)
+}
+
 /// List-build pass — turns a loop that collects with `List.prepend` and
 /// reverses on the way out into one that appends to a builder. Appends
 /// the synthesized `<fn>__collected` variants to `items`. See
@@ -843,13 +864,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
 
     // ── The proof snapshot point ────────────────────────────────────
     //
-    // The next two stages are the FABRICATING ones: `interp_lower`
-    // replaces an interpolation with a `__buf_*` chain, `buffer_build`
-    // replaces a join pipeline with a `<sink>__buffered` loop. Both put
-    // entities in the AST that the source does not contain, and a proof
-    // about those is a proof about a program the user never wrote — so
-    // the AST the proof exporters read is copied here, before either
-    // runs. The copy is completed below by re-running the
+    // The following traversal-lowering stages are FABRICATING:
+    // interpolation buffers, buffered joins, String cursors/indexes, and
+    // list builders all put entities in the AST that source does not
+    // contain. A proof about those is a proof about a program the user
+    // never wrote, so the AST the proof exporters read is copied here,
+    // before any of them runs. The copy is completed below by re-running the
     // above-the-line stages on it; see [`AstView`] for why the line
     // cannot simply be a point in this stage order.
     let proof_snapshot: Option<Vec<TopLevel>> = proof_stages.then(|| items.clone());
@@ -876,6 +896,13 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         result.pass_diagnostics.push(diag_for_chars_fusion(&report));
         result.chars_fusion = Some(report);
         fire(&mut cfg, PipelineStage::CharsFusion, items);
+    }
+
+    if cfg.run_string_index {
+        let report = string_index(items);
+        result.pass_diagnostics.push(diag_for_string_index(&report));
+        result.string_index = Some(report);
+        fire(&mut cfg, PipelineStage::StringIndex, items);
     }
 
     // After chars fusion, so a loop that has been given a cursor is
@@ -1237,6 +1264,13 @@ fn diag_for_chars_fusion(report: &CharsFusionPassReport) -> PassDiagnostic {
     }
 }
 
+fn diag_for_string_index(report: &StringIndexPassReport) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::StringIndex,
+        report: PassReport::StringIndex(report.clone()),
+    }
+}
+
 fn diag_for_list_build(report: &ListBuildPassReport) -> PassDiagnostic {
     PassDiagnostic {
         stage: PipelineStage::ListBuild,
@@ -1470,6 +1504,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::CharsFusion,
+                PipelineStage::StringIndex,
                 PipelineStage::ListBuild,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
@@ -1503,6 +1538,7 @@ fn id(n: Int) -> Int
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
+                run_string_index: false,
                 run_list_build: false,
                 run_last_use: false,
                 run_analyze: false,

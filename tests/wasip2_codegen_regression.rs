@@ -155,6 +155,34 @@ fn compile_core_flattened(
 }
 
 #[test]
+fn recursive_string_index_compiles_and_validates_as_component() {
+    let source = r#"module Probe
+    intent = "Carry a hidden Unicode index through a recursive wasip2 worker."
+    exposes [main]
+    effects []
+
+fn walk(text: String, pos: Int, seen: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> seen + String.len(String.slice(text, 1, 3)) * 10
+        Option.Some(_) -> walk(text, pos + 1, seen + 1)
+
+fn main() -> Int
+    walk("aą😀z", 0, 0)
+"#;
+    let items = parse_pipeline(source).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &Default::default())
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
 fn tcp_send_bytes_compiles_and_validates_as_component() {
     let source = r#"module Probe
     intent = "Compile the byte-clean TCP request path."

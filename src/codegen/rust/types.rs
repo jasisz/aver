@@ -43,6 +43,9 @@ pub fn type_to_rust(ty: &Type) -> String {
         // information. Identity-sensitive routing happens at the
         // call layer (see `backend_named_type_key`).
         Type::Named { name, .. } => {
+            if name == "String.Index" {
+                return "aver_rt::StringIndex".to_string();
+            }
             // Dotted names like Tcp.Connection → not supported in transpilation
             if name.contains('.') {
                 name.replace('.', "_")
@@ -120,6 +123,9 @@ pub fn type_to_rust_scoped(ty: &Type, ctx: &CodegenContext, current_scope: Optio
             )
         }
         Type::Named { id, name } => {
+            if name == "String.Index" {
+                return "aver_rt::StringIndex".to_string();
+            }
             let key = id
                 .map(|id| ctx.symbol_table.type_entry(id).key.clone())
                 .or_else(|| {
