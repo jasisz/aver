@@ -15,6 +15,7 @@ pub fn type_to_rust(ty: &Type) -> String {
             format!("Result<{}, {}>", type_to_rust(ok), type_to_rust(err))
         }
         Type::Option(inner) => format!("Option<{}>", type_to_rust(inner)),
+        Type::List(inner) if **inner == Type::Int => "aver_rt::AverIntList".to_string(),
         Type::List(inner) => format!("aver_rt::AverList<{}>", type_to_rust(inner)),
         Type::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(type_to_rust).collect();
@@ -85,6 +86,7 @@ pub fn type_to_rust_scoped(ty: &Type, ctx: &CodegenContext, current_scope: Optio
         Type::Option(inner) => {
             format!("Option<{}>", type_to_rust_scoped(inner, ctx, current_scope))
         }
+        Type::List(inner) if **inner == Type::Int => "aver_rt::AverIntList".to_string(),
         Type::List(inner) => format!(
             "aver_rt::AverList<{}>",
             type_to_rust_scoped(inner, ctx, current_scope)

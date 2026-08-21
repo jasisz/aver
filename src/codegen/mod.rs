@@ -321,6 +321,13 @@ pub struct CodegenContext {
     /// pipeline (TCO / no-alloc / mutual-recursion all apply
     /// identically). Empty when no sinks are detected.
     pub synthesized_buffered_fns: Vec<FnDef>,
+    /// Proof-derived compact layouts for opaque `List<Int>` refinements in
+    /// the unflattened source program. The table is representation-neutral:
+    /// backends may consume only the element widths they can preserve
+    /// soundly. Ungated construction removes a candidate before it reaches
+    /// this table, so an entry certifies both the element interval and the
+    /// smart-constructor-only construction discipline.
+    pub packed_sequence_layouts: HashMap<String, crate::codegen::proof_lower::PackedSequenceLayout>,
     /// Proof-export decision IR populated by `proof_lower::lower`
     /// during `build_context`. Backends (Lean, Dafny) read from
     /// here to decide refinement-record lift, recursion contracts,
@@ -747,7 +754,7 @@ pub fn build_context(
         .map(|p| crate::ir::mir::bare_i64::analyze(p, &empty_carrier))
         .unwrap_or_default();
 
-    let ctx = CodegenContext {
+    let mut ctx = CodegenContext {
         items,
         type_defs,
         fn_defs,
@@ -767,6 +774,7 @@ pub fn build_context(
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,
+        packed_sequence_layouts: HashMap::new(),
         bare_i64,
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
@@ -798,6 +806,22 @@ pub fn build_context(
     // and call `refresh_facts()` to populate the field — the field
     // stays `default()` here for those callers until they explicitly
     // refresh.
+    let packed_inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let mut packed_layouts =
+        crate::codegen::proof_lower::packed_sequence_layout_table(&packed_inputs);
+    let candidates = packed_layouts.keys().cloned().collect::<HashSet<_>>();
+    let intervals = packed_layouts
+        .iter()
+        .map(|(name, layout)| (name.clone(), (layout.element_interval, true)))
+        .collect();
+    let demoted = crate::codegen::proof_lower::carrier_ungated_construction_demotions(
+        &packed_inputs,
+        &candidates,
+        &intervals,
+        &HashMap::new(),
+    );
+    packed_layouts.retain(|name, _| !demoted.contains(name));
+    ctx.packed_sequence_layouts = packed_layouts;
     ctx
 }
 

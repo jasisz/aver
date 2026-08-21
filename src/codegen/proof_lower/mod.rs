@@ -72,7 +72,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnDef, Literal, Spanned, TopLevel, TypeDef};
+use crate::ast::{Expr, FnDef, Literal, Pattern, Spanned, TopLevel, TypeDef};
 use crate::codegen::common::expr_to_dotted_name;
 use crate::codegen::recursion::RecursionPlan;
 use crate::codegen::{CodegenContext, ModuleInfo};
@@ -1417,7 +1417,7 @@ pub fn carrier_ungated_construction_demotions(
             let expr = match stmt {
                 crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => e,
             };
-            carrier_walk_expr(expr, &mut |e| {
+            carrier_walk_expr_with_byte_payloads(expr, &HashSet::new(), &mut |e, byte_payloads| {
                 let (type_name, fields): (&String, &[(String, Spanned<Expr>)]) = match e {
                     Expr::RecordCreate { type_name, fields } => (type_name, fields),
                     Expr::RecordUpdate {
@@ -1437,7 +1437,9 @@ pub fn carrier_ungated_construction_demotions(
                 }
                 let safe_literal = matches!(
                     intervals.get(type_name),
-                    Some((iv, true)) if construct_arg_is_in_interval(fields, *iv)
+                    Some((iv, true))
+                        if construct_arg_is_in_interval(fields, *iv)
+                            || construct_arg_is_finalized_bytes(fields, *iv, byte_payloads)
                 );
                 if !safe_literal {
                     demoted.insert(type_name.to_string());
@@ -1578,6 +1580,119 @@ fn construct_arg_is_in_interval(
         _ => return false,
     };
     iv.contains_point(k)
+}
+
+/// The byte-sink list-build pass may replace an exact standard-library
+/// `fromList(collected)` call with a compiler-synthesized `ByteBuilder` loop.
+/// Its successful `__byt_finalize` payload is already validated to 0..=255,
+/// so wrapping that payload is another refinement gate rather than an escape.
+/// Keep this structural and interval-exact: a byte builder cannot establish a
+/// narrower refinement such as 0..=127.
+fn construct_arg_is_finalized_bytes(
+    fields: &[(String, Spanned<Expr>)],
+    iv: crate::ir::interval::Interval,
+    byte_payloads: &HashSet<String>,
+) -> bool {
+    let [(_, value)] = fields else {
+        return false;
+    };
+    if iv != crate::ir::interval::Interval::between(0, 255) {
+        return false;
+    }
+    matches!(
+        &value.node,
+        Expr::Ident(name) | Expr::Resolved { name, .. } if byte_payloads.contains(name)
+    )
+}
+
+/// Carrier visitor that tracks values proven to be byte lists by the
+/// compiler-internal `__byt_finalize : ByteBuilder -> Result<List<Int>,
+/// String>` boundary. Facts are scoped to the matching `Result.Ok` arm and
+/// therefore cannot leak across an unrelated constructor site.
+fn carrier_walk_expr_with_byte_payloads(
+    expr: &Spanned<Expr>,
+    byte_payloads: &HashSet<String>,
+    visit: &mut impl FnMut(&Expr, &HashSet<String>),
+) {
+    visit(&expr.node, byte_payloads);
+    if let Expr::Match { subject, arms } = &expr.node {
+        carrier_walk_expr_with_byte_payloads(subject, byte_payloads, visit);
+        let finalized_bytes = matches!(
+            &subject.node,
+            Expr::FnCall(callee, args)
+                if args.len() == 1
+                    && crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
+                        == Some("__byt_finalize")
+        );
+        for arm in arms {
+            let mut arm_payloads = byte_payloads.clone();
+            if finalized_bytes
+                && let Pattern::Constructor(name, bindings) = &arm.pattern
+                && name == "Result.Ok"
+                && let [binding] = bindings.as_slice()
+            {
+                arm_payloads.insert(binding.clone());
+            }
+            carrier_walk_expr_with_byte_payloads(&arm.body, &arm_payloads, visit);
+        }
+        return;
+    }
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            carrier_walk_expr_with_byte_payloads(callee, byte_payloads, visit);
+            for arg in args {
+                carrier_walk_expr_with_byte_payloads(arg, byte_payloads, visit);
+            }
+        }
+        Expr::TailCall(call) => {
+            for arg in &call.args {
+                carrier_walk_expr_with_byte_payloads(arg, byte_payloads, visit);
+            }
+        }
+        Expr::Attr(base, _) | Expr::Neg(base) | Expr::ErrorProp(base) => {
+            carrier_walk_expr_with_byte_payloads(base, byte_payloads, visit);
+        }
+        Expr::BinOp(_, left, right) => {
+            carrier_walk_expr_with_byte_payloads(left, byte_payloads, visit);
+            carrier_walk_expr_with_byte_payloads(right, byte_payloads, visit);
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for item in items {
+                carrier_walk_expr_with_byte_payloads(item, byte_payloads, visit);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                carrier_walk_expr_with_byte_payloads(key, byte_payloads, visit);
+                carrier_walk_expr_with_byte_payloads(value, byte_payloads, visit);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(payload) = payload {
+                carrier_walk_expr_with_byte_payloads(payload, byte_payloads, visit);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let crate::ast::StrPart::Parsed(value) = part {
+                    carrier_walk_expr_with_byte_payloads(value, byte_payloads, visit);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                carrier_walk_expr_with_byte_payloads(value, byte_payloads, visit);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            carrier_walk_expr_with_byte_payloads(base, byte_payloads, visit);
+            for (_, value) in updates {
+                carrier_walk_expr_with_byte_payloads(value, byte_payloads, visit);
+            }
+        }
+        Expr::Match { .. } => unreachable!("match returned above"),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
 }
 
 /// Local AST visitor (the proof-lower module has no shared walker). Pre-order

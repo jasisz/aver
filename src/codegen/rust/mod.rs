@@ -25,6 +25,18 @@ use crate::codegen::common::module_prefix_to_rust_segments;
 use crate::codegen::{CodegenContext, ProjectOutput};
 use crate::types::Type;
 
+/// Whether the shared proof analysis selected a byte-wide physical carrier
+/// for this nominal refinement. Rust intentionally consumes only `U8` in the
+/// first slice; every other proven width keeps the established representation.
+pub(super) fn uses_packed_u8(ctx: &CodegenContext, type_name: &str) -> bool {
+    matches!(
+        ctx.packed_sequence_layouts
+            .get(type_name)
+            .map(|layout| layout.element),
+        Some(crate::codegen::proof_lower::PackedIntElement::U8)
+    )
+}
+
 /// Synthesize Rust's `mod.rs` cascade from a flat list of (segments, body)
 /// modules. Every parent directory along each module's path gets a
 /// `mod.rs` that declares `pub mod {child};` for each immediate child;
@@ -739,7 +751,10 @@ fn entry_module_sections(
         }
         sections.push(toplevel::emit_public_type_def(td, ctx));
         if ctx.emit_replay_runtime {
-            sections.push(replay::emit_replay_value_impl(td));
+            sections.push(replay::emit_replay_value_impl(
+                td,
+                uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)),
+            ));
         }
     }
 
@@ -843,13 +858,18 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             crate::codegen::common::type_def_name(td)
         );
         if canonical == "Bytes.Bytes" && ctx.capabilities.uses_standard_bytes() {
-            sections.push(provider::emit_standard_bytes_codec());
+            sections.push(provider::emit_standard_bytes_codec(uses_packed_u8(
+                ctx, "Bytes",
+            )));
         }
         if ctx.capabilities.boundary_type(&canonical).is_some() {
             sections.push(provider::emit_represented_type_codec(&module.prefix, td));
         }
         if ctx.emit_replay_runtime {
-            sections.push(replay::emit_replay_value_impl(td));
+            sections.push(replay::emit_replay_value_impl(
+                td,
+                uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)),
+            ));
         }
     }
 

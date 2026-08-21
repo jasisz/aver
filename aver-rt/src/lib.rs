@@ -9,7 +9,9 @@ mod display;
 pub mod http;
 pub mod http_server;
 pub mod int;
+pub mod int_list;
 pub mod listbuilder;
+pub mod packed_u8;
 #[cfg(feature = "random")]
 pub mod random;
 mod runtime;
@@ -23,7 +25,12 @@ pub mod terminal;
 pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
 pub use display::{AverDisplay, aver_display};
 pub use int::{AverInt, ShiftCountError};
+pub use int_list::{
+    AverIntList, AverIntListIter, int_list_builder_finalize, int_list_builder_new,
+    int_list_builder_push, into_packed_u8,
+};
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};
+pub use packed_u8::AverPackedU8;
 pub use runtime::{
     append_bytes, append_text, cli_args, console_error, console_print, console_warn, delete_dir,
     delete_file, env_get, env_set, file_size, list_dir, make_dir, path_exists, read_bytes,
@@ -1402,8 +1409,30 @@ pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
     list.uncons()
 }
 
-pub fn list_uncons_cloned<T: Clone>(list: &AverList<T>) -> Option<(T, AverList<T>)> {
-    list.uncons_cloned()
+pub trait AverListMatch: Sized {
+    type Item;
+
+    fn uncons_for_match(&self) -> Option<(Self::Item, Self)>;
+}
+
+impl<T: Clone> AverListMatch for AverList<T> {
+    type Item = T;
+
+    fn uncons_for_match(&self) -> Option<(Self::Item, Self)> {
+        self.uncons_cloned()
+    }
+}
+
+impl AverListMatch for AverIntList {
+    type Item = AverInt;
+
+    fn uncons_for_match(&self) -> Option<(Self::Item, Self)> {
+        self.uncons_cloned()
+    }
+}
+
+pub fn list_uncons_cloned<L: AverListMatch>(list: &L) -> Option<(L::Item, L)> {
+    list.uncons_for_match()
 }
 
 /// Pattern-match on an AverList: empty and cons (head, tail) arms.

@@ -187,7 +187,33 @@ pub(super) fn resource_types_by_module(
 /// `Bytes` is nominal source data but canonical octets at a provider boundary.
 /// Emit this inside the generated `Bytes` module so it can project the opaque
 /// record without exposing that representation to providers.
-pub(super) fn emit_standard_bytes_codec() -> String {
+pub(super) fn emit_standard_bytes_codec(packed_u8: bool) -> String {
+    if packed_u8 {
+        return r#"impl aver_rt::provider::ProviderCodec for Bytes {
+    fn into_provider_value(
+        self,
+        _registry: &aver_rt::provider::NativeProviderRegistry,
+        _capability: &str,
+    ) -> Result<aver_rt::provider::ProviderValue, String> {
+        Ok(aver_rt::provider::ProviderValue::Bytes(self.values.into_vec()))
+    }
+
+    fn from_provider_value(
+        value: aver_rt::provider::ProviderValue,
+        _registry: &aver_rt::provider::NativeProviderRegistry,
+        _capability: &str,
+        _minted_resource: Option<&str>,
+    ) -> Result<Self, String> {
+        match value {
+            aver_rt::provider::ProviderValue::Bytes(bytes) => Ok(Self {
+                values: aver_rt::AverPackedU8::from_vec(bytes),
+            }),
+            other => Err(format!("expected Bytes, got {}", other.shape())),
+        }
+    }
+}"#
+        .to_string();
+    }
     r#"impl aver_rt::provider::ProviderCodec for Bytes {
     fn into_provider_value(
         self,
@@ -195,7 +221,7 @@ pub(super) fn emit_standard_bytes_codec() -> String {
         _capability: &str,
     ) -> Result<aver_rt::provider::ProviderValue, String> {
         let mut bytes = Vec::with_capacity(self.values.len());
-        for (index, value) in self.values.iter().enumerate() {
+        for (index, value) in self.values.iter_cloned().enumerate() {
             let Some(value) = value.to_i64() else {
                 return Err(format!("Bytes value at index {} is outside the host integer range", index));
             };
@@ -214,7 +240,7 @@ pub(super) fn emit_standard_bytes_codec() -> String {
     ) -> Result<Self, String> {
         match value {
             aver_rt::provider::ProviderValue::Bytes(bytes) => Ok(Self {
-                values: aver_rt::AverList::from_vec(
+                values: aver_rt::AverIntList::from_vec(
                     bytes
                         .into_iter()
                         .map(|byte| aver_rt::AverInt::from(i64::from(byte)))
@@ -224,7 +250,7 @@ pub(super) fn emit_standard_bytes_codec() -> String {
             other => Err(format!("expected Bytes, got {}", other.shape())),
         }
     }
-}"#
+    }"#
         .to_string()
 }
 
