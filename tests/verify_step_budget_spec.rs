@@ -746,3 +746,212 @@ fn the_runner_with_no_config_declines_the_expensive_case() {
     assert_eq!(*limit, 1_000_000);
     assert!(*steps >= 1_000_000, "steps = {steps}");
 }
+
+// ── j. the ceiling reaches every door, not just `verify` ────────────────
+
+/// A ceiling only one command obeys is not project policy. `[verify]
+/// max-cases` reached the loader that `aver verify` walks and nothing else,
+/// so a project that raised it got a file `aver verify` accepted and no other
+/// command could touch: `check`, `run`, `compile` and `proof` parsed the same
+/// source under the compiled-in ten thousand and refused it — quoting ten
+/// thousand while the project had written forty.
+const RAISED_CEILING: &str = "[verify]\nmax-cases = 40000\n";
+
+/// A module one case past the ceiling this project declares, written inline
+/// because the number in the source and the number in `aver.toml` are the
+/// subject.
+const OVER_THE_PROJECT_CEILING: &str = "module Over\n    intent =\n        \"A domain one case past the ceiling this project declared, in a module\"\n        \"that also has an entry, so every door has something to refuse.\"\n    exposes [identity, main]\n    effects []\n\nfn identity(n: Int) -> Int\n    ? \"n itself.\"\n    n\n\nverify identity law fixpoint\n    given n: Int = 1..40001\n    identity(n) => n\n\nfn main() -> Int\n    ? \"The entry hands back one point of the domain.\"\n    identity(1)\n";
+
+/// A program well under every ceiling: what a project with no `[verify]`
+/// section has to keep seeing, byte for byte.
+const UNDER_EVERY_CEILING: &str = "module Small\n    intent =\n        \"A law over fifty points and an entry, both far below anything any\"\n        \"budget could refuse.\"\n    exposes [identity, main]\n    effects []\n\nfn identity(n: Int) -> Int\n    ? \"n itself.\"\n    n\n\nverify identity law fixpoint\n    given n: Int = 1..50\n    identity(n) => n\n\nfn main() -> Int\n    ? \"The entry hands back one point of the domain.\"\n    identity(1)\n\nverify main\n    main() => 1\n";
+
+/// The four doors the report named, each run against `main.av` in `dir`.
+fn doors(dir: &Path) -> Vec<(&'static str, std::process::Output)> {
+    vec![
+        (
+            "check",
+            run_aver_in(dir, &["check", "main.av", "--module-root", "."]),
+        ),
+        (
+            "run",
+            run_aver_in(dir, &["run", "main.av", "--module-root", "."]),
+        ),
+        (
+            "compile",
+            run_aver_in(
+                dir,
+                &[
+                    "compile",
+                    "main.av",
+                    "--target",
+                    "rust",
+                    "-o",
+                    "out-rust",
+                    "--module-root",
+                    ".",
+                ],
+            ),
+        ),
+        (
+            "proof",
+            run_aver_in(
+                dir,
+                &["proof", "main.av", "-o", "out-proof", "--module-root", "."],
+            ),
+        ),
+    ]
+}
+
+#[test]
+fn a_raised_ceiling_reaches_check_run_compile_and_proof() {
+    let dir = project(
+        "budget-doors-raised",
+        "wide_domain_program.av",
+        RAISED_CEILING,
+    );
+
+    for (name, out) in doors(&dir) {
+        let text = format_output(&out);
+        assert!(
+            !text.contains("expands to 12000 cases"),
+            "`aver {name}` must parse a domain the project declared legal:\n{text}"
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "`aver {name}` must accept the file `aver verify` accepts:\n{text}"
+        );
+    }
+
+    // And the door that was already wired still agrees with the other four.
+    let out = verify(&dir, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+/// Every other command that reads one of the user's `.av` files off disk is
+/// the same door. None of them may hold a second opinion about how many
+/// cases the file is allowed to declare.
+#[test]
+fn a_raised_ceiling_reaches_the_remaining_doors() {
+    let dir = project(
+        "budget-doors-rest",
+        "wide_domain_program.av",
+        RAISED_CEILING,
+    );
+
+    let runs = [
+        (
+            "audit",
+            run_aver_in(&dir, &["audit", "main.av", "--module-root", "."]),
+        ),
+        ("format", run_aver_in(&dir, &["format", "main.av"])),
+        (
+            "shape",
+            run_aver_in(&dir, &["shape", "main.av", "--module-root", "."]),
+        ),
+        (
+            "context",
+            run_aver_in(&dir, &["context", "main.av", "--module-root", "."]),
+        ),
+        (
+            "why",
+            run_aver_in(&dir, &["why", "main.av", "--module-root", "."]),
+        ),
+        (
+            "capabilities",
+            run_aver_in(&dir, &["capabilities", "main.av", "--module-root", "."]),
+        ),
+    ];
+
+    for (name, out) in runs {
+        let text = format_output(&out);
+        assert!(
+            !text.contains("expands to 12000 cases"),
+            "`aver {name}` must parse a domain the project declared legal:\n{text}"
+        );
+    }
+}
+
+/// The message has to name the ceiling that actually applied. A project that
+/// wrote forty thousand and declared forty thousand and one cases is told
+/// about forty thousand — hearing "max 10000" back would send it to change a
+/// setting that is already right.
+#[test]
+fn a_domain_over_the_projects_ceiling_names_the_projects_number_at_every_door() {
+    let dir = temp_dir("budget-doors-over");
+    std::fs::write(dir.join("main.av"), OVER_THE_PROJECT_CEILING).expect("stage the module");
+    std::fs::write(dir.join("aver.toml"), RAISED_CEILING).expect("stage aver.toml");
+
+    for (name, out) in doors(&dir) {
+        let text = format_output(&out);
+        assert!(
+            text.contains("expands to 40001 cases (max 40000)"),
+            "`aver {name}` must name the ceiling that applied:\n{text}"
+        );
+        assert!(
+            !text.contains("max 10000"),
+            "`aver {name}` must not quote the compiled-in number at a project that moved it:\n{text}"
+        );
+        assert_ne!(
+            out.status.code(),
+            Some(0),
+            "`aver {name}` must still refuse the file:\n{text}"
+        );
+    }
+}
+
+/// The no-op claim, at the doors as well as at `verify`: a project with no
+/// `[verify]` section gets byte for byte what a project with no `aver.toml`
+/// at all gets — and no `aver.toml` at all is what every project had before
+/// any of this existed.
+#[test]
+fn a_project_with_no_verify_section_is_byte_identical_at_every_door() {
+    let bare = temp_dir("budget-doors-bare");
+    std::fs::write(bare.join("main.av"), UNDER_EVERY_CEILING).expect("stage the module");
+
+    let empty = temp_dir("budget-doors-empty");
+    std::fs::write(empty.join("main.av"), UNDER_EVERY_CEILING).expect("stage the module");
+    std::fs::write(empty.join("aver.toml"), "").expect("stage an aver.toml with no [verify]");
+
+    for ((name, without), (_, with)) in doors(&bare).into_iter().zip(doors(&empty)) {
+        assert_eq!(
+            without.status.code(),
+            with.status.code(),
+            "`aver {name}` changed its exit code:\nwithout aver.toml:\n{}\nwith an empty one:\n{}",
+            format_output(&without),
+            format_output(&with)
+        );
+        assert_eq!(
+            without.stdout,
+            with.stdout,
+            "`aver {name}` changed its stdout:\nwithout aver.toml:\n{}\nwith an empty one:\n{}",
+            format_output(&without),
+            format_output(&with)
+        );
+        assert_eq!(
+            without.stderr,
+            with.stderr,
+            "`aver {name}` changed its stderr:\nwithout aver.toml:\n{}\nwith an empty one:\n{}",
+            format_output(&without),
+            format_output(&with)
+        );
+    }
+}
+
+/// And the compiled-in ceiling is still the answer when nothing raises it,
+/// at every door: a project with no `[verify]` section is refused the same
+/// twelve-thousand-case domain, quoting the same ten thousand.
+#[test]
+fn without_a_raise_every_door_still_holds_the_compiled_in_ceiling() {
+    let dir = project("budget-doors-default", "wide_domain_program.av", "");
+
+    for (name, out) in doors(&dir) {
+        let text = format_output(&out);
+        assert!(
+            text.contains("expands to 12000 cases (max 10000)"),
+            "`aver {name}` must keep the built-in ceiling when nothing moves it:\n{text}"
+        );
+        assert_ne!(out.status.code(), Some(0), "{text}");
+    }
+}

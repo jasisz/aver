@@ -594,6 +594,7 @@ impl Parser {
                             | crate::ast::VerifyGivenDomain::IntRange { .. }
                     )
                 }) {
+                    let max_cases = self.verify_max_cases_for(&fn_name);
                     let mut total = cases.len();
                     for g in &cases_givens {
                         let len = Self::domain_len(&g.domain);
@@ -603,11 +604,16 @@ impl Parser {
                                 g.name
                             )));
                         }
+                        // A product that overflows `usize` is past the ceiling
+                        // by any reading, and the ceiling it is past is this
+                        // block's own — never the compiled-in one.
                         total = total.checked_mul(len).ok_or_else(|| {
-                            self.error("verify block expands to too many cases".to_string())
+                            self.error(format!(
+                                "verify block expands to too many cases (> {})",
+                                max_cases
+                            ))
                         })?;
                     }
-                    let max_cases = self.verify_max_cases_for(&fn_name);
                     if total > max_cases {
                         return Err(self.error(format!(
                             "verify block expands to {} cases (max {})",

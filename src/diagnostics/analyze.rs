@@ -1,9 +1,12 @@
 //! Single-file analysis pipeline.
 //!
 //! `analyze_source` is the canonical entry for going from source text to
-//! diagnostics. Runtime-neutral: no file IO, no config, no VM. Multi-file
-//! concerns (unused exposes, config suppression, dependency resolution)
-//! stay in CLI / LSP callers.
+//! diagnostics. Runtime-neutral: no VM, and no file IO beyond what naming a
+//! project implies — a caller that sets both `module_base_dir` and
+//! `source_path` is pointing at a real project, and the parse reads its
+//! `aver.toml` for the verify-case ceiling. Multi-file concerns (unused
+//! exposes, config suppression, dependency resolution) stay in CLI / LSP
+//! callers.
 
 #[cfg(feature = "runtime")]
 use super::factories::verify_provider_setup_diagnostic;
@@ -17,7 +20,7 @@ use crate::checker::{
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
-use crate::source::{LoadedModule, parse_source};
+use crate::source::{LoadedModule, parse_source_with_verify_ceiling};
 #[cfg(feature = "runtime")]
 use crate::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 
@@ -26,6 +29,13 @@ use crate::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 pub struct AnalyzeOptions {
     pub file_label: String,
     pub module_base_dir: Option<String>,
+    /// Where this source lives on disk, when it lives anywhere. Set together
+    /// with `module_base_dir` it names a file of a real project, and the
+    /// parse honours the verify-case ceiling that project declared for it —
+    /// the same ceiling `aver verify`'s loader applies. Left `None` by the
+    /// playground and by editor scratch buffers, which have no `aver.toml`
+    /// to ask, so those parse under the built-in default.
+    pub source_path: Option<String>,
     /// Pre-resolved dependency modules (e.g. from a virtual filesystem
     /// in the playground). When set, takes precedence over
     /// `module_base_dir` — the type checker integrates these directly
@@ -78,6 +88,7 @@ impl Default for AnalyzeOptions {
         Self {
             file_label: "<input>".to_string(),
             module_base_dir: None,
+            source_path: None,
             loaded_modules: None,
             stdlib_shadowed: Vec::new(),
             include_intent_warnings: true,
@@ -147,7 +158,16 @@ fn analyze_source_impl(
     options: &AnalyzeOptions,
     #[cfg(feature = "runtime")] provider_bindings: &[crate::provider::ProviderBinding],
 ) -> AnalysisReport {
-    let items = match parse_source(source) {
+    // The ceiling on verify-case expansion is project policy, so a file of a
+    // real project parses under the number that project wrote down. Resolved
+    // through the same helper the source loader uses, because two rules about
+    // how many cases a file may declare is exactly the disagreement the
+    // setting exists to prevent.
+    let ceiling = crate::source::project_verify_ceiling_or_default(
+        options.module_base_dir.as_deref(),
+        options.source_path.as_deref(),
+    );
+    let items = match parse_source_with_verify_ceiling(source, ceiling) {
         Ok(items) => items,
         Err(e) => {
             return AnalysisReport::with_diagnostics(

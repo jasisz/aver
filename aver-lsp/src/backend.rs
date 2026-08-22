@@ -242,7 +242,11 @@ impl LanguageServer for AverBackend {
             docs.get(&uri.to_string()).cloned().unwrap_or_default()
         };
 
-        Ok(format_document_edits(&source))
+        Ok(format_document_edits(
+            &source,
+            self.get_base_dir(&uri).as_deref(),
+            modules::uri_to_path(&uri).as_deref(),
+        ))
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
@@ -335,8 +339,19 @@ impl LanguageServer for AverBackend {
     }
 }
 
-fn format_document_edits(source: &str) -> Option<Vec<TextEdit>> {
-    let (formatted, _violations) = aver::format::try_format_source(source).ok()?;
+/// The formatter has to parse, and an editor buffer that belongs to a project
+/// parses under that project's verify-case ceiling — otherwise "format on
+/// save" refuses a file `aver verify` and `aver format` both accept.
+fn format_document_edits(
+    source: &str,
+    base_dir: Option<&str>,
+    path: Option<&str>,
+) -> Option<Vec<TextEdit>> {
+    let (formatted, _violations) = match (base_dir, path) {
+        (Some(root), Some(file)) => aver::format::try_format_project_source(source, root, file),
+        _ => aver::format::try_format_source(source),
+    }
+    .ok()?;
     if formatted == source {
         return None;
     }
@@ -430,7 +445,7 @@ mod tests {
     #[test]
     fn formatting_returns_full_document_edit() {
         let src = "module Demo\r\nfn x() -> Int\r\n    1\t \r\n";
-        let edits = format_document_edits(src).expect("expected formatting edits");
+        let edits = format_document_edits(src, None, None).expect("expected formatting edits");
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "module Demo\n\nfn x() -> Int\n    1\n");
     }

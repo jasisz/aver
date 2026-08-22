@@ -1,0 +1,23 @@
+module WideProgram
+    intent =
+        "A law declared over twelve thousand points — past the built-in ceiling"
+        "and inside the one this project writes down — in a module that also"
+        "has an entry to run, so every door that reads a project file has"
+        "something to do with it."
+    exposes [identity, main]
+    effects []
+
+fn identity(n: Int) -> Int
+    ? "n itself."
+    n
+
+verify identity law fixpoint
+    given n: Int = 1..12000
+    identity(n) => n
+
+fn main() -> Int
+    ? "The entry hands back one point of the domain."
+    identity(1)
+
+verify main
+    main() => 1

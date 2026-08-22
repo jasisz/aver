@@ -1185,7 +1185,7 @@ pub(super) fn cmd_run_vm(
             process::exit(1);
         }
     };
-    let mut items = match super::shared::parse_file(&source) {
+    let mut items = match super::shared::parse_file(&source, &module_root, file) {
         Ok(items) => items,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -1636,7 +1636,7 @@ pub(super) fn cmd_run_self_hosted(
                 process::exit(1);
             }
         };
-        let mut items = match parse_file(&source) {
+        let mut items = match parse_file(&source, &mr, file) {
             Ok(i) => i,
             Err(e) => {
                 eprintln!("{}", e.red());
@@ -1782,6 +1782,7 @@ fn check_units(
         let opts = diagnostic::AnalyzeOptions {
             file_label: shown_path.clone(),
             module_base_dir: Some(module_root.to_string()),
+            source_path: Some(path.to_string()),
             stdlib_shadowed: aver::source::collect_stdlib_shadowed(items, module_root),
             ..Default::default()
         };
@@ -2114,7 +2115,7 @@ fn audit_unit(
     context: &AuditContext<'_>,
     tracker: &mut SuppressionTracker,
 ) -> AuditTotals {
-    use super::format_cmd::try_format_source;
+    use super::format_cmd::try_format_project_source;
     use aver::diagnostics::{
         AnalyzeOptions, analyze_source_with_verify_provider_bindings, needs_format_diagnostic,
     };
@@ -2125,6 +2126,7 @@ fn audit_unit(
 
     let mut opts = AnalyzeOptions::new(shown_path.clone());
     opts.module_base_dir = Some(module_root.to_string());
+    opts.source_path = Some(path.to_string());
     opts.include_verify_run = true;
     opts.verify_run_hostile = context.hostile;
     let mut report =
@@ -2149,10 +2151,11 @@ fn audit_unit(
 
     // Format check: append needs-format diagnostic with structured
     // per-rule violations (capped at the factory's MAX_VIOLATION_REGIONS).
-    let (needs_format, format_violations) = match try_format_source(source) {
-        Ok((formatted, violations)) if formatted != source => (true, violations),
-        _ => (false, Vec::new()),
-    };
+    let (needs_format, format_violations) =
+        match try_format_project_source(source, module_root, path) {
+            Ok((formatted, violations)) if formatted != source => (true, violations),
+            _ => (false, Vec::new()),
+        };
     if needs_format {
         report.diagnostics.push(needs_format_diagnostic(
             &shown_path,
@@ -3415,7 +3418,7 @@ fn build_codegen_context(
         }
     };
 
-    let mut items = match parse_file(&source) {
+    let mut items = match parse_file(&source, &module_root, file) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -4111,7 +4114,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             process::exit(1);
         }
     };
-    let mut items = match parse_file(&source) {
+    let mut items = match parse_file(&source, &module_root, file) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -4475,7 +4478,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
             process::exit(1);
         }
     };
-    let mut items = match parse_file(&source) {
+    let mut items = match parse_file(&source, &module_root, file) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -4824,7 +4827,7 @@ pub(super) fn cmd_explain_mir_coverage(
             process::exit(1);
         }
     };
-    let mut items = match parse_file(&source) {
+    let mut items = match parse_file(&source, &module_root, file) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -6009,7 +6012,7 @@ fn cmd_compile_wasm_gc(
             process::exit(1);
         }
     };
-    let mut items = match parse_file(&source) {
+    let mut items = match parse_file(&source, &module_root, file) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("{}", e.red());
@@ -6305,7 +6308,7 @@ fn cmd_compile_wasip2(
                 process::exit(1);
             }
         };
-        let mut items = match parse_file(&source) {
+        let mut items = match parse_file(&source, &module_root, file) {
             Ok(i) => i,
             Err(e) => {
                 eprintln!("{}", e.red());
@@ -10116,17 +10119,21 @@ fn sample_check_candidate(
         return SampleVerdict::Gap(format!("cannot read source `{file}`"));
     };
     let combined = format!("{orig}\n{candidate_src}\n");
-    let items = match aver::source::parse_source(&combined) {
+    let base_dir = if module_root.is_empty() {
+        None
+    } else {
+        Some(module_root)
+    };
+    // The candidate is appended to the user's own file, so the whole thing
+    // parses under that file's project ceiling — otherwise a project with a
+    // wide `given` domain could never sample-check a candidate at all.
+    let ceiling = aver::source::project_verify_ceiling_or_default(base_dir, Some(file));
+    let items = match aver::source::parse_source_with_verify_ceiling(&combined, ceiling) {
         // A candidate that does not even parse is syntactically outside the
         // Aver surface — report the kind, never the raw error (it can quote
         // Lean-only idents that leaked through as text).
         Err(_) => return SampleVerdict::Gap("candidate not machine-checkable".to_string()),
         Ok(i) => i,
-    };
-    let base_dir = if module_root.is_empty() {
-        None
-    } else {
-        Some(module_root)
     };
     let results =
         match aver::diagnostics::vm_verify::run_verify_for_items_vm(items, None, base_dir, file) {

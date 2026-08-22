@@ -25,6 +25,13 @@ use aver::parser::Parser;
 pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
+    // A buffer that belongs to a project is parsed under that project's
+    // verify-case ceiling, so the editor agrees with `aver check` about how
+    // many cases a `given` domain may declare. A scratch buffer with no file
+    // and no root keeps the built-in default.
+    let source_path = uri.and_then(crate::modules::uri_to_path);
+    let ceiling = aver::source::project_verify_ceiling_or_default(base_dir, source_path.as_deref());
+
     // Phase 1: lex — own step to get precise lexer error locations.
     let mut lexer = Lexer::new(source);
     let tokens = match lexer.tokenize() {
@@ -37,6 +44,7 @@ pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<
 
     // Phase 2: parse — same rationale.
     let mut parser = Parser::new(tokens);
+    parser.set_verify_ceiling(ceiling);
     let items = match parser.parse() {
         Ok(items) => items,
         Err(aver::parser::ParseError::Error { msg, line, col }) => {
@@ -55,6 +63,7 @@ pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<
     if let Some(dir) = base_dir {
         opts.module_base_dir = Some(dir.to_string());
     }
+    opts.source_path = source_path;
     // Verify execution is now part of the canonical analysis pipeline.
     opts.include_verify_run = true;
     let report = analyze_source(source, &opts);

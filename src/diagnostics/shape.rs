@@ -735,7 +735,8 @@ pub fn analyze_source_with(
     fingerprints: &[LayerFingerprint],
     basis: &str,
 ) -> Result<ShapeReport, String> {
-    let mut items = crate::source::parse_source(source).map_err(|e| format!("parse: {}", e))?;
+    let mut items = crate::source::parse_project_source(source, module_root, file_label)
+        .map_err(|e| format!("parse: {}", e))?;
     let module_root = module_root.to_string();
 
     let dep_modules = crate::source::load_compile_deps(&items, &module_root)

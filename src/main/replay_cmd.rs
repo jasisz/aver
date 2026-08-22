@@ -158,7 +158,7 @@ fn replay_recording_file_vm(
     let replay_module_root = resolve_replay_module_root(path, &recording);
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let source = read_file(&replay_program_file)?;
-    let mut items = parse_file(&source)?;
+    let mut items = parse_file(&source, &replay_module_root, &replay_program_file)?;
     let entry_line = find_fn_line(&items, &recording.entry_fn);
 
     let outcome = run_vm_replay(&recording, &replay_module_root, &mut items, check_args);
@@ -197,7 +197,11 @@ fn replay_recording_file_wasm_gc(
 
     #[cfg(feature = "wasm")]
     {
-        let entry_line = find_fn_line_in_file(&replay_program_file, &recording.entry_fn);
+        let entry_line = find_fn_line_in_file(
+            &replay_program_file,
+            &replay_module_root,
+            &recording.entry_fn,
+        );
         let outcome = run_wasm_gc_replay(
             &recording,
             &replay_module_root,

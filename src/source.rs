@@ -36,12 +36,17 @@ pub fn parse_source_with_verify_ceiling(
 /// Parse one of the user's own project files, under the ceiling the project
 /// declared for that file.
 ///
-/// This function and [`Walk::new`] are the only two places where `aver.toml`
-/// and the parser meet. Every other parse in the compiler goes through
-/// [`parse_source`] or constructs a [`Parser`] directly and keeps the
-/// built-in default — which is what those want, because they parse
-/// compiler-synthesized source (TCO hoists, effect-lifting wrappers, hostile
-/// stubs, coverage and law probes), never a user's `given` domain.
+/// Every command that reads a `.av` off disk parses it through here or
+/// through [`Walk::new`], which resolves the same ceiling the same way for
+/// each dependency it loads. That is the whole rule: a file the project
+/// declared legal is legal at every door, and a file over the ceiling is
+/// refused at every door with the project's own number in the message.
+///
+/// Every other parse in the compiler goes through [`parse_source`] or
+/// constructs a [`Parser`] directly and keeps the built-in default — which
+/// is what those want, because they parse compiler-synthesized source (TCO
+/// hoists, effect-lifting wrappers, hostile stubs, coverage and law probes),
+/// never a user's `given` domain.
 ///
 /// A missing or malformed `aver.toml` leaves the default in place here; every
 /// command loads and reports the file separately, so a broken one is never
@@ -54,6 +59,15 @@ pub fn parse_project_source(
     parse_source_with_verify_ceiling(source, project_verify_ceiling(module_root, file))
 }
 
+/// The module root a command works against when the user names none: the
+/// working directory, which is where `aver.toml` is looked for.
+pub fn working_module_root() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|dir| dir.into_os_string().into_string().ok())
+        .unwrap_or_else(|| ".".to_string())
+}
+
 /// The verify-case ceiling the project rooted at `module_root` declares for
 /// `file`, or the built-in default when there is no readable `aver.toml`.
 pub fn project_verify_ceiling(module_root: &str, file: &str) -> VerifyCaseCeiling {
@@ -63,6 +77,20 @@ pub fn project_verify_ceiling(module_root: &str, file: &str) -> VerifyCaseCeilin
     {
         Some(config) => verify_ceiling_for(&config, module_root, file),
         None => VerifyCaseCeiling::compiled_default(),
+    }
+}
+
+/// [`project_verify_ceiling`] for a caller that may hold no project at all:
+/// an editor scratch buffer, the playground's virtual filesystem, a
+/// candidate law checked outside any root. Nothing to ask means the built-in
+/// default — which is what those callers had before any of this existed.
+pub fn project_verify_ceiling_or_default(
+    module_root: Option<&str>,
+    file: Option<&str>,
+) -> VerifyCaseCeiling {
+    match (module_root, file) {
+        (Some(root), Some(file)) => project_verify_ceiling(root, file),
+        _ => VerifyCaseCeiling::compiled_default(),
     }
 }
 
