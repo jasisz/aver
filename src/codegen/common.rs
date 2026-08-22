@@ -1401,23 +1401,32 @@ pub fn fn_id_for_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnI
 }
 
 /// [`fn_id_for_decl`] for a declaration the emitter is writing right now.
-/// A `&FnDef` the context does not own by identity — the lifted form of an
-/// effectful function, a rewritten body — is keyed in the module scope it is
-/// being emitted under: a dependency's lifted `get` resolves to
-/// `Infra.Store.get`, not to an entry function that happens to share the
-/// bare name. Identical to [`fn_id_for_decl`] for every owned declaration
-/// and for everything emitted in the entry scope.
+///
+/// A declaration the context owns keeps the identity pointer-eq gives it:
+/// this helper hands every such `&FnDef` straight to [`fn_id_for_decl`], so
+/// a module-owned function resolves to its own `Module.fn` key no matter
+/// which scope happens to be active. The ambient scope is consulted for one
+/// case only — a `&FnDef` the context does NOT own, i.e. a value the emitter
+/// synthesized for this one emission (the lifted form of an effectful
+/// function, a `?`-lowered body). Such a value has no pointer identity to
+/// resolve and is written into exactly one namespace: the one
+/// [`CodegenContext::with_module_scope`] names. So a dependency's lifted
+/// `get` resolves to `Infra.Store.get`, not to an entry function that
+/// happens to share the bare name.
+///
+/// The synthesized-plus-no-scope case therefore means "the emitter is
+/// writing the entry file", which is what [`fn_id_for_decl`] already keys.
+/// Every Lean emit path that writes module content runs inside
+/// `with_module_scope(Some(prefix))`; the entry paths pass `None`.
+/// `fn_id_for_emitted_decl_keys_owned_module_fn_by_ownership` pins the
+/// half of that contract this helper is responsible for.
 pub fn fn_id_for_emitted_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnId> {
-    if let Some(prefix) = fn_owning_scope_for(ctx, fd) {
-        return ctx
+    match ctx.active_module_scope() {
+        Some(prefix) if fn_owning_scope_for(ctx, fd).is_none() => ctx
             .symbol_table
-            .fn_id_of(&crate::ir::FnKey::in_module(prefix.to_string(), &fd.name));
+            .fn_id_of(&crate::ir::FnKey::in_module(prefix, &fd.name)),
+        _ => fn_id_for_decl(ctx, fd),
     }
-    let key = match ctx.active_module_scope() {
-        Some(prefix) => crate::ir::FnKey::in_module(prefix, &fd.name),
-        None => crate::ir::FnKey::entry(&fd.name),
-    };
-    ctx.symbol_table.fn_id_of(&key)
 }
 
 /// Resolve a dotted source-level name (`fn`, `Module.fn`) to the
@@ -4348,5 +4357,158 @@ mod tests {
         let from_entry =
             find_refined_type_scoped(&ctx, "Natural", None).expect("entry Natural lookup");
         assert_eq!(from_entry.predicate_param, "entry_n");
+    }
+
+    #[test]
+    fn fn_id_for_emitted_decl_keys_owned_module_fn_by_ownership() {
+        // The question the `FnKey::entry(&fd.name)` guardrail asks about
+        // `fn_id_for_emitted_decl`: can a MODULE-owned function be keyed as
+        // an entry function? It cannot. Every declaration the context owns
+        // goes through `fn_id_for_decl`, whose pointer-eq resolution ignores
+        // the ambient scope, so ownership wins even when a DIFFERENT module's
+        // emit pass is in flight.
+        //
+        // The ambient scope decides for one case only: a `&FnDef` the context
+        // does not own — the lifted form of an effectful function, a
+        // `?`-lowered body clone. Such a value exists solely to be written
+        // into the namespace the emitter is currently writing, so that
+        // namespace IS its identity; `None` there means the emitter is
+        // writing the entry file. Both halves are pinned below.
+        use crate::ast::{FnBody, FnDef, TopLevel};
+        use crate::codegen::{CodegenContext, ModuleInfo};
+        use std::collections::{HashMap, HashSet};
+
+        let make_get = |ret: &str| FnDef {
+            name: "get".to_string(),
+            line: 1,
+            params: vec![("key".to_string(), "String".to_string())],
+            return_type: ret.to_string(),
+            effects: Vec::new(),
+            desc: None,
+            body: std::sync::Arc::new(FnBody::from_expr(sb(Expr::Ident("key".to_string())))),
+            resolution: None,
+        };
+        let make_module = |prefix: &str, ret: &str| ModuleInfo {
+            prefix: prefix.to_string(),
+            depends: Vec::new(),
+            type_defs: Vec::new(),
+            fn_defs: vec![make_get(ret)],
+            capability_items: Vec::new(),
+            capability_semantics: None,
+            verify_laws: Vec::new(),
+            analysis: None,
+        };
+
+        // Three functions, one bare name: the entry's, and one in each of two
+        // dependency modules.
+        let items = vec![TopLevel::FnDef(make_get("String"))];
+        let modules = vec![
+            make_module("Infra.Store", "Option<String>"),
+            make_module("Infra.Cache", "Int"),
+        ];
+        let symbol_table = crate::ir::SymbolTable::build(&items, &modules);
+        let entry_id = symbol_table
+            .fn_id_of(&crate::ir::FnKey::entry("get"))
+            .expect("entry get id");
+        let store_id = symbol_table
+            .fn_id_of(&crate::ir::FnKey::in_module("Infra.Store", "get"))
+            .expect("Infra.Store.get id");
+        let cache_id = symbol_table
+            .fn_id_of(&crate::ir::FnKey::in_module("Infra.Cache", "get"))
+            .expect("Infra.Cache.get id");
+        assert!(
+            entry_id != store_id && store_id != cache_id && entry_id != cache_id,
+            "the three same-bare-name declarations must have distinct ids"
+        );
+
+        let ctx = CodegenContext {
+            items,
+            type_defs: Vec::new(),
+            fn_defs: Vec::new(),
+            project_name: "emitted-decl-identity".to_string(),
+            modules,
+            capabilities: Default::default(),
+            module_prefixes: HashSet::new(),
+            #[cfg(feature = "runtime")]
+            policy: None,
+            emit_replay_runtime: false,
+            runtime_policy_from_env: false,
+            guest_entry: None,
+            emit_self_host_support: false,
+            extra_fn_defs: Vec::new(),
+            mutual_tco_members: HashSet::new(),
+            recursive_fns: HashSet::new(),
+            buffer_build_sinks: HashMap::new(),
+            buffer_fusion_sites: Vec::new(),
+            synthesized_buffered_fns: Vec::new(),
+            packed_sequence_layouts: HashMap::new(),
+            proof_ir: crate::ir::ProofIR::default(),
+            symbol_table,
+            resolved_fn_defs: Vec::new(),
+            resolved_module_fn_defs: Vec::new(),
+            current_module_scope: std::cell::RefCell::new(None),
+            lean_do_block: std::cell::Cell::new(false),
+            declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
+            program_shape: None,
+            mir_program: None,
+            bare_i64: Default::default(),
+            discovered_lemmas: Vec::new(),
+            sample_expected: std::collections::HashMap::new(),
+            allow_mathlib: false,
+            hand_proofs: Default::default(),
+        };
+
+        // ---- Owned declarations: ownership decides, the scope never does.
+        let owned_store = &ctx.modules[0].fn_defs[0];
+        assert_eq!(
+            fn_id_for_emitted_decl(&ctx, owned_store),
+            Some(store_id),
+            "a module-owned fn must key to its own module with no scope active \
+             — the entry key is not reachable for it"
+        );
+        ctx.with_module_scope(Some("Infra.Cache"), || {
+            assert_eq!(
+                fn_id_for_emitted_decl(&ctx, owned_store),
+                Some(store_id),
+                "a module-owned fn must key to its OWN module even while \
+                 another module's emit pass is in flight"
+            );
+        });
+        let TopLevel::FnDef(owned_entry) = &ctx.items[0] else {
+            unreachable!("entry item 0 is the entry `get`")
+        };
+        assert_eq!(
+            fn_id_for_emitted_decl(&ctx, owned_entry),
+            Some(entry_id),
+            "an entry-owned fn keys to the entry"
+        );
+
+        // ---- Synthesized declarations: the namespace being written decides.
+        // A lifted / lowered clone is a fresh value, so pointer-eq finds no
+        // owner and the emitter's scope is the only identity it has.
+        let synthesized = make_get("Option<String>");
+        ctx.with_module_scope(Some("Infra.Store"), || {
+            assert_eq!(
+                fn_id_for_emitted_decl(&ctx, &synthesized),
+                Some(store_id),
+                "a synthesized declaration emitted into `Infra.Store` is that \
+                 module's fn, not the entry fn sharing its bare name"
+            );
+        });
+        ctx.with_module_scope(Some("Infra.Cache"), || {
+            assert_eq!(
+                fn_id_for_emitted_decl(&ctx, &synthesized),
+                Some(cache_id),
+                "the same clone emitted into `Infra.Cache` is that module's fn"
+            );
+        });
+        assert_eq!(
+            fn_id_for_emitted_decl(&ctx, &synthesized),
+            Some(entry_id),
+            "with no module scope active the emitter is writing the entry \
+             file, so a synthesized declaration there is an entry fn — every \
+             Lean emit path that writes module content sets the scope first"
+        );
     }
 }
