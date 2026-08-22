@@ -4658,3 +4658,79 @@ verify nested law indexOrder
          lifting its own arguments again"
     );
 }
+
+/// The termination measure of a three-member cycle counts, for each member,
+/// every list that travels around the cycle — and orders the one call that
+/// hands both tails on unchanged.
+#[test]
+fn three_member_cycle_is_measured_by_what_travels_around_it() {
+    let mut ctx = ctx_from_source(
+        include_str!("../../../tests/fixtures/mutual_cycle_three_lists.av"),
+        "mutual_cycle_three_lists",
+    );
+    ctx.refresh_facts();
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    assert!(lean.contains("termination_by (sizeOf left + sizeOf right, 2)"));
+    assert!(lean.contains("termination_by (sizeOf tail + sizeOf right, 1)"));
+    assert!(lean.contains("termination_by (sizeOf tail + sizeOf rest, 3)"));
+    assert!(
+        !lean.contains("__fuel"),
+        "the cycle must not fall back to fuel:\n{lean}"
+    );
+}
+
+/// The pair the forwarded-parameter measure already handled emits the same
+/// measure under the call edge analysis: `tail` and `items`, ranked 2 and 1,
+/// nothing added (not the returned `head`, not the `Int` position).
+#[test]
+fn forwarded_pair_measure_is_unchanged_by_the_edge_analysis() {
+    let mut ctx = ctx_from_source(
+        include_str!("../../../tests/fixtures/mutual_measure_forwarded.av"),
+        "mutual_measure_forwarded",
+    );
+    ctx.refresh_facts();
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    let measures: Vec<&str> = lean
+        .lines()
+        .filter(|line| line.trim_start().starts_with("termination_by"))
+        .collect();
+    assert_eq!(
+        measures,
+        vec![
+            "  termination_by (sizeOf tail, 2)",
+            "  termination_by (sizeOf items, 1)"
+        ],
+        "{lean}"
+    );
+    assert!(lean.contains(
+        "  decreasing_by all_goals (first | decreasing_tactic | (simp_wf; (try simp only [AverMap.entries, AverMap.fromList]); (try simp_all); first | omega | (constructor <;> first | rfl | omega)))"
+    ));
+}
+
+/// A method application that is itself the receiver of a method application
+/// is parenthesised; a receiver that is one bracketed group, or one followed
+/// by projections, stays as it was.
+#[test]
+fn chained_method_receivers_are_parenthesised() {
+    let mut ctx = ctx_from_source(
+        include_str!("../../../tests/fixtures/lean_chained_receivers.av"),
+        "lean_chained_receivers",
+    );
+    ctx.refresh_facts();
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    assert!(
+        lean.contains("((doubled xs).drop (Int.toNat 1)).take (Int.toNat 32)"),
+        "{lean}"
+    );
+    assert!(
+        lean.contains("((xs ++ ys).drop (Int.toNat 1)).take (Int.toNat 2)"),
+        "{lean}"
+    );
+    assert!(
+        lean.contains("((doubled xs).reverse.drop (Int.toNat 1)).take (Int.toNat 2)"),
+        "{lean}"
+    );
+}

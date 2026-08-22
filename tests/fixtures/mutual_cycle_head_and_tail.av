@@ -1,0 +1,23 @@
+module MutualCycleHeadAndTail
+    intent =
+        "A cycle through a self-recursive helper that receives the head and the tail of a list of lists."
+        "The head is a smaller part of the list by size, so the Lean export counts both; it is not shorter than the list, so the Dafny export, which measures by length, does not pair its measure with this ordering and lowers the group with fuel."
+    exposes [outer]
+    depends []
+    effects []
+
+fn outer(xs: List<List<Int>>) -> Int
+    ? "Peels xs and hands head and tail on."
+    match xs
+        [] -> 0
+        [h, ..t] -> helper(h, t)
+
+fn helper(a: List<Int>, b: List<List<Int>>) -> Int
+    ? "Peels a; when it is empty goes back with b."
+    match a
+        [] -> outer(b)
+        [x, ..r] -> x + helper(r, b)
+
+verify outer
+    outer([]) => 0
+    outer([[1, 2], [3], []]) => 6

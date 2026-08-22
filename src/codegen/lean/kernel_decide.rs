@@ -68,7 +68,7 @@
 //! Both are exhaustive matches, so a new `Builtin` variant must be classified
 //! on both axes before it compiles.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Literal, Spanned, Type, TypeDef};
 use crate::codegen::CodegenContext;
@@ -126,8 +126,10 @@ pub(super) struct CaseDecidability {
     /// is executable but not a statically justified recursion bound. A ground
     /// claim whose call cone reaches one must never be handed to
     /// `native_decide`: Lean's `panic!` returns `default`, so exhaustion can
-    /// make a false equality evaluate to true.
-    unbounded_fuel_fns: HashSet<FnId>,
+    /// make a false equality evaluate to true. The value is the call edge
+    /// analysis's refusal for the fn's group when it has one — the call the
+    /// exporter could not see shrink — so the claim's decline can say so.
+    unbounded_fuel_fns: HashMap<FnId, Option<String>>,
     /// Recursive user type names — they carry the `opaque` `DecidableEq` shim.
     opaque_eq_types: HashSet<String>,
     /// Provider-owned pure operations reached by each user function.  These
@@ -141,7 +143,7 @@ pub(super) struct CaseDecidability {
 impl CaseDecidability {
     pub(super) fn new(
         opaque_fns: HashSet<FnId>,
-        unbounded_fuel_fns: HashSet<FnId>,
+        unbounded_fuel_fns: HashMap<FnId, Option<String>>,
         opaque_eq_types: HashSet<String>,
         capability_opacity: super::capability_opaque::CapabilityOpacity,
     ) -> Self {
@@ -158,7 +160,7 @@ impl CaseDecidability {
     pub(super) fn disabled() -> Self {
         Self {
             opaque_fns: HashSet::new(),
-            unbounded_fuel_fns: HashSet::new(),
+            unbounded_fuel_fns: HashMap::new(),
             opaque_eq_types: HashSet::new(),
             capability_opacity: super::capability_opaque::CapabilityOpacity::default(),
             enabled: false,
@@ -179,7 +181,8 @@ impl CaseDecidability {
     }
 
     /// Canonical names of every function with an unbounded fuel fallback
-    /// reachable from `roots`, including transitive user-function calls.
+    /// reachable from `roots`, including transitive user-function calls, each
+    /// with its group's refusal when the call edge analysis has one.
     ///
     /// This is deliberately separate from [`Self::closure_is_kernel_decidable`].
     /// Kernel opacity has many causes (`mutual`, `partial`, recursive equality,
@@ -190,7 +193,7 @@ impl CaseDecidability {
         &self,
         roots: &[&Spanned<crate::ast::Expr>],
         ctx: &CodegenContext,
-    ) -> Vec<String> {
+    ) -> Vec<(String, Option<String>)> {
         if !self.enabled || self.unbounded_fuel_fns.is_empty() {
             return Vec::new();
         }
@@ -204,13 +207,16 @@ impl CaseDecidability {
 
         let mut pending: Vec<FnId> = pending.into_iter().collect();
         let mut seen = HashSet::new();
-        let mut hits = std::collections::BTreeSet::new();
+        let mut hits = std::collections::BTreeMap::new();
         while let Some(fn_id) = pending.pop() {
             if !seen.insert(fn_id) {
                 continue;
             }
-            if self.unbounded_fuel_fns.contains(&fn_id) {
-                hits.insert(ctx.symbol_table.fn_entry(fn_id).key.canonical());
+            if let Some(refusal) = self.unbounded_fuel_fns.get(&fn_id) {
+                hits.insert(
+                    ctx.symbol_table.fn_entry(fn_id).key.canonical(),
+                    refusal.clone(),
+                );
             }
             let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
                 continue;

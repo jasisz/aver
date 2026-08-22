@@ -185,7 +185,7 @@ pub(crate) fn collect_calls_from_body(body: &FnBody) -> Vec<(String, Vec<&Spanne
 /// inside an arm, a binder the pattern introduces names whatever the pattern
 /// matched, so any tracked subterm of the same name is no longer reachable
 /// under that name there.
-fn pattern_bound_names(pattern: &Pattern) -> Vec<&str> {
+pub(crate) fn pattern_bound_names(pattern: &Pattern) -> Vec<&str> {
     match pattern {
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
         Pattern::Ident(name) => vec![name.as_str()],
@@ -1652,22 +1652,15 @@ pub(crate) fn mutual_sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
 /// even though fuel encoding handles them fine; backends fall back
 /// to fuel for those SCCs.
 pub fn scc_has_growing_accumulator(fns: &[&FnDef]) -> bool {
+    if scc_member_calling_inside_interpolation(fns).is_some() {
+        return true;
+    }
     let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     let mut sizeof_indices: HashMap<String, Vec<usize>> = HashMap::new();
     for fd in fns {
         sizeof_indices.insert(fd.name.clone(), sizeof_measure_param_indices(fd));
     }
     for fd in fns {
-        // String interpolation in a body that ends up calling an
-        // intra-SCC fn confuses Lean's wf elaboration — the recursive
-        // call lives inside the interpolation's anonymous `s!"{...}"`
-        // expansion, and the wf check pins anonymous binders the
-        // tactic chain can't pin back to the source-named param.
-        // Wumpus's `roomListItem` (`_ => s!"{rs}, {roomList rest}"`)
-        // is the canonical shape. Fall back to fuel for this case.
-        if body_has_intra_scc_call_in_interpolation(fd.body.as_ref(), &names) {
-            return true;
-        }
         for (callee_raw, args) in collect_calls_from_body(fd.body.as_ref()) {
             let Some(callee_name) = canonical_callee_name(&callee_raw, &names) else {
                 continue;
@@ -1686,6 +1679,21 @@ pub fn scc_has_growing_accumulator(fns: &[&FnDef]) -> bool {
         }
     }
     false
+}
+
+/// The first member whose body calls into the group from inside a string
+/// interpolation.
+///
+/// Such a call confuses Lean's well-founded elaboration — it lives inside
+/// the interpolation's anonymous `s!"{...}"` expansion, and the check pins
+/// anonymous binders the tactic chain cannot pin back to the source-named
+/// parameter. Wumpus's `roomListItem` (`_ => s!"{rs}, {roomList rest}"`) is
+/// the canonical shape; backends lower such a group with fuel.
+pub(crate) fn scc_member_calling_inside_interpolation<'a>(fns: &[&'a FnDef]) -> Option<&'a FnDef> {
+    let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    fns.iter()
+        .copied()
+        .find(|fd| body_has_intra_scc_call_in_interpolation(fd.body.as_ref(), &names))
 }
 
 fn body_has_intra_scc_call_in_interpolation(body: &FnBody, names: &HashSet<String>) -> bool {
@@ -1804,41 +1812,47 @@ fn unproven_computed_bound_names(body: &FnBody) -> HashSet<String> {
         .collect()
 }
 
-/// Does an intra-SCC call pass a value with no statically known size relation
-/// into a measured position?
+/// The first intra-SCC call that passes a value with no statically known
+/// size relation into a measured position: the caller, the callee, the
+/// position and the argument — or `None` when every such call is safe.
 ///
-/// This is intentionally narrower than [`scc_passes_computed_measure_arg`].
+/// This is intentionally narrower than [`scc_computed_measure_arg`].
 /// That predicate decides whether a concrete Lean `termination_by` template is
 /// likely to elaborate and therefore rejects every non-trivial expression.
 /// This predicate guards `native_decide` soundness: it rejects only an opaque
 /// computation such as `next = pairsOf(level, [])`, for which the generated
 /// fuel seed is executable but not a proved recursion bound. Known
 /// non-growing expressions such as `Map.entries(m)` remain safe.
-pub(crate) fn scc_has_unproven_computed_measure_edge(fns: &[&FnDef]) -> bool {
+pub(crate) fn scc_unproven_computed_measure_edge<'a>(
+    fns: &[&'a FnDef],
+) -> Option<(&'a FnDef, &'a FnDef, usize, &'a Spanned<Expr>)> {
     let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
-    fns.iter().any(|fd| {
+    fns.iter().find_map(|fd| {
         let computed = unproven_computed_bound_names(fd.body.as_ref());
         collect_calls_from_body(fd.body.as_ref())
             .into_iter()
             .filter_map(|(callee_raw, args)| {
                 canonical_callee_name(&callee_raw, &names).map(|callee| (callee, args))
             })
-            .any(|(callee, args)| {
-                let Some(peer) = fns.iter().find(|peer| peer.name == callee) else {
-                    return false;
-                };
-                mutual_sizeof_measure_param_indices(peer).iter().any(|idx| {
-                    args.get(*idx).is_some_and(|arg| match local_name_of(arg) {
-                        Some(name) => computed.contains(name),
-                        None => !arg_is_non_growing(arg),
+            .find_map(|(callee, args)| {
+                let peer = fns.iter().find(|peer| peer.name == callee)?;
+                mutual_sizeof_measure_param_indices(peer)
+                    .into_iter()
+                    .find_map(|idx| {
+                        let arg = *args.get(idx)?;
+                        let unproven = match local_name_of(arg) {
+                            Some(name) => computed.contains(name),
+                            None => !arg_is_non_growing(arg),
+                        };
+                        unproven.then_some((*fd, *peer, idx, arg))
                     })
-                })
             })
     })
 }
 
-/// Does some call between members of this group hand on, at a measured
-/// position, a value the caller COMPUTED?
+/// A call between members of this group that hands on, at a position
+/// `measured` selects for the callee, a value the caller COMPUTED: the
+/// caller, the callee, the position and the argument.
 ///
 /// A plain `sizeOf` measure is only honest when the emitter can SEE each step
 /// shrink, and a computed value cannot be seen to. `climb` binds
@@ -1853,34 +1867,36 @@ pub(crate) fn scc_has_unproven_computed_measure_edge(fns: &[&FnDef]) -> bool {
 /// a length lemma when the computed value comes from a non-growing filter
 /// (quicksort's `sort`/`sortWithPivot`), and failing that the group lowers
 /// with fuel, which builds. This says only "not by plain `sizeOf`".
-pub(crate) fn scc_passes_computed_measure_arg(fns: &[&FnDef]) -> bool {
+pub(crate) fn scc_computed_measure_arg<'a>(
+    fns: &[&'a FnDef],
+    measured: &dyn Fn(&FnDef) -> Vec<usize>,
+) -> Option<(&'a FnDef, &'a FnDef, usize, &'a Spanned<Expr>)> {
     let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
-    fns.iter().any(|fd| {
+    fns.iter().find_map(|fd| {
         let computed = let_bound_names(fd.body.as_ref());
         collect_calls_from_body(fd.body.as_ref())
             .into_iter()
             .filter_map(|(callee_raw, args)| {
                 canonical_callee_name(&callee_raw, &names).map(|callee| (callee, args))
             })
-            .any(|(callee, args)| {
-                let Some(peer) = fns.iter().find(|peer| peer.name == callee) else {
-                    return false;
-                };
-                mutual_sizeof_measure_param_indices(peer).iter().any(|idx| {
-                    args.get(*idx).is_some_and(|arg| {
-                        local_name_of(arg).is_none_or(|name| computed.contains(name))
-                    })
+            .find_map(|(callee, args)| {
+                let peer = fns.iter().find(|peer| peer.name == callee)?;
+                measured(peer).into_iter().find_map(|idx| {
+                    let arg = *args.get(idx)?;
+                    local_name_of(arg)
+                        .is_none_or(|name| computed.contains(name))
+                        .then_some((*fd, *peer, idx, arg))
                 })
             })
     })
 }
 
-pub(crate) fn supports_mutual_sizeof_ranked(
-    component: &[&FnDef],
-) -> Option<HashMap<String, usize>> {
-    if component.len() < 2 {
-        return None;
-    }
+/// The calls between members of `component` that hand every parameter the
+/// callee forwards by name ([`mutual_sizeof_measure_param_indices`]) the
+/// caller's forwarded parameters, in order — the calls that leave that
+/// measure unchanged — keyed by caller. `None` when a member forwards
+/// nothing or no member calls another.
+fn forwarded_same_edges(component: &[&FnDef]) -> Option<HashMap<String, HashSet<String>>> {
     let names: HashSet<String> = component.iter().map(|fd| fd.name.clone()).collect();
     let metric_indices: HashMap<String, Vec<usize>> = component
         .iter()
@@ -1925,17 +1941,87 @@ pub(crate) fn supports_mutual_sizeof_ranked(
             }
         }
     }
-    if !any_intra {
+    any_intra.then_some(same_edges)
+}
+
+/// Tie-break ranks for the measure that counts the parameters each member
+/// forwards by name: the ordering the plan had before the call edge
+/// analysis existed, which a backend measuring every sequence parameter
+/// (Dafny) pairs with its own measure.
+pub(crate) fn forwarded_ranks(component: &[&FnDef]) -> Option<HashMap<String, usize>> {
+    let same_edges = forwarded_same_edges(component)?;
+    let names: HashSet<String> = component.iter().map(|fd| fd.name.clone()).collect();
+    ranks_from_same_edges(&names, &same_edges)
+}
+
+pub(crate) fn supports_mutual_sizeof_ranked(
+    component: &[&FnDef],
+    inputs: &ProofLowerInputs,
+) -> Option<HashMap<String, usize>> {
+    if component.len() < 2 {
         return None;
     }
-
-    let ranks = ranks_from_same_edges(&names, &same_edges)?;
+    let same_edges = forwarded_same_edges(component)?;
+    let names: HashSet<String> = component.iter().map(|fd| fd.name.clone()).collect();
+    let ranks = match ranks_from_same_edges(&names, &same_edges) {
+        Some(ranks) => ranks,
+        // The forwarded-by-name selection sees a cycle of calls that keep
+        // its measure unchanged. The call edge analysis may still find a
+        // measure — one counting a parameter that selection leaves out, or
+        // an `Int` countdown — in which case its ordering is the plan's.
+        None => cycle_measure_ranks(component, inputs)?,
+    };
     let mut out = HashMap::new();
     for fd in component {
         let rank = ranks.get(&fd.name).cloned()?;
         out.insert(fd.name.clone(), rank);
     }
     Some(out)
+}
+
+/// Tie-break ranks from [`super::cycle_measure`], with the candidates read
+/// off the annotated parameter types: lists, vectors, maps and recursive
+/// user ADTs carry a structural size, an `Int` a countdown.
+fn cycle_measure_ranks(
+    component: &[&FnDef],
+    inputs: &ProofLowerInputs,
+) -> Option<HashMap<String, usize>> {
+    use super::cycle_measure::{Candidate, MeasureKind};
+    let candidates: Vec<Vec<Candidate>> = component
+        .iter()
+        .map(|fd| {
+            fd.params
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (_, type_name))| {
+                    let kind = if type_name == "Int" {
+                        MeasureKind::Countdown
+                    } else if ["List", "Vector", "Map"]
+                        .iter()
+                        .any(|t| type_name == *t || type_name.starts_with(&format!("{t}<")))
+                        || inputs
+                            .find_type_def(type_name)
+                            .is_some_and(crate::codegen::common::is_recursive_type_def)
+                    {
+                        MeasureKind::Structural
+                    } else {
+                        return None;
+                    };
+                    Some(Candidate { index, kind })
+                })
+                .collect()
+        })
+        .collect();
+    // The plan's measure is by size, under which a matched list's head is a
+    // part of the list.
+    let measures = super::cycle_measure::measure_for_cycle(component, &candidates, true).ok()?;
+    Some(
+        component
+            .iter()
+            .zip(measures)
+            .map(|(fd, measure)| (fd.name.clone(), measure.rank))
+            .collect(),
+    )
 }
 
 /// True when every callsite of `fn_name` visible inside `ctx` is also
@@ -2344,7 +2430,7 @@ pub fn analyze_plans_in_scope(
                         );
                     }
                 }
-            } else if let Some(rankings) = supports_mutual_sizeof_ranked(&component) {
+            } else if let Some(rankings) = supports_mutual_sizeof_ranked(&component, inputs) {
                 for fd in &component {
                     if let Some(rank) = rankings.get(&fd.name).cloned() {
                         plans.insert(fd.name.clone(), RecursionPlan::MutualSizeOfRanked { rank });

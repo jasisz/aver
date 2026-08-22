@@ -1,0 +1,24 @@
+module MutualCycleGrownConcat
+    intent =
+        "A recursion cycle bounded by an Int counting down, in which one call hands on a list grown by concatenation."
+        "The list is not what bounds the recursion, so the measure does not count it; what a call passes for a parameter the measure does not count is not looked at."
+    exposes [left]
+    depends []
+    effects []
+
+fn left(xs: List<Int>, n: Int) -> Int
+    ? "Peels xs."
+    match xs
+        [] -> n
+        [h, ..t] -> right(t, n)
+
+fn right(ys: List<Int>, n: Int) -> Int
+    ? "Grows ys by one and goes back with one round fewer."
+    match n <= 0
+        true -> List.len(ys)
+        false -> left(List.concat(ys, [n]), n - 1)
+
+verify left
+    left([], 0) => 0
+    left([1, 2], 1) => 1
+    left([1, 2, 3], 4) => 2

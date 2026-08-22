@@ -1,0 +1,25 @@
+module MutualCycleSameSubjectTwice
+    intent =
+        "A recursion cycle in which one member matches the SAME list twice, nested, and hands both tails on: two names for one part."
+        "A measure counting both parameters of the callee would not decrease — the sum of the two tails is not smaller than the list — so the measure counts one of them."
+    exposes [twin]
+    depends []
+    effects []
+
+fn twin(xs: List<Int>) -> Int
+    ? "Matches xs twice and hands both tails on."
+    match xs
+        [] -> 0
+        [a, ..r1] -> match xs
+            [] -> 0
+            [b, ..r2] -> both(r1, r2)
+
+fn both(ys: List<Int>, zs: List<Int>) -> Int
+    ? "Peels ys and continues with its tail."
+    match ys
+        [] -> List.len(zs)
+        [c, ..t] -> c + twin(t)
+
+verify twin
+    twin([]) => 0
+    twin([1, 2, 3]) => 2

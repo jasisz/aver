@@ -534,3 +534,429 @@ fn a_mutual_measure_counts_only_what_is_forwarded() {
         "aver-proof-mutual-measure",
     );
 }
+
+/// A recursion cycle of three functions, each descending on a DIFFERENT
+/// list — the shape of a byte-wise lexicographic comparison, met on the first
+/// external project.
+///
+/// Measuring each member by one parameter cannot work: on the call that
+/// hands a tail on unchanged, the caller's counted parameter is not the
+/// callee's, and the termination checker answers with a counterexample
+/// (`omega could not prove the goal: a possible counterexample may satisfy
+/// the constraints b ≥ 0 a ≥ 0`). The measure now counts every parameter
+/// that travels around the cycle, and the one call that leaves the sum
+/// unchanged is settled by ordering the members.
+///
+/// On the binary before this change the fixture reports two build errors.
+#[test]
+fn a_three_member_cycle_descending_on_different_lists_builds() {
+    assert_proof_builds(
+        "tests/fixtures/mutual_cycle_three_lists.av",
+        "aver-proof-cycle-three-lists",
+    );
+}
+
+/// A cycle of four, each member consuming one of four lists and handing the
+/// other three on unchanged. Every call shrinks exactly one list, so only a
+/// measure counting all four decreases on every call. Four build errors on
+/// the binary before this change.
+#[test]
+fn a_four_member_cycle_builds() {
+    assert_proof_builds(
+        "tests/fixtures/mutual_cycle_four_lists.av",
+        "aver-proof-cycle-four-lists",
+    );
+}
+
+/// A cycle in which the list shrinks on one call and an `Int` budget on
+/// another, so neither alone decreases around the cycle.
+///
+/// The structural parameters alone leave a cycle of unchanged calls, so the
+/// budget joins the measure as `Int.toNat budget`, which the guard on the
+/// spending call lets the checker see shrink. Before this change the pair
+/// had no plan at all and was exported as `partial def`, which proves
+/// nothing about its termination.
+#[test]
+fn a_cycle_mixing_an_int_countdown_with_a_list_descent_builds_with_a_measure() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-cycle-countdown");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/mutual_cycle_countdown_and_list.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    let lean = std::fs::read_to_string(output_dir.join("MutualCycleCountdownAndList.lean"))
+        .expect("read the generated module");
+    assert!(
+        lean.contains("termination_by (Int.toNat budget + sizeOf queue, 1)")
+            && lean.contains("termination_by (sizeOf queue + Int.toNat budget, 2)"),
+        "the measure must count the list and the budget:\n{lean}"
+    );
+    assert!(
+        !lean.contains("partial def"),
+        "the pair must be a total definition:\n{lean}"
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["passed"].as_bool()
+        ),
+        (Some(0), Some(true)),
+        "{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// A cycle with no measure: one call hands on a list that GREW, and the
+/// `Int` that really bounds the recursion is spent without a guard.
+///
+/// The group lowers with fuel, which builds, and the claims behind it are
+/// declined rather than evaluated under a seed that is not a bound — with
+/// the refusal naming the call the exporter could not see shrink. Before
+/// this change the refusal named only the functions.
+#[test]
+fn a_cycle_with_no_measure_is_declined_naming_the_call_that_fails() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-cycle-grown-list");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/mutual_cycle_grown_list.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["declined"].as_u64(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(0), Some(1), Some(0)),
+        "the cycle must build with fuel and decline its claim:\n{}",
+        format_output(&run)
+    );
+    let declined = summary["declined_claims"]
+        .as_array()
+        .expect("declined_claims array");
+    assert_eq!(declined[0]["claim"], "settle");
+    let reason = declined[0]["reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains(
+            "the call from `pad` to `settle` passes `List.prepend(0, ys)` for `xs`, which is not a parameter of `pad` or a smaller part of one"
+        ),
+        "the refusal must name the call that fails: {reason}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// The measure of a cycle member, as emitted: every `termination_by` line of
+/// the generated module, with the build summary.
+fn cycle_measures(fixture: &str, module: &str, prefix: &str) -> (Vec<String>, serde_json::Value) {
+    let output_dir = temp_output_dir(prefix);
+    let (summary, run) = run_lean_check_json(fixture, &output_dir, 0, &[]);
+    let lean = std::fs::read_to_string(output_dir.join(format!("{module}.lean")))
+        .unwrap_or_else(|e| panic!("read the generated module ({e}):\n{}", format_output(&run)));
+    let measures = lean
+        .lines()
+        .filter(|line| line.trim_start().starts_with("termination_by"))
+        .map(|line| line.trim().to_string())
+        .collect();
+    assert!(
+        !lean.contains("partial def"),
+        "the group must be a total definition:\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+    (measures, summary)
+}
+
+/// One member matches the SAME list twice, nested, and hands both tails on.
+///
+/// The two tails are the same part under two names, so a measure counting
+/// both parameters of the callee does not decrease on that call (`omega
+/// could not prove the goal … c - d ≥ 1 where c := sizeOf r1, d := sizeOf
+/// a`): one build error on the binary before this change, which took the
+/// binders of two patterns for disjoint parts. Parts that first differ at two
+/// different patterns overlap, so the callee counts one parameter.
+#[test]
+fn two_matches_on_one_list_are_not_counted_twice() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let (measures, summary) = cycle_measures(
+        "tests/fixtures/mutual_cycle_same_subject_twice.av",
+        "MutualCycleSameSubjectTwice",
+        "aver-proof-cycle-same-subject-twice",
+    );
+    assert_eq!(
+        measures,
+        vec![
+            "termination_by (sizeOf ys, 1)",
+            "termination_by (sizeOf xs, 2)"
+        ]
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["passed"].as_bool()
+        ),
+        (Some(0), Some(true)),
+        "{summary}"
+    );
+}
+
+/// The same, two levels deep: the second match on the list binds a tail of a
+/// tail, which overlaps the tail the first match bound. One build error on
+/// the binary before this change.
+#[test]
+fn a_tail_of_a_tail_is_not_counted_beside_the_tail() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let (measures, summary) = cycle_measures(
+        "tests/fixtures/mutual_cycle_tail_of_tail.av",
+        "MutualCycleTailOfTail",
+        "aver-proof-cycle-tail-of-tail",
+    );
+    assert_eq!(
+        measures,
+        vec![
+            "termination_by (sizeOf ys, 1)",
+            "termination_by (sizeOf xs, 2)"
+        ]
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["passed"].as_bool()
+        ),
+        (Some(0), Some(true)),
+        "{summary}"
+    );
+}
+
+/// A cycle an `Int` counts down, on which one call hands on a list grown by
+/// concatenation.
+///
+/// The list is not what bounds the recursion and the measure does not count
+/// it; what a call passes for a parameter the measure does not count never
+/// appears in a termination goal. On the binary before this change a guard
+/// over every list parameter sent the group to fuel before the measure was
+/// looked for, and the claims were declined with a reason naming no call.
+#[test]
+fn a_list_grown_on_a_call_the_measure_does_not_count_is_not_looked_at() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let (measures, summary) = cycle_measures(
+        "tests/fixtures/mutual_cycle_grown_concat.av",
+        "MutualCycleGrownConcat",
+        "aver-proof-cycle-grown-concat",
+    );
+    assert_eq!(
+        measures,
+        vec![
+            "termination_by (Int.toNat n, 2)",
+            "termination_by (Int.toNat n, 1)"
+        ]
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["declined"].as_u64().unwrap_or(0),
+            summary["passed"].as_bool()
+        ),
+        (Some(0), 0, Some(true)),
+        "nothing declined, everything proved:\n{summary}"
+    );
+}
+
+/// A cycle an `Int` counts down, along which two tree parameters travel.
+///
+/// The measure counts both trees and the countdown; a sum over two
+/// recursive types is not stated natively, so the group lowers with fuel —
+/// and a fuel seed counting only the trees is no bound on the countdown. The
+/// claims are declined, with the reason, rather than evaluated until the
+/// fuel runs out: on the binary before this change the true claims reported
+/// a panic.
+#[test]
+fn a_countdown_the_fuel_seed_does_not_count_is_declined_not_run_dry() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-cycle-two-trees-countdown");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/mutual_cycle_two_trees_countdown.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["declined"].as_u64(),
+            summary["model_panicked"].as_bool(),
+        ),
+        (Some(0), Some(1), Some(false)),
+        "the group must build with fuel and decline its claims:\n{}",
+        format_output(&run)
+    );
+    let declined = summary["declined_claims"]
+        .as_array()
+        .expect("declined_claims array");
+    assert_eq!(declined[0]["claim"], "rounds");
+    let reason = declined[0]["reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains(
+            "counts a recursive type together with another parameter, which the Lean export does not state natively"
+        ) && reason.contains("counting down, which the fuel seed does not count"),
+        "the refusal must say why the seed is no bound: {reason}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// A group that lowers with fuel and declines the claims behind it: the
+/// module builds, nothing panics, and the one declined claim is `claim`,
+/// with a refusal that says each of `reasons`.
+fn assert_cycle_declined(fixture: &str, prefix: &str, claim: &str, reasons: &[&str]) {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping proof smoke test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir(prefix);
+    let (summary, run) = run_lean_check_json(fixture, &output_dir, 0, &[]);
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["declined"].as_u64(),
+            summary["model_panicked"].as_bool(),
+        ),
+        (Some(0), Some(1), Some(false)),
+        "the group must build with fuel and decline its claims:\n{}",
+        format_output(&run)
+    );
+    let declined = &summary["declined_claims"][0];
+    assert_eq!(declined["claim"], claim, "{summary}");
+    let reason = declined["reason"].as_str().unwrap_or_default();
+    for part in reasons {
+        assert!(
+            reason.contains(part),
+            "the refusal must say {part:?}: {reason}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// A cycle the analysis refuses: the list is regrown behind a match on a
+/// computed subject, and the `Int` that drives the recursion is guarded by
+/// `n == 0`, which rules out zero but not the negatives. The group lowers
+/// with fuel, whose seed counts the list — no bound on a recursion as long as
+/// `n`.
+///
+/// On the binary before this change the refusal was not consulted once the
+/// group was on fuel: under `native_decide` the seed ran dry on
+/// `a([1], 50) => 7` and the build reported a panic. The claims are declined
+/// with the call the analysis could not see shrink.
+#[test]
+fn a_cycle_the_analysis_refuses_is_declined_not_run_dry() {
+    assert_cycle_declined(
+        "tests/fixtures/mutual_cycle_hidden_regrowth.av",
+        "aver-proof-cycle-hidden-regrowth",
+        "a",
+        &[
+            "the call from `b` to `a` passes `u` for `xs`, which is not a parameter of `b` or a smaller part of one",
+        ],
+    );
+}
+
+/// A self-recursive helper receives one tail twice and hands the second on
+/// through an alias, so the group makes quadratically many calls on a seed
+/// that counts the cells once. The two arguments are the same part under two
+/// names, so no measure counts both; on the binary before this change the
+/// seed ran dry on the 24-element claim and the build reported a panic.
+#[test]
+fn a_cycle_through_a_helper_that_takes_one_tail_twice_is_declined_not_run_dry() {
+    assert_cycle_declined(
+        "tests/fixtures/mutual_cycle_quadratic_helper.av",
+        "aver-proof-cycle-quadratic-helper",
+        "outer",
+        &[
+            "the call from `outer` to `helper` passes `t` for `b`, which overlaps the `t` it passes for `a`",
+        ],
+    );
+}
+
+/// Two trees travel a cycle whose measure counts both — a sum the Lean
+/// export does not state natively — and one call hands a list grown by
+/// concatenation into a position the fuel seed counts. The claims are
+/// declined, and the refusal names that call; on the binary before this
+/// change it named only the member and the back-off.
+#[test]
+fn a_decline_for_a_computed_value_on_a_counted_position_names_the_call() {
+    assert_cycle_declined(
+        "tests/fixtures/mutual_cycle_two_trees_grown_list.av",
+        "aver-proof-cycle-two-trees-grown-list",
+        "f",
+        &[
+            "the measure of `f` counts a recursive type together with another parameter, which the Lean export does not state natively",
+            "the call from `g` to `f` passes `List.concat(xs, [1])` for `xs`",
+        ],
+    );
+}
+
+/// The Dafny export measures a recursion group by the length of every
+/// sequence parameter. The countdown-and-list cycle is planned by a measure
+/// that counts the budget too, so the plan's ordering of the members is not
+/// an ordering of the calls that leave `|queue|` unchanged: paired with it,
+/// Dafny reported `decreases clause might not decrease`. A rank chosen for
+/// a measure Dafny does not state is not handed to it; the group lowers with
+/// fuel, which verifies. Before the group had a plan at all, the plain
+/// functions reported two termination errors.
+#[test]
+fn dafny_does_not_pair_its_measure_with_a_rank_chosen_for_another() {
+    assert_dafny_verifies_and_passes(
+        "tests/fixtures/mutual_cycle_countdown_and_list.av",
+        "aver-dafny-cycle-countdown",
+    );
+}
+
+/// A self-recursive helper receives the head and the tail of a list of
+/// lists. The head is a smaller part of the list by size, which is what the
+/// Lean measure counts, but not by length, which is what Dafny's
+/// `decreases |a| + |b|` measures: paired with the ordering chosen for the
+/// size measure, Dafny reported `decreases clause might not decrease` on the
+/// binary before this change. The analysis run for Dafny takes only a tail
+/// for a part, finds no measure, and the group lowers with fuel, which
+/// verifies.
+#[test]
+fn dafny_does_not_take_a_list_head_for_a_shorter_list() {
+    assert_dafny_verifies_and_passes(
+        "tests/fixtures/mutual_cycle_head_and_tail.av",
+        "aver-dafny-cycle-head-and-tail",
+    );
+}
+
+/// `List.take(List.drop(xs, 1), 32)` and two chains of three list operations,
+/// each the next one's receiver.
+///
+/// `List.drop` emits `receiver.drop n`; as the receiver of `.take` that
+/// application went out unwrapped — it begins with `(` — and Lean attached
+/// `.take` to its last argument: `Invalid field take: The environment does
+/// not contain Nat.take`. Nine build errors on the binary before this change.
+#[test]
+fn a_method_application_as_a_receiver_is_parenthesised() {
+    assert_proof_builds(
+        "tests/fixtures/lean_chained_receivers.av",
+        "aver-proof-chained-receivers",
+    );
+}

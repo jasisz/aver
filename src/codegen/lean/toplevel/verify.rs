@@ -149,9 +149,24 @@ pub fn emit_verify_block(
             .or_else(|| {
                 let fuel_dependencies = decidability.unbounded_fuel_dependencies(&roots, ctx);
                 (!fuel_dependencies.is_empty()).then(|| {
+                    let names = fuel_dependencies
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    // The call edge analysis's refusal, when the group has
+                    // one: which call the exporter could not see shrink.
+                    let refusals: std::collections::BTreeSet<&str> = fuel_dependencies
+                        .iter()
+                        .filter_map(|(_, refusal)| refusal.as_deref())
+                        .collect();
+                    let why = if refusals.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", refusals.into_iter().collect::<Vec<_>>().join("; "))
+                    };
                     format!(
-                        "the Lean call cone reaches fuel-lowered function(s) {} whose seed is not a proven recursion bound; native_decide can turn fuel exhaustion into a default value, so this claim was not exported",
-                        fuel_dependencies.join(", ")
+                        "the Lean call cone reaches fuel-lowered function(s) {names} whose seed is not a proven recursion bound{why}; native_decide can turn fuel exhaustion into a default value, so this claim was not exported"
                     )
                 })
             })

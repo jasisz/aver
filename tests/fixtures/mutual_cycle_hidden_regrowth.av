@@ -1,0 +1,26 @@
+module MutualCycleHiddenRegrowth
+    intent =
+        "A recursion cycle driven by an Int whose guard is an equality, on which the list is regrown behind a match on a computed subject."
+        "No measure decreases on every call, so the group lowers with fuel — and a fuel seed counting the list is no bound on a recursion as long as n. The claims are declined with the call the analysis could not see shrink, not evaluated until the fuel runs out."
+    exposes [a]
+    depends []
+    effects []
+
+fn a(xs: List<Int>, n: Int) -> Int
+    ? "Peels xs."
+    match xs
+        [] -> 0
+        [h, ..t] -> b(t, n)
+
+fn b(ys: List<Int>, n: Int) -> Int
+    ? "Stops at zero, else regrows ys by one and counts n down."
+    match n == 0
+        true -> 7
+        false -> match List.concat([0, 0], ys)
+            [] -> 0
+            [k, ..u] -> a(u, n - 1)
+
+verify a
+    a([], 3) => 0
+    a([1], 2) => 7
+    a([1], 50) => 7

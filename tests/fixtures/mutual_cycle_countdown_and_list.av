@@ -1,0 +1,28 @@
+module MutualCycleCountdownAndList
+    intent =
+        "A recursion cycle in which the list shrinks on one call and an Int budget on another, so neither alone decreases around the cycle."
+        "The measure has to count both: the size of the list and the budget, which the guard bounds below before a unit of it is spent."
+    exposes [drain]
+    depends []
+    effects []
+
+fn drain(budget: Int, queue: List<Int>) -> Int
+    ? "Spend one unit of budget, then serve the queue; out of budget, report what is left waiting."
+    match budget <= 0
+        true -> List.len(queue)
+        false -> serve(queue, budget - 1)
+
+fn serve(queue: List<Int>, budget: Int) -> Int
+    ? "Serve a ready head at once; a head that is not ready waits, which costs a unit of budget."
+    match queue
+        [] -> budget
+        [head, ..rest] -> match head == 0
+            true -> serve(rest, budget)
+            false -> drain(budget, queue)
+
+verify drain
+    drain(0, [1, 2]) => 2
+    drain(3, []) => 2
+    drain(3, [0, 0]) => 2
+    drain(2, [1]) => 1
+    drain(5, [0, 1, 0]) => 2

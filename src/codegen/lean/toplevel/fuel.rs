@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::expr::{aver_name_to_lean, emit_expr_legacy};
 use super::fn_def::{emit_fn_body_for, lower_pure_question_bang_for_emit};
@@ -14,6 +14,7 @@ use super::{
 };
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::codegen::recursion::cycle_measure::{Candidate, MeasureKind};
 use crate::codegen::recursion::{native_aux_name, rewrite_recursive_calls_body};
 
 const STRING_POS_FUEL_VAR: &str = "fuel'";
@@ -282,17 +283,39 @@ pub(super) fn emit_nat_linear_recurrence_fn(
     .join("\n")
 }
 
-fn emit_sizeof_measure_expr(fd: &FnDef, recursive_types: &HashSet<String>) -> Option<String> {
-    let measure_terms: Vec<String> = sizeof_measure_param_indices(fd)
+/// The parameters the fuel seed counts — every one with a measure
+/// expression — each with its term, in signature order.
+fn seed_measure_terms(fd: &FnDef, recursive_types: &HashSet<String>) -> Vec<(usize, String)> {
+    sizeof_measure_param_indices(fd)
         .into_iter()
         .filter_map(|idx| {
-            fd.params.get(idx).and_then(|(name, type_name)| {
-                type_measure_expr(type_name, &aver_name_to_lean(name), recursive_types, None)
-            })
+            let (name, type_name) = fd.params.get(idx)?;
+            let term =
+                type_measure_expr(type_name, &aver_name_to_lean(name), recursive_types, None)?;
+            Some((idx, term))
         })
+        .collect()
+}
+
+fn emit_sizeof_measure_expr(fd: &FnDef, recursive_types: &HashSet<String>) -> Option<String> {
+    let measure_terms: Vec<String> = seed_measure_terms(fd, recursive_types)
+        .into_iter()
+        .map(|(_, term)| term)
         .collect();
 
     (!measure_terms.is_empty()).then(|| measure_terms.join(" + "))
+}
+
+/// The recursive user types in scope, by bare name: the ones the seed
+/// measures by a measure function of their own.
+fn recursive_type_names(ctx: &CodegenContext) -> HashSet<String> {
+    ctx.modules
+        .iter()
+        .flat_map(|m| m.type_defs.iter())
+        .chain(ctx.type_defs.iter())
+        .filter(|td| is_recursive_type_def(td))
+        .map(|td| type_def_name(td).to_string())
+        .collect()
 }
 
 fn emit_mutual_sizeof_wrapper(
@@ -1181,31 +1204,21 @@ pub(super) fn emit_fuelized_mutual_int_countdown_group(
         .join("\n")
 }
 
-/// Termination measure for Lean's native `termination_by` clause —
-/// `name.length` for List/Vector/String params (Lean's stdlib
-/// `List.length` is what `decreasing_tactic` knows how to chase),
-/// `sizeOf name` fallback for recursive ADTs. Sum across every
-/// sizeOf-relevant param.
+/// The parameters of `fd` a native `termination_by` measure may count, each
+/// with the measure it carries and whether it is a recursive user ADT.
 ///
-/// Epic #180 Phase 4 — reads param types from the resolved fn def
-/// (already typed by the typechecker) instead of re-parsing the
-/// AST annotation string.
-fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
-    let indices = crate::codegen::recursion::detect::mutual_sizeof_measure_param_indices(fd);
-    if indices.is_empty() {
-        return None;
-    }
-    // SINGLE-carrier only for the recursive-ADT arm. Multi-carrier ADT sum
-    // measures (`sizeOf f + sizeOf g`) are native-CLOSABLE for some shapes
-    // (an `eval` SCC builds) but NOT all — a red-black-tree mutual SCC's
-    // `decreasing_by` does not close, hard-failing the build. So multi-carrier
-    // ADT stays on fuel pending a per-SCC closure check; lifting it blanket
-    // regressed `proof_export_lake_builds_red_black_tree`.
-    let single_sizeof_param = indices.len() == 1;
-
-    // Pointer-eq scope so a same-bare-name twin never provides
-    // these param types. Synthetic / mid-rewrite fns fall back to
-    // on-demand resolve.
+/// Lists, vectors and maps (list-backed in the proof model) carry `sizeOf`;
+/// so does a recursive ADT, whose constructor sub-terms are structurally
+/// smaller. An `Int` carries `Int.toNat`, which a guarded `n - k` strictly
+/// decreases. Strings (position recursion, not structural) and every other
+/// shape carry nothing; a group that decreases only on one of those stays on
+/// fuel.
+///
+/// Param types come from the resolved fn def (already typed by the
+/// typechecker) rather than the AST annotation string. Pointer-eq scope so a
+/// same-bare-name twin never provides them; synthetic / mid-rewrite fns fall
+/// back to on-demand resolve.
+fn native_measure_candidates(fd: &FnDef, ctx: &CodegenContext) -> Vec<(Candidate, bool)> {
     let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
         .and_then(|id| ctx.resolved_program.fn_by_id(id));
     let resolved_owned = match resolved_fd {
@@ -1214,110 +1227,316 @@ fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<S
     };
     let rfd: &crate::ir::hir::ResolvedFnDef =
         resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
-    let mut terms: Vec<String> = Vec::new();
-    for idx in indices {
-        let (name, ty) = rfd.params.get(idx)?;
-        let lean_name = aver_name_to_lean(name);
-        match ty {
+    let candidate = |index, kind| Candidate { index, kind };
+    rfd.params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, ty))| match ty {
             crate::types::Type::List(_)
             | crate::types::Type::Vector(_)
-            // `Map` lowers to `List (k × v)` in the proof backend (AverMap is
-            // list-backed), so `sizeOf` measures it exactly like a List — e.g.
-            // a json-shaped `objectSafe(m: Map) = entriesSafe(Map.entries m)`
-            // delegates at the SAME `sizeOf m` and settles on the lex rank.
             | crate::types::Type::Map(_, _) => {
-                // `sizeOf` instead of `.length` so the user measure
-                // matches what Lean's mutual-block wf elaboration
-                // generates internally — `decreasing_tactic` then
-                // closes the chain without `simp_wf` scrambling.
-                terms.push(format!("sizeOf {lean_name}"));
+                Some((candidate(index, MeasureKind::Structural), false))
             }
-            // A recursive ADT param recurses STRUCTURALLY: its `sizeOf`
-            // strictly drops on every constructor sub-term, so it carries a
-            // native `sizeOf` measure exactly like a List — the same
-            // `(sizeOf, rank)` lex tuple the mutual block emits, with the
-            // robust `decreasing_by` closing the ADT-field decrease and the
-            // rank settling any same-`sizeOf` delegation (e.g. a Map-as-list
-            // `entries` identity hop in a json-shaped SCC). Restricted to the
-            // Proof side only, and the kernel's own termination check is the
-            // fail-closed backstop — if the measure is wrong for some SCC the
-            // build fails (that SCC stays open), never a false theorem. So we
-            // try native here instead of conservatively forcing a fuel wrapper,
-            // which would tax every law touching the predicate with
-            // fuel-congruence. SINGLE-carrier only (see above).
+            crate::types::Type::Int => Some((candidate(index, MeasureKind::Countdown), false)),
             // backend-link-stage: name-keyed recursive-type-def lookup (same as
             // the fuel path's `recursive_types`); the measure only needs WHETHER
             // this Named type is recursive, not its `id`, so the bare-name match
             // is sufficient here.
-            crate::types::Type::Named { name: tname, .. }
-                if single_sizeof_param
-                    && ctx
-                        .modules
-                        .iter()
-                        .flat_map(|m| m.type_defs.iter())
-                        .chain(ctx.type_defs.iter())
-                        .any(|td| {
-                            type_def_name(td) == tname.as_str() && is_recursive_type_def(td)
-                        }) =>
+            crate::types::Type::Named { name, .. }
+                if user_type_def(ctx, name).is_some_and(is_recursive_type_def) =>
             {
-                terms.push(format!("sizeOf {lean_name}"));
+                Some((candidate(index, MeasureKind::Structural), true))
             }
-            // String (parser position-recursion, not structural) and every
-            // other shape still decline to fuel.
-            _ => return None,
-        }
-    }
-    (!terms.is_empty()).then(|| terms.join(" + "))
+            _ => None,
+        })
+        .collect()
 }
 
-/// Native termination emission for mutual-recursion SCCs whose
-/// every member has a sizeOf measure (List / Vector / String) and a
-/// classifier rank — Lean 4 `mutual ... end` block with one
-/// `termination_by` per def, lex tuple `(sizeOf_sum, rank)` from
-/// `MutualSizeOfRanked`. Mirrors the Dafny native path from #83.
+/// A user type def by bare name, across the entry and every dep module.
+fn user_type_def<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a TypeDef> {
+    ctx.modules
+        .iter()
+        .flat_map(|m| m.type_defs.iter())
+        .chain(ctx.type_defs.iter())
+        .find(|td| type_def_name(td) == name)
+}
+
+/// One member's native measure: the parameters the call edge analysis
+/// counts — each with whether it is a recursive user ADT and its Lean term
+/// — and the tie-break rank.
+pub(in crate::codegen::lean) struct NativeMeasure {
+    params: Vec<(Candidate, bool, String)>,
+    rank: usize,
+}
+
+impl NativeMeasure {
+    /// The `termination_by` sum.
+    fn sum(&self) -> String {
+        self.params
+            .iter()
+            .map(|(_, _, term)| term.as_str())
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+
+    /// The positions measured by `sizeOf`.
+    fn structural_indices(&self) -> Vec<usize> {
+        self.params
+            .iter()
+            .filter(|(c, _, _)| c.kind == MeasureKind::Structural)
+            .map(|(c, _, _)| c.index)
+            .collect()
+    }
+
+    /// Whether the measure sums a recursive ADT with anything else. Such
+    /// sums are native-closable for some shapes (an `eval` SCC builds) but
+    /// NOT all — a red-black-tree mutual SCC's `decreasing_by` does not
+    /// close, hard-failing the build — so they stay on fuel pending a
+    /// per-SCC closure check; lifting it blanket regressed
+    /// `proof_export_lake_builds_red_black_tree`.
+    fn sums_an_adt(&self) -> bool {
+        self.params.len() > 1 && self.params.iter().any(|(_, adt, _)| *adt)
+    }
+}
+
+/// The native measure of every member of a mutual group, chosen by the
+/// call edge analysis in [`crate::codegen::recursion::cycle_measure`].
+///
+/// `Err(reason)` is the analysis's refusal: no measure decreases on every
+/// call, and the reason names the call that fails.
+pub(in crate::codegen::lean) fn native_cycle_measure(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+) -> Result<Vec<NativeMeasure>, String> {
+    let candidates: Vec<Vec<(Candidate, bool)>> = fns
+        .iter()
+        .map(|fd| native_measure_candidates(fd, ctx))
+        .collect();
+    let plain: Vec<Vec<Candidate>> = candidates
+        .iter()
+        .map(|cs| cs.iter().map(|(c, _)| *c).collect())
+        .collect();
+    let measures = crate::codegen::recursion::cycle_measure::measure_for_cycle(fns, &plain, true)
+        .map_err(|refusal| refusal.reason)?;
+    Ok(fns
+        .iter()
+        .zip(measures.iter().zip(&candidates))
+        .map(|(fd, (measure, member_candidates))| {
+            let params = measure
+                .params
+                .iter()
+                .map(|p| {
+                    let adt = member_candidates
+                        .iter()
+                        .any(|(c, adt)| c.index == p.index && *adt);
+                    let lean_name = aver_name_to_lean(&fd.params[p.index].0);
+                    let term = match p.kind {
+                        // `sizeOf` instead of `.length` so the user measure
+                        // matches what Lean's mutual-block wf elaboration
+                        // generates internally — `decreasing_tactic` then
+                        // closes the chain without `simp_wf` scrambling.
+                        MeasureKind::Structural => format!("sizeOf {lean_name}"),
+                        MeasureKind::Countdown => format!("Int.toNat {lean_name}"),
+                    };
+                    (*p, adt, term)
+                })
+                .collect();
+            NativeMeasure {
+                params,
+                rank: measure.rank,
+            }
+        })
+        .collect())
+}
+
+/// Why this backend does not state a measure the analysis found, when it
+/// does not: a member whose sum counts a recursive ADT with anything else,
+/// a call into the group from inside a string interpolation, or a counted
+/// position handed a value the elaborator cannot see shrink (a computed
+/// one, or `Map.entries(m)`). Positions the measure does not count are not
+/// looked at: what a call passes there never appears in a `decreasing_by`
+/// goal.
+fn native_measure_back_off(fns: &[&FnDef], measures: &[NativeMeasure]) -> Option<String> {
+    use crate::codegen::recursion::detect::{
+        scc_computed_measure_arg, scc_member_calling_inside_interpolation,
+    };
+    if let Some((fd, _)) = fns
+        .iter()
+        .zip(measures)
+        .find(|(_, measure)| measure.params.is_empty())
+    {
+        // Unreachable by construction — a member counting nothing sits on
+        // a cycle of unchanged calls, which the analysis refuses — and
+        // cheap to keep out of a `termination_by (, r)`.
+        return Some(format!("the measure of `{}` counts nothing", fd.name));
+    }
+    if let Some((fd, _)) = fns
+        .iter()
+        .zip(measures)
+        .find(|(_, measure)| measure.sums_an_adt())
+    {
+        return Some(format!(
+            "the measure of `{}` counts a recursive type together with another parameter, which the Lean export does not state natively",
+            fd.name
+        ));
+    }
+    if let Some(fd) = scc_member_calling_inside_interpolation(fns) {
+        return Some(format!(
+            "`{}` calls into the group from inside a string interpolation, under which the Lean export does not state a measure",
+            fd.name
+        ));
+    }
+    let measured = |fd: &FnDef| -> Vec<usize> {
+        fns.iter()
+            .position(|peer| peer.name == fd.name)
+            .map(|member| measures[member].structural_indices())
+            .unwrap_or_default()
+    };
+    scc_computed_measure_arg(fns, &measured).map(|(caller, callee, slot, arg)| {
+        format!(
+            "the call from `{}` to `{}` passes `{}` for `{}`, which the Lean export cannot see shrink",
+            caller.name,
+            callee.name,
+            crate::codegen::recursion::cycle_measure::describe(arg),
+            callee.params[slot].0
+        )
+    })
+}
+
+/// The parameters the fuel seed of `fd` counts, as candidates for a measure
+/// the seed bounds: every one with a measure expression — a list, a map, a
+/// recursive type, and a tuple or an option holding one, which the export
+/// states no termination measure over — is structural, and every part of
+/// one is smaller by that measure (a list's head as much as its tail, a
+/// constructor's field, a tuple's component); the `Int` parameters are
+/// countdowns, which the seed does not count.
+fn seed_measure_candidates(fd: &FnDef, recursive_types: &HashSet<String>) -> Vec<Candidate> {
+    let counted: Vec<usize> = seed_measure_terms(fd, recursive_types)
+        .into_iter()
+        .map(|(index, _)| index)
+        .collect();
+    fd.params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, type_name))| {
+            let kind = if counted.contains(&index) {
+                MeasureKind::Structural
+            } else if type_name == "Int" {
+                MeasureKind::Countdown
+            } else {
+                return None;
+            };
+            Some(Candidate { index, kind })
+        })
+        .collect()
+}
+
+/// Why the fuel seed of `fns` — the sizes of the parameters it counts — is
+/// not a proven recursion bound, as far as the call edge analysis can say:
+/// the sentence the fuel-cone decline cites, so a claim lost behind a fuel
+/// fallback says which call the exporter could not see shrink.
+///
+/// The analysis is run over exactly what the seed counts
+/// ([`seed_measure_candidates`]): a measure over those parameters that
+/// decreases on every call bounds the calls by the seed. The seed bounds
+/// nothing when the analysis refuses — no measure decreases on every call,
+/// and the refusal names the one that fails — when a call hands a value the
+/// caller computed into a position the seed counts, or when the measure
+/// counts an `Int` down, which the seed does not; in the latter two the
+/// reason says first why the group is on fuel at all (see
+/// [`native_measure_back_off`]) and then why the seed is no bound. `None`
+/// when the seed is a bound.
+pub(in crate::codegen::lean) fn native_measure_refusal(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+) -> Option<String> {
+    use crate::codegen::recursion::cycle_measure::{describe, measure_for_cycle};
+    use crate::codegen::recursion::detect::scc_unproven_computed_measure_edge;
+    let recursive_types = recursive_type_names(ctx);
+    let candidates: Vec<Vec<Candidate>> = fns
+        .iter()
+        .map(|fd| seed_measure_candidates(fd, &recursive_types))
+        .collect();
+    let measures = match measure_for_cycle(fns, &candidates, true) {
+        Err(refusal) => return Some(refusal.reason),
+        Ok(measures) => measures,
+    };
+    let computed = scc_unproven_computed_measure_edge(fns).map(|(caller, callee, slot, arg)| {
+        format!(
+            "the call from `{}` to `{}` passes `{}` for `{}`, which the fuel seed counts and the Lean export cannot see shrink",
+            caller.name,
+            callee.name,
+            describe(arg),
+            callee.params[slot].0
+        )
+    });
+    let countdown = fns.iter().zip(&measures).find_map(|(fd, measure)| {
+        measure
+            .params
+            .iter()
+            .find(|c| c.kind == MeasureKind::Countdown)
+            .map(|c| {
+                format!(
+                    "the recursion is bounded by `{}` of `{}` counting down, which the fuel seed does not count",
+                    fd.params[c.index].0, fd.name
+                )
+            })
+    });
+    if computed.is_none() && countdown.is_none() {
+        return None;
+    }
+    let back_off = native_cycle_measure(fns, ctx)
+        .ok()
+        .and_then(|measures| native_measure_back_off(fns, &measures));
+    let reasons: Vec<String> = back_off
+        .into_iter()
+        .chain(computed)
+        .chain(countdown)
+        .collect();
+    Some(reasons.join("; "))
+}
+
+/// Native termination emission for mutual-recursion SCCs planned as
+/// `MutualSizeOfRanked` — a Lean 4 `mutual ... end` block with one
+/// `termination_by` per def, the lex tuple `(measure, rank)` chosen by the
+/// call edge analysis so it decreases on every call between the members.
+/// Mirrors the Dafny native path from #83.
 ///
 /// Returns `None` when:
 /// - SCC isn't fully `MutualSizeOfRanked` (caller picks fuel)
-/// - Any member has no inferable sizeOf measure
-/// - Growing-accumulator pattern detected (tail-rec `[x] + acc`
-///   shapes won't decrease the lex tuple)
+/// - The analysis finds no measure that decreases on every call
+/// - This backend backs off from the measure it finds: see
+///   [`native_measure_back_off`]
 pub(super) fn emit_native_mutual_sizeof_group(
     fns: &[&FnDef],
     ctx: &CodegenContext,
 ) -> Option<String> {
-    let mut ranks: HashMap<String, usize> = HashMap::new();
     for fd in fns {
         if !is_pure_fn(fd) {
             return None;
         }
         // MutualSizeOfRanked carries `params: vec![]` + rank>=1; any
         // other Lex shape (single-param mutual int-countdown, two-
-        // param string-pos) fails this group's pre-conditions.
-        match contract_lex_params_rank(ctx, fd) {
-            Some(([], rank)) => {
-                ranks.insert(fd.name.clone(), rank);
-            }
-            _ => return None,
+        // param string-pos) fails this group's pre-conditions. The
+        // contract's rank is the plan's ordering of same-measure calls;
+        // the emitted rank comes from the call edge analysis below, which
+        // orders exactly the calls the chosen measure leaves unchanged.
+        if !matches!(contract_lex_params_rank(ctx, fd), Some(([], _))) {
+            return None;
         }
     }
-    let mut measures: HashMap<String, String> = HashMap::new();
-    for fd in fns {
-        let measure = emit_native_termination_measure(fd, ctx)?;
-        measures.insert(fd.name.clone(), measure);
-    }
-    if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
-        return None;
-    }
-    // A step whose shrink the emitter cannot see is not this strategy's:
-    // see `scc_passes_computed_measure_arg`.
-    if crate::codegen::recursion::detect::scc_passes_computed_measure_arg(fns) {
+    // One measure per member that decreases on EVERY call between them, or
+    // none: a group the analysis refuses, or this backend backs off from,
+    // lowers with fuel and the reason reaches the claims behind it through
+    // `native_measure_refusal`.
+    let measures = native_cycle_measure(fns, ctx).ok()?;
+    if native_measure_back_off(fns, &measures).is_some() {
         return None;
     }
 
     let mut lines: Vec<String> = vec!["mutual".to_string()];
-    for fd in fns {
-        let measure = measures.get(&fd.name).unwrap();
-        let rank = ranks.get(&fd.name).unwrap();
+    for (fd, measure) in fns.iter().zip(&measures) {
+        let (measure, rank) = (measure.sum(), measure.rank);
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
@@ -1360,14 +1579,7 @@ pub(super) fn emit_native_mutual_sizeof_group(
 
 pub(super) fn emit_fuelized_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
-    let recursive_types: HashSet<String> = ctx
-        .modules
-        .iter()
-        .flat_map(|m| m.type_defs.iter())
-        .chain(ctx.type_defs.iter())
-        .filter(|td| is_recursive_type_def(td))
-        .map(|td| type_def_name(td).to_string())
-        .collect();
+    let recursive_types = recursive_type_names(ctx);
     let rank_budget = fns
         .iter()
         .filter_map(|fd| contract_lex_rank(ctx, fd))

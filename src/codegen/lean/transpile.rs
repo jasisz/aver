@@ -232,8 +232,9 @@ fn component_is_fuel_lowered(emitted: &[String]) -> bool {
         .any(|code| code_has_non_comment_token(code, &marker))
 }
 
-/// `true` iff this component uses the mutual-sizeOf fuel fallback without a
-/// statically justified bound on every recursive step.
+/// Why this component's fuel seed is not a statically justified bound on
+/// every recursive step, when it is not: the refusal the claims whose
+/// evaluation would reach the component are declined with.
 ///
 /// Fuel is not inherently approximate in Aver. Int countdown, string-position
 /// and ordinary ranked-sizeOf helpers derive a budget that bounds their exact
@@ -243,13 +244,13 @@ fn component_is_fuel_lowered(emitted: &[String]) -> bool {
 /// barred from sampled native evaluation. A growing accumulator or a wrapper
 /// without its own measured parameter is not sufficient evidence: both occur
 /// in bounded mutual traversals such as the JSON parser and serializer.
-fn component_has_unbounded_fuel(
+fn component_unbounded_fuel_refusal(
     comp: &[&crate::ast::FnDef],
     ctx: &CodegenContext,
     emitted: &[String],
-) -> bool {
+) -> Option<String> {
     if !component_is_fuel_lowered(emitted) || comp.len() < 2 {
-        return false;
+        return None;
     }
     let is_mutual_sizeof = comp.iter().all(|fd| {
         crate::codegen::common::find_fn_contract_for_fn(ctx, fd).is_some_and(|contract| {
@@ -261,8 +262,17 @@ fn component_has_unbounded_fuel(
             )
         })
     });
+    // The seed counts the group's structural parameters. It bounds the
+    // recursion of a group for which the call edge analysis, run over the
+    // parameters the seed counts, finds a measure — whether this backend
+    // states it or backs off from it (a sum over two recursive types, say);
+    // it bounds nothing the analysis refused, no recursion an `Int` counts
+    // down, and none a computed value is handed into at a position it
+    // counts — such a group is declined rather than evaluated until its
+    // fuel runs out and a true claim reports a panic.
     is_mutual_sizeof
-        && crate::codegen::recursion::detect::scc_has_unproven_computed_measure_edge(comp)
+        .then(|| toplevel::fuel::native_measure_refusal(comp, ctx))
+        .flatten()
 }
 
 /// Token scan over emitted Lean, ignoring `/-- … -/` doc comments and `--`
@@ -306,8 +316,10 @@ fn code_has_non_comment_token(code: &str, token: &str) -> bool {
 struct SampledFnClassification {
     /// Declarations the kernel cannot reduce through.
     opaque: HashSet<crate::ir::FnId>,
-    /// Exact subset whose emitted fuel seed is not a proven recursion bound.
-    unbounded_fuel: HashSet<crate::ir::FnId>,
+    /// Exact subset whose emitted fuel seed is not a proven recursion bound,
+    /// each with the call edge analysis's refusal when it has one — the call
+    /// the exporter could not see shrink, cited by the claims it declines.
+    unbounded_fuel: HashMap<crate::ir::FnId, Option<String>>,
 }
 
 #[derive(Clone, Copy)]
@@ -347,10 +359,11 @@ fn emit_pure_component(
                 .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
         );
     }
-    if component_has_unbounded_fuel(comp, ctx, &out) {
+    if let Some(refusal) = component_unbounded_fuel_refusal(comp, ctx, &out) {
         sampled_fns.unbounded_fuel.extend(
             comp.iter()
-                .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
+                .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd))
+                .map(|id| (id, Some(refusal.clone()))),
         );
     }
     out
