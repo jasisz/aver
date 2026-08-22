@@ -582,10 +582,11 @@ impl SymbolTable {
     /// Resolve a *bare* type name (no module prefix) against the scopes
     /// visible to the module named by `asking` — its own scope, the modules
     /// it names in `depends [...]` (including the types those modules only
-    /// re-expose), the embedded standard modules, and the entry scope — and
-    /// return the unique match. Returns `None` when the name doesn't resolve
-    /// there OR when two visible scopes legitimately share it (ambiguous
-    /// reference; caller must qualify).
+    /// re-expose), and the embedded standard modules — and return the unique
+    /// match. The entry scope joins that list only when `asking` is the
+    /// entry itself. Returns `None` when the name doesn't resolve there OR
+    /// when two visible scopes legitimately share it (ambiguous reference;
+    /// caller must qualify).
     ///
     /// Phase-E cross-module ctor resolution: an Aver expression like
     /// `Val.ValOk(x)` written from a module that doesn't host the
@@ -662,8 +663,10 @@ impl SymbolTable {
     /// - the embedded standard modules (reserved names a project file cannot
     ///   shadow, and a builtin's signature may cross one without the module
     ///   naming it);
-    /// - the entry scope — which the resolver's earlier `TypeKey::entry` step
-    ///   normally claims first;
+    /// - the entry scope, and only for the entry's own code. A dependency
+    ///   never names the entry in `depends [...]` — the relation runs the
+    ///   other way — so the entry's declarations are as invisible to it as
+    ///   any other module it did not import;
     /// - any capability, when the type is one of its resources. The type
     ///   checker marks every resource visible unconditionally
     ///   (`register_capability_sigs`) because an operation is nameable in
@@ -676,7 +679,8 @@ impl SymbolTable {
     /// downstream as "not a user type" rather than as an error.
     fn type_is_visible_to(&self, key: &TypeKey, id: TypeId, asking: Option<&str>) -> bool {
         let Some(scope) = key.scope_str() else {
-            return true;
+            // Entry scope. Only the entry's own code can spell these bare.
+            return self.names_entry_scope(asking);
         };
         if asking.is_some_and(|asking| module_names_match(scope, asking))
             || crate::stdlib::find(scope).is_some()
@@ -699,19 +703,37 @@ impl SymbolTable {
             .is_some_and(|target| target.module == scope && target.name == name)
     }
 
+    /// Is `asking` the entry scope's own name?
+    ///
+    /// A resolver context that carries no module name is the entry file's
+    /// own — a single-file program declares no `module` header. The other
+    /// spelling is whatever the entry's header does declare, since the
+    /// table keys the entry's items under `TypeKey::entry` either way.
+    ///
+    /// Callers use this to keep the entry's declarations out of a
+    /// dependency's bare-name lookup. The entry is just another module from
+    /// a dependency's point of view, and the dependency relation runs one
+    /// way: the entry names its dependencies, never the reverse. Without
+    /// the check, which file the command was pointed at decides what a bare
+    /// name inside a dependency means.
+    pub fn names_entry_scope(&self, asking: Option<&str>) -> bool {
+        match asking {
+            None => true,
+            Some(name) => self.entry_module_name.as_deref() == Some(name),
+        }
+    }
+
     /// The direct `depends [...]` of the module a resolver context calls
     /// `asking`. `None` means entry scope, and so does the entry's own
     /// declared module name.
     fn depends_of(&self, asking: Option<&str>) -> &[String] {
-        match asking {
-            None => &self.entry_depends,
-            Some(name) if self.entry_module_name.as_deref() == Some(name) => &self.entry_depends,
-            Some(name) => self
-                .module_depends
-                .get(name)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
+        if self.names_entry_scope(asking) {
+            return &self.entry_depends;
         }
+        asking
+            .and_then(|name| self.module_depends.get(name))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Resolve a constructor by (owning type, variant name).
@@ -1282,6 +1304,51 @@ mod tests {
         let cfg = table.type_id_by_bare_name_in("Cfg", None);
         assert_eq!(cfg, table.type_id_of(&TypeKey::entry("Cfg")));
         assert!(cfg.is_some());
+    }
+
+    #[test]
+    fn a_type_the_entry_declares_is_invisible_to_a_dependency() {
+        // The entry is another module from a dependency's point of view: it
+        // names its dependencies in `depends [...]` and they never name it.
+        // While the entry's scope was consulted for everyone, the answer to
+        // "what does this bare name mean inside `A`" depended on which file
+        // the command was pointed at — a type nobody in `A`'s world had
+        // heard of could claim the name, or take it away.
+        let mod_a = module_depending_on("A", &["B"], vec![], vec![]);
+        let mod_b = module("B", vec![], vec![sum("Step", &["Continue", "Stop"], 1)]);
+        let entry_items = vec![
+            TopLevel::Module(entry_module("Entry", &["A"])),
+            TopLevel::TypeDef(product("Step", 1)),
+        ];
+        let table = SymbolTable::build(&entry_items, &[mod_a, mod_b]);
+        table.assert_consistent();
+
+        assert_eq!(
+            table.type_id_by_bare_name_in("Step", Some("A")),
+            table.type_id_of(&TypeKey::in_module("B", "Step")),
+            "the dependency sees the one `Step` it imported, not the entry's"
+        );
+        assert_eq!(
+            table.type_id_by_bare_name_in("Step", None),
+            table.type_id_of(&TypeKey::entry("Step")),
+            "the entry's own code still sees its own declaration"
+        );
+        assert_eq!(
+            table.type_id_by_bare_name_in("Step", Some("Entry")),
+            table.type_id_of(&TypeKey::entry("Step")),
+            "and so does the entry spelled by its own header name"
+        );
+    }
+
+    #[test]
+    fn only_the_entry_answers_to_the_entry_scope() {
+        let entry_items = vec![TopLevel::Module(entry_module("Entry", &[]))];
+        let table = SymbolTable::build(&entry_items, &[module("A", vec![], vec![])]);
+        table.assert_consistent();
+
+        assert!(table.names_entry_scope(None), "no module name is the entry");
+        assert!(table.names_entry_scope(Some("Entry")));
+        assert!(!table.names_entry_scope(Some("A")));
     }
 
     #[test]

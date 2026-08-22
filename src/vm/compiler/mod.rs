@@ -109,6 +109,26 @@ enum ModuleSource<'a> {
     Loaded(Vec<crate::source::LoadedModule>),
 }
 
+/// What to say when a function is absent from the MIR program.
+///
+/// "Did not lower" is the backend's own vocabulary and names a file the
+/// reader did not write in. When the reason is a name the resolver could
+/// not classify, the resolved body still holds it, and that is the thing to
+/// report: the reference, the function, the file and the line. The internal
+/// error stays for the case it was written for — a shape genuinely outside
+/// the lowerable subset, where no name is at fault.
+fn did_not_lower_message(rfd: &ResolvedFnDef, file: &str) -> String {
+    match crate::ir::hir::collect_unresolved_in_fn(rfd).first() {
+        Some(unresolved) => {
+            unresolved.explain(&format!("fn `{}`", rfd.name), &unresolved.at_file(file))
+        }
+        None => format!(
+            "internal error: fn `{}` did not lower to MIR (an unsupported shape reached the VM backend)",
+            rfd.name
+        ),
+    }
+}
+
 /// Lower a resolved item list to MIR and run the Phase 6 optimize
 /// pipeline. Order is deliberate: (1) nullary-literal inlining unlocks
 /// call-site literals, (2) const-fold collapses literal arithmetic,
@@ -262,7 +282,8 @@ fn compile_program_inner(
         ModuleSource::Disk(None) => {}
         ModuleSource::Loaded(loaded) => {
             for m in loaded {
-                compiler.integrate_module(&m.dep_name, m.items, symbols, arena)?;
+                let path = m.path.display().to_string();
+                compiler.integrate_module(&m.dep_name, &path, m.items, symbols, arena)?;
             }
         }
     }
@@ -349,12 +370,11 @@ fn compile_program_inner(
             // it surfaces as a hard CompileError.
             // Entry fns resolve through `global_names`; no module scope.
             let entry_scope = HashMap::new();
-            let mir_fn = mir_program.fn_by_id(rfd.fn_id).ok_or_else(|| CompileError {
-                msg: format!(
-                    "internal error: fn `{}` did not lower to MIR (an unsupported shape reached the VM backend)",
-                    rfd.name
-                ),
-            })?;
+            let mir_fn = mir_program
+                .fn_by_id(rfd.fn_id)
+                .ok_or_else(|| CompileError {
+                    msg: did_not_lower_message(rfd, &compiler.source_file),
+                })?;
             let chunk = compiler
                 .compile_fn_via_mir(rfd, mir_fn, symbols, arena, &entry_scope, mir_program)
                 .map_err(|e| e.into_compile_error(&format!("fn `{}`", rfd.name)))?;
@@ -547,7 +567,8 @@ impl ProgramCompiler {
             .map_err(|e| CompileError { msg: e })?;
 
         for loaded in modules {
-            self.integrate_module(&loaded.dep_name, loaded.items, entry_symbols, arena)?;
+            let path = loaded.path.display().to_string();
+            self.integrate_module(&loaded.dep_name, &path, loaded.items, entry_symbols, arena)?;
         }
         Ok(())
     }
@@ -562,9 +583,14 @@ impl ProgramCompiler {
     /// knows about every transitive dep before this is invoked
     /// (`cmd_run_vm`, `cmd_compile_aver`, and tests via
     /// `load_compile_deps`).
+    ///
+    /// `dep_path` is the file the module was loaded from, carried so a
+    /// refusal names a place the reader can open rather than a module name
+    /// they then have to go looking for.
     fn integrate_module(
         &mut self,
         dep_name: &str,
+        dep_path: &str,
         mut mod_items: Vec<TopLevel>,
         entry_symbols: &SymbolTable,
         arena: &mut Arena,
@@ -667,10 +693,7 @@ impl ProgramCompiler {
             if let ResolvedTopLevel::FnDef(rfd) = item {
                 let (fn_name, fn_id) = &module_fn_ids[fn_idx];
                 let mir_fn = dep_mir.fn_by_id(rfd.fn_id).ok_or_else(|| CompileError {
-                    msg: format!(
-                        "internal error: dep fn `{}` did not lower to MIR (an unsupported shape reached the VM backend)",
-                        rfd.name
-                    ),
+                    msg: did_not_lower_message(rfd, dep_path),
                 })?;
                 let mut chunk = self
                     .compile_fn_via_mir(rfd, mir_fn, entry_symbols, arena, &module_scope, &dep_mir)
@@ -1060,11 +1083,20 @@ impl ProgramCompiler {
                     ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => value,
                 };
                 crate::ir::mir::lower_top_level_value(value, &mut prog).map_err(|reason| {
-                    CompileError {
-                        msg: format!(
+                    // Same rule as `did_not_lower_message`: a name the
+                    // resolver could not classify is reportable in the
+                    // program's own terms, and the statement carries its
+                    // line. The internal error is for everything else.
+                    let msg = match crate::ir::hir::collect_unresolved_in_value(value).first() {
+                        Some(unresolved) => unresolved.explain(
+                            "a top-level statement",
+                            &unresolved.at_file(&self.source_file),
+                        ),
+                        None => format!(
                             "internal error: a top-level statement did not lower to MIR ({reason:?})"
                         ),
-                    }
+                    };
+                    CompileError { msg }
                 })
             })
             .collect::<Result<_, _>>()?;

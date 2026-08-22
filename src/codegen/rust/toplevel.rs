@@ -683,7 +683,9 @@ fn emit_fn_def_with_visibility(
                     "    {}",
                     emit_codegen_error_expr(
                         ctx,
-                        format!("MIR walker could not render guest-entry fn `{}`", fd.name),
+                        unresolved_name_reason(resolved_fd, scope).unwrap_or_else(|| {
+                            format!("MIR walker could not render guest-entry fn `{}`", fd.name)
+                        }),
                     )
                 )
             });
@@ -799,7 +801,9 @@ fn emit_fn_def_with_visibility(
                     ret_type,
                     emit_codegen_error_expr(
                         ctx,
-                        format!("MIR walker could not render self-TCO fn `{}`", fd.name),
+                        unresolved_name_reason(resolved_fd, scope).unwrap_or_else(|| {
+                            format!("MIR walker could not render self-TCO fn `{}`", fd.name)
+                        }),
                     )
                 )
             });
@@ -824,7 +828,9 @@ fn emit_fn_def_with_visibility(
                     "    {}",
                     emit_codegen_error_expr(
                         ctx,
-                        format!("MIR walker could not render fn `{}`", fd.name),
+                        unresolved_name_reason(resolved_fd, scope).unwrap_or_else(|| {
+                            format!("MIR walker could not render fn `{}`", fd.name)
+                        }),
                     )
                 )
             });
@@ -1421,13 +1427,21 @@ fn emit_main_with_visibility(
             .collect();
         let refs: Vec<&Spanned<crate::ir::hir::ResolvedExpr>> = resolved.iter().collect();
         let values = super::from_mir::emit_mir_top_stmt_values(&refs, ctx).unwrap_or_else(|| {
-            top_stmts
+            resolved
                 .iter()
-                .map(|_| {
-                    emit_codegen_error_expr(
-                        ctx,
-                        "MIR walker could not render a top-level statement".to_string(),
-                    )
+                .map(|value| {
+                    let reason = crate::ir::hir::collect_unresolved_in_value(value)
+                        .first()
+                        .map(|first| {
+                            first.explain(
+                                "a top-level statement",
+                                &first.at_module(ectx.current_module_scope.as_deref()),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            "MIR walker could not render a top-level statement".to_string()
+                        });
+                    emit_codegen_error_expr(ctx, reason)
                 })
                 .collect()
         });
@@ -1459,7 +1473,14 @@ fn emit_main_with_visibility(
                     "    {}",
                     emit_codegen_error_expr(
                         ctx,
-                        "MIR walker could not render the `main` fn body".to_string(),
+                        main_fn_id
+                            .and_then(|fn_id| ctx.resolved_program.fn_by_id(fn_id))
+                            .and_then(|fd| {
+                                unresolved_name_reason(fd, ectx.current_module_scope.as_deref())
+                            })
+                            .unwrap_or_else(|| {
+                                "MIR walker could not render the `main` fn body".to_string()
+                            }),
                     )
                 )
             });
@@ -1526,6 +1547,30 @@ fn emit_verify_case_expr(
 /// the record and refuses to report success; it does not go looking for the
 /// macro in the files it just wrote, because a program is free to carry the
 /// text `compile_error!` in a string of its own.
+/// The reason a function did not reach the emitter, when the program
+/// itself carries one.
+///
+/// The MIR walker answering `None` is the symptom. When the resolver could
+/// not classify a name in the body, that name is the cause and it comes
+/// with a line — something a reader can act on, which "MIR walker could not
+/// render fn `checked`" is not. `None` when every name resolved: then the
+/// shape rather than a name defeated the backend, and the caller's own
+/// wording is the honest one.
+///
+/// The location is the module, not a path: the Rust backend is handed each
+/// dependency's parsed items and never the file they were read from.
+pub(super) fn unresolved_name_reason(
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    scope: Option<&str>,
+) -> Option<String> {
+    let unresolved = crate::ir::hir::collect_unresolved_in_fn(resolved_fd);
+    let first = unresolved.first()?;
+    Some(first.explain(
+        &format!("fn `{}`", resolved_fd.name),
+        &first.at_module(scope),
+    ))
+}
+
 pub(super) fn emit_codegen_error_expr(ctx: &CodegenContext, message: String) -> String {
     let message_lit = format!("{:?}", message);
     ctx.substituted_compile_errors.borrow_mut().push(message);

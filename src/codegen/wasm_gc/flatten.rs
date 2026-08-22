@@ -20,11 +20,19 @@
 //!   the dependency's): dep `TypeDef.name` gets renamed to the canonical
 //!   `"Prefix.Name"` form (`Left.Box`, `Right.Box`, `Palette.Colour`) so the
 //!   wasm-gc `TypeRegistry` keys them into distinct slots. Dep-internal
-//!   bare references to the colliding own type (in `TypeDef` field types,
+//!   bare references to a colliding name (in `TypeDef` field types,
 //!   `FnDef` signatures, body `Constructor` / `RecordCreate` / `RecordUpdate`
 //!   / pattern heads, let-binding annotations) get rewritten to canonical
 //!   so the post-flatten resolver + registry agree. Qualified references
 //!   from other modules stay verbatim (no strip) for the same reason.
+//!
+//!   The reference is canonicalised to the module that declares what the
+//!   name means IN THAT MODULE: its own declaration when it has one, else
+//!   the single dependency declaration. Rewriting only a module's OWN types
+//!   left a bare reference to a sibling dependency's colliding type
+//!   untouched, and after flattening it resolved against the entry's
+//!   declaration instead — a module the dependency never imported. The
+//!   function then failed to lower and shipped as a trap stub.
 //!
 //! Treating collision as the trigger keeps the migration narrow: the legacy
 //! strip path and bare-name lookups continue to work for every existing
@@ -136,14 +144,16 @@ pub fn flatten_multimodule(
         })
         .collect();
 
-    let empty_own_colliding: HashSet<String> = HashSet::new();
+    let empty_owner: HashMap<String, String> = HashMap::new();
     let empty_set: HashSet<String> = HashSet::new();
 
     let entry_ctx = RewriteCtx {
         prefixes: &prefixes,
         same_module_prefix: None,
         same_module_fns: &empty_set,
-        own_colliding: &empty_own_colliding,
+        // The entry keeps the bare spelling of every name it declares, so
+        // nothing in its own body needs canonicalising.
+        colliding_owner: &empty_owner,
         dep_prefix: "",
         colliding_bare_names: &colliding_bare_names,
     };
@@ -165,19 +175,29 @@ pub fn flatten_multimodule(
     for dep in dep_modules {
         let same_module_fns: HashSet<String> =
             dep.fn_defs.iter().map(|fd| fd.name.clone()).collect();
-        // Own colliding type names — the canonicalisation passes use
-        // this set to rewrite dep-internal bare refs to `Prefix.Name`
-        // (only colliding ones need the rewrite; non-colliding bare
-        // names continue to resolve against the registry's bare key).
-        let own_colliding: HashSet<String> = dep
-            .type_defs
+        let own_types: HashSet<&str> = dep.type_defs.iter().map(type_def_name).collect();
+        // What each ambiguous bare name means INSIDE this module — the
+        // canonicalisation passes rewrite its references to `Owner.Name`
+        // (only ambiguous ones; a name only one module declares keeps
+        // resolving against the registry's bare key).
+        //
+        // Its own declaration first: a module's own type wins its own bare
+        // name. Otherwise the single dependency declaration of that name,
+        // which is what the module imported it under. The entry's
+        // declaration is never a candidate — flattening puts every module
+        // in one scope, but a dependency still does not import the entry,
+        // and letting the entry claim the name here is what made a
+        // dependency's constructor resolve to a record it had never heard
+        // of and lower to a trap stub.
+        let colliding_owner: HashMap<String, String> = colliding_bare_names
             .iter()
-            .filter_map(|td| {
-                let bare = type_def_name(td).to_string();
-                if colliding_bare_names.contains(&bare) {
-                    Some(bare)
-                } else {
-                    None
+            .filter_map(|bare| {
+                if own_types.contains(bare.as_str()) {
+                    return Some((bare.clone(), dep.prefix.clone()));
+                }
+                match bare_owners.get(bare).map(Vec::as_slice) {
+                    Some([only]) => Some((bare.clone(), only.clone())),
+                    _ => None,
                 }
             })
             .collect();
@@ -185,7 +205,7 @@ pub fn flatten_multimodule(
             prefixes: &prefixes,
             same_module_prefix: Some(&dep.prefix),
             same_module_fns: &same_module_fns,
-            own_colliding: &own_colliding,
+            colliding_owner: &colliding_owner,
             dep_prefix: &dep.prefix,
             colliding_bare_names: &colliding_bare_names,
         };
@@ -202,7 +222,7 @@ pub fn flatten_multimodule(
         for fd in &dep.fn_defs {
             let mut new_fd = fd.clone();
             rewrite_fn_signature(&mut new_fd, &qualified_type_names, &colliding_bare_names);
-            canonicalise_fn_signature_for_own_colliding(&mut new_fd, &dep.prefix, &own_colliding);
+            canonicalise_fn_signature_for_own_colliding(&mut new_fd, &colliding_owner);
 
             let body_arc = std::sync::Arc::make_mut(&mut new_fd.body);
             let FnBody::Block(stmts) = body_arc;
@@ -273,16 +293,15 @@ fn rename_typedef_if_colliding(
 
 fn canonicalise_fn_signature_for_own_colliding(
     fd: &mut crate::ast::FnDef,
-    dep_prefix: &str,
-    own_colliding: &HashSet<String>,
+    colliding_owner: &HashMap<String, String>,
 ) {
-    if own_colliding.is_empty() {
+    if colliding_owner.is_empty() {
         return;
     }
     for (_, ty) in fd.params.iter_mut() {
-        *ty = canonicalise_own_colliding(ty, dep_prefix, own_colliding);
+        *ty = canonicalise_own_colliding(ty, colliding_owner);
     }
-    fd.return_type = canonicalise_own_colliding(&fd.return_type, dep_prefix, own_colliding);
+    fd.return_type = canonicalise_own_colliding(&fd.return_type, colliding_owner);
 }
 
 /// Strip module prefixes from qualified type references in `type_str`,
@@ -312,15 +331,12 @@ fn strip_non_colliding_prefixes(
     out
 }
 
-/// Rewrite bare own-type references in `type_str` to `Prefix.Name` when
-/// the bare name is in `own_colliding`. Run after the strip pass so the
-/// two transforms compose cleanly.
-fn canonicalise_own_colliding(
-    type_str: &str,
-    dep_prefix: &str,
-    own_colliding: &HashSet<String>,
-) -> String {
-    if own_colliding.is_empty() {
+/// Rewrite bare colliding type references in `type_str` to `Owner.Name`,
+/// where the owner is the module that declares what the name means in the
+/// module being walked. Run after the strip pass so the two transforms
+/// compose cleanly.
+fn canonicalise_own_colliding(type_str: &str, colliding_owner: &HashMap<String, String>) -> String {
+    if colliding_owner.is_empty() {
         return type_str.to_string();
     }
     let mut out = String::with_capacity(type_str.len());
@@ -336,12 +352,13 @@ fn canonicalise_own_colliding(
                 i += 1;
             }
             let token = &type_str[start..i];
-            if !token.contains('.') && own_colliding.contains(token) {
-                out.push_str(dep_prefix);
-                out.push('.');
-                out.push_str(token);
-            } else {
-                out.push_str(token);
+            match colliding_owner.get(token).filter(|_| !token.contains('.')) {
+                Some(owner) => {
+                    out.push_str(owner);
+                    out.push('.');
+                    out.push_str(token);
+                }
+                None => out.push_str(token),
             }
         } else {
             out.push(b as char);
@@ -393,8 +410,8 @@ fn attr_chain_to_dotted(expr: &Expr) -> Option<String> {
     }
 }
 
-/// Invariants for one body-rewriting traversal. `dep_prefix` /
-/// `own_colliding` are empty while the entry module's own items are
+/// Invariants for one body-rewriting traversal. `dep_prefix` is empty and
+/// `colliding_owner` is empty while the entry module's own items are
 /// walked, so the canonicalisation passes keyed on them are inert there.
 struct RewriteCtx<'a> {
     /// Every dep module path, used to spot cross-module references.
@@ -403,9 +420,12 @@ struct RewriteCtx<'a> {
     same_module_prefix: Option<&'a str>,
     /// Fn names declared by the module being walked.
     same_module_fns: &'a HashSet<String>,
-    /// Bare type names the module being walked declares that are ambiguous
-    /// program-wide, so its own references to them need canonicalising.
-    own_colliding: &'a HashSet<String>,
+    /// Ambiguous bare type names as the module being walked reads them:
+    /// name → the module that declares what the name means HERE. Its own
+    /// declaration when it has one, otherwise the single declaration
+    /// elsewhere among the dependencies. The entry's declaration is never a
+    /// candidate — a dependency does not import the entry.
+    colliding_owner: &'a HashMap<String, String>,
     /// The owning dep's path, or `""` for the entry module.
     dep_prefix: &'a str,
     /// Every ambiguous bare type name in the program — a reference to one
@@ -463,7 +483,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             rewrite_expr(&mut subject.node, ctx);
             for arm in arms.iter_mut() {
                 if !ctx.dep_prefix.is_empty() {
-                    canonicalise_pattern(&mut arm.pattern, ctx.dep_prefix, ctx.own_colliding);
+                    canonicalise_pattern(&mut arm.pattern, ctx.colliding_owner);
                 }
                 rewrite_expr(&mut arm.body.node, ctx);
             }
@@ -482,7 +502,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
                 return;
             }
             if !ctx.dep_prefix.is_empty() {
-                canonicalise_attr_head_for_own_colliding(expr, ctx.dep_prefix, ctx.own_colliding);
+                canonicalise_attr_head_for_own_colliding(expr, ctx.colliding_owner);
             }
             if let Expr::Attr(obj, _) = expr {
                 rewrite_expr(&mut obj.node, ctx);
@@ -490,7 +510,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
         }
         Expr::Constructor(name, payload) => {
             if !ctx.dep_prefix.is_empty() {
-                canonicalise_constructor_name(name, ctx.dep_prefix, ctx.own_colliding);
+                canonicalise_constructor_name(name, ctx.colliding_owner);
             }
             if let Some(payload) = payload.as_deref_mut() {
                 rewrite_expr(&mut payload.node, ctx);
@@ -498,7 +518,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
         }
         Expr::RecordCreate { type_name, fields } => {
             if !ctx.dep_prefix.is_empty() {
-                canonicalise_bare_type_name(type_name, ctx.dep_prefix, ctx.own_colliding);
+                canonicalise_bare_type_name(type_name, ctx.colliding_owner);
             }
             for (_, expr) in fields.iter_mut() {
                 rewrite_expr(&mut expr.node, ctx);
@@ -510,7 +530,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             updates,
         } => {
             if !ctx.dep_prefix.is_empty() {
-                canonicalise_bare_type_name(type_name, ctx.dep_prefix, ctx.own_colliding);
+                canonicalise_bare_type_name(type_name, ctx.colliding_owner);
             }
             rewrite_expr(&mut base.node, ctx);
             for (_, expr) in updates.iter_mut() {
@@ -542,54 +562,50 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
     }
 }
 
-fn canonicalise_bare_type_name(
-    type_name: &mut String,
-    dep_prefix: &str,
-    own_colliding: &HashSet<String>,
-) {
-    if !type_name.contains('.') && own_colliding.contains(type_name.as_str()) {
-        *type_name = format!("{dep_prefix}.{type_name}");
+fn canonicalise_bare_type_name(type_name: &mut String, colliding_owner: &HashMap<String, String>) {
+    if type_name.contains('.') {
+        return;
+    }
+    if let Some(owner) = colliding_owner.get(type_name.as_str()) {
+        *type_name = format!("{owner}.{type_name}");
     }
 }
 
-fn canonicalise_constructor_name(
-    name: &mut String,
-    dep_prefix: &str,
-    own_colliding: &HashSet<String>,
-) {
+fn canonicalise_constructor_name(name: &mut String, colliding_owner: &HashMap<String, String>) {
     let head = name.split('.').next().unwrap_or(name);
-    if own_colliding.contains(head) {
+    if let Some(owner) = colliding_owner.get(head) {
         let rest = &name[head.len()..];
-        *name = format!("{dep_prefix}.{head}{rest}");
+        *name = format!("{owner}.{head}{rest}");
     }
 }
 
 fn canonicalise_attr_head_for_own_colliding(
     expr: &mut Expr,
-    dep_prefix: &str,
-    own_colliding: &HashSet<String>,
+    colliding_owner: &HashMap<String, String>,
 ) {
-    fn walk(e: &mut Expr, dep_prefix: &str, own_colliding: &HashSet<String>, depth: u32) {
+    fn walk(e: &mut Expr, colliding_owner: &HashMap<String, String>, depth: u32) {
         if depth > 32 {
             return;
         }
         match e {
-            Expr::Attr(inner, _) => walk(&mut inner.node, dep_prefix, own_colliding, depth + 1),
-            Expr::Ident(name) if !name.contains('.') && own_colliding.contains(name.as_str()) => {
-                *name = format!("{dep_prefix}.{name}");
+            Expr::Attr(inner, _) => walk(&mut inner.node, colliding_owner, depth + 1),
+            Expr::Ident(name) if !name.contains('.') => {
+                if let Some(owner) = colliding_owner.get(name.as_str()) {
+                    *name = format!("{owner}.{name}");
+                }
             }
             _ => {}
         }
     }
-    walk(expr, dep_prefix, own_colliding, 0);
+    walk(expr, colliding_owner, 0);
 }
 
-fn canonicalise_pattern(pat: &mut Pattern, dep_prefix: &str, own_colliding: &HashSet<String>) {
+fn canonicalise_pattern(pat: &mut Pattern, colliding_owner: &HashMap<String, String>) {
     if let Pattern::Constructor(name, _bindings) = pat {
         let head = name.split('.').next().unwrap_or(name);
-        if own_colliding.contains(head) {
+        if let Some(owner) = colliding_owner.get(head) {
             let rest = &name[head.len()..];
-            *name = format!("{dep_prefix}.{head}{rest}");
+            *name = format!("{owner}.{head}{rest}");
         }
     }
 }
@@ -639,7 +655,7 @@ fn rewrite_stmts(stmts: &mut [Stmt], ctx: &RewriteCtx<'_>) {
                 if !ctx.dep_prefix.is_empty()
                     && let Some(ty) = type_ann.as_mut()
                 {
-                    *ty = canonicalise_own_colliding(ty, ctx.dep_prefix, ctx.own_colliding);
+                    *ty = canonicalise_own_colliding(ty, ctx.colliding_owner);
                 }
                 rewrite_expr(&mut expr.node, ctx);
             }

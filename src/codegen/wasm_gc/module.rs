@@ -3094,6 +3094,29 @@ pub(super) fn emit_module_with(
         let ty = registry.record_field_type(record, field)?.to_string();
         Some((idx, ty))
     };
+    // A trap stub is the right answer for a shape the MIR body emitter does
+    // not cover — the fn lowered, and the module still ships. It is the
+    // wrong answer for a fn that never lowered because a name inside it did
+    // not resolve: that is a compiler-side gap, and a stub turns it into a
+    // trap the caller meets at run time with nothing said at build time.
+    // Refuse those by name and line instead.
+    for (i, mir_fn) in mir_fn_for.iter().enumerate() {
+        if mir_fn.is_some() {
+            continue;
+        }
+        let rfd = &resolved_fn_defs[i];
+        let unresolved = crate::ir::hir::collect_unresolved_in_fn(rfd);
+        if let Some(first) = unresolved.first() {
+            // The input here is the FLATTENED program, so there is no module
+            // left to name — the fn's own (mangled) name carries where it
+            // came from, and the line is its module's own.
+            return Err(WasmGcError::Validation(first.explain(
+                &format!("fn `{}`", rfd.name),
+                &format!("line {}", first.line),
+            )));
+        }
+    }
+
     let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> =
         if registry.aint_struct_idx.is_some() {
             mir_fn_for

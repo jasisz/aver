@@ -96,76 +96,208 @@ pub use classify::{
 pub use dump::{dump_resolved_expr, dump_resolved_program};
 pub use resolve::{ResolveCtx, resolve_fn_def_external, resolve_program, resolve_top_level};
 
-/// Count every `ResolvedCallee::Unresolved` and
-/// `ResolvedCtor::Unresolved` reachable from `fd`'s body. The Phase E
-/// contract for `resolved_items` is **zero unresolved for well-typed
-/// programs** — non-zero means either the typechecker already
-/// rejected the program (resolver bailed to recovery) or there's a
-/// resolver gap. CI invariants compare this count against typecheck
-/// errors to catch silent regressions.
-pub fn count_unresolved_in_fn(fd: &ResolvedFnDef) -> usize {
-    let mut count = 0;
-    count_unresolved_in_body(&fd.body, &mut count);
-    count
+/// A name the resolver could not classify, and the line the program writes
+/// it on.
+///
+/// The Phase E contract for `resolved_items` is **zero unresolved for
+/// well-typed programs**. A survivor means either the typechecker already
+/// rejected the program (the resolver bailed to recovery) or the two
+/// disagree: the typechecker answered the name through its own visibility
+/// relation and the resolver could not. The second is a compiler bug, and
+/// it used to be invisible — the lowerer dropped the whole function and
+/// whichever backend later found it missing invented a message about a
+/// function in another file. Backends now report this instead of guessing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnresolvedRef {
+    pub kind: UnresolvedKind,
+    /// Source spelling, as written: `"Step.Continue"`, `"Domain.Foo.bar"`.
+    pub name: String,
+    /// Line inside the module that declares the function. `0` when no node
+    /// on the path carried one.
+    pub line: usize,
 }
 
-fn count_unresolved_in_body(body: &ResolvedFnBody, out: &mut usize) {
+/// Which reference did not resolve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnresolvedKind {
+    /// A `Type.Variant` reference, in expression or in pattern position.
+    Ctor,
+    /// A call target.
+    Callee,
+}
+
+impl UnresolvedRef {
+    /// The sentence a backend prints in place of one it invents. Names what
+    /// did not resolve, what writes it, and where — so a reader can open
+    /// that file at that line and see the reference.
+    ///
+    /// `owner` is the phrase for what holds the reference, already
+    /// rendered: `` "fn `checked`" ``, `"a top-level statement"`. `site` is
+    /// the location, from [`Self::at_file`] or [`Self::at_module`] —
+    /// backends differ in whether they still know the path a module was
+    /// loaded from.
+    pub fn explain(&self, owner: &str, site: &str) -> String {
+        match self.kind {
+            UnresolvedKind::Ctor => match self.name.rsplit_once('.') {
+                Some((type_name, variant)) => format!(
+                    "{site}: {owner} writes the constructor `{}`, but no type `{type_name}` with \
+                     a variant `{variant}` is in scope there — qualify it with the module that \
+                     declares it, or name that module in this one's `depends [...]`",
+                    self.name
+                ),
+                None => format!(
+                    "{site}: {owner} writes the constructor `{}`, which names no type in scope \
+                     there",
+                    self.name
+                ),
+            },
+            UnresolvedKind::Callee => format!(
+                "{site}: {owner} calls `{}`, which names nothing in scope there",
+                self.name
+            ),
+        }
+    }
+
+    /// `file:line`, the shape every terminal and editor already jumps to.
+    /// The file alone when no node on the path carried a line.
+    pub fn at_file(&self, file: &str) -> String {
+        if self.line > 0 {
+            format!("{file}:{}", self.line)
+        } else {
+            file.to_string()
+        }
+    }
+
+    /// The location when only the module is known. A backend handed a
+    /// dependency's parsed items does not always know the path they were
+    /// read from, and naming the module is honest where inventing a path
+    /// would not be. `None` is the entry module.
+    pub fn at_module(&self, module: Option<&str>) -> String {
+        let where_ = match module {
+            Some(m) => format!("module {m}"),
+            None => "the entry module".to_string(),
+        };
+        if self.line > 0 {
+            format!("{where_}, line {}", self.line)
+        } else {
+            where_
+        }
+    }
+}
+
+/// Every `ResolvedCallee::Unresolved` and `ResolvedCtor::Unresolved`
+/// reachable from `fd`'s body, in the order the walk meets them.
+pub fn collect_unresolved_in_fn(fd: &ResolvedFnDef) -> Vec<UnresolvedRef> {
+    let mut out = Vec::new();
+    collect_unresolved_in_body(&fd.body, &mut out);
+    out
+}
+
+/// Which of the two an unresolved call target was meant to be, by the
+/// language's own spelling rule: `Shape.Circle(3.14)` is a constructor,
+/// `Domain.Geometry.area(s)` is a call.
+fn unresolved_kind_for_callee(name: &str) -> UnresolvedKind {
+    let last = name.rsplit('.').next().unwrap_or(name);
+    match last.chars().next() {
+        Some(first) if first.is_uppercase() => UnresolvedKind::Ctor,
+        _ => UnresolvedKind::Callee,
+    }
+}
+
+/// The same walk over a free-standing value expression — a top-level
+/// module statement, which belongs to no `ResolvedFnDef`.
+pub fn collect_unresolved_in_value(value: &Spanned<ResolvedExpr>) -> Vec<UnresolvedRef> {
+    let mut out = Vec::new();
+    collect_unresolved_in_expr(value, &mut out);
+    out
+}
+
+/// Count every `ResolvedCallee::Unresolved` and
+/// `ResolvedCtor::Unresolved` reachable from `fd`'s body. CI invariants
+/// compare this count against typecheck errors to catch silent
+/// regressions; [`collect_unresolved_in_fn`] is the same walk with the
+/// names and lines kept.
+pub fn count_unresolved_in_fn(fd: &ResolvedFnDef) -> usize {
+    collect_unresolved_in_fn(fd).len()
+}
+
+fn collect_unresolved_in_body(body: &ResolvedFnBody, out: &mut Vec<UnresolvedRef>) {
     match body {
         ResolvedFnBody::Block(stmts) => {
             for stmt in stmts {
-                count_unresolved_in_stmt(stmt, out);
+                collect_unresolved_in_stmt(stmt, out);
             }
         }
     }
 }
 
-fn count_unresolved_in_stmt(stmt: &ResolvedStmt, out: &mut usize) {
+fn collect_unresolved_in_stmt(stmt: &ResolvedStmt, out: &mut Vec<UnresolvedRef>) {
     match stmt {
         ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
-            count_unresolved_in_expr(&value.node, out)
+            collect_unresolved_in_expr(value, out)
         }
     }
 }
 
-fn count_unresolved_in_expr(expr: &ResolvedExpr, out: &mut usize) {
-    match expr {
+fn collect_unresolved_in_expr(expr: &Spanned<ResolvedExpr>, out: &mut Vec<UnresolvedRef>) {
+    let line = expr.line;
+    match &expr.node {
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
-        ResolvedExpr::Attr(obj, _) => count_unresolved_in_expr(&obj.node, out),
+        ResolvedExpr::Attr(obj, _) => collect_unresolved_in_expr(obj, out),
         ResolvedExpr::Call(callee, args) => {
             if let ResolvedCallee::Unresolved { callee } = callee {
-                *out += 1;
-                count_unresolved_in_expr(&callee.node, out);
+                let name = classify::resolved_to_dotted(&callee.node)
+                    .unwrap_or_else(|| "<expression>".to_string());
+                out.push(UnresolvedRef {
+                    // Aver's own rule: an UpperCamel callee is a
+                    // constructor, a lowerCamel one is a function call. A
+                    // constructor applied to arguments arrives here rather
+                    // than through `Ctor`, and telling the reader their
+                    // constructor "names nothing to call" would send them
+                    // looking for a function.
+                    kind: unresolved_kind_for_callee(&name),
+                    name,
+                    line: if callee.line > 0 { callee.line } else { line },
+                });
+                collect_unresolved_in_expr(callee, out);
             }
             for a in args {
-                count_unresolved_in_expr(&a.node, out);
+                collect_unresolved_in_expr(a, out);
             }
         }
         ResolvedExpr::BinOp(_, l, r) => {
-            count_unresolved_in_expr(&l.node, out);
-            count_unresolved_in_expr(&r.node, out);
+            collect_unresolved_in_expr(l, out);
+            collect_unresolved_in_expr(r, out);
         }
         ResolvedExpr::Neg(inner) | ResolvedExpr::ErrorProp(inner) => {
-            count_unresolved_in_expr(&inner.node, out)
+            collect_unresolved_in_expr(inner, out)
         }
         ResolvedExpr::Match { subject, arms } => {
-            count_unresolved_in_expr(&subject.node, out);
+            collect_unresolved_in_expr(subject, out);
             for arm in arms {
-                count_unresolved_in_pattern(&arm.pattern, out);
-                count_unresolved_in_expr(&arm.body.node, out);
+                // A resolved pattern carries no span of its own. The arm's
+                // body starts on the same source line as the pattern that
+                // guards it, which is the line a reader needs.
+                collect_unresolved_in_pattern(&arm.pattern, arm.body.line, out);
+                collect_unresolved_in_expr(&arm.body, out);
             }
         }
         ResolvedExpr::Ctor(ctor, args) => {
-            if matches!(ctor, ResolvedCtor::Unresolved { .. }) {
-                *out += 1;
+            if let ResolvedCtor::Unresolved { name } = ctor {
+                out.push(UnresolvedRef {
+                    kind: UnresolvedKind::Ctor,
+                    name: name.clone(),
+                    line,
+                });
             }
             for a in args {
-                count_unresolved_in_expr(&a.node, out);
+                collect_unresolved_in_expr(a, out);
             }
         }
         ResolvedExpr::InterpolatedStr(parts) => {
             for p in parts {
                 if let ResolvedStrPart::Parsed(inner) = p {
-                    count_unresolved_in_expr(&inner.node, out);
+                    collect_unresolved_in_expr(inner, out);
                 }
             }
         }
@@ -173,35 +305,35 @@ fn count_unresolved_in_expr(expr: &ResolvedExpr, out: &mut usize) {
         | ResolvedExpr::Tuple(items)
         | ResolvedExpr::IndependentProduct(items, _) => {
             for i in items {
-                count_unresolved_in_expr(&i.node, out);
+                collect_unresolved_in_expr(i, out);
             }
         }
         ResolvedExpr::MapLiteral(pairs) => {
             for (k, v) in pairs {
-                count_unresolved_in_expr(&k.node, out);
-                count_unresolved_in_expr(&v.node, out);
+                collect_unresolved_in_expr(k, out);
+                collect_unresolved_in_expr(v, out);
             }
         }
         ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                count_unresolved_in_expr(&e.node, out);
+                collect_unresolved_in_expr(e, out);
             }
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
-            count_unresolved_in_expr(&base.node, out);
+            collect_unresolved_in_expr(base, out);
             for (_, e) in updates {
-                count_unresolved_in_expr(&e.node, out);
+                collect_unresolved_in_expr(e, out);
             }
         }
         ResolvedExpr::TailCall { args, .. } => {
             for a in args {
-                count_unresolved_in_expr(&a.node, out);
+                collect_unresolved_in_expr(a, out);
             }
         }
     }
 }
 
-fn count_unresolved_in_pattern(pat: &ResolvedPattern, out: &mut usize) {
+fn collect_unresolved_in_pattern(pat: &ResolvedPattern, line: usize, out: &mut Vec<UnresolvedRef>) {
     match pat {
         ResolvedPattern::Wildcard
         | ResolvedPattern::Literal(_)
@@ -210,12 +342,16 @@ fn count_unresolved_in_pattern(pat: &ResolvedPattern, out: &mut usize) {
         | ResolvedPattern::Cons(_, _) => {}
         ResolvedPattern::Tuple(items) => {
             for p in items {
-                count_unresolved_in_pattern(p, out);
+                collect_unresolved_in_pattern(p, line, out);
             }
         }
         ResolvedPattern::Ctor(ctor, _) => {
-            if matches!(ctor, ResolvedCtor::Unresolved { .. }) {
-                *out += 1;
+            if let ResolvedCtor::Unresolved { name } = ctor {
+                out.push(UnresolvedRef {
+                    kind: UnresolvedKind::Ctor,
+                    name: name.clone(),
+                    line,
+                });
             }
         }
     }
@@ -747,6 +883,112 @@ pub enum ResolvedTopLevel {
 mod tests {
     use super::*;
     use crate::ir::identity::TypeId;
+
+    /// A fn whose body is `Step.Continue(n)` on the given line, with the
+    /// constructor left unclassified — what the resolver produces when the
+    /// name did not resolve where it was written.
+    fn fn_with_unresolved_ctor(line: usize) -> ResolvedFnDef {
+        let ctor = ResolvedExpr::Ctor(
+            ResolvedCtor::Unresolved {
+                name: "Step.Continue".to_string(),
+            },
+            vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(1)), line)],
+        );
+        ResolvedFnDef {
+            fn_id: FnId(1),
+            name: "checked".to_string(),
+            line: 8,
+            params: Vec::new(),
+            return_type: Type::Unit,
+            effects: Vec::new(),
+            desc: None,
+            body: std::sync::Arc::new(ResolvedFnBody::Block(vec![ResolvedStmt::Expr(
+                Spanned::new(ctor, line),
+            )])),
+            resolution: None,
+        }
+    }
+
+    #[test]
+    fn an_unresolved_ctor_is_collected_with_the_line_that_writes_it() {
+        // The whole point of keeping the walk's findings instead of only
+        // counting them: a backend that finds the fn missing can say what
+        // is wrong and where, instead of naming the fn and stopping.
+        let found = collect_unresolved_in_fn(&fn_with_unresolved_ctor(10));
+        assert_eq!(
+            found,
+            vec![UnresolvedRef {
+                kind: UnresolvedKind::Ctor,
+                name: "Step.Continue".to_string(),
+                line: 10,
+            }]
+        );
+        assert_eq!(count_unresolved_in_fn(&fn_with_unresolved_ctor(10)), 1);
+    }
+
+    #[test]
+    fn the_explanation_names_the_constructor_its_type_and_where_it_is_written() {
+        let found = collect_unresolved_in_fn(&fn_with_unresolved_ctor(10));
+        let message = found[0].explain("fn `checked`", &found[0].at_file("domain/locktime.av"));
+        assert!(
+            message.starts_with("domain/locktime.av:10: fn `checked`"),
+            "{message}"
+        );
+        assert!(message.contains("`Step.Continue`"), "{message}");
+        assert!(
+            message.contains("`Step`") && message.contains("`Continue`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_module_only_backend_says_module_and_line() {
+        let found = collect_unresolved_in_fn(&fn_with_unresolved_ctor(10));
+        assert_eq!(
+            found[0].at_module(Some("Domain.LockTime")),
+            "module Domain.LockTime, line 10"
+        );
+        assert_eq!(found[0].at_module(None), "the entry module, line 10");
+    }
+
+    #[test]
+    fn an_unresolved_call_target_is_read_by_the_languages_own_spelling_rule() {
+        // A constructor applied to arguments reaches the resolver as a
+        // call, so the drop is recorded as `UnsupportedCallee` — but
+        // `Shape.Circle` is a constructor and telling the reader it "names
+        // nothing to call" sends them looking for a function.
+        assert_eq!(
+            unresolved_kind_for_callee("Shape.Circle"),
+            UnresolvedKind::Ctor
+        );
+        assert_eq!(unresolved_kind_for_callee("Step"), UnresolvedKind::Ctor);
+        assert_eq!(
+            unresolved_kind_for_callee("Domain.Geometry.area"),
+            UnresolvedKind::Callee
+        );
+        assert_eq!(unresolved_kind_for_callee("area"), UnresolvedKind::Callee);
+    }
+
+    #[test]
+    fn a_fn_whose_names_all_resolved_yields_nothing_to_explain() {
+        // The negative half: a backend that cannot render a fn for some
+        // other reason must keep saying so in its own words, not blame a
+        // name. `None` here is what makes the fallback wording reachable.
+        let fd = ResolvedFnDef {
+            fn_id: FnId(2),
+            name: "size".to_string(),
+            line: 3,
+            params: Vec::new(),
+            return_type: Type::Int,
+            effects: Vec::new(),
+            desc: None,
+            body: std::sync::Arc::new(ResolvedFnBody::Block(vec![ResolvedStmt::Expr(
+                Spanned::new(ResolvedExpr::Literal(Literal::Int(7)), 4),
+            )])),
+            resolution: None,
+        };
+        assert!(collect_unresolved_in_fn(&fd).is_empty());
+    }
 
     #[test]
     fn resolved_callee_user_fn_carries_typed_identity() {

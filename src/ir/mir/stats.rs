@@ -59,12 +59,17 @@ pub enum SkipReason {
     /// `Option.Some(v) -> ...`) — same wave 3c-i territory as
     /// the construction side.
     BuiltinCtorPattern,
-    /// `Result-`like ctor whose `CtorId` didn't resolve — usually
-    /// a typecheck error that leaked past the gate. Drops the fn
-    /// rather than panic on a half-resolved ctor.
+    /// A constructor whose `CtorId` didn't resolve. Drops the fn
+    /// rather than panic on a half-resolved ctor — but never
+    /// silently: the resolved body still holds the name and the line,
+    /// and every backend that finds the fn missing reports them
+    /// (`crate::ir::hir::collect_unresolved_in_fn`). It is NOT safe to
+    /// assume the type checker already said something; it resolves a
+    /// bare name through its own visibility relation and can accept
+    /// what this resolver could not classify.
     UnresolvedCtor,
-    /// First-class fn value / intrinsic / unresolved call target.
-    /// Wave 3c-iii (closures / intrinsics) territory.
+    /// A call target the resolver could not classify. Same family as
+    /// [`Self::UnresolvedCtor`], reported the same way.
     UnsupportedCallee,
     /// `Record{...}` / `Record{base & ...}` on a built-in type
     /// (`HttpResponse`, `Header`, `Buffer`, …) with no `TypeId`.
