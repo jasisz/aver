@@ -7,25 +7,26 @@ impl Parser {
             pos: 0,
             allow_compiler_identifiers: false,
             recursion_depth: 0,
-            verify_max_cases: crate::config::DEFAULT_VERIFY_MAX_CASES,
+            verify_ceiling: crate::config::VerifyCaseCeiling::compiled_default(),
         }
     }
 
-    /// Raise (or lower) the ceiling on how many cases one verify block may
-    /// expand into, from `[verify] max-cases`.
+    /// Install the ceiling on how many cases one verify block may expand
+    /// into, resolved for the file about to be parsed from `[verify]
+    /// max-cases` and the `[[verify.costly]]` entries that cover it.
     ///
     /// Set on exactly one path: the source loader that reads the user's own
     /// project files, next to the `aver.toml` that asked for it. Every
     /// internal re-parse constructs its parser with [`Parser::new`] and keeps
     /// the default, which is right — those parse compiler-synthesized code,
     /// never a user's `given` domain.
-    pub fn set_verify_max_cases(&mut self, max_cases: usize) {
-        self.verify_max_cases = max_cases;
+    pub fn set_verify_ceiling(&mut self, ceiling: crate::config::VerifyCaseCeiling) {
+        self.verify_ceiling = ceiling;
     }
 
-    /// The ceiling in force for this parser.
-    pub(super) fn verify_max_cases(&self) -> usize {
-        self.verify_max_cases
+    /// The ceiling in force for the verify blocks of `fn_name`.
+    pub(super) fn verify_max_cases_for(&self, fn_name: &str) -> usize {
+        self.verify_ceiling.for_fn(fn_name)
     }
 
     /// Parse a source fragment synthesized by the compiler itself.
@@ -38,7 +39,7 @@ impl Parser {
             pos: 0,
             allow_compiler_identifiers: true,
             recursion_depth: 0,
-            verify_max_cases: crate::config::DEFAULT_VERIFY_MAX_CASES,
+            verify_ceiling: crate::config::VerifyCaseCeiling::compiled_default(),
         }
     }
 

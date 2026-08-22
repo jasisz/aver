@@ -426,7 +426,8 @@ max-cases  = 10_000             # ceiling on `given`-domain expansion (default)
 [[verify.costly]]
 fn         = "checkScript"
 files      = ["domain/scriptcases*.av"]
-step-limit = 50_000_000
+step-limit = 50_000_000          # raise the per-case budget for this fn
+max-cases  = 40_000              # raise the case ceiling for this fn
 reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
 ```
 
@@ -446,10 +447,11 @@ An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a 
 `[verify]` budgets in detail:
 
 - `step-limit` is the per-case opcode budget `aver verify` installs before every case. The default, 1,000,000, is what stops a tail-recursive function without a base case: Aver's tail-call optimization turns that into a goto-loop with no stack growth, so nothing else would. Raising it globally trades that bail-out away for every case in the project; `[[verify.costly]]` trades it away for one function, which is almost always what you mean.
-- `[[verify.costly]]` raises the budget for the verify blocks of one function. `fn` is required. `reason` is required and must be non-empty — the same rule `[[check.suppress]]` has, for the same reason: a budget nobody explained is a budget nobody can retire. `files` is optional and uses the same anchored globs, matched against the file's path relative to the module root. Where several entries match, the most permissive wins.
+- `[[verify.costly]]` raises the budgets for the verify blocks of one function. `fn` is required. `reason` is required and must be non-empty — the same rule `[[check.suppress]]` has, for the same reason: a budget nobody explained is a budget nobody can retire. `files` is optional and uses the same anchored globs, matched against the file's path relative to the module root.
+- An entry carries both dials, and must set at least one: `step-limit` for a fn whose cases are slow, `max-cases` for a fn whose `given` domain is wide, both for a fn that is both. An entry that sets neither is a config error. Where several entries match one block, the most permissive `step-limit` wins and the first `max-cases` wins.
 - The report names every case that needed more than the project default, with its step count and the entry that raised it, so a raise is never a silent licence.
 - An entry that raised nothing during a run is reported on stderr — separately for "matched no verified file" and "matched files but no block of that fn" — and never changes the exit code.
-- `max-cases` is the ceiling on how many cases one verify block may expand into, on both sides: the `given` domain the parser expands and the `--hostile` cartesian the runner expands on top of it. Both fail loudly with the count rather than truncating, because a truncated case list is a claim you did not make. Each expanded case clones an expression pair, so raising this costs parse-time memory in proportion to the new ceiling.
+- `max-cases` is the ceiling on how many cases one verify block may expand into, on both sides: the `given` domain the parser expands and the `--hostile` cartesian the runner expands on top of it. Both fail loudly with the count rather than truncating, because a truncated case list is a claim you did not make. Each expanded case clones an expression pair, so raising this costs parse-time memory in proportion to the new ceiling. `[verify] max-cases` moves it for the whole project; a `[[verify.costly]]` entry moves it for the blocks of the one function it names, which is usually what a wide corpus actually means.
 - Neither setting changes what a program means. The same source verifies the same way under any budget; it just gets more or less room to finish.
 
 `[[check.suppress]]` rules in detail:

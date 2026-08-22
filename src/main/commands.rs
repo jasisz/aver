@@ -255,9 +255,9 @@ pub(super) fn collect_program_units(
     // and still fails loudly, preserving its existing behavior.
     //
     // The entry file is one of the user's own project files, so it parses
-    // under the project's `[verify] max-cases`; `load_program` below reads
-    // the same ceiling for every dependency it walks.
-    let items = aver::source::parse_project_source(&source, module_root).unwrap_or_default();
+    // under the ceiling the project declared for it; `load_program` below
+    // reads the same `aver.toml` for every dependency it walks.
+    let items = aver::source::parse_project_source(&source, module_root, file).unwrap_or_default();
 
     // The tolerant walk keeps a dependency that fails to parse or lacks its
     // declaration as a unit of its own, so each file reports its diagnostics
@@ -2461,7 +2461,7 @@ fn report_stale_verify_costly(
             if cfg.verify_costly_covers_file(idx, &key) {
                 covered[idx] = true;
             }
-            if entry.step_limit > default_limit
+            if moves_a_dial(entry, default_limit)
                 && fr
                     .blocks
                     .iter()
@@ -2480,7 +2480,7 @@ fn report_stale_verify_costly(
         } else {
             entry.files.join(", ")
         };
-        let detail = if entry.step_limit <= default_limit {
+        let detail = if !moves_a_dial(entry, default_limit) {
             "does not raise anything — its step-limit is not above the project default"
         } else if covered[idx] {
             "matched files in this run but raised no case's budget — the fn may be stale"
@@ -2495,6 +2495,14 @@ fn report_stale_verify_costly(
             detail
         );
     }
+}
+
+/// Whether an entry moves either dial at all, before asking whether it found
+/// a block to move it for. A `max-cases` is always a move — it is the ceiling
+/// for the blocks it names, up or down — while a `step-limit` at or below the
+/// project default raises nothing.
+fn moves_a_dial(entry: &aver::config::VerifyCostly, default_limit: u64) -> bool {
+    entry.max_cases.is_some() || entry.step_limit.is_some_and(|limit| limit > default_limit)
 }
 
 /// Render a step count the way a reader compares budgets: `8.2M`, `50M`,
@@ -2560,13 +2568,12 @@ fn run_verify_for_file(
         // loudly instead of passing green. A dependency names itself: the
         // caller labels the error with the input file.
         if items.is_empty()
-            && let Err(e) = aver::source::parse_source_with_verify_max_cases(
+            && let Err(e) = aver::source::parse_source_with_verify_ceiling(
                 &source,
-                config
-                    .as_ref()
-                    .map_or(aver::config::DEFAULT_VERIFY_MAX_CASES, |cfg| {
-                        cfg.verify_max_cases()
-                    }),
+                match &config {
+                    Some(cfg) => aver::source::verify_ceiling_for(cfg, module_root, &path),
+                    None => aver::config::VerifyCaseCeiling::compiled_default(),
+                },
             )
         {
             return Err(if path == file {
@@ -7216,7 +7223,7 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTru
     let Ok(source) = read_file(file) else {
         return out;
     };
-    let Ok(items) = aver::source::parse_project_source(&source, module_root) else {
+    let Ok(items) = aver::source::parse_project_source(&source, module_root, file) else {
         return out;
     };
     let merged = merge_verify_blocks(&items);

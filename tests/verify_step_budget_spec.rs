@@ -202,7 +202,7 @@ reason     = "raised once, and not far enough"
 // ── c. malformed entries are config errors ──────────────────────────────
 
 #[test]
-fn a_costly_entry_without_fn_reason_or_step_limit_is_a_config_error() {
+fn a_costly_entry_without_fn_reason_or_a_dial_is_a_config_error() {
     let cases: [(&str, &str, &str); 4] = [
         (
             "no-fn",
@@ -220,9 +220,9 @@ fn a_costly_entry_without_fn_reason_or_step_limit_is_a_config_error() {
             "`reason` must not be empty",
         ),
         (
-            "no-step-limit",
+            "no-dial",
             "[[verify.costly]]\nfn = \"countdown\"\nreason = \"expensive\"\n",
-            "requires a positive integer `step-limit`",
+            "raises nothing — set `step-limit`, `max-cases`, or both",
         ),
     ];
     for (name, toml, expected) in cases {
@@ -530,6 +530,141 @@ fn a_domain_over_the_raised_ceiling_fails_naming_the_raised_number() {
     );
 }
 
+// ── h-bis. the case ceiling, per function ───────────────────────────────
+
+/// Both dials live in both places. The ceiling is checked per verify block,
+/// a block belongs to exactly one function, and a `[[verify.costly]]` entry
+/// already names a function and a set of files — so `max-cases` scopes
+/// itself there under exactly the rule `step-limit` already uses.
+#[test]
+fn a_costly_entry_raises_max_cases_for_the_function_it_names() {
+    let dir = project(
+        "budget-cases-costly",
+        "big_domain.av",
+        r#"
+[verify]
+max-cases = 10000
+
+[[verify.costly]]
+fn         = "identity"
+files      = ["main.av"]
+max-cases  = 40000
+reason     = "the fixpoint law is declared over twelve thousand points"
+"#,
+    );
+    let out = verify(&dir, &[]);
+    assert!(
+        stdout_of(&out).contains("✓ identity law fixpoint      12000/12000"),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+#[test]
+fn a_domain_over_the_entrys_ceiling_fails_naming_the_entrys_number() {
+    let dir = temp_dir("budget-cases-costly-over");
+    std::fs::write(
+        dir.join("main.av"),
+        "module Over\n    intent =\n        \"A domain one case past the ceiling one entry declared.\"\n    exposes [identity]\n    effects []\n\nfn identity(n: Int) -> Int\n    ? \"n itself.\"\n    n\n\nverify identity law fixpoint\n    given n: Int = 1..40001\n    identity(n) => n\n",
+    )
+    .expect("stage the module");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[[verify.costly]]\nfn = \"identity\"\nmax-cases = 40000\nreason = \"the fixpoint law is wide\"\n",
+    )
+    .expect("stage aver.toml");
+    let out = verify(&dir, &[]);
+    let text = format_output(&out);
+    assert!(
+        text.contains("Law verify expands to 40001 cases (max 40000)"),
+        "the message must name the ceiling the entry asked for:\n{text}"
+    );
+    assert_ne!(out.status.code(), Some(0), "{text}");
+}
+
+#[test]
+fn a_costly_entry_whose_files_do_not_match_leaves_the_project_ceiling() {
+    let dir = project(
+        "budget-cases-elsewhere",
+        "big_domain.av",
+        r#"
+[[verify.costly]]
+fn         = "identity"
+files      = ["domain/*.av"]
+max-cases  = 40000
+reason     = "the wide corpus lives under domain/, and this file is not it"
+"#,
+    );
+    let out = verify(&dir, &[]);
+    let text = format_output(&out);
+    assert!(
+        text.contains("Law verify expands to 12000 cases (max 10000)"),
+        "an entry whose globs miss the file must not move its ceiling:\n{text}"
+    );
+    assert_ne!(out.status.code(), Some(0), "{text}");
+}
+
+/// An entry may raise either dial. One that names only `max-cases` is a
+/// valid entry and leaves the step budget exactly where it was, so the
+/// expensive case is still declined.
+#[test]
+fn a_costly_entry_may_raise_only_max_cases() {
+    let dir = project(
+        "budget-cases-only",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+max-cases  = 40000
+reason     = "this corpus is wide, not slow"
+"#,
+    );
+    let out = verify(&dir, &[]);
+    let text = stdout_of(&out);
+    assert!(
+        text.contains("Summary: 1 module | 1 block | 1/2 cases passed | 0 failed | 1 not answered"),
+        "raising the ceiling must not raise the step budget:\n{}",
+        format_output(&out)
+    );
+}
+
+/// Staleness follows the dials: an entry that moved the ceiling of a block
+/// this run parsed did its job, and one that names a fn nothing has is
+/// still reported.
+#[test]
+fn an_entry_that_only_raises_max_cases_is_not_reported_stale() {
+    let dir = project(
+        "budget-cases-stale",
+        "big_domain.av",
+        r#"
+[[verify.costly]]
+fn         = "identity"
+max-cases  = 40000
+reason     = "the fixpoint law is declared over twelve thousand points"
+
+[[verify.costly]]
+fn         = "noSuchFunction"
+max-cases  = 40000
+reason     = "points at a fn this project no longer has"
+"#,
+    );
+    let out = verify(&dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        !stderr.contains(r#"fn = "identity""#),
+        "the entry that moved this block's ceiling is not stale:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        stderr.contains(r#"fn = "noSuchFunction""#) && stderr.contains("the fn may be stale"),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
 /// `max-cases` reaches the parse of the user's project files and nothing
 /// else. The compiler re-parses synthesized source in a dozen internal
 /// places — TCO hoists among them — and every one of those keeps the
@@ -575,6 +710,13 @@ fn the_fuzz_path_runs_at_exactly_one_million_steps() {
     let budget = CaseBudget::resolve(None, "countdown", "main.av");
     assert_eq!(budget.limit, 1_000_000);
     assert_eq!(budget.raised_by, None);
+
+    // The `--hostile` expander asks the same question about the ceiling, and
+    // with no config it gets the compiled-in number too.
+    assert_eq!(
+        aver::diagnostics::vm_verify::max_cases_for(None, "countdown", "main.av"),
+        aver::config::DEFAULT_VERIFY_MAX_CASES
+    );
 }
 
 /// The whole point of the fuzz guard: with no config, the expensive case is

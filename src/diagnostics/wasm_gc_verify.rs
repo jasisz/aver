@@ -129,12 +129,12 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     }
 
     if mode == ExpansionMode::Hostile {
-        let max_cases = config
-            .as_ref()
-            .map_or(crate::config::DEFAULT_VERIFY_MAX_CASES, |cfg| {
-                cfg.verify_max_cases()
-            });
+        // Same ceiling the VM lane uses, resolved per block for the same
+        // reason: `[[verify.costly]]` names one function.
+        let key = crate::diagnostics::vm_verify::costly_glob_key(source_file, base_dir);
         for b in &mut blocks {
+            let max_cases =
+                crate::diagnostics::vm_verify::max_cases_for(config.as_ref(), &b.fn_name, &key);
             apply_hostile_expansion_with_registry(b, &items, &tc.capabilities, max_cases)?;
         }
     }

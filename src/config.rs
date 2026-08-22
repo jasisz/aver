@@ -117,7 +117,8 @@ pub struct CheckSuppression {
 pub const DEFAULT_VERIFY_STEP_LIMIT: u64 = 1_000_000;
 
 /// Ceiling on how many cases one verify block may expand into, and the
-/// number `[verify] max-cases` overrides.
+/// number `[verify] max-cases` — or a `[[verify.costly]]` entry's own
+/// `max-cases`, for the blocks it names — overrides.
 ///
 /// It bounds both expansions of a `given` domain: the declared side the
 /// parser performs, and the `--hostile` side the verify runner performs on
@@ -129,23 +130,92 @@ pub const DEFAULT_VERIFY_STEP_LIMIT: u64 = 1_000_000;
 /// much as a time bound; raising it costs parse-time memory in proportion.
 pub const DEFAULT_VERIFY_MAX_CASES: usize = 10_000;
 
-/// A single `[[verify.costly]]` entry: a raised per-case step budget for the
-/// verify blocks of one function.
+/// A single `[[verify.costly]]` entry: the raised budgets for the verify
+/// blocks of one function.
 ///
 /// Same shape as [`CheckSuppression`] on purpose. Both are a project saying
 /// "I know about this and here is why", so both require a written reason and
 /// both scope themselves with optional anchored file globs.
+///
+/// It carries both `[verify]` dials, because both are checked per verify
+/// block and a block belongs to exactly one function: `step-limit` says one
+/// case of this fn may cost more, `max-cases` says this fn's `given` domain
+/// may be wider. An entry may raise either or both; one that raises neither
+/// is refused at load.
 #[derive(Debug, Clone)]
 pub struct VerifyCostly {
-    /// Name of the function whose verify blocks get the raised budget
+    /// Name of the function whose verify blocks get the raised budgets
     /// (e.g. `"checkScript"`).
     pub fn_name: String,
     /// Optional file glob patterns. Empty = every verified file.
     pub files: Vec<String>,
-    /// The raised per-case budget, in VM steps.
-    pub step_limit: u64,
+    /// The raised per-case budget, in VM steps. `None` = this entry leaves
+    /// the step budget where the project put it.
+    pub step_limit: Option<u64>,
+    /// The raised ceiling on this fn's verify-case expansion. `None` = this
+    /// entry leaves the ceiling where the project put it.
+    pub max_cases: Option<usize>,
     /// Mandatory explanation — why this case is expected to be expensive.
     pub reason: String,
+}
+
+impl VerifyCostly {
+    /// The `fn` half of the match rule. One implementation, so `step-limit`
+    /// and `max-cases` can never come to disagree about which blocks an
+    /// entry is about.
+    pub fn matches_fn(&self, fn_name: &str) -> bool {
+        self.fn_name == fn_name
+    }
+
+    /// The `files` half of the match rule: an entry with no globs covers
+    /// every verified file.
+    pub fn covers_file(&self, file_path: &str) -> bool {
+        self.files.is_empty() || self.files.iter().any(|g| glob_matches(file_path, g))
+    }
+}
+
+/// The ceiling on verify-case expansion in force while parsing one file.
+///
+/// The parser meets one file and many function names, so the `files` half of
+/// the match rule is settled when this is built and the `fn` half waits for
+/// the block being parsed. A parser built without a project holds
+/// [`VerifyCaseCeiling::compiled_default`], which answers the compiled-in
+/// number for every function.
+#[derive(Debug, Clone)]
+pub struct VerifyCaseCeiling {
+    /// What a function no entry names gets: `[verify] max-cases`, or the
+    /// compiled-in default.
+    default: usize,
+    /// The entries whose globs cover this file and that set `max-cases`, in
+    /// `aver.toml` order — first match wins.
+    raises: Vec<VerifyCostly>,
+}
+
+impl VerifyCaseCeiling {
+    /// The ceiling with no project configuration at all — what every
+    /// internal re-parse and every fuzz target parses under.
+    pub fn compiled_default() -> Self {
+        Self::flat(DEFAULT_VERIFY_MAX_CASES)
+    }
+
+    /// One number for every function, whatever it is called.
+    pub fn flat(max_cases: usize) -> Self {
+        VerifyCaseCeiling {
+            default: max_cases,
+            raises: Vec::new(),
+        }
+    }
+
+    /// The ceiling for the verify blocks of `fn_name`: the first covering
+    /// `[[verify.costly]]` entry that names it and sets `max-cases`, else
+    /// the project default.
+    pub fn for_fn(&self, fn_name: &str) -> usize {
+        self.raises
+            .iter()
+            .find(|entry| entry.matches_fn(fn_name))
+            .and_then(|entry| entry.max_cases)
+            .unwrap_or(self.default)
+    }
 }
 
 /// `[verify]` policy: how much work one verify case is allowed to be, and
@@ -159,7 +229,8 @@ pub struct VerifyCostly {
 pub struct VerifySettings {
     /// `[verify] step-limit` — the per-case default budget.
     pub step_limit: Option<u64>,
-    /// `[verify] max-cases` — the cap on `given`-domain expansion.
+    /// `[verify] max-cases` — the cap on `given`-domain expansion, for every
+    /// function no `[[verify.costly]]` entry raises.
     pub max_cases: Option<usize>,
     /// `[[verify.costly]]` entries, in file order.
     pub costly: Vec<VerifyCostly>,
@@ -379,9 +450,7 @@ impl ProjectConfig {
     /// verified" from "the path was verified and no block of that fn ran".
     pub fn verify_costly_covers_file(&self, idx: usize, file_path: &str) -> bool {
         match self.verify.costly.get(idx) {
-            Some(entry) => {
-                entry.files.is_empty() || entry.files.iter().any(|g| glob_matches(file_path, g))
-            }
+            Some(entry) => entry.covers_file(file_path),
             None => false,
         }
     }
@@ -389,15 +458,40 @@ impl ProjectConfig {
     /// Whether the entry at `idx` applies to `fn_name` in `file_path`.
     pub fn verify_costly_applies(&self, idx: usize, fn_name: &str, file_path: &str) -> bool {
         match self.verify.costly.get(idx) {
-            Some(entry) => {
-                entry.fn_name == fn_name && self.verify_costly_covers_file(idx, file_path)
-            }
+            Some(entry) => entry.matches_fn(fn_name) && entry.covers_file(file_path),
             None => false,
         }
     }
 
+    /// The ceiling on verify-case expansion for one file, resolved as far as
+    /// a file path can resolve it. Handed to the parser, which supplies the
+    /// function name of each block it parses.
+    pub fn verify_case_ceiling(&self, file_path: &str) -> VerifyCaseCeiling {
+        VerifyCaseCeiling {
+            default: self.verify_max_cases(),
+            raises: self
+                .verify
+                .costly
+                .iter()
+                .filter(|entry| entry.max_cases.is_some() && entry.covers_file(file_path))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// The ceiling for one function's verify block in one file: the first
+    /// matching `[[verify.costly]]` entry that sets `max-cases`, else
+    /// `[verify] max-cases`, else the compiled-in default.
+    ///
+    /// The runner's `--hostile` cartesian asks this per block, exactly as the
+    /// parser asks the same question of the same entries per block.
+    pub fn verify_max_cases_for(&self, fn_name: &str, file_path: &str) -> usize {
+        self.verify_case_ceiling(file_path).for_fn(fn_name)
+    }
+
     /// The budget for one function's verify block in one file: the default,
-    /// raised by the most permissive matching `[[verify.costly]]` entry.
+    /// raised by the most permissive matching `[[verify.costly]]` entry that
+    /// sets `step-limit`.
     ///
     /// Returns the index of the entry that did the raising so the report can
     /// name it and so an entry that raised nothing can be called stale. Ties
@@ -407,10 +501,17 @@ impl ProjectConfig {
         let base = self.verify_step_limit();
         let raised = (0..self.verify.costly.len())
             .filter(|idx| self.verify_costly_applies(*idx, fn_name, file_path))
-            .filter(|idx| self.verify.costly[*idx].step_limit > base)
+            .filter(|idx| {
+                self.verify.costly[*idx]
+                    .step_limit
+                    .is_some_and(|l| l > base)
+            })
             .max_by_key(|idx| (self.verify.costly[*idx].step_limit, std::cmp::Reverse(*idx)));
         match raised {
-            Some(idx) => (self.verify.costly[idx].step_limit, Some(idx)),
+            Some(idx) => (
+                self.verify.costly[idx].step_limit.unwrap_or(base),
+                Some(idx),
+            ),
             None => (base, None),
         }
     }
@@ -1023,13 +1124,16 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
             ));
         }
 
-        let step_limit = parse_positive_u64(t, &format!("[[verify.costly]][{}]", i), "step-limit")?
-            .ok_or_else(|| {
-                format!(
-                    "aver.toml: [[verify.costly]][{}] requires a positive integer `step-limit`",
-                    i
-                )
-            })?;
+        let context = format!("[[verify.costly]][{}]", i);
+        let step_limit = parse_positive_u64(t, &context, "step-limit")?;
+        let max_cases = parse_positive_u64(t, &context, "max-cases")?.map(|n| n as usize);
+
+        if step_limit.is_none() && max_cases.is_none() {
+            return Err(format!(
+                "aver.toml: [[verify.costly]][{}] raises nothing — set `step-limit`, `max-cases`, or both",
+                i
+            ));
+        }
 
         let files = if let Some(val) = t.get("files") {
             let arr = val.as_array().ok_or_else(|| {
@@ -1054,6 +1158,7 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
             fn_name,
             files,
             step_limit,
+            max_cases,
             reason,
         });
     }
@@ -1813,6 +1918,10 @@ reason = "   "
             config.verify_budget_for("checkScript", "domain/scriptcases1.av"),
             (DEFAULT_VERIFY_STEP_LIMIT, None)
         );
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+            DEFAULT_VERIFY_MAX_CASES
+        );
     }
 
     #[test]
@@ -1854,15 +1963,128 @@ step-limit = 50000000
     }
 
     #[test]
-    fn verify_costly_requires_a_positive_step_limit() {
-        for entry in ["", "step-limit = 0", "step-limit = \"lots\""] {
+    fn verify_costly_dials_must_be_positive_integers() {
+        for entry in [
+            "step-limit = 0",
+            "step-limit = \"lots\"",
+            "max-cases = 0",
+            "max-cases = \"lots\"",
+        ] {
             let toml = format!(
                 "[[verify.costly]]\nfn = \"checkScript\"\nreason = \"expensive\"\n{entry}\n"
             );
-            let error = ProjectConfig::parse(&toml)
-                .expect_err("a budget must be a positive integer of steps");
-            assert!(error.contains("step-limit"), "{error}");
+            let error = ProjectConfig::parse(&toml).expect_err("a dial must be a positive integer");
+            assert!(error.contains("must be a positive integer"), "{error}");
         }
+    }
+
+    #[test]
+    fn verify_costly_requires_at_least_one_dial() {
+        let toml = "[[verify.costly]]\nfn = \"checkScript\"\nreason = \"expensive\"\n";
+        let error = ProjectConfig::parse(toml).expect_err("an entry that raises nothing is a typo");
+        assert!(
+            error.contains("raises nothing — set `step-limit`, `max-cases`, or both"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn verify_costly_may_raise_either_dial_or_both() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+reason = "slow, not wide"
+
+[[verify.costly]]
+fn = "checkTx"
+max-cases = 40000
+reason = "wide, not slow"
+
+[[verify.costly]]
+fn = "checkBlock"
+step-limit = 50000000
+max-cases = 40000
+reason = "both"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        let dials: Vec<(Option<u64>, Option<usize>)> = config
+            .verify
+            .costly
+            .iter()
+            .map(|entry| (entry.step_limit, entry.max_cases))
+            .collect();
+        assert_eq!(
+            dials,
+            vec![
+                (Some(50_000_000), None),
+                (None, Some(40_000)),
+                (Some(50_000_000), Some(40_000)),
+            ]
+        );
+        // An entry that moves only the ceiling leaves the step budget alone.
+        assert_eq!(
+            config.verify_budget_for("checkTx", "domain/txcases1.av"),
+            (DEFAULT_VERIFY_STEP_LIMIT, None)
+        );
+    }
+
+    #[test]
+    fn verify_max_cases_is_raised_for_the_named_fn_in_the_matching_files() {
+        let toml = r#"
+[verify]
+max-cases = 20000
+
+[[verify.costly]]
+fn = "checkScript"
+files = ["domain/scriptcases*.av"]
+max-cases = 40000
+reason = "Core corpus includes consensus-max 10,000-byte scripts"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+            40_000
+        );
+        // Right fn, wrong file.
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/txcases1.av"),
+            20_000
+        );
+        // Right file, wrong fn.
+        assert_eq!(
+            config.verify_max_cases_for("checkTx", "domain/scriptcases1.av"),
+            20_000
+        );
+    }
+
+    #[test]
+    fn verify_max_cases_takes_the_first_matching_entry_that_sets_it() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+reason = "the slow ones — this entry says nothing about width"
+
+[[verify.costly]]
+fn = "checkScript"
+max-cases = 40000
+reason = "and the wide ones"
+
+[[verify.costly]]
+fn = "checkScript"
+max-cases = 90000
+reason = "never reached — an earlier entry already answered"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+            40_000
+        );
+        // The ceiling a parser carries for one file answers the same way.
+        let ceiling = config.verify_case_ceiling("domain/scriptcases1.av");
+        assert_eq!(ceiling.for_fn("checkScript"), 40_000);
+        assert_eq!(ceiling.for_fn("checkTx"), DEFAULT_VERIFY_MAX_CASES);
     }
 
     #[test]

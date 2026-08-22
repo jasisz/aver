@@ -673,14 +673,6 @@ pub fn run_verify_for_items_vm_with_mode_and_bindings(
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
-    // `[verify] max-cases` bounds the `--hostile` cartesian exactly as it
-    // bounds the parser's declared expansion — one ceiling, two expanders.
-    let max_cases = config
-        .as_ref()
-        .map_or(crate::config::DEFAULT_VERIFY_MAX_CASES, |cfg| {
-            cfg.verify_max_cases()
-        });
-
     // Everything appended below this line is compiler-fabricated, so
     // this is where the program the user wrote ends — the scope the
     // shadowing ban in `pipeline::typecheck_gate` is entitled to read.
@@ -738,7 +730,13 @@ pub fn run_verify_for_items_vm_with_mode_and_bindings(
     }
 
     if mode == ExpansionMode::Hostile {
+        // The ceiling bounds the `--hostile` cartesian exactly as it bounds
+        // the parser's declared expansion — one ceiling, two expanders — and
+        // it is resolved per block for the same reason the parser resolves
+        // it per block: `[[verify.costly]]` names one function.
+        let key = costly_glob_key(source_file, base_dir);
         for block in &mut verify_blocks {
+            let max_cases = max_cases_for(config.as_ref(), &block.fn_name, &key);
             apply_hostile_expansion_with_registry(
                 block,
                 &items,
@@ -846,6 +844,16 @@ impl CaseBudget {
     pub fn raised_by_fn(&self, config: Option<&ProjectConfig>) -> Option<String> {
         let idx = self.raised_by?;
         Some(config?.verify.costly.get(idx)?.fn_name.clone())
+    }
+}
+
+/// The ceiling on one function's verify-case expansion in one file — the
+/// project's, or the compiled-in default for an embedder that passes no
+/// config at all.
+pub fn max_cases_for(config: Option<&ProjectConfig>, fn_name: &str, file_key: &str) -> usize {
+    match config {
+        Some(config) => config.verify_max_cases_for(fn_name, file_key),
+        None => crate::config::DEFAULT_VERIFY_MAX_CASES,
     }
 }
 
@@ -991,13 +999,6 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
-    // See the disk-loader path: one ceiling for both expanders.
-    let max_cases = config
-        .as_ref()
-        .map_or(crate::config::DEFAULT_VERIFY_MAX_CASES, |cfg| {
-            cfg.verify_max_cases()
-        });
-
     // End of the program the user wrote — see the disk-loader path.
     let user_program_len = items.len();
 
@@ -1023,7 +1024,11 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
     }
 
     if mode == ExpansionMode::Hostile {
+        // See the disk-loader path: one ceiling for both expanders, resolved
+        // per block.
+        let key = costly_glob_key(source_file, None);
         for block in &mut verify_blocks {
+            let max_cases = max_cases_for(config.as_ref(), &block.fn_name, &key);
             apply_hostile_expansion_with_registry(
                 block,
                 &items,
