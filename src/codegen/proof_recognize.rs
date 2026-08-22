@@ -528,18 +528,6 @@ impl NatCompareKind {
         }
     }
 
-    /// The Prop the FALSE bridge maps `f a b = false` onto — the complement of
-    /// `prop_op`, written in the `omega`-ready form: `¬(a ≤ b)` is `b < a`,
-    /// `¬(a < b)` is `b ≤ a`, `¬(a = b)` is `a ≠ b`. Used to bridge a NEGATED
-    /// premise (`when Bool.not(le a b)`) into a linear-`Nat` fact.
-    pub(crate) fn false_prop(self) -> &'static str {
-        match self {
-            NatCompareKind::Le => "b < a",
-            NatCompareKind::Lt => "b ≤ a",
-            NatCompareKind::Eq => "a ≠ b",
-        }
-    }
-
     /// The bridge theorem's name suffix (kept distinct per relation so two
     /// bridges in one law never collide, and the both-args rung can spot them).
     pub(crate) fn bridge_suffix(self) -> &'static str {
@@ -606,19 +594,39 @@ fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareK
     if fd.params.len() != 2 || fd.return_type.trim() != "Bool" {
         return None;
     }
+    let (_, t0) = &fd.params[0];
+    let (_, t1) = &fd.params[1];
+    if t0 != t1 {
+        return None;
+    }
+    let peano = peano_type_named(ctx, t0)?;
+    detect_nat_compare_op_for_peano(fd, &peano)
+}
+
+/// Classify a canonical Peano comparison after the caller has resolved the
+/// operand type and selected its exact declaration. `proof_lower` uses this
+/// entry point so syntax recognition is backend-neutral while declaration
+/// identity stays pinned by `SymbolTable`; backend renderers keep using the
+/// context convenience wrapper above.
+pub(crate) fn detect_nat_compare_op_for_peano(
+    fd: &FnDef,
+    peano: &PeanoType,
+) -> Option<NatCompareKind> {
+    if fd.params.len() != 2 || fd.return_type.trim() != "Bool" {
+        return None;
+    }
     let (p0, t0) = &fd.params[0];
     let (p1, t1) = &fd.params[1];
     if t0 != t1 {
         return None;
     }
-    let peano = peano_type_named(ctx, t0)?;
     let ln = crate::codegen::recursion::detect::local_name_of;
     let tail = fd.body.tail_expr()?;
     let Expr::Match { subject, arms, .. } = &tail.node else {
         return None;
     };
     let outer_on = ln(subject)?;
-    let (base_body, q, succ_body) = split_peano_match(arms, &peano)?;
+    let (base_body, q, succ_body) = split_peano_match(arms, peano)?;
 
     // The succ arm nests a match on the OTHER param; recursion strips one succ
     // from each. The base-arm bool and the inner-base bool encode `≤` vs `<`.
@@ -631,7 +639,7 @@ fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareK
         return None;
     };
     let inner_on = ln(inner_subj)?;
-    let (inner_base, r, inner_succ) = split_peano_match(inner_arms, &peano)?;
+    let (inner_base, r, inner_succ) = split_peano_match(inner_arms, peano)?;
     let rec_ok = |first: &str, second: &str| {
         call_or_ctor(inner_succ).is_some_and(|(rc, ra)| {
             rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(first) && ln(ra[1]) == Some(second)
@@ -672,7 +680,7 @@ fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareK
             ..
         } = &base_body.node
         && ln(base_subj) == Some(p1.as_str())
-        && let Some((bb_base, _z, bb_succ)) = split_peano_match(base_arms, &peano)
+        && let Some((bb_base, _z, bb_succ)) = split_peano_match(base_arms, peano)
         && as_bool_lit(bb_base) == Some(true)
         && as_bool_lit(bb_succ) == Some(false)
     {

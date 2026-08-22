@@ -23,7 +23,8 @@ use aver::codegen::recursion::{RecursionPlan, analyze_plans_in_scope};
 use aver::ir::proof_ir::{
     DecreaseProof, FuelMetric, Measure, PreservationProof, QuantifierType, RecursionContract,
 };
-use aver::source::parse_source;
+use aver::source::{LoadedModule, parse_source};
+use std::path::PathBuf;
 
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
@@ -81,6 +82,71 @@ fn build_ctx(src: &str) -> CodegenContext {
     ctx
 }
 
+fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenContext {
+    let mut items = parse_source(entry_src).expect("entry parse");
+    let loaded: Vec<LoadedModule> = deps
+        .iter()
+        .map(|(name, source)| LoadedModule {
+            dep_name: (*name).to_string(),
+            items: parse_source(source).unwrap_or_else(|error| panic!("{name} parse: {error}")),
+            path: PathBuf::from(format!("{name}.av")),
+        })
+        .collect();
+    let modules: Vec<aver::codegen::ModuleInfo> = loaded
+        .iter()
+        .map(aver::codegen::ModuleInfo::from_loaded)
+        .collect();
+    let mut pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            run_tco: true,
+            typecheck: Some(aver::ir::TypecheckMode::WithLoaded(&loaded)),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_chars_fusion: false,
+            run_string_index: false,
+            run_list_build: false,
+            run_resolve: false,
+            run_last_use: false,
+            run_analyze: true,
+            run_escape: false,
+            run_refinement_lower: true,
+            run_interval_analyze: false,
+            run_contract_lower: true,
+            run_law_lower: true,
+            run_build_symbols: true,
+            dep_modules: &modules,
+            alloc_policy: None,
+            call_ctx: None,
+            on_after_pass: None,
+        },
+    );
+    let tc = pipeline_result
+        .typecheck
+        .take()
+        .expect("typecheck requested");
+    assert!(
+        tc.errors.is_empty(),
+        "multi-module source typechecks: {:?}",
+        tc.errors
+    );
+    let proof_ir = pipeline_result.proof_ir.take();
+    let view = pipeline_result.codegen_view(items);
+    let mut ctx = aver::codegen::build_context(
+        view.items,
+        &tc,
+        view.analysis.as_ref(),
+        "diff-modules".to_string(),
+        modules,
+        view.symbol_table,
+        view.resolved_items,
+    );
+    if let Some(ir) = proof_ir {
+        ctx.proof_ir = ir;
+    }
+    ctx
+}
+
 /// Resolve a top-level fn's `FnContract` by bare name. After the
 /// FnKey → FnId migration the contracts map is keyed by opaque
 /// `FnId`, so tests resolve the identity through the symbol table
@@ -109,6 +175,21 @@ fn law_theorem<'a>(
         .law_theorems
         .iter()
         .find(|t| t.fn_id == fn_id && t.law_name == law_name)
+}
+
+fn module_law_theorem<'a>(
+    ctx: &'a CodegenContext,
+    module: &str,
+    fn_name: &str,
+    law_name: &str,
+) -> Option<&'a aver::ir::proof_ir::LawTheorem> {
+    let fn_id = ctx
+        .symbol_table
+        .fn_id_of(&aver::ir::FnKey::in_module(module, fn_name))?;
+    ctx.proof_ir
+        .law_theorems
+        .iter()
+        .find(|theorem| theorem.fn_id == fn_id && theorem.law_name == law_name)
 }
 
 fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> {
@@ -1176,6 +1257,184 @@ fn reflexive_law_pinned_when_lhs_equals_rhs() {
         matches!(theorem.strategy, aver::ir::ProofStrategy::Reflexive),
         "x => x must pin Reflexive, got: {:?}",
         theorem.strategy,
+    );
+}
+
+#[test]
+fn conditional_peano_comparison_is_pinned_before_the_lean_backend() {
+    let src = "module CmpBridge\n\
+         \x20   intent = \"comparison implication\"\n\
+         \n\
+         type Nat\n\
+         \x20   Z\n\
+         \x20   S(Nat)\n\
+         \n\
+         fn le(x: Nat, y: Nat) -> Bool\n\
+         \x20   match x\n\
+         \x20       Nat.Z -> true\n\
+         \x20       Nat.S(z) -> match y\n\
+         \x20           Nat.Z -> false\n\
+         \x20           Nat.S(w) -> le(z, w)\n\
+         \n\
+         verify le law leSucc\n\
+         \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   when le(m, n)\n\
+         \x20   le(m, Nat.S(n)) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "le", "leSucc").expect("law theorem");
+    let aver::ir::ProofStrategy::ConditionalComparisonBridge {
+        comparisons,
+        negated_premise,
+    } = &theorem.strategy
+    else {
+        panic!(
+            "proof lowering must own the comparison-bridge decision, got {:?}",
+            theorem.strategy
+        );
+    };
+    assert!(negated_premise.is_none());
+    assert_eq!(comparisons.len(), 1);
+    assert_eq!(
+        comparisons[0].kind,
+        aver::ir::proof_ir::PeanoComparisonKind::Le
+    );
+    assert_eq!(
+        comparisons[0].fn_id,
+        ctx.symbol_table
+            .fn_id_of(&aver::ir::FnKey::entry("le"))
+            .expect("le id")
+    );
+}
+
+#[test]
+fn negated_peano_comparison_pins_the_false_bridge_plan() {
+    let src = "module CmpBridge\n\
+         \x20   intent = \"comparison implication\"\n\
+         \n\
+         type Nat\n\
+         \x20   Z\n\
+         \x20   S(Nat)\n\
+         \n\
+         fn le(x: Nat, y: Nat) -> Bool\n\
+         \x20   match x\n\
+         \x20       Nat.Z -> true\n\
+         \x20       Nat.S(z) -> match y\n\
+         \x20           Nat.Z -> false\n\
+         \x20           Nat.S(w) -> le(z, w)\n\
+         \n\
+         verify le law totality\n\
+         \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   when Bool.not(le(m, n))\n\
+         \x20   le(n, m) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "le", "totality").expect("law theorem");
+    let aver::ir::ProofStrategy::ConditionalComparisonBridge {
+        comparisons,
+        negated_premise: Some(negated),
+    } = &theorem.strategy
+    else {
+        panic!(
+            "proof lowering must pin the negated-premise bridge, got {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(comparisons, std::slice::from_ref(negated));
+    assert_eq!(negated.kind, aver::ir::proof_ir::PeanoComparisonKind::Le);
+}
+
+#[test]
+fn comparison_shape_lookup_is_scoped_across_same_bare_names() {
+    let entry = "module Entry\n\
+         \x20   intent = \"load colliding comparison modules\"\n\
+         \x20   depends [Good, Decoy]\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n";
+    let good = "module Good\n\
+         \x20   intent = \"canonical comparison\"\n\
+         \x20   exposes [Nat, le]\n\
+         \n\
+         type Nat\n\
+         \x20   Z\n\
+         \x20   S(Nat)\n\
+         \n\
+         fn le(x: Nat, y: Nat) -> Bool\n\
+         \x20   match x\n\
+         \x20       Nat.Z -> true\n\
+         \x20       Nat.S(z) -> match y\n\
+         \x20           Nat.Z -> false\n\
+         \x20           Nat.S(w) -> le(z, w)\n\
+         \n\
+         verify le law successor\n\
+         \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   when le(m, n)\n\
+         \x20   le(m, Nat.S(n)) => true\n";
+    let decoy = "module Decoy\n\
+         \x20   intent = \"same names, different declarations\"\n\
+         \x20   exposes [Nat, le]\n\
+         \n\
+         type Nat\n\
+         \x20   Z\n\
+         \x20   S(Int)\n\
+         \n\
+         fn le(x: Nat, y: Nat) -> Bool\n\
+         \x20   true\n\
+         \n\
+         verify le law successor\n\
+         \x20   given m: Nat = [Nat.Z, Nat.S(0)]\n\
+         \x20   given n: Nat = [Nat.Z, Nat.S(0)]\n\
+         \x20   when le(m, n)\n\
+         \x20   le(m, n) => true\n";
+    let ctx = build_ctx_with_modules(entry, &[("Good", good), ("Decoy", decoy)]);
+
+    let good_law = module_law_theorem(&ctx, "Good", "le", "successor").expect("Good law");
+    assert!(matches!(
+        good_law.strategy,
+        aver::ir::ProofStrategy::ConditionalComparisonBridge { .. }
+    ));
+
+    let decoy_law = module_law_theorem(&ctx, "Decoy", "le", "successor").expect("Decoy law");
+    assert!(
+        !matches!(
+            decoy_law.strategy,
+            aver::ir::ProofStrategy::ConditionalComparisonBridge { .. }
+        ),
+        "same-bare-name lookup must not borrow Good.le/Good.Nat for Decoy's law",
+    );
+}
+
+#[test]
+fn compound_peano_premise_stays_out_of_comparison_bridge_strategy() {
+    let src = "module CmpBridge\n\
+         \x20   intent = \"comparison implication\"\n\
+         \n\
+         type Nat\n\
+         \x20   Z\n\
+         \x20   S(Nat)\n\
+         \n\
+         fn le(x: Nat, y: Nat) -> Bool\n\
+         \x20   match x\n\
+         \x20       Nat.Z -> true\n\
+         \x20       Nat.S(z) -> match y\n\
+         \x20           Nat.Z -> false\n\
+         \x20           Nat.S(w) -> le(z, w)\n\
+         \n\
+         verify le law weakened\n\
+         \x20   given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n\
+         \x20   when Bool.and(le(m, n), le(m, n))\n\
+         \x20   le(m, Nat.S(n)) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "le", "weakened").expect("law theorem");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::ConditionalComparisonBridge { .. }
+        ),
+        "compound premises must keep the bounded/backend fallback",
     );
 }
 

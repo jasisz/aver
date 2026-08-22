@@ -339,6 +339,32 @@ impl<'a> ProofLowerInputs<'a> {
         })
     }
 
+    /// Resolve a source call through the canonical symbol table, then recover
+    /// the exact AST declaration that owns the resulting [`crate::ir::FnId`].
+    ///
+    /// Shape recognizers intentionally inspect source AST, but the choice of
+    /// *which* declaration to inspect is identity-sensitive. Keeping that
+    /// lookup here prevents proof lowering from repeating the old backend
+    /// mistake where two same-bare-name functions in different modules could
+    /// share whichever declaration a linear walk found first.
+    pub fn find_fn_def_in_scope(&self, call_name: &str, scope: Option<&str>) -> Option<&'a FnDef> {
+        let id = self.symbol_table.resolve_fn_id_in(call_name, scope)?;
+        let key = &self.symbol_table.fn_entry(id).key;
+        match key.scope_str() {
+            None => self.entry_items.iter().find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == key.name => Some(fd),
+                _ => None,
+            }),
+            Some(prefix) => self
+                .dep_modules
+                .iter()
+                .find(|module| module.prefix == prefix)?
+                .fn_defs
+                .iter()
+                .find(|fd| fd.name == key.name),
+        }
+    }
+
     /// Find a type def by bare name across entry + deps. None on miss
     /// or when the name resolves to a non-Product / non-Sum shape.
     pub fn find_type_def(&self, type_name: &str) -> Option<&'a TypeDef> {
@@ -350,6 +376,34 @@ impl<'a> ProofLowerInputs<'a> {
             })
             .chain(self.dep_modules.iter().flat_map(|m| m.type_defs.iter()))
             .find(|td| crate::codegen::common::type_def_name(td) == type_name)
+    }
+
+    /// Identity-safe counterpart of [`Self::find_type_def`]. Resolves the
+    /// source spelling from `scope` first, then recovers the declaration from
+    /// its canonical [`crate::ir::TypeId`]. Proof shape detection may inspect
+    /// the returned AST, but it never chooses that AST by bare name.
+    pub fn find_type_def_in_scope(
+        &self,
+        type_name: &str,
+        scope: Option<&str>,
+    ) -> Option<&'a TypeDef> {
+        let id = self.symbol_table.resolve_type_id_in(type_name, scope)?;
+        let key = &self.symbol_table.type_entry(id).key;
+        match key.scope_str() {
+            None => self.entry_items.iter().find_map(|item| match item {
+                TopLevel::TypeDef(td) if crate::codegen::common::type_def_name(td) == key.name => {
+                    Some(td)
+                }
+                _ => None,
+            }),
+            Some(prefix) => self
+                .dep_modules
+                .iter()
+                .find(|module| module.prefix == prefix)?
+                .type_defs
+                .iter()
+                .find(|td| crate::codegen::common::type_def_name(td) == key.name),
+        }
     }
 }
 
@@ -2262,7 +2316,8 @@ fn populate_fn_contracts_for_scope(
 /// ADTs), LibraryAxiom (Map set/get), MapUpdatePostcondition,
 /// MapKeyTrackedIncrement, SpecEquivalence{,SimpNormalized},
 /// LinearIntSpecEquivalence, EffectfulSpecEquivalence (with Oracle
-/// Lift), LinearArithmetic (catch-all over an unfold chain).
+/// Lift), ConditionalComparisonBridge (identity-pinned Peano relations),
+/// LinearArithmetic (catch-all over an unfold chain).
 /// Unmatched shapes pin `BackendDispatch` and fall through to the
 /// backend's residual chain (linear_recurrence2 emit + sampled /
 /// guarded-domain fallback).
@@ -2662,25 +2717,27 @@ fn induction_demanded_countdown_fns(inputs: &ProofLowerInputs) -> Vec<(Option<St
 ///    -f(b, a)` form. Sub-only (Mul has no anti-commutative law).
 /// 6. `UnaryEqualsBinary { inner_fn }` — outer fn is unary, claim
 ///    binds it to the inner binary fn at a constant.
-/// 7. `LinearArithmetic { unfold_fns, ... }` — catch-all when the
+/// 7. `ConditionalComparisonBridge` — a `when`-premised implication
+///    between canonical Peano comparisons over linear constructor terms.
+/// 8. `LinearArithmetic { unfold_fns, ... }` — catch-all when the
 ///    law reduces to linear arith after unfolding the call chain.
-/// 8. `EnumConstantFold { unfold_fns }` — ground law over fixed
+/// 9. `EnumConstantFold { unfold_fns }` — ground law over fixed
 ///    enum/ADT constructor args, scalar return (#466).
-/// 9. `FiniteDomainCases { givens }` — every given ranges over a
-///    closed finite domain (Bool / fieldless enum, product ≤ 16);
-///    closes by exhaustive `cases` enumeration.
-/// 10. `RingIdentity { unfold_fns }` — unconditional ring identity
+/// 10. `FiniteDomainCases { givens }` — every given ranges over a
+///     closed finite domain (Bool / fieldless enum, product ≤ 16);
+///     closes by exhaustive `cases` enumeration.
+/// 11. `RingIdentity { unfold_fns }` — unconditional ring identity
 ///     over Int-component records (cross-multiplication equality);
 ///     runs before the prelude-simp rung, which would otherwise claim
 ///     the shape and park it on a caught sorry.
-/// 11. `IntDecimalRoundtrip { … }` — canonical decimal-Int
+/// 12. `IntDecimalRoundtrip { … }` — canonical decimal-Int
 ///     parse/serialize roundtrip over a recognized string-pos scanner;
 ///     runs before the prelude-simp rung, which would otherwise claim
 ///     the shape and park it on a caught sorry.
-/// 12. `SimpOverPreludeLemmas { … }` — builtin-roundtrip shape; the
+/// 13. `SimpOverPreludeLemmas { … }` — builtin-roundtrip shape; the
 ///     Lean backend renders it AFTER its legacy chain, so it fires
 ///     exactly where the bare-`sorry` universal used to.
-/// 13. `BackendDispatch` — backend's ad-hoc chain decides.
+/// 14. `BackendDispatch` — backend's ad-hoc chain decides.
 ///
 /// (The induction/spec-equivalence/Map families detected between
 /// these rungs are documented at their detector sites below.)
@@ -2857,6 +2914,16 @@ fn classify_law_strategy(
             helper_fn,
         };
     }
+    // Conditional implication between canonical Peano comparisons. This used
+    // to be recognized twice inside Lean: once while choosing the theorem's
+    // universal statement and again while choosing its proof. Pin it here so
+    // every backend sees one decision and the statement/proof cannot drift.
+    if let Some(plan) = conditional_comparison::detect(law, inputs, scope) {
+        return ProofStrategy::ConditionalComparisonBridge {
+            comparisons: plan.comparisons,
+            negated_premise: plan.negated_premise,
+        };
+    }
     // Nonnegativity / order over a NONLINEAR Int product (`E >= 0` or
     // `prod <= prod`) — the inequality sibling of `RingIdentity`. Placed
     // BEFORE the `LinearArithmetic` catch-all because that rung claims any
@@ -2981,6 +3048,7 @@ fn classify_law_strategy(
     ProofStrategy::BackendDispatch
 }
 
+mod conditional_comparison;
 mod finite_domain;
 mod floor_window;
 mod induction;

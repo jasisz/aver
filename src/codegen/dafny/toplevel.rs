@@ -1387,6 +1387,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::NonlinearNonneg { .. }
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
                 | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
+                | crate::ir::ProofStrategy::ConditionalComparisonBridge { .. }
         )
     });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs
@@ -3045,6 +3046,10 @@ pub fn emit_verify_law(
                     // `BackendDispatch` and its exports stay
                     // byte-identical.
                     | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
+                    // Dafny has no comparison-bridge renderer yet. Keep its
+                    // existing default/fallback gates until it consumes this
+                    // ProofIR strategy explicitly.
+                    | crate::ir::ProofStrategy::ConditionalComparisonBridge { .. }
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

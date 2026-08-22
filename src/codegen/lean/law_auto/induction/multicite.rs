@@ -285,7 +285,7 @@ fn deterministically_universal(
     if prev_law.when.is_some() {
         super::super::recognize_finite_int_domain(prev, prev_law, ctx)
             || super::super::recognize_interval_monotonicity(prev, prev_law, ctx)
-            || super::recognize_conditional_comparison_bridge(prev_law, ctx)
+            || super::recognize_conditional_comparison_bridge(prev, prev_law, ctx)
             || super::recognize_conditional_inductive_generic(prev, prev_law, ctx)
             || matches!(
                 super::super::law_strategy_for(ctx, &prev.fn_name, &prev_law.name),
