@@ -562,7 +562,7 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
     // provides this fn's return type. Synthetic FnDefs (TCO hoists,
     // mid-rewrite fns) the resolver never saw fall through to
     // `ctx.resolve_fn_def`'s on-demand lift.
-    let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+    let resolved_fd = crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)
         .and_then(|id| ctx.resolved_program.fn_by_id(id));
     let resolved_owned = match resolved_fd {
         Some(_) => None,
