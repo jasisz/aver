@@ -349,6 +349,13 @@ impl<'a> ProofLowerInputs<'a> {
     /// share whichever declaration a linear walk found first.
     pub fn find_fn_def_in_scope(&self, call_name: &str, scope: Option<&str>) -> Option<&'a FnDef> {
         let id = self.symbol_table.resolve_fn_id_in(call_name, scope)?;
+        self.find_fn_def_by_id(id)
+    }
+
+    /// Recover the exact source declaration for an already-resolved function.
+    /// Shape discovery remains AST-based, while declaration selection stays
+    /// entirely on the typed identity path.
+    pub fn find_fn_def_by_id(&self, id: crate::ir::FnId) -> Option<&'a FnDef> {
         let key = &self.symbol_table.fn_entry(id).key;
         match key.scope_str() {
             None => self.entry_items.iter().find_map(|item| match item {
@@ -2317,7 +2324,8 @@ fn populate_fn_contracts_for_scope(
 /// MapKeyTrackedIncrement, SpecEquivalence{,SimpNormalized},
 /// LinearIntSpecEquivalence, EffectfulSpecEquivalence (with Oracle
 /// Lift), ConditionalComparisonBridge (identity-pinned Peano relations),
-/// LinearArithmetic (catch-all over an unfold chain).
+/// BoundedIntDomain (identity-pinned finite enumeration), LinearArithmetic
+/// (catch-all over an unfold chain).
 /// Unmatched shapes pin `BackendDispatch` and fall through to the
 /// backend's residual chain (linear_recurrence2 emit + sampled /
 /// guarded-domain fallback).
@@ -2719,25 +2727,27 @@ fn induction_demanded_countdown_fns(inputs: &ProofLowerInputs) -> Vec<(Option<St
 ///    binds it to the inner binary fn at a constant.
 /// 7. `ConditionalComparisonBridge` — a `when`-premised implication
 ///    between canonical Peano comparisons over linear constructor terms.
-/// 8. `LinearArithmetic { unfold_fns, ... }` — catch-all when the
+/// 8. `BoundedIntDomain` — a unary Bool subject over one literal-bounded
+///    half-open Int interval with a non-recursive call cone.
+/// 9. `LinearArithmetic { unfold_fns, ... }` — catch-all when the
 ///    law reduces to linear arith after unfolding the call chain.
-/// 9. `EnumConstantFold { unfold_fns }` — ground law over fixed
-///    enum/ADT constructor args, scalar return (#466).
-/// 10. `FiniteDomainCases { givens }` — every given ranges over a
+/// 10. `EnumConstantFold { unfold_fns }` — ground law over fixed
+///     enum/ADT constructor args, scalar return (#466).
+/// 11. `FiniteDomainCases { givens }` — every given ranges over a
 ///     closed finite domain (Bool / fieldless enum, product ≤ 16);
 ///     closes by exhaustive `cases` enumeration.
-/// 11. `RingIdentity { unfold_fns }` — unconditional ring identity
+/// 12. `RingIdentity { unfold_fns }` — unconditional ring identity
 ///     over Int-component records (cross-multiplication equality);
 ///     runs before the prelude-simp rung, which would otherwise claim
 ///     the shape and park it on a caught sorry.
-/// 12. `IntDecimalRoundtrip { … }` — canonical decimal-Int
+/// 13. `IntDecimalRoundtrip { … }` — canonical decimal-Int
 ///     parse/serialize roundtrip over a recognized string-pos scanner;
 ///     runs before the prelude-simp rung, which would otherwise claim
 ///     the shape and park it on a caught sorry.
-/// 13. `SimpOverPreludeLemmas { … }` — builtin-roundtrip shape; the
+/// 14. `SimpOverPreludeLemmas { … }` — builtin-roundtrip shape; the
 ///     Lean backend renders it AFTER its legacy chain, so it fires
 ///     exactly where the bare-`sorry` universal used to.
-/// 14. `BackendDispatch` — backend's ad-hoc chain decides.
+/// 15. `BackendDispatch` — backend's ad-hoc chain decides.
 ///
 /// (The induction/spec-equivalence/Map families detected between
 /// these rungs are documented at their detector sites below.)
@@ -2924,6 +2934,17 @@ fn classify_law_strategy(
             negated_premise: plan.negated_premise,
         };
     }
+    // Literal-bounded Int enumeration. Proof lowering validates the guard,
+    // unary Bool subject, exact subject identity, and non-recursive call cone;
+    // Lean only chooses its bounded-Nat enumeration syntax from this plan.
+    if let Some(plan) = bounded_int_domain::detect(law, fn_name, inputs, scope) {
+        return ProofStrategy::BoundedIntDomain {
+            var: plan.var,
+            lo: plan.lo,
+            hi: plan.hi,
+            subject: plan.subject,
+        };
+    }
     // Nonnegativity / order over a NONLINEAR Int product (`E >= 0` or
     // `prod <= prod`) — the inequality sibling of `RingIdentity`. Placed
     // BEFORE the `LinearArithmetic` catch-all because that rung claims any
@@ -3048,6 +3069,7 @@ fn classify_law_strategy(
     ProofStrategy::BackendDispatch
 }
 
+mod bounded_int_domain;
 mod conditional_comparison;
 mod finite_domain;
 mod floor_window;
