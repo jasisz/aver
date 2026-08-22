@@ -695,6 +695,203 @@ fn the_ceiling_does_not_leak_into_internal_re_parses() {
     assert!(error.contains("max 10000"), "{error}");
 }
 
+// ── h-ter. one tie-break, shared by both dials ──────────────────────────
+
+/// Two entries naming the same fn, the larger ceiling written second. Under
+/// first-match-wins the narrow shard would govern a block it was never about,
+/// and moving either entry up the file would change the answer — the order of
+/// `aver.toml` would become part of the meaning of the project. The most
+/// permissive matching entry wins instead, for the case ceiling exactly as
+/// for the step budget.
+const CEILING_NARROW_FIRST: &str = r#"
+[[verify.costly]]
+fn         = "identity"
+max-cases  = 11000
+reason     = "the narrow shard of the fixpoint corpus"
+
+[[verify.costly]]
+fn         = "identity"
+max-cases  = 40000
+reason     = "and the wide shard, which is the corpus this file declares"
+"#;
+
+const CEILING_WIDE_FIRST: &str = r#"
+[[verify.costly]]
+fn         = "identity"
+max-cases  = 40000
+reason     = "and the wide shard, which is the corpus this file declares"
+
+[[verify.costly]]
+fn         = "identity"
+max-cases  = 11000
+reason     = "the narrow shard of the fixpoint corpus"
+"#;
+
+#[test]
+fn the_largest_matching_max_cases_wins_even_when_it_is_written_last() {
+    let dir = project(
+        "budget-cases-tiebreak",
+        "big_domain.av",
+        CEILING_NARROW_FIRST,
+    );
+    let out = verify(&dir, &[]);
+    assert!(
+        stdout_of(&out).contains("✓ identity law fixpoint      12000/12000"),
+        "the entry that grants the most room governs the block, wherever it sits in the file:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+/// The same pair for `step-limit`, which already resolved this way: it is
+/// here to pin the two dials to one another, so a later change to either
+/// tie-break has to move both or fail.
+#[test]
+fn the_largest_matching_step_limit_wins_even_when_it_is_written_last() {
+    let dir = project(
+        "budget-limit-tiebreak",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+step-limit = 2000000
+reason     = "the ordinary cases of this fn"
+
+[[verify.costly]]
+fn         = "countdown"
+step-limit = 50000000
+reason     = "and the four-hundred-thousand-step one this file declares"
+"#,
+    );
+    let out = verify(&dir, &[]);
+    let text = stdout_of(&out);
+    assert!(
+        text.contains("✓ countdown      2/2"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("limit 50M"),
+        "the budget in force must be the most permissive one, not the first:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+/// Order-independence is the point of the rule, so it is asserted directly:
+/// the same two entries in the other order produce the same run, byte for
+/// byte. Each entry is an independent statement about one function, and a
+/// reader who finds one does not have to scan the rest of the list.
+#[test]
+fn reordering_two_matching_entries_changes_nothing() {
+    let narrow_first = project(
+        "budget-cases-order-narrow",
+        "big_domain.av",
+        CEILING_NARROW_FIRST,
+    );
+    let wide_first = project(
+        "budget-cases-order-wide",
+        "big_domain.av",
+        CEILING_WIDE_FIRST,
+    );
+    let a = verify(&narrow_first, &[]);
+    let b = verify(&wide_first, &[]);
+
+    assert_eq!(
+        a.status.code(),
+        b.status.code(),
+        "the exit code depended on the order of the entries:\nnarrow first:\n{}\nwide first:\n{}",
+        format_output(&a),
+        format_output(&b)
+    );
+    assert_eq!(
+        stdout_of(&a),
+        stdout_of(&b),
+        "the report depended on the order of the entries:\nnarrow first:\n{}\nwide first:\n{}",
+        format_output(&a),
+        format_output(&b)
+    );
+    assert_eq!(a.status.code(), Some(0), "{}", format_output(&a));
+}
+
+/// An entry that matched a live block and was out-granted by another entry
+/// is not stale. Staleness asks whether an entry raises anything over the
+/// project default and whether it found a block at all — never which of two
+/// entries won, because losing a tie-break says nothing about whether the
+/// declaration is still true of the project.
+#[test]
+fn an_entry_out_granted_by_another_is_not_reported_stale() {
+    let dir = project(
+        "budget-subsumed",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+step-limit = 2000000
+max-cases  = 11000
+reason     = "the ordinary cases of this fn, subsumed by the entry below"
+
+[[verify.costly]]
+fn         = "countdown"
+step-limit = 50000000
+max-cases  = 40000
+reason     = "and the four-hundred-thousand-step one this file declares"
+"#,
+    );
+    let out = verify(&dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        !stderr.contains("[[verify.costly]]"),
+        "a subsumed entry is a live declaration, not a stale one:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+// ── h-quater. an entry only ever raises ─────────────────────────────────
+
+/// `[[verify.costly]]` says "this case is expensive, give it room". A value
+/// below the number already in force says the opposite — a ratchet keeping
+/// something cheap — which is a different feature under a different name.
+/// Under a section called `costly` it is almost always a typo, so it is
+/// refused at load, where it costs nothing.
+#[test]
+fn a_costly_entry_below_the_number_in_force_is_a_config_error() {
+    let cases: [(&str, &str, &str); 4] = [
+        (
+            "limit-under-compiled-default",
+            "[[verify.costly]]\nfn = \"countdown\"\nstep-limit = 500000\nreason = \"expensive\"\n",
+            "`step-limit` = 500000 raises nothing — the step budget in force is 1000000",
+        ),
+        (
+            "limit-equal-to-the-project-default",
+            "[verify]\nstep-limit = 5000000\n\n[[verify.costly]]\nfn = \"countdown\"\nstep-limit = 5000000\nreason = \"expensive\"\n",
+            "`step-limit` = 5000000 raises nothing — the step budget in force is 5000000",
+        ),
+        (
+            "cases-under-compiled-default",
+            "[[verify.costly]]\nfn = \"identity\"\nmax-cases = 500\nreason = \"wide\"\n",
+            "`max-cases` = 500 raises nothing — the case ceiling in force is 10000",
+        ),
+        (
+            "cases-under-the-project-ceiling",
+            "[verify]\nmax-cases = 40000\n\n[[verify.costly]]\nfn = \"identity\"\nmax-cases = 20000\nreason = \"wide\"\n",
+            "`max-cases` = 20000 raises nothing — the case ceiling in force is 40000",
+        ),
+    ];
+    for (name, toml, expected) in cases {
+        let dir = project(&format!("budget-lowering-{name}"), "plain.av", toml);
+        let out = verify(&dir, &[]);
+        let text = format_output(&out);
+        assert!(
+            text.contains(expected),
+            "[[verify.costly]] {name} must say `{expected}`:\n{text}"
+        );
+        assert_ne!(out.status.code(), Some(0), "{text}");
+    }
+}
+
 // ── i. the fuzz guard, asserted ─────────────────────────────────────────
 
 /// The fuzz targets call the runner directly with `config: None` and never

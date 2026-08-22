@@ -2438,12 +2438,19 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
     }
 }
 
-/// Report `[[verify.costly]]` entries that raised nothing.
+/// Report `[[verify.costly]]` entries that found nothing to raise.
 ///
 /// Same hygiene `[[check.suppress]]` gets, and for the same reason: a waiver
 /// that points at a fn or a path this run never saw is a claim about the
 /// project that has quietly stopped being true. Written to stderr so `--json`
 /// stdout stays a clean stream, and never changes the exit code.
+///
+/// Whether an entry raises at all is settled against the project default,
+/// once, at load: an entry not above it is a config error. So the only
+/// question left here is whether the entry found a block, and it is never
+/// which of two matching entries won — an entry out-granted by another still
+/// matched a live block, and losing a tie-break says nothing about whether
+/// the declaration is still true of the project.
 fn report_stale_verify_costly(
     config: Option<&aver::config::ProjectConfig>,
     file_results: &[VerifyFileResult],
@@ -2455,27 +2462,25 @@ fn report_stale_verify_costly(
     if cfg.verify.costly.is_empty() {
         return;
     }
-    let default_limit = cfg.verify_step_limit();
     let mut covered = vec![false; cfg.verify.costly.len()];
-    let mut raised = vec![false; cfg.verify.costly.len()];
+    let mut matched = vec![false; cfg.verify.costly.len()];
     for fr in file_results {
         let key = aver::diagnostics::vm_verify::costly_glob_key(&fr.path, Some(module_root));
-        for (idx, entry) in cfg.verify.costly.iter().enumerate() {
+        for idx in 0..cfg.verify.costly.len() {
             if cfg.verify_costly_covers_file(idx, &key) {
                 covered[idx] = true;
             }
-            if moves_a_dial(entry, default_limit)
-                && fr
-                    .blocks
-                    .iter()
-                    .any(|block| cfg.verify_costly_applies(idx, &block.fn_name, &key))
+            if fr
+                .blocks
+                .iter()
+                .any(|block| cfg.verify_costly_applies(idx, &block.fn_name, &key))
             {
-                raised[idx] = true;
+                matched[idx] = true;
             }
         }
     }
     for (idx, entry) in cfg.verify.costly.iter().enumerate() {
-        if raised[idx] {
+        if matched[idx] {
             continue;
         }
         let scope = if entry.files.is_empty() {
@@ -2483,10 +2488,8 @@ fn report_stale_verify_costly(
         } else {
             entry.files.join(", ")
         };
-        let detail = if !moves_a_dial(entry, default_limit) {
-            "does not raise anything — its step-limit is not above the project default"
-        } else if covered[idx] {
-            "matched files in this run but raised no case's budget — the fn may be stale"
+        let detail = if covered[idx] {
+            "matched files in this run but no verify block of that fn — the fn may be stale"
         } else {
             "matched no verified file — the path may be stale"
         };
@@ -2498,14 +2501,6 @@ fn report_stale_verify_costly(
             detail
         );
     }
-}
-
-/// Whether an entry moves either dial at all, before asking whether it found
-/// a block to move it for. A `max-cases` is always a move — it is the ceiling
-/// for the blocks it names, up or down — while a `step-limit` at or below the
-/// project default raises nothing.
-fn moves_a_dial(entry: &aver::config::VerifyCostly, default_limit: u64) -> bool {
-    entry.max_cases.is_some() || entry.step_limit.is_some_and(|limit| limit > default_limit)
 }
 
 /// Render a step count the way a reader compares budgets: `8.2M`, `50M`,

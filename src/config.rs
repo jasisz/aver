@@ -141,7 +141,9 @@ pub const DEFAULT_VERIFY_MAX_CASES: usize = 10_000;
 /// block and a block belongs to exactly one function: `step-limit` says one
 /// case of this fn may cost more, `max-cases` says this fn's `given` domain
 /// may be wider. An entry may raise either or both; one that raises neither
-/// is refused at load.
+/// — because it sets no dial, or because a dial it sets is not above the
+/// number already in force — is refused at load. So an entry only ever
+/// raises, and where several match one block the most permissive wins.
 #[derive(Debug, Clone)]
 pub struct VerifyCostly {
     /// Name of the function whose verify blocks get the raised budgets
@@ -187,7 +189,9 @@ pub struct VerifyCaseCeiling {
     /// compiled-in default.
     default: usize,
     /// The entries whose globs cover this file and that set `max-cases`, in
-    /// `aver.toml` order — first match wins.
+    /// `aver.toml` order. The order is how the file reads, not what it
+    /// means: the most permissive of the entries naming a function governs
+    /// that function's blocks.
     raises: Vec<VerifyCostly>,
 }
 
@@ -206,16 +210,46 @@ impl VerifyCaseCeiling {
         }
     }
 
-    /// The ceiling for the verify blocks of `fn_name`: the first covering
-    /// `[[verify.costly]]` entry that names it and sets `max-cases`, else
-    /// the project default.
+    /// The ceiling for the verify blocks of `fn_name`: the project default,
+    /// raised by the most permissive covering `[[verify.costly]]` entry that
+    /// names it — the tie-break `step-limit` uses, through the same helper.
     pub fn for_fn(&self, fn_name: &str) -> usize {
-        self.raises
-            .iter()
-            .find(|entry| entry.matches_fn(fn_name))
-            .and_then(|entry| entry.max_cases)
-            .unwrap_or(self.default)
+        most_permissive_raise(
+            self.default,
+            self.raises
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.matches_fn(fn_name))
+                .map(|(idx, entry)| (idx, entry.max_cases)),
+        )
+        .0
     }
+}
+
+/// Resolve one `[[verify.costly]]` dial for one verify block: `base`, raised
+/// by the most permissive value among the entries that match the block.
+///
+/// Both dials go through this, so the two cannot drift apart. Most
+/// permissive rather than first match because first match makes the order of
+/// entries in `aver.toml` semantic: adding an entry near the top silently
+/// changes which one governs a block elsewhere, and a reader has to scan the
+/// whole list to know what applies. This way each entry is an independent
+/// statement about one function, the answer does not depend on order, and
+/// adding an entry can only loosen, never re-point.
+///
+/// Returns the index of the entry that did the raising, so a report can name
+/// it. An exact tie goes to the earlier entry: the value is the same either
+/// way, so that only settles which entry gets named.
+fn most_permissive_raise<T: Ord + Copy>(
+    base: T,
+    candidates: impl IntoIterator<Item = (usize, Option<T>)>,
+) -> (T, Option<usize>) {
+    candidates
+        .into_iter()
+        .filter_map(|(idx, value)| value.map(|value| (idx, value)))
+        .filter(|&(_, value)| value > base)
+        .max_by_key(|&(idx, value)| (value, std::cmp::Reverse(idx)))
+        .map_or((base, None), |(idx, value)| (value, Some(idx)))
 }
 
 /// `[verify]` policy: how much work one verify case is allowed to be, and
@@ -273,7 +307,7 @@ pub struct ProjectConfig {
     /// Check-time warning suppressions.
     pub check_suppressions: Vec<CheckSuppression>,
     /// `[verify]` budgets: per-case step limit, case-count ceiling, and the
-    /// `[[verify.costly]]` entries that raise the first one per function.
+    /// `[[verify.costly]]` entries that raise either of them per function.
     pub verify: VerifySettings,
     /// How `?!` products handle branch failure.
     pub independence_mode: IndependenceMode,
@@ -479,9 +513,9 @@ impl ProjectConfig {
         }
     }
 
-    /// The ceiling for one function's verify block in one file: the first
-    /// matching `[[verify.costly]]` entry that sets `max-cases`, else
-    /// `[verify] max-cases`, else the compiled-in default.
+    /// The ceiling for one function's verify block in one file: `[verify]
+    /// max-cases`, else the compiled-in default, raised by the most
+    /// permissive matching `[[verify.costly]]` entry that sets `max-cases`.
     ///
     /// The runner's `--hostile` cartesian asks this per block, exactly as the
     /// parser asks the same question of the same entries per block.
@@ -494,26 +528,17 @@ impl ProjectConfig {
     /// sets `step-limit`.
     ///
     /// Returns the index of the entry that did the raising so the report can
-    /// name it and so an entry that raised nothing can be called stale. Ties
-    /// go to the earlier entry, so the answer does not depend on iteration
-    /// order.
+    /// name it and so an entry that matched nothing can be called stale.
     pub fn verify_budget_for(&self, fn_name: &str, file_path: &str) -> (u64, Option<usize>) {
-        let base = self.verify_step_limit();
-        let raised = (0..self.verify.costly.len())
-            .filter(|idx| self.verify_costly_applies(*idx, fn_name, file_path))
-            .filter(|idx| {
-                self.verify.costly[*idx]
-                    .step_limit
-                    .is_some_and(|l| l > base)
-            })
-            .max_by_key(|idx| (self.verify.costly[*idx].step_limit, std::cmp::Reverse(*idx)));
-        match raised {
-            Some(idx) => (
-                self.verify.costly[idx].step_limit.unwrap_or(base),
-                Some(idx),
-            ),
-            None => (base, None),
-        }
+        most_permissive_raise(
+            self.verify_step_limit(),
+            self.verify
+                .costly
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| self.verify_costly_applies(*idx, fn_name, file_path))
+                .map(|(idx, entry)| (idx, entry.step_limit)),
+        )
     }
 
     /// True when at least one `[[shape.expected]]` glob matches `file_path`.
@@ -1089,6 +1114,17 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
         None => Vec::new(),
     };
 
+    // The numbers an entry has to beat. A `[[verify.costly]]` entry says
+    // "this case is expensive, give it room"; a lower number says the
+    // opposite — a ratchet keeping something cheap, which is a different
+    // feature and would need its own name — and an equal one says nothing at
+    // all. Under a section called `costly` either is almost always a mistake,
+    // and refusing it here costs nothing. It is also the reversible
+    // direction: the ban can be relaxed later without breaking anyone's file,
+    // while allowing it and withdrawing it later breaks configs.
+    let project_step_limit = step_limit.unwrap_or(DEFAULT_VERIFY_STEP_LIMIT);
+    let project_max_cases = max_cases.unwrap_or(DEFAULT_VERIFY_MAX_CASES);
+
     let mut costly = Vec::new();
     for (i, entry) in arr.iter().enumerate() {
         let t = entry
@@ -1125,14 +1161,32 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
         }
 
         let context = format!("[[verify.costly]][{}]", i);
-        let step_limit = parse_positive_u64(t, &context, "step-limit")?;
-        let max_cases = parse_positive_u64(t, &context, "max-cases")?.map(|n| n as usize);
+        let entry_step_limit = parse_positive_u64(t, &context, "step-limit")?;
+        let entry_max_cases = parse_positive_u64(t, &context, "max-cases")?.map(|n| n as usize);
 
-        if step_limit.is_none() && max_cases.is_none() {
+        if entry_step_limit.is_none() && entry_max_cases.is_none() {
             return Err(format!(
                 "aver.toml: [[verify.costly]][{}] raises nothing — set `step-limit`, `max-cases`, or both",
                 i
             ));
+        }
+        if let Some(limit) = entry_step_limit {
+            reject_lowering(
+                &context,
+                "step-limit",
+                limit,
+                project_step_limit,
+                "step budget",
+            )?;
+        }
+        if let Some(cases) = entry_max_cases {
+            reject_lowering(
+                &context,
+                "max-cases",
+                cases,
+                project_max_cases,
+                "case ceiling",
+            )?;
         }
 
         let files = if let Some(val) = t.get("files") {
@@ -1157,8 +1211,8 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
         costly.push(VerifyCostly {
             fn_name,
             files,
-            step_limit,
-            max_cases,
+            step_limit: entry_step_limit,
+            max_cases: entry_max_cases,
             reason,
         });
     }
@@ -1168,6 +1222,25 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
         max_cases,
         costly,
     })
+}
+
+/// Refuse a `[[verify.costly]]` dial that is not above the number already in
+/// force, naming both. Keeps one sentence true of both dials: an entry only
+/// ever raises, and the most permissive matching entry wins.
+fn reject_lowering<T: Ord + std::fmt::Display>(
+    context: &str,
+    key: &str,
+    entry_value: T,
+    in_force: T,
+    dial: &str,
+) -> Result<(), String> {
+    if entry_value > in_force {
+        return Ok(());
+    }
+    Err(format!(
+        "aver.toml: {} `{}` = {} raises nothing — the {} in force is {}, and a [[verify.costly]] entry may only raise it",
+        context, key, entry_value, dial, in_force
+    ))
 }
 
 /// Read an optional positive-integer key out of a `[verify]`-family table.
@@ -2059,7 +2132,7 @@ reason = "Core corpus includes consensus-max 10,000-byte scripts"
     }
 
     #[test]
-    fn verify_max_cases_takes_the_first_matching_entry_that_sets_it() {
+    fn verify_max_cases_takes_the_most_permissive_matching_entry() {
         let toml = r#"
 [[verify.costly]]
 fn = "checkScript"
@@ -2068,23 +2141,68 @@ reason = "the slow ones — this entry says nothing about width"
 
 [[verify.costly]]
 fn = "checkScript"
-max-cases = 40000
-reason = "and the wide ones"
+max-cases = 90000
+reason = "the widest shard"
 
 [[verify.costly]]
 fn = "checkScript"
-max-cases = 90000
-reason = "never reached — an earlier entry already answered"
+max-cases = 40000
+reason = "a narrower one, which does not take the wider one back"
 "#;
         let config = ProjectConfig::parse(toml).unwrap();
         assert_eq!(
             config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
-            40_000
+            90_000
         );
         // The ceiling a parser carries for one file answers the same way.
         let ceiling = config.verify_case_ceiling("domain/scriptcases1.av");
-        assert_eq!(ceiling.for_fn("checkScript"), 40_000);
+        assert_eq!(ceiling.for_fn("checkScript"), 90_000);
         assert_eq!(ceiling.for_fn("checkTx"), DEFAULT_VERIFY_MAX_CASES);
+    }
+
+    /// The tie-break is one rule, so writing the entries in the other order
+    /// has to give the same two answers — for both dials.
+    #[test]
+    fn neither_dial_depends_on_the_order_of_the_entries() {
+        let narrow_first = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 5000000
+max-cases = 40000
+reason = "the narrow shard"
+
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+max-cases = 90000
+reason = "the wide one"
+"#;
+        let wide_first = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+max-cases = 90000
+reason = "the wide one"
+
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 5000000
+max-cases = 40000
+reason = "the narrow shard"
+"#;
+        for toml in [narrow_first, wide_first] {
+            let config = ProjectConfig::parse(toml).unwrap();
+            assert_eq!(
+                config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+                90_000
+            );
+            assert_eq!(
+                config
+                    .verify_budget_for("checkScript", "domain/scriptcases1.av")
+                    .0,
+                50_000_000
+            );
+        }
     }
 
     #[test]
@@ -2158,22 +2276,37 @@ reason = "and the consensus-max ones in the last shard"
         }
     }
 
+    /// An entry only ever raises. A dial that is not above the number
+    /// already in force states the opposite intent — a ratchet keeping
+    /// something cheap — so it is refused at load, naming both numbers.
     #[test]
-    fn verify_costly_below_the_default_raises_nothing() {
-        let toml = r#"
-[verify]
-step-limit = 5000000
-
-[[verify.costly]]
-fn = "checkScript"
-step-limit = 2000000
-reason = "written before the project default was raised past it"
-"#;
-        let config = ProjectConfig::parse(toml).unwrap();
-        assert_eq!(
-            config.verify_budget_for("checkScript", "domain/scriptcases1.av"),
-            (5_000_000, None)
-        );
+    fn verify_costly_not_above_the_number_in_force_is_a_config_error() {
+        let cases = [
+            (
+                "[verify]\nstep-limit = 5000000\n\n[[verify.costly]]\nfn = \"checkScript\"\nstep-limit = 2000000\nreason = \"written before the project default was raised past it\"\n",
+                "`step-limit` = 2000000 raises nothing — the step budget in force is 5000000",
+            ),
+            (
+                "[[verify.costly]]\nfn = \"checkScript\"\nstep-limit = 1000000\nreason = \"exactly the compiled-in budget\"\n",
+                "`step-limit` = 1000000 raises nothing — the step budget in force is 1000000",
+            ),
+            (
+                "[verify]\nmax-cases = 40000\n\n[[verify.costly]]\nfn = \"checkScript\"\nmax-cases = 20000\nreason = \"written before the project ceiling was raised past it\"\n",
+                "`max-cases` = 20000 raises nothing — the case ceiling in force is 40000",
+            ),
+            (
+                "[[verify.costly]]\nfn = \"checkScript\"\nmax-cases = 10000\nreason = \"exactly the compiled-in ceiling\"\n",
+                "`max-cases` = 10000 raises nothing — the case ceiling in force is 10000",
+            ),
+        ];
+        for (toml, expected) in cases {
+            let error = ProjectConfig::parse(toml).expect_err("an entry may only raise");
+            assert!(error.contains(expected), "{error}");
+            assert!(
+                error.contains("may only raise it"),
+                "the message has to say which direction is allowed: {error}"
+            );
+        }
     }
 
     #[test]
