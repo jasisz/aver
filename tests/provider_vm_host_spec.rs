@@ -290,7 +290,7 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     );
     let project_verify_report = report(&project_verify);
     assert!(project_verify_report.contains("5/5 cases passed"));
-    assert!(!project_verify_report.contains("skipped — type errors"));
+    assert!(!project_verify_report.contains("not checked — type errors"));
     assert!(!project_verify_report.contains("unknown capability"));
 
     let independent_path = app.join("independent.av").to_string_lossy().into_owned();
@@ -367,8 +367,8 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     );
     assert!(!mismatched_verify.status.success());
     let mismatched_verify_report = report(&mismatched_verify);
-    assert!(mismatched_verify_report.contains("skipped — provider composition error"));
-    assert!(!mismatched_verify_report.contains("skipped — type errors"));
+    assert!(mismatched_verify_report.contains("not checked — provider composition error"));
+    assert!(!mismatched_verify_report.contains("not checked — type errors"));
 
     let mismatched_audit = run_aver(
         &cache,
