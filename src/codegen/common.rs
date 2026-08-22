@@ -1400,6 +1400,26 @@ pub fn fn_id_for_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnI
     ctx.symbol_table.fn_id_of(&fn_key)
 }
 
+/// [`fn_id_for_decl`] for a declaration the emitter is writing right now.
+/// A `&FnDef` the context does not own by identity — the lifted form of an
+/// effectful function, a rewritten body — is keyed in the module scope it is
+/// being emitted under: a dependency's lifted `get` resolves to
+/// `Infra.Store.get`, not to an entry function that happens to share the
+/// bare name. Identical to [`fn_id_for_decl`] for every owned declaration
+/// and for everything emitted in the entry scope.
+pub fn fn_id_for_emitted_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnId> {
+    if let Some(prefix) = fn_owning_scope_for(ctx, fd) {
+        return ctx
+            .symbol_table
+            .fn_id_of(&crate::ir::FnKey::in_module(prefix.to_string(), &fd.name));
+    }
+    let key = match ctx.active_module_scope() {
+        Some(prefix) => crate::ir::FnKey::in_module(prefix, &fd.name),
+        None => crate::ir::FnKey::entry(&fd.name),
+    };
+    ctx.symbol_table.fn_id_of(&key)
+}
+
 /// Resolve a dotted source-level name (`fn`, `Module.fn`) to the
 /// opaque `FnId`. Used by emit code that walks AST expressions
 /// (e.g. detecting calls to opaque-emitted fns inside a law body)
@@ -3704,6 +3724,81 @@ pub(crate) fn verify_reachable_fn_names(items: &[TopLevel]) -> HashSet<String> {
     reachable
 }
 
+/// Oracle v1, dependency side: for each dependency module, the names of
+/// its functions some proof cone reaches, keyed by module prefix.
+///
+/// A dependency file carries no sampled `verify` blocks of its own, so the
+/// entry's rule ("lift an effectful function only when a claim reaches it")
+/// is applied through the consumers: the roots are the qualified calls
+/// (`Infra.Store.get(...)`) spelled in the entry's `verify` blocks and in the
+/// bodies of the entry functions those blocks reach, plus each module's own
+/// exposed laws; the closure then follows every call inside the module
+/// (bare names stay in the module, qualified names cross into the module
+/// they name). The purpose of the entry filter is kept: an effectful loop
+/// nobody proves anything about is not lifted in a dependency either.
+pub(crate) fn dependency_reachable_fn_names(
+    ctx: &CodegenContext,
+) -> std::collections::HashMap<String, HashSet<String>> {
+    let entry_reachable = verify_reachable_fn_names(&ctx.items);
+    let mut pending: Vec<(String, String)> = Vec::new();
+    let push = |scope: Option<&str>, name: &str, pending: &mut Vec<(String, String)>| {
+        if let Some((prefix, bare)) = name.rsplit_once('.') {
+            if ctx.modules.iter().any(|m| m.prefix == prefix) {
+                pending.push((prefix.to_string(), bare.to_string()));
+            }
+        } else if let Some(prefix) = scope {
+            pending.push((prefix.to_string(), name.to_string()));
+        }
+    };
+    for item in &ctx.items {
+        let mut refs = HashSet::new();
+        match item {
+            TopLevel::Verify(vb) => collect_verify_block_refs(vb, &mut refs),
+            TopLevel::FnDef(fd) if entry_reachable.contains(&fd.name) => {
+                collect_called_idents_in_body(&fd.body, &mut refs)
+            }
+            _ => continue,
+        }
+        for name in refs {
+            push(None, &name, &mut pending);
+        }
+    }
+    for module in &ctx.modules {
+        for vb in &module.verify_laws {
+            let mut refs = HashSet::new();
+            collect_verify_block_refs(vb, &mut refs);
+            for name in refs {
+                push(Some(&module.prefix), &name, &mut pending);
+            }
+        }
+    }
+    let mut reachable: std::collections::HashMap<String, HashSet<String>> =
+        std::collections::HashMap::new();
+    while let Some((prefix, name)) = pending.pop() {
+        if !reachable
+            .entry(prefix.clone())
+            .or_default()
+            .insert(name.clone())
+        {
+            continue;
+        }
+        let Some(fd) = ctx
+            .modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .and_then(|m| m.fn_defs.iter().find(|fd| fd.name == name))
+        else {
+            continue;
+        };
+        let mut called = HashSet::new();
+        collect_called_idents_in_body(&fd.body, &mut called);
+        for callee in called {
+            push(Some(&prefix), &callee, &mut pending);
+        }
+    }
+    reachable
+}
+
 fn collect_verify_block_refs(vb: &VerifyBlock, out: &mut HashSet<String>) {
     out.insert(vb.fn_name.clone());
     for (lhs, rhs) in &vb.cases {
@@ -3747,6 +3842,13 @@ fn collect_called_idents(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
             if let Expr::Ident(name) | Expr::Resolved { name, .. } = &callee.node {
                 out.insert(name.clone());
             } else {
+                // A dotted callee (`Infra.Store.get(...)`) is recorded under
+                // the qualified name it spells, which is how a dependency
+                // module's function is reached from a consumer; the walk
+                // into the callee keeps every bare identifier it mentions.
+                if let Some(name) = crate::ir::expr_to_dotted_name(&callee.node) {
+                    out.insert(name);
+                }
                 collect_called_idents(callee, out);
             }
             for a in args {

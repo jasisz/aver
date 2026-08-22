@@ -285,12 +285,73 @@ fn try_lift_error_prop_stmt(
 /// (from `cfg.effectful_helpers`), return its declared effect list.
 /// Otherwise `None` — caller proceeds with standard non-injected
 /// lowering.
+///
+/// A bare callee (`helper(...)`) is looked up by its name; a dotted one
+/// (`Infra.Store.get(...)`, an `Attr` chain) by the qualified name it
+/// spells, which is how a dependency module's lifted function is keyed.
 fn callee_helper_effects(callee: &Expr, cfg: &LiftConfig) -> Option<Vec<String>> {
-    let name = match callee {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
-        _ => return None,
-    };
+    let name = dotted_callee_name(callee)?;
     cfg.effectful_helpers.get(&name).cloned()
+}
+
+/// The name a callee expression spells: `f`, or `A.B.f` for an `Attr`
+/// chain whose head is an identifier. `None` for a computed callee.
+fn dotted_callee_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
+        Expr::Attr(base, field) => Some(format!("{}.{}", dotted_callee_name(&base.node)?, field)),
+        _ => None,
+    }
+}
+
+/// The `(path, oracle..., fresh resource...)` arguments a call to an
+/// effectful helper with `helper_effects` receives ahead of its source
+/// arguments, spelled with the CALLER's bindings. The path is the current
+/// scope's path expression (a helper call is a sequential point, not a
+/// fresh branch; the helper's own `!`/`?!` bodies build their own
+/// `BranchPath.child` threading). An oracle the caller does not hold is
+/// skipped: the effect checker requires a caller to declare every effect
+/// of its callees, so the binding exists whenever the program checked.
+fn helper_injection(
+    helper_effects: &[String],
+    cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
+    line: SourceLine,
+) -> Vec<Spanned<Expr>> {
+    let mut injected: Vec<Spanned<Expr>> = Vec::new();
+    let needs_path = helper_effects.iter().any(|e| {
+        matches!(
+            classify_effect(cfg, e).map(|c| c.dimension),
+            Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
+        )
+    });
+    if needs_path {
+        injected.push(path_expr.clone());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for e in helper_effects {
+        if !seen.insert(e.clone()) {
+            continue;
+        }
+        let Some(c) = classify_effect(cfg, e) else {
+            continue;
+        };
+        if matches!(c.dimension, EffectDimension::Output) {
+            continue;
+        }
+        if let Some(oracle_name) = cfg.oracles.get(e) {
+            injected.push(spanned(Expr::Ident(oracle_name.clone()), line));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    for e in helper_effects {
+        if seen.insert(e.clone())
+            && let Some(fresh_name) = cfg.fresh_resources.get(e)
+        {
+            injected.push(spanned(Expr::Ident(fresh_name.clone()), line));
+        }
+    }
+    injected
 }
 
 /// Deterministic binding name for the k-th `?!` branch's unwrapped
@@ -499,46 +560,10 @@ fn lift_expr(
             } else if let Some(helper_effects) = callee_helper_effects(&callee.node, cfg) {
                 // Oracle v1: call site to an effectful user helper —
                 // inject `(path, oracle...)` args so the call matches
-                // the helper's lifted arity. Path is the current
-                // scope's path expression (no `.child(path, i)` because
-                // a helper call is a sequential point, not a fresh
-                // branch); the helper's own `!`/`?!` bodies build
-                // their own `BranchPath.child` threading.
+                // the helper's lifted arity.
                 let new_callee = lift_expr(callee, cfg, path_expr, counter)?;
                 let new_args = lift_args(args, cfg, path_expr, counter)?;
-                let mut injected: Vec<Spanned<Expr>> = Vec::new();
-                let needs_path = helper_effects.iter().any(|e| {
-                    matches!(
-                        classify_effect(cfg, e).map(|c| c.dimension),
-                        Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
-                    )
-                });
-                if needs_path {
-                    injected.push(path_expr.clone());
-                }
-                let mut seen = std::collections::HashSet::new();
-                for e in &helper_effects {
-                    if !seen.insert(e.clone()) {
-                        continue;
-                    }
-                    let Some(c) = classify_effect(cfg, e) else {
-                        continue;
-                    };
-                    if matches!(c.dimension, EffectDimension::Output) {
-                        continue;
-                    }
-                    if let Some(oracle_name) = cfg.oracles.get(e) {
-                        injected.push(spanned(Expr::Ident(oracle_name.clone()), expr.line));
-                    }
-                }
-                let mut seen = std::collections::HashSet::new();
-                for e in &helper_effects {
-                    if seen.insert(e.clone())
-                        && let Some(fresh_name) = cfg.fresh_resources.get(e)
-                    {
-                        injected.push(spanned(Expr::Ident(fresh_name.clone()), expr.line));
-                    }
-                }
+                let mut injected = helper_injection(&helper_effects, cfg, path_expr, expr.line);
                 injected.extend(new_args);
                 Expr::FnCall(Box::new(new_callee), injected)
             } else {
@@ -652,10 +677,22 @@ fn lift_expr(
         }
 
         Expr::TailCall(inner) => {
+            // A self or mutual tail call is a call like any other once the
+            // proof backends spell it: after tail-call optimisation the
+            // callee is a lifted effectful helper (the function itself or a
+            // sibling), so it receives the same `(path, oracle...)` prefix a
+            // plain call site gets. Without it the emitted call drops the
+            // threaded parameters and Lean reports an application type
+            // mismatch on the first source argument.
             let new_args = lift_args(&inner.args, cfg, path_expr, counter)?;
+            let mut args = match cfg.effectful_helpers.get(&inner.target) {
+                Some(helper_effects) => helper_injection(helper_effects, cfg, path_expr, expr.line),
+                None => Vec::new(),
+            };
+            args.extend(new_args);
             Expr::TailCall(Box::new(crate::ast::TailCallData {
                 target: inner.target.clone(),
-                args: new_args,
+                args,
             }))
         }
     };
@@ -688,12 +725,22 @@ fn lift_classified_call(
         None => {
             // Not a classified effect — treat as a regular call. This
             // covers user-defined helper `Foo.bar` references the
-            // `effect_method_name` heuristic falsely matched.
+            // `effect_method_name` heuristic falsely matched. When that
+            // helper is a dependency module's lifted effectful function
+            // (`Infra.Store.get`), the call site receives the same
+            // `(path, oracle...)` prefix a bare helper call gets.
             let new_args = lift_args(args, cfg, path_expr, counter)?;
+            let mut injected = match cfg.effectful_helpers.get(effect_name) {
+                Some(helper_effects) => {
+                    helper_injection(helper_effects, cfg, path_expr, original.line)
+                }
+                None => Vec::new(),
+            };
+            injected.extend(new_args);
             // Reconstruct the original callee expression (we already know
             // the shape because it matched our `Attr` heuristic).
             let callee_expr = rebuild_dotted_callee(effect_name, original);
-            return Ok(Expr::FnCall(Box::new(callee_expr), new_args));
+            return Ok(Expr::FnCall(Box::new(callee_expr), injected));
         }
     };
 
@@ -778,16 +825,8 @@ fn lift_classified_call(
 }
 
 fn effect_method_name(expr: &Expr) -> Option<String> {
-    fn qualified_name(expr: &Expr) -> Option<String> {
-        match expr {
-            Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
-            Expr::Attr(base, field) => Some(format!("{}.{}", qualified_name(&base.node)?, field)),
-            _ => None,
-        }
-    }
-
     match expr {
-        Expr::Attr(_, _) => qualified_name(expr),
+        Expr::Attr(_, _) => dotted_callee_name(expr),
         _ => None,
     }
 }
