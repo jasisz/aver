@@ -134,6 +134,17 @@ pub struct SymbolTable {
     ctor_index: HashMap<(TypeId, String), CtorId>,
     /// Builtin canonical name → `BuiltinId` (Phase 6 wave 11).
     builtin_index: HashMap<String, BuiltinId>,
+    /// Direct `depends [...]` of each dependency module, keyed by its prefix
+    /// and by the short name its own header declares. Read by
+    /// [`SymbolTable::type_id_by_bare_name_in`] so a bare type name is
+    /// answered only by the scopes the asking module can see — the same
+    /// question the type checker asks through its own visibility map.
+    module_depends: HashMap<String, Vec<String>>,
+    /// Direct `depends [...]` of the entry scope, and the name its `module`
+    /// header declares. The entry lives under `TypeKey::entry` (no prefix),
+    /// but a resolver context still spells its scope with the declared name.
+    entry_depends: Vec<String>,
+    entry_module_name: Option<String>,
     /// Canonical provider-bound operation name → whether the call establishes
     /// an effect. These have no `FnId` because there is no Aver body.
     capability_operations: HashMap<String, CapabilityOperationInfo>,
@@ -157,6 +168,26 @@ pub struct BuiltinEntry {
     pub name: String,
 }
 
+/// A resolver context names its module the way the source does — whatever
+/// the `module X` header says — while the symbol table keys a dependency by
+/// the path its importers spell in `depends [...]` (`Domain.X`). The two are
+/// the same module, so a scope-aware lookup has to accept either spelling.
+fn module_names_match(prefix: &str, asking: &str) -> bool {
+    prefix == asking || prefix.rsplit('.').next() == Some(asking)
+}
+
+/// The keys a dependency's `depends [...]` list is indexed under: its full
+/// path, and the short name its own header declares.
+fn module_lookup_keys(prefix: &str) -> Vec<String> {
+    let mut keys = vec![prefix.to_string()];
+    if let Some(short) = prefix.rsplit('.').next()
+        && short != prefix
+    {
+        keys.push(short.to_string());
+    }
+    keys
+}
+
 impl SymbolTable {
     /// Build a `SymbolTable` from entry items + dep modules. The
     /// build order is fully deterministic: modules in
@@ -173,6 +204,23 @@ impl SymbolTable {
             table.modules.push(ModuleEntry {
                 prefix: Some(m.prefix.clone()),
             });
+            // Indexed under both spellings a resolver context can carry:
+            // the path importers write in `depends [...]` and the name the
+            // module's own header declares. See `module_names_match`.
+            for key in module_lookup_keys(&m.prefix) {
+                table
+                    .module_depends
+                    .entry(key)
+                    .or_default()
+                    .extend(m.depends.iter().cloned());
+            }
+        }
+        if let Some(module) = entry_items.iter().find_map(|i| match i {
+            TopLevel::Module(module) => Some(module),
+            _ => None,
+        }) {
+            table.entry_depends = module.depends.clone();
+            table.entry_module_name = Some(module.name.clone());
         }
 
         // Helpful pre-traversal: gather (scope, fns, types) tuples
@@ -504,11 +552,12 @@ impl SymbolTable {
         self.type_index.get(key).copied()
     }
 
-    /// Resolve a *bare* type name (no module prefix) against every
-    /// scope in the table — entry first, then each dep module — and
-    /// return the unique match. Returns `None` when the name doesn't
-    /// resolve OR when two or more scopes legitimately share it
-    /// (ambiguous reference; caller must qualify).
+    /// Resolve a *bare* type name (no module prefix) against the scopes
+    /// visible to the module named by `asking` — its own scope, the modules
+    /// it names in `depends [...]`, the embedded standard modules, and the
+    /// entry scope — and return the unique match. Returns `None` when the
+    /// name doesn't resolve there OR when two visible scopes legitimately
+    /// share it (ambiguous reference; caller must qualify).
     ///
     /// Phase-E cross-module ctor resolution: an Aver expression like
     /// `Val.ValOk(x)` written from a module that doesn't host the
@@ -519,19 +568,62 @@ impl SymbolTable {
     /// resolved-form classification authoritative, which exposed
     /// this missing lookup. Adding it here keeps identity logic on
     /// the symbol table where the rest of identity resolution lives.
-    pub fn type_id_by_bare_name(&self, name: &str) -> Option<TypeId> {
+    pub fn type_id_by_bare_name_in(&self, name: &str, asking: Option<&str>) -> Option<TypeId> {
         let mut found: Option<TypeId> = None;
         for (key, id) in &self.type_index {
-            if key.name == name {
-                if found.is_some() {
-                    // Ambiguous bare reference across scopes; the
-                    // caller must qualify with a module prefix.
-                    return None;
-                }
-                found = Some(*id);
+            if key.name != name || !self.scope_is_visible_to(key.scope_str(), asking) {
+                continue;
             }
+            if found.is_some() {
+                // Ambiguous bare reference among the scopes the asking
+                // module can see; the caller must qualify with a module
+                // prefix. The type checker reports this as
+                // `Ambiguous type name '<name>'`.
+                return None;
+            }
+            found = Some(*id);
         }
         found
+    }
+
+    /// Can a bare type reference written in `asking` see a type declared in
+    /// `scope`?
+    ///
+    /// Visible: the asking module's own scope, the modules it names in
+    /// `depends [...]`, the embedded standard modules (reserved names a
+    /// project file cannot shadow, and a builtin's signature may cross one
+    /// without the module naming it), and the entry scope — which the
+    /// resolver's earlier `TypeKey::entry` step normally claims first.
+    ///
+    /// A module the asking one never imported is NOT visible. Letting it in
+    /// is how a type nobody imported could make a bare name ambiguous
+    /// everywhere: the lookup then answered `None`, and `None` reads
+    /// downstream as "not a user type" rather than as an error.
+    fn scope_is_visible_to(&self, scope: Option<&str>, asking: Option<&str>) -> bool {
+        let Some(scope) = scope else {
+            return true;
+        };
+        if asking.is_some_and(|asking| module_names_match(scope, asking))
+            || crate::stdlib::find(scope).is_some()
+        {
+            return true;
+        }
+        self.depends_of(asking).iter().any(|dep| dep == scope)
+    }
+
+    /// The direct `depends [...]` of the module a resolver context calls
+    /// `asking`. `None` means entry scope, and so does the entry's own
+    /// declared module name.
+    fn depends_of(&self, asking: Option<&str>) -> &[String] {
+        match asking {
+            None => &self.entry_depends,
+            Some(name) if self.entry_module_name.as_deref() == Some(name) => &self.entry_depends,
+            Some(name) => self
+                .module_depends
+                .get(name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        }
     }
 
     /// Resolve a constructor by (owning type, variant name).
@@ -657,9 +749,18 @@ mod tests {
     }
 
     fn module(prefix: &str, fns: Vec<FnDef>, types: Vec<TypeDef>) -> ModuleInfo {
+        module_depending_on(prefix, &[], fns, types)
+    }
+
+    fn module_depending_on(
+        prefix: &str,
+        depends: &[&str],
+        fns: Vec<FnDef>,
+        types: Vec<TypeDef>,
+    ) -> ModuleInfo {
         ModuleInfo {
             prefix: prefix.to_string(),
-            depends: Vec::new(),
+            depends: depends.iter().map(|d| (*d).to_string()).collect(),
             type_defs: types,
             fn_defs: fns,
             capability_items: Vec::new(),
@@ -828,19 +929,21 @@ mod tests {
         // Phase-E PR 9.4: a callsite in module `A` referring to type
         // `Val` declared in module `B` (no qualifier in source) gets
         // the right `TypeId` via this fallback. The rule is: "bare
-        // type name from any scope resolves iff exactly one scope
-        // declares it".
-        let mod_a = module("A", vec![], vec![sum("Color", &["Red", "Blue"], 1)]);
+        // type name resolves iff exactly one scope the asking module
+        // can see declares it" — and `A` sees `B` because it depends
+        // on it.
+        let mod_a =
+            module_depending_on("A", &["B"], vec![], vec![sum("Color", &["Red", "Blue"], 1)]);
         let mod_b = module("B", vec![], vec![product("Val", 1)]);
         let table = SymbolTable::build(&[], &[mod_a, mod_b]);
         table.assert_consistent();
 
-        let val_id = table.type_id_by_bare_name("Val");
+        let val_id = table.type_id_by_bare_name_in("Val", Some("A"));
         let qualified = table.type_id_of(&TypeKey::in_module("B", "Val"));
         assert_eq!(val_id, qualified, "bare `Val` resolves to B.Val");
         assert!(val_id.is_some());
 
-        let color_id = table.type_id_by_bare_name("Color");
+        let color_id = table.type_id_by_bare_name_in("Color", Some("A"));
         assert_eq!(
             color_id,
             table.type_id_of(&TypeKey::in_module("A", "Color"))
@@ -848,20 +951,87 @@ mod tests {
     }
 
     #[test]
-    fn type_id_by_bare_name_returns_none_on_ambiguity() {
-        // Two modules each declaring a type called `T` — bare
-        // reference is ambiguous, caller must qualify. The cross-
-        // module ctor-classification path falls back to
-        // `Unresolved` here, which the typechecker then flags as a
-        // user-facing error (or the caller already qualified, in
-        // which case the higher-priority `TypeKey::in_module`
-        // lookup succeeded before this method ran).
-        let mod_a = module("A", vec![], vec![product("T", 1)]);
-        let mod_b = module("B", vec![], vec![product("T", 1)]);
-        let table = SymbolTable::build(&[], &[mod_a, mod_b]);
+    fn type_id_by_bare_name_ignores_a_module_the_asker_never_imported() {
+        // The whole point of the scope filter. `B` declares `Val` and `A`
+        // depends on it; `C` also declares a `Val` but nothing imports it.
+        // Before the filter, `C` made `Val` ambiguous for `A` — the lookup
+        // answered `None`, and downstream `None` means "not a user type",
+        // so the Rust backend wrote `compile_error!` into the generated
+        // crate for every function that touched it.
+        let mod_a = module_depending_on("A", &["B"], vec![], vec![]);
+        let mod_b = module("B", vec![], vec![product("Val", 1)]);
+        let mod_c = module("C", vec![], vec![product("Val", 1)]);
+        let table = SymbolTable::build(&[], &[mod_a, mod_b, mod_c]);
         table.assert_consistent();
 
-        assert_eq!(table.type_id_by_bare_name("T"), None);
+        assert_eq!(
+            table.type_id_by_bare_name_in("Val", Some("A")),
+            table.type_id_of(&TypeKey::in_module("B", "Val")),
+            "a module A never imported must not take the answer away"
+        );
+        // Written from `C` itself, the bare name is still C's own type.
+        assert_eq!(
+            table.type_id_by_bare_name_in("Val", Some("C")),
+            table.type_id_of(&TypeKey::in_module("C", "Val"))
+        );
+    }
+
+    #[test]
+    fn a_module_is_recognised_by_the_name_its_own_header_declares() {
+        // A resolver context spells the module the way the source does
+        // (`module User`); the symbol table keys it by the path importers
+        // spell (`Domain.User`). Both spellings reach the resolver on the
+        // same program, so both have to give the same visibility answer —
+        // otherwise the fallback goes quiet for exactly the modules this
+        // filter was written to keep working. Measured on the first
+        // external project: matching only the path left 76 functions
+        // unrendered, matching either left none.
+        let mod_user = module_depending_on("Domain.User", &["Domain.State"], vec![], vec![]);
+        let mod_state = module(
+            "Domain.State",
+            vec![],
+            vec![sum("Step", &["Continue", "Stop"], 1)],
+        );
+        let mod_tally = module("Domain.Tally", vec![], vec![product("Step", 1)]);
+        let table = SymbolTable::build(&[], &[mod_user, mod_state, mod_tally]);
+        table.assert_consistent();
+
+        let from_state = table.type_id_of(&TypeKey::in_module("Domain.State", "Step"));
+        assert!(from_state.is_some());
+        assert_eq!(
+            table.type_id_by_bare_name_in("Step", Some("Domain.User")),
+            from_state
+        );
+        assert_eq!(
+            table.type_id_by_bare_name_in("Step", Some("User")),
+            from_state,
+            "the header's own spelling must resolve the same way as the path"
+        );
+
+        // A module's own type is visible to it under either spelling too.
+        let from_tally = table.type_id_of(&TypeKey::in_module("Domain.Tally", "Step"));
+        assert_eq!(
+            table.type_id_by_bare_name_in("Step", Some("Tally")),
+            from_tally
+        );
+    }
+
+    #[test]
+    fn type_id_by_bare_name_returns_none_on_ambiguity() {
+        // Two modules the asking one depends on, each declaring a type
+        // called `T` — bare reference is ambiguous, caller must qualify.
+        // The cross-module ctor-classification path falls back to
+        // `Unresolved` here, which the typechecker then flags as
+        // `Ambiguous type name 'T'` (or the caller already qualified, in
+        // which case the higher-priority `TypeKey::in_module` lookup
+        // succeeded before this method ran).
+        let mod_user = module_depending_on("User", &["A", "B"], vec![], vec![]);
+        let mod_a = module("A", vec![], vec![product("T", 1)]);
+        let mod_b = module("B", vec![], vec![product("T", 1)]);
+        let table = SymbolTable::build(&[], &[mod_user, mod_a, mod_b]);
+        table.assert_consistent();
+
+        assert_eq!(table.type_id_by_bare_name_in("T", Some("User")), None);
 
         // Qualified lookups still resolve.
         assert!(table.type_id_of(&TypeKey::in_module("A", "T")).is_some());
@@ -877,16 +1047,19 @@ mod tests {
         let table = SymbolTable::build(&[TopLevel::TypeDef(entry_type)], &[mod_a]);
         table.assert_consistent();
 
-        let cfg = table.type_id_by_bare_name("Cfg");
+        let cfg = table.type_id_by_bare_name_in("Cfg", None);
         assert_eq!(cfg, table.type_id_of(&TypeKey::entry("Cfg")));
         assert!(cfg.is_some());
     }
 
     #[test]
     fn type_id_by_bare_name_missing_name_is_none() {
-        let mod_a = module("A", vec![], vec![product("X", 1)]);
+        let mod_a = module_depending_on("A", &["X"], vec![], vec![product("X", 1)]);
         let table = SymbolTable::build(&[], &[mod_a]);
         table.assert_consistent();
-        assert_eq!(table.type_id_by_bare_name("NotATypeAnywhere"), None);
+        assert_eq!(
+            table.type_id_by_bare_name_in("NotATypeAnywhere", Some("A")),
+            None
+        );
     }
 }

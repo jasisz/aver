@@ -508,6 +508,14 @@ With `--module-root examples`:
 - `depends [Data.Fibonacci]` → `examples/data/fibonacci.av`, call as `Data.Fibonacci.fn(...)`
 - `depends [Modules.Models.User]` → `examples/modules/models/user.av`, call as `Modules.Models.User.fn(...)`
 
+A type may be written bare — `Step` rather than `Domain.State.Step` — when
+exactly one module in scope declares that name. In scope means the module
+itself and the modules it names in `depends [...]`; a module elsewhere in the
+program that nobody imported here has no say, so declaring a type in one
+cannot change what a name means anywhere else. When two modules a file does
+import declare the same type name, the bare form is an error naming both
+candidates, and the reference has to be qualified.
+
 ## Static type checking
 
 Type errors block `run`, `check`, and `verify`. No partial execution. The checker covers function bodies, top-level statements, effect propagation, and duplicate binding detection.

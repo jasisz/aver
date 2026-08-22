@@ -501,6 +501,27 @@ pub struct ProjectOutput {
     pub files: Vec<(String, String)>,
 }
 
+impl ProjectOutput {
+    /// Generated Rust files carrying a `compile_error!` the backend
+    /// substituted for a construct it could not render.
+    ///
+    /// A code generator that writes a deliberate compile error must not
+    /// report success: without this the command exited 0 and the failure
+    /// surfaced only when the user reached `cargo build`. Any occurrence of
+    /// the macro counts — a future emitter with a different message must not
+    /// slip past a guard tuned to today's wording. The check is deliberately
+    /// fail-closed: a string in the user's own program that happened to
+    /// contain the macro name would refuse the compile with an explicit
+    /// message, which is the safe direction.
+    pub fn generated_compile_errors(&self) -> Vec<&str> {
+        self.files
+            .iter()
+            .filter(|(path, content)| path.ends_with(".rs") && content.contains("compile_error!"))
+            .map(|(path, _)| path.as_str())
+            .collect()
+    }
+}
+
 /// Build a CodegenContext from parsed + type-checked items.
 ///
 /// `entry_analysis` is the `analyze` stage output for `items` (entry
@@ -1368,5 +1389,52 @@ fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_
 impl crate::verify_law::FnSigOracle for CodegenContext {
     fn fn_sig(&self, name: &str) -> Option<crate::verify_law::FnSigInfo> {
         codegen_ctx_fn_sig(self, name)
+    }
+}
+
+#[cfg(test)]
+mod project_output_tests {
+    use super::ProjectOutput;
+
+    fn output(files: &[(&str, &str)]) -> ProjectOutput {
+        ProjectOutput {
+            files: files
+                .iter()
+                .map(|(path, content)| (path.to_string(), content.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_generated_compile_error_is_reported_with_its_file() {
+        let out = output(&[
+            ("Cargo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.rs", "fn main() {}\n"),
+            (
+                "src/aver_generated/domain/user/mod.rs",
+                "pub fn added() { compile_error!(\"MIR walker could not render fn `added`\"); }\n",
+            ),
+        ]);
+        assert_eq!(
+            out.generated_compile_errors(),
+            vec!["src/aver_generated/domain/user/mod.rs"]
+        );
+    }
+
+    #[test]
+    fn a_clean_crate_reports_nothing() {
+        let out = output(&[
+            ("Cargo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.rs", "fn main() { println!(\"hi\"); }\n"),
+        ]);
+        assert!(out.generated_compile_errors().is_empty());
+    }
+
+    #[test]
+    fn a_non_rust_file_is_not_scanned() {
+        // Lean and Dafny outputs go through the same writer; only the Rust
+        // backend has this construct.
+        let out = output(&[("Proof.lean", "-- compile_error! is prose here\n")]);
+        assert!(out.generated_compile_errors().is_empty());
     }
 }

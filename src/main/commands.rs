@@ -3324,6 +3324,31 @@ fn write_codegen_output(
         process::exit(1);
     }
 
+    // A code generator that writes a deliberate compile error must not
+    // report success. The Rust emitter substitutes `compile_error!` for a
+    // construct it cannot render, which used to leave `compile` exiting 0
+    // with a crate that only fails once the user reaches `cargo build`.
+    // The files are written first so the message is readable in place.
+    let unrenderable = output.generated_compile_errors();
+    if !unrenderable.is_empty() {
+        eprintln!(
+            "{}",
+            format!(
+                "Compiled {} → {}/ [{}], but the generated code contains a compile error the backend could not avoid:",
+                file, output_dir, target_label
+            )
+            .red()
+        );
+        for path in &unrenderable {
+            eprintln!("  {}", path.dimmed());
+        }
+        eprintln!(
+            "{}",
+            "the message is in the file, at the construct that could not be rendered".dimmed()
+        );
+        process::exit(1);
+    }
+
     println!(
         "{}",
         format!("Compiled {} → {}/ [{}]", file, output_dir, target_label).green()

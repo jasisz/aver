@@ -1,0 +1,11 @@
+module Entry
+    intent =
+        "Pulls in both modules that declare a type called `Step`. Neither"
+        "of them can see the other's."
+    depends [Domain.User, Domain.Tally]
+    effects [Console.print]
+
+fn main() -> Unit
+    ? "Prints both Steps' payloads."
+    ! [Console.print]
+    Console.print("{Domain.User.size(7)} {Domain.Tally.tallyOf(Domain.Tally.Step(tally = 1))}")

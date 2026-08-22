@@ -401,6 +401,94 @@ fn fused_stdlib_hex_decoding_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A type declared in a module nobody imports must not reach the code the
+/// other modules generate.
+///
+/// `Domain.State` declares a sum type `Step` and `Domain.User` — which
+/// depends on it and on nothing else — spells that name bare. `Domain.Tally`
+/// declares a record that happens to be called `Step` too, and `Domain.User`
+/// never imports it. The bare-name lookup used to scan the whole program, so
+/// the second declaration made the name ambiguous, the lookup answered
+/// `None`, and `None` reads downstream as "not a user constructor": the Rust
+/// backend substituted `compile_error!` for every function that touched it
+/// while `check`, `verify` and `compile` all reported success. The failure
+/// surfaced only at `cargo build`.
+///
+/// Nothing cheaper than a real build settles this: the emitted crate is
+/// exactly where the substitution lands.
+#[test]
+fn a_type_in_an_unimported_module_does_not_break_the_generated_crate() {
+    let root = repo_root().join("tests/fixtures/bare_type_scope");
+    let file = root.join("app/entry.av");
+    let vm_stdout = run_vm(&file, Some(&root)).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        vm_stdout, "7 1",
+        "fixture should print both Steps' payloads"
+    );
+
+    let ws = temp_dir("bare_type_scope");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "p_bare_type_scope";
+
+    let result = (|| {
+        compile_rust(&file, &project, name, Some(&root), &[])?;
+        let unrenderable: Vec<String> = walk_rust_sources(&project)
+            .into_iter()
+            .filter(|(_, content)| content.contains("compile_error!"))
+            .map(|(path, _)| path)
+            .collect();
+        if !unrenderable.is_empty() {
+            return Err(format!(
+                "emitted crate carries a deliberate compile error in:\n  - {}",
+                unrenderable.join("\n  - ")
+            ));
+        }
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "compiled binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Every `.rs` file under `dir`, as (display path, contents).
+fn walk_rust_sources(dir: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                out.push((path.display().to_string(), content));
+            }
+        }
+    }
+    out
+}
+
 /// Chars fusion, on the shapes where the two backends could disagree.
 ///
 /// The cursor steps by CODEPOINTS because `String.chars` yields

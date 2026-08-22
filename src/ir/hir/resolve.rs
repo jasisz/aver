@@ -118,11 +118,12 @@ impl<'a> ResolveCtx<'a> {
     ///    qualified form).
     /// 3. Bare `name` in `current_module` (`TypeKey::in_module(current, name)`).
     /// 4. Bare `name` in entry scope (`TypeKey::entry(name)`).
-    /// 5. Bare `name` searched across every scope via
-    ///    [`crate::ir::SymbolTable::type_id_by_bare_name`] — handles
-    ///    the cross-module case where module `A` references type
-    ///    `Val` declared in module `B` without qualification. Returns
-    ///    `None` when ambiguous (caller must qualify).
+    /// 5. Bare `name` searched across the scopes `current_module` can see
+    ///    via [`crate::ir::SymbolTable::type_id_by_bare_name_in`] — handles
+    ///    the cross-module case where module `A` references type `Val`
+    ///    declared in a module `A` depends on, without qualification.
+    ///    Returns `None` when two visible scopes share the name (caller
+    ///    must qualify); a module `A` never imported is not consulted.
     pub fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
         if let Some((prefix, n)) = name.rsplit_once('.') {
             if let Some(id) = self.symbols.type_id_of(&TypeKey::in_module(prefix, n)) {
@@ -145,10 +146,18 @@ impl<'a> ResolveCtx<'a> {
         // Cross-module bare-name fallback. Phase-E ctor resolution
         // for `Val.ValOk(x)` written from a module that doesn't host
         // `Val` (e.g. `Domain.Eval.Core` referencing
-        // `Domain.Value.Val`). `type_id_by_bare_name` returns `None`
-        // on ambiguity, so two scopes that share a type name still
-        // need a qualified reference.
-        self.symbols.type_id_by_bare_name(name)
+        // `Domain.Value.Val`).
+        //
+        // Scoped to what the asking module can actually see: its own
+        // `depends [...]`, the standard modules, and the entry. A module
+        // nobody imported must not participate — otherwise declaring a
+        // type there makes the bare name ambiguous for everyone, the
+        // lookup answers `None`, and `None` reads downstream as "not a
+        // user type" rather than as an error. Two VISIBLE scopes sharing
+        // the name still need a qualified reference, and the type checker
+        // reports that as `Ambiguous type name`.
+        self.symbols
+            .type_id_by_bare_name_in(name, self.current_module.as_deref())
     }
 
     /// Resolve a `"Type.Variant"` constructor reference to a
