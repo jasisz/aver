@@ -1303,9 +1303,21 @@ pub fn type_key_for_decl(ctx: &CodegenContext, td: &TypeDef) -> crate::ir::TypeK
 /// Round-7: resolve a (possibly bare) type name from the AST into
 /// a [`crate::ir::TypeKey`]. `scope` is the emit-time current scope
 /// (`Some(prefix)` inside a per-module emit loop, `None` for
-/// entry). Bare names prefer the current scope, then entry, then
-/// fall back to module-walk first match — mirroring
-/// [`find_refined_type_scoped`]'s resolution order.
+/// entry). Bare names prefer the current scope, then — for the entry's own
+/// code only — the entry, then the scopes the asking module can see.
+///
+/// The entry step is gated for the same reason the resolver's is
+/// ([`crate::ir::hir::ResolveCtx::resolve_type_id`]): the entry is another
+/// module from a dependency's point of view, and a dependency never names
+/// it. Ungated, a bare name in a dependency bound to whatever declaration
+/// happened to sit in the file the command was pointed at, and the emitted
+/// code for one unchanged module differed between two runs over the same
+/// program.
+///
+/// The cross-scope step asks the symbol table, so this shares the type
+/// checker's visibility relation instead of keeping a third one — "the
+/// first module in the list that declares this name" was neither scoped
+/// nor stable.
 pub fn type_key_for_name(
     ctx: &CodegenContext,
     name: &str,
@@ -1322,9 +1334,12 @@ pub fn type_key_for_name(
             }
         }
     }
-    // Entry-declared types win the bare lookup when no scope is
-    // active (or when scope's module doesn't own the name).
-    if !name_is_qualified && ctx.type_defs.iter().any(|td| type_def_name(td) == bare) {
+    // Entry-declared types win the bare lookup for the entry's own code,
+    // once the current scope has had its turn.
+    if !name_is_qualified
+        && ctx.symbol_table.names_entry_scope(scope)
+        && ctx.type_defs.iter().any(|td| type_def_name(td) == bare)
+    {
         return crate::ir::TypeKey::entry(bare);
     }
     if name_is_qualified
@@ -1332,6 +1347,9 @@ pub fn type_key_for_name(
         && ctx.modules.iter().any(|m| m.prefix == prefix)
     {
         return crate::ir::TypeKey::in_module(prefix.to_string(), bare_part);
+    }
+    if !name_is_qualified && let Some(id) = ctx.symbol_table.type_id_by_bare_name_in(bare, scope) {
+        return ctx.symbol_table.type_entry(id).key.clone();
     }
     for m in &ctx.modules {
         if m.type_defs.iter().any(|td| type_def_name(td) == bare) {

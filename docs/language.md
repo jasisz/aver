@@ -519,6 +519,12 @@ else. When two modules a file does import declare the same type name, the
 bare form is an error naming both candidates, and the reference has to be
 qualified.
 
+The entry module is not an exception to that rule. A dependency names the
+modules it uses in its own `depends [...]`, and nothing names the entry, so
+the entry's own declarations are in scope for the entry's own code and
+nowhere else. Which file you point `run`, `verify` or `compile` at therefore
+never changes what a name written inside a dependency means.
+
 ## Static type checking
 
 Type errors block `run`, `check`, and `verify`. No partial execution. The checker covers function bodies, top-level statements, effect propagation, and duplicate binding detection.

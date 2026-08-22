@@ -112,24 +112,37 @@ impl<'a> ResolveCtx<'a> {
     ///
     /// Resolution order (first match wins):
     /// 1. `prefix.name` matches `TypeKey::in_module(prefix, name)`.
-    /// 2. `prefix.name` with `prefix == current_module` matches the
-    ///    entry-scope `TypeKey::entry(name)` (Aver lets a
-    ///    self-referencing module spell its own type with the
-    ///    qualified form).
+    /// 2. `prefix.name` written INSIDE the entry, with `prefix ==
+    ///    current_module`, matches the entry-scope `TypeKey::entry(name)`
+    ///    (Aver lets a self-referencing module spell its own type with the
+    ///    qualified form, and the entry's items are keyed under entry scope
+    ///    whatever its `module` header says).
     /// 3. Bare `name` in `current_module` (`TypeKey::in_module(current, name)`).
-    /// 4. Bare `name` in entry scope (`TypeKey::entry(name)`).
+    /// 4. Bare `name` in entry scope (`TypeKey::entry(name)`) — again only
+    ///    when the asking module IS the entry.
     /// 5. Bare `name` searched across the scopes `current_module` can see
     ///    via [`crate::ir::SymbolTable::type_id_by_bare_name_in`] — handles
     ///    the cross-module case where module `A` references type `Val`
     ///    declared in a module `A` depends on, without qualification.
     ///    Returns `None` when two visible scopes share the name (caller
     ///    must qualify); a module `A` never imported is not consulted.
+    ///
+    /// Steps 2 and 4 are the entry's own scope, so they are gated on the
+    /// asking module being the entry. The entry is another module from a
+    /// dependency's point of view: it names its dependencies and they never
+    /// name it, so nothing it declares is in scope for the code it pulls
+    /// in. Ungated, the answer to "what does this bare name mean inside
+    /// this dependency" changed with which file the command was pointed at.
     pub fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
+        let in_entry = self
+            .symbols
+            .names_entry_scope(self.current_module.as_deref());
         if let Some((prefix, n)) = name.rsplit_once('.') {
             if let Some(id) = self.symbols.type_id_of(&TypeKey::in_module(prefix, n)) {
                 return Some(id);
             }
-            if self.current_module.as_deref() == Some(prefix)
+            if in_entry
+                && self.current_module.as_deref() == Some(prefix)
                 && let Some(id) = self.symbols.type_id_of(&TypeKey::entry(n))
             {
                 return Some(id);
@@ -140,7 +153,7 @@ impl<'a> ResolveCtx<'a> {
         {
             return Some(id);
         }
-        if let Some(id) = self.symbols.type_id_of(&TypeKey::entry(name)) {
+        if in_entry && let Some(id) = self.symbols.type_id_of(&TypeKey::entry(name)) {
             return Some(id);
         }
         // Cross-module bare-name fallback. Phase-E ctor resolution

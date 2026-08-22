@@ -711,7 +711,15 @@ impl TypeChecker {
                     // codegen via `aver_type_of` on a stamp-less node.
                     let msg = ident_namespace_diagnostic(name, &self.type_variants)
                         .unwrap_or_else(|| format!("Unknown identifier '{}'", name));
-                    self.error(msg);
+                    // The ident's own line when it has one. A head that is
+                    // part of a dotted callee (`Stepp.Continue(n)`) is
+                    // reached through the call's fallthrough, and the
+                    // function header is not where the reader wrote it.
+                    if expr.line > 0 {
+                        self.error_at_line(expr.line, msg);
+                    } else {
+                        self.error(msg);
+                    }
                     Type::Invalid
                 }
             }
@@ -1047,6 +1055,32 @@ impl TypeChecker {
                             format!(
                                 "Capability operation '{}' is not exposed by its module",
                                 display_name
+                            ),
+                        );
+                        return Type::Invalid;
+                    }
+
+                    // `Type.Variant(...)` where the type is one this module
+                    // can see and the variant is not one it declares.
+                    // Nothing above resolves that shape, and the
+                    // fallthrough below infers the head on its own — which
+                    // reports `Step` at the function's header line, naming
+                    // neither the constructor the program wrote nor the
+                    // line it wrote it on. `Result` and `Option` are
+                    // excluded: their names carry combinators as well as
+                    // constructors, so an unresolved `Option.map` is not a
+                    // constructor mistake.
+                    if let Some((type_name, variant)) = display_name.rsplit_once('.')
+                        && !matches!(type_name, "Result" | "Option")
+                        && let Some(variants) = self.variants_for(type_name)
+                        && !variants.iter().any(|v| v == variant)
+                    {
+                        let declared = variants.join(", ");
+                        self.error_at_line(
+                            err_line,
+                            format!(
+                                "Unknown constructor '{display_name}': type '{type_name}' \
+                                 declares {declared}"
                             ),
                         );
                         return Type::Invalid;

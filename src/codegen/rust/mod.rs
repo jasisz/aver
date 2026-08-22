@@ -739,7 +739,19 @@ fn emit_mutual_tco_block_routed(
             .map(|fd| fd.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        let message = format!("MIR walker could not render mutual-TCO block [{names}]");
+        // A trampoline is all-or-nothing, so one member's unclassified name
+        // takes the whole group with it. Report that name rather than the
+        // roster: the roster is what the reporter of #1076 was handed, and
+        // it points at every function except the one at fault.
+        let message = group_fns
+            .iter()
+            .filter_map(|fd| {
+                let fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)?;
+                let resolved_fd = ctx.resolved_program.fn_by_id(fn_id)?;
+                toplevel::unresolved_name_reason(resolved_fd, scope)
+            })
+            .next()
+            .unwrap_or_else(|| format!("MIR walker could not render mutual-TCO block [{names}]"));
         ctx.substituted_compile_errors
             .borrow_mut()
             .push(message.clone());

@@ -322,8 +322,11 @@ fn lower_expr(
                     name: name.clone(),
                     last_use: last_use.0,
                 },
-                // Unresolved callees (typecheck-rejected recovery) still
-                // ride the HIR fallback.
+                // A callee the resolver could not classify. Same family as
+                // the unresolved ctor below and reported the same way: the
+                // fn drops, and every backend that finds it missing reads
+                // the name and the line back off the resolved body rather
+                // than assuming the type checker said something.
                 ResolvedCallee::Unresolved { .. } => {
                     return Err(SkipReason::UnsupportedCallee);
                 }
@@ -371,6 +374,9 @@ fn lower_expr(
                 expr,
             ))
         }
+        // Construction side of the same rule as the pattern branch in
+        // `lower_pattern`: the fn drops, and the drop is reportable rather
+        // than assumed to have been reported by somebody else.
         ResolvedExpr::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
             return Err(SkipReason::UnresolvedCtor);
         }
@@ -629,9 +635,14 @@ fn lower_pattern(
                 binding_names: names.clone(),
             }
         }
-        // Unresolved ctors still drop — typechecker already
-        // surfaced the error; MIR refuses to emit half-resolved
-        // identity.
+        // Unresolved ctors still drop: MIR refuses to emit a
+        // half-resolved identity. It does NOT follow that someone else
+        // reported the problem — the type checker resolves a bare name
+        // through its own visibility relation and can accept what this
+        // resolver could not classify, which is how #1076 went silent.
+        // The drop is reportable instead of assumed: every backend that
+        // finds the fn missing reads the name and the line back off the
+        // resolved body (`hir::collect_unresolved_in_fn`) and says so.
         ResolvedPattern::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
             return Err(SkipReason::UnresolvedCtor);
         }
