@@ -112,7 +112,10 @@ fn a_project_without_a_verify_section_reports_exactly_as_before() {
         format_output(&json)
     );
     assert!(
-        json_text.contains(r#""cases_passed":1,"cases_failed":1}"#),
+        // The counts, not what follows them: `aver verify --json` gained
+        // `files_skipped` / `blocks_unchecked` after this test was written,
+        // so pinning the closing brace would pin a neighbouring feature.
+        json_text.contains(r#""cases_passed":1,"cases_failed":1"#),
         "{}",
         format_output(&json)
     );
