@@ -1,0 +1,27 @@
+module MutualCycleTwoTreesCountdown
+    intent =
+        "A recursion cycle bounded by an Int counting down, in which two tree parameters travel along."
+        "The measure counts both trees and the countdown; a sum over two recursive types is not stated natively, and a fuel seed counting only the trees is no bound on the countdown — so the claims are declined, not evaluated until the fuel runs out."
+    exposes [rounds]
+    depends []
+    effects []
+
+type Tree
+    Leaf
+    Node(Tree, Tree)
+
+fn rounds(t: Tree, u: Tree, n: Int) -> Int
+    ? "Counts the rounds left in n, handing both trees on."
+    match n <= 0
+        true -> 0
+        false -> round(t, u, n - 1)
+
+fn round(t: Tree, u: Tree, n: Int) -> Int
+    ? "One round: a leaf counts one and goes on; a node descends."
+    match t
+        Tree.Leaf -> 1 + rounds(t, u, n)
+        Tree.Node(l, r) -> rounds(l, u, n)
+
+verify rounds
+    rounds(Tree.Leaf, Tree.Leaf, 3) => 3
+    rounds(Tree.Leaf, Tree.Leaf, 50) => 50

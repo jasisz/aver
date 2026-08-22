@@ -1,0 +1,28 @@
+module MutualCycleTailOfTail
+    intent =
+        "A recursion cycle in which one member matches the SAME list twice at different depths, so a tail and a tail of a tail travel under different names."
+        "The two parts overlap, so the measure counts one of them."
+    exposes [walk]
+    depends []
+    effects []
+
+fn walk(xs: List<Int>) -> Int
+    ? "Matches xs twice, the second time two levels deep."
+    match xs
+        [] -> 0
+        [a, ..r1] -> match xs
+            [] -> 0
+            [c, ..mid] -> match mid
+                [] -> c
+                [d, ..r2] -> both(r1, r2)
+
+fn both(ys: List<Int>, zs: List<Int>) -> Int
+    ? "Peels ys and continues with its tail."
+    match ys
+        [] -> List.len(zs)
+        [e, ..t] -> e + walk(t)
+
+verify walk
+    walk([]) => 0
+    walk([5]) => 5
+    walk([1, 2, 3]) => 5

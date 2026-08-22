@@ -1,0 +1,21 @@
+module MutualCycleGrownList
+    intent =
+        "A recursion cycle with no measure the exporter can state: one call hands on a list that GREW, and the Int that really bounds the recursion is spent without a guard."
+        "The exporter must neither state a measure it cannot prove nor evaluate the cycle under a fuel seed that is not a bound. It declines the claims and names the call it could not see shrink."
+    exposes [settle]
+    depends []
+    effects []
+
+fn settle(xs: List<Int>, n: Int) -> Int
+    ? "The length of the list after it has been padded n times."
+    match n <= 0
+        true -> List.len(xs)
+        false -> pad(xs, n)
+
+fn pad(ys: List<Int>, n: Int) -> Int
+    ? "Pads the list with one zero and settles it with one padding fewer to go."
+    settle(List.prepend(0, ys), n - 1)
+
+verify settle
+    settle([], 0) => 0
+    settle([1], 2) => 3

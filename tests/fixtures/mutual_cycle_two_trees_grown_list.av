@@ -1,0 +1,27 @@
+module MutualCycleTwoTreesGrownList
+    intent =
+        "Two trees travel a recursion cycle; a list the measure need not count is regrown on one call."
+        "The measure counts both trees and is not stated natively; the fuel seed counts the list too, and the call that regrows it is the one the decline names."
+    exposes [f]
+    depends []
+    effects []
+
+type Tree
+    Leaf
+    Node(Tree, Tree)
+
+fn f(t: Tree, u: Tree, xs: List<Int>) -> Int
+    ? "Descends on t."
+    match t
+        Tree.Leaf -> List.len(xs)
+        Tree.Node(l, r) -> g(l, u, xs)
+
+fn g(t: Tree, u: Tree, xs: List<Int>) -> Int
+    ? "Descends on u, or goes back with a longer list."
+    match u
+        Tree.Leaf -> f(t, u, List.concat(xs, [1]))
+        Tree.Node(l, r) -> f(t, l, xs)
+
+verify f
+    f(Tree.Leaf, Tree.Leaf, []) => 0
+    f(Tree.Node(Tree.Leaf, Tree.Leaf), Tree.Leaf, [5]) => 2

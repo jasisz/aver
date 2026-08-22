@@ -228,12 +228,46 @@ fn emit_list_length_subject(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -
 }
 
 /// Wrap in parens if the string looks like a compound expression.
+///
+/// Used for the receiver of every `receiver.method arg` builtin as well as
+/// for their arguments. A string that begins with `(` is self-contained
+/// only when that bracket closes at its very end, or when all that follows
+/// the closing bracket is a chain of projections with no space in it
+/// (`(f x).field.reverse`, which Lean reads as one term). `(bytesIn
+/// control).drop (Int.toNat 1)` begins with a bracket without being
+/// self-contained, and as the receiver of `.take` it went out unwrapped —
+/// Lean then read `.take` as a field of the last argument, `(Int.toNat 1)`,
+/// and refused the whole expression with `Invalid field take: The
+/// environment does not contain Nat.take`.
 fn p(s: &str) -> String {
-    if s.contains(' ') && !s.starts_with('(') && !s.starts_with('"') {
+    if s.contains(' ') && !s.starts_with('"') && !is_group_with_projections(s) {
         format!("({})", s)
     } else {
         s.to_string()
     }
+}
+
+/// `(…)` followed by nothing but `.name` segments, none containing a space.
+fn is_group_with_projections(s: &str) -> bool {
+    if !s.starts_with('(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = &s[i + 1..];
+                    return rest.is_empty()
+                        || (rest.starts_with('.') && !rest.contains(' ') && !rest.contains('('));
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]

@@ -1,0 +1,37 @@
+module MutualCycleFourLists
+    intent =
+        "Four functions in one recursion cycle, each consuming the head of one of four lists and handing the other three on unchanged."
+        "Every call shrinks exactly one of the four lists. A measure that counts all four decreases on every call; a measure that counts fewer misses the call that shrinks the list it left out, and a measure that counts the wrong one is not even comparable across the call."
+    exposes [roundRobin]
+    depends []
+    effects []
+
+fn roundRobin(a: List<Int>, b: List<Int>, c: List<Int>, d: List<Int>) -> Int
+    ? "Sum of the heads taken in turn from the four lists, until the list whose turn it is runs dry."
+    match a
+        [] -> 0
+        [x, ..rest] -> x + secondTurn(rest, b, c, d)
+
+fn secondTurn(a: List<Int>, b: List<Int>, c: List<Int>, d: List<Int>) -> Int
+    ? "The second list's turn."
+    match b
+        [] -> 0
+        [x, ..rest] -> x + thirdTurn(a, rest, c, d)
+
+fn thirdTurn(a: List<Int>, b: List<Int>, c: List<Int>, d: List<Int>) -> Int
+    ? "The third list's turn."
+    match c
+        [] -> 0
+        [x, ..rest] -> x + fourthTurn(a, b, rest, d)
+
+fn fourthTurn(a: List<Int>, b: List<Int>, c: List<Int>, d: List<Int>) -> Int
+    ? "The fourth list's turn, after which the first is up again."
+    match d
+        [] -> 0
+        [x, ..rest] -> x + roundRobin(a, b, c, rest)
+
+verify roundRobin
+    roundRobin([], [], [], []) => 0
+    roundRobin([1], [2], [3], [4]) => 10
+    roundRobin([1, 5], [2, 6], [3, 7], [4, 8]) => 36
+    roundRobin([1, 5], [2], [3, 7], [4, 8]) => 15

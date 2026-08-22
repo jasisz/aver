@@ -1,0 +1,25 @@
+module MutualCycleQuadraticHelper
+    intent =
+        "A cycle through a self-recursive helper that receives one tail twice and hands the second on through an alias, so the group makes many more calls than its parameters have cells."
+        "The two arguments are the same part under two names, so no measure counts both and none decreases on every call; the group lowers with fuel, whose seed counts the cells once. The claims are declined with the call that fails, not evaluated until the fuel runs out."
+    exposes [outer]
+    depends []
+    effects []
+
+fn outer(xs: List<Int>) -> Int
+    ? "Peels xs and hands its tail on twice."
+    match xs
+        [] -> 0
+        [h, ..t] -> helper(t, t)
+
+fn helper(a: List<Int>, b: List<Int>) -> Int
+    ? "Peels a; when it is empty goes back with b."
+    match a
+        [] -> outer(b)
+        [x, ..r] -> match b
+            bb -> x + 1 + helper(r, bb)
+
+verify outer
+    outer([]) => 0
+    outer([1, 2, 3]) => 11
+    outer([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) => 276

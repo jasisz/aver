@@ -1,0 +1,34 @@
+module MutualCycleThreeLists
+    intent =
+        "Three functions in one recursion cycle, each descending on a DIFFERENT list: the first peels its left list, the second its right list, and the third hands both tails on unchanged."
+        "A measure that counts one parameter per member cannot decrease on every call — on the step that hands a tail on unchanged, the counted parameter of the caller is not the counted parameter of the callee. The measure has to count everything that travels around the whole cycle, and the step that leaves it unchanged has to be settled by ordering the members."
+    exposes [before]
+    depends []
+    effects []
+
+fn before(left: List<Int>, right: List<Int>) -> Bool
+    ? "Whether left sorts before right, byte by byte."
+    match left
+        [] -> List.len(right) > 0
+        [head, ..tail] -> atHead(head, tail, right)
+
+fn atHead(head: Int, tail: List<Int>, right: List<Int>) -> Bool
+    ? "This byte decides unless the two are equal, when the rest does."
+    match right
+        [] -> false
+        [other, ..rest] -> onwardIfEqual(head, tail, other, rest)
+
+fn onwardIfEqual(head: Int, tail: List<Int>, other: Int, rest: List<Int>) -> Bool
+    ? "Equal bytes carry the comparison one place further along."
+    match head == other
+        false -> head < other
+        true -> before(tail, rest)
+
+verify before
+    before([], []) => false
+    before([], [1]) => true
+    before([1], []) => false
+    before([1], [2]) => true
+    before([2], [1]) => false
+    before([1, 1], [1, 2]) => true
+    before([1, 2], [1, 2]) => false

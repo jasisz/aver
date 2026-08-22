@@ -171,6 +171,20 @@ pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) 
         return None;
     }
 
+    // The contract's rank orders the calls that leave the PLAN's measure
+    // unchanged. Dafny's measure is the length of every sequence parameter,
+    // which is what the plan ranked whenever it ranked the parameters the
+    // members hand on by name — the ordering these groups had before the
+    // call edge analysis existed, kept as it was. A rank the analysis chose
+    // for another measure — one counting an `Int` down, or leaving a
+    // sequence out — is not Dafny's to pair with `|xs| + |ys|`: there the
+    // analysis is rerun over exactly Dafny's parameters, and the group stays
+    // native only when it counts every one of them, with the ranks it then
+    // gives.
+    if crate::codegen::recursion::detect::forwarded_ranks(fns).is_none() {
+        ranks = dafny_cycle_ranks(fns)?;
+    }
+
     let mut lines: Vec<String> = Vec::new();
     for fd in fns {
         let measure = measures.get(&fd.name).unwrap();
@@ -208,19 +222,74 @@ pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) 
 /// the index set [`sizeof_measure_param_indices`] uses on the Lean
 /// side so the same fns are picked across backends.
 fn emit_sizeof_measure_expr_dafny(fd: &FnDef) -> Option<String> {
-    let mut terms: Vec<String> = Vec::new();
-    for (name, ty) in &fd.params {
-        let parsed = crate::codegen::common::parse_type_annotation(ty);
-        match parsed {
-            crate::types::Type::List(_)
-            | crate::types::Type::Vector(_)
-            | crate::types::Type::Str => {
-                terms.push(format!("|{}|", aver_name_to_dafny(name)));
-            }
-            _ => {}
-        }
-    }
+    let terms: Vec<String> = dafny_measure_param_indices(fd)
+        .into_iter()
+        .map(|index| format!("|{}|", aver_name_to_dafny(&fd.params[index].0)))
+        .collect();
     (!terms.is_empty()).then(|| terms.join(" + "))
+}
+
+/// The positions Dafny's `decreases` measures: every `List`, `Vector` and
+/// `String` parameter, in signature order.
+fn dafny_measure_param_indices(fd: &FnDef) -> Vec<usize> {
+    fd.params
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, ty))| {
+            matches!(
+                crate::codegen::common::parse_type_annotation(ty),
+                crate::types::Type::List(_)
+                    | crate::types::Type::Vector(_)
+                    | crate::types::Type::Str
+            )
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Tie-break ranks from the call edge analysis run over exactly the
+/// parameters Dafny measures, or `None` when the measure it finds counts
+/// something else (an `Int` it can see count down) or leaves one of them
+/// out — `decreases |xs| + |ys|, rank` is only right for a rank that
+/// orders the calls leaving `|xs| + |ys|` unchanged. The analysis is run
+/// with a matched list's head not taken for a part of the list: the head
+/// is smaller by size, which the plan measures, not by length.
+fn dafny_cycle_ranks(fns: &[&FnDef]) -> Option<std::collections::HashMap<String, usize>> {
+    use crate::codegen::recursion::cycle_measure::{Candidate, MeasureKind, measure_for_cycle};
+    let candidates: Vec<Vec<Candidate>> = fns
+        .iter()
+        .map(|fd| {
+            fd.params
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (_, ty))| {
+                    let kind = match crate::codegen::common::parse_type_annotation(ty) {
+                        crate::types::Type::List(_) | crate::types::Type::Vector(_) => {
+                            MeasureKind::Structural
+                        }
+                        crate::types::Type::Int => MeasureKind::Countdown,
+                        _ => return None,
+                    };
+                    Some(Candidate { index, kind })
+                })
+                .collect()
+        })
+        .collect();
+    let measures = measure_for_cycle(fns, &candidates, false).ok()?;
+    let counted: Vec<Vec<usize>> = measures
+        .iter()
+        .map(|measure| measure.params.iter().map(|c| c.index).collect())
+        .collect();
+    let measured: Vec<Vec<usize>> = fns
+        .iter()
+        .map(|fd| dafny_measure_param_indices(fd))
+        .collect();
+    (counted == measured).then(|| {
+        fns.iter()
+            .zip(measures)
+            .map(|(fd, measure)| (fd.name.clone(), measure.rank))
+            .collect()
+    })
 }
 
 fn emit_dafny_params(params: &[(String, String)]) -> String {

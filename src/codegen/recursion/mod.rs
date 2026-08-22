@@ -10,6 +10,7 @@
 //! AST transform that rewrites recursive calls into helper calls are
 //! shared.
 
+pub mod cycle_measure;
 pub mod detect;
 
 use std::collections::HashSet;

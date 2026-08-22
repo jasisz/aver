@@ -1,0 +1,41 @@
+module LeanChainedReceivers
+    intent =
+        "List operations whose RECEIVER is itself a list operation with arguments — `List.take(List.drop(…), n)` — and chains of three."
+        "Each emits as `receiver.method arg`. A receiver that begins with `(` and continues past its closing bracket is an application, not an atom; left unwrapped, the next `.method` attaches to the receiver's last argument, and Lean looks for `take` on a Nat."
+    exposes [window, trimmed, middle]
+    depends []
+    effects []
+
+fn doubled(xs: List<Int>) -> List<Int>
+    ? "Each element twice over, as a compound receiver for the calls below."
+    match xs
+        [] -> []
+        [h, ..t] -> List.prepend(h * 2, doubled(t))
+
+verify doubled
+    doubled([]) => []
+    doubled([1, 2]) => [2, 4]
+
+fn window(xs: List<Int>) -> List<Int>
+    ? "Thirty-two elements after the first, of the doubled list."
+    List.take(List.drop(doubled(xs), 1), 32)
+
+verify window
+    window([1, 2, 3]) => [4, 6]
+    window([]) => []
+
+fn trimmed(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "The two lists joined, the first element dropped, then the first two kept — three operations, each the next one's receiver."
+    List.take(List.drop(List.concat(xs, ys), 1), 2)
+
+verify trimmed
+    trimmed([1, 2], [3, 4]) => [2, 3]
+    trimmed([], []) => []
+
+fn middle(xs: List<Int>) -> List<Int>
+    ? "The doubled list reversed, the first dropped, the next two kept — three method receivers in a chain."
+    List.take(List.drop(List.reverse(doubled(xs)), 1), 2)
+
+verify middle
+    middle([1, 2, 3]) => [4, 2]
+    middle([7]) => []
