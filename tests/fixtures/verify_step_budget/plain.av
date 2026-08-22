@@ -1,0 +1,15 @@
+module Plain
+    intent =
+        "One case that agrees and one that does not. Nothing here is near any"
+        "budget, so this file is what a project with no [verify] section must"
+        "keep reporting byte for byte."
+    exposes [double]
+    effects []
+
+fn double(n: Int) -> Int
+    ? "Twice n."
+    n * 2
+
+verify double
+    double(2) => 4
+    double(3) => 7

@@ -468,6 +468,17 @@ pub struct CodegenContext {
     /// kernel-certify a false equation. Entries exist only for cases that
     /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
     pub sample_expected: std::collections::HashMap<(String, usize), String>,
+    /// `(common::verify_block_counter_key(vb), global_case_index)` → the
+    /// reason `aver verify` gave for not answering that case.
+    ///
+    /// The counterpart to [`Self::sample_expected`], and the reason it is a
+    /// separate table rather than an absence: a case with no ground truth
+    /// falls back to the source RHS, which for a declined case would emit
+    /// `impl(sample) = <the author's expected expression>` — a claim nothing
+    /// checked, in exactly the shape literalization exists to prevent, and
+    /// precisely on the big inputs where the model is likeliest to exhaust
+    /// fuel too. A case listed here is declined as a claim instead.
+    pub declined_cases: std::collections::HashMap<(String, usize), String>,
     /// `aver proof --allow-mathlib` (Lean only, opt-in): permit a generic
     /// Mathlib break-glass closing arm on laws the core strategies cannot
     /// claim. When `false` (the default) the Lean backend is BYTE-IDENTICAL to
@@ -802,6 +813,7 @@ pub fn build_context(
         mir_program,
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
+        declined_cases: std::collections::HashMap::new(),
         allow_mathlib: false,
         hand_proofs: std::collections::HashMap::new(),
     };

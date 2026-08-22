@@ -28,6 +28,25 @@ pub enum VerifyCaseOutcome {
     /// worlds. Distinct from `Skipped` (which is `when`-driven and
     /// drives the vacuous-under-hostile warning).
     SkippedAfterBaseFail,
+    /// The case was not answered.
+    ///
+    /// A third outcome, deliberately neither `Pass` nor a failure: the engine
+    /// ran out of the budget it was given before the case produced a value,
+    /// so nothing was observed — not agreement, and not a counter-example.
+    /// Counted on its own, reported with its reason, and it fails the run,
+    /// because "we did not check this" must never read as "this checks out".
+    Declined {
+        /// One sentence, user-facing: why we did not answer.
+        reason: String,
+        /// Work the case consumed before the budget stopped it: VM opcodes on
+        /// the VM lane, wasmtime fuel on the wasm-gc lane.
+        steps: u64,
+        /// The budget in force for this case.
+        limit: u64,
+        /// `Some(fn)` when an `aver.toml` `[[verify.costly]]` entry raised the
+        /// budget above the project default and it still was not enough.
+        raised_by: Option<String>,
+    },
     Mismatch {
         expected: String,
         actual: String,
@@ -70,6 +89,37 @@ pub struct VerifyCaseResult {
     /// for non-`Pass` outcomes and for runners that don't compute values
     /// (wasm-gc differential verify).
     pub expected_value: Option<crate::value::Value>,
+    /// Work this case cost: VM opcodes dispatched on the VM lane, wasmtime
+    /// fuel consumed on the wasm-gc lane, `0` where nothing ran (a skipped
+    /// case) or where the runner does not measure. Reporting uses it to show
+    /// what a raised `[[verify.costly]]` budget actually bought.
+    pub steps: u64,
+}
+
+/// The per-case step budget a verify block's cases ran under.
+///
+/// Carried on the result so the report can say what a raised budget bought:
+/// the cases that needed more than `default_limit` are exactly the ones that
+/// would have been declined without the `[[verify.costly]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyBudgetInfo {
+    /// Budget in force for each case of the block.
+    pub limit: u64,
+    /// The project default `limit` was raised from, equal to `limit` when
+    /// nothing raised it.
+    pub default_limit: u64,
+    /// `Some(fn)` when an `aver.toml` `[[verify.costly]]` entry raised it.
+    pub raised_by: Option<String>,
+}
+
+impl Default for VerifyBudgetInfo {
+    fn default() -> Self {
+        VerifyBudgetInfo {
+            limit: crate::config::DEFAULT_VERIFY_STEP_LIMIT,
+            default_limit: crate::config::DEFAULT_VERIFY_STEP_LIMIT,
+            raised_by: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +137,11 @@ pub struct VerifyResult {
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
+    /// Cases that exceeded their step budget. Never folded into `failed`:
+    /// a decline says the block was not checked, not that it is wrong.
+    pub declined: usize,
+    /// The budget these cases ran under.
+    pub budget: VerifyBudgetInfo,
     pub case_results: Vec<VerifyCaseResult>,
     // Legacy field — kept temporarily for existing consumers
     pub failures: Vec<(String, String, String)>, // (expr_src, expected, actual)

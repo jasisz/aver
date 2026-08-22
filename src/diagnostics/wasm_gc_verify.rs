@@ -30,6 +30,7 @@ use crate::checker::{
     VerifyCaseOutcome, VerifyCaseResult, VerifyResult, expr_to_str, merge_verify_blocks,
 };
 use crate::config::ProjectConfig;
+use crate::diagnostics::vm_verify::CaseBudget;
 use crate::verify_law::expand::ExpansionMode;
 
 pub fn run_verify_for_items_wasm_gc(
@@ -49,13 +50,14 @@ pub fn run_verify_for_items_wasm_gc(
 
 pub fn run_verify_for_items_wasm_gc_with_mode(
     mut items: Vec<TopLevel>,
-    _config: Option<ProjectConfig>,
+    config: Option<ProjectConfig>,
     base_dir: Option<&str>,
-    _source_file: &str,
+    source_file: &str,
     mode: ExpansionMode,
 ) -> Result<Vec<VerifyResult>, String> {
     use super::vm_verify::{
-        apply_hostile_expansion, format_type_errors, inject_hostile_effect_stubs_for_blocks,
+        apply_hostile_expansion_with_registry, format_type_errors,
+        inject_hostile_effect_stubs_for_blocks,
     };
 
     // Pre-flight rejects for features the wasm-gc backend can't yet
@@ -127,8 +129,13 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     }
 
     if mode == ExpansionMode::Hostile {
+        let max_cases = config
+            .as_ref()
+            .map_or(crate::config::DEFAULT_VERIFY_MAX_CASES, |cfg| {
+                cfg.verify_max_cases()
+            });
         for b in &mut blocks {
-            apply_hostile_expansion(b, &items)?;
+            apply_hostile_expansion_with_registry(b, &items, &tc.capabilities, max_cases)?;
         }
     }
 
@@ -201,7 +208,19 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     .map(|out| out.bytes)
     .map_err(|e| format!("wasm-gc compile error: {}", e))?;
 
-    run_verify_cases_in_wasmtime(&bytes, &plans)
+    // Same resolution the VM lane performs, over the same `aver.toml`, so a
+    // case is runnable on both lanes or on neither.
+    let key = crate::diagnostics::vm_verify::costly_glob_key(source_file, base_dir);
+    let budgets: Vec<CaseBudget> = plans
+        .iter()
+        .map(|plan| CaseBudget::resolve(config.as_ref(), &plan.block.fn_name, &key))
+        .collect();
+    let raised_by: Vec<Option<String>> = budgets
+        .iter()
+        .map(|budget| budget.raised_by_fn(config.as_ref()))
+        .collect();
+
+    run_verify_cases_in_wasmtime(&bytes, &plans, &budgets, &raised_by)
 }
 
 struct WasmGcVerifyCaseFns {
@@ -431,19 +450,61 @@ fn build_verify_wasm_gc_plans(
     plans
 }
 
-/// Per-case wasmtime fuel budget — symmetric to
-/// `vm_verify::VERIFY_VM_STEP_LIMIT`. Wasmtime "fuel" is a
-/// per-Store counter that drops to zero on every executed wasm
-/// instruction; running out raises `Trap::OutOfFuel`, surfaced
-/// here as a `RuntimeError` so a tail-recursive user fn bails as
-/// a clean Failure instead of pinning wasmtime forever. 10M wasm
-/// ops is well above what real verify cases need on the bench
-/// suite and short enough to bail in a few hundred ms.
-const WASM_GC_VERIFY_FUEL: u64 = 10_000_000;
+/// Wasm instructions one VM opcode is worth.
+///
+/// The two lanes do not share an instruction set: an Aver opcode the VM
+/// dispatches once lowers to a handful of wasm instructions, so equal
+/// counters would make the wasm lane the stricter of the two and a case
+/// runnable under `aver verify` could be declined under `aver verify
+/// --wasm-gc`. One factor, documented here and applied at the single
+/// `set_fuel` call below, is what keeps "which cases are runnable" a
+/// property of the project's budget rather than of the backend.
+///
+/// 10 reproduces the fuel the wasm lane used when it carried its own
+/// constant (10M against the VM's 1M default), so no case changes lane
+/// on the day the two numbers were joined.
+pub const WASM_FUEL_PER_VM_STEP: u64 = 10;
+
+/// Fuel for one case, from the step budget that case runs under.
+pub fn case_fuel(step_limit: u64) -> u64 {
+    step_limit.saturating_mul(WASM_FUEL_PER_VM_STEP)
+}
+
+/// Why a wasm-gc verify helper call produced no value. Mirrors the VM
+/// lane's `VerifyCallFailure`: running out of fuel means the case was not
+/// answered, everything else means it failed.
+enum WasmCallFailure {
+    OutOfFuel,
+    Error(String),
+}
+
+impl WasmCallFailure {
+    fn message(self) -> String {
+        match self {
+            WasmCallFailure::OutOfFuel => "wasm-gc verify: out of fuel".to_string(),
+            WasmCallFailure::Error(message) => message,
+        }
+    }
+
+    fn from_call_error(fn_name: &str, error: wasmtime::Error) -> Self {
+        if matches!(
+            error.downcast_ref::<wasmtime::Trap>(),
+            Some(wasmtime::Trap::OutOfFuel)
+        ) {
+            return WasmCallFailure::OutOfFuel;
+        }
+        WasmCallFailure::Error(format!(
+            "wasm-gc verify: call `{}` failed: {}",
+            fn_name, error
+        ))
+    }
+}
 
 fn run_verify_cases_in_wasmtime(
     bytes: &[u8],
     plans: &[WasmGcVerifyPlan],
+    budgets: &[CaseBudget],
+    raised_by: &[Option<String>],
 ) -> Result<Vec<VerifyResult>, String> {
     use wasmtime::{
         Caller, Config, Engine, ExternType, FuncType, Linker, Module, Store, Val, ValType,
@@ -514,11 +575,18 @@ fn run_verify_cases_in_wasmtime(
 
     let mut results = Vec::with_capacity(plans.len());
 
-    for plan in plans {
+    for (plan_idx, plan) in plans.iter().enumerate() {
+        let budget = budgets
+            .get(plan_idx)
+            .copied()
+            .unwrap_or_else(CaseBudget::compiled_default);
+        let raised = raised_by.get(plan_idx).and_then(|r| r.as_deref());
+        let fuel = case_fuel(budget.limit);
         let mut case_results = Vec::with_capacity(plan.cases.len());
         let mut passed = 0usize;
         let mut failed = 0usize;
         let mut skipped = 0usize;
+        let mut declined = 0usize;
         let case_total = plan.cases.len();
 
         for (idx, case) in plan.cases.iter().enumerate() {
@@ -534,13 +602,40 @@ fn run_verify_cases_in_wasmtime(
             // consumes it and triggers `Trap::OutOfFuel` ≈ a few hundred
             // ms instead of looping forever. Mirrors the VM's per-call
             // `step_limit` reset in `Machine::run_named_function`.
+            //
+            // The single conversion point between the two lanes: the project
+            // sets ONE per-case step budget and this is where the wasm lane
+            // reads it.
             store
-                .set_fuel(WASM_GC_VERIFY_FUEL)
+                .set_fuel(fuel)
                 .map_err(|e| format!("wasm-gc verify: set_fuel: {}", e))?;
 
             // Guard — when present and false, skip the case.
             if let Some(gname) = &case.guard {
                 match invoke_bool(&mut store, &instance, gname) {
+                    Err(WasmCallFailure::OutOfFuel) => {
+                        declined += 1;
+                        case_results.push(VerifyCaseResult {
+                            outcome: VerifyCaseOutcome::Declined {
+                                reason: crate::diagnostics::vm_verify::decline_reason(
+                                    &budget, raised,
+                                ),
+                                steps: fuel_used(&mut store, fuel),
+                                limit: fuel,
+                                raised_by: raised.map(str::to_string),
+                            },
+                            span: None,
+                            case_expr: case.case_expr.clone(),
+                            case_index: idx,
+                            case_total,
+                            law_context: None,
+                            from_hostile,
+                            hostile_profile: None,
+                            expected_value: None,
+                            steps: fuel_used(&mut store, fuel),
+                        });
+                        continue;
+                    }
                     Ok(b) => {
                         if !b {
                             skipped += 1;
@@ -554,6 +649,7 @@ fn run_verify_cases_in_wasmtime(
                                 from_hostile,
                                 hostile_profile: None,
                                 expected_value: None,
+                                steps: fuel_used(&mut store, fuel),
                             });
                             continue;
                         }
@@ -562,7 +658,7 @@ fn run_verify_cases_in_wasmtime(
                         failed += 1;
                         case_results.push(VerifyCaseResult {
                             outcome: VerifyCaseOutcome::RuntimeError {
-                                error: format!("guard: {}", e),
+                                error: format!("guard: {}", e.message()),
                             },
                             span: None,
                             case_expr: case.case_expr.clone(),
@@ -572,6 +668,7 @@ fn run_verify_cases_in_wasmtime(
                             from_hostile,
                             hostile_profile: None,
                             expected_value: None,
+                            steps: fuel_used(&mut store, fuel),
                         });
                         continue;
                     }
@@ -580,6 +677,15 @@ fn run_verify_cases_in_wasmtime(
 
             // Check — wasm computes lhs == rhs natively, host decodes Bool.
             let outcome = match invoke_bool(&mut store, &instance, &case.check) {
+                Err(WasmCallFailure::OutOfFuel) => {
+                    declined += 1;
+                    VerifyCaseOutcome::Declined {
+                        reason: crate::diagnostics::vm_verify::decline_reason(&budget, raised),
+                        steps: fuel_used(&mut store, fuel),
+                        limit: fuel,
+                        raised_by: raised.map(str::to_string),
+                    }
+                }
                 Ok(true) => {
                     passed += 1;
                     VerifyCaseOutcome::Pass
@@ -610,7 +716,7 @@ fn run_verify_cases_in_wasmtime(
                 }
                 Err(e) => {
                     failed += 1;
-                    VerifyCaseOutcome::RuntimeError { error: e }
+                    VerifyCaseOutcome::RuntimeError { error: e.message() }
                 }
             };
             case_results.push(VerifyCaseResult {
@@ -623,6 +729,7 @@ fn run_verify_cases_in_wasmtime(
                 from_hostile,
                 hostile_profile: None,
                 expected_value: None,
+                steps: fuel_used(&mut store, fuel),
             });
         }
 
@@ -633,6 +740,12 @@ fn run_verify_cases_in_wasmtime(
             passed,
             failed,
             skipped,
+            declined,
+            budget: crate::checker::VerifyBudgetInfo {
+                limit: fuel,
+                default_limit: case_fuel(budget.default_limit),
+                raised_by: raised.map(str::to_string),
+            },
             case_results,
             failures: Vec::new(),
         });
@@ -688,23 +801,28 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
     }
 }
 
+/// Fuel this case has consumed so far, out of `granted`.
+fn fuel_used(store: &mut wasmtime::Store<()>, granted: u64) -> u64 {
+    granted.saturating_sub(store.get_fuel().unwrap_or(0))
+}
+
 fn invoke_bool(
     store: &mut wasmtime::Store<()>,
     instance: &wasmtime::Instance,
     fn_name: &str,
-) -> Result<bool, String> {
-    let func = instance
-        .get_func(&mut *store, fn_name)
-        .ok_or_else(|| format!("wasm-gc verify: export `{}` not found", fn_name))?;
+) -> Result<bool, WasmCallFailure> {
+    let func = instance.get_func(&mut *store, fn_name).ok_or_else(|| {
+        WasmCallFailure::Error(format!("wasm-gc verify: export `{}` not found", fn_name))
+    })?;
     let mut out = vec![wasmtime::Val::I32(0); 1];
     func.call(&mut *store, &[], &mut out)
-        .map_err(|e| format!("wasm-gc verify: call `{}` failed: {}", fn_name, e))?;
+        .map_err(|e| WasmCallFailure::from_call_error(fn_name, e))?;
     match &out[0] {
         wasmtime::Val::I32(n) => Ok(*n != 0),
-        v => Err(format!(
+        v => Err(WasmCallFailure::Error(format!(
             "wasm-gc verify: `{}` returned non-Bool {:?}",
             fn_name, v
-        )),
+        ))),
     }
 }
 
@@ -744,4 +862,42 @@ fn invoke_string(
             .map_err(|e| format!("wasm-gc verify: memory read for repr: {}", e))?;
     }
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One number feeds both lanes, and the factor between them is pinned.
+    ///
+    /// The wasm lane used to carry its own `WASM_GC_VERIFY_FUEL = 10_000_000`
+    /// with a doc comment calling itself "symmetric to VERIFY_VM_STEP_LIMIT"
+    /// while being ten times larger, so the two lanes disagreed about which
+    /// cases were runnable. They are now the same number times this factor;
+    /// this test is what keeps them from drifting apart again silently.
+    #[test]
+    fn the_wasm_budget_is_the_step_budget_times_one_documented_factor() {
+        assert_eq!(WASM_FUEL_PER_VM_STEP, 10);
+        assert_eq!(
+            case_fuel(crate::config::DEFAULT_VERIFY_STEP_LIMIT),
+            10_000_000,
+            "the default must reproduce the fuel the wasm lane used before the two numbers were joined"
+        );
+        assert_eq!(case_fuel(50_000_000), 500_000_000);
+    }
+
+    #[test]
+    fn a_raised_step_budget_raises_the_wasm_budget_with_it() {
+        let raised = crate::diagnostics::vm_verify::CaseBudget::resolve(
+            Some(
+                &crate::config::ProjectConfig::parse(
+                    "[[verify.costly]]\nfn = \"checkScript\"\nstep-limit = 50000000\nreason = \"consensus-max scripts\"\n",
+                )
+                .expect("fixture config parses"),
+            ),
+            "checkScript",
+            "domain/scriptcases1.av",
+        );
+        assert_eq!(case_fuel(raised.limit), 500_000_000);
+    }
 }

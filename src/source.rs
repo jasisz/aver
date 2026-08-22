@@ -8,10 +8,46 @@ use crate::parser::Parser;
 use crate::visibility;
 
 pub fn parse_source(source: &str) -> Result<Vec<TopLevel>, String> {
+    parse_source_with_verify_max_cases(source, crate::config::DEFAULT_VERIFY_MAX_CASES)
+}
+
+/// [`parse_source`] with an explicit ceiling on verify-case expansion.
+pub fn parse_source_with_verify_max_cases(
+    source: &str,
+    max_cases: usize,
+) -> Result<Vec<TopLevel>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens);
+    parser.set_verify_max_cases(max_cases);
     parser.parse().map_err(|e| e.to_string())
+}
+
+/// Parse one of the user's own project files, under the project's own
+/// `[verify] max-cases`.
+///
+/// This function and [`Walk::new`] are the only two places where `aver.toml`
+/// and the parser meet. Every other parse in the compiler goes through
+/// [`parse_source`] or constructs a [`Parser`] directly and keeps the
+/// built-in default — which is what those want, because they parse
+/// compiler-synthesized source (TCO hoists, effect-lifting wrappers, hostile
+/// stubs, coverage and law probes), never a user's `given` domain.
+///
+/// A missing or malformed `aver.toml` leaves the default in place here; every
+/// command loads and reports the file separately, so a broken one is never
+/// swallowed.
+pub fn parse_project_source(source: &str, module_root: &str) -> Result<Vec<TopLevel>, String> {
+    parse_source_with_verify_max_cases(source, project_verify_max_cases(module_root))
+}
+
+/// The `[verify] max-cases` of the project rooted at `module_root`, or the
+/// built-in default when there is no readable `aver.toml`.
+pub fn project_verify_max_cases(module_root: &str) -> usize {
+    crate::config::ProjectConfig::load_from_dir(Path::new(module_root))
+        .ok()
+        .flatten()
+        .map(|config| config.verify_max_cases())
+        .unwrap_or(crate::config::DEFAULT_VERIFY_MAX_CASES)
 }
 
 /// Enforce module contract for file-based programs:
@@ -450,6 +486,9 @@ pub fn load_program(
 struct Walk<'a> {
     module_root: &'a str,
     mode: LoadMode,
+    /// Read once per walk from the project's `aver.toml`, so every module of
+    /// one program expands its verify cases under the same ceiling.
+    verify_max_cases: usize,
     loaded: HashSet<PathBuf>,
     loading: Vec<PathBuf>,
     modules: Vec<ProgramModule>,
@@ -461,6 +500,7 @@ impl<'a> Walk<'a> {
         Self {
             module_root,
             mode,
+            verify_max_cases: project_verify_max_cases(module_root),
             loaded: HashSet::new(),
             loading: Vec::new(),
             modules: Vec::new(),
@@ -530,26 +570,27 @@ impl<'a> Walk<'a> {
         let ModuleSource { path, source } = resolved;
         let is_stdlib = path.starts_with("<aver-stdlib>");
 
-        let (items, fault) = match parse_source(&source) {
-            Ok(items) => match require_module_declaration(&items, &path.to_string_lossy()) {
-                Ok(()) => (items, None),
-                Err(message) => (
-                    items,
-                    Some(LoadError::Declaration {
+        let (items, fault) =
+            match parse_source_with_verify_max_cases(&source, self.verify_max_cases) {
+                Ok(items) => match require_module_declaration(&items, &path.to_string_lossy()) {
+                    Ok(()) => (items, None),
+                    Err(message) => (
+                        items,
+                        Some(LoadError::Declaration {
+                            path: path.clone(),
+                            message,
+                        }),
+                    ),
+                },
+                Err(error) => (
+                    Vec::new(),
+                    Some(LoadError::Parse {
+                        name: dep_name.to_string(),
                         path: path.clone(),
-                        message,
+                        error,
                     }),
                 ),
-            },
-            Err(error) => (
-                Vec::new(),
-                Some(LoadError::Parse {
-                    name: dep_name.to_string(),
-                    path: path.clone(),
-                    error,
-                }),
-            ),
-        };
+            };
         if self.mode == LoadMode::Strict {
             if let Some(fault) = fault {
                 return Err(fault);

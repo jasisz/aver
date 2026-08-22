@@ -66,7 +66,24 @@ macro_rules! read_i64 {
 }
 
 impl VM {
+    /// Run the dispatch loop, then publish how many opcodes it took.
+    ///
+    /// The counter lives on the VM (`self.step_count`) rather than in a local
+    /// so it is readable at every exit — including the `?` exits the loop
+    /// takes through its helpers — which is what lets the verify runner say
+    /// "this case cost 8.2M steps" instead of only "it did or did not fit".
+    /// A nested `call_function` (a host callback re-entering the VM) gets its
+    /// own budget and hands the outer one back untouched, exactly as the old
+    /// per-call local did.
     pub(super) fn execute_until(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
+        let outer = std::mem::take(&mut self.step_count);
+        let result = self.execute_dispatch_loop(caller_depth);
+        self.last_step_count = self.step_count;
+        self.step_count = outer;
+        result
+    }
+
+    fn execute_dispatch_loop(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
         let mut fn_id = self.frames.last().unwrap().fn_id;
         let mut ip = self.frames.last().unwrap().ip as usize;
         let mut bp = self.frames.last().unwrap().bp as usize;
@@ -169,12 +186,11 @@ impl VM {
             }};
         }
 
-        // Per-call dispatched-opcode counter. Bumped every iteration;
-        // checked against `step_limit` in the same 256-op cadence as
-        // cancellation so the hot path stays branch-light. Reset by
-        // `run_named_function` at the top of every verify case so cases
-        // don't share budget.
-        let mut step_count: u64 = 0;
+        // Per-call dispatched-opcode counter (`self.step_count`, zeroed by
+        // `execute_until` above). Bumped every iteration; checked against
+        // `step_limit` in the same 256-op cadence as cancellation so the hot
+        // path stays branch-light. Reset per call so cases don't share
+        // budget, and readable afterwards through `VM::last_step_count`.
         loop {
             // Cooperative cancellation + step-limit: both amortised by
             // checking every 256 opcodes. Step limit defaults to `None`
@@ -184,12 +200,12 @@ impl VM {
                     return Err(VmError::runtime("cancelled by sibling branch"));
                 }
                 if let Some(limit) = self.step_limit
-                    && step_count >= limit
+                    && self.step_count >= limit
                 {
                     return Err(VmError::StepLimit { limit, line: 0 });
                 }
             }
-            step_count += 1;
+            self.step_count += 1;
 
             let code: &[u8] = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
 

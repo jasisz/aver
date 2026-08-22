@@ -20,8 +20,6 @@ struct ExpandedLawCases {
 }
 
 impl Parser {
-    const VERIFY_LAW_MAX_CASES: usize = 10_000;
-
     fn current_ident_is(&self, expected: &str) -> bool {
         matches!(&self.current().kind, TokenKind::Ident(name) if name == expected)
     }
@@ -168,17 +166,17 @@ impl Parser {
                     given.name
                 )));
             }
+            let max_cases = self.verify_max_cases();
             total = total.checked_mul(len).ok_or_else(|| {
                 self.error(format!(
                     "Law verify expands to too many cases (> {})",
-                    Self::VERIFY_LAW_MAX_CASES
+                    max_cases
                 ))
             })?;
-            if total > Self::VERIFY_LAW_MAX_CASES {
+            if total > max_cases {
                 return Err(self.error(format!(
                     "Law verify expands to {} cases (max {})",
-                    total,
-                    Self::VERIFY_LAW_MAX_CASES
+                    total, max_cases
                 )));
             }
         }
@@ -608,11 +606,11 @@ impl Parser {
                             self.error("verify block expands to too many cases".to_string())
                         })?;
                     }
-                    if total > Self::VERIFY_LAW_MAX_CASES {
+                    if total > self.verify_max_cases() {
                         return Err(self.error(format!(
                             "verify block expands to {} cases (max {})",
                             total,
-                            Self::VERIFY_LAW_MAX_CASES
+                            self.verify_max_cases()
                         )));
                     }
 

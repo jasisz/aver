@@ -178,6 +178,26 @@ pub struct FormatViolation {
     pub after: Option<String>,
 }
 
+/// A case that needed more than the project's default step budget and got it
+/// from an `aver.toml` `[[verify.costly]]` entry.
+///
+/// Reported so a raised budget is never invisible: the reader sees which
+/// cases it bought and at what cost, and can tell a genuinely expensive
+/// corpus from a runaway one.
+#[derive(Clone, Debug, Serialize)]
+pub struct VerifyCostlyCase {
+    /// Index of the case within its block, as the report numbers it.
+    pub case_index: usize,
+    /// The case as written.
+    pub case: String,
+    /// Largest single evaluation the case needed.
+    pub steps: u64,
+    /// Budget it ran under.
+    pub limit: u64,
+    /// The `[[verify.costly]]` `fn` that raised the budget.
+    pub raised_by: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct VerifyBlockResult {
     pub name: String,
@@ -187,6 +207,11 @@ pub struct VerifyBlockResult {
     /// Kept for back-compat with consumers that don't care about the
     /// distinction; the split lives in the two fields below.
     pub skipped: usize,
+    /// Cases that ran out of their step budget: not answered, so neither
+    /// `passed` nor `failed`. Omitted when zero, so a project with nothing
+    /// declined emits exactly the bytes it emitted before this existed.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub declined: usize,
     pub total: usize,
     /// Cases that originated from the user's declared `given` list (or
     /// the `verify` cases-form values they wrote literally). Always
@@ -216,6 +241,10 @@ pub struct VerifyBlockResult {
     /// harder worlds. Subset of `skipped`.
     #[serde(skip_serializing_if = "is_zero", default)]
     pub skipped_after_base_fail: usize,
+    /// Cases the project's raised budget bought. Empty — and absent from the
+    /// JSON — for every project that raised nothing.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub costly_cases: Vec<VerifyCostlyCase>,
 }
 
 fn is_zero(n: &usize) -> bool {

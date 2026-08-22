@@ -6,6 +6,20 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- **A verify case can now cost more than the default budget, if the project says so.** `aver verify` caps each case at 1,000,000 VM opcodes. Real corpora contain cases that need more and are not runaway at all — a Bitcoin script at the consensus 10,000-byte limit, a transaction whose every input hashes the whole transaction — and until now the only thing the cap could say about them was `case aborted`, which reads as a defect and invites deleting the case. A project raises the budget for the function it knows about, in `aver.toml`, with a written reason:
+
+  ```toml
+  [[verify.costly]]
+  fn         = "checkScript"
+  files      = ["domain/scriptcases*.av"]
+  step-limit = 50_000_000
+  reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
+  ```
+
+  `fn` and a non-empty `reason` are required, `files` is optional and uses the same anchored globs `[[check.suppress]]` uses, and an entry that raised nothing during a run is reported on stderr. The report names what the raise bought — `checkScript case 41: 8.2M steps (limit 50M, aver.toml [[verify.costly]] fn = "checkScript")` — so a raised budget is never a silent licence. `[verify] step-limit` moves the project-wide default, and `[verify] max-cases` moves the ten-thousand-case ceiling on `given`-domain expansion, which now bounds the `--hostile` cartesian through the same one setting. A project with no `[verify]` section behaves exactly as before, byte for byte.
+
+- **A verify case that runs out of budget is now declined, not failed.** Exceeding the budget — default or raised — is a third case outcome: `fail[verify-declined]: case not answered`, counted separately from passes and failures in the report and in `--json`, and failing the run. It is not a counter-example, because nothing disagreed; it is Aver saying the case was not checked, which must never read as "this checks out". The proof lane follows: a declined case is exported as a declined claim with its reason instead of a theorem, so `aver proof` no longer emits `impl(sample) = <the expected expression the author wrote>` for a case nothing ran — the exact shape ground-truth literalization exists to prevent, and the one that used to drop out precisely on the largest inputs. `aver verify --wasm-gc` runs on the same budget through one documented conversion factor, so a case is runnable on both lanes or on neither. Reported by Robin Owens ([@n1bor](https://github.com/n1bor)).
+
 - **A type error inside a dependency's function body is now reported at the dependency's file.** `aver check main.av` used to print such an error with the entry's file name and the dependency's line number; it now names the dependency (`at: lib.av:8:5`) and shows its source, and when the dependency is itself part of the checked program the error appears once, under that module.
 - **Map iteration now has one canonical order on wasm-gc too.** `Map.keys`, `Map.values`, and `Map.entries` sort a shared scratch permutation of occupied slots instead of exposing hash-bucket order, preserving key/value pairing without copying map contents. Monomorphized comparators cover numeric `Int`, Unicode `String`, false-first `Bool`, lexicographic lists and proof-packed byte sequences, componentwise tuples, records by field name, and variants by constructor name then payload. List keys are boxed at the table boundary so the valid empty list (`[]`, represented by a null list ref) no longer collides with the empty-bucket marker. The obsolete wasm-gc map-order carve-out has been removed from proof trust headers.
 

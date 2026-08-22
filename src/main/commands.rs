@@ -253,7 +253,11 @@ pub(super) fn collect_program_units(
     // Parse failure shouldn't abort `check`: its analysis pass owns the
     // canonical line/column diagnostic. `verify` re-parses an empty item set
     // and still fails loudly, preserving its existing behavior.
-    let items = parse_file(&source).unwrap_or_default();
+    //
+    // The entry file is one of the user's own project files, so it parses
+    // under the project's `[verify] max-cases`; `load_program` below reads
+    // the same ceiling for every dependency it walks.
+    let items = aver::source::parse_project_source(&source, module_root).unwrap_or_default();
 
     // The tolerant walk keeps a dependency that fails to parse or lacks its
     // declaration as a unit of its own, so each file reports its diagnostics
@@ -2017,19 +2021,32 @@ pub(super) fn cmd_audit(
     report_dead_suppressions(config.as_ref(), &tracker, batch);
 
     if json {
+        // The declined count appears only when something was declined, so an
+        // audit with nothing to decline emits the bytes it always did.
+        let declined_key = if totals.verify_declined > 0 {
+            format!(",\"verify_declined\":{}", totals.verify_declined)
+        } else {
+            String::new()
+        };
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"audit\":{{\"check_errors\":{},\"verify_failures\":{},\"format_needed\":{}}}}}",
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"audit\":{{\"check_errors\":{},\"verify_failures\":{}{},\"format_needed\":{}}}}}",
             inputs.len(),
             audited_modules,
             totals.check_errors,
             totals.verify_failures,
+            declined_key,
             totals.format_needed
         );
     } else {
         println!();
         println!("{}", "─".repeat(50).dimmed());
+        let declined_part = if totals.verify_declined > 0 {
+            format!(" | {} verify not answered", totals.verify_declined)
+        } else {
+            String::new()
+        };
         println!(
-            "{} {} {} | {} check errors | {} verify failures | {} format",
+            "{} {} {} | {} check errors | {} verify failures{} | {} format",
             "Audit:".bold(),
             audited_modules,
             if audited_modules == 1 {
@@ -2039,6 +2056,7 @@ pub(super) fn cmd_audit(
             },
             totals.check_errors,
             totals.verify_failures,
+            declined_part,
             totals.format_needed
         );
     }
@@ -2064,6 +2082,11 @@ struct AuditContext<'a> {
 struct AuditTotals {
     check_errors: usize,
     verify_failures: usize,
+    /// Verify cases that ran out of their step budget. Its own count, never
+    /// folded into `verify_failures`: a decline is not a counter-example. It
+    /// still fails the audit, because a case nobody answered must not leave
+    /// the gate green.
+    verify_declined: usize,
     format_needed: usize,
 }
 
@@ -2071,11 +2094,15 @@ impl AuditTotals {
     fn add(&mut self, other: AuditTotals) {
         self.check_errors += other.check_errors;
         self.verify_failures += other.verify_failures;
+        self.verify_declined += other.verify_declined;
         self.format_needed += other.format_needed;
     }
 
     fn any(&self) -> bool {
-        self.check_errors > 0 || self.verify_failures > 0 || self.format_needed > 0
+        self.check_errors > 0
+            || self.verify_failures > 0
+            || self.verify_declined > 0
+            || self.format_needed > 0
     }
 }
 
@@ -2160,6 +2187,11 @@ fn audit_unit(
             .as_ref()
             .map(|vs| vs.blocks.iter().map(|b| b.failed).sum::<usize>())
             .unwrap_or(0);
+    let verify_declined = report
+        .verify_summary
+        .as_ref()
+        .map(|vs| vs.blocks.iter().map(|b| b.declined).sum::<usize>())
+        .unwrap_or(0);
 
     if context.json {
         println!("{}", report.to_json());
@@ -2170,6 +2202,7 @@ fn audit_unit(
     AuditTotals {
         check_errors,
         verify_failures,
+        verify_declined,
         format_needed: usize::from(needs_format),
     }
 }
@@ -2186,13 +2219,29 @@ fn render_audit_tty(
     }
     if let Some(vs) = &report.verify_summary {
         for block in &vs.blocks {
-            if block.failed == 0 && block.skipped == 0 {
+            if block.failed == 0 && block.skipped == 0 && block.declined == 0 {
                 println!(
                     "  {} verify {}  {}/{}",
                     "✓".green(),
                     block.name,
                     block.passed,
                     block.total
+                );
+            } else if block.declined > 0 {
+                // Not answered is neither passed nor failed; say so first,
+                // because it is the one outcome a reader must not skim past.
+                println!(
+                    "  {} verify {}  {}/{} passed, {} not answered{}",
+                    "?".yellow(),
+                    block.name,
+                    block.passed,
+                    block.total,
+                    block.declined,
+                    if block.failed > 0 {
+                        format!(", {} failed", block.failed)
+                    } else {
+                        String::new()
+                    }
                 );
             } else if block.failed == 0 {
                 // Skipped cases aren't failures — typically law-form
@@ -2386,6 +2435,90 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
     }
 }
 
+/// Report `[[verify.costly]]` entries that raised nothing.
+///
+/// Same hygiene `[[check.suppress]]` gets, and for the same reason: a waiver
+/// that points at a fn or a path this run never saw is a claim about the
+/// project that has quietly stopped being true. Written to stderr so `--json`
+/// stdout stays a clean stream, and never changes the exit code.
+fn report_stale_verify_costly(
+    config: Option<&aver::config::ProjectConfig>,
+    file_results: &[VerifyFileResult],
+    module_root: &str,
+) {
+    let Some(cfg) = config else {
+        return;
+    };
+    if cfg.verify.costly.is_empty() {
+        return;
+    }
+    let default_limit = cfg.verify_step_limit();
+    let mut covered = vec![false; cfg.verify.costly.len()];
+    let mut raised = vec![false; cfg.verify.costly.len()];
+    for fr in file_results {
+        let key = aver::diagnostics::vm_verify::costly_glob_key(&fr.path, Some(module_root));
+        for (idx, entry) in cfg.verify.costly.iter().enumerate() {
+            if cfg.verify_costly_covers_file(idx, &key) {
+                covered[idx] = true;
+            }
+            if entry.step_limit > default_limit
+                && fr
+                    .blocks
+                    .iter()
+                    .any(|block| cfg.verify_costly_applies(idx, &block.fn_name, &key))
+            {
+                raised[idx] = true;
+            }
+        }
+    }
+    for (idx, entry) in cfg.verify.costly.iter().enumerate() {
+        if raised[idx] {
+            continue;
+        }
+        let scope = if entry.files.is_empty() {
+            "every file".to_string()
+        } else {
+            entry.files.join(", ")
+        };
+        let detail = if entry.step_limit <= default_limit {
+            "does not raise anything — its step-limit is not above the project default"
+        } else if covered[idx] {
+            "matched files in this run but raised no case's budget — the fn may be stale"
+        } else {
+            "matched no verified file — the path may be stale"
+        };
+        eprintln!(
+            "{} aver.toml [[verify.costly]] fn = \"{}\" (files: {}) {}",
+            "warning:".yellow(),
+            entry.fn_name,
+            scope,
+            detail
+        );
+    }
+}
+
+/// Render a step count the way a reader compares budgets: `8.2M`, `50M`,
+/// `812k`, `431`. Exact below a thousand, one decimal above.
+fn format_step_count(steps: u64) -> String {
+    const K: u64 = 1_000;
+    const M: u64 = 1_000_000;
+    const G: u64 = 1_000_000_000;
+    let (scaled, unit) = if steps >= G {
+        (steps as f64 / G as f64, "G")
+    } else if steps >= M {
+        (steps as f64 / M as f64, "M")
+    } else if steps >= K {
+        (steps as f64 / K as f64, "k")
+    } else {
+        return steps.to_string();
+    };
+    if (scaled - scaled.round()).abs() < 0.05 {
+        format!("{}{}", scaled.round() as u64, unit)
+    } else {
+        format!("{:.1}{}", scaled, unit)
+    }
+}
+
 struct VerifyFileResult {
     path: String,
     source: String,
@@ -2404,10 +2537,12 @@ fn run_verify_for_file(
 ) -> Result<Vec<VerifyFileResult>, String> {
     use aver::verify_law::expand::ExpansionMode;
 
+    // Loaded first: the project's `[verify] max-cases` is what the loader
+    // parsed these units under, and the re-parse below has to agree with it.
+    let config = load_runtime_policy(module_root)?;
     let units = collect_program_units(file, module_root, reported)?;
     let mut file_results = Vec::new();
 
-    let config = load_runtime_policy(module_root)?;
     let mode = if hostile {
         ExpansionMode::Hostile
     } else {
@@ -2425,7 +2560,14 @@ fn run_verify_for_file(
         // loudly instead of passing green. A dependency names itself: the
         // caller labels the error with the input file.
         if items.is_empty()
-            && let Err(e) = parse_file(&source)
+            && let Err(e) = aver::source::parse_source_with_verify_max_cases(
+                &source,
+                config
+                    .as_ref()
+                    .map_or(aver::config::DEFAULT_VERIFY_MAX_CASES, |cfg| {
+                        cfg.verify_max_cases()
+                    }),
+            )
         {
             return Err(if path == file {
                 e
@@ -2518,14 +2660,17 @@ fn bucket_hostile(cases: &[aver::checker::VerifyCaseResult]) -> (usize, usize, u
     let mut hostile_passed = 0usize;
     let mut hostile_failed = 0usize;
     for case in cases {
-        let passed = matches!(case.outcome, VerifyCaseOutcome::Pass);
-        let skipped = matches!(
-            case.outcome,
-            VerifyCaseOutcome::Skipped | VerifyCaseOutcome::SkippedAfterBaseFail
-        );
-        if skipped {
-            continue;
-        }
+        // Exhaustive on purpose: a decline is neither bucket. Folding it into
+        // `failed` would report a counter-example Aver never saw.
+        let passed = match &case.outcome {
+            VerifyCaseOutcome::Pass => true,
+            VerifyCaseOutcome::Mismatch { .. }
+            | VerifyCaseOutcome::RuntimeError { .. }
+            | VerifyCaseOutcome::UnexpectedErr { .. } => false,
+            VerifyCaseOutcome::Skipped
+            | VerifyCaseOutcome::SkippedAfterBaseFail
+            | VerifyCaseOutcome::Declined { .. } => continue,
+        };
         match (case.from_hostile, passed) {
             (false, true) => declared_passed += 1,
             (false, false) => declared_failed += 1,
@@ -2548,7 +2693,7 @@ fn render_verify_output(
     json: bool,
 ) {
     use super::diagnostic::{
-        verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
+        verify_declined_diagnostic, verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
         verify_unexpected_err_diagnostic,
     };
     use aver::checker::VerifyCaseOutcome;
@@ -2607,7 +2752,26 @@ fn render_verify_output(
                                 col,
                             ))
                         }
-                        _ => None,
+                        VerifyCaseOutcome::Declined {
+                            reason,
+                            steps,
+                            limit,
+                            raised_by,
+                        } => Some(verify_declined_diagnostic(
+                            &display_path,
+                            &fr.source,
+                            &block.block_label,
+                            &cr.case_expr,
+                            reason,
+                            *steps,
+                            *limit,
+                            raised_by.as_deref(),
+                            line,
+                            col,
+                        )),
+                        VerifyCaseOutcome::Pass
+                        | VerifyCaseOutcome::Skipped
+                        | VerifyCaseOutcome::SkippedAfterBaseFail => None,
                     };
                     if let Some(d) = diag {
                         diagnostics.push(d);
@@ -2630,13 +2794,15 @@ fn render_verify_output(
                     passed: block.passed,
                     failed: block.failed,
                     skipped: block.skipped,
-                    total: block.passed + block.failed + block.skipped,
+                    declined: block.declined,
+                    total: block.passed + block.failed + block.skipped + block.declined,
                     declared_passed,
                     declared_failed,
                     hostile_passed,
                     hostile_failed,
                     skipped_by_when,
                     skipped_after_base_fail,
+                    costly_cases: aver::diagnostics::verify_run::costly_cases_of(block),
                 });
             }
             let mut report =
@@ -2653,14 +2819,25 @@ fn render_verify_output(
             println!("{}", format!("Verify: {}", display_path).cyan());
 
             for block in &fr.blocks {
-                let total = block.passed + block.failed + block.skipped;
-                if block.failed == 0 {
+                let total = block.passed + block.failed + block.skipped + block.declined;
+                if block.failed == 0 && block.declined == 0 {
                     println!(
                         "  {} {}      {}/{}",
                         "✓".green(),
                         block.block_label,
                         block.passed,
                         total
+                    );
+                } else if block.failed == 0 {
+                    // Nothing disagreed; some cases were not answered. The
+                    // mark is neither ✓ nor ✗ — the block was not checked.
+                    println!(
+                        "  {} {}      {}/{} passed ({} not answered)",
+                        "?".yellow(),
+                        block.block_label,
+                        block.passed,
+                        total,
+                        block.declined
                     );
                 } else {
                     // Bracket reports either declared/hostile pass-ratios
@@ -2712,7 +2889,12 @@ fn render_verify_output(
                                 VerifyCaseOutcome::Mismatch { .. } => mismatch += 1,
                                 VerifyCaseOutcome::RuntimeError { .. } => runtime_err += 1,
                                 VerifyCaseOutcome::UnexpectedErr { .. } => unexpected_err += 1,
-                                _ => {}
+                                // Declines are counted from `block.declined`
+                                // just below, alongside the failure kinds.
+                                VerifyCaseOutcome::Declined { .. }
+                                | VerifyCaseOutcome::Pass
+                                | VerifyCaseOutcome::Skipped
+                                | VerifyCaseOutcome::SkippedAfterBaseFail => {}
                             }
                         }
                         let mut parts = Vec::new();
@@ -2724,6 +2906,9 @@ fn render_verify_output(
                         }
                         if unexpected_err > 0 {
                             parts.push(format!("{} unexpected err", unexpected_err));
+                        }
+                        if block.declined > 0 {
+                            parts.push(format!("{} not answered", block.declined));
                         }
                         if parts.is_empty() {
                             String::new()
@@ -2738,6 +2923,25 @@ fn render_verify_output(
                         block.passed,
                         total,
                         breakdown
+                    );
+                }
+
+                // What the raised budget bought. Named explicitly so a
+                // `[[verify.costly]]` entry is never a silent licence: the
+                // reader sees which cases needed more than the project
+                // default and by how much.
+                for costly in aver::diagnostics::verify_run::costly_cases_of(block) {
+                    println!(
+                        "    {}",
+                        format!(
+                            "{} case {}: {} steps (limit {}, aver.toml [[verify.costly]] fn = \"{}\")",
+                            block.fn_name,
+                            costly.case_index + 1,
+                            format_step_count(costly.steps),
+                            format_step_count(costly.limit),
+                            costly.raised_by
+                        )
+                        .dimmed()
                     );
                 }
 
@@ -2851,7 +3055,27 @@ fn render_verify_output(
                                 col,
                             ))
                         }
-                        _ => None,
+                        VerifyCaseOutcome::Declined {
+                            reason,
+                            steps,
+                            limit,
+                            raised_by,
+                        } => Some(verify_declined_diagnostic(
+                            &display_path,
+                            &fr.source,
+                            &block.block_label,
+                            &cr.case_expr,
+                            reason,
+                            *steps,
+                            *limit,
+                            raised_by.as_deref(),
+                            line,
+                            col,
+                        )),
+                        VerifyCaseOutcome::Pass
+                        | VerifyCaseOutcome::Skipped
+                        | VerifyCaseOutcome::SkippedAfterBaseFail
+                        | VerifyCaseOutcome::Mismatch { .. } => None,
                     };
                     if let Some(d) = diag {
                         if diag_count < max_diags {
@@ -3026,7 +3250,12 @@ pub(super) fn cmd_verify(
         .flat_map(|fr| &fr.blocks)
         .map(|b| b.skipped)
         .sum();
-    let total_cases = total_passed + total_failed + total_skipped;
+    let total_declined: usize = all_file_results
+        .iter()
+        .flat_map(|fr| &fr.blocks)
+        .map(|b| b.declined)
+        .sum();
+    let total_cases = total_passed + total_failed + total_skipped + total_declined;
     // Modules that declared at least one block; `files` stays what the
     // command was pointed at.
     let total_modules = all_file_results
@@ -3047,13 +3276,21 @@ pub(super) fn cmd_verify(
             );
         }
     } else if json {
+        // `cases_declined` appears only when something was declined, so a
+        // project with nothing to decline emits the bytes it always did.
+        let declined_key = if total_declined > 0 {
+            format!(",\"cases_declined\":{}", total_declined)
+        } else {
+            String::new()
+        };
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}}}",
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}{}}}",
             inputs.len(),
             total_modules,
             total_blocks,
             total_passed,
-            total_failed
+            total_failed,
+            declined_key
         );
     } else {
         println!();
@@ -3069,7 +3306,14 @@ pub(super) fn cmd_verify(
                     match cr.outcome {
                         VerifyCaseOutcome::Skipped => skipped_when += 1,
                         VerifyCaseOutcome::SkippedAfterBaseFail => skipped_base += 1,
-                        _ => {}
+                        // Declines have their own total; they are not a
+                        // kind of skip — a skip was ruled out by `when`,
+                        // a decline was never answered.
+                        VerifyCaseOutcome::Declined { .. }
+                        | VerifyCaseOutcome::Pass
+                        | VerifyCaseOutcome::Mismatch { .. }
+                        | VerifyCaseOutcome::RuntimeError { .. }
+                        | VerifyCaseOutcome::UnexpectedErr { .. } => {}
                     }
                 }
             }
@@ -3084,8 +3328,13 @@ pub(super) fn cmd_verify(
                 skipped_base
             ));
         }
+        let declined_part = if total_declined > 0 {
+            format!(" | {} not answered", total_declined)
+        } else {
+            String::new()
+        };
         let summary = format!(
-            "Summary: {} module{} | {} block{} | {}/{} cases passed | {} failed{}",
+            "Summary: {} module{} | {} block{} | {}/{} cases passed | {} failed{}{}",
             total_modules,
             if total_modules == 1 { "" } else { "s" },
             total_blocks,
@@ -3093,13 +3342,20 @@ pub(super) fn cmd_verify(
             total_passed,
             total_cases,
             total_failed,
+            declined_part,
             skipped_part,
         );
-        if total_failed == 0 {
+        if total_failed == 0 && total_declined == 0 {
             println!("{}", summary.green());
+        } else if total_failed == 0 {
+            println!("{}", summary.yellow());
         } else {
             println!("{}", summary.red());
         }
+    }
+
+    if let Ok(config) = load_runtime_policy(&module_root) {
+        report_stale_verify_costly(config.as_ref(), &all_file_results, &module_root);
     }
 
     if !json
@@ -3121,7 +3377,9 @@ pub(super) fn cmd_verify(
         eprintln!("\n{repair}");
     }
 
-    if !failed_files.is_empty() || total_failed > 0 {
+    // A decline fails the run. "We did not check this" must never be read as
+    // "this checks out", and the exit code is the only thing most CI reads.
+    if !failed_files.is_empty() || total_failed > 0 || total_declined > 0 {
         process::exit(1);
     }
 }
@@ -6800,7 +7058,9 @@ pub(super) fn cmd_proof(
             // (it proves laws symbolically — Z3 either discharges a sample
             // lemma or reports an error; there is no panic-returns-default
             // evaluation path to go vacuous through).
-            ctx.sample_expected = collect_verify_ground_truth(file, &module_root);
+            let ground_truth = collect_verify_ground_truth(file, &module_root);
+            ctx.sample_expected = ground_truth.expected;
+            ctx.declined_cases = ground_truth.declined;
             cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
             // Under `--allow-mathlib` the speculative/minimize re-emit passes are
             // SKIPPED: they run their own `lake build` probes that would choke on
@@ -6949,14 +7209,14 @@ pub(super) fn cmd_proof(
 ///
 /// Any failure (unreadable file, parse/typecheck error, VM error) returns an
 /// empty table — emission then behaves exactly as before this feature.
-fn collect_verify_ground_truth(file: &str, module_root: &str) -> HashMap<(String, usize), String> {
+fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTruth {
     use aver::checker::{VerifyCaseOutcome, merge_verify_blocks};
 
-    let mut out = HashMap::new();
+    let mut out = VerifyGroundTruth::default();
     let Ok(source) = read_file(file) else {
         return out;
     };
-    let Ok(items) = parse_file(&source) else {
+    let Ok(items) = aver::source::parse_project_source(&source, module_root) else {
         return out;
     };
     let merged = merge_verify_blocks(&items);
@@ -6992,8 +7252,23 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> HashMap<(String
             continue;
         }
         for cr in &result.case_results {
-            if !matches!(cr.outcome, VerifyCaseOutcome::Pass) {
-                continue;
+            // Exhaustive on purpose. The `Pass` filter this used to be
+            // silently dropped a declined case into the "no entry" bucket,
+            // whose documented fallback is the source RHS — turning "we did
+            // not check this" into a theorem stating the author's own
+            // expected expression.
+            match &cr.outcome {
+                VerifyCaseOutcome::Pass => {}
+                VerifyCaseOutcome::Declined { reason, .. } => {
+                    out.declined
+                        .insert((key.clone(), base + cr.case_index), reason.clone());
+                    continue;
+                }
+                VerifyCaseOutcome::Skipped
+                | VerifyCaseOutcome::SkippedAfterBaseFail
+                | VerifyCaseOutcome::Mismatch { .. }
+                | VerifyCaseOutcome::RuntimeError { .. }
+                | VerifyCaseOutcome::UnexpectedErr { .. } => continue,
             }
             let Some(value) = &cr.expected_value else {
                 continue;
@@ -7004,13 +7279,23 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> HashMap<(String
             {
                 continue;
             }
-            out.insert(
+            out.expected.insert(
                 (key.clone(), base + cr.case_index),
                 aver::value::aver_repr_literal(value),
             );
         }
     }
     out
+}
+
+/// What a Declared-mode verify pass tells the Lean emitter about each case:
+/// the value it observed, or the reason it observed nothing.
+#[derive(Default)]
+struct VerifyGroundTruth {
+    /// Cases that passed, with their VM-computed expected value.
+    expected: std::collections::HashMap<(String, usize), String>,
+    /// Cases that were declined, with the reason.
+    declined: std::collections::HashMap<(String, usize), String>,
 }
 
 /// Structural Float scan for ground-truth literalization: any embedded
@@ -9884,6 +10169,13 @@ fn sample_check_candidate(
     if let Some(counterexample) = mismatch {
         return SampleVerdict::Fail { counterexample };
     }
+    if res.declined > 0 {
+        // Not a counterexample and not a pass: the candidate's sampled case
+        // ran out of budget, so nothing was observed about it.
+        return SampleVerdict::Gap(
+            "candidate not machine-checkable (a sampled case exceeded its step budget)".to_string(),
+        );
+    }
     if res.failed > 0 {
         return SampleVerdict::Gap(
             "candidate not machine-checkable (a sampled case errored)".to_string(),
@@ -11811,6 +12103,7 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
+            declined_cases: std::collections::HashMap::new(),
             allow_mathlib: false,
             hand_proofs: Default::default(),
         }

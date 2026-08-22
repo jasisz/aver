@@ -1,0 +1,14 @@
+module BigDomain
+    intent =
+        "A law whose given domain expands past the built-in ten-thousand-case"
+        "ceiling, so a project that means it has to say so in aver.toml."
+    exposes [identity]
+    effects []
+
+fn identity(n: Int) -> Int
+    ? "n itself."
+    n
+
+verify identity law fixpoint
+    given n: Int = 1..12000
+    identity(n) => n

@@ -27,8 +27,8 @@ pub use analyze::analyze_source_with_verify_provider_bindings;
 pub use analyze::{AnalyzeOptions, analyze_source};
 pub use factories::{
     from_check_finding, from_type_error, needs_format_diagnostic, replay_effect_error_diagnostic,
-    replay_output_mismatch_diagnostic, unused_binding_diagnostic, verify_mismatch_diagnostic,
-    verify_provider_setup_diagnostic, verify_runtime_error_diagnostic,
+    replay_output_mismatch_diagnostic, unused_binding_diagnostic, verify_declined_diagnostic,
+    verify_mismatch_diagnostic, verify_provider_setup_diagnostic, verify_runtime_error_diagnostic,
     verify_unexpected_err_diagnostic,
 };
 pub use model::{
