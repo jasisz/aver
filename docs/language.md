@@ -248,7 +248,7 @@ If the identifier after `law` is the name of an existing pure function and the l
 
 This is an intentional style choice. In Aver, the author should usually write a simple spec function and a law relating the implementation to that spec, instead of writing proof-oriented invariants directly in surface code.
 
-`verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases.
+`verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases — a project that means to go further says so in `aver.toml`, with `[verify] max-cases` for the whole project or `max-cases` in a `[[verify.costly]]` entry for the blocks of one function.
 
 Oracle laws cover classified effectful functions:
 

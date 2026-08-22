@@ -1785,6 +1785,7 @@ mod tests {
             bare_i64: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
+            declined_cases: std::collections::HashMap::new(),
             allow_mathlib: false,
             hand_proofs: Default::default(),
         }

@@ -142,7 +142,7 @@ pub(super) fn try_run_wasm_gc(
                 config.tcp_settings.native()
             });
     let source = read_file(file)?;
-    let mut items = parse_file(&source)?;
+    let mut items = parse_file(&source, &module_root, file)?;
     let dep_modules = load_compile_deps(
         &items,
         &module_root,

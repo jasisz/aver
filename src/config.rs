@@ -96,6 +96,180 @@ pub struct CheckSuppression {
     pub reason: String,
 }
 
+/// Per-case opcode budget installed before evaluating a verify case, and the
+/// number `[verify] step-limit` overrides.
+///
+/// AFL nightly found tail-recursive shapes (`fn id(x) -> Int = id(-7)` and
+/// friends — byte-havoc dropping the terminating arm) where Aver's TCO turns
+/// infinite recursion into a goto-loop with no stack growth, so without this
+/// cap the VM dispatch loop never terminates. 1M opcodes is 100× above what
+/// real verify cases need (per-case eval is normally <10k steps on the bench
+/// suite) and short enough that an unconverging case bails in ~5-50ms even on
+/// a slow shared CI runner — well under AFL's default `AFL_HANG_TMOUT=1000ms`,
+/// so fuzz-discovered infinite loops surface as proper `VmError::StepLimit`
+/// instead of AFL hangs. The cap resets per `run_named_function`, so cases
+/// don't share budget.
+///
+/// A project that raises it is trading that bail-out time away knowingly, per
+/// function, in writing — which is what `[[verify.costly]]` is. The fuzz
+/// targets construct the runner with no config at all, so they always run at
+/// exactly this number.
+pub const DEFAULT_VERIFY_STEP_LIMIT: u64 = 1_000_000;
+
+/// Ceiling on how many cases one verify block may expand into, and the
+/// number `[verify] max-cases` — or a `[[verify.costly]]` entry's own
+/// `max-cases`, for the blocks it names — overrides.
+///
+/// It bounds both expansions of a `given` domain: the declared side the
+/// parser performs, and the `--hostile` side the verify runner performs on
+/// top of it (value boundaries × adversarial effect worlds × eval orders).
+/// Both fail loudly with the count rather than truncating, because a
+/// truncated case list is a claim the user did not make.
+///
+/// Each expanded case clones an expression pair, so this is a memory bound as
+/// much as a time bound; raising it costs parse-time memory in proportion.
+pub const DEFAULT_VERIFY_MAX_CASES: usize = 10_000;
+
+/// A single `[[verify.costly]]` entry: the raised budgets for the verify
+/// blocks of one function.
+///
+/// Same shape as [`CheckSuppression`] on purpose. Both are a project saying
+/// "I know about this and here is why", so both require a written reason and
+/// both scope themselves with optional anchored file globs.
+///
+/// It carries both `[verify]` dials, because both are checked per verify
+/// block and a block belongs to exactly one function: `step-limit` says one
+/// case of this fn may cost more, `max-cases` says this fn's `given` domain
+/// may be wider. An entry may raise either or both; one that raises neither
+/// — because it sets no dial, or because a dial it sets is not above the
+/// number already in force — is refused at load. So an entry only ever
+/// raises, and where several match one block the most permissive wins.
+#[derive(Debug, Clone)]
+pub struct VerifyCostly {
+    /// Name of the function whose verify blocks get the raised budgets
+    /// (e.g. `"checkScript"`).
+    pub fn_name: String,
+    /// Optional file glob patterns. Empty = every verified file.
+    pub files: Vec<String>,
+    /// The raised per-case budget, in VM steps. `None` = this entry leaves
+    /// the step budget where the project put it.
+    pub step_limit: Option<u64>,
+    /// The raised ceiling on this fn's verify-case expansion. `None` = this
+    /// entry leaves the ceiling where the project put it.
+    pub max_cases: Option<usize>,
+    /// Mandatory explanation — why this case is expected to be expensive.
+    pub reason: String,
+}
+
+impl VerifyCostly {
+    /// The `fn` half of the match rule. One implementation, so `step-limit`
+    /// and `max-cases` can never come to disagree about which blocks an
+    /// entry is about.
+    pub fn matches_fn(&self, fn_name: &str) -> bool {
+        self.fn_name == fn_name
+    }
+
+    /// The `files` half of the match rule: an entry with no globs covers
+    /// every verified file.
+    pub fn covers_file(&self, file_path: &str) -> bool {
+        self.files.is_empty() || self.files.iter().any(|g| glob_matches(file_path, g))
+    }
+}
+
+/// The ceiling on verify-case expansion in force while parsing one file.
+///
+/// The parser meets one file and many function names, so the `files` half of
+/// the match rule is settled when this is built and the `fn` half waits for
+/// the block being parsed. A parser built without a project holds
+/// [`VerifyCaseCeiling::compiled_default`], which answers the compiled-in
+/// number for every function.
+#[derive(Debug, Clone)]
+pub struct VerifyCaseCeiling {
+    /// What a function no entry names gets: `[verify] max-cases`, or the
+    /// compiled-in default.
+    default: usize,
+    /// The entries whose globs cover this file and that set `max-cases`, in
+    /// `aver.toml` order. The order is how the file reads, not what it
+    /// means: the most permissive of the entries naming a function governs
+    /// that function's blocks.
+    raises: Vec<VerifyCostly>,
+}
+
+impl VerifyCaseCeiling {
+    /// The ceiling with no project configuration at all — what every
+    /// internal re-parse and every fuzz target parses under.
+    pub fn compiled_default() -> Self {
+        Self::flat(DEFAULT_VERIFY_MAX_CASES)
+    }
+
+    /// One number for every function, whatever it is called.
+    pub fn flat(max_cases: usize) -> Self {
+        VerifyCaseCeiling {
+            default: max_cases,
+            raises: Vec::new(),
+        }
+    }
+
+    /// The ceiling for the verify blocks of `fn_name`: the project default,
+    /// raised by the most permissive covering `[[verify.costly]]` entry that
+    /// names it — the tie-break `step-limit` uses, through the same helper.
+    pub fn for_fn(&self, fn_name: &str) -> usize {
+        most_permissive_raise(
+            self.default,
+            self.raises
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.matches_fn(fn_name))
+                .map(|(idx, entry)| (idx, entry.max_cases)),
+        )
+        .0
+    }
+}
+
+/// Resolve one `[[verify.costly]]` dial for one verify block: `base`, raised
+/// by the most permissive value among the entries that match the block.
+///
+/// Both dials go through this, so the two cannot drift apart. Most
+/// permissive rather than first match because first match makes the order of
+/// entries in `aver.toml` semantic: adding an entry near the top silently
+/// changes which one governs a block elsewhere, and a reader has to scan the
+/// whole list to know what applies. This way each entry is an independent
+/// statement about one function, the answer does not depend on order, and
+/// adding an entry can only loosen, never re-point.
+///
+/// Returns the index of the entry that did the raising, so a report can name
+/// it. An exact tie goes to the earlier entry: the value is the same either
+/// way, so that only settles which entry gets named.
+fn most_permissive_raise<T: Ord + Copy>(
+    base: T,
+    candidates: impl IntoIterator<Item = (usize, Option<T>)>,
+) -> (T, Option<usize>) {
+    candidates
+        .into_iter()
+        .filter_map(|(idx, value)| value.map(|value| (idx, value)))
+        .filter(|&(_, value)| value > base)
+        .max_by_key(|&(idx, value)| (value, std::cmp::Reverse(idx)))
+        .map_or((base, None), |(idx, value)| (value, Some(idx)))
+}
+
+/// `[verify]` policy: how much work one verify case is allowed to be, and
+/// how many cases a `given` domain is allowed to expand into.
+///
+/// Both are project policy, not program meaning: the same source verifies
+/// the same way whatever these say, it just gets more or less room to
+/// finish. `None` means "use the compiled-in default", so a project with no
+/// `[verify]` section behaves exactly as it did before this existed.
+#[derive(Debug, Clone, Default)]
+pub struct VerifySettings {
+    /// `[verify] step-limit` — the per-case default budget.
+    pub step_limit: Option<u64>,
+    /// `[verify] max-cases` — the cap on `given`-domain expansion, for every
+    /// function no `[[verify.costly]]` entry raises.
+    pub max_cases: Option<usize>,
+    /// `[[verify.costly]]` entries, in file order.
+    pub costly: Vec<VerifyCostly>,
+}
+
 /// How independent products (`!`/`?!`) are scheduled and how failures
 /// propagate.
 ///
@@ -132,6 +306,9 @@ pub struct ProjectConfig {
     pub tcp_settings_configured: bool,
     /// Check-time warning suppressions.
     pub check_suppressions: Vec<CheckSuppression>,
+    /// `[verify]` budgets: per-case step limit, case-count ceiling, and the
+    /// `[[verify.costly]]` entries that raise either of them per function.
+    pub verify: VerifySettings,
     /// How `?!` products handle branch failure.
     pub independence_mode: IndependenceMode,
     /// Per-project layer fingerprints for `aver shape`. Empty = use the
@@ -272,6 +449,7 @@ impl ProjectConfig {
         }
 
         let check_suppressions = parse_check_suppressions(&table)?;
+        let verify = parse_verify_settings(&table)?;
         let independence_mode = parse_independence_mode(&table)?;
         let (shape_layers, shape_expected) = parse_shape(&table)?;
         let provider_manifest = providers::parse_provider_manifest(&table)?;
@@ -281,11 +459,86 @@ impl ProjectConfig {
             tcp_settings,
             tcp_settings_configured,
             check_suppressions,
+            verify,
             independence_mode,
             shape_layers,
             shape_expected,
             provider_manifest,
         })
+    }
+
+    /// The per-case verify step budget this project asks for, before any
+    /// `[[verify.costly]]` entry raises it.
+    pub fn verify_step_limit(&self) -> u64 {
+        self.verify.step_limit.unwrap_or(DEFAULT_VERIFY_STEP_LIMIT)
+    }
+
+    /// The ceiling on how many cases a `given` domain may expand into.
+    pub fn verify_max_cases(&self) -> usize {
+        self.verify.max_cases.unwrap_or(DEFAULT_VERIFY_MAX_CASES)
+    }
+
+    /// Whether the `[[verify.costly]]` entry at `idx` covers `file_path` by
+    /// its file globs alone, ignoring `fn`. An entry with no globs covers
+    /// every file. Separates "the entry points at a path this run never
+    /// verified" from "the path was verified and no block of that fn ran".
+    pub fn verify_costly_covers_file(&self, idx: usize, file_path: &str) -> bool {
+        match self.verify.costly.get(idx) {
+            Some(entry) => entry.covers_file(file_path),
+            None => false,
+        }
+    }
+
+    /// Whether the entry at `idx` applies to `fn_name` in `file_path`.
+    pub fn verify_costly_applies(&self, idx: usize, fn_name: &str, file_path: &str) -> bool {
+        match self.verify.costly.get(idx) {
+            Some(entry) => entry.matches_fn(fn_name) && entry.covers_file(file_path),
+            None => false,
+        }
+    }
+
+    /// The ceiling on verify-case expansion for one file, resolved as far as
+    /// a file path can resolve it. Handed to the parser, which supplies the
+    /// function name of each block it parses.
+    pub fn verify_case_ceiling(&self, file_path: &str) -> VerifyCaseCeiling {
+        VerifyCaseCeiling {
+            default: self.verify_max_cases(),
+            raises: self
+                .verify
+                .costly
+                .iter()
+                .filter(|entry| entry.max_cases.is_some() && entry.covers_file(file_path))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// The ceiling for one function's verify block in one file: `[verify]
+    /// max-cases`, else the compiled-in default, raised by the most
+    /// permissive matching `[[verify.costly]]` entry that sets `max-cases`.
+    ///
+    /// The runner's `--hostile` cartesian asks this per block, exactly as the
+    /// parser asks the same question of the same entries per block.
+    pub fn verify_max_cases_for(&self, fn_name: &str, file_path: &str) -> usize {
+        self.verify_case_ceiling(file_path).for_fn(fn_name)
+    }
+
+    /// The budget for one function's verify block in one file: the default,
+    /// raised by the most permissive matching `[[verify.costly]]` entry that
+    /// sets `step-limit`.
+    ///
+    /// Returns the index of the entry that did the raising so the report can
+    /// name it and so an entry that matched nothing can be called stale.
+    pub fn verify_budget_for(&self, fn_name: &str, file_path: &str) -> (u64, Option<usize>) {
+        most_permissive_raise(
+            self.verify_step_limit(),
+            self.verify
+                .costly
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| self.verify_costly_applies(*idx, fn_name, file_path))
+                .map(|(idx, entry)| (idx, entry.step_limit)),
+        )
     }
 
     /// True when at least one `[[shape.expected]]` glob matches `file_path`.
@@ -835,6 +1088,177 @@ fn parse_check_suppressions(table: &toml::Table) -> Result<Vec<CheckSuppression>
     }
 
     Ok(suppressions)
+}
+
+/// Parse the `[verify]` section and its `[[verify.costly]]` entries.
+///
+/// Deliberately the same shape, the same validation and the same voice as
+/// [`parse_check_suppressions`]: `fn` is what `slug` is, `reason` is
+/// mandatory and non-empty for the same reason, and `files` is the same
+/// optional anchored glob list.
+fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> {
+    let verify_table = match table.get("verify") {
+        Some(toml::Value::Table(t)) => t,
+        Some(_) => return Err("aver.toml: [verify] must be a table".to_string()),
+        None => return Ok(VerifySettings::default()),
+    };
+
+    let step_limit = parse_positive_u64(verify_table, "[verify]", "step-limit")?;
+    let max_cases = parse_positive_u64(verify_table, "[verify]", "max-cases")?.map(|n| n as usize);
+
+    let arr = match verify_table.get("costly") {
+        Some(toml::Value::Array(a)) => a.clone(),
+        Some(_) => {
+            return Err("aver.toml: [[verify.costly]] must be an array of tables".to_string());
+        }
+        None => Vec::new(),
+    };
+
+    // The numbers an entry has to beat. A `[[verify.costly]]` entry says
+    // "this case is expensive, give it room"; a lower number says the
+    // opposite — a ratchet keeping something cheap, which is a different
+    // feature and would need its own name — and an equal one says nothing at
+    // all. Under a section called `costly` either is almost always a mistake,
+    // and refusing it here costs nothing. It is also the reversible
+    // direction: the ban can be relaxed later without breaking anyone's file,
+    // while allowing it and withdrawing it later breaks configs.
+    let project_step_limit = step_limit.unwrap_or(DEFAULT_VERIFY_STEP_LIMIT);
+    let project_max_cases = max_cases.unwrap_or(DEFAULT_VERIFY_MAX_CASES);
+
+    let mut costly = Vec::new();
+    for (i, entry) in arr.iter().enumerate() {
+        let t = entry
+            .as_table()
+            .ok_or_else(|| format!("aver.toml: [[verify.costly]][{}] must be a table", i))?;
+
+        let fn_name = t
+            .get("fn")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "aver.toml: [[verify.costly]][{}] requires a string `fn` — the function whose verify cases are expensive",
+                    i
+                )
+            })?
+            .to_string();
+
+        let reason = t
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "aver.toml: [[verify.costly]][{}] requires a string `reason` — say why this case is expected to be expensive",
+                    i
+                )
+            })?
+            .to_string();
+
+        if reason.trim().is_empty() {
+            return Err(format!(
+                "aver.toml: [[verify.costly]][{}] `reason` must not be empty",
+                i
+            ));
+        }
+
+        let context = format!("[[verify.costly]][{}]", i);
+        let entry_step_limit = parse_positive_u64(t, &context, "step-limit")?;
+        let entry_max_cases = parse_positive_u64(t, &context, "max-cases")?.map(|n| n as usize);
+
+        if entry_step_limit.is_none() && entry_max_cases.is_none() {
+            return Err(format!(
+                "aver.toml: [[verify.costly]][{}] raises nothing — set `step-limit`, `max-cases`, or both",
+                i
+            ));
+        }
+        if let Some(limit) = entry_step_limit {
+            reject_lowering(
+                &context,
+                "step-limit",
+                limit,
+                project_step_limit,
+                "step budget",
+            )?;
+        }
+        if let Some(cases) = entry_max_cases {
+            reject_lowering(
+                &context,
+                "max-cases",
+                cases,
+                project_max_cases,
+                "case ceiling",
+            )?;
+        }
+
+        let files = if let Some(val) = t.get("files") {
+            let arr = val.as_array().ok_or_else(|| {
+                format!("aver.toml: [[verify.costly]][{}].files must be an array", i)
+            })?;
+            arr.iter()
+                .enumerate()
+                .map(|(j, v)| {
+                    v.as_str().map(|s| s.to_string()).ok_or_else(|| {
+                        format!(
+                            "aver.toml: [[verify.costly]][{}].files[{}] must be a string",
+                            i, j
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        costly.push(VerifyCostly {
+            fn_name,
+            files,
+            step_limit: entry_step_limit,
+            max_cases: entry_max_cases,
+            reason,
+        });
+    }
+
+    Ok(VerifySettings {
+        step_limit,
+        max_cases,
+        costly,
+    })
+}
+
+/// Refuse a `[[verify.costly]]` dial that is not above the number already in
+/// force, naming both. Keeps one sentence true of both dials: an entry only
+/// ever raises, and the most permissive matching entry wins.
+fn reject_lowering<T: Ord + std::fmt::Display>(
+    context: &str,
+    key: &str,
+    entry_value: T,
+    in_force: T,
+    dial: &str,
+) -> Result<(), String> {
+    if entry_value > in_force {
+        return Ok(());
+    }
+    Err(format!(
+        "aver.toml: {} `{}` = {} raises nothing — the {} in force is {}, and a [[verify.costly]] entry may only raise it",
+        context, key, entry_value, dial, in_force
+    ))
+}
+
+/// Read an optional positive-integer key out of a `[verify]`-family table.
+/// Absent is `None`; present but zero, negative or non-integer is an error —
+/// a budget of zero would decline every case, which nobody means to write.
+fn parse_positive_u64(
+    table: &toml::Table,
+    context: &str,
+    key: &str,
+) -> Result<Option<u64>, String> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(toml::Value::Integer(n)) if *n > 0 => Ok(Some(*n as u64)),
+        Some(_) => Err(format!(
+            "aver.toml: {} `{}` must be a positive integer",
+            context, key
+        )),
+    }
 }
 
 /// Drop any leading `./` segments. Matching is anchored, so `./a/b.av` and
@@ -1553,6 +1977,336 @@ reason = "   "
         let result = ProjectConfig::parse(toml);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must not be empty"));
+    }
+
+    // ── [verify] budgets ─────────────────────────────────────────────
+
+    #[test]
+    fn verify_section_absent_leaves_the_compiled_defaults() {
+        let config = ProjectConfig::parse("").unwrap();
+        assert_eq!(config.verify_step_limit(), DEFAULT_VERIFY_STEP_LIMIT);
+        assert_eq!(config.verify_max_cases(), DEFAULT_VERIFY_MAX_CASES);
+        assert!(config.verify.costly.is_empty());
+        assert_eq!(
+            config.verify_budget_for("checkScript", "domain/scriptcases1.av"),
+            (DEFAULT_VERIFY_STEP_LIMIT, None)
+        );
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+            DEFAULT_VERIFY_MAX_CASES
+        );
+    }
+
+    #[test]
+    fn verify_costly_requires_fn() {
+        let toml = r#"
+[[verify.costly]]
+reason = "Bitcoin Core's corpus has consensus-max scripts"
+step-limit = 50000000
+"#;
+        let error = ProjectConfig::parse(toml).expect_err("`fn` is required");
+        assert!(error.contains("requires a string `fn`"), "{error}");
+    }
+
+    #[test]
+    fn verify_costly_requires_reason() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+"#;
+        let error = ProjectConfig::parse(toml).expect_err("`reason` is required");
+        assert!(error.contains("requires a string `reason`"), "{error}");
+        assert!(
+            error.contains("say why this case is expected to be expensive"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn verify_costly_rejects_empty_reason() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+reason = "   "
+step-limit = 50000000
+"#;
+        let error = ProjectConfig::parse(toml).expect_err("blank `reason` is not a reason");
+        assert!(error.contains("must not be empty"), "{error}");
+    }
+
+    #[test]
+    fn verify_costly_dials_must_be_positive_integers() {
+        for entry in [
+            "step-limit = 0",
+            "step-limit = \"lots\"",
+            "max-cases = 0",
+            "max-cases = \"lots\"",
+        ] {
+            let toml = format!(
+                "[[verify.costly]]\nfn = \"checkScript\"\nreason = \"expensive\"\n{entry}\n"
+            );
+            let error = ProjectConfig::parse(&toml).expect_err("a dial must be a positive integer");
+            assert!(error.contains("must be a positive integer"), "{error}");
+        }
+    }
+
+    #[test]
+    fn verify_costly_requires_at_least_one_dial() {
+        let toml = "[[verify.costly]]\nfn = \"checkScript\"\nreason = \"expensive\"\n";
+        let error = ProjectConfig::parse(toml).expect_err("an entry that raises nothing is a typo");
+        assert!(
+            error.contains("raises nothing — set `step-limit`, `max-cases`, or both"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn verify_costly_may_raise_either_dial_or_both() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+reason = "slow, not wide"
+
+[[verify.costly]]
+fn = "checkTx"
+max-cases = 40000
+reason = "wide, not slow"
+
+[[verify.costly]]
+fn = "checkBlock"
+step-limit = 50000000
+max-cases = 40000
+reason = "both"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        let dials: Vec<(Option<u64>, Option<usize>)> = config
+            .verify
+            .costly
+            .iter()
+            .map(|entry| (entry.step_limit, entry.max_cases))
+            .collect();
+        assert_eq!(
+            dials,
+            vec![
+                (Some(50_000_000), None),
+                (None, Some(40_000)),
+                (Some(50_000_000), Some(40_000)),
+            ]
+        );
+        // An entry that moves only the ceiling leaves the step budget alone.
+        assert_eq!(
+            config.verify_budget_for("checkTx", "domain/txcases1.av"),
+            (DEFAULT_VERIFY_STEP_LIMIT, None)
+        );
+    }
+
+    #[test]
+    fn verify_max_cases_is_raised_for_the_named_fn_in_the_matching_files() {
+        let toml = r#"
+[verify]
+max-cases = 20000
+
+[[verify.costly]]
+fn = "checkScript"
+files = ["domain/scriptcases*.av"]
+max-cases = 40000
+reason = "Core corpus includes consensus-max 10,000-byte scripts"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+            40_000
+        );
+        // Right fn, wrong file.
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/txcases1.av"),
+            20_000
+        );
+        // Right file, wrong fn.
+        assert_eq!(
+            config.verify_max_cases_for("checkTx", "domain/scriptcases1.av"),
+            20_000
+        );
+    }
+
+    #[test]
+    fn verify_max_cases_takes_the_most_permissive_matching_entry() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+reason = "the slow ones — this entry says nothing about width"
+
+[[verify.costly]]
+fn = "checkScript"
+max-cases = 90000
+reason = "the widest shard"
+
+[[verify.costly]]
+fn = "checkScript"
+max-cases = 40000
+reason = "a narrower one, which does not take the wider one back"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+            90_000
+        );
+        // The ceiling a parser carries for one file answers the same way.
+        let ceiling = config.verify_case_ceiling("domain/scriptcases1.av");
+        assert_eq!(ceiling.for_fn("checkScript"), 90_000);
+        assert_eq!(ceiling.for_fn("checkTx"), DEFAULT_VERIFY_MAX_CASES);
+    }
+
+    /// The tie-break is one rule, so writing the entries in the other order
+    /// has to give the same two answers — for both dials.
+    #[test]
+    fn neither_dial_depends_on_the_order_of_the_entries() {
+        let narrow_first = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 5000000
+max-cases = 40000
+reason = "the narrow shard"
+
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+max-cases = 90000
+reason = "the wide one"
+"#;
+        let wide_first = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 50000000
+max-cases = 90000
+reason = "the wide one"
+
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 5000000
+max-cases = 40000
+reason = "the narrow shard"
+"#;
+        for toml in [narrow_first, wide_first] {
+            let config = ProjectConfig::parse(toml).unwrap();
+            assert_eq!(
+                config.verify_max_cases_for("checkScript", "domain/scriptcases1.av"),
+                90_000
+            );
+            assert_eq!(
+                config
+                    .verify_budget_for("checkScript", "domain/scriptcases1.av")
+                    .0,
+                50_000_000
+            );
+        }
+    }
+
+    #[test]
+    fn verify_budget_is_raised_for_the_named_fn_in_the_matching_files() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+files = ["domain/scriptcases*.av"]
+step-limit = 50000000
+reason = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.verify_budget_for("checkScript", "domain/scriptcases1.av"),
+            (50_000_000, Some(0))
+        );
+        // Right fn, wrong file.
+        assert_eq!(
+            config.verify_budget_for("checkScript", "domain/txcases1.av"),
+            (DEFAULT_VERIFY_STEP_LIMIT, None)
+        );
+        // Right file, wrong fn.
+        assert_eq!(
+            config.verify_budget_for("checkTx", "domain/scriptcases1.av"),
+            (DEFAULT_VERIFY_STEP_LIMIT, None)
+        );
+    }
+
+    #[test]
+    fn verify_budget_takes_the_most_permissive_matching_entry() {
+        let toml = r#"
+[[verify.costly]]
+fn = "checkScript"
+step-limit = 5000000
+reason = "the ordinary big ones"
+
+[[verify.costly]]
+fn = "checkScript"
+files = ["domain/scriptcases5.av"]
+step-limit = 50000000
+reason = "and the consensus-max ones in the last shard"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.verify_budget_for("checkScript", "domain/scriptcases5.av"),
+            (50_000_000, Some(1))
+        );
+        assert_eq!(
+            config.verify_budget_for("checkScript", "domain/scriptcases1.av"),
+            (5_000_000, Some(0))
+        );
+    }
+
+    #[test]
+    fn verify_step_limit_and_max_cases_are_overridable() {
+        let config =
+            ProjectConfig::parse("[verify]\nstep-limit = 2000000\nmax-cases = 40000\n").unwrap();
+        assert_eq!(config.verify_step_limit(), 2_000_000);
+        assert_eq!(config.verify_max_cases(), 40_000);
+    }
+
+    #[test]
+    fn verify_scalars_must_be_positive_integers() {
+        for toml in [
+            "[verify]\nstep-limit = 0\n",
+            "[verify]\nstep-limit = \"lots\"\n",
+            "[verify]\nmax-cases = 0\n",
+        ] {
+            let error = ProjectConfig::parse(toml).expect_err("a zero budget declines everything");
+            assert!(error.contains("must be a positive integer"), "{error}");
+        }
+    }
+
+    /// An entry only ever raises. A dial that is not above the number
+    /// already in force states the opposite intent — a ratchet keeping
+    /// something cheap — so it is refused at load, naming both numbers.
+    #[test]
+    fn verify_costly_not_above_the_number_in_force_is_a_config_error() {
+        let cases = [
+            (
+                "[verify]\nstep-limit = 5000000\n\n[[verify.costly]]\nfn = \"checkScript\"\nstep-limit = 2000000\nreason = \"written before the project default was raised past it\"\n",
+                "`step-limit` = 2000000 raises nothing — the step budget in force is 5000000",
+            ),
+            (
+                "[[verify.costly]]\nfn = \"checkScript\"\nstep-limit = 1000000\nreason = \"exactly the compiled-in budget\"\n",
+                "`step-limit` = 1000000 raises nothing — the step budget in force is 1000000",
+            ),
+            (
+                "[verify]\nmax-cases = 40000\n\n[[verify.costly]]\nfn = \"checkScript\"\nmax-cases = 20000\nreason = \"written before the project ceiling was raised past it\"\n",
+                "`max-cases` = 20000 raises nothing — the case ceiling in force is 40000",
+            ),
+            (
+                "[[verify.costly]]\nfn = \"checkScript\"\nmax-cases = 10000\nreason = \"exactly the compiled-in ceiling\"\n",
+                "`max-cases` = 10000 raises nothing — the case ceiling in force is 10000",
+            ),
+        ];
+        for (toml, expected) in cases {
+            let error = ProjectConfig::parse(toml).expect_err("an entry may only raise");
+            assert!(error.contains(expected), "{error}");
+            assert!(
+                error.contains("may only raise it"),
+                "the message has to say which direction is allowed: {error}"
+            );
+        }
     }
 
     #[test]

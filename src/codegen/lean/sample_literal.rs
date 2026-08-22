@@ -33,6 +33,27 @@ use crate::codegen::CodegenContext;
 
 use super::expr::emit_expr_legacy;
 
+/// The reason `aver verify` gave for not answering case `global_case_idx`,
+/// when it declined it.
+///
+/// A declined case must not reach the fallback this module documents. The
+/// fallback is the source RHS, so a declined case would be emitted as
+/// `impl(sample) = <the author's expected expression>` — a claim nothing
+/// checked, in exactly the shape the module exists to prevent, and precisely
+/// on the big inputs where the model is likeliest to exhaust fuel too. The
+/// caller states no theorem for such a case and records a `DeclinedClaim`.
+pub(super) fn decline_reason<'a>(
+    vb: &VerifyBlock,
+    ctx: &'a CodegenContext,
+    global_case_idx: usize,
+) -> Option<&'a String> {
+    let key = (
+        crate::codegen::common::verify_block_counter_key(vb),
+        global_case_idx,
+    );
+    ctx.declined_cases.get(&key)
+}
+
 /// Emit the expected side of case `global_case_idx` (the emitter's running
 /// per-key index: `case_index_start + idx`) from VM ground truth, if a safe
 /// literal is available. `None` → caller falls back to the source RHS.

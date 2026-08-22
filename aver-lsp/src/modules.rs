@@ -109,6 +109,11 @@ pub fn base_dir_from_uri(uri: &Uri) -> Option<String> {
     path.parent().map(|p| p.to_string_lossy().to_string())
 }
 
+/// The filesystem path an LSP URI names, when it names one.
+pub fn uri_to_path(uri: &Uri) -> Option<String> {
+    Some(uri.to_file_path()?.to_string_lossy().to_string())
+}
+
 /// Convert a filesystem path to an LSP Uri.
 pub fn path_to_uri(path: &std::path::Path) -> Option<Uri> {
     Uri::from_file_path(path)

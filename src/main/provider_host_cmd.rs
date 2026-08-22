@@ -269,10 +269,12 @@ pub(super) fn known_project_capabilities(
         let Some(path) = aver::source::find_module_file(&binding.capability, module_root) else {
             continue;
         };
-        let Ok(source) = std::fs::read_to_string(path) else {
+        let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(items) = aver::source::parse_source(&source) else {
+        let Ok(items) =
+            aver::source::parse_project_source(&source, module_root, &path.to_string_lossy())
+        else {
             continue;
         };
         // A dotted binding such as `Infra.Kv` names the module by its path;

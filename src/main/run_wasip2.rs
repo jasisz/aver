@@ -105,7 +105,8 @@ fn build_component(
 
     let module_root = super::shared::resolve_module_root(module_root_override);
     let source = super::shared::read_file(file).map_err(|e| e.to_string())?;
-    let mut items = super::shared::parse_file(&source).map_err(|e| e.to_string())?;
+    let mut items =
+        super::shared::parse_file(&source, &module_root, file).map_err(|e| e.to_string())?;
     let dep_modules = super::commands::load_compile_deps(
         &items,
         &module_root,

@@ -218,7 +218,7 @@ verify pickOne trace
     pickOne().result => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-This expands to two cases. Multiple `given` lists expand as a cartesian product, capped at `10_000` cases. Stub names may be local (`lowDie`) or qualified imports (`Helpers.lowDie`).
+This expands to two cases. Multiple `given` lists expand as a cartesian product, capped at `10_000` cases (`[verify] max-cases` in `aver.toml` moves the cap for the project, and `max-cases` in a `[[verify.costly]]` entry moves it for one function). Stub names may be local (`lowDie`) or qualified imports (`Helpers.lowDie`).
 
 ## Trace API
 
@@ -300,7 +300,7 @@ Supported law shapes can become universal theorems. Concrete `given` domains sti
 
 A `verify <fn> law` block does double duty:
 
-- `aver verify` runs it as a **finite sample check**: the cartesian product of the `given` domains is enumerated (capped at 10,000 cases) and evaluated against the law's RHS using whatever stubs you supplied.
+- `aver verify` runs it as a **finite sample check**: the cartesian product of the `given` domains is enumerated (capped at 10,000 cases, or whatever `max-cases` the project set for this function) and evaluated against the law's RHS using whatever stubs you supplied.
 - `aver proof` exports the same block as a **universally quantified theorem** in Lean / Dafny, where every classified effect becomes a function parameter and the law is asserted *for every possible such function* — not just for the stubs in `given`.
 
 These two questions can have different answers on the same block. The canonical example is `examples/formal/randomness_paradox.av`:
@@ -429,10 +429,12 @@ installer overwrites user-given for the duration of a hostile-profile
 case so the same law gets evaluated under both worlds.
 
 The full cartesian (value-boundary cases × adversarial worlds) is
-capped at `10_000` cases per block — same cap as parser-side declared
-expansion. Over-budget blocks fail with a clear error pointing at the
-law and listing the projected size; tighten the `given` domain, add a
-`when` precondition, or run that block without `--hostile`.
+capped at `10_000` cases per block — the same `max-cases` ceiling as
+parser-side declared expansion, resolved per block through the same
+`[[verify.costly]]` entries. Over-budget blocks fail with
+a clear error pointing at the law and listing the projected size;
+tighten the `given` domain, add a `when` precondition, raise the
+ceiling in `aver.toml`, or run that block without `--hostile`.
 
 `when` clauses stay binding: a hostile case is dropped if the `when`
 guard returns `false`. That is the line `--hostile` honours — `given`

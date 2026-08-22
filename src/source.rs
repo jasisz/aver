@@ -3,15 +3,110 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{TopLevel, VerifyKind};
+use crate::config::VerifyCaseCeiling;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::visibility;
 
 pub fn parse_source(source: &str) -> Result<Vec<TopLevel>, String> {
+    parse_source_with_verify_ceiling(source, VerifyCaseCeiling::compiled_default())
+}
+
+/// [`parse_source`] with one explicit ceiling for every verify block.
+pub fn parse_source_with_verify_max_cases(
+    source: &str,
+    max_cases: usize,
+) -> Result<Vec<TopLevel>, String> {
+    parse_source_with_verify_ceiling(source, VerifyCaseCeiling::flat(max_cases))
+}
+
+/// [`parse_source`] under a ceiling already resolved for the file's path, so
+/// each verify block gets the number its own function was given.
+pub fn parse_source_with_verify_ceiling(
+    source: &str,
+    ceiling: VerifyCaseCeiling,
+) -> Result<Vec<TopLevel>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens);
+    parser.set_verify_ceiling(ceiling);
     parser.parse().map_err(|e| e.to_string())
+}
+
+/// Parse one of the user's own project files, under the ceiling the project
+/// declared for that file.
+///
+/// Every command that reads a `.av` off disk parses it through here or
+/// through [`Walk::new`], which resolves the same ceiling the same way for
+/// each dependency it loads. That is the whole rule: a file the project
+/// declared legal is legal at every door, and a file over the ceiling is
+/// refused at every door with the project's own number in the message.
+///
+/// Every other parse in the compiler goes through [`parse_source`] or
+/// constructs a [`Parser`] directly and keeps the built-in default — which
+/// is what those want, because they parse compiler-synthesized source (TCO
+/// hoists, effect-lifting wrappers, hostile stubs, coverage and law probes),
+/// never a user's `given` domain.
+///
+/// A missing or malformed `aver.toml` leaves the default in place here; every
+/// command loads and reports the file separately, so a broken one is never
+/// swallowed.
+pub fn parse_project_source(
+    source: &str,
+    module_root: &str,
+    file: &str,
+) -> Result<Vec<TopLevel>, String> {
+    parse_source_with_verify_ceiling(source, project_verify_ceiling(module_root, file))
+}
+
+/// The module root a command works against when the user names none: the
+/// working directory, which is where `aver.toml` is looked for.
+pub fn working_module_root() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|dir| dir.into_os_string().into_string().ok())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+/// The verify-case ceiling the project rooted at `module_root` declares for
+/// `file`, or the built-in default when there is no readable `aver.toml`.
+pub fn project_verify_ceiling(module_root: &str, file: &str) -> VerifyCaseCeiling {
+    match crate::config::ProjectConfig::load_from_dir(Path::new(module_root))
+        .ok()
+        .flatten()
+    {
+        Some(config) => verify_ceiling_for(&config, module_root, file),
+        None => VerifyCaseCeiling::compiled_default(),
+    }
+}
+
+/// [`project_verify_ceiling`] for a caller that may hold no project at all:
+/// an editor scratch buffer, the playground's virtual filesystem, a
+/// candidate law checked outside any root. Nothing to ask means the built-in
+/// default — which is what those callers had before any of this existed.
+pub fn project_verify_ceiling_or_default(
+    module_root: Option<&str>,
+    file: Option<&str>,
+) -> VerifyCaseCeiling {
+    match (module_root, file) {
+        (Some(root), Some(file)) => project_verify_ceiling(root, file),
+        _ => VerifyCaseCeiling::compiled_default(),
+    }
+}
+
+/// The ceiling `config` declares for `file`, matched against the same
+/// anchored path form `[[verify.costly]].files` globs are matched against
+/// everywhere else. For callers that already hold the project's config and
+/// must not read a second, possibly different one off disk.
+pub fn verify_ceiling_for(
+    config: &crate::config::ProjectConfig,
+    module_root: &str,
+    file: &str,
+) -> VerifyCaseCeiling {
+    config.verify_case_ceiling(&crate::diagnostics::vm_verify::costly_glob_key(
+        file,
+        Some(module_root),
+    ))
 }
 
 /// Enforce module contract for file-based programs:
@@ -450,6 +545,11 @@ pub fn load_program(
 struct Walk<'a> {
     module_root: &'a str,
     mode: LoadMode,
+    /// Read once per walk from the project's `aver.toml`, so every module of
+    /// one program expands its verify cases under the same policy — the
+    /// ceiling itself is resolved per file, because `[[verify.costly]]`
+    /// scopes itself by file glob as well as by function name.
+    verify_config: Option<crate::config::ProjectConfig>,
     loaded: HashSet<PathBuf>,
     loading: Vec<PathBuf>,
     modules: Vec<ProgramModule>,
@@ -461,10 +561,21 @@ impl<'a> Walk<'a> {
         Self {
             module_root,
             mode,
+            verify_config: crate::config::ProjectConfig::load_from_dir(Path::new(module_root))
+                .ok()
+                .flatten(),
             loaded: HashSet::new(),
             loading: Vec::new(),
             modules: Vec::new(),
             next_discovery_index: 1,
+        }
+    }
+
+    /// The ceiling this walk's project declares for one of its modules.
+    fn verify_ceiling(&self, path: &Path) -> VerifyCaseCeiling {
+        match &self.verify_config {
+            Some(config) => verify_ceiling_for(config, self.module_root, &path.to_string_lossy()),
+            None => VerifyCaseCeiling::compiled_default(),
         }
     }
 
@@ -530,26 +641,27 @@ impl<'a> Walk<'a> {
         let ModuleSource { path, source } = resolved;
         let is_stdlib = path.starts_with("<aver-stdlib>");
 
-        let (items, fault) = match parse_source(&source) {
-            Ok(items) => match require_module_declaration(&items, &path.to_string_lossy()) {
-                Ok(()) => (items, None),
-                Err(message) => (
-                    items,
-                    Some(LoadError::Declaration {
+        let (items, fault) =
+            match parse_source_with_verify_ceiling(&source, self.verify_ceiling(&path)) {
+                Ok(items) => match require_module_declaration(&items, &path.to_string_lossy()) {
+                    Ok(()) => (items, None),
+                    Err(message) => (
+                        items,
+                        Some(LoadError::Declaration {
+                            path: path.clone(),
+                            message,
+                        }),
+                    ),
+                },
+                Err(error) => (
+                    Vec::new(),
+                    Some(LoadError::Parse {
+                        name: dep_name.to_string(),
                         path: path.clone(),
-                        message,
+                        error,
                     }),
                 ),
-            },
-            Err(error) => (
-                Vec::new(),
-                Some(LoadError::Parse {
-                    name: dep_name.to_string(),
-                    path: path.clone(),
-                    error,
-                }),
-            ),
-        };
+            };
         if self.mode == LoadMode::Strict {
             if let Some(fault) = fault {
                 return Err(fault);

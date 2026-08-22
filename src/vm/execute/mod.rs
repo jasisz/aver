@@ -43,6 +43,15 @@ pub struct VM {
     /// no stack growth). Counter resets at the top of each
     /// `run_named_function` so consecutive cases don't share budget.
     step_limit: Option<u64>,
+    /// Dispatched opcodes consumed by the call currently running. Zeroed and
+    /// restored by `execute_until`, so a nested call never spends the outer
+    /// call's budget.
+    step_count: u64,
+    /// Dispatched opcodes the last completed call consumed — however it
+    /// ended. The verify runner reads it to report what a case actually cost,
+    /// which is the only way a raised budget can be shown to have bought
+    /// something.
+    last_step_count: u64,
     /// Verify compiles the whole module but executes one concrete case at a
     /// time. It still validates checked contract/model identities up front,
     /// while an absent custom binding is allowed to fail only if that case
@@ -164,6 +173,8 @@ impl VM {
             byte_builder_pool: Vec::new(),
             byte_builder_free: Vec::new(),
             step_limit: None,
+            step_count: 0,
+            last_step_count: 0,
             defer_missing_capability_providers_to_dispatch: false,
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),
@@ -178,6 +189,12 @@ impl VM {
     /// pinning the host. `None` removes the cap.
     pub fn set_step_limit(&mut self, limit: Option<u64>) {
         self.step_limit = limit;
+    }
+
+    /// Dispatched opcodes the last `run_named_function` / `run` call
+    /// consumed, whether it returned a value or hit the step limit.
+    pub fn last_step_count(&self) -> u64 {
+        self.last_step_count
     }
 
     /// Keep contract/hash preflight, but let an absent provider fail at the

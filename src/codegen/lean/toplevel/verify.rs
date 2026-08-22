@@ -229,6 +229,16 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
+        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, case_index_start + idx)
+        {
+            lines.push(record_declined_case(
+                vb,
+                ctx,
+                case_index_start + idx + 1,
+                reason,
+            ));
+            continue;
+        }
         let (left, right, theorem_params) =
             super::verify_cases::rewrite_plain_case_oracles(vb, idx, left, right, ctx);
         let theorem_param_text = theorem_params
@@ -300,6 +310,42 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+/// Record that one case of `vb` was declined by `aver verify`, and render the
+/// refusal comment that stands in for its theorem.
+///
+/// Keyed on the block's claim identity, the same one the proof manifest and
+/// `--gate` use, so several declined cases in one block collapse to one
+/// charged claim naming the first.
+fn record_declined_case(
+    vb: &VerifyBlock,
+    ctx: &CodegenContext,
+    case_number: usize,
+    reason: &str,
+) -> String {
+    let (kind, claim) = match &vb.kind {
+        VerifyKind::Law(law) => (
+            crate::codegen::DeclineKind::Law,
+            format!("{}.{}", vb.fn_name, law.name),
+        ),
+        VerifyKind::Cases => (crate::codegen::DeclineKind::Cases, vb.fn_name.clone()),
+    };
+    let full_reason = format!("case {}: {}", case_number, reason);
+    ctx.declined_claims
+        .borrow_mut()
+        .entry(format!("{}:{claim}", kind.as_str()))
+        .or_insert_with(|| crate::codegen::DeclinedClaim {
+            kind,
+            claim,
+            reason: full_reason.clone(),
+        });
+    format!(
+        "-- verify {} case {}: {} — no theorem emitted",
+        aver_name_to_lean(&vb.fn_name),
+        case_number,
+        reason
+    )
 }
 
 /// Emit the left side of a verify case or a law statement, and report whether
@@ -1182,7 +1228,15 @@ fn emit_verify_law_block(
     // for compound predicates (`Bool.and(n ≥ 0, n ≤ 100)`) blows
     // through `maxHeartbeats`. The per-case `sample_N` theorems
     // below still get emitted as a granular cross-check.
-    if !vb.cases.is_empty() && lifted_vars.is_empty() {
+    // A block with a declined case gets no `_checked_domain` theorem at all.
+    // The conjunction is one claim over every case, so a single unanswered
+    // case would carry the source RHS into it and make the whole conjunct a
+    // statement nothing checked. The answered cases still get their granular
+    // `_sample_N` theorems below.
+    let has_declined_case = (0..vb.cases.len()).any(|idx| {
+        super::sample_literal::decline_reason(vb, ctx, case_index_start + idx).is_some()
+    });
+    if !vb.cases.is_empty() && lifted_vars.is_empty() && !has_declined_case {
         let domain_theorem_name = format!("{}_checked_domain", theorem_base);
         let domain_conjuncts: Vec<String> = vb
             .cases
@@ -1347,6 +1401,16 @@ fn emit_verify_law_block(
         ));
     }
     for idx in sample_indices {
+        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, case_index_start + idx)
+        {
+            lines.push(record_declined_case(
+                vb,
+                ctx,
+                case_index_start + idx + 1,
+                reason,
+            ));
+            continue;
+        }
         let (left, right) = &vb.cases[idx];
         let theorem_name = format!("{}_sample_{}", theorem_base, case_index_start + idx + 1);
         // Oracle v1: inject the case-specific stub value so a domain

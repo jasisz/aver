@@ -10,7 +10,7 @@ fn load_capability_target_manifest(
 ) -> Result<aver::provider::CapabilityTargetManifest, String> {
     let module_root = resolve_module_root(module_root_override);
     let source = read_file(file)?;
-    let mut items = parse_file(&source)?;
+    let mut items = parse_file(&source, &module_root, file)?;
     require_module_declaration(&items, file)?;
     let modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
     let result = aver::ir::pipeline::run(

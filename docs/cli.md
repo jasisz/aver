@@ -90,8 +90,28 @@ It fails on:
 - mismatched examples
 - parse/type errors
 - execution errors
+- cases it could not answer within their step budget
 
 It is not a coverage tool.
+
+Every case runs under a per-case budget of VM opcodes — 1,000,000 by default.
+A case that exceeds it is **declined**: a third outcome, counted separately
+from passes and failures, reported as `fail[verify-declined]: case not
+answered`, and failing the command. A decline is not a counter-example. It
+says the case was not checked, which is why it can never be read as a pass.
+
+A project whose corpus legitimately contains expensive cases raises the
+budget for the function it knows about, in `aver.toml`, with a written reason
+— see `[verify]` below. The report then names the cases the raise bought:
+
+```
+  ✓ checkScript      1119/1119
+    checkScript case 41: 8.2M steps (limit 50M, aver.toml [[verify.costly]] fn = "checkScript")
+```
+
+`--wasm-gc` runs the same cases on the same budget, converted to wasmtime
+fuel by one documented factor, so a case is runnable on both lanes or on
+neither.
 
 A file whose program `verify` could not run — a type error anywhere in it,
 a backend or provider failure, a refusal by verify itself — is **not
@@ -108,6 +128,12 @@ the entry. The buckets that say `aver check` will not help are the ones verify
 itself is known to own: a `--wasm-gc` backend refusal, a provider composition
 failure, and verify's own refusals. Anything else is treated as a source error
 and points at `aver check`.
+
+Declined cases and unchecked files are independent counts and a run can carry
+both at once: the summary states each of them separately, `--json` carries
+`cases_declined` (only when something was declined) alongside `files_skipped`
+and `blocks_unchecked`, and either one above zero keeps the run out of green
+and out of exit code 0.
 
 When the project's `aver.toml` binds providers and a module reaches one of
 those capabilities, the cases run inside the cached provider host, so a
@@ -414,6 +440,17 @@ request_idle_timeout_secs = 30
 slug = "non-tail-recursion"
 files = ["**/eval/**"]
 reason = "Tree-walking interpreter — CPS would destroy correspondence."
+
+[verify]
+step-limit = 1_000_000          # per-case opcode budget (default)
+max-cases  = 10_000             # ceiling on `given`-domain expansion (default)
+
+[[verify.costly]]
+fn         = "checkScript"
+files      = ["domain/scriptcases*.av"]
+step-limit = 50_000_000          # raise the per-case budget for this fn
+max-cases  = 40_000              # raise the case ceiling for this fn
+reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
 ```
 
 Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment and one-shot request idle timeouts; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
@@ -428,6 +465,17 @@ Disk path patterns have deliberately small, explicit semantics:
 | `**` | Invalid; use `./**` or `/**` to state the intended boundary |
 
 An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
+
+`[verify]` budgets in detail:
+
+- `step-limit` is the per-case opcode budget `aver verify` installs before every case. The default, 1,000,000, is what stops a tail-recursive function without a base case: Aver's tail-call optimization turns that into a goto-loop with no stack growth, so nothing else would. Raising it globally trades that bail-out away for every case in the project; `[[verify.costly]]` trades it away for one function, which is almost always what you mean.
+- `[[verify.costly]]` raises the budgets for the verify blocks of one function. `fn` is required. `reason` is required and must be non-empty — the same rule `[[check.suppress]]` has, for the same reason: a budget nobody explained is a budget nobody can retire. `files` is optional and uses the same anchored globs, matched against the file's path relative to the module root.
+- An entry carries both dials, and must set at least one: `step-limit` for a fn whose cases are slow, `max-cases` for a fn whose `given` domain is wide, both for a fn that is both. An entry that sets neither is a config error, and so is a dial that is not above the number already in force — `[[verify.costly]]` says "this case is expensive, give it room", and a lower number says the opposite. So an entry only ever raises, and where several entries match one block the most permissive value wins, for both dials. First-match-wins would make the order of the entries part of what the file means: an entry added near the top would silently change which one governs a block elsewhere, and a reader would have to scan the whole list to know what applies. This way each entry is an independent statement about one function, and adding one can only loosen, never re-point.
+- The report names every case that needed more than the project default, with its step count and the entry that raised it, so a raise is never a silent licence.
+- An entry that matched no verify block during a run is reported on stderr — separately for "matched no verified file" and "matched files but no block of that fn" — and never changes the exit code. An entry another entry out-granted is not reported: it matched a live block, and losing a tie-break says nothing about whether the declaration is still true of the project.
+- `max-cases` is the ceiling on how many cases one verify block may expand into, on both sides: the `given` domain the parser expands and the `--hostile` cartesian the runner expands on top of it. Both fail loudly with the count rather than truncating, because a truncated case list is a claim you did not make. Each expanded case clones an expression pair, so raising this costs parse-time memory in proportion to the new ceiling. `[verify] max-cases` moves it for the whole project; a `[[verify.costly]]` entry moves it for the blocks of the one function it names, which is usually what a wide corpus actually means.
+- The ceiling belongs to the file, not to one command. Every command that reads your `.av` files parses them under it — `check`, `run`, `compile`, `proof`, `audit`, `format`, `shape`, `context`, `why`, `capabilities`, `replay`, `bench` — as does the dependency walk each of them performs. A `given` domain your project declared legal is legal at every door, a domain over the ceiling is refused at every door, and the message names the number that actually applied rather than the built-in one.
+- Neither setting changes what a program means. The same source verifies the same way under any budget; it just gets more or less room to finish.
 
 `[[check.suppress]]` rules in detail:
 
