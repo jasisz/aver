@@ -5828,3 +5828,157 @@ fn mir_forced_tcp_send_record_replay_roundtrips() {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
 }
+
+// ─── Representation of a type that arrives without being named ──────────
+
+/// A record whose type a module never names, and never can.
+///
+/// `High.Report` depends on `Mid.Rules` alone. `Mid.Rules` returns a
+/// `Rules`, whose `policy` field is a `Low.Policy.Policy` — so `Policy`
+/// reaches `High.Report` by projection, from a module it does not import
+/// and does not re-expose. That is legal Aver and the VM runs it.
+///
+/// The Rust backend asks one question about the base of a projection: is
+/// this type's `List<Int>` stored as packed bytes? It used to answer from a
+/// `TypeId` that had been minted in a DIFFERENT symbol table (each
+/// dependency module is typechecked on its own first) and left in place
+/// when re-resolution failed, so the id indexed whatever declaration
+/// happened to sit at that position in the whole-program table. Here it
+/// landed on `Bytes`, and the emitter wrote `.to_int_list()` — a `PackedU8`
+/// method — onto a `bool` field. `aver compile` reported success, `aver
+/// check` was byte-identical, and the only thing that ever said otherwise
+/// was `cargo build`:
+/// `error[E0599]: no method named to_int_list found for type bool`.
+const PROJECTED_TYPE_MODULES: &[(&str, &str)] = &[
+    (
+        "low/policy.av",
+        r#"module Policy
+    intent =
+        "The flags a run is made under. Nothing above Mid.Rules imports this."
+    exposes [Policy, none]
+    depends []
+    effects []
+
+record Policy
+    strict: Bool
+    verbose: Bool
+
+fn none() -> Policy
+    ? "Every flag off."
+    Policy(strict = false, verbose = false)
+
+verify none
+    none().strict => false
+"#,
+    ),
+    (
+        "mid/rules.av",
+        r#"module Rules
+    intent =
+        "The rules in force, one field of which is a Policy."
+    exposes [Rules, at]
+    depends [Low.Policy]
+    effects []
+
+record Rules
+    height: Int
+    policy: Policy
+
+fn at(height: Int) -> Rules
+    ? "The rules at a height, with no policy flag set."
+    Rules(height = height, policy = Low.Policy.none())
+
+verify at
+    at(1).height => 1
+"#,
+    ),
+    (
+        "high/report.av",
+        r#"module Report
+    intent =
+        "Reads a flag off a Policy it never names and cannot name."
+    exposes [strictness]
+    depends [Mid.Rules]
+    effects []
+
+fn strictness(rules: Rules) -> String
+    ? "Says whether the rules are strict, reading the flag by projection."
+    match rules.policy.strict
+        true -> "strict"
+        _ -> "lenient"
+
+verify strictness
+    strictness(Mid.Rules.at(3)) => "lenient"
+"#,
+    ),
+    (
+        "main.av",
+        r#"module Main
+    intent =
+        "Prints how strict the rules at a height are, and some bytes as hex."
+    depends [Bytes, High.Report, Mid.Rules]
+    effects [Console.print]
+
+fn main() -> Unit
+    ? "Prints the strictness of the rules at height 9 and three bytes."
+    ! [Console.print]
+    Console.print("{High.Report.strictness(Mid.Rules.at(9))} {hexOf([1, 2, 3])}")
+
+fn hexOf(values: List<Int>) -> String
+    ? "The hex spelling of a list of byte values."
+    match Bytes.fromList(values)
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(why) -> why
+"#,
+    ),
+];
+
+#[test]
+fn a_type_reached_only_by_projection_keeps_its_representation() {
+    let ws = temp_dir("projected-type");
+    let root = ws.join("src");
+    for (relative, source) in PROJECTED_TYPE_MODULES {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().expect("module parent")).expect("create module dir");
+        fs::write(&path, source).expect("write module");
+    }
+    let entry = root.join("main.av");
+    let name = "projected_type_probe";
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+
+    let result = (|| -> Result<(), String> {
+        let vm_stdout = run_vm(&entry, Some(&root))?;
+        compile_rust(&entry, &project, name, Some(&root), &[])?;
+
+        // The emitted projection must be the bool field itself. A
+        // `.to_int_list()` here is the backend re-typing a `bool` as a
+        // packed byte sequence.
+        let report = project.join("src/aver_generated/high/report/mod.rs");
+        let emitted =
+            fs::read_to_string(&report).map_err(|e| format!("read {}: {e}", report.display()))?;
+        if emitted.contains("to_int_list") {
+            return Err(format!(
+                "the backend chose a packed-bytes representation for a `Bool` field \
+                 whose owning type it could not identify:\n{emitted}"
+            ));
+        }
+
+        // And the crate builds — which is the only thing that ever caught
+        // this before.
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}

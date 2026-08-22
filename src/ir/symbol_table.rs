@@ -614,6 +614,35 @@ impl SymbolTable {
         found
     }
 
+    /// The one type declared under this bare name anywhere in the program,
+    /// or `None` when nothing declares it and when two modules do.
+    ///
+    /// This answers a different question from
+    /// [`Self::type_id_by_bare_name_in`], which decides what a bare name a
+    /// programmer WROTE is allowed to mean. Here the name is not being
+    /// looked up for the first time: it belongs to a type some
+    /// correctly-scoped resolver already accepted where it was written, and
+    /// the only task left is to say which declaration of THIS symbol table
+    /// it is. The module that wrote it may be one the asking context cannot
+    /// see — a record field whose type its owner declares next door reaches
+    /// a third module by projection, and that module names neither.
+    ///
+    /// Fail-closed on ambiguity: two declarations of the name leave the
+    /// identity unknown rather than picking one.
+    pub fn unique_type_id_by_bare_name(&self, name: &str) -> Option<TypeId> {
+        let mut found: Option<TypeId> = None;
+        for (key, id) in &self.type_index {
+            if key.name != name {
+                continue;
+            }
+            if found.is_some_and(|f| f != *id) {
+                return None;
+            }
+            found = Some(*id);
+        }
+        found
+    }
+
     /// Can a bare type reference written in `asking` see the type `key`
     /// declares?
     ///
@@ -1201,6 +1230,44 @@ mod tests {
         // Qualified lookups still resolve.
         assert!(table.type_id_of(&TypeKey::in_module("A", "T")).is_some());
         assert!(table.type_id_of(&TypeKey::in_module("B", "T")).is_some());
+    }
+
+    #[test]
+    fn a_name_only_one_module_declares_re_homes_even_where_it_is_invisible() {
+        // The identity of a type that reaches a module without being
+        // nameable there. `User` depends on `A` alone; `B`'s record arrives
+        // by projection off an `A` value. Asking what `B`'s bare name is
+        // ALLOWED to mean in `User` answers nothing, and rightly so — but
+        // the type still has exactly one declaration, and that is its
+        // identity.
+        let mod_user = module_depending_on("User", &["A"], vec![], vec![]);
+        let mod_a = module("A", vec![], vec![product("Holder", 1)]);
+        let mod_b = module("B", vec![], vec![product("Held", 1)]);
+        let table = SymbolTable::build(&[], &[mod_user, mod_a, mod_b]);
+        table.assert_consistent();
+
+        assert_eq!(table.type_id_by_bare_name_in("Held", Some("User")), None);
+        assert_eq!(
+            table.unique_type_id_by_bare_name("Held"),
+            table.type_id_of(&TypeKey::in_module("B", "Held")),
+        );
+    }
+
+    #[test]
+    fn two_declarations_of_a_name_leave_the_identity_unknown() {
+        // Fail-closed: picking one of them would put a `TypeId` on a type
+        // it does not name, and every consumer that reads a representation
+        // or a path off that id reads it off the wrong declaration.
+        let mod_a = module("A", vec![], vec![product("T", 1)]);
+        let mod_b = module("B", vec![], vec![product("T", 1)]);
+        let table = SymbolTable::build(&[], &[mod_a, mod_b]);
+        table.assert_consistent();
+
+        assert_eq!(table.unique_type_id_by_bare_name("T"), None);
+        assert_eq!(
+            table.unique_type_id_by_bare_name("NotDeclaredAnywhere"),
+            None
+        );
     }
 
     #[test]

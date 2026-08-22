@@ -403,6 +403,30 @@ pub struct CodegenContext {
     /// `cmd_proof`. Keyed rather than pushed because each gate can be consulted
     /// several times per claim, and a `Vec` would multiply-count.
     pub declined_claims: std::cell::RefCell<std::collections::BTreeMap<String, DeclinedClaim>>,
+    /// Every construct the Rust emitter substituted a `compile_error!` for,
+    /// in emit order, as the message it wrote.
+    ///
+    /// Same reason as `declined_claims` one field up: the emitter knows it
+    /// refused, so it says so here. Re-discovering the refusal by scanning
+    /// the generated files for the macro name cannot tell the backend's own
+    /// output apart from a program's data — a `String` literal quoting
+    /// `compile_error!` is ordinary Aver — and it goes quiet the day the
+    /// wording changes.
+    ///
+    /// Written by `rust::toplevel::emit_codegen_error_expr` and by the
+    /// mutual-TCO block fallback; read out into
+    /// [`ProjectOutput::substituted_compile_errors`] at the end of a Rust
+    /// transpile.
+    pub substituted_compile_errors: std::cell::RefCell<Vec<String>>,
+    /// Verify cases the Rust emitter left out of the generated
+    /// `#[cfg(test)]` module because the MIR walker could not render them,
+    /// as "`fn` name: reason".
+    ///
+    /// A dropped case is not a build failure — the verify-only Oracle and
+    /// trace shapes are exercised by `aver verify` and were never meant to
+    /// run as `cargo test` — but it must not be a secret either: `compile`
+    /// reports what it left behind.
+    pub omitted_verify_cases: std::cell::RefCell<Vec<String>>,
     /// Per-dep resolved fn defs, parallel to `modules`.
     ///
     /// **Compatibility projection of `resolved_program.modules[i].fn_defs`**
@@ -505,26 +529,45 @@ pub struct CodegenContext {
 pub struct ProjectOutput {
     /// Files to write: (relative_path, content).
     pub files: Vec<(String, String)>,
+    /// What the backend substituted a `compile_error!` for while producing
+    /// `files`, one message per construct, in emit order. Empty for a
+    /// backend that has no such construct (Lean, Dafny).
+    pub substituted_compile_errors: Vec<String>,
+    /// Verify cases the backend left out of the generated test module, one
+    /// line each. Not a failure — the generated crate builds and its
+    /// `cargo test` passes — but the user is told which of their cases the
+    /// crate does not carry.
+    pub omitted_verify_cases: Vec<String>,
 }
 
 impl ProjectOutput {
-    /// Generated Rust files carrying a `compile_error!` the backend
-    /// substituted for a construct it could not render.
+    /// Files from a backend that has no `compile_error!` substitution to
+    /// report (Lean, Dafny) — or none this time.
+    pub fn of(files: Vec<(String, String)>) -> Self {
+        Self {
+            files,
+            substituted_compile_errors: Vec::new(),
+            omitted_verify_cases: Vec::new(),
+        }
+    }
+
+    /// The constructs the backend could not render and wrote a
+    /// `compile_error!` for instead.
     ///
     /// A code generator that writes a deliberate compile error must not
     /// report success: without this the command exited 0 and the failure
-    /// surfaced only when the user reached `cargo build`. Any occurrence of
-    /// the macro counts — a future emitter with a different message must not
-    /// slip past a guard tuned to today's wording. The check is deliberately
-    /// fail-closed: a string in the user's own program that happened to
-    /// contain the macro name would refuse the compile with an explicit
-    /// message, which is the safe direction.
-    pub fn generated_compile_errors(&self) -> Vec<&str> {
-        self.files
-            .iter()
-            .filter(|(path, content)| path.ends_with(".rs") && content.contains("compile_error!"))
-            .map(|(path, _)| path.as_str())
-            .collect()
+    /// surfaced only when the user reached `cargo build`.
+    ///
+    /// The list is what the emitter RECORDED, not what a scan of the output
+    /// found. Scanning cannot work here: `compile_error!` in a generated
+    /// file is either the backend's own refusal or a string the program
+    /// itself carries — `"rustc says: compile_error!(...)"` is ordinary Aver
+    /// data — and no amount of care about the pattern separates the two,
+    /// because both are just text in the same file. Reading the fact from
+    /// the emitter that produced it cannot be triggered by program data at
+    /// all, and cannot go quiet when someone rewords a message.
+    pub fn generated_compile_errors(&self) -> &[String] {
+        &self.substituted_compile_errors
     }
 }
 
@@ -824,6 +867,8 @@ pub fn build_context(
         current_module_scope: std::cell::RefCell::new(None),
         lean_do_block: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+        substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
+        omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         program_shape,
         resolved_program,
         mir_program,
@@ -1403,17 +1448,17 @@ mod project_output_tests {
     use super::ProjectOutput;
 
     fn output(files: &[(&str, &str)]) -> ProjectOutput {
-        ProjectOutput {
-            files: files
+        ProjectOutput::of(
+            files
                 .iter()
                 .map(|(path, content)| (path.to_string(), content.to_string()))
                 .collect(),
-        }
+        )
     }
 
     #[test]
-    fn a_generated_compile_error_is_reported_with_its_file() {
-        let out = output(&[
+    fn a_recorded_substitution_is_reported_with_its_reason() {
+        let mut out = output(&[
             ("Cargo.toml", "[package]\nname = \"app\"\n"),
             ("src/main.rs", "fn main() {}\n"),
             (
@@ -1421,9 +1466,10 @@ mod project_output_tests {
                 "pub fn added() { compile_error!(\"MIR walker could not render fn `added`\"); }\n",
             ),
         ]);
+        out.substituted_compile_errors = vec!["MIR walker could not render fn `added`".to_string()];
         assert_eq!(
             out.generated_compile_errors(),
-            vec!["src/aver_generated/domain/user/mod.rs"]
+            ["MIR walker could not render fn `added`".to_string()]
         );
     }
 
@@ -1437,10 +1483,17 @@ mod project_output_tests {
     }
 
     #[test]
-    fn a_non_rust_file_is_not_scanned() {
-        // Lean and Dafny outputs go through the same writer; only the Rust
-        // backend has this construct.
-        let out = output(&[("Proof.lean", "-- compile_error! is prose here\n")]);
+    fn the_macro_in_program_data_is_not_a_backend_refusal() {
+        // The user's own string, rendered verbatim into the crate. The
+        // backend substituted nothing, so nothing is reported — the crate
+        // compiles and printing that string is what the program does.
+        let out = output(&[
+            ("Cargo.toml", "[package]\nname = \"app\"\n"),
+            (
+                "src/aver_generated/main/mod.rs",
+                "pub fn banner() -> &'static str { \"rustc says: compile_error!(...)\" }\n",
+            ),
+        ]);
         assert!(out.generated_compile_errors().is_empty());
     }
 }

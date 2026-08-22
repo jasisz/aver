@@ -123,6 +123,10 @@ fn transpile_project(
     required_provider_operations: BTreeSet<String>,
     provider_composition: composition::ProviderComposition,
 ) -> ProjectOutput {
+    // Every refusal below is recorded on the context as it happens; this
+    // transpile reports its own, not a previous one's.
+    ctx.substituted_compile_errors.borrow_mut().clear();
+    ctx.omitted_verify_cases.borrow_mut().clear();
     // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
     // backend codegens from. This runs ONLY here (the Rust entry) — the VM,
     // wasm-gc, proof, Dafny and Lean backends never call `transpile`, so
@@ -392,7 +396,11 @@ fn transpile_project(
     ));
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
-    ProjectOutput { files }
+    ProjectOutput {
+        files,
+        substituted_compile_errors: ctx.substituted_compile_errors.borrow().clone(),
+        omitted_verify_cases: ctx.omitted_verify_cases.borrow().clone(),
+    }
 }
 
 fn render_root_library(has_policy: bool, has_replay: bool, has_self_host_support: bool) -> String {
@@ -731,9 +739,13 @@ fn emit_mutual_tco_block_routed(
             .map(|fd| fd.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
+        let message = format!("MIR walker could not render mutual-TCO block [{names}]");
+        ctx.substituted_compile_errors
+            .borrow_mut()
+            .push(message.clone());
         format!(
-            "{}fn __mutual_tco_block_{}_render_error() {{ compile_error!(\"MIR walker could not render mutual-TCO block [{}]\"); }}",
-            visibility, group_id, names
+            "{}fn __mutual_tco_block_{}_render_error() {{ compile_error!({:?}); }}",
+            visibility, group_id, message
         )
     })
 }

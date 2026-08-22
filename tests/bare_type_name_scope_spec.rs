@@ -258,3 +258,43 @@ fn the_vm_and_the_checker_agree_with_the_generated_code() {
         }
     }
 }
+
+#[test]
+fn a_program_that_quotes_the_rust_macro_still_compiles() {
+    // The guard above ("a generated compile error must not report success")
+    // used to be a substring scan of the emitted files. A program is free to
+    // put `compile_error!` in a string of its own — this one returns the
+    // text of a rustc diagnostic — and the scan could not tell the
+    // backend's refusal apart from the program's data. It refused a valid
+    // program, and the user's only escape was to edit their own literal.
+    //
+    // The verify block is the second half. The same substring test decided
+    // which verify cases to carry into the generated `#[cfg(test)]` module,
+    // so this program's case disappeared without a word.
+    let dir = temp_dir("macro-in-a-string");
+    write(
+        &dir.join("main.av"),
+        "module Main\n    intent =\n        \"A perfectly ordinary program whose own string data happens to\"\n        \"mention the Rust macro the guard used to scan for.\"\n    depends []\n    effects [Console.print]\n\nfn banner() -> String\n    ? \"Returns a diagnostic string that quotes a Rust macro.\"\n    \"rustc says: compile_error!(\\\"unsupported\\\")\"\n\nverify banner\n    banner() => \"rustc says: compile_error!(\\\"unsupported\\\")\"\n\nfn main() -> Unit\n    ? \"Prints the banner.\"\n    ! [Console.print]\n    Console.print(banner())\n",
+    );
+
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["compile", "main.av", "--target", "rust", "-o", "out"])
+        .output()
+        .expect("run aver compile --target rust");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the backend substituted nothing here; the macro is the program's own data\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let verify = fs::read_to_string(dir.join("out/src/verify.rs")).expect("read verify.rs");
+    assert!(
+        verify.contains("fn test_banner_case_1()"),
+        "the verify case must survive into the generated tests:\n{verify}"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
