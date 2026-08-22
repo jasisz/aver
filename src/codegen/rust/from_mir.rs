@@ -3458,9 +3458,9 @@ fn ty_is_int(ty: Option<&Type>) -> bool {
 //
 // The ownership / borrow facts (rc pass-through params Arc-wrapped on
 // the self-loop / `&T` extra trampoline args; non-rc owned params `mut`
-// with NO borrow-by-default) are re-derived from the AST `FnDef` via
-// `compute_rc_params` / `compute_self_passthrough_params`; those are
-// name/structure based and SCC discovery reuses `find_mutual_tco_groups`.
+// with NO borrow-by-default) come from the matching function substrate:
+// self-TCO still uses its AST metadata helper, while mutual-TCO derives
+// membership, types, and pass-through parameters from resolved HIR.
 // Get the ownership wrong → rustc rejects, which the build gate catches.
 
 /// Emit a self-TCO fn entirely from MIR: the public signature
@@ -3857,37 +3857,35 @@ fn mir_if_cond_and_branches<'a>(
 /// and thin wrapper fns. The member bodies are walked from MIR
 /// (`MirFn.body`).
 ///
-/// `group_fns` is the SCC (from the AST-based `find_mutual_tco_groups`);
-/// `mir_fns` are the matching `MirFn`s in the same order. Returns `None`
+/// `group_fns` is the resolved-HIR SCC; `mir_fns` are the matching `MirFn`s
+/// in the same order. Returns `None`
 /// (→ the caller emits a hard codegen diagnostic for the whole block)
 /// when any member body can't render — the block is all-or-nothing
 /// because the members share one trampoline.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_mir_mutual_tco_block(
     group_id: usize,
-    group_fns: &[&crate::ast::FnDef],
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
     mir_fns: &[&crate::ir::mir::MirFn],
-    resolved_fns: &[&crate::ir::hir::ResolvedFnDef],
     ctx: &CodegenContext,
     scope: Option<&str>,
     visibility: &str,
 ) -> Option<String> {
-    use super::toplevel::{compute_rc_params, fn_name_to_variant, rc_param_names};
+    use super::toplevel::{compute_resolved_rc_params, fn_name_to_variant};
 
     if group_fns.is_empty() {
         return None;
     }
     let enum_name = format!("__MutualTco{}", group_id);
     let trampoline_name = format!("__mutual_tco_trampoline_{}", group_id);
-    let ret_type = if group_fns[0].return_type.is_empty() {
-        "()".to_string()
-    } else {
-        super::types::type_annotation_to_rust_scoped(&group_fns[0].return_type, ctx, scope)
-    };
+    let ret_type = super::types::type_to_rust_scoped(&group_fns[0].return_type, ctx, scope);
 
     let member_fn_ids: HashSet<crate::ir::FnId> = mir_fns.iter().map(|m| m.fn_id).collect();
-    let rc_indices = compute_rc_params(group_fns, ctx);
-    let rc_names = rc_param_names(&group_fns[0].params, &rc_indices);
+    let rc_indices = compute_resolved_rc_params(group_fns);
+    let rc_names: HashSet<String> = rc_indices
+        .iter()
+        .filter_map(|&i| group_fns[0].params.get(i).map(|(name, _)| name.clone()))
+        .collect();
 
     // Render every member's trampoline-arm body FIRST — bail before
     // emitting anything if a member can't render (all-or-nothing block).
@@ -3902,7 +3900,7 @@ pub(super) fn emit_mir_mutual_tco_block(
         // flagship `vector_ops` is self-TCO, handled in `emit_mir_tco_fn`).
         // Keeping borrow-by-default is always sound — not graduating never
         // skips a clone.
-        let mut policy = MirFnEmitPolicy::from_resolved(resolved_fns[i], scope, false);
+        let mut policy = MirFnEmitPolicy::from_resolved(group_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
         let arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         let body = emit_mir_trampoline_body(
@@ -3927,7 +3925,7 @@ pub(super) fn emit_mir_mutual_tco_block(
             .params
             .iter()
             .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(_, ty)| super::types::type_annotation_to_rust_scoped(ty, ctx, scope))
+            .map(|(_, ty)| super::types::type_to_rust_scoped(ty, ctx, scope))
             .collect();
         if param_types.is_empty() {
             enum_lines.push(format!("    {},", variant));
@@ -3974,15 +3972,14 @@ pub(super) fn emit_mir_mutual_tco_block(
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
-        let params = super::toplevel::emit_fn_params_pub(&fd.params, false, ctx, scope);
+        let params = emit_resolved_fn_params(&fd.params, ctx, scope);
         let variant_arg_names: Vec<String> = fd
             .params
             .iter()
             .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(name, type_ann)| {
+            .map(|(name, ty)| {
                 let rust_name = aver_name_to_rust(name);
-                let ty = crate::types::parse_type_str(type_ann);
-                if should_borrow_param(&ty) {
+                if should_borrow_param(ty) {
                     format!("{}.clone()", rust_name)
                 } else {
                     rust_name
@@ -4034,7 +4031,7 @@ pub(super) fn emit_mir_mutual_tco_block(
 /// Build the rc-param extra `&T` argument list for the mutual
 /// trampoline signature (`, x: &T, y: &U`), or empty when no rc params.
 fn mutual_rc_param_sig(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     rc_names: &HashSet<String>,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -4050,7 +4047,7 @@ fn mutual_rc_param_sig(
             format!(
                 "{}: &{}",
                 aver_name_to_rust(name),
-                super::types::type_annotation_to_rust_scoped(ty, ctx, scope)
+                super::types::type_to_rust_scoped(ty, ctx, scope)
             )
         })
         .collect();
@@ -4059,6 +4056,26 @@ fn mutual_rc_param_sig(
     } else {
         format!(", {}", parts.join(", "))
     }
+}
+
+fn emit_resolved_fn_params(
+    params: &[(String, crate::types::Type)],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    params
+        .iter()
+        .map(|(name, ty)| {
+            let rust_name = aver_name_to_rust(name);
+            let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
+            if should_borrow_param(ty) {
+                format!("{rust_name}: &{rust_type}")
+            } else {
+                format!("{rust_name}: {rust_type}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Emit one trampoline arm body from MIR: leads with
