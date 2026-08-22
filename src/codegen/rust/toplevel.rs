@@ -841,36 +841,6 @@ fn emit_fn_def_with_visibility(
     lines.join("\n")
 }
 
-fn emit_fn_params(
-    params: &[(String, String)],
-    mutable: bool,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    emit_fn_params_with_rc(params, mutable, &HashSet::new(), ctx, scope)
-}
-
-/// `pub(super)` shim so the MIR walker's mutual-TCO wrapper emits the
-/// same borrow-by-default param signature as the HIR emitter's wrappers.
-pub(super) fn emit_fn_params_pub(
-    params: &[(String, String)],
-    mutable: bool,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    emit_fn_params(params, mutable, ctx, scope)
-}
-
-fn emit_fn_params_with_rc(
-    params: &[(String, String)],
-    mutable: bool,
-    rc_indices: &HashSet<usize>,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    emit_fn_params_inner(params, mutable, rc_indices, &HashSet::new(), ctx, scope)
-}
-
 /// Emit the non-TCO param signature, graduating `own_param`-proven
 /// collection params (Rust-mangled names in `owned_params`) from `&T`
 /// borrow-by-default to `mut p: T` owned-by-value. The body's
@@ -1041,6 +1011,190 @@ pub(super) fn compute_rc_params(group_fns: &[&FnDef], _ctx: &CodegenContext) -> 
     // Different arities: use name+type-based detection.
     // Find params (name, type) that appear in ALL functions and are pass-through.
     compute_rc_params_by_name(group_fns)
+}
+
+/// Resolved-HIR equivalent used by mutual-TCO emission. Tail-call membership
+/// and parameter types are identity-bearing, so this path never reconstructs
+/// either fact from AST strings.
+pub(super) fn compute_resolved_rc_params(
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
+) -> HashSet<usize> {
+    if group_fns.is_empty() {
+        return HashSet::new();
+    }
+
+    let arity = group_fns[0].params.len();
+    if group_fns.iter().all(|fd| fd.params.len() == arity) {
+        return compute_resolved_rc_params_by_index(group_fns);
+    }
+
+    compute_resolved_rc_params_by_name(group_fns)
+}
+
+fn compute_resolved_rc_params_by_index(
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
+) -> HashSet<usize> {
+    let arity = group_fns[0].params.len();
+    let member_ids: HashSet<crate::ir::FnId> = group_fns.iter().map(|fd| fd.fn_id).collect();
+    let mut candidates: HashSet<usize> = (0..arity)
+        .filter(|&i| {
+            let ty = &group_fns[0].params[i].1;
+            group_fns.iter().all(|fd| fd.params[i].1 == *ty) && is_expensive_clone_type(ty)
+        })
+        .collect();
+
+    for fd in group_fns {
+        check_resolved_tailcalls_for_rc(&fd.body, &member_ids, &fd.params, &mut candidates);
+        if candidates.is_empty() {
+            break;
+        }
+    }
+    candidates
+}
+
+fn compute_resolved_rc_params_by_name(
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
+) -> HashSet<usize> {
+    let fn_param_map: HashMap<crate::ir::FnId, HashMap<&str, (usize, &crate::types::Type)>> =
+        group_fns
+            .iter()
+            .map(|fd| {
+                let params = fd
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, ty))| (name.as_str(), (i, ty)))
+                    .collect();
+                (fd.fn_id, params)
+            })
+            .collect();
+    let member_ids: HashSet<crate::ir::FnId> = group_fns.iter().map(|fd| fd.fn_id).collect();
+
+    let shared_params: Vec<&str> = group_fns[0]
+        .params
+        .iter()
+        .filter(|(name, ty)| {
+            is_expensive_clone_type(ty)
+                && group_fns
+                    .iter()
+                    .all(|fd| fd.params.iter().any(|(n, t)| n == name && t == ty))
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let valid_params: HashSet<&str> = shared_params
+        .into_iter()
+        .filter(|param_name| {
+            group_fns.iter().all(|fd| {
+                check_resolved_param_passthrough_by_name(
+                    &fd.body,
+                    &member_ids,
+                    param_name,
+                    &fn_param_map,
+                )
+            })
+        })
+        .collect();
+
+    group_fns[0]
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, _))| valid_params.contains(name.as_str()))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn resolved_expr_is_param(expr: &crate::ir::hir::ResolvedExpr, param_name: &str) -> bool {
+    matches!(
+        expr,
+        crate::ir::hir::ResolvedExpr::Resolved { name, .. }
+            | crate::ir::hir::ResolvedExpr::Ident(name)
+            if name == param_name
+    )
+}
+
+fn check_resolved_tailcalls_for_rc(
+    body: &crate::ir::hir::ResolvedFnBody,
+    member_ids: &HashSet<crate::ir::FnId>,
+    params: &[(String, crate::types::Type)],
+    candidates: &mut HashSet<usize>,
+) {
+    for stmt in body.stmts() {
+        let expr = match stmt {
+            crate::ir::hir::ResolvedStmt::Expr(expr)
+            | crate::ir::hir::ResolvedStmt::Binding { value: expr, .. } => expr,
+        };
+        check_resolved_expr_tailcalls_for_rc(&expr.node, member_ids, params, candidates);
+    }
+}
+
+fn check_resolved_expr_tailcalls_for_rc(
+    expr: &crate::ir::hir::ResolvedExpr,
+    member_ids: &HashSet<crate::ir::FnId>,
+    params: &[(String, crate::types::Type)],
+    candidates: &mut HashSet<usize>,
+) {
+    match expr {
+        crate::ir::hir::ResolvedExpr::TailCall { target, args }
+            if member_ids.contains(target) && args.len() == params.len() =>
+        {
+            candidates.retain(|&i| resolved_expr_is_param(&args[i].node, &params[i].0));
+        }
+        crate::ir::hir::ResolvedExpr::Match { arms, .. } => {
+            for arm in arms {
+                check_resolved_expr_tailcalls_for_rc(
+                    &arm.body.node,
+                    member_ids,
+                    params,
+                    candidates,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn check_resolved_param_passthrough_by_name(
+    body: &crate::ir::hir::ResolvedFnBody,
+    member_ids: &HashSet<crate::ir::FnId>,
+    param_name: &str,
+    fn_param_map: &HashMap<crate::ir::FnId, HashMap<&str, (usize, &crate::types::Type)>>,
+) -> bool {
+    body.stmts().iter().all(|stmt| {
+        let expr = match stmt {
+            crate::ir::hir::ResolvedStmt::Expr(expr)
+            | crate::ir::hir::ResolvedStmt::Binding { value: expr, .. } => expr,
+        };
+        check_resolved_expr_passthrough_by_name(&expr.node, member_ids, param_name, fn_param_map)
+    })
+}
+
+fn check_resolved_expr_passthrough_by_name(
+    expr: &crate::ir::hir::ResolvedExpr,
+    member_ids: &HashSet<crate::ir::FnId>,
+    param_name: &str,
+    fn_param_map: &HashMap<crate::ir::FnId, HashMap<&str, (usize, &crate::types::Type)>>,
+) -> bool {
+    match expr {
+        crate::ir::hir::ResolvedExpr::TailCall { target, args } if member_ids.contains(target) => {
+            fn_param_map
+                .get(target)
+                .and_then(|params| params.get(param_name))
+                .is_some_and(|(target_idx, _)| {
+                    args.get(*target_idx)
+                        .is_some_and(|arg| resolved_expr_is_param(&arg.node, param_name))
+                })
+        }
+        crate::ir::hir::ResolvedExpr::Match { arms, .. } => arms.iter().all(|arm| {
+            check_resolved_expr_passthrough_by_name(
+                &arm.body.node,
+                member_ids,
+                param_name,
+                fn_param_map,
+            )
+        }),
+        _ => true,
+    }
 }
 
 /// Index-based Rc detection: all fns have same arity, check same position.
@@ -1261,20 +1415,20 @@ pub(super) fn compute_self_passthrough_params(fd: &FnDef) -> HashSet<usize> {
 
 // --- Mutual TCO (trampoline) support ---
 
-/// Find groups of mutually tail-calling functions (SCCs of size > 1).
-/// Returns indices into `fn_defs`.
-pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
-    let name_to_idx: HashMap<&str, usize> = fn_defs
+/// Find groups of mutually tail-calling functions (SCCs of size > 1) from
+/// resolved-HIR tail-call identities. Returns indices into `fn_defs`.
+pub fn find_mutual_tco_groups(fn_defs: &[&crate::ir::hir::ResolvedFnDef]) -> Vec<Vec<usize>> {
+    let id_to_idx: HashMap<crate::ir::FnId, usize> = fn_defs
         .iter()
         .enumerate()
-        .map(|(i, fd)| (fd.name.as_str(), i))
+        .map(|(i, fd)| (fd.fn_id, i))
         .collect();
-    crate::call_graph::tailcall_scc_components(fn_defs)
+    crate::call_graph::tailcall_scc_components_resolved(fn_defs)
         .into_iter()
         .map(|group| {
             let mut indices: Vec<usize> = group
                 .iter()
-                .filter_map(|fd| name_to_idx.get(fd.name.as_str()).copied())
+                .filter_map(|fd| id_to_idx.get(&fd.fn_id).copied())
                 .collect();
             indices.sort();
             indices
@@ -1791,6 +1945,21 @@ mod tests {
         }
     }
 
+    fn resolve_test_fns(fn_defs: Vec<FnDef>) -> Vec<crate::ir::hir::ResolvedFnDef> {
+        let items: Vec<crate::ast::TopLevel> = fn_defs
+            .into_iter()
+            .map(crate::ast::TopLevel::FnDef)
+            .collect();
+        let symbols = crate::ir::SymbolTable::build(&items, &[]);
+        crate::ir::hir::resolve_program(&symbols, &items)
+            .into_iter()
+            .filter_map(|item| match item {
+                crate::ir::hir::ResolvedTopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn a_substituted_compile_error_is_recorded_where_it_is_made() {
         // The emitter is the only thing that knows it refused. `compile
@@ -1862,7 +2031,8 @@ mod tests {
             resolution: None,
         };
 
-        let fn_defs: Vec<&FnDef> = vec![&a, &b, &c];
+        let resolved = resolve_test_fns(vec![a, b, c]);
+        let fn_defs: Vec<&crate::ir::hir::ResolvedFnDef> = resolved.iter().collect();
         let groups = find_mutual_tco_groups(&fn_defs);
         assert!(
             groups.is_empty(),
@@ -1888,7 +2058,8 @@ mod tests {
             resolution: None,
         };
 
-        let fn_defs: Vec<&FnDef> = vec![&self_rec];
+        let resolved = resolve_test_fns(vec![self_rec]);
+        let fn_defs: Vec<&crate::ir::hir::ResolvedFnDef> = resolved.iter().collect();
         let groups = find_mutual_tco_groups(&fn_defs);
         assert!(
             groups.is_empty(),

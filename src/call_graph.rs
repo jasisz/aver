@@ -12,7 +12,9 @@ mod codegen;
 mod flow;
 mod scc;
 
-pub use codegen::{ordered_fn_components, tailcall_scc_components};
+pub use codegen::{
+    ordered_fn_components, tailcall_scc_components, tailcall_scc_components_resolved,
+};
 pub use flow::{TOP_LEVEL_CALLER, call_components, callers_of};
 
 // ---------------------------------------------------------------------------

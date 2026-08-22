@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TailCallData};
+use crate::ir::FnId;
+use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
 
 use super::collect_codegen_deps_body;
 use super::scc::{tarjan_sccs, topo_components};
@@ -99,6 +101,77 @@ pub fn tailcall_scc_components<'a>(fns: &[&'a FnDef]) -> Vec<Vec<&'a FnDef>> {
             group
         })
         .collect()
+}
+
+/// Identity-keyed tail-call SCCs for resolved-HIR consumers.
+///
+/// Unlike [`tailcall_scc_components`], graph edges come directly from the
+/// [`FnId`] stored in `ResolvedExpr::TailCall`. Backends therefore never need
+/// to recover an SCC peer by parsing or comparing a source function name.
+pub fn tailcall_scc_components_resolved<'a>(
+    fns: &[&'a ResolvedFnDef],
+) -> Vec<Vec<&'a ResolvedFnDef>> {
+    if fns.is_empty() {
+        return vec![];
+    }
+
+    let fn_map: HashMap<FnId, &ResolvedFnDef> = fns.iter().map(|fd| (fd.fn_id, *fd)).collect();
+    let nodes: Vec<FnId> = fn_map.keys().copied().collect();
+    let node_set: HashSet<FnId> = nodes.iter().copied().collect();
+
+    let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
+    for fd in fns {
+        let mut deps = HashSet::new();
+        collect_resolved_tailcall_deps_body(&fd.body, &node_set, &mut deps);
+        let mut sorted = deps.into_iter().collect::<Vec<_>>();
+        sorted.sort();
+        graph.insert(fd.fn_id, sorted);
+    }
+
+    crate::scc::tarjan_sccs(&nodes, &graph)
+        .into_iter()
+        .filter(|component| component.len() > 1)
+        .map(|component| {
+            let mut group: Vec<&ResolvedFnDef> = component
+                .iter()
+                .filter_map(|id| fn_map.get(id).copied())
+                .collect();
+            group.sort_by_key(|fd| fd.fn_id);
+            group
+        })
+        .collect()
+}
+
+fn collect_resolved_tailcall_deps_body(
+    body: &ResolvedFnBody,
+    fn_ids: &HashSet<FnId>,
+    out: &mut HashSet<FnId>,
+) {
+    for stmt in body.stmts() {
+        match stmt {
+            ResolvedStmt::Expr(expr) | ResolvedStmt::Binding { value: expr, .. } => {
+                collect_resolved_tailcall_deps_expr(expr, fn_ids, out);
+            }
+        }
+    }
+}
+
+fn collect_resolved_tailcall_deps_expr(
+    expr: &Spanned<ResolvedExpr>,
+    fn_ids: &HashSet<FnId>,
+    out: &mut HashSet<FnId>,
+) {
+    match &expr.node {
+        ResolvedExpr::TailCall { target, .. } if fn_ids.contains(target) => {
+            out.insert(*target);
+        }
+        ResolvedExpr::Match { arms, .. } => {
+            for arm in arms {
+                collect_resolved_tailcall_deps_expr(&arm.body, fn_ids, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_tailcall_deps_body(

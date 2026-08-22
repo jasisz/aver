@@ -188,18 +188,18 @@ fn transpile_project(
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
     let has_terminal_types = has_terminal_runtime || needs_terminal_types;
 
-    // `main` fn lookup is identity-safe by parser invariant — only
-    // entry scope can declare it, and at most once. The view's
-    // `entry_fns()` enumerates the same set in the same source order,
-    // so iterating either substrate yields the same answer here.
-    // temporary-migration-bridge: downstream `render_root_main` still
-    // takes `Option<&FnDef>`; signature swap is a PR D follow-up.
+    // The generated entry module still pairs the AST declaration with its
+    // resolved body for source metadata. Root dispatch only needs the return
+    // type, so resolve `main` once by its entry-scope identity and hand the
+    // typed declaration to `render_root_main`.
     let main_fn = ctx.fn_defs.iter().find(|fd| fd.name == "main");
+    let resolved_main_fn = ctx
+        .symbol_table
+        .fn_id_of(&crate::ir::FnKey::entry("main"))
+        .and_then(|id| ctx.resolved_program.fn_by_id(id));
     debug_assert_eq!(
         main_fn.is_some(),
-        ctx.resolved_program
-            .entry_fns()
-            .any(|rfd| rfd.name == "main"),
+        resolved_main_fn.is_some(),
         "ctx.fn_defs and ctx.resolved_program.entry_fns() must agree on \
          main fn presence (epic #170 Phase 1 invariant)"
     );
@@ -241,7 +241,7 @@ fn transpile_project(
         (
             "src/main.rs".to_string(),
             render_root_main(
-                main_fn,
+                resolved_main_fn,
                 has_embedded_policy,
                 ctx.emit_replay_runtime,
                 ctx.guest_entry.as_deref(),
@@ -443,7 +443,7 @@ fn render_root_library(has_policy: bool, has_replay: bool, has_self_host_support
 }
 
 fn render_root_main(
-    main_fn: Option<&FnDef>,
+    main_fn: Option<&crate::ir::hir::ResolvedFnDef>,
     has_policy: bool,
     has_replay: bool,
     guest_entry: Option<&str>,
@@ -504,9 +504,14 @@ fn render_root_main(
 
     // Spawn main on a thread with 256 MB stack to avoid overflow in deep recursion.
     sections.push(String::new());
-    let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
-    let result_unit_string =
-        main_fn.is_some_and(|fd| fd.return_type.replace(' ', "") == "Result<Unit,String>");
+    let returns_result = main_fn.is_some_and(|fd| matches!(&fd.return_type, Type::Result(_, _)));
+    let result_unit_string = main_fn.is_some_and(|fd| {
+        matches!(
+            &fd.return_type,
+            Type::Result(ok, err)
+                if matches!(ok.as_ref(), Type::Unit) && matches!(err.as_ref(), Type::Str)
+        )
+    });
     // `aver bench --target rust` sets `AVER_BENCH_ITER` (and optionally
     // `AVER_BENCH_WARMUP`) to drive an in-process benchmark loop that
     // calls `aver_generated::entry::main` N times under one process.
@@ -567,7 +572,7 @@ fn render_root_main(
             sections.push("        }".to_string());
             sections.push("    }".to_string());
         } else {
-            let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
+            let ret_type = types::type_to_rust(&main_fn.unwrap().return_type);
             sections.push(format!("fn main() -> {} {{", ret_type));
             if has_provider_runtime {
                 sections.push("    bootstrap_provider_bindings().unwrap_or_else(|error| panic!(\"{}\", error));".to_string());
@@ -701,37 +706,22 @@ fn codegen_depends(
 /// regen), not by byte-parity.
 fn emit_mutual_tco_block_routed(
     group_id: usize,
-    group_fns: &[&FnDef],
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
     ctx: &CodegenContext,
     scope: Option<&str>,
     visibility: &str,
 ) -> String {
-    // Resolve every member to its (MirFn, ResolvedFnDef) pair.
-    let resolved: Option<Vec<(&crate::ir::mir::MirFn, &crate::ir::hir::ResolvedFnDef)>> =
-        ctx.mir_program.as_ref().and_then(|prog| {
+    // Every member already carries its canonical FnId. MIR lookup is the
+    // only remaining join and cannot accidentally cross a same-name scope.
+    let mir_fns: Option<Vec<&crate::ir::mir::MirFn>> =
+        ctx.mir_program.as_ref().and_then(|program| {
             group_fns
                 .iter()
-                .map(|fd| {
-                    let fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)?;
-                    let mir_fn = prog.fn_by_id(fn_id)?;
-                    let resolved_fd = ctx.resolved_program.fn_by_id(fn_id)?;
-                    Some((mir_fn, resolved_fd))
-                })
+                .map(|fd| program.fn_by_id(fd.fn_id))
                 .collect()
         });
-    let code = resolved.and_then(|pairs| {
-        let mir_fns: Vec<&crate::ir::mir::MirFn> = pairs.iter().map(|(m, _)| *m).collect();
-        let resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
-            pairs.iter().map(|(_, r)| *r).collect();
-        from_mir::emit_mir_mutual_tco_block(
-            group_id,
-            group_fns,
-            &mir_fns,
-            &resolved_fns,
-            ctx,
-            scope,
-            visibility,
-        )
+    let code = mir_fns.and_then(|mir_fns| {
+        from_mir::emit_mir_mutual_tco_block(group_id, group_fns, &mir_fns, ctx, scope, visibility)
     });
     code.unwrap_or_else(|| {
         let names = group_fns
@@ -745,11 +735,7 @@ fn emit_mutual_tco_block_routed(
         // it points at every function except the one at fault.
         let message = group_fns
             .iter()
-            .filter_map(|fd| {
-                let fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)?;
-                let resolved_fd = ctx.resolved_program.fn_by_id(fn_id)?;
-                toplevel::unresolved_name_reason(resolved_fd, scope)
-            })
+            .filter_map(|fd| toplevel::unresolved_name_reason(fd, scope))
             .next()
             .unwrap_or_else(|| format!("MIR walker could not render mutual-TCO block [{names}]"));
         ctx.substituted_compile_errors
@@ -760,6 +746,20 @@ fn emit_mutual_tco_block_routed(
             visibility, group_id, message
         )
     })
+}
+
+fn missing_resolved_fn_error(fd: &FnDef, scope: Option<&str>, ctx: &CodegenContext) -> String {
+    let qualified = scope
+        .map(|prefix| format!("{prefix}.{}", fd.name))
+        .unwrap_or_else(|| fd.name.clone());
+    let message = format!(
+        "Rust codegen requires resolved HIR for function `{qualified}`; \
+         all synthesis and rewriting must finish before CodegenContext is built"
+    );
+    ctx.substituted_compile_errors
+        .borrow_mut()
+        .push(message.clone());
+    format!("compile_error!({message:?});")
 }
 
 fn entry_module_sections(
@@ -782,21 +782,17 @@ fn entry_module_sections(
         }
     }
 
-    // Detect mutual TCO groups among non-main functions. Set-form membership
-    // is read from `ctx.mutual_tco_members` (populated by the analyze stage's
-    // unioned per-module sets); the index-keyed `groups` form still comes
-    // from `find_mutual_tco_groups` because trampoline emission needs the
-    // structural shape, not just the names.
-    // temporary-migration-bridge: `find_mutual_tco_groups` walks
-    // `&[&FnDef]` to detect tail-call SCCs against the raw AST body
-    // shape. Position-aligned with `ctx.resolved_program.entry_fns()`
-    // (both iterate the same source-ordered set). PR D migrates the
-    // SCC analyser to consume `ResolvedFnDef` bodies directly.
-    let non_main_fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+    // Detect mutual TCO groups directly from resolved tail-call identities.
+    let non_main_fns: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
+        .resolved_program
+        .entry_fns()
+        .filter(|fd| fd.name != "main")
+        .collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&non_main_fns);
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
-        let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| non_main_fns[idx]).collect();
+        let group_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+            group_indices.iter().map(|&idx| non_main_fns[idx]).collect();
         sections.push(emit_mutual_tco_block_routed(
             group_id + 1,
             &group_fns,
@@ -814,25 +810,19 @@ fn entry_module_sections(
     // is the identity-keyed lookup — no bare-name walk over the
     // resolved list.
     for fd in &ctx.fn_defs {
+        if fd.name == "main" {
+            continue;
+        }
         let Some(fn_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
+            sections.push(missing_resolved_fn_error(fd, None, ctx));
             continue;
         };
         let is_mutual = ctx.mutual_tco_members.contains(&fn_id);
-        if fd.name == "main" || is_mutual {
+        if is_mutual {
             continue;
         }
         let Some(resolved_fd) = ctx.resolved_program.fn_by_id(fn_id) else {
-            // Synthetic FnDefs (TCO hoists) inserted post-pipeline don't
-            // have a resolved twin yet — fall back to on-demand resolve
-            // for those. `temporary-migration-bridge`: PR E moves
-            // synthetic-fn resolve into a typed builder.
-            let resolved_owned = ctx.resolve_fn_def(fd, None);
-            sections.push(toplevel::emit_public_fn_def(
-                fd,
-                resolved_owned.as_ref(),
-                ctx,
-                None,
-            ));
+            sections.push(missing_resolved_fn_error(fd, None, ctx));
             continue;
         };
         sections.push(toplevel::emit_public_fn_def(fd, resolved_fd, ctx, None));
@@ -897,12 +887,6 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         }
     }
 
-    // Same shape as the entry path: groups (with indices) come from
-    // `find_mutual_tco_groups`, set-form membership reads from
-    // `module.analysis.mutual_tco_members` (bare names, scope-local
-    // per module, DAG invariant keeps them unambiguous) when the
-    // analyze stage ran. Fall back to projecting `ctx.mutual_tco_members`
-    // (FnId set) back to bare names for this module's scope.
     // Capability hostile profiles are executable specifications, not runtime
     // implementation.  Drop their full model-only closure here, at the
     // runtime-backend boundary.  The capability registry preserves helpers
@@ -912,32 +896,16 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         &module.fn_defs,
         &module.exposes,
     );
-    let fn_refs: Vec<&FnDef> = module
-        .fn_defs
-        .iter()
+    let fn_refs: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
+        .resolved_program
+        .module_fns(&module.prefix)
         .filter(|fd| !verification_only_fns.contains(&fd.name))
         .collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&fn_refs);
-    let module_mutual_owned: HashSet<String> = match module.analysis.as_ref() {
-        Some(a) => a.mutual_tco_members.clone(),
-        None => ctx
-            .mutual_tco_members
-            .iter()
-            .filter_map(|id| {
-                let entry = ctx.symbol_table.fn_entry(*id);
-                entry
-                    .key
-                    .scope
-                    .as_deref()
-                    .filter(|s| *s == module.prefix)
-                    .map(|_| entry.key.name.clone())
-            })
-            .collect(),
-    };
-    let module_mutual = &module_mutual_owned;
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
-        let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| fn_refs[idx]).collect();
+        let group_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+            group_indices.iter().map(|&idx| fn_refs[idx]).collect();
         sections.push(emit_mutual_tco_block_routed(
             group_id + 1,
             &group_fns,
@@ -948,27 +916,23 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     }
 
     for fd in &module.fn_defs {
-        if verification_only_fns.contains(&fd.name) || module_mutual.contains(&fd.name) {
+        if verification_only_fns.contains(&fd.name) {
             continue;
         }
-        // Same pair-API as the entry loop above. Module fns route
-        // through `fn_id_for_decl` (pointer-eq scope on `&FnDef`) →
-        // `resolved_program.fn_by_id(fn_id)` so a same-bare-name
-        // entry-scope twin never accidentally provides this body.
-        let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
-            .and_then(|id| ctx.resolved_program.fn_by_id(id));
-        let resolved_owned = if resolved_fd.is_some() {
-            None
-        } else {
-            // temporary-migration-bridge: synthetic / mid-rewrite fns
-            // fall back to on-demand resolve in the dep scope.
-            Some(ctx.resolve_fn_def(fd, Some(&module.prefix)))
+        let Some(fn_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
+            sections.push(missing_resolved_fn_error(fd, Some(&module.prefix), ctx));
+            continue;
         };
-        let resolved_ref: &crate::ir::hir::ResolvedFnDef =
-            resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
+        if ctx.mutual_tco_members.contains(&fn_id) {
+            continue;
+        }
+        let Some(resolved_fd) = ctx.resolved_program.fn_by_id(fn_id) else {
+            sections.push(missing_resolved_fn_error(fd, Some(&module.prefix), ctx));
+            continue;
+        };
         sections.push(toplevel::emit_public_fn_def(
             fd,
-            resolved_ref,
+            resolved_fd,
             ctx,
             Some(&module.prefix),
         ));
@@ -1549,6 +1513,32 @@ fn isOdd(n: Int) -> Bool
 
         // Should NOT contain direct recursive calls between the two
         assert!(!entry.contains("isOdd((n - 1i64))"));
+    }
+
+    #[test]
+    fn missing_resolved_function_is_a_hard_codegen_error() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn helper(n: Int) -> Int
+    n + 1
+"#,
+            "missing-resolved-fn",
+        );
+        ctx.resolved_program = crate::codegen::program_view::ResolvedProgramView::default();
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("compile_error!"), "{entry}");
+        assert!(
+            out.generated_compile_errors()
+                .iter()
+                .any(|error| error.contains("resolved HIR for function `helper`")),
+            "{:?}",
+            out.generated_compile_errors()
+        );
     }
 
     #[test]

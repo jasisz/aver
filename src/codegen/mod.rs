@@ -634,6 +634,14 @@ pub fn build_context(
 
     let module_prefixes: HashSet<String> = modules.iter().map(|m| m.prefix.clone()).collect();
 
+    // Build the canonical resolved view before any codegen analysis. Fallback
+    // SCC discovery below reads the same FnId-keyed bodies the backends emit.
+    let resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
+        resolved_items,
+        &modules,
+        &symbol_table,
+    );
+
     // Mutual-TCO membership unions per-scope sets from the analyze
     // stage (entry's `entry_analysis` + each dep module's
     // `module.analysis`); falls back to recomputing per-scope via
@@ -650,23 +658,13 @@ pub fn build_context(
             None,
         )),
         None => {
-            // No entry analysis: compute the per-scope SCC set inline
-            // via `call_graph` and project to FnIds. Same effect as
-            // running the analyze stage's mutual-TCO discovery.
-            // **syntax-discovery-only** (epic #170 Phase 8 guardrail):
-            // `entry_fns` is filtered from `fn_defs` — the entry-scope
-            // FnDef vec — so `FnKey::entry(&fd.name)` below is the
-            // correct keying by construction (every `fd` here is
-            // entry-scope).
-            let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
-            for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
-                if group.len() < 2 {
-                    continue;
-                }
+            let entry_fns: Vec<&crate::ir::hir::ResolvedFnDef> = resolved_program
+                .entry_fns()
+                .filter(|fd| fd.name != "main")
+                .collect();
+            for group in crate::call_graph::tailcall_scc_components_resolved(&entry_fns) {
                 for fd in group {
-                    if let Some(id) = symbol_table.fn_id_of(&crate::ir::FnKey::entry(&fd.name)) {
-                        mutual_tco_members.insert(id);
-                    }
+                    mutual_tco_members.insert(fd.fn_id);
                 }
             }
         }
@@ -679,18 +677,11 @@ pub fn build_context(
                 Some(&module.prefix),
             )),
             None => {
-                let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
-                for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
-                    if group.len() < 2 {
-                        continue;
-                    }
+                let mod_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+                    resolved_program.module_fns(&module.prefix).collect();
+                for group in crate::call_graph::tailcall_scc_components_resolved(&mod_fns) {
                     for fd in group {
-                        if let Some(id) = symbol_table.fn_id_of(&crate::ir::FnKey::in_module(
-                            module.prefix.clone(),
-                            &fd.name,
-                        )) {
-                            mutual_tco_members.insert(id);
-                        }
+                        mutual_tco_members.insert(fd.fn_id);
                     }
                 }
             }
@@ -768,19 +759,8 @@ pub fn build_context(
         .cloned()
         .collect();
 
-    // Epic #170 Phase 1: build the canonical `ResolvedProgramView`
-    // once, from the pipeline's already-resolved entry items + the
-    // dep modules' AST fn defs. The view does the module-side
-    // resolution (pinning `ResolveCtx.current_module = Some(prefix)`)
-    // — that's the only producer in the codebase. `resolved_fn_defs`
-    // / `resolved_module_fn_defs` then project FROM the view rather
-    // than running an independent second resolve, eliminating the
-    // "two truths" hazard build_context carried since PR 9.
-    let resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
-        resolved_items,
-        &modules,
-        &symbol_table,
-    );
+    // Legacy projection fields remain for consumers still migrating, but
+    // both project from the one resolved view built above.
     let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> =
         resolved_program.entry_fns().cloned().collect();
     let resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>> = resolved_program
@@ -1030,37 +1010,29 @@ impl CodegenContext {
         // keyed sets below resolve through it, same shape as the
         // production `build_context` flow.
         let symbol_table = crate::ir::SymbolTable::build(&self.items, &self.modules);
-        let entry_fn_id = |name: &str| -> Option<crate::ir::FnId> {
-            symbol_table.fn_id_of(&crate::ir::FnKey::entry(name))
-        };
-        let module_fn_id = |prefix: &str, name: &str| -> Option<crate::ir::FnId> {
-            symbol_table.fn_id_of(&crate::ir::FnKey::in_module(prefix.to_string(), name))
-        };
-
-        let entry_fn_refs: Vec<&FnDef> =
-            self.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+        let entry_resolved_items = crate::ir::hir::resolve_program(&symbol_table, &self.items);
+        let resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
+            entry_resolved_items,
+            &self.modules,
+            &symbol_table,
+        );
+        let entry_fn_refs: Vec<&crate::ir::hir::ResolvedFnDef> = resolved_program
+            .entry_fns()
+            .filter(|fd| fd.name != "main")
+            .collect();
 
         let mut mutual_tco_members: HashSet<crate::ir::FnId> = HashSet::new();
-        for group in crate::call_graph::tailcall_scc_components(&entry_fn_refs) {
-            if group.len() < 2 {
-                continue;
-            }
+        for group in crate::call_graph::tailcall_scc_components_resolved(&entry_fn_refs) {
             for fd in group {
-                if let Some(id) = entry_fn_id(&fd.name) {
-                    mutual_tco_members.insert(id);
-                }
+                mutual_tco_members.insert(fd.fn_id);
             }
         }
         for module in &self.modules {
-            let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
-            for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
-                if group.len() < 2 {
-                    continue;
-                }
+            let mod_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+                resolved_program.module_fns(&module.prefix).collect();
+            for group in crate::call_graph::tailcall_scc_components_resolved(&mod_fns) {
                 for fd in group {
-                    if let Some(id) = module_fn_id(&module.prefix, &fd.name) {
-                        mutual_tco_members.insert(id);
-                    }
+                    mutual_tco_members.insert(fd.fn_id);
                 }
             }
         }
@@ -1094,20 +1066,9 @@ impl CodegenContext {
         // need for `recursive_fns` / `mutual_tco_members`.
         self.symbol_table = symbol_table;
 
-        // Rebuild the canonical resolved view from the current items
-        // + modules (post-PR-A: this is the single source for resolved
-        // bodies). Entry-side resolved items are produced by
-        // `resolve_program`, then the view runs the per-dep-module
-        // resolve internally and indexes everything by `FnId`. The
-        // `resolved_fn_defs` / `resolved_module_fn_defs` mirrors below
-        // are projections of this view, kept for callsites that still
-        // walk them directly during the #170 backend-migration arc.
-        let entry_resolved_items = crate::ir::hir::resolve_program(&self.symbol_table, &self.items);
-        self.resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
-            entry_resolved_items,
-            &self.modules,
-            &self.symbol_table,
-        );
+        // Publish the one view used for SCC discovery above. Projection
+        // fields remain for consumers still migrating.
+        self.resolved_program = resolved_program;
         self.resolved_fn_defs = self.resolved_program.entry_fns().cloned().collect();
         self.resolved_module_fn_defs = self
             .resolved_program
