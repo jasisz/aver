@@ -72,6 +72,32 @@ Oracle-lifted laws make effects explicit as theorem parameters. For example,
 the derived `Random.int` oracle signature. See [oracle.md](oracle.md) for the
 classified effect set, stub signatures, Oracle law syntax, and trace assertions.
 
+Lifting is per module, not per entry. A dependency file exports the effectful
+functions some claim reaches exactly as the entry does — inside its own
+namespace, with the same leading `(path : BranchPath)` and one oracle
+parameter per classified effect — so `Infra.Store.get` becomes
+
+```lean
+def get (path : BranchPath)
+        (rnd_Infra_Kv_get : BranchPath -> Int -> String -> Except String (Option String))
+        (store : Store) (key : String) : Except String (Option String)
+```
+
+and a call site anywhere passes that callee's own oracle list:
+`Infra.Store.get path rnd_Infra_Kv_get store (heightKey height)`. A tail call
+carries the same arguments, and two effectful functions that call each other
+are exported as one `mutual` block rather than a forward reference. A lifted
+signature spells the types its effects carry by their owner module
+(`Tcp.Connection`, `Bytes.Bytes`), and that owner is usually a standard module
+the source never writes in `depends`; a file that exports a lifted function
+therefore imports the owners of the constants it names, alongside its written
+`depends`. Which functions a dependency exports follows the consumers: the roots are the
+qualified calls the entry's `verify` blocks and their cones spell, closed over
+the calls those functions make inside their own module. A function no claim
+reaches is still not exported — a loop that reads the console forever has no
+Lean meaning and nothing is being proven about it — so a program that proves
+nothing about a dependency's effects exports exactly what it did before.
+
 ## Verify emission
 
 `verify` blocks become Lean proof obligations:
