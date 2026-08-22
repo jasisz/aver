@@ -625,11 +625,17 @@ fn qualify_record_type(
 ) -> Option<String> {
     let entry = match type_id {
         Some(id) => ctx.symbol_table.type_entry(id),
-        None => ctx
-            .symbol_table
-            .types
-            .iter()
-            .find(|e| e.key.name == type_name)?,
+        // No identity: the source name is the only handle left. One
+        // declaration of that name is that declaration; two are two
+        // different records with two different paths, and picking the
+        // first would emit a path to the wrong one. Declining leaves
+        // `mir_record_rust_type` on the verbatim name, which rustc either
+        // accepts (entry scope) or rejects by name — never silently the
+        // other module's struct.
+        None => {
+            let id = ctx.symbol_table.unique_type_id_by_bare_name(type_name)?;
+            ctx.symbol_table.type_entry(id)
+        }
     };
     let canonical = entry.key.canonical();
     let (prefix, suffix) = resolve_module_call(&canonical, ctx.module_prefixes)?;
@@ -663,31 +669,54 @@ fn mir_record_rust_type(
     type_name.to_string()
 }
 
-fn record_uses_packed_u8(
+/// Does this nominal type carry its `List<Int>` inhabitants as packed
+/// bytes? A `Some(false)` and a `None` emit differently — `None` means the
+/// question could not be answered, and the caller must refuse rather than
+/// pick a representation.
+///
+/// The answer comes from the type's identity. When the identity is missing
+/// the bare source name is a usable key ONLY while it misses the packed
+/// table: `packed_sequence_layout_table` drops a name two modules disagree
+/// about, so a name that is absent from it is absent for every declaration
+/// of that name in the program, and "not packed" is the one answer it can
+/// have. A name that HITS the table with no identity behind it is the
+/// dangerous direction: the value would be re-typed as `PackedU8` on the
+/// strength of a string, and the emitted `.to_int_list()` does not exist on
+/// anything else. That is answered `None`, never `Some(true)`.
+fn packed_u8_carrier(
     type_id: Option<crate::ir::TypeId>,
     type_name: &str,
     ctx: &MirEmitCtx<'_>,
-) -> bool {
+) -> Option<bool> {
     let Some(codegen) = ctx.codegen else {
-        return false;
+        return Some(false);
     };
-    let bare = type_id
-        .map(|id| ctx.symbol_table.type_entry(id).key.name.as_str())
-        .unwrap_or_else(|| type_name.rsplit('.').next().unwrap_or(type_name));
-    super::uses_packed_u8(codegen, bare)
+    if let Some(id) = type_id {
+        let bare = ctx.symbol_table.type_entry(id).key.name.as_str();
+        return Some(super::uses_packed_u8(codegen, bare));
+    }
+    let bare = type_name.rsplit('.').next().unwrap_or(type_name);
+    if super::uses_packed_u8(codegen, bare) {
+        return None;
+    }
+    Some(false)
 }
 
-fn type_uses_packed_u8(ty: Option<&Type>, ctx: &MirEmitCtx<'_>) -> bool {
-    let Some(codegen) = ctx.codegen else {
-        return false;
-    };
-    let Some(Type::Named { id, name }) = ty else {
-        return false;
-    };
-    let bare = id
-        .map(|id| ctx.symbol_table.type_entry(id).key.name.as_str())
-        .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name));
-    super::uses_packed_u8(codegen, bare)
+/// The refusal text for a representation question the backend could not
+/// answer. Loud by construction: a recorded `compile_error!` fails
+/// `aver compile --target rust` with the type named, where guessing used to
+/// emit a method call on a value that has no such method and say nothing.
+fn unresolved_packed_carrier(type_name: &str, ctx: &MirEmitCtx<'_>) -> String {
+    let message = format!(
+        "the type `{type_name}` here has no resolved identity, and a type of that \
+         name is stored as packed bytes — the Rust backend will not guess a value's \
+         representation from its name; qualify the type or name its module in \
+         `depends [...]`"
+    );
+    match ctx.codegen {
+        Some(codegen) => super::toplevel::emit_codegen_error_expr(codegen, message),
+        None => message,
+    }
 }
 
 fn pack_u8_list(value: String) -> String {
@@ -1415,10 +1444,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             }
             let base = emit_mir_expr(&proj.base, emit_ctx)?;
             let projected = format!("{}.{}", base, aver_name_to_rust(&proj.field));
-            if type_uses_packed_u8(proj.base.ty(), emit_ctx) {
-                Some(format!("({projected}).to_int_list()"))
-            } else {
-                Some(projected)
+            let Some(Type::Named { id, name }) = proj.base.ty() else {
+                return Some(projected);
+            };
+            match packed_u8_carrier(*id, name, emit_ctx) {
+                Some(true) => Some(format!("({projected}).to_int_list()")),
+                Some(false) => Some(projected),
+                None => Some(unresolved_packed_carrier(name, emit_ctx)),
             }
         }
         MirExpr::RecordCreate(spanned_rec) => {
@@ -1431,7 +1463,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // through `clone_arg`.
             let rec = &spanned_rec.node;
             let rust_type = mir_record_rust_type(rec.type_id, &rec.type_name, emit_ctx);
-            let packed_u8 = record_uses_packed_u8(rec.type_id, &rec.type_name, emit_ctx);
+            let Some(packed_u8) = packed_u8_carrier(rec.type_id, &rec.type_name, emit_ctx) else {
+                return Some(unresolved_packed_carrier(&rec.type_name, emit_ctx));
+            };
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
                 let mut val =
@@ -1451,7 +1485,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `clone_arg`.
             let upd = &spanned_upd.node;
             let rust_type = mir_record_rust_type(upd.type_id, &upd.type_name, emit_ctx);
-            let packed_u8 = record_uses_packed_u8(upd.type_id, &upd.type_name, emit_ctx);
+            let Some(packed_u8) = packed_u8_carrier(upd.type_id, &upd.type_name, emit_ctx) else {
+                return Some(unresolved_packed_carrier(&upd.type_name, emit_ctx));
+            };
             let mut parts = Vec::with_capacity(upd.updates.len());
             let mut moved_replaced_field = false;
             for f in &upd.updates {

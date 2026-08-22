@@ -1552,9 +1552,12 @@ pub(super) fn reject_literal_refinement_discharge(
         .map(|m| {
             let (capability_items, capability_semantics) =
                 aver::codegen::capability_metadata(&m.items);
+            let decl = aver::visibility::module_decl(&m.items);
             aver::codegen::ModuleInfo {
                 prefix: m.dep_name.clone(),
-                depends: Vec::new(),
+                depends: decl.map(|d| d.depends.clone()).unwrap_or_default(),
+                exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),
+                exposes_opaque: decl.map(|d| d.exposes_opaque.clone()).unwrap_or_default(),
                 type_defs: m
                     .items
                     .iter()
@@ -3513,10 +3516,52 @@ fn write_codegen_output(
         process::exit(1);
     }
 
+    // A code generator that writes a deliberate compile error must not
+    // report success. The Rust emitter substitutes `compile_error!` for a
+    // construct it cannot render, which used to leave `compile` exiting 0
+    // with a crate that only fails once the user reaches `cargo build`.
+    // The files are written first so the message is readable in place.
+    //
+    // What counts is what the emitter recorded when it made the
+    // substitution — not what a scan of the output finds. A program may put
+    // `compile_error!` in a string of its own, and that is not a backend
+    // refusal.
+    let unrenderable = output.generated_compile_errors();
+    if !unrenderable.is_empty() {
+        eprintln!(
+            "{}",
+            format!(
+                "Compiled {} → {}/ [{}], but the generated code contains a compile error the backend could not avoid:",
+                file, output_dir, target_label
+            )
+            .red()
+        );
+        for message in unrenderable {
+            eprintln!("  {}", message.dimmed());
+        }
+        eprintln!(
+            "{}",
+            "the message is in the file too, at the construct that could not be rendered".dimmed()
+        );
+        process::exit(1);
+    }
+
     println!(
         "{}",
         format!("Compiled {} → {}/ [{}]", file, output_dir, target_label).green()
     );
+    // A verify case the backend could not render is left out of the
+    // generated test module. That is not a build failure, but it is a case
+    // the crate does not run, so it is named here rather than vanishing.
+    if !output.omitted_verify_cases.is_empty() {
+        println!(
+            "  {}",
+            "verify cases not carried into the generated tests:".yellow()
+        );
+        for note in &output.omitted_verify_cases {
+            println!("    {}", note.dimmed());
+        }
+    }
     println!("  {}", build_hint.cyan());
 }
 
@@ -11994,6 +12039,8 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
+            omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
             resolved_program: aver::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,

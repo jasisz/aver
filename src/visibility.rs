@@ -4,7 +4,10 @@ use crate::ast::{FnDef, Module, TopLevel, TypeDef, TypeVariant};
 
 mod type_exports;
 
-pub use type_exports::{ExportedTypeTarget, ModuleTypeExports, collect_module_type_exports};
+pub use type_exports::{
+    ExportedTypeTarget, ModuleTypeExports, ModuleTypeSurface, collect_module_type_exports,
+    collect_type_exports,
+};
 
 /// Type definition collected from a module — backend-agnostic metadata.
 #[derive(Debug, Clone)]
@@ -83,17 +86,21 @@ pub fn module_decl(items: &[TopLevel]) -> Option<&Module> {
     })
 }
 
+/// An `exposes [...]` list as visibility reads it: an empty list is the
+/// absence of the clause (default rule), never "expose nothing".
+pub fn declared_exposes(exposes: &[String]) -> Option<&[String]> {
+    if exposes.is_empty() {
+        None
+    } else {
+        Some(exposes)
+    }
+}
+
 /// The explicit `exposes` list a file declares, if any.
 /// The single derivation of the argument `is_exposed` expects, so lints and
 /// codegen can never disagree about what "private" means.
 pub fn effective_exposes(items: &[TopLevel]) -> Option<&[String]> {
-    module_decl(items).and_then(|m| {
-        if m.exposes.is_empty() {
-            None
-        } else {
-            Some(m.exposes.as_slice())
-        }
-    })
+    module_decl(items).and_then(|m| declared_exposes(&m.exposes))
 }
 
 /// Collect all exported items from a parsed module.

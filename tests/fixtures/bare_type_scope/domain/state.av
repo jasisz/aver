@@ -1,0 +1,19 @@
+module State
+    intent =
+        "Declares the sum type `Step` that `Domain.User` builds values of."
+    depends []
+    effects []
+
+type Step
+    Continue(Int)
+    Stop(String)
+
+fn stepOf(n: Int) -> Step
+    ? "The Step a run begins with."
+    match n > 0
+        true -> Step.Continue(n)
+        false -> Step.Stop("none")
+
+verify stepOf
+    stepOf(1) => Step.Continue(1)
+    stepOf(0) => Step.Stop("none")

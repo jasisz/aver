@@ -4173,6 +4173,8 @@ mod tests {
         let make_module = |prefix: &str| ModuleInfo {
             prefix: prefix.to_string(),
             depends: Vec::new(),
+            exposes: Vec::new(),
+            exposes_opaque: Vec::new(),
             type_defs: vec![TypeDef::Product {
                 name: "Natural".to_string(),
                 fields: vec![("value".to_string(), "Int".to_string())],
@@ -4263,6 +4265,8 @@ mod tests {
         let module = ModuleInfo {
             prefix: "Mod".to_string(),
             depends: Vec::new(),
+            exposes: Vec::new(),
+            exposes_opaque: Vec::new(),
             type_defs: vec![TypeDef::Product {
                 name: "Natural".to_string(),
                 fields: vec![("value".to_string(), "Int".to_string())],
@@ -4329,6 +4333,8 @@ mod tests {
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
+            omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,
@@ -4391,6 +4397,8 @@ mod tests {
         let make_module = |prefix: &str, ret: &str| ModuleInfo {
             prefix: prefix.to_string(),
             depends: Vec::new(),
+            exposes: Vec::new(),
+            exposes_opaque: Vec::new(),
             type_defs: Vec::new(),
             fn_defs: vec![make_get(ret)],
             capability_items: Vec::new(),
@@ -4449,6 +4457,8 @@ mod tests {
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
+            omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,

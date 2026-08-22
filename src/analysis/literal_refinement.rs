@@ -428,9 +428,12 @@ mod tests {
             .iter()
             .map(|(prefix, src)| {
                 let items = parse(src);
+                let decl = crate::visibility::module_decl(&items);
                 ModuleInfo {
                     prefix: prefix.to_string(),
-                    depends: Vec::new(),
+                    depends: decl.map(|d| d.depends.clone()).unwrap_or_default(),
+                    exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),
+                    exposes_opaque: decl.map(|d| d.exposes_opaque.clone()).unwrap_or_default(),
                     type_defs: items
                         .iter()
                         .filter_map(|i| match i {

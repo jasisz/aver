@@ -1358,7 +1358,7 @@ pub(super) fn transpile_unified(
     }
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
-    ProjectOutput { files }
+    ProjectOutput::of(files)
 }
 
 #[cfg(test)]

@@ -1,0 +1,17 @@
+module Tally
+    intent =
+        "Declares a record that happens to share the bare name `Step` with"
+        "the sum type in `Domain.State`. Nothing imports both."
+    depends []
+    effects []
+
+record Step
+    tally: Int
+
+fn tallyOf(step: Step) -> Int
+    ? "Reads the tally out of this module's own Step."
+    step.tally
+
+verify tallyOf
+    tallyOf(Step(tally = 1)) => 1
+    tallyOf(Step(tally = 9)) => 9
