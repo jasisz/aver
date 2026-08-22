@@ -2392,6 +2392,104 @@ struct VerifyFileResult {
     blocks: Vec<VerifyResult>,
 }
 
+/// A module `verify` did not check, and the number of verify blocks that went
+/// unchecked with it.
+struct VerifyUncheckedFile {
+    path: String,
+    blocks: usize,
+}
+
+/// Why a module went unchecked. Each reason owns its repair line, so a fault
+/// `aver check` cannot see never sends the user there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VerifySkipReason {
+    /// A source error — `aver check` prints it in full.
+    Source,
+    /// The wasm-gc backend refused the program; the source type-checks.
+    WasmGcBackend,
+    /// Provider composition or setup failed.
+    ProviderSetup,
+    /// Verify itself could not run. Not a source error, so `aver check`
+    /// passes on the file and has nothing to add.
+    Engine,
+}
+
+/// One module could not be checked, so it and every module of the same
+/// program behind it went unchecked.
+struct VerifyStop {
+    /// The module that carries the fault — not necessarily the entry.
+    at: String,
+    reason: VerifySkipReason,
+    message: String,
+    unchecked: Vec<VerifyUncheckedFile>,
+}
+
+/// What one input produced: the modules that were verified, plus the stop, if
+/// any. Verified modules are kept even when a later module of the same program
+/// could not be checked — their results are real and the user asked for them.
+struct VerifyRun {
+    results: Vec<VerifyFileResult>,
+    stop: Option<VerifyStop>,
+}
+
+/// Bucket a message `verify` could not get past. `Engine` is the bucket that
+/// makes a claim — that `aver check` passes on the file and has nothing to
+/// add — so it is only ever chosen for a message verify itself is known to
+/// have written. Everything else falls back to `Source`, where the worst case
+/// is a pointer at `aver check` that turns out to have nothing to say. Source
+/// faults reach here in several dialects (`error[...]` from the type checker,
+/// `Type errors in dependency`, and the plain-prose parse / module-resolution
+/// messages `load_compile_deps` returns), and no list of those would stay
+/// complete.
+fn classify_verify_stop(message: &str) -> VerifySkipReason {
+    if message.starts_with("wasm-gc") || message.starts_with("verify --wasm-gc") {
+        VerifySkipReason::WasmGcBackend
+    } else if aver::provider::is_provider_setup_error(message) {
+        VerifySkipReason::ProviderSetup
+    } else if
+    // The `--hostile` expansion cap.
+    message.starts_with("verify '")
+        // The bytecode compiler refused a program the checker accepted.
+        || message.starts_with("VM compile error:")
+        // Misuse of the trace vocabulary, which only exists inside a law.
+        || message.starts_with("Trace.")
+    {
+        VerifySkipReason::Engine
+    } else {
+        VerifySkipReason::Source
+    }
+}
+
+/// The verify blocks the entry itself declares, for the one case where no
+/// program units could be collected at all. Reporting `0` for a file full of
+/// `verify` blocks understates the gap by exactly the number that matters.
+fn verify_entry_block_count(file: &str) -> usize {
+    read_file(file)
+        .ok()
+        .and_then(|source| parse_file(&source).ok())
+        .map(|items| aver::checker::merge_verify_blocks(&items).len())
+        .unwrap_or(0)
+}
+
+fn verify_stopped_before_any_module(
+    file: &str,
+    reason: VerifySkipReason,
+    message: String,
+) -> VerifyRun {
+    VerifyRun {
+        results: Vec::new(),
+        stop: Some(VerifyStop {
+            at: file.to_string(),
+            reason,
+            message,
+            unchecked: vec![VerifyUncheckedFile {
+                path: file.to_string(),
+                blocks: verify_entry_block_count(file),
+            }],
+        }),
+    }
+}
+
 /// Verify every not-yet-reported module of the program named by `file`,
 /// leaves-first.
 fn run_verify_for_file(
@@ -2401,19 +2499,62 @@ fn run_verify_for_file(
     wasm_gc: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
     reported: &mut HashSet<PathBuf>,
-) -> Result<Vec<VerifyFileResult>, String> {
+) -> VerifyRun {
     use aver::verify_law::expand::ExpansionMode;
 
-    let units = collect_program_units(file, module_root, reported)?;
-    let mut file_results = Vec::new();
+    let units = match collect_program_units(file, module_root, reported) {
+        Ok(units) => units,
+        // A module that cannot be found or read is a project error, and
+        // `aver check` reports it the same way.
+        Err(e) => return verify_stopped_before_any_module(file, VerifySkipReason::Source, e),
+    };
+    // Counted before anything runs — and before anything else can fail: once a
+    // module stops the walk, the modules from that one on carry blocks nobody
+    // checked, and the summary has to say how many. A stop that happens here,
+    // rather than inside the loop, still leaves every one of these modules
+    // unchecked.
+    let mut unchecked: Vec<VerifyUncheckedFile> = units
+        .iter()
+        .map(|(path, _, items)| VerifyUncheckedFile {
+            path: path.clone(),
+            blocks: aver::checker::merge_verify_blocks(items).len(),
+        })
+        .collect();
 
-    let config = load_runtime_policy(module_root)?;
+    // Every module of this program was already reported under an earlier input
+    // of the same directory walk. There is nothing left for this entry to run
+    // and nothing left for it to skip, so it must not open a stop of its own:
+    // that would print `0 file(s) not checked` above an empty list, and count
+    // modules an earlier entry already counted.
+    if unchecked.is_empty() {
+        return VerifyRun {
+            results: Vec::new(),
+            stop: None,
+        };
+    }
+
+    let config = match load_runtime_policy(module_root) {
+        Ok(config) => config,
+        Err(e) => {
+            return VerifyRun {
+                results: Vec::new(),
+                stop: Some(VerifyStop {
+                    at: file.to_string(),
+                    reason: VerifySkipReason::Source,
+                    message: e,
+                    unchecked,
+                }),
+            };
+        }
+    };
+
+    let mut results = Vec::new();
     let mode = if hostile {
         ExpansionMode::Hostile
     } else {
         ExpansionMode::Declared
     };
-    for (path, source, items) in units {
+    for (index, (path, source, items)) in units.into_iter().enumerate() {
         // `collect_program_units` swallows a parse error into empty `items` so
         // that `aver check` can surface it as a canonical line/col diagnostic
         // via its own analysis pass. `verify` has no such pass, so an
@@ -2422,18 +2563,22 @@ fn run_verify_for_file(
         // Re-parse ONLY when there are no items (cheap and rare — an
         // empty/comment-only file parses to no items with no error, and is
         // left alone) and surface the real parse error so `verify` fails
-        // loudly instead of passing green. A dependency names itself: the
-        // caller labels the error with the input file.
+        // loudly instead of passing green.
         if items.is_empty()
             && let Err(e) = parse_file(&source)
         {
-            return Err(if path == file {
-                e
-            } else {
-                format!("{}: {}", display_check_path(&path, module_root), e)
-            });
+            unchecked.drain(..index);
+            return VerifyRun {
+                results,
+                stop: Some(VerifyStop {
+                    at: path,
+                    reason: VerifySkipReason::Source,
+                    message: e,
+                    unchecked,
+                }),
+            };
         }
-        let blocks = if wasm_gc {
+        let outcome = if wasm_gc {
             #[cfg(feature = "wasm")]
             {
                 aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc_with_mode(
@@ -2442,12 +2587,12 @@ fn run_verify_for_file(
                     Some(module_root),
                     &path,
                     mode,
-                )?
+                )
             }
             #[cfg(not(feature = "wasm"))]
             {
                 let _ = (items, &path);
-                return Err("verify --wasm-gc requires building with --features wasm".to_string());
+                Err("verify --wasm-gc requires building with --features wasm".to_string())
             }
         } else {
             aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode_and_bindings(
@@ -2457,16 +2602,34 @@ fn run_verify_for_file(
                 &path,
                 mode,
                 provider_bindings,
-            )?
+            )
         };
-        file_results.push(VerifyFileResult {
-            path,
-            source,
-            blocks,
-        });
+        match outcome {
+            Ok(blocks) => results.push(VerifyFileResult {
+                path,
+                source,
+                blocks,
+            }),
+            Err(e) => {
+                let reason = classify_verify_stop(&e);
+                unchecked.drain(..index);
+                return VerifyRun {
+                    results,
+                    stop: Some(VerifyStop {
+                        at: path,
+                        reason,
+                        message: e,
+                        unchecked,
+                    }),
+                };
+            }
+        }
     }
 
-    Ok(file_results)
+    VerifyRun {
+        results,
+        stop: None,
+    }
 }
 
 /// Bucket case outcomes by `from_hostile` for the per-block summary
@@ -2901,111 +3064,127 @@ pub(super) fn cmd_verify(
 
     let mut all_file_results: Vec<VerifyFileResult> = Vec::new();
     let mut failed_files = Vec::new();
-    let mut skipped_typecheck: Vec<String> = Vec::new();
-    let mut skipped_wasm_gc_backend: Vec<String> = Vec::new();
-    let mut skipped_provider_setup: Vec<String> = Vec::new();
+    let mut stops: Vec<VerifyStop> = Vec::new();
     let mut printed_any = false;
     // Every module of every input's program, each verified once.
     let mut reported = HashSet::new();
 
     for file in &inputs {
-        match run_verify_for_file(
+        let run = run_verify_for_file(
             file,
             &module_root,
             hostile,
             wasm_gc,
             provider_bindings,
             &mut reported,
-        ) {
-            Ok(file_results) => {
-                // Render immediately — streaming output
-                let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());
-                if has_blocks && printed_any && !json {
-                    println!();
-                }
-                render_verify_output(&file_results, &module_root, verbose, json);
-                if has_blocks {
-                    printed_any = true;
-                }
-                for fr in &file_results {
-                    if fr.blocks.iter().any(|b| b.failed > 0) {
-                        failed_files.push(fr.path.clone());
-                    }
-                }
-                all_file_results.extend(file_results);
-            }
-            Err(e) => {
-                eprintln!("{}: {}", display_check_path(file, &module_root).red(), e);
-                // Bucket honestly: a wasm-gc backend error (compile /
-                // codegen failure, preflight reject, wasmtime setup) is
-                // NOT a source type error — `aver check` passes on such
-                // files, so pointing the user there would be a dead end.
-                // Backend errors carry a `wasm-gc` / `verify --wasm-gc`
-                // prefix (see `diagnostics::wasm_gc_verify`). Provider
-                // registry setup has its own bucket; only remaining setup
-                // failures retain the historical type-error classification.
-                if e.starts_with("wasm-gc") || e.starts_with("verify --wasm-gc") {
-                    skipped_wasm_gc_backend.push(display_check_path(file, &module_root));
-                } else if aver::provider::is_provider_setup_error(&e) {
-                    skipped_provider_setup.push(display_check_path(file, &module_root));
-                } else {
-                    skipped_typecheck.push(display_check_path(file, &module_root));
-                }
-                failed_files.push(file.clone());
+        );
+        // Render immediately — streaming output. Modules verified before a
+        // stop are reported like any other: their cases really ran.
+        let has_blocks = run.results.iter().any(|fr| !fr.blocks.is_empty());
+        if has_blocks && printed_any && !json {
+            println!();
+        }
+        render_verify_output(&run.results, &module_root, verbose, json);
+        if has_blocks {
+            printed_any = true;
+        }
+        for fr in &run.results {
+            if fr.blocks.iter().any(|b| b.failed > 0) {
+                failed_files.push(fr.path.clone());
             }
         }
-    }
-
-    if !skipped_typecheck.is_empty() && !json {
-        println!();
-        println!(
-            "{}",
-            format!(
-                "{} file(s) skipped — type errors (run aver check for details):",
-                skipped_typecheck.len()
-            )
-            .yellow()
-        );
-        for f in &skipped_typecheck {
-            println!("  {}", f.dimmed());
+        all_file_results.extend(run.results);
+        if let Some(stop) = run.stop {
+            // Name the module that carries the fault, not the entry that
+            // happens to depend on it.
+            eprintln!(
+                "{}: {}",
+                display_check_path(&stop.at, &module_root).red(),
+                stop.message
+            );
+            failed_files.push(file.clone());
+            stops.push(stop);
         }
-        println!(
-            "{}",
-            "hint: if these files use modules, pass --module-root <dir>".dimmed()
-        );
     }
 
-    if !skipped_wasm_gc_backend.is_empty() && !json {
-        println!();
-        println!(
-            "{}",
-            format!(
-                "{} file(s) skipped — wasm-gc backend error (the source type-checks; see the message above):",
-                skipped_wasm_gc_backend.len()
-            )
-            .yellow()
-        );
-        for f in &skipped_wasm_gc_backend {
-            println!("  {}", f.dimmed());
-        }
-        println!(
-            "{}",
-            "hint: `aver verify` (VM) runs these blocks without the wasm-gc backend".dimmed()
-        );
-    }
+    let files_not_checked: usize = stops.iter().map(|stop| stop.unchecked.len()).sum();
+    let blocks_unchecked: usize = stops
+        .iter()
+        .flat_map(|stop| &stop.unchecked)
+        .map(|file| file.blocks)
+        .sum();
 
-    if !skipped_provider_setup.is_empty() && !json {
-        println!();
-        println!(
-            "{}",
-            format!(
-                "{} file(s) skipped — provider composition error (the source type-checks; see the message above):",
-                skipped_provider_setup.len()
-            )
-            .yellow()
-        );
-        for f in &skipped_provider_setup {
-            println!("  {}", f.dimmed());
+    if !json {
+        // Bucket honestly. A wasm-gc backend error (compile / codegen
+        // failure, preflight reject, wasmtime setup) is NOT a source error —
+        // `aver check` passes on such files, so pointing the user there would
+        // be a dead end. The same holds for provider setup and for verify's
+        // own refusals, and each bucket says so in its own repair line.
+        for (reason, headline, hint) in [
+            (
+                VerifySkipReason::Source,
+                "type errors (run aver check for details)",
+                Some("hint: if these files use modules, pass --module-root <dir>"),
+            ),
+            (
+                VerifySkipReason::WasmGcBackend,
+                "wasm-gc backend error (the source type-checks; see the message above)",
+                Some("hint: `aver verify` (VM) runs these blocks without the wasm-gc backend"),
+            ),
+            (
+                VerifySkipReason::ProviderSetup,
+                "provider composition error (the source type-checks; see the message above)",
+                None,
+            ),
+            (
+                VerifySkipReason::Engine,
+                "verify could not run (not a source error; see the message above)",
+                Some("hint: `aver check` will not show this — it passes on these files"),
+            ),
+        ] {
+            let bucket: Vec<&VerifyStop> =
+                stops.iter().filter(|stop| stop.reason == reason).collect();
+            if bucket.is_empty() {
+                continue;
+            }
+            // The module-root hint is about resolving `depends [...]`. When
+            // every stop in this bucket is a project file that does not parse,
+            // it has nothing to do with the fault.
+            let hint = match reason {
+                VerifySkipReason::Source
+                    if bucket
+                        .iter()
+                        .all(|stop| stop.message.starts_with("aver.toml:")) =>
+                {
+                    None
+                }
+                _ => hint,
+            };
+            let count: usize = bucket.iter().map(|stop| stop.unchecked.len()).sum();
+            println!();
+            println!(
+                "{}",
+                format!("{} file(s) not checked — {}:", count, headline).yellow()
+            );
+            for stop in bucket {
+                for unchecked in &stop.unchecked {
+                    let name = display_check_path(&unchecked.path, &module_root);
+                    let line = if unchecked.blocks == 0 {
+                        name
+                    } else {
+                        format!(
+                            "{} ({} verify block{} unchecked)",
+                            name,
+                            unchecked.blocks,
+                            if unchecked.blocks == 1 { "" } else { "s" }
+                        )
+                    };
+                    println!("  {}", line.dimmed());
+                }
+            }
+            if let Some(hint) = hint {
+                println!("{}", hint.dimmed());
+            }
         }
     }
 
@@ -3034,26 +3213,21 @@ pub(super) fn cmd_verify(
         .filter(|fr| !fr.blocks.is_empty())
         .count();
 
-    if total_blocks == 0 {
-        if json {
-            println!(
-                "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":0,\"blocks\":0,\"cases_passed\":0,\"cases_failed\":0}}",
-                inputs.len()
-            );
-        } else {
-            println!(
-                "{}",
-                format!("No verify blocks found in {}.", path).yellow()
-            );
-        }
-    } else if json {
+    if json {
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}}}",
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{},\"files_skipped\":{},\"blocks_unchecked\":{}}}",
             inputs.len(),
             total_modules,
             total_blocks,
             total_passed,
-            total_failed
+            total_failed,
+            files_not_checked,
+            blocks_unchecked
+        );
+    } else if total_blocks == 0 && files_not_checked == 0 {
+        println!(
+            "{}",
+            format!("No verify blocks found in {}.", path).yellow()
         );
     } else {
         println!();
@@ -3084,8 +3258,19 @@ pub(super) fn cmd_verify(
                 skipped_base
             ));
         }
+        // A file nobody could check is part of the answer, not a footnote:
+        // without this member a run that checked one of three files reads
+        // exactly like a run that checked all three.
+        let mut not_checked_part = String::new();
+        if files_not_checked > 0 {
+            not_checked_part = format!(
+                " | {} file{} not checked",
+                files_not_checked,
+                if files_not_checked == 1 { "" } else { "s" }
+            );
+        }
         let summary = format!(
-            "Summary: {} module{} | {} block{} | {}/{} cases passed | {} failed{}",
+            "Summary: {} module{} | {} block{} | {}/{} cases passed | {} failed{}{}",
             total_modules,
             if total_modules == 1 { "" } else { "s" },
             total_blocks,
@@ -3094,11 +3279,15 @@ pub(super) fn cmd_verify(
             total_cases,
             total_failed,
             skipped_part,
+            not_checked_part,
         );
-        if total_failed == 0 {
-            println!("{}", summary.green());
-        } else {
+        if total_failed > 0 {
             println!("{}", summary.red());
+        } else if files_not_checked > 0 {
+            // Never green while something went unchecked.
+            println!("{}", summary.yellow());
+        } else {
+            println!("{}", summary.green());
         }
     }
 
