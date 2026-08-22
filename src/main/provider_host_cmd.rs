@@ -6,7 +6,7 @@
 //! capability; a backend that cannot host a Rust provider refuses instead of
 //! running without it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::ExitStatus;
@@ -14,8 +14,7 @@ use std::process::ExitStatus;
 use aver::codegen::rust as rust_codegen;
 
 use super::cli::Commands;
-use super::commands::resolve_av_inputs;
-use super::shared::{parse_file, read_file};
+use super::commands::{collect_program_units, resolve_av_inputs};
 
 /// Where a command executes the program, seen from the provider host.
 enum HostBackend {
@@ -32,7 +31,7 @@ pub(super) fn run_if_requested(
     command: &Commands,
     raw_args: &[OsString],
 ) -> Option<Result<ExitStatus, String>> {
-    let (input, files, module_root, backend, command_name) = match command {
+    let (input, inputs, module_root, backend, command_name) = match command {
         Commands::Run {
             file,
             module_root,
@@ -94,7 +93,7 @@ pub(super) fn run_if_requested(
         .ok()
         .flatten()?
         .provider_manifest?;
-    let plan = match plan_for_files(&files, &module_root, &manifest) {
+    let plan = match plan_for_programs(&inputs, &module_root, &manifest) {
         Ok(plan) => plan,
         Err(error) => return Some(Err(error)),
     };
@@ -187,42 +186,44 @@ struct ProgramPlan {
 /// Validate the complete schema-1 composition before provider code reaches
 /// Cargo. Generated Rust and the cached VM host intentionally share this plan.
 ///
-/// A file that does not parse, load, or type is left out of the plan: the
-/// command itself reports it, and no binding can be active for it.
-fn plan_for_files(
-    files: &[String],
+/// The plan spans the modules the command itself walks: every module of
+/// every input's program, each once. A program that does not load, or a
+/// module that does not parse or type, is left out: the command itself
+/// reports it, and no binding can be active for it.
+fn plan_for_programs(
+    inputs: &[String],
     module_root: &str,
     manifest: &aver::config::ProviderPackageManifest,
 ) -> Result<ProgramPlan, String> {
     let mut capabilities = aver::capability::CapabilityRegistry::default();
     let mut required = BTreeSet::new();
-    for file in files {
-        let Ok(source) = read_file(file) else {
+    let mut planned = HashSet::new();
+    for input in inputs {
+        let Ok(units) = collect_program_units(input, module_root, &mut planned) else {
             continue;
         };
-        let Ok(mut items) = parse_file(&source) else {
-            continue;
-        };
-        aver::ir::pipeline::tco(&mut items);
-        let Ok(modules) = aver::source::load_compile_deps(&items, module_root) else {
-            continue;
-        };
-        let tc = aver::ir::pipeline::typecheck_gate(
-            &items,
-            &aver::ir::TypecheckMode::Full {
-                base_dir: Some(module_root),
-            },
-            &items,
-        );
-        if !tc.errors.is_empty() {
-            continue;
+        for (_path, _source, mut items) in units {
+            aver::ir::pipeline::tco(&mut items);
+            let Ok(modules) = aver::source::load_compile_deps(&items, module_root) else {
+                continue;
+            };
+            let tc = aver::ir::pipeline::typecheck_gate(
+                &items,
+                &aver::ir::TypecheckMode::Full {
+                    base_dir: Some(module_root),
+                },
+                &items,
+            );
+            if !tc.errors.is_empty() {
+                continue;
+            }
+            required.extend(aver::provider::required_capability_operations(
+                &items,
+                &modules,
+                &tc.capabilities,
+            ));
+            capabilities.merge(tc.capabilities);
         }
-        required.extend(aver::provider::required_capability_operations(
-            &items,
-            &modules,
-            &tc.capabilities,
-        ));
-        capabilities.merge(tc.capabilities);
     }
 
     let known_capabilities = known_project_capabilities(module_root, &capabilities, Some(manifest));

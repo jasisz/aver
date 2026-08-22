@@ -76,6 +76,10 @@ diagnostics:
 - missing `verify` on pure, non-trivial, non-`main` functions
 - coverage-style warnings for thin `verify` examples
 - file size warnings
+- exposed names nothing in the checked program imports (`unused-expose`);
+  a directory input judges exposes over every program in it, a single
+  file only over its own program, so a name used solely by a sibling
+  program outside the input is reported
 
 Warnings do not make `check` fail.
 
@@ -151,12 +155,19 @@ aver audit file-or-dir --module-root .
 2. `verify` execution (same as `verify`)
 3. `format --check` (structural compliance)
 
+Like `check` and `verify`, `audit` walks the whole program: the entry plus
+everything it reaches through `depends [...]`, leaves first, one `Audit:`
+section per module. A directory is the union of the programs rooted at
+its files, each module audited once, so a dependency outside the
+directory is audited too. Embedded standard modules are typed but not
+audited.
+
 When the project's `aver.toml` binds providers, the verify axis runs through
 the same cached provider host as `aver verify`. Static checks and formatting
 remain provider-neutral. A project without `[providers]` never invokes Cargo.
 
 Output is a flat list of `error[slug]:` / `warning[slug]:` lines plus a
-summary footer: `N files | X check errors | Y verify failures | Z format`.
+summary footer: `N modules | X check errors | Y verify failures | Z format`.
 Any non-zero count fails the command.
 
 - warnings (e.g. `independence-hazard`, `non-tail-recursion`) do not fail

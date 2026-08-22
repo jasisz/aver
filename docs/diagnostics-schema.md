@@ -24,7 +24,7 @@ Top-level object per analyzed file:
 
 ## CLI NDJSON contract
 
-Every multi-record CLI command (`aver check`, `aver verify`, `aver why`) emits one bundle per analyzed file, one JSON object per line, followed by a trailing `summary` record with counts. Each line carries its own `schema_version` so consumers can grep, concat, or tail streams without losing context.
+Every multi-record CLI command (`aver check`, `aver verify`, `aver audit`, `aver why`) emits one bundle per analyzed file, one JSON object per line, followed by a trailing `summary` record with counts. Each line carries its own `schema_version` so consumers can grep, concat, or tail streams without losing context.
 
 ```
 {"schema_version":1,"kind":"analysis","file_label":"a.av",...}
@@ -32,7 +32,7 @@ Every multi-record CLI command (`aver check`, `aver verify`, `aver why`) emits o
 {"schema_version":1,"kind":"summary","files":1,"modules":2,"passed":1,"failed":1}
 ```
 
-`aver check` and `aver verify` walk the whole program named by each input file (the entry plus everything it reaches through `depends [...]`), so they emit one bundle per module, leaves first. In their summaries `files` counts the inputs the command was pointed at and `modules` the modules reported: for `check` every module checked (`passed` and `failed` count modules), for `verify` every module that declared at least one verify block (`blocks`, `cases_passed`, `cases_failed` sum over them).
+`aver check` and `aver verify` walk the whole program named by each input file (the entry plus everything it reaches through `depends [...]`), so they emit one bundle per module, leaves first. In their summaries `files` counts the inputs the command was pointed at and `modules` the modules reported: for `check` every module checked (`passed` and `failed` count modules), for `verify` every module that declared at least one verify block (`blocks`, `cases_passed`, `cases_failed` sum over them). `aver audit` walks the program the same way: every module it reaches is audited once and counted in `modules`, and `audit.check_errors`, `audit.verify_failures` and `audit.format_needed` sum over those modules.
 
 Single-record playground calls (`aver_check`, `aver_verify`, `aver_why`, `aver_context`) emit one bundle — the same shape as a single NDJSON line above.
 

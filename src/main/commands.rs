@@ -236,14 +236,15 @@ pub(super) fn find_self_host_binary() -> Result<PathBuf, String> {
 
 /// One module of a report: its path as the loader spelled it, its source,
 /// and its parsed items (empty when the file failed to parse).
-type ReportUnit = (String, String, Vec<TopLevel>);
+pub(super) type ReportUnit = (String, String, Vec<TopLevel>);
 
-/// The modules `check` and `verify` report for the program named by `file`:
+/// The modules `check`, `verify` and `audit` report for the program named
+/// by `file`:
 /// every project module reachable through `depends [...]`, leaves-first,
 /// the entry last. Embedded standard modules are not units. Modules whose
 /// canonical path is already in `reported` are skipped and the rest are
 /// added to it, so a directory input reports each module once.
-fn collect_program_units(
+pub(super) fn collect_program_units(
     file: &str,
     module_root: &str,
     reported: &mut HashSet<PathBuf>,
@@ -865,7 +866,8 @@ fn collect_used_exposes_for_importer(
 /// Exposed names nobody imports, judged over `units` as one program: a
 /// name counts as used when any unit imports it. A module no unit imports
 /// (an entry, or a leaf pointed at directly) is not judged, since its
-/// importers are not in view.
+/// importers are not in view. The finding names that scope: a sibling
+/// program outside the checked inputs is not consulted.
 fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> Vec<CheckFinding> {
     let mut module_info_by_path = HashMap::new();
 
@@ -985,7 +987,10 @@ fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> 
             module: Some(info.module_name),
             file: Some(info.file),
             fn_name: None,
-            message: format!("Unused exposes: {}", unused.join(", ")),
+            message: format!(
+                "exposes not used by the checked program(s): {}",
+                unused.join(", ")
+            ),
             extra_spans: vec![],
         });
     }
@@ -1891,7 +1896,10 @@ fn check_units(
 }
 
 /// Composite: static check + verify execution + format-check in one
-/// pass. JSON mode emits one AnalysisReport bundle per file (diagnostics
+/// pass over every module of the program — the entry plus everything it
+/// reaches through `depends [...]`, leaves-first — and, for a directory,
+/// over the union of the programs rooted at its files, each module audited
+/// once. JSON mode emits one AnalysisReport bundle per module (diagnostics
 /// include check issues + verify failures + needs-format), trailing
 /// summary aggregates the three axes.
 pub(super) fn cmd_audit(
@@ -1901,11 +1909,6 @@ pub(super) fn cmd_audit(
     hostile: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) {
-    use super::format_cmd::try_format_source;
-    use aver::diagnostics::{
-        AnalyzeOptions, analyze_source_with_verify_provider_bindings, needs_format_diagnostic,
-    };
-
     let module_root = crate::cli_entry::shared::resolve_module_root(module_root_override);
     let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
         Ok(c) => c,
@@ -1930,17 +1933,62 @@ pub(super) fn cmd_audit(
     };
 
     let batch = Path::new(path).is_dir();
+    // Every module of every input's program, each collected once: a module
+    // reached from an earlier input is not a unit of a later one.
+    let mut reported = HashSet::new();
+    let programs = inputs
+        .iter()
+        .map(|file| {
+            (
+                file,
+                collect_program_units(file, &module_root, &mut reported),
+            )
+        })
+        .collect::<Vec<_>>();
+    // A diagnostic belongs to the module whose file it points at. When that
+    // module is itself audited, the unit whose typecheck surfaced the
+    // diagnostic (typically an entry seeing a dependency error) must not
+    // repeat it.
+    let unit_keys = programs
+        .iter()
+        .filter_map(|(_, units)| units.as_ref().ok())
+        .flatten()
+        .map(|(path, _, _)| canonical_path_key(path))
+        .collect::<HashSet<_>>();
+    let context = AuditContext {
+        module_root: &module_root,
+        config: config.as_ref(),
+        unit_keys: &unit_keys,
+        json,
+        hostile,
+        provider_bindings,
+    };
+
     let mut tracker = SuppressionTracker::new(config.as_ref());
+    let mut audited_modules = 0usize;
+    let mut totals = AuditTotals::default();
+    let mut printed_any = false;
 
-    let mut total_check_errors = 0usize;
-    let mut total_verify_failures = 0usize;
-    let mut total_format_needed = 0usize;
+    for (file, units) in programs {
+        // An input whose every module was audited under an earlier input
+        // has no section of its own.
+        if matches!(&units, Ok(units) if units.is_empty()) {
+            continue;
+        }
+        if !json && batch {
+            if printed_any {
+                println!();
+            }
+            println!("Input: {}", display_check_path(file, &module_root).cyan());
+        }
+        printed_any = true;
 
-    for file in &inputs {
-        let shown_path = display_check_path(file, &module_root);
-        let source = match crate::cli_entry::shared::read_file(file) {
-            Ok(s) => s,
+        let units = match units {
+            Ok(units) => units,
             Err(e) => {
+                // A program that cannot be loaded fails the audit: none of
+                // its modules was checked.
+                let shown_path = display_check_path(file, &module_root);
                 if json {
                     println!(
                         "{{\"schema_version\":1,\"kind\":\"file-error\",\"file\":{},\"error\":{}}}",
@@ -1950,79 +1998,19 @@ pub(super) fn cmd_audit(
                 } else {
                     eprintln!("{}: {}", shown_path.red(), e);
                 }
+                if reported.insert(aver::source::canonicalize_path(Path::new(file))) {
+                    audited_modules += 1;
+                }
+                totals.check_errors += 1;
                 continue;
             }
         };
-
-        let mut opts = AnalyzeOptions::new(shown_path.clone());
-        opts.module_base_dir = Some(module_root.clone());
-        opts.include_verify_run = true;
-        opts.verify_run_hostile = hostile;
-        let mut report =
-            analyze_source_with_verify_provider_bindings(&source, &opts, provider_bindings);
-
-        // Suppression runs before the format check on purpose: `needs-format`
-        // still increments `total_format_needed` and still forces exit 1, so
-        // letting a waiver delete the diagnostic would report a clean file
-        // that fails anyway.
-        let suppress_key = suppression_path(file, &module_root);
-        tracker.note_file(config.as_ref(), &suppress_key);
-        let suppressed_count = apply_check_suppressions(
-            &mut report.diagnostics,
-            config.as_ref(),
-            &suppress_key,
-            &mut tracker,
-        );
-
-        // Format check: append needs-format diagnostic with structured
-        // per-rule violations (capped at the factory's MAX_VIOLATION_REGIONS).
-        let (format_changed, format_violations) = match try_format_source(&source) {
-            Ok((formatted, violations)) if formatted != source => (true, violations),
-            _ => (false, Vec::new()),
-        };
-        let needs_format = format_changed;
-        if needs_format {
-            report.diagnostics.push(needs_format_diagnostic(
-                &shown_path,
-                &format_violations,
-                &source,
-            ));
-            total_format_needed += 1;
-        }
-
-        // Check errors = static-analysis errors (`Severity::Error`:
-        // parse errors, type errors, intent-checker errors such as
-        // `verify-rhs`). Verify EXECUTION failures carry
-        // `Severity::Fail` and are counted through `verify_summary`
-        // below, so excluding them here avoids double counting — but
-        // exclusion must key on the severity, not the slug. The old
-        // `!slug.starts_with("verify-")` filter also swallowed
-        // `error[verify-rhs]` (a static check error that happens to
-        // share the prefix), so a file whose only problems were
-        // verify-rhs errors audited as "0 check errors" with exit 0.
-        let file_check_errors = report
-            .diagnostics
-            .iter()
-            .filter(|d| matches!(d.severity, aver::diagnostics::Severity::Error))
-            .count();
-        let verify_setup_failures = report
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.slug == "verify-provider-setup")
-            .count();
-        let file_verify_failures = verify_setup_failures
-            + report
-                .verify_summary
-                .as_ref()
-                .map(|vs| vs.blocks.iter().map(|b| b.failed).sum::<usize>())
-                .unwrap_or(0);
-        total_check_errors += file_check_errors;
-        total_verify_failures += file_verify_failures;
-
-        if json {
-            println!("{}", report.to_json());
-        } else {
-            render_audit_tty(&shown_path, &report, needs_format, suppressed_count);
+        for (idx, (unit_path, source, _items)) in units.iter().enumerate() {
+            if !json && idx > 0 {
+                println!();
+            }
+            totals.add(audit_unit(unit_path, source, &context, &mut tracker));
+            audited_modules += 1;
         }
     }
 
@@ -2030,27 +2018,159 @@ pub(super) fn cmd_audit(
 
     if json {
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"audit\":{{\"check_errors\":{},\"verify_failures\":{},\"format_needed\":{}}}}}",
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"audit\":{{\"check_errors\":{},\"verify_failures\":{},\"format_needed\":{}}}}}",
             inputs.len(),
-            total_check_errors,
-            total_verify_failures,
-            total_format_needed
+            audited_modules,
+            totals.check_errors,
+            totals.verify_failures,
+            totals.format_needed
         );
     } else {
         println!();
         println!("{}", "─".repeat(50).dimmed());
         println!(
-            "{} {} files | {} check errors | {} verify failures | {} format",
+            "{} {} {} | {} check errors | {} verify failures | {} format",
             "Audit:".bold(),
-            inputs.len(),
-            total_check_errors,
-            total_verify_failures,
-            total_format_needed
+            audited_modules,
+            if audited_modules == 1 {
+                "module"
+            } else {
+                "modules"
+            },
+            totals.check_errors,
+            totals.verify_failures,
+            totals.format_needed
         );
     }
 
-    if total_check_errors > 0 || total_verify_failures > 0 || total_format_needed > 0 {
+    if totals.any() {
         process::exit(1);
+    }
+}
+
+/// What every module of an audit shares.
+struct AuditContext<'a> {
+    module_root: &'a str,
+    config: Option<&'a aver::config::ProjectConfig>,
+    /// Canonical paths of every audited module, across all inputs.
+    unit_keys: &'a HashSet<String>,
+    json: bool,
+    hostile: bool,
+    provider_bindings: &'a [aver::provider::ProviderBinding],
+}
+
+/// The three axes of an audit, counted per module and summed per run.
+#[derive(Default)]
+struct AuditTotals {
+    check_errors: usize,
+    verify_failures: usize,
+    format_needed: usize,
+}
+
+impl AuditTotals {
+    fn add(&mut self, other: AuditTotals) {
+        self.check_errors += other.check_errors;
+        self.verify_failures += other.verify_failures;
+        self.format_needed += other.format_needed;
+    }
+
+    fn any(&self) -> bool {
+        self.check_errors > 0 || self.verify_failures > 0 || self.format_needed > 0
+    }
+}
+
+/// Audit one module: its static diagnostics (minus those another audited
+/// module owns), its verify run, and its format check, rendered in place.
+fn audit_unit(
+    path: &str,
+    source: &str,
+    context: &AuditContext<'_>,
+    tracker: &mut SuppressionTracker,
+) -> AuditTotals {
+    use super::format_cmd::try_format_source;
+    use aver::diagnostics::{
+        AnalyzeOptions, analyze_source_with_verify_provider_bindings, needs_format_diagnostic,
+    };
+
+    let module_root = context.module_root;
+    let shown_path = display_check_path(path, module_root);
+    let own_key = canonical_path_key(path);
+
+    let mut opts = AnalyzeOptions::new(shown_path.clone());
+    opts.module_base_dir = Some(module_root.to_string());
+    opts.include_verify_run = true;
+    opts.verify_run_hostile = context.hostile;
+    let mut report =
+        analyze_source_with_verify_provider_bindings(source, &opts, context.provider_bindings);
+    report.diagnostics.retain(|d| {
+        let key = span_file_key(&d.span.file, module_root);
+        key == own_key || !context.unit_keys.contains(&key)
+    });
+
+    // Suppression runs before the format check on purpose: `needs-format`
+    // still counts toward `format_needed` and still forces exit 1, so
+    // letting a waiver delete the diagnostic would report a clean module
+    // that fails anyway.
+    let suppress_key = suppression_path(path, module_root);
+    tracker.note_file(context.config, &suppress_key);
+    let suppressed_count = apply_check_suppressions(
+        &mut report.diagnostics,
+        context.config,
+        &suppress_key,
+        tracker,
+    );
+
+    // Format check: append needs-format diagnostic with structured
+    // per-rule violations (capped at the factory's MAX_VIOLATION_REGIONS).
+    let (needs_format, format_violations) = match try_format_source(source) {
+        Ok((formatted, violations)) if formatted != source => (true, violations),
+        _ => (false, Vec::new()),
+    };
+    if needs_format {
+        report.diagnostics.push(needs_format_diagnostic(
+            &shown_path,
+            &format_violations,
+            source,
+        ));
+    }
+
+    // Check errors = static-analysis errors (`Severity::Error`:
+    // parse errors, type errors, intent-checker errors such as
+    // `verify-rhs`). Verify EXECUTION failures carry
+    // `Severity::Fail` and are counted through `verify_summary`
+    // below, so excluding them here avoids double counting — but
+    // exclusion must key on the severity, not the slug. The old
+    // `!slug.starts_with("verify-")` filter also swallowed
+    // `error[verify-rhs]` (a static check error that happens to
+    // share the prefix), so a file whose only problems were
+    // verify-rhs errors audited as "0 check errors" with exit 0.
+    let check_errors = report
+        .diagnostics
+        .iter()
+        .filter(|d| matches!(d.severity, aver::diagnostics::Severity::Error))
+        .count();
+    let verify_setup_failures = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.slug == "verify-provider-setup")
+        .count();
+    let verify_failures = verify_setup_failures
+        + report
+            .verify_summary
+            .as_ref()
+            .map(|vs| vs.blocks.iter().map(|b| b.failed).sum::<usize>())
+            .unwrap_or(0);
+
+    if context.json {
+        println!("{}", report.to_json());
+    } else {
+        render_audit_tty(&shown_path, &report, needs_format, suppressed_count);
+    }
+
+    AuditTotals {
+        check_errors,
+        verify_failures,
+        format_needed: usize::from(needs_format),
     }
 }
 
@@ -2060,7 +2180,6 @@ fn render_audit_tty(
     needs_format: bool,
     suppressed_count: usize,
 ) {
-    println!();
     println!("{}", format!("Audit: {}", shown_path).cyan());
     for diag in &report.diagnostics {
         println!("  {}[{}]: {}", severity_tag(diag), diag.slug, diag.summary);

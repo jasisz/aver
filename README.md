@@ -546,7 +546,7 @@ aver cert verify out/file.wasm out/cert
 aver cert explain out/file.wasm out/cert
 ```
 
-Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). Both `check` and `verify` walk the whole program — the entry plus every module it reaches through `depends [...]` — and report per module; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
+Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). `check`, `verify`, and `audit` walk the whole program — the entry plus every module it reaches through `depends [...]` — and report per module; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
 
 | Command | What it checks | Use as a gate? |
 |---|---|---|

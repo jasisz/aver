@@ -16,6 +16,8 @@ const MAIN_SOURCE: &str = include_str!("fixtures/native_provider_composed/main.a
 const INDEPENDENT_SOURCE: &str = include_str!("fixtures/native_provider_composed/independent.av");
 const PROVIDER_SOURCE: &str = include_str!("fixtures/native_provider_host/src/lib.rs");
 const PROBE_SOURCE: &str = "module Probe\n    intent = \"Exercise an entry program smaller than the project manifest.\"\n\nfn main() -> Unit\n    Unit\n";
+/// An entry with no provider call of its own, over a module that has them.
+const THIN_SOURCE: &str = "module Thin\n    intent = \"Audit a thin entry whose dependency reaches the bound capability.\"\n    depends [Composed]\n\nfn main() -> Result<Unit, String>\n    ? \"Delegate to the composed module.\"\n    Composed.main()\n";
 
 fn aver_bin() -> &'static str {
     env!("CARGO_BIN_EXE_aver")
@@ -315,8 +317,42 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     );
     assert!(project_audit.status.success(), "{}", report(&project_audit));
     let project_audit_report = report(&project_audit);
-    assert!(project_audit_report.contains("Audit: 4 files"));
+    assert!(
+        project_audit_report.contains("Audit: 4 modules"),
+        "{project_audit_report}"
+    );
     assert!(project_audit_report.contains("verify identity"));
+
+    // A thin entry names the program that reaches the bound capability,
+    // so auditing the entry alone runs that module's cases in the provider
+    // host: the bindings are planned over the program, not the input file.
+    fs::write(
+        app.join("composed.av"),
+        MAIN_SOURCE.replace("module NativeProviderComposed", "module Composed"),
+    )
+    .expect("write composed module");
+    fs::write(app.join("thin.av"), THIN_SOURCE).expect("write thin entry");
+    let thin_path = app.join("thin.av").to_string_lossy().into_owned();
+    let thin_audit = run_aver(
+        &cache,
+        &["audit", &thin_path, "--module-root", &module_root],
+    );
+    assert!(thin_audit.status.success(), "{}", report(&thin_audit));
+    let thin_audit_report = report(&thin_audit);
+    assert!(
+        thin_audit_report.contains("Audit: 3 modules"),
+        "{thin_audit_report}"
+    );
+    assert!(
+        thin_audit_report.contains("verify sharedRegistryWorks"),
+        "{thin_audit_report}"
+    );
+    assert!(
+        thin_audit_report.contains("0 check errors | 0 verify failures"),
+        "{thin_audit_report}"
+    );
+    fs::remove_file(app.join("composed.av")).expect("drop composed module");
+    fs::remove_file(app.join("thin.av")).expect("drop thin entry");
 
     // A real provider setup failure is not a source type error, and audit
     // must not swallow it into an empty verify summary.

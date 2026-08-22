@@ -1,6 +1,7 @@
 //! A file names a program: the entry module plus everything it reaches
-//! through `depends [...]`. `aver check` and `aver verify` report every
-//! module of that program, leaves-first, and fail when any module fails.
+//! through `depends [...]`. `aver check`, `aver verify` and `aver audit`
+//! report every module of that program, leaves-first, and fail when any
+//! module fails.
 //! Embedded standard modules are part of the program for typing but are not
 //! units of the report: their own `verify` blocks are checked per release.
 
@@ -213,8 +214,17 @@ fn unused_exposes_are_judged_over_the_whole_directory() {
     assert!(stdout.contains("Checked 3 module(s): 3 passed"), "{stdout}");
     // `double` is used by entry.av's program and `triple` by other.av's:
     // only the name no program imports is unused.
-    assert_eq!(stdout.matches("Unused exposes:").count(), 1, "{stdout}");
-    assert!(stdout.contains("Unused exposes: spare"), "{stdout}");
+    assert_eq!(
+        stdout
+            .matches("exposes not used by the checked program(s):")
+            .count(),
+        1,
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("exposes not used by the checked program(s): spare"),
+        "{stdout}"
+    );
     let after_headers = lines_after(&stdout, "Input: ");
     assert_eq!(after_headers.len(), 2, "{stdout}");
     assert!(
@@ -282,6 +292,153 @@ fn embedded_standard_modules_are_typed_but_not_sampled_or_listed() {
     assert_eq!(stdout.matches("Check: ").count(), 1, "{stdout}");
     assert!(!stdout.contains("bytes.av"), "{stdout}");
     assert!(!stdout.contains("Checked "), "{stdout}");
+}
+
+#[test]
+fn audit_entry_audits_the_dependency_module_too() {
+    let project = Project::new("audit-program");
+    project.write("lib.av", LIB_AV).write("entry.av", ENTRY_AV);
+
+    let run = project.run(&["audit", "entry.av"]);
+    assert!(run.status.success(), "{}", report(&run));
+    let (stdout, _) = text(&run);
+    // Leaves first: the dependency's cases and law run before the entry's.
+    assert!(
+        position(&stdout, "Audit: ./lib.av") < position(&stdout, "Audit: entry.av"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("verify double  3/3"), "{stdout}");
+    assert!(stdout.contains("verify double  9/9"), "{stdout}");
+    assert!(
+        stdout.contains("Audit: 2 modules | 0 check errors | 0 verify failures | 0 format"),
+        "{stdout}"
+    );
+
+    let json = project.run(&["audit", "entry.av", "--json"]);
+    assert!(json.status.success(), "{}", report(&json));
+    let (stdout, _) = text(&json);
+    assert!(stdout.contains("\"file_label\":\"./lib.av\""), "{stdout}");
+    let summary = stdout.lines().last().unwrap_or_default();
+    assert!(
+        summary.contains(
+            "\"kind\":\"summary\",\"files\":1,\"modules\":2,\"audit\":{\"check_errors\":0,\"verify_failures\":0,\"format_needed\":0}"
+        ),
+        "{summary}"
+    );
+
+    // A failing case in the dependency fails the audit, under the
+    // dependency's own section.
+    project.write(
+        "lib.av",
+        &LIB_AV.replace("double(3) => 6", "double(3) => 7"),
+    );
+    let run = project.run(&["audit", "entry.av"]);
+    assert!(!run.status.success(), "{}", report(&run));
+    let (stdout, _) = text(&run);
+    assert!(stdout.contains("Audit: ./lib.av"), "{stdout}");
+    assert!(
+        stdout.contains("verify double  2/3 passed, 1 failed"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Audit: 2 modules | 0 check errors | 1 verify failures | 0 format"),
+        "{stdout}"
+    );
+
+    // A type error in the dependency counts once, under the dependency;
+    // the entry's section does not repeat it.
+    project.write("lib.av", &LIB_AV.replace("n * 2", "n * \"two\""));
+    let run = project.run(&["audit", "entry.av"]);
+    assert!(!run.status.success(), "{}", report(&run));
+    let (stdout, _) = text(&run);
+    assert_eq!(stdout.matches("error[type-error]").count(), 1, "{stdout}");
+    assert!(
+        position(&stdout, "error[type-error]") < position(&stdout, "Audit: entry.av"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Audit: 2 modules | 1 check errors | 0 verify failures | 0 format"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn directory_audit_reports_each_module_once() {
+    let project = Project::new("audit-dir");
+    project.write("lib.av", LIB_AV).write("entry.av", ENTRY_AV);
+
+    let run = project.run(&["audit", "."]);
+    assert!(run.status.success(), "{}", report(&run));
+    let (stdout, _) = text(&run);
+    assert_eq!(stdout.matches("Audit: ./lib.av").count(), 1, "{stdout}");
+    assert_eq!(stdout.matches("Audit: ./entry.av").count(), 1, "{stdout}");
+    assert!(
+        position(&stdout, "Audit: ./lib.av") < position(&stdout, "Audit: ./entry.av"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Audit: 2 modules | 0 check errors | 0 verify failures | 0 format"),
+        "{stdout}"
+    );
+    // lib.av was audited under entry.av's program, so it gets no section
+    // of its own: the one `Input:` header opens a non-empty section.
+    let after_headers = lines_after(&stdout, "Input: ");
+    assert_eq!(after_headers.len(), 1, "{stdout}");
+    assert!(
+        after_headers.iter().all(|line| line.starts_with("Audit: ")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn audit_reaches_a_dependency_outside_the_directory() {
+    let project = Project::new("audit-outside");
+    fs::create_dir_all(project.dir.join("app")).expect("create app dir");
+    project
+        .write("lib.av", LIB_AV)
+        .write("app/entry.av", ENTRY_AV);
+
+    let run = project.run(&["audit", "app"]);
+    assert!(run.status.success(), "{}", report(&run));
+    let (stdout, _) = text(&run);
+    assert!(
+        position(&stdout, "Audit: ./lib.av") < position(&stdout, "Audit: app/entry.av"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("verify double  9/9"), "{stdout}");
+    assert!(stdout.contains("Audit: 2 modules"), "{stdout}");
+}
+
+#[test]
+fn single_input_unused_exposes_name_the_checked_program_as_their_scope() {
+    let project = Project::new("check-scope");
+    project
+        .write("lib.av", SHARED_LIB_AV)
+        .write("entry.av", ENTRY_AV)
+        .write("other.av", OTHER_AV);
+
+    // Only entry.av's program is judged: `triple` is used by other.av,
+    // which is outside the input, and the diagnostic says so.
+    let run = project.run(&["check", "entry.av"]);
+    assert!(run.status.success(), "{}", report(&run));
+    let (stdout, _) = text(&run);
+    assert!(
+        stdout.contains(
+            "warning[unused-expose]: exposes not used by the checked program(s): triple, spare"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("at: ./lib.av:3:5"), "{stdout}");
+
+    let json = project.run(&["check", "entry.av", "--json"]);
+    assert!(json.status.success(), "{}", report(&json));
+    let (stdout, _) = text(&json);
+    assert!(
+        stdout.contains(
+            "\"slug\":\"unused-expose\",\"summary\":\"exposes not used by the checked program(s): triple, spare\",\"span\":{\"file\":\"./lib.av\",\"line\":3,\"col\":5}"
+        ),
+        "{stdout}"
+    );
 }
 
 #[test]
