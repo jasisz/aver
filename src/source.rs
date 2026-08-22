@@ -143,8 +143,10 @@ pub fn require_module_declaration(items: &[TopLevel], file: &str) -> Result<(), 
     Ok(())
 }
 
-pub fn find_module_file(name: &str, module_root: &str) -> Option<PathBuf> {
-    let root = Path::new(module_root);
+/// The two relative paths every loader tries for one canonical module name.
+/// Keeping this derivation shared makes the browser virtual filesystem obey
+/// exactly the same module identity contract as the CLI filesystem loader.
+fn module_file_candidates(name: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = name.split('.').filter(|s| !s.is_empty()).collect();
     if parts.is_empty() {
         return None;
@@ -159,6 +161,12 @@ pub fn find_module_file(name: &str, module_root: &str) -> Option<PathBuf> {
             .join("/")
     );
     let exact_rel = format!("{}.av", parts.join("/"));
+    Some((lower_rel, exact_rel))
+}
+
+pub fn find_module_file(name: &str, module_root: &str) -> Option<PathBuf> {
+    let root = Path::new(module_root);
+    let (lower_rel, exact_rel) = module_file_candidates(name)?;
 
     let lower = root.join(&lower_rel);
     if lower.exists() {
@@ -790,40 +798,13 @@ fn load_recursive_from_map(
 }
 
 fn find_file_key_in_map(dep_name: &str, files: &HashMap<String, String>) -> Option<String> {
-    let parts: Vec<&str> = dep_name.split('.').filter(|s| !s.is_empty()).collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let lower_rel = format!(
-        "{}.av",
-        parts
-            .iter()
-            .map(|p| p.to_lowercase())
-            .collect::<Vec<_>>()
-            .join("/")
-    );
-    let exact_rel = format!("{}.av", parts.join("/"));
-    let last = parts.last().copied().unwrap_or(dep_name);
-    let last_lower = format!("{}.av", last.to_lowercase());
-    let last_exact = format!("{}.av", last);
-
-    for candidate in [&lower_rel, &exact_rel, &last_lower, &last_exact] {
+    let (lower_rel, exact_rel) = module_file_candidates(dep_name)?;
+    for candidate in [&lower_rel, &exact_rel] {
         if files.contains_key(candidate) {
             return Some(candidate.clone());
         }
     }
-    // Fallback: case-insensitive scan — browsers let users name files
-    // however they like, and dep names are canonical-cased anyway.
-    let wanted = last.to_lowercase();
-    files
-        .keys()
-        .find(|k| {
-            Path::new(k)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|stem| stem.eq_ignore_ascii_case(&wanted))
-        })
-        .cloned()
+    None
 }
 
 /// Load a dependency tree starting from `root_deps`.
@@ -1014,6 +995,23 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].dep_name, "Bytes");
         assert_eq!(loaded[1].dep_name, "Crypto.Digest32");
+    }
+
+    #[test]
+    fn virtual_filesystem_uses_the_same_canonical_path_as_disk() {
+        let source = "module User\n    intent = \"test\"\n".to_string();
+        let mut leaf_only = std::collections::HashMap::new();
+        leaf_only.insert("user.av".to_string(), source.clone());
+        let error = load_module_tree_from_map(&["Domain.User".to_string()], &leaf_only)
+            .expect_err("a dotted dependency must not fall back to a leaf filename");
+        assert!(error.contains("Module 'Domain.User' not found"), "{error}");
+
+        let mut canonical = std::collections::HashMap::new();
+        canonical.insert("domain/user.av".to_string(), source);
+        let loaded = load_module_tree_from_map(&["Domain.User".to_string()], &canonical)
+            .expect("canonical virtual path should load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].dep_name, "Domain.User");
     }
 
     #[test]

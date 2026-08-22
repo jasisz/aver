@@ -759,3 +759,45 @@ fn main()
 "#,
     );
 }
+
+/// Regression for #1084: flattening rewrites an entry signature from the
+/// dependency-qualified spelling to the linked type name. The wasm function
+/// type and the MIR body must read the same post-link identity.
+#[test]
+fn entry_returning_qualified_dependency_type_compiles_and_validates() {
+    let root = tempfile::tempdir().expect("temporary module root");
+    fs::write(
+        root.path().join("tmpreviewc.av"),
+        r#"module TmpReviewC
+    intent = "Own the Step value returned through the entry boundary."
+    exposes [Step, made]
+    depends []
+
+type Step
+    Made(Int)
+
+fn made(n: Int) -> Step
+    Step.Made(n)
+"#,
+    )
+    .expect("write dependency");
+
+    let entry = r#"module Main
+    intent = "Return a qualified dependency type from an entry function."
+    depends [TmpReviewC]
+
+fn made(n: Int) -> TmpReviewC.Step
+    TmpReviewC.made(n)
+
+fn main() -> Int
+    match made(7)
+        TmpReviewC.Step.Made(n) -> n
+"#;
+    let root_str = root.path().to_str().expect("utf-8 module root");
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(entry, Some(root_str)).expect("pipeline");
+    let bytes = compile_flattened(&items, &type_aliases).expect("wasm-gc compile");
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .expect("qualified dependency return must validate");
+}

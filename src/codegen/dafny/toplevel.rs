@@ -4,7 +4,7 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
 use crate::types::Type;
 
-use super::expr::{aver_name_to_dafny, emit_expr_legacy};
+use super::expr::{aver_name_to_dafny, emit_expr_legacy, emit_expr_legacy_with_expected};
 
 /// Emit a Dafny type from an Aver type annotation string.
 /// Ghost-predicate names emitted by `oracle_subtypes::dafny_subtype_predicates`
@@ -295,7 +295,7 @@ pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
         .as_ref()
         .map(|lowered_fd| lowered_fd.body.as_ref())
         .unwrap_or(fd.body.as_ref());
-    let body = emit_fn_body(body_ast, ctx);
+    let body = emit_fn_body_with_expected(body_ast, ctx, &rfd.return_type);
 
     let needs_decreases = body_has_recursive_call(body_ast, &fd.name);
 
@@ -359,12 +359,18 @@ fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
 /// body inside a mutual SCC helper.
 pub(super) fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
     match body {
-        FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx),
+        FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx, None),
+    }
+}
+
+fn emit_fn_body_with_expected(body: &FnBody, ctx: &CodegenContext, expected: &Type) -> String {
+    match body {
+        FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx, Some(expected)),
     }
 }
 
 /// Convert a block of statements into a Dafny expression.
-fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
+fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext, expected: Option<&Type>) -> String {
     if stmts.is_empty() {
         return "()".to_string();
     }
@@ -373,7 +379,10 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
     if stmts.len() == 1
         && let Stmt::Expr(expr) = &stmts[0]
     {
-        return emit_expr_legacy(expr, ctx, None);
+        return expected.map_or_else(
+            || emit_expr_legacy(expr, ctx, None),
+            |ty| emit_expr_legacy_with_expected(expr, ctx, None, ty),
+        );
     }
 
     // For blocks with bindings, collect them and emit the last expression
@@ -395,7 +404,10 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
             }
             Stmt::Expr(expr) => {
                 if i == stmts.len() - 1 {
-                    final_expr = Some(emit_expr_legacy(expr, ctx, None));
+                    final_expr = Some(expected.map_or_else(
+                        || emit_expr_legacy(expr, ctx, None),
+                        |ty| emit_expr_legacy_with_expected(expr, ctx, None, ty),
+                    ));
                 }
             }
         }

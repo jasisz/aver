@@ -1323,38 +1323,8 @@ pub fn type_key_for_name(
     name: &str,
     scope: Option<&str>,
 ) -> crate::ir::TypeKey {
-    let bare = name.rsplit('.').next().unwrap_or(name);
-    let name_is_qualified = name.contains('.');
-    if let Some(prefix) = scope
-        && !name_is_qualified
-    {
-        for m in &ctx.modules {
-            if m.prefix == prefix && m.type_defs.iter().any(|td| type_def_name(td) == bare) {
-                return crate::ir::TypeKey::in_module(prefix.to_string(), bare);
-            }
-        }
-    }
-    // Entry-declared types win the bare lookup for the entry's own code,
-    // once the current scope has had its turn.
-    if !name_is_qualified
-        && ctx.symbol_table.names_entry_scope(scope)
-        && ctx.type_defs.iter().any(|td| type_def_name(td) == bare)
-    {
-        return crate::ir::TypeKey::entry(bare);
-    }
-    if name_is_qualified
-        && let Some((prefix, bare_part)) = name.rsplit_once('.')
-        && ctx.modules.iter().any(|m| m.prefix == prefix)
-    {
-        return crate::ir::TypeKey::in_module(prefix.to_string(), bare_part);
-    }
-    if !name_is_qualified && let Some(id) = ctx.symbol_table.type_id_by_bare_name_in(bare, scope) {
+    if let Some(id) = ctx.symbol_table.resolve_type_id_in(name, scope) {
         return ctx.symbol_table.type_entry(id).key.clone();
-    }
-    for m in &ctx.modules {
-        if m.type_defs.iter().any(|td| type_def_name(td) == bare) {
-            return crate::ir::TypeKey::in_module(m.prefix.clone(), bare);
-        }
     }
     // Unresolved — fall back to entry key with the original text.
     // Callers using this typically end up with a miss in the IR

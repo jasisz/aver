@@ -565,7 +565,8 @@ fn emit_capability_resource_types(ctx: &CodegenContext, scope: Option<&str>) -> 
                 }
             };
             belongs.then(|| {
-                let declaration_name = if scope.is_some() {
+                let declaration_name = if scope.is_some() || entry_module.as_deref() == Some(module)
+                {
                     super::syntax::aver_name_to_lean(name)
                 } else {
                     super::syntax::aver_path_to_lean(canonical)

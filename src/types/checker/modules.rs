@@ -129,18 +129,6 @@ impl TypeChecker {
                 // Phase B: routing handled by `insert_fn_sig` — user
                 // fns land in the `FnId`-keyed `fn_sigs`.
                 self.insert_fn_sig(&canonical, sig);
-                // Bare alias so source-faithful references inside this
-                // module's own bodies (`foo()`) still resolve to its
-                // FnId when the canonical name carries the module
-                // prefix (`A.foo`). Use `fn_id_for_canonical` (no
-                // visibility filter) — the fn IS visible to its own
-                // module, and `insert_fn_sig` above already added it
-                // to `visible_fn_ids`.
-                if canonical != f.name
-                    && let Some(id) = self.fn_id_for_canonical(&canonical)
-                {
-                    self.merge_bare_fn_alias(f.name.clone(), id);
-                }
             }
         }
     }
@@ -320,65 +308,8 @@ impl TypeChecker {
     /// Resolve a single type name in `owner_module`'s context. See
     /// `canonicalize_named_in_module` for the three-case ordering.
     fn resolve_in_owner_context(&self, name: &str, owner_module: &str) -> Option<TypeId> {
-        if let Some((prefix, n)) = name.rsplit_once('.') {
-            // Qualified self-reference resolves against the declaration table.
-            if prefix == owner_module {
-                return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
-            }
-            // Compiler-shipped capability resources are implicit language
-            // atoms: a module does not need `depends [Tcp]` merely to thread
-            // `Tcp.Connection` through one of its public signatures.  Stamp
-            // that reference with the capability module's one canonical
-            // TypeId even while resolving the signature in its owner's
-            // isolated dependency context.  Ordinary module types (and
-            // project-defined capabilities) still follow the explicit
-            // dependency gate below.
-            if crate::stdlib::is_standard_capability(prefix)
-                && self
-                    .capabilities
-                    .resource_types()
-                    .any(|resource| resource == name)
-            {
-                return self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n));
-            }
-            // A dependency-qualified reference may name either a type declared
-            // by that dependency or one it explicitly re-exports. Do not let a
-            // module elsewhere in the loaded closure become visible merely
-            // because its symbols exist in the shared table.
-            if self
-                .module_depends
-                .get(owner_module)
-                .is_some_and(|deps| deps.iter().any(|dep| dep == prefix))
-            {
-                return self.type_export_id(prefix, n);
-            }
-            return None;
-        }
-        // Bare in owner's own scope.
-        if let Some(id) = self
-            .symbol_table
-            .type_id_of(&TypeKey::in_module(owner_module, name))
-        {
-            return Some(id);
-        }
-        // Bare in any of owner's own depends — visibility-exposed
-        // only. No fallback to entry: bare references in a dep that
-        // can't be satisfied by its own scope or its own depends
-        // stay unresolved.
-        if let Some(deps) = self.module_depends.get(owner_module) {
-            let mut resolved = None;
-            for dep in deps {
-                let Some(id) = self.type_export_id(dep, name) else {
-                    continue;
-                };
-                if resolved.is_some_and(|existing| existing != id) {
-                    return None;
-                }
-                resolved = Some(id);
-            }
-            return resolved;
-        }
-        None
+        self.symbol_table
+            .resolve_type_id_in(name, Some(owner_module))
     }
 
     pub(super) fn canonicalize_named(&self, ty: Type) -> Type {
@@ -692,9 +623,6 @@ impl TypeChecker {
                         .fn_id_of(&FnKey::in_module(entry.module.clone(), fn_name.clone()))
                     {
                         self.visible_fn_ids.insert(id);
-                        if let Some(alias) = entry.alias.as_deref() {
-                            self.merge_bare_fn_alias(alias.to_string(), id);
-                        }
                     }
                 }
                 SymbolKind::OpaqueType { name }

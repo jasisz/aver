@@ -12,17 +12,16 @@
 //! of the proof-export audit).
 //!
 //! `FnKey` / `TypeKey` / `LawKey` are the typed replacements.
-//! Identity is resolved **once** at the IR boundary (today: the
-//! `proof_lower` stage); from there backends consume the key
-//! directly. The compiler refuses to compare a key to a bare
-//! `String`, so the bug class can no longer be expressed.
+//! `SymbolTable` resolves identity once for typechecking and HIR/MIR;
+//! the VM, proof lowering, and ordinary backend paths then consume the
+//! opaque IDs directly. A few source-shape proof/codegen adapters remain
+//! as explicitly marked migration bridges tracked outside this module.
 //!
 //! These types live in `crate::ir` rather than `crate::ir::proof_ir`
 //! because identity-across-module-boundary is a general IR concern,
-//! not a proof-specific one. The proof flow is the first consumer;
-//! future cross-module identity sites (VM call-site resolution,
-//! Rust codegen multi-module module-fn lookups) will use the same
-//! types.
+//! not a proof-specific one. Typechecking, VM lowering, and every
+//! backend share these identities rather than defining local notions
+//! of which declaration a name denotes.
 
 // ---------------------------------------------------------------------------
 // Opaque IDs
@@ -45,8 +44,15 @@
 pub struct FnId(pub u32);
 
 /// Opaque, stable identity for a type declaration (record or sum).
+///
+/// Unlike the source-order IDs used for functions and constructors, a
+/// `TypeId` is derived from its canonical [`TypeKey`]. Dependency modules are
+/// typechecked in their own tables before whole-program lowering; using a
+/// vector position here let an ID for `A.Policy` silently name `Bytes` in the
+/// next table. The canonical fingerprint is table-independent, and every
+/// [`crate::ir::SymbolTable`] checks collisions when registering it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct TypeId(pub u32);
+pub struct TypeId(pub u64);
 
 /// Opaque, stable identity for a constructor (a single variant of a
 /// sum type, or a single record's nominal constructor — record types
@@ -167,6 +173,36 @@ impl TypeKey {
 
     pub fn scope_str(&self) -> Option<&str> {
         self.scope.as_deref()
+    }
+}
+
+impl TypeId {
+    /// Derive the same opaque identity from the same canonical key in every
+    /// symbol table. FNV-1a is used only as a compact deterministic
+    /// fingerprint; `SymbolTable::build` detects a collision and fails closed
+    /// instead of allowing two declarations to share an identity.
+    pub(crate) fn for_key(key: &TypeKey) -> Self {
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        fn add(hash: &mut u64, bytes: &[u8]) {
+            for byte in bytes {
+                *hash ^= u64::from(*byte);
+                *hash = hash.wrapping_mul(PRIME);
+            }
+        }
+
+        let mut hash = OFFSET;
+        match key.scope.as_deref() {
+            Some(scope) => {
+                add(&mut hash, &[1]);
+                add(&mut hash, scope.as_bytes());
+            }
+            None => add(&mut hash, &[0]),
+        }
+        add(&mut hash, &[0xff]);
+        add(&mut hash, key.name.as_bytes());
+        TypeId(hash)
     }
 }
 

@@ -301,7 +301,7 @@ pub(super) fn render_model_descriptor(
     descriptor.into_bytes()
 }
 
-fn function_closure(
+pub(super) fn function_closure(
     scope: &str,
     roots: &BTreeSet<String>,
     functions: &BTreeMap<&str, &FnDef>,

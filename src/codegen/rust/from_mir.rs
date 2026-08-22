@@ -614,29 +614,16 @@ fn resolve_module_call<'a>(
 /// [`module_prefix_to_rust_path`], the same helpers the runtime
 /// cross-module ctor / fn-ref emit uses.
 ///
-/// Identity comes from the `MirRecordCreate.type_id` when present (the
-/// resolver's precise handle — robust against two dep modules sharing a
-/// bare type name); a `None` `type_id` falls back to the first
-/// symbol-table entry whose bare name matches.
+/// Identity comes only from `MirRecordCreate.type_id` (the resolver's precise
+/// handle — robust against two dep modules sharing a bare type name). A node
+/// without identity keeps its source spelling; codegen never searches the
+/// whole program by bare name.
 fn qualify_record_type(
     type_id: Option<crate::ir::TypeId>,
-    type_name: &str,
+    _type_name: &str,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    let entry = match type_id {
-        Some(id) => ctx.symbol_table.type_entry(id),
-        // No identity: the source name is the only handle left. One
-        // declaration of that name is that declaration; two are two
-        // different records with two different paths, and picking the
-        // first would emit a path to the wrong one. Declining leaves
-        // `mir_record_rust_type` on the verbatim name, which rustc either
-        // accepts (entry scope) or rejects by name — never silently the
-        // other module's struct.
-        None => {
-            let id = ctx.symbol_table.unique_type_id_by_bare_name(type_name)?;
-            ctx.symbol_table.type_entry(id)
-        }
-    };
+    let entry = ctx.symbol_table.type_entry_if_present(type_id?)?;
     let canonical = entry.key.canonical();
     let (prefix, suffix) = resolve_module_call(&canonical, ctx.module_prefixes)?;
     Some(format!(

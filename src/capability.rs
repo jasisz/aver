@@ -222,6 +222,57 @@ impl CapabilityRegistry {
         (declared, user_profiles.len())
     }
 
+    /// Function bodies that belong exclusively to this capability's proof
+    /// model and therefore have no place in a runtime artifact.
+    ///
+    /// Hostile declarations name model roots, but their transitive helpers
+    /// are part of the model as well.  A helper can also be reachable from an
+    /// exported ordinary function, so subtract the complete runtime closure
+    /// rather than dropping hostile roots (or private functions) by name.
+    pub(crate) fn verification_only_function_names(
+        &self,
+        module: &str,
+        fn_defs: &[FnDef],
+        exposes: &[String],
+    ) -> BTreeSet<String> {
+        let functions: BTreeMap<&str, &FnDef> =
+            fn_defs.iter().map(|fd| (fd.name.as_str(), fd)).collect();
+        let model_roots: BTreeSet<String> = self
+            .operations()
+            .filter(|operation| operation.module == module)
+            .flat_map(|operation| operation.hostile.iter().cloned())
+            .collect();
+        if model_roots.is_empty() {
+            return BTreeSet::new();
+        }
+
+        let mut errors = Vec::new();
+        let model_closure =
+            descriptor::function_closure(module, &model_roots, &functions, &mut errors);
+        debug_assert!(
+            errors.is_empty(),
+            "validated capability model closure became incomplete: {errors:?}"
+        );
+
+        let declared_exposes = crate::visibility::declared_exposes(exposes);
+        let runtime_roots: BTreeSet<String> = fn_defs
+            .iter()
+            .filter(|fd| crate::visibility::is_exposed(&fd.name, declared_exposes))
+            .map(|fd| fd.name.clone())
+            .collect();
+        let runtime_closure =
+            descriptor::function_closure(module, &runtime_roots, &functions, &mut errors);
+        debug_assert!(
+            errors.is_empty(),
+            "validated capability runtime closure became incomplete: {errors:?}"
+        );
+
+        model_closure
+            .difference(&runtime_closure)
+            .cloned()
+            .collect()
+    }
+
     pub fn merge(&mut self, other: CapabilityRegistry) {
         self.contracts.extend(other.contracts);
         self.operations.extend(other.operations);

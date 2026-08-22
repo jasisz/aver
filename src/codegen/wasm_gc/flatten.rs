@@ -156,6 +156,7 @@ pub fn flatten_multimodule(
 
     let entry_ctx = RewriteCtx {
         prefixes: &prefixes,
+        qualified_type_names: &qualified_type_names,
         same_module_prefix: None,
         same_module_fns: &empty_set,
         // The entry keeps the bare spelling of every name it declares, so
@@ -210,6 +211,7 @@ pub fn flatten_multimodule(
             .collect();
         let dep_ctx = RewriteCtx {
             prefixes: &prefixes,
+            qualified_type_names: &qualified_type_names,
             same_module_prefix: Some(&dep.prefix),
             same_module_fns: &same_module_fns,
             colliding_owner: &colliding_owner,
@@ -423,6 +425,9 @@ fn attr_chain_to_dotted(expr: &Expr) -> Option<String> {
 struct RewriteCtx<'a> {
     /// Every dep module path, used to spot cross-module references.
     prefixes: &'a HashSet<String>,
+    /// Every dependency-qualified type spelling that the post-link program
+    /// may need to rewrite in annotations and inferred type stamps.
+    qualified_type_names: &'a HashSet<String>,
     /// The owning dep's path while its own fn bodies are walked.
     same_module_prefix: Option<&'a str>,
     /// Fn names declared by the module being walked.
@@ -438,6 +443,63 @@ struct RewriteCtx<'a> {
     /// Every ambiguous bare type name in the program — a reference to one
     /// of these through another module's path keeps the qualified spelling.
     colliding_bare_names: &'a HashSet<String>,
+}
+
+/// Rewrite both an expression and the typechecker stamp attached to it. The
+/// stamp belongs to the pre-flatten symbol table, so its `TypeId` must never
+/// cross the link boundary. Its source spelling is rewritten to the same
+/// post-link name as signatures and type definitions; the fresh HIR resolver
+/// then assigns an id from the flattened table.
+fn rewrite_spanned_expr(expr: &mut Spanned<Expr>, ctx: &RewriteCtx<'_>) {
+    if let Some(ty) = expr.ty.get_mut() {
+        rewrite_stamped_type(ty, ctx);
+    }
+    rewrite_expr(&mut expr.node, ctx);
+}
+
+fn rewrite_stamped_type(ty: &mut crate::ast::Type, ctx: &RewriteCtx<'_>) {
+    use crate::ast::Type;
+    match ty {
+        Type::Named { id, name } => {
+            *name = rewrite_type_spelling(name, ctx);
+            // TypeIds are table-local. `flatten_multimodule` changes the
+            // table, so carrying the old numeric id would misidentify a
+            // different declaration (or index past the new table).
+            *id = None;
+        }
+        Type::List(inner) | Type::Vector(inner) | Type::Option(inner) => {
+            rewrite_stamped_type(inner, ctx);
+        }
+        Type::Result(ok, err) | Type::Map(ok, err) => {
+            rewrite_stamped_type(ok, ctx);
+            rewrite_stamped_type(err, ctx);
+        }
+        Type::Tuple(items) => {
+            for item in items {
+                rewrite_stamped_type(item, ctx);
+            }
+        }
+        Type::Fn(params, ret, _) => {
+            for param in params {
+                rewrite_stamped_type(param, ctx);
+            }
+            rewrite_stamped_type(ret, ctx);
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_type_spelling(type_name: &str, ctx: &RewriteCtx<'_>) -> String {
+    let stripped = strip_non_colliding_prefixes(
+        type_name,
+        ctx.qualified_type_names,
+        ctx.colliding_bare_names,
+    );
+    if ctx.dep_prefix.is_empty() {
+        stripped
+    } else {
+        canonicalise_own_colliding(&stripped, ctx.colliding_owner)
+    }
 }
 
 fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
@@ -464,9 +526,9 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             if let Some(rep) = new_callee {
                 callee.node = rep;
             }
-            rewrite_expr(&mut callee.node, ctx);
+            rewrite_spanned_expr(callee, ctx);
             for arg in args.iter_mut() {
-                rewrite_expr(&mut arg.node, ctx);
+                rewrite_spanned_expr(arg, ctx);
             }
         }
         Expr::TailCall(boxed) => {
@@ -476,21 +538,21 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
                 boxed.target = prefixed(prefix, &boxed.target);
             }
             for arg in boxed.args.iter_mut() {
-                rewrite_expr(&mut arg.node, ctx);
+                rewrite_spanned_expr(arg, ctx);
             }
         }
         Expr::BinOp(_, left, right) => {
-            rewrite_expr(&mut left.node, ctx);
-            rewrite_expr(&mut right.node, ctx);
+            rewrite_spanned_expr(left, ctx);
+            rewrite_spanned_expr(right, ctx);
         }
         Expr::Neg(inner) => {
-            rewrite_expr(&mut inner.node, ctx);
+            rewrite_spanned_expr(inner, ctx);
         }
         Expr::Match { subject, arms } => {
-            rewrite_expr(&mut subject.node, ctx);
+            rewrite_spanned_expr(subject, ctx);
             for arm in arms.iter_mut() {
                 rewrite_pattern(&mut arm.pattern, ctx);
-                rewrite_expr(&mut arm.body.node, ctx);
+                rewrite_spanned_expr(&mut arm.body, ctx);
             }
         }
         Expr::Attr(_, _) => {
@@ -510,13 +572,13 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
                 canonicalise_attr_head_for_own_colliding(expr, ctx.colliding_owner);
             }
             if let Expr::Attr(obj, _) = expr {
-                rewrite_expr(&mut obj.node, ctx);
+                rewrite_spanned_expr(obj, ctx);
             }
         }
         Expr::Constructor(name, payload) => {
             rewrite_constructor_name(name, ctx);
             if let Some(payload) = payload.as_deref_mut() {
-                rewrite_expr(&mut payload.node, ctx);
+                rewrite_spanned_expr(payload, ctx);
             }
         }
         Expr::RecordCreate { type_name, fields } => {
@@ -524,7 +586,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
                 canonicalise_bare_type_name(type_name, ctx.colliding_owner);
             }
             for (_, expr) in fields.iter_mut() {
-                rewrite_expr(&mut expr.node, ctx);
+                rewrite_spanned_expr(expr, ctx);
             }
         }
         Expr::RecordUpdate {
@@ -535,29 +597,29 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             if !ctx.dep_prefix.is_empty() {
                 canonicalise_bare_type_name(type_name, ctx.colliding_owner);
             }
-            rewrite_expr(&mut base.node, ctx);
+            rewrite_spanned_expr(base, ctx);
             for (_, expr) in updates.iter_mut() {
-                rewrite_expr(&mut expr.node, ctx);
+                rewrite_spanned_expr(expr, ctx);
             }
         }
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items.iter_mut() {
-                rewrite_expr(&mut item.node, ctx);
+                rewrite_spanned_expr(item, ctx);
             }
         }
         Expr::MapLiteral(entries) => {
             for (key, value) in entries.iter_mut() {
-                rewrite_expr(&mut key.node, ctx);
-                rewrite_expr(&mut value.node, ctx);
+                rewrite_spanned_expr(key, ctx);
+                rewrite_spanned_expr(value, ctx);
             }
         }
         Expr::ErrorProp(inner) => {
-            rewrite_expr(&mut inner.node, ctx);
+            rewrite_spanned_expr(inner, ctx);
         }
         Expr::InterpolatedStr(parts) => {
             for part in parts.iter_mut() {
                 if let crate::ast::StrPart::Parsed(inner) = part {
-                    rewrite_expr(&mut inner.node, ctx);
+                    rewrite_spanned_expr(inner, ctx);
                 }
             }
         }
@@ -711,15 +773,13 @@ fn rewrite_stmts(stmts: &mut [Stmt], ctx: &RewriteCtx<'_>) {
     for stmt in stmts.iter_mut() {
         match stmt {
             Stmt::Binding(_, type_ann, expr) => {
-                if !ctx.dep_prefix.is_empty()
-                    && let Some(ty) = type_ann.as_mut()
-                {
-                    *ty = canonicalise_own_colliding(ty, ctx.colliding_owner);
+                if let Some(ty) = type_ann.as_mut() {
+                    *ty = rewrite_type_spelling(ty, ctx);
                 }
-                rewrite_expr(&mut expr.node, ctx);
+                rewrite_spanned_expr(expr, ctx);
             }
             Stmt::Expr(expr) => {
-                rewrite_expr(&mut expr.node, ctx);
+                rewrite_spanned_expr(expr, ctx);
             }
         }
     }

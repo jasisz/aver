@@ -4675,12 +4675,15 @@ fn render_symbol_table_dump(symbols: &aver::ir::SymbolTable) -> String {
     }
     writeln!(out).unwrap();
     writeln!(out, "## types ({})", symbols.types.len()).unwrap();
-    for (idx, te) in symbols.types.iter().enumerate() {
+    for te in &symbols.types {
         let shape = if te.is_product { "record" } else { "sum" };
+        let type_id = symbols
+            .type_id_of(&te.key)
+            .expect("listed type must have an identity");
         writeln!(
             out,
             "- TypeId({}) = {} ({}, {} ctor(s), in ModuleId({}))",
-            idx,
+            type_id.0,
             te.key.canonical(),
             shape,
             te.variants.len().max(if te.is_product { 1 } else { 0 }),
@@ -4691,7 +4694,7 @@ fn render_symbol_table_dump(symbols: &aver::ir::SymbolTable) -> String {
     writeln!(out).unwrap();
     writeln!(out, "## ctors ({})", symbols.ctors.len()).unwrap();
     for (idx, ce) in symbols.ctors.iter().enumerate() {
-        let owning = &symbols.types[ce.owning_type.0 as usize];
+        let owning = symbols.type_entry(ce.owning_type);
         writeln!(
             out,
             "- CtorId({}) = {}.{} (of TypeId({}))",
