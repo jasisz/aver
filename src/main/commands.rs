@@ -2432,19 +2432,43 @@ struct VerifyRun {
     stop: Option<VerifyStop>,
 }
 
-/// Bucket a message `verify` could not get past. Only a message recognisable
-/// as a source error points at `aver check`: the command passes on everything
-/// else, so sending the user there would be a blind alley.
+/// Bucket a message `verify` could not get past. `Engine` is the bucket that
+/// makes a claim — that `aver check` passes on the file and has nothing to
+/// add — so it is only ever chosen for a message verify itself is known to
+/// have written. Everything else falls back to `Source`, where the worst case
+/// is a pointer at `aver check` that turns out to have nothing to say. Source
+/// faults reach here in several dialects (`error[...]` from the type checker,
+/// `Type errors in dependency`, and the plain-prose parse / module-resolution
+/// messages `load_compile_deps` returns), and no list of those would stay
+/// complete.
 fn classify_verify_stop(message: &str) -> VerifySkipReason {
     if message.starts_with("wasm-gc") || message.starts_with("verify --wasm-gc") {
         VerifySkipReason::WasmGcBackend
     } else if aver::provider::is_provider_setup_error(message) {
         VerifySkipReason::ProviderSetup
-    } else if message.starts_with("error[") || message.starts_with("Type errors in dependency") {
-        VerifySkipReason::Source
-    } else {
+    } else if
+    // The `--hostile` expansion cap.
+    message.starts_with("verify '")
+        // The bytecode compiler refused a program the checker accepted.
+        || message.starts_with("VM compile error:")
+        // Misuse of the trace vocabulary, which only exists inside a law.
+        || message.starts_with("Trace.")
+    {
         VerifySkipReason::Engine
+    } else {
+        VerifySkipReason::Source
     }
+}
+
+/// The verify blocks the entry itself declares, for the one case where no
+/// program units could be collected at all. Reporting `0` for a file full of
+/// `verify` blocks understates the gap by exactly the number that matters.
+fn verify_entry_block_count(file: &str) -> usize {
+    read_file(file)
+        .ok()
+        .and_then(|source| parse_file(&source).ok())
+        .map(|items| aver::checker::merge_verify_blocks(&items).len())
+        .unwrap_or(0)
 }
 
 fn verify_stopped_before_any_module(
@@ -2460,7 +2484,7 @@ fn verify_stopped_before_any_module(
             message,
             unchecked: vec![VerifyUncheckedFile {
                 path: file.to_string(),
-                blocks: 0,
+                blocks: verify_entry_block_count(file),
             }],
         }),
     }
@@ -2484,14 +2508,11 @@ fn run_verify_for_file(
         // `aver check` reports it the same way.
         Err(e) => return verify_stopped_before_any_module(file, VerifySkipReason::Source, e),
     };
-    let config = match load_runtime_policy(module_root) {
-        Ok(config) => config,
-        Err(e) => return verify_stopped_before_any_module(file, VerifySkipReason::Source, e),
-    };
-
-    // Counted before anything runs: once a module stops the walk, the modules
-    // from that one on carry blocks nobody checked, and the summary has to say
-    // how many.
+    // Counted before anything runs — and before anything else can fail: once a
+    // module stops the walk, the modules from that one on carry blocks nobody
+    // checked, and the summary has to say how many. A stop that happens here,
+    // rather than inside the loop, still leaves every one of these modules
+    // unchecked.
     let mut unchecked: Vec<VerifyUncheckedFile> = units
         .iter()
         .map(|(path, _, items)| VerifyUncheckedFile {
@@ -2499,6 +2520,33 @@ fn run_verify_for_file(
             blocks: aver::checker::merge_verify_blocks(items).len(),
         })
         .collect();
+
+    // Every module of this program was already reported under an earlier input
+    // of the same directory walk. There is nothing left for this entry to run
+    // and nothing left for it to skip, so it must not open a stop of its own:
+    // that would print `0 file(s) not checked` above an empty list, and count
+    // modules an earlier entry already counted.
+    if unchecked.is_empty() {
+        return VerifyRun {
+            results: Vec::new(),
+            stop: None,
+        };
+    }
+
+    let config = match load_runtime_policy(module_root) {
+        Ok(config) => config,
+        Err(e) => {
+            return VerifyRun {
+                results: Vec::new(),
+                stop: Some(VerifyStop {
+                    at: file.to_string(),
+                    reason: VerifySkipReason::Source,
+                    message: e,
+                    unchecked,
+                }),
+            };
+        }
+    };
 
     let mut results = Vec::new();
     let mode = if hostile {
@@ -3099,6 +3147,19 @@ pub(super) fn cmd_verify(
             if bucket.is_empty() {
                 continue;
             }
+            // The module-root hint is about resolving `depends [...]`. When
+            // every stop in this bucket is a project file that does not parse,
+            // it has nothing to do with the fault.
+            let hint = match reason {
+                VerifySkipReason::Source
+                    if bucket
+                        .iter()
+                        .all(|stop| stop.message.starts_with("aver.toml:")) =>
+                {
+                    None
+                }
+                _ => hint,
+            };
             let count: usize = bucket.iter().map(|stop| stop.unchecked.len()).sum();
             println!();
             println!(

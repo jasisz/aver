@@ -251,3 +251,103 @@ fn a_clean_run_prints_exactly_what_it_printed_before() {
 
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_stop_before_the_first_module_still_counts_the_whole_program() {
+    // A perfectly good three-module program (leaf <- mid <- app, one verify
+    // block each) behind a project file that does not parse. The walk never
+    // enters the module loop, but all three modules and all three blocks went
+    // unchecked, and the report has to say so: naming only the entry, with no
+    // block count, is exactly the undercount this command exists to stop.
+    let dir = temp_dir("stop-before-loop");
+    write(
+        &dir,
+        "leaf.av",
+        "module Leaf\n    exposes [leafValue]\n\nfn leafValue(n: Int) -> Int\n    n * 3\n\nverify leafValue\n    leafValue(1) => 3\n",
+    );
+    write(
+        &dir,
+        "mid.av",
+        "module Mid\n    depends [Leaf]\n    exposes [midValue]\n\nfn midValue(n: Int) -> Int\n    Leaf.leafValue(n) + 1\n\nverify midValue\n    midValue(1) => 4\n",
+    );
+    write(
+        &dir,
+        "app.av",
+        "module App\n    depends [Mid]\n\nfn appValue(n: Int) -> Int\n    Mid.midValue(n) * 2\n\nverify appValue\n    appValue(1) => 8\n",
+    );
+    write(&dir, "aver.toml", "[runtime\nthis is not valid toml\n");
+
+    let run = run_verify(&dir, &["app.av", "--module-root", "."]);
+
+    assert!(
+        run.stdout.contains("3 file(s) not checked"),
+        "all three modules went unchecked, got stdout:\n{}",
+        run.stdout
+    );
+    for module in ["leaf.av", "mid.av", "app.av"] {
+        assert!(
+            run.stdout
+                .contains(&format!("{module} (1 verify block unchecked)")),
+            "{module} declares a block nobody ran and must be counted, got stdout:\n{}",
+            run.stdout
+        );
+    }
+    assert!(
+        run.stdout.contains("| 3 files not checked"),
+        "the summary line must carry the count, got stdout:\n{}",
+        run.stdout
+    );
+    assert_eq!(run.code, Some(1));
+
+    let json = run_verify(&dir, &["app.av", "--module-root", ".", "--json"]);
+    let summary = json.stdout.lines().last().expect("a summary record");
+    assert!(
+        summary.contains("\"files_skipped\":3,\"blocks_unchecked\":3"),
+        "three modules declaring three blocks went unchecked, got:\n{summary}"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_dependency_that_does_not_parse_is_a_source_error_in_a_directory_run() {
+    // The directory walk reaches `broken.av` first, so by the time `user.av`
+    // is walked the parse error comes back from dependency loading rather
+    // than from the module loop's own re-parse. It is still a source error:
+    // `aver check` prints it in full, so telling the user the opposite sends
+    // them away from the one command that would show them the fault.
+    let dir = temp_dir("unparseable-dep");
+    write(
+        &dir,
+        "broken.av",
+        "module Broken\n    exposes [f]\n\nfn f(n: Int) -> Int\n    (n + 1\n\nverify f\n    f(1) => 2\n",
+    );
+    write(
+        &dir,
+        "user.av",
+        "module User\n    depends [Broken]\n\nfn g(n: Int) -> Int\n    Broken.f(n) * 2\n\nverify g\n    g(1) => 4\n",
+    );
+
+    let run = run_verify(&dir, &["."]);
+
+    assert!(
+        !run.stdout.contains("`aver check` will not show this"),
+        "`aver check` reports this parse error in full, got stdout:\n{}",
+        run.stdout
+    );
+    assert!(
+        !run.stdout
+            .contains("verify could not run (not a source error"),
+        "an unparseable dependency is a source error, got stdout:\n{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout
+            .contains("not checked — type errors (run aver check for details)"),
+        "an unparseable dependency belongs in the source bucket, got stdout:\n{}",
+        run.stdout
+    );
+    assert_eq!(run.code, Some(1));
+
+    fs::remove_dir_all(&dir).ok();
+}

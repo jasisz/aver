@@ -102,8 +102,12 @@ one named, not the entry that depends on it. The summary line gains a
 `| N file(s) not checked` member and is never green while N is above zero,
 and `--json` carries `files_skipped` and `blocks_unchecked` in its summary
 record. Modules that did verify before the walk stopped still report their
-cases. Only the reason bucket that really is a source error points at
-`aver check`.
+cases. A stop that happens before the first module runs — a project file that
+does not parse, for instance — counts every module of that program, not just
+the entry. The buckets that say `aver check` will not help are the ones verify
+itself is known to own: a `--wasm-gc` backend refusal, a provider composition
+failure, and verify's own refusals. Anything else is treated as a source error
+and points at `aver check`.
 
 When the project's `aver.toml` binds providers and a module reaches one of
 those capabilities, the cases run inside the cached provider host, so a
