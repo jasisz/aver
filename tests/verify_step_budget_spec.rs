@@ -367,6 +367,14 @@ fn audit_reports_a_decline_under_its_own_count_and_fails() {
     );
 }
 
+/// `aver proof --check-json` shells out to `lake`, which the Check & Test CI
+/// job does not install (the Proof Export job does). A test that needs the
+/// Lean build to have actually run says so rather than asserting on the
+/// instruction the command prints when it cannot.
+fn lake_available() -> bool {
+    Command::new("lake").arg("--version").output().is_ok()
+}
+
 // ── f. the proof lane refuses instead of pinning the source RHS ─────────
 
 #[test]
@@ -403,7 +411,12 @@ fn the_proof_lane_declines_a_case_verify_did_not_answer() {
         "{lean}"
     );
 
-    // And it is charged, not merely omitted.
+    // And it is charged, not merely omitted. This half needs the Lean build
+    // to have run; without `lake` the command prints the command line instead.
+    if !lake_available() {
+        eprintln!("skipping the --check-json half: `lake` not available");
+        return;
+    }
     let checked = run_aver_in(
         &dir,
         &[
