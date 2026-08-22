@@ -665,6 +665,14 @@ impl SymbolTable {
     /// and modules outside `depends [...]` never participate.
     pub fn resolve_type_id_in(&self, name: &str, asking: Option<&str>) -> Option<TypeId> {
         let in_entry = self.names_entry_scope(asking);
+        // A linked single-module backend may preserve a dependency's canonical
+        // identity by registering a synthetic entry type whose name itself is
+        // qualified (`Palette.Colour`). Prefer that exact key before parsing a
+        // dot as a source-level module boundary. Ordinary source declarations
+        // cannot contain dots, so this branch is inert before flatten/link.
+        if in_entry && let Some(id) = self.type_id_of(&TypeKey::entry(name)) {
+            return Some(id);
+        }
         if let Some((prefix, bare)) = name.rsplit_once('.') {
             if in_entry && self.entry_module_name.as_deref() == Some(prefix) {
                 return self.type_id_of(&TypeKey::entry(bare));
@@ -1133,6 +1141,26 @@ mod tests {
         assert_ne!(circle, square);
         assert_eq!(table.ctor_entry(circle).name, "Circle");
         assert_eq!(table.ctor_entry(square).name, "Square");
+    }
+
+    #[test]
+    fn flattened_qualified_entry_type_resolves_by_its_exact_linked_name() {
+        let items = vec![
+            TopLevel::Module(entry_module("Entry", &["Palette"])),
+            TopLevel::TypeDef(sum("Palette.Colour", &["Cyan", "Blue"], 1)),
+        ];
+        let table = SymbolTable::build(&items, &[]);
+        table.assert_consistent();
+
+        let linked = table
+            .type_id_of(&TypeKey::entry("Palette.Colour"))
+            .expect("linked type missing");
+        assert_eq!(
+            table.resolve_type_id_in("Palette.Colour", Some("Entry")),
+            Some(linked),
+            "the linked canonical name is one entry key, not a module lookup"
+        );
+        assert!(table.ctor_id_of(linked, "Cyan").is_some());
     }
 
     #[test]

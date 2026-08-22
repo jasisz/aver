@@ -131,7 +131,16 @@ fn parse_pipeline_with_module_root(
     let mut type_aliases = std::collections::HashMap::new();
     if let Some(root) = module_root {
         let dep_modules = aver::source::load_compile_deps(&items, root)?;
-        type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+            &mut items,
+            &dep_modules,
+            &result
+                .typecheck
+                .as_ref()
+                .expect("typecheck requested")
+                .capabilities,
+            aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+        );
         aver::ir::pipeline::resolve(&mut items);
     }
     Ok((items, type_aliases))

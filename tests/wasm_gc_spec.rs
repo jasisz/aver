@@ -267,7 +267,16 @@ fn compile_multi_module_bytes(entry_src: &str, dep_sources: &[(&str, &str)]) -> 
         .into_iter()
         .map(|m| aver::codegen::ModuleInfo::from_loaded(&m))
         .collect();
-    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+        &mut entry_items,
+        &modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("typecheck requested")
+            .capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    );
     aver::ir::pipeline::resolve(&mut entry_items);
     aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
         &entry_items,
@@ -961,7 +970,13 @@ record Other
         path: std::path::PathBuf::from("Dep.av"),
     };
     let modules = vec![aver::codegen::ModuleInfo::from_loaded(&loaded)];
-    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    let capabilities = aver::capability::CapabilityRegistry::default();
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+        &mut entry_items,
+        &modules,
+        &capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    );
     assert!(
         !type_aliases.contains_key("Dep.Octets"),
         "entry declares its own `Octets`, so the qualified dep spelling \
