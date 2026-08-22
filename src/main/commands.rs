@@ -6326,7 +6326,15 @@ fn cmd_compile_wasm_gc(
             .capabilities,
         aver::provider::CapabilityTarget::WasmGc,
     );
-    let type_aliases = flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = flatten_multimodule(
+        &mut items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc pipeline requested typechecking")
+            .capabilities,
+    );
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
     // above; this picks up the newly appended dep FnDefs. The
@@ -6646,7 +6654,12 @@ fn cmd_compile_wasip2(
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
         // it) but does not pull `wasm`.
-        let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+            &mut items,
+            &dep_modules,
+            capabilities,
+            aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+        );
         // `_and_reannotate`: same #950 wipe-guard as the wasm-gc
         // compile path — a bare re-resolve wipes `aliased_slots`.
         aver::ir::pipeline::resolve_and_reannotate(&mut items);
@@ -11273,8 +11286,14 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 pub(super) fn flatten_multimodule(
     items: &mut Vec<TopLevel>,
     dep_modules: &[ModuleInfo],
+    capabilities: &aver::capability::CapabilityRegistry,
 ) -> std::collections::HashMap<String, String> {
-    aver::codegen::wasm_gc::flatten_multimodule(items, dep_modules)
+    aver::codegen::wasm_gc::flatten_multimodule(
+        items,
+        dep_modules,
+        capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    )
 }
 
 /// Which lowering a dependency module gets, mirroring the entry-module

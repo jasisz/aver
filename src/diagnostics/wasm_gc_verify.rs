@@ -191,7 +191,16 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     };
     let mut type_aliases = std::collections::HashMap::new();
     if !dep_modules.is_empty() {
-        type_aliases = crate::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        type_aliases = crate::codegen::wasm_gc::flatten_multimodule(
+            &mut items,
+            &dep_modules,
+            &result
+                .typecheck
+                .as_ref()
+                .expect("wasm-gc verify pipeline requested typechecking")
+                .capabilities,
+            crate::codegen::wasm_gc::CapabilityFunctionSurface::Verification,
+        );
         // `_and_reannotate`: a bare post-flatten re-resolve wipes
         // `aliased_slots` and the wasm-gc in-place fast path goes
         // wrong (#950).

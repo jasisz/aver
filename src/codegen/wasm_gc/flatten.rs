@@ -52,6 +52,15 @@ use crate::ast::{Expr, FnBody, Pattern, Spanned, Stmt, TopLevel, TypeDef};
 use crate::codegen::ModuleInfo;
 use crate::codegen::common::type_def_name;
 
+/// Which capability function closure belongs in the flattened module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityFunctionSurface {
+    /// Executable artifacts omit hostile profiles and model-only helpers.
+    Runtime,
+    /// `aver verify --wasm-gc` keeps model functions used by verify helpers.
+    Verification,
+}
+
 /// Walks each loaded `ModuleInfo`, prefixes every fn name with
 /// `{module_prefix}_`, rewrites bare same-module call sites to use the
 /// prefixed name, strips non-colliding module-qualified type refs to their
@@ -78,7 +87,36 @@ use crate::codegen::common::type_def_name;
 pub fn flatten_multimodule(
     items: &mut Vec<TopLevel>,
     dep_modules: &[ModuleInfo],
+    capabilities: &crate::capability::CapabilityRegistry,
+    capability_surface: CapabilityFunctionSurface,
 ) -> HashMap<String, String> {
+    // A capability's hostile profiles and model-only helper closure belong to
+    // verify/proof, not to an executable artifact. Rust codegen applies the
+    // same registry-derived boundary. Do it before flattening so an untyped
+    // model fixture cannot leak into wasm-gc/wasip2 lowering, while helpers
+    // shared with an exposed runtime function remain present.
+    let entry_capability = (capability_surface == CapabilityFunctionSurface::Runtime)
+        .then(|| crate::visibility::module_decl(items))
+        .flatten()
+        .and_then(|module| {
+            (module.kind.as_deref() == Some("capability"))
+                .then(|| (module.name.clone(), module.exposes.clone()))
+        });
+    if let Some((module, exposes)) = entry_capability {
+        let fn_defs: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd.clone()),
+                _ => None,
+            })
+            .collect();
+        let verification_only =
+            capabilities.verification_only_function_names(&module, &fn_defs, &exposes);
+        items.retain(
+            |item| !matches!(item, TopLevel::FnDef(fd) if verification_only.contains(&fd.name)),
+        );
+    }
+
     if dep_modules.is_empty() {
         return HashMap::new();
     }
@@ -181,8 +219,19 @@ pub fn flatten_multimodule(
     }
 
     for dep in dep_modules {
-        let same_module_fns: HashSet<String> =
-            dep.fn_defs.iter().map(|fd| fd.name.clone()).collect();
+        let verification_only = if capability_surface == CapabilityFunctionSurface::Runtime
+            && dep.capability_semantics.is_some()
+        {
+            capabilities.verification_only_function_names(&dep.prefix, &dep.fn_defs, &dep.exposes)
+        } else {
+            Default::default()
+        };
+        let same_module_fns: HashSet<String> = dep
+            .fn_defs
+            .iter()
+            .filter(|fd| !verification_only.contains(&fd.name))
+            .map(|fd| fd.name.clone())
+            .collect();
         let own_types: HashSet<&str> = dep.type_defs.iter().map(type_def_name).collect();
         // What each ambiguous bare name means INSIDE this module — the
         // canonicalisation passes rewrite its references to `Owner.Name`
@@ -228,7 +277,11 @@ pub fn flatten_multimodule(
             items.push(TopLevel::TypeDef(new_td));
         }
 
-        for fd in &dep.fn_defs {
+        for fd in dep
+            .fn_defs
+            .iter()
+            .filter(|fd| !verification_only.contains(&fd.name))
+        {
             let mut new_fd = fd.clone();
             rewrite_fn_signature(&mut new_fd, &qualified_type_names, &colliding_bare_names);
             canonicalise_fn_signature_for_own_colliding(&mut new_fd, &colliding_owner);

@@ -82,7 +82,7 @@ mod wasip2_tcp;
 mod wat_helper;
 
 pub use body::{CoverageReport, coverage_report};
-pub use flatten::flatten_multimodule;
+pub use flatten::{CapabilityFunctionSurface, flatten_multimodule};
 
 /// Backend lowering mode — selects the host-bridge shape the wasm-gc
 /// emitter targets.

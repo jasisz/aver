@@ -207,7 +207,12 @@ fn build_component(
         );
         return Err(error);
     }
-    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+        &mut items,
+        &dep_modules,
+        capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    );
     // `_and_reannotate`: a bare post-flatten re-resolve wipes
     // `aliased_slots`, and the wasm-gc in-place fast path then mutates
     // container-held collections through extracted locals (#950).
