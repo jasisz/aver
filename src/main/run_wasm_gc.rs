@@ -197,7 +197,15 @@ pub(super) fn try_run_wasm_gc(
                 required.iter().map(String::as_str),
             )?;
     }
-    let type_aliases = flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = flatten_multimodule(
+        &mut items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc run pipeline requested typechecking")
+            .capabilities,
+    );
     // Re-run resolver after multi-module flatten so the freshly
     // appended dep fns get a `FnResolution` (slot map + slot_types).
     // The first `pipeline::run` only saw entry items; without this

@@ -133,17 +133,6 @@ impl TypeChecker {
     /// context, not visibility: a facade may re-export a type declared several
     /// files below it without making every module in between globally visible.
     fn prepare_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
-        // Phase B (peer review round 6): track each dep module's own
-        // `depends` list so the per-owner type resolver
-        // (`canonicalize_named_in_module`) can walk it instead of
-        // falling back to the importer's context or to whichever
-        // siblings happen to be in the entry's loaded tree.
-        for m in modules {
-            if let Some(module_decl) = TypeChecker::module_decl(&m.items) {
-                self.module_depends
-                    .insert(m.dep_name.clone(), module_decl.depends.clone());
-            }
-        }
         let pairs: Vec<_> = modules
             .iter()
             .map(|m| (m.dep_name.clone(), m.items.clone()))
@@ -246,7 +235,6 @@ impl TypeChecker {
             let mut sub = TypeChecker::new_with_symbols(self.symbol_table.clone());
             sub.self_host_mode = self.self_host_mode;
             sub.capabilities = self.capabilities.clone();
-            sub.module_depends = self.module_depends.clone();
             sub.module_type_exports = self.module_type_exports.clone();
             // Phase B: the dep module's prefix in the symbol table is
             // its `dep_name` (the path the entry's `depends` clause

@@ -991,6 +991,36 @@ pub fn emit_expr_legacy(
     emit_expr(&resolved, ctx)
 }
 
+/// Source-shape adapter for a function's result expression. Capability model
+/// functions are loaded independently from the entry program, so their raw AST
+/// bodies do not always retain typechecker stamps. Carrying the declared return
+/// type through result-position matches gives Dafny enough information to pick
+/// refinement-bearing `Result` / `Option` constructor parameters without doing
+/// another name lookup in the backend.
+pub(super) fn emit_expr_legacy_with_expected(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    expected: &crate::types::Type,
+) -> String {
+    let active = ctx.active_module_scope();
+    let effective = scope.or(active.as_deref());
+    let resolved = ctx.resolve_expr(expr, effective);
+    stamp_result_position_type(&resolved, expected);
+    emit_expr(&resolved, ctx)
+}
+
+fn stamp_result_position_type(expr: &Spanned<ResolvedExpr>, expected: &crate::types::Type) {
+    if expr.ty().is_none() {
+        let _ = expr.ty.set(expected.clone());
+    }
+    if let ResolvedExpr::Match { arms, .. } = &expr.node {
+        for arm in arms {
+            stamp_result_position_type(&arm.body, expected);
+        }
+    }
+}
+
 /// Source-shape adapter for [`emit_pattern`]. See [`emit_expr_legacy`]
 /// for the scope-fallback rule.
 #[allow(dead_code)]

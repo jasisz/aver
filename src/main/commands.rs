@@ -4675,12 +4675,15 @@ fn render_symbol_table_dump(symbols: &aver::ir::SymbolTable) -> String {
     }
     writeln!(out).unwrap();
     writeln!(out, "## types ({})", symbols.types.len()).unwrap();
-    for (idx, te) in symbols.types.iter().enumerate() {
+    for te in &symbols.types {
         let shape = if te.is_product { "record" } else { "sum" };
+        let type_id = symbols
+            .type_id_of(&te.key)
+            .expect("listed type must have an identity");
         writeln!(
             out,
             "- TypeId({}) = {} ({}, {} ctor(s), in ModuleId({}))",
-            idx,
+            type_id.0,
             te.key.canonical(),
             shape,
             te.variants.len().max(if te.is_product { 1 } else { 0 }),
@@ -4691,7 +4694,7 @@ fn render_symbol_table_dump(symbols: &aver::ir::SymbolTable) -> String {
     writeln!(out).unwrap();
     writeln!(out, "## ctors ({})", symbols.ctors.len()).unwrap();
     for (idx, ce) in symbols.ctors.iter().enumerate() {
-        let owning = &symbols.types[ce.owning_type.0 as usize];
+        let owning = symbols.type_entry(ce.owning_type);
         writeln!(
             out,
             "- CtorId({}) = {}.{} (of TypeId({}))",
@@ -6323,7 +6326,15 @@ fn cmd_compile_wasm_gc(
             .capabilities,
         aver::provider::CapabilityTarget::WasmGc,
     );
-    let type_aliases = flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = flatten_multimodule(
+        &mut items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("wasm-gc pipeline requested typechecking")
+            .capabilities,
+    );
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
     // above; this picks up the newly appended dep FnDefs. The
@@ -6643,7 +6654,12 @@ fn cmd_compile_wasip2(
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
         // it) but does not pull `wasm`.
-        let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+            &mut items,
+            &dep_modules,
+            capabilities,
+            aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+        );
         // `_and_reannotate`: same #950 wipe-guard as the wasm-gc
         // compile path — a bare re-resolve wipes `aliased_slots`.
         aver::ir::pipeline::resolve_and_reannotate(&mut items);
@@ -11270,8 +11286,14 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 pub(super) fn flatten_multimodule(
     items: &mut Vec<TopLevel>,
     dep_modules: &[ModuleInfo],
+    capabilities: &aver::capability::CapabilityRegistry,
 ) -> std::collections::HashMap<String, String> {
-    aver::codegen::wasm_gc::flatten_multimodule(items, dep_modules)
+    aver::codegen::wasm_gc::flatten_multimodule(
+        items,
+        dep_modules,
+        capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    )
 }
 
 /// Which lowering a dependency module gets, mirroring the entry-module

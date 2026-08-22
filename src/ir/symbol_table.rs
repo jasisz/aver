@@ -36,7 +36,7 @@
 //! `symbols.fn_id_of(&fn_key)` and get a stable opaque handle
 //! back, without disturbing anything that already works.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{CapabilityItem, FnDef, TopLevel, TypeDef, TypeVariant};
 use crate::capability::{OracleDimension, ReplaySemantics};
@@ -107,6 +107,19 @@ pub struct CapabilityOperationInfo {
     pub mints_resource: bool,
 }
 
+/// One canonical module boundary for every source symbol kind.
+///
+/// Functions and types share the same dependency edge and `exposes` boundary.
+/// The payload stays typed because types additionally preserve declaration
+/// ownership across explicit re-exports (and carry opacity), while functions
+/// are exported only by their declaring module.
+#[derive(Debug, Clone, Default)]
+struct ModuleSymbolSurface {
+    depends: Vec<String>,
+    functions: HashSet<String>,
+    types: HashMap<String, crate::visibility::ExportedTypeTarget>,
+}
+
 /// Resolved-identity table for an Aver program. Built once after
 /// module load + before typecheck (eventually — today no caller
 /// invokes this yet); consumers thereafter look up IDs and never
@@ -127,6 +140,14 @@ pub struct SymbolTable {
 
     fn_index: HashMap<FnKey, FnId>,
     type_index: HashMap<TypeKey, TypeId>,
+    /// Stable `TypeId` → source-order storage position. `TypeId` is keyed by
+    /// canonical identity rather than by this vector position, so it remains
+    /// meaningful when a typed dependency crosses into a whole-program table.
+    type_positions: HashMap<TypeId, usize>,
+    /// Bare declaration name → all identities carrying that name. This is an
+    /// index, not a resolver fallback: lookups still filter the candidates
+    /// through the asking module's visibility relation.
+    type_name_index: HashMap<String, Vec<TypeId>>,
     /// Per-type lookup of `variant_name → CtorId`. The outer
     /// `TypeId` plus inner `String` lets two unrelated sum types
     /// share a variant name (`Result.Ok` vs a user's
@@ -134,24 +155,16 @@ pub struct SymbolTable {
     ctor_index: HashMap<(TypeId, String), CtorId>,
     /// Builtin canonical name → `BuiltinId` (Phase 6 wave 11).
     builtin_index: HashMap<String, BuiltinId>,
-    /// Direct `depends [...]` of each dependency module, keyed by its prefix
-    /// and by the short name its own header declares. Read by
-    /// [`SymbolTable::type_id_by_bare_name_in`] so a bare type name is
-    /// answered only by the scopes the asking module can see — the same
-    /// question the type checker asks through its own visibility map.
-    module_depends: HashMap<String, Vec<String>>,
+    /// Canonical module path → the one boundary used to resolve functions,
+    /// types, records, constructors, and their downstream identities. The
+    /// short `module User` header is validated by the loader and never becomes
+    /// a second key beside `Domain.User`.
+    module_surfaces: HashMap<String, ModuleSymbolSurface>,
     /// Direct `depends [...]` of the entry scope, and the name its `module`
     /// header declares. The entry lives under `TypeKey::entry` (no prefix),
     /// but a resolver context still spells its scope with the declared name.
     entry_depends: Vec<String>,
     entry_module_name: Option<String>,
-    /// Each dependency module's public type surface after explicit re-exports,
-    /// from [`crate::visibility::collect_type_exports`] — the same relation the
-    /// type checker resolves an owner-context bare name through
-    /// (`TypeChecker::resolve_in_owner_context`). A type is not only visible to
-    /// the module that declares it: whoever depends on a module that re-exposes
-    /// it sees it too, under the declaration owner's identity.
-    module_type_exports: crate::visibility::ModuleTypeExports,
     /// Canonical provider-bound operation name → whether the call establishes
     /// an effect. These have no `FnId` because there is no Aver body.
     capability_operations: HashMap<String, CapabilityOperationInfo>,
@@ -175,27 +188,28 @@ pub struct BuiltinEntry {
     pub name: String,
 }
 
-/// A resolver context names its module the way the source does — whatever
-/// the `module X` header says — while the symbol table keys a dependency by
-/// the path its importers spell in `depends [...]` (`Domain.X`). The two are
-/// the same module, so a scope-aware lookup has to accept either spelling.
-fn module_names_match(prefix: &str, asking: &str) -> bool {
-    prefix == asking || prefix.rsplit('.').next() == Some(asking)
-}
-
-/// The keys a dependency's `depends [...]` list is indexed under: its full
-/// path, and the short name its own header declares.
-fn module_lookup_keys(prefix: &str) -> Vec<String> {
-    let mut keys = vec![prefix.to_string()];
-    if let Some(short) = prefix.rsplit('.').next()
-        && short != prefix
-    {
-        keys.push(short.to_string());
-    }
-    keys
-}
-
 impl SymbolTable {
+    /// Reserve the stable identity for one declaration. Duplicate source
+    /// declarations are a type error reported by the checker, so symbol
+    /// discovery keeps the first declaration and remains total while error
+    /// recovery continues. A different key producing the same fingerprint is
+    /// still an internal collision and must fail loudly.
+    fn register_type_position(&mut self, id: TypeId, key: &TypeKey) -> bool {
+        if let Some(position) = self.type_positions.get(&id).copied() {
+            let existing = &self.types[position].key;
+            assert_eq!(
+                existing,
+                key,
+                "internal TypeId fingerprint collision between `{}` and `{}`",
+                existing.canonical(),
+                key.canonical()
+            );
+            return false;
+        }
+        self.type_positions.insert(id, self.types.len());
+        true
+    }
+
     /// Build a `SymbolTable` from entry items + dep modules. The
     /// build order is fully deterministic: modules in
     /// `dep_modules` walk order with the entry scope prepended,
@@ -211,16 +225,6 @@ impl SymbolTable {
             table.modules.push(ModuleEntry {
                 prefix: Some(m.prefix.clone()),
             });
-            // Indexed under both spellings a resolver context can carry:
-            // the path importers write in `depends [...]` and the name the
-            // module's own header declares. See `module_names_match`.
-            for key in module_lookup_keys(&m.prefix) {
-                table
-                    .module_depends
-                    .entry(key)
-                    .or_default()
-                    .extend(m.depends.iter().cloned());
-            }
         }
         if let Some(module) = entry_items.iter().find_map(|i| match i {
             TopLevel::Module(module) => Some(module),
@@ -248,7 +252,25 @@ impl SymbolTable {
                     .collect(),
             })
             .collect();
-        table.module_type_exports = crate::visibility::collect_type_exports(&surfaces);
+        let mut module_type_exports = crate::visibility::collect_type_exports(&surfaces);
+        for module in dep_modules {
+            let exposes = crate::visibility::declared_exposes(&module.exposes);
+            table.module_surfaces.insert(
+                module.prefix.clone(),
+                ModuleSymbolSurface {
+                    depends: module.depends.clone(),
+                    functions: module
+                        .fn_defs
+                        .iter()
+                        .filter(|fd| crate::visibility::is_exposed(&fd.name, exposes))
+                        .map(|fd| fd.name.clone())
+                        .collect(),
+                    types: module_type_exports
+                        .remove(&module.prefix)
+                        .unwrap_or_default(),
+                },
+            );
+        }
 
         // Helpful pre-traversal: gather (scope, fns, types) tuples
         // so the actual indexing pass is uniform across entry vs
@@ -342,8 +364,16 @@ impl SymbolTable {
                     Some(p) => TypeKey::in_module(p.to_string(), type_name.clone()),
                     None => TypeKey::entry(type_name.clone()),
                 };
-                let type_id = TypeId(table.types.len() as u32);
+                let type_id = TypeId::for_key(&key);
+                if !table.register_type_position(type_id, &key) {
+                    continue;
+                }
                 table.type_index.insert(key.clone(), type_id);
+                table
+                    .type_name_index
+                    .entry(type_name.clone())
+                    .or_default()
+                    .push(type_id);
                 // Register variants (sum) or single constructor
                 // (product) into the ctor table.
                 let ctor_ids: Vec<CtorId> = if is_product {
@@ -393,8 +423,16 @@ impl SymbolTable {
                         if table.type_index.contains_key(&key) {
                             continue;
                         }
-                        let type_id = TypeId(table.types.len() as u32);
+                        let type_id = TypeId::for_key(&key);
+                        if !table.register_type_position(type_id, &key) {
+                            continue;
+                        }
                         table.type_index.insert(key.clone(), type_id);
+                        table
+                            .type_name_index
+                            .entry(name.clone())
+                            .or_default()
+                            .push(type_id);
                         table.types.push(TypeEntry {
                             key,
                             module: module_id,
@@ -574,9 +612,101 @@ impl SymbolTable {
         self.fn_index.get(key).copied()
     }
 
+    /// Resolve a source function name from one canonical module scope.
+    ///
+    /// Own declarations win for bare names, including private helpers.
+    /// Cross-module functions follow Aver's explicit `Module.fn` syntax and
+    /// cross the boundary only when exposed. The entry scope is visible only
+    /// to itself; in particular a dependency's bare `main()` can never fall
+    /// through to the program entry.
+    pub fn resolve_fn_id_in(&self, name: &str, asking: Option<&str>) -> Option<FnId> {
+        let in_entry = self.names_entry_scope(asking);
+        if let Some((prefix, bare)) = name.rsplit_once('.') {
+            if in_entry && self.entry_module_name.as_deref() == Some(prefix) {
+                return self.fn_id_of(&FnKey::entry(bare));
+            }
+            if asking == Some(prefix) {
+                return self.fn_id_of(&FnKey::in_module(prefix, bare));
+            }
+            if self.depends_of(asking).iter().any(|dep| dep == prefix)
+                && self
+                    .module_surfaces
+                    .get(prefix)
+                    .is_some_and(|surface| surface.functions.contains(bare))
+            {
+                return self.fn_id_of(&FnKey::in_module(prefix, bare));
+            }
+            return None;
+        }
+
+        if in_entry {
+            if let Some(id) = self.fn_id_of(&FnKey::entry(name)) {
+                return Some(id);
+            }
+        } else if let Some(scope) = asking
+            && let Some(id) = self.fn_id_of(&FnKey::in_module(scope, name))
+        {
+            return Some(id);
+        }
+
+        None
+    }
+
     /// Resolve a `TypeKey` to its `TypeId`.
     pub fn type_id_of(&self, key: &TypeKey) -> Option<TypeId> {
         self.type_index.get(key).copied()
+    }
+
+    /// Resolve a source type name from one canonical module scope.
+    ///
+    /// Qualified dependency names and bare dependency names both traverse the
+    /// same precomputed [`crate::visibility::ModuleTypeExports`] surface, so a
+    /// facade preserves the declaration owner's `TypeId`. Private declarations
+    /// and modules outside `depends [...]` never participate.
+    pub fn resolve_type_id_in(&self, name: &str, asking: Option<&str>) -> Option<TypeId> {
+        let in_entry = self.names_entry_scope(asking);
+        // A linked single-module backend may preserve a dependency's canonical
+        // identity by registering a synthetic entry type whose name itself is
+        // qualified (`Palette.Colour`). Prefer that exact key before parsing a
+        // dot as a source-level module boundary. Ordinary source declarations
+        // cannot contain dots, so this branch is inert before flatten/link.
+        if in_entry && let Some(id) = self.type_id_of(&TypeKey::entry(name)) {
+            return Some(id);
+        }
+        if let Some((prefix, bare)) = name.rsplit_once('.') {
+            if in_entry && self.entry_module_name.as_deref() == Some(prefix) {
+                return self.type_id_of(&TypeKey::entry(bare));
+            }
+            if asking == Some(prefix) {
+                return self.type_id_of(&TypeKey::in_module(prefix, bare));
+            }
+
+            // Provider resources are language-level atoms and can occur in a
+            // lifted signature without a source `depends` edge.
+            if let Some(id) = self.type_id_of(&TypeKey::in_module(prefix, bare))
+                && self.type_entry(id).is_capability_resource
+            {
+                return Some(id);
+            }
+
+            if self.depends_of(asking).iter().any(|dep| dep == prefix)
+                || crate::stdlib::find(prefix).is_some()
+            {
+                return self.type_export_id(prefix, bare);
+            }
+            return None;
+        }
+
+        if in_entry {
+            if let Some(id) = self.type_id_of(&TypeKey::entry(name)) {
+                return Some(id);
+            }
+        } else if let Some(scope) = asking
+            && let Some(id) = self.type_id_of(&TypeKey::in_module(scope, name))
+        {
+            return Some(id);
+        }
+        self.type_id_by_bare_name_in(name, asking)
     }
 
     /// Resolve a *bare* type name (no module prefix) against the scopes
@@ -599,44 +729,16 @@ impl SymbolTable {
     /// the symbol table where the rest of identity resolution lives.
     pub fn type_id_by_bare_name_in(&self, name: &str, asking: Option<&str>) -> Option<TypeId> {
         let mut found: Option<TypeId> = None;
-        for (key, id) in &self.type_index {
-            if key.name != name || !self.type_is_visible_to(key, *id, asking) {
+        for id in self.type_name_index.get(name).into_iter().flatten() {
+            let key = &self.type_entry(*id).key;
+            if !self.type_is_visible_to(key, *id, asking) {
                 continue;
             }
-            if found.is_some() {
+            if found.is_some_and(|existing| existing != *id) {
                 // Ambiguous bare reference among the scopes the asking
                 // module can see; the caller must qualify with a module
                 // prefix. The type checker reports this as
                 // `Ambiguous type name '<name>'`.
-                return None;
-            }
-            found = Some(*id);
-        }
-        found
-    }
-
-    /// The one type declared under this bare name anywhere in the program,
-    /// or `None` when nothing declares it and when two modules do.
-    ///
-    /// This answers a different question from
-    /// [`Self::type_id_by_bare_name_in`], which decides what a bare name a
-    /// programmer WROTE is allowed to mean. Here the name is not being
-    /// looked up for the first time: it belongs to a type some
-    /// correctly-scoped resolver already accepted where it was written, and
-    /// the only task left is to say which declaration of THIS symbol table
-    /// it is. The module that wrote it may be one the asking context cannot
-    /// see — a record field whose type its owner declares next door reaches
-    /// a third module by projection, and that module names neither.
-    ///
-    /// Fail-closed on ambiguity: two declarations of the name leave the
-    /// identity unknown rather than picking one.
-    pub fn unique_type_id_by_bare_name(&self, name: &str) -> Option<TypeId> {
-        let mut found: Option<TypeId> = None;
-        for (key, id) in &self.type_index {
-            if key.name != name {
-                continue;
-            }
-            if found.is_some_and(|f| f != *id) {
                 return None;
             }
             found = Some(*id);
@@ -682,7 +784,7 @@ impl SymbolTable {
             // Entry scope. Only the entry's own code can spell these bare.
             return self.names_entry_scope(asking);
         };
-        if asking.is_some_and(|asking| module_names_match(scope, asking))
+        if asking == Some(scope)
             || crate::stdlib::find(scope).is_some()
             || self.type_entry(id).is_capability_resource
         {
@@ -690,16 +792,23 @@ impl SymbolTable {
         }
         self.depends_of(asking)
             .iter()
-            .any(|dep| dep == scope || self.dependency_re_exposes(dep, &key.name, scope))
+            .any(|dep| self.dependency_re_exposes(dep, &key.name, scope))
+    }
+
+    /// Resolve `module.alias` through that module's public type surface.
+    /// Re-exports return the original declaration identity.
+    fn type_export_id(&self, module: &str, alias: &str) -> Option<TypeId> {
+        let target = self.module_surfaces.get(module)?.types.get(alias)?;
+        self.type_id_of(&TypeKey::in_module(&target.module, &target.name))
     }
 
     /// Does `dep` hand `scope`'s type `name` on to its own importers? True for
     /// a type `dep` declares itself and for one it re-exposes from further
     /// down, since the export surface keeps the declaration owner's identity.
     fn dependency_re_exposes(&self, dep: &str, name: &str, scope: &str) -> bool {
-        self.module_type_exports
+        self.module_surfaces
             .get(dep)
-            .and_then(|exports| exports.get(name))
+            .and_then(|surface| surface.types.get(name))
             .is_some_and(|target| target.module == scope && target.name == name)
     }
 
@@ -731,8 +840,8 @@ impl SymbolTable {
             return &self.entry_depends;
         }
         asking
-            .and_then(|name| self.module_depends.get(name))
-            .map(Vec::as_slice)
+            .and_then(|name| self.module_surfaces.get(name))
+            .map(|surface| surface.depends.as_slice())
             .unwrap_or(&[])
     }
 
@@ -751,8 +860,28 @@ impl SymbolTable {
         &self.fns[id.0 as usize]
     }
 
+    /// Borrow a type entry when this table contains the canonical identity.
+    /// Foreign table-local vector positions are not interpreted as this
+    /// table's declarations.
+    pub fn type_entry_if_present(&self, id: TypeId) -> Option<&TypeEntry> {
+        if let Some(position) = self.type_positions.get(&id) {
+            return self.types.get(*position);
+        }
+        // A handful of unit-only emitter fixtures construct a minimal table by
+        // pushing entries directly. Production tables always populate
+        // `type_positions` through `build`.
+        #[cfg(test)]
+        if self.type_positions.is_empty() {
+            return usize::try_from(id.0)
+                .ok()
+                .and_then(|position| self.types.get(position));
+        }
+        None
+    }
+
     pub fn type_entry(&self, id: TypeId) -> &TypeEntry {
-        &self.types[id.0 as usize]
+        self.type_entry_if_present(id)
+            .unwrap_or_else(|| panic!("TypeId({}) does not belong to this symbol table", id.0))
     }
 
     pub fn ctor_entry(&self, id: CtorId) -> &CtorEntry {
@@ -811,10 +940,16 @@ impl SymbolTable {
             );
         }
         for (i, entry) in self.types.iter().enumerate() {
+            let id = TypeId::for_key(&entry.key);
             assert_eq!(
                 self.type_index.get(&entry.key),
-                Some(&TypeId(i as u32)),
+                Some(&id),
                 "type_index out of sync at index {i}"
+            );
+            assert_eq!(
+                self.type_positions.get(&id),
+                Some(&i),
+                "type_positions out of sync at index {i}"
             );
         }
         for (i, entry) in self.ctors.iter().enumerate() {
@@ -1009,6 +1144,26 @@ mod tests {
     }
 
     #[test]
+    fn flattened_qualified_entry_type_resolves_by_its_exact_linked_name() {
+        let items = vec![
+            TopLevel::Module(entry_module("Entry", &["Palette"])),
+            TopLevel::TypeDef(sum("Palette.Colour", &["Cyan", "Blue"], 1)),
+        ];
+        let table = SymbolTable::build(&items, &[]);
+        table.assert_consistent();
+
+        let linked = table
+            .type_id_of(&TypeKey::entry("Palette.Colour"))
+            .expect("linked type missing");
+        assert_eq!(
+            table.resolve_type_id_in("Palette.Colour", Some("Entry")),
+            Some(linked),
+            "the linked canonical name is one entry key, not a module lookup"
+        );
+        assert!(table.ctor_id_of(linked, "Cyan").is_some());
+    }
+
+    #[test]
     fn variant_name_collision_across_unrelated_sums_is_resolved_per_type() {
         // Two sum types each with an `Ok` variant — distinct
         // `CtorId`s because owning_type differs. Mirror of the
@@ -1193,15 +1348,11 @@ mod tests {
     }
 
     #[test]
-    fn a_module_is_recognised_by_the_name_its_own_header_declares() {
-        // A resolver context spells the module the way the source does
-        // (`module User`); the symbol table keys it by the path importers
-        // spell (`Domain.User`). Both spellings reach the resolver on the
-        // same program, so both have to give the same visibility answer —
-        // otherwise the fallback goes quiet for exactly the modules this
-        // filter was written to keep working. Measured on the first
-        // external project: matching only the path left 76 functions
-        // unrendered, matching either left none.
+    fn a_dependency_has_only_its_canonical_import_path_identity() {
+        // The loader validates `module User` against the final segment of
+        // `Domain.User`, then every compiler phase carries `Domain.User`.
+        // Accepting the short header spelling here would recreate a second
+        // identity and make a sibling `Other.User` indistinguishable.
         let mod_user = module_depending_on("Domain.User", &["Domain.State"], vec![], vec![]);
         let mod_state = module(
             "Domain.State",
@@ -1220,15 +1371,80 @@ mod tests {
         );
         assert_eq!(
             table.type_id_by_bare_name_in("Step", Some("User")),
-            from_state,
-            "the header's own spelling must resolve the same way as the path"
+            None,
+            "the short module header is validation metadata, not an alias"
         );
 
-        // A module's own type is visible to it under either spelling too.
+        // A module's own type is visible under its canonical path only.
         let from_tally = table.type_id_of(&TypeKey::in_module("Domain.Tally", "Step"));
         assert_eq!(
-            table.type_id_by_bare_name_in("Step", Some("Tally")),
+            table.type_id_by_bare_name_in("Step", Some("Domain.Tally")),
             from_tally
+        );
+    }
+
+    #[test]
+    fn one_module_surface_resolves_functions_and_records_with_the_same_boundary() {
+        let dep = module_exposing(
+            "Dep.Helper",
+            &[],
+            &["ask"],
+            vec![fn_def("ask"), fn_def("secret")],
+            vec![product("Secret", 1)],
+        );
+        let entry_items = vec![TopLevel::Module(entry_module("Main", &["Dep.Helper"]))];
+        let table = SymbolTable::build(&entry_items, &[dep]);
+
+        assert!(
+            table
+                .resolve_fn_id_in("Dep.Helper.ask", Some("Main"))
+                .is_some()
+        );
+        assert_eq!(
+            table.resolve_fn_id_in("Dep.Helper.secret", Some("Main")),
+            None,
+            "a private function must stop at the module boundary"
+        );
+        assert_eq!(
+            table.resolve_type_id_in("Dep.Helper.Secret", Some("Main")),
+            None,
+            "a private record must stop at that same module boundary"
+        );
+        assert!(
+            table
+                .resolve_fn_id_in("secret", Some("Dep.Helper"))
+                .is_some(),
+            "own private functions remain visible inside the module"
+        );
+        assert!(
+            table
+                .resolve_type_id_in("Secret", Some("Dep.Helper"))
+                .is_some(),
+            "own private records remain visible inside the module"
+        );
+    }
+
+    #[test]
+    fn dependency_main_resolves_to_the_dependency_not_the_entry() {
+        let dep = module("Dep.Helper", vec![fn_def("main"), fn_def("ask")], vec![]);
+        let entry_items = vec![
+            TopLevel::Module(entry_module("Main", &["Dep.Helper"])),
+            TopLevel::FnDef(fn_def("main")),
+        ];
+        let table = SymbolTable::build(&entry_items, &[dep]);
+
+        assert_eq!(
+            table.resolve_fn_id_in("main", Some("Dep.Helper")),
+            table.fn_id_of(&FnKey::in_module("Dep.Helper", "main"))
+        );
+        assert_eq!(
+            table.resolve_fn_id_in("main", Some("Main")),
+            table.fn_id_of(&FnKey::entry("main"))
+        );
+        assert_eq!(
+            table.resolve_fn_id_in("Main.main", Some("Dep.Helper")),
+            None,
+            "dependencies cannot see the program entry"
         );
     }
 
@@ -1255,41 +1471,28 @@ mod tests {
     }
 
     #[test]
-    fn a_name_only_one_module_declares_re_homes_even_where_it_is_invisible() {
-        // The identity of a type that reaches a module without being
-        // nameable there. `User` depends on `A` alone; `B`'s record arrives
-        // by projection off an `A` value. Asking what `B`'s bare name is
-        // ALLOWED to mean in `User` answers nothing, and rightly so — but
-        // the type still has exactly one declaration, and that is its
-        // identity.
-        let mod_user = module_depending_on("User", &["A"], vec![], vec![]);
-        let mod_a = module("A", vec![], vec![product("Holder", 1)]);
-        let mod_b = module("B", vec![], vec![product("Held", 1)]);
-        let table = SymbolTable::build(&[], &[mod_user, mod_a, mod_b]);
-        table.assert_consistent();
-
-        assert_eq!(table.type_id_by_bare_name_in("Held", Some("User")), None);
-        assert_eq!(
-            table.unique_type_id_by_bare_name("Held"),
-            table.type_id_of(&TypeKey::in_module("B", "Held")),
+    fn canonical_type_identity_is_stable_across_symbol_tables() {
+        let first = SymbolTable::build(
+            &[],
+            &[
+                module("A", vec![], vec![product("Held", 1)]),
+                module("B", vec![], vec![product("Other", 1)]),
+            ],
         );
-    }
-
-    #[test]
-    fn two_declarations_of_a_name_leave_the_identity_unknown() {
-        // Fail-closed: picking one of them would put a `TypeId` on a type
-        // it does not name, and every consumer that reads a representation
-        // or a path off that id reads it off the wrong declaration.
-        let mod_a = module("A", vec![], vec![product("T", 1)]);
-        let mod_b = module("B", vec![], vec![product("T", 1)]);
-        let table = SymbolTable::build(&[], &[mod_a, mod_b]);
-        table.assert_consistent();
-
-        assert_eq!(table.unique_type_id_by_bare_name("T"), None);
-        assert_eq!(
-            table.unique_type_id_by_bare_name("NotDeclaredAnywhere"),
-            None
+        let reversed = SymbolTable::build(
+            &[],
+            &[
+                module("B", vec![], vec![product("Other", 1)]),
+                module("A", vec![], vec![product("Held", 1)]),
+            ],
         );
+        let key = TypeKey::in_module("A", "Held");
+        let first_id = first.type_id_of(&key).expect("A.Held in first table");
+        let reversed_id = reversed.type_id_of(&key).expect("A.Held in reversed table");
+
+        assert_eq!(first_id, reversed_id);
+        assert_eq!(first.type_entry(first_id).key, key);
+        assert_eq!(reversed.type_entry(reversed_id).key, key);
     }
 
     #[test]

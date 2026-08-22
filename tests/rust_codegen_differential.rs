@@ -5982,3 +5982,77 @@ fn a_type_reached_only_by_projection_keeps_its_representation() {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
 }
+
+/// Regression for #1085: a dependency's bare `main()` is its own ordinary
+/// module function. It must never bind to the entry point merely because the
+/// dependency projection used to omit functions named `main`.
+#[test]
+fn dependency_calling_its_own_main_builds_and_matches_vm() {
+    let ws = temp_dir("dependency-own-main");
+    let root = ws.join("src");
+    let dep = root.join("dep/helper.av");
+    fs::create_dir_all(dep.parent().expect("dependency parent")).expect("create module dir");
+    fs::write(
+        &dep,
+        r#"module Helper
+    intent = "Keep a module-local main callable as an ordinary function."
+    exposes [ask]
+    depends []
+
+fn main() -> Int
+    111
+
+fn ask() -> Int
+    main()
+
+verify ask
+    ask() => 111
+"#,
+    )
+    .expect("write dependency");
+    let entry = root.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    intent = "Print the dependency's answer without capturing its main name."
+    depends [Dep.Helper]
+    effects [Console.print]
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{Dep.Helper.ask()}")
+"#,
+    )
+    .expect("write entry");
+
+    let name = "dependency_own_main";
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        let vm_stdout = run_vm(&entry, Some(&root))?;
+        if vm_stdout != "111" {
+            return Err(format!("VM oracle returned {vm_stdout:?}, expected 111"));
+        }
+        compile_rust(&entry, &project, name, Some(&root), &[])?;
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "generated dependency-main binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}

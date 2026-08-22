@@ -1384,7 +1384,7 @@ fn diag_for_build_symbols(table: &crate::ir::SymbolTable) -> PassDiagnostic {
         per_module[te.module.0 as usize].types += 1;
     }
     for ce in &table.ctors {
-        let owning_module = table.types[ce.owning_type.0 as usize].module;
+        let owning_module = table.type_entry(ce.owning_type).module;
         per_module[owning_module.0 as usize].ctors += 1;
     }
 

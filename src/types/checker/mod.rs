@@ -520,25 +520,10 @@ struct TypeChecker {
     /// map use the canonical key directly; bare→canonical resolution
     /// goes through `symbol_table.type_id_of` for type-derived keys.
     extra_sigs: HashMap<String, FnSig>,
-    /// Bare → `FnId` aliases for cross-module imports. Populated
-    /// during `integrate_registry` from visibility-exposed aliases
-    /// (and during `build_signatures` for the current module's own
-    /// fns). The typed replacement for the pre-phase-B
-    /// `sig_aliases: HashMap<String, String>`: same bare-name routing
-    /// role, but the value side now carries opaque identity instead
-    /// of a string that needed re-resolution downstream.
-    ///
-    /// When two distinct modules each expose the same bare name
-    /// (`Pricing.percent` *and* `Math.percent` both surface a bare
-    /// `percent`), the entry switches to [`Resolution::Ambiguous`]
-    /// and `resolve_fn_id` refuses to silently pick one — the user
-    /// must qualify the reference. Avoids the
-    /// "global bare alias last-wins" bug class peer review #148
-    /// flagged.
-    bare_fn_aliases: HashMap<String, Resolution<FnId>>,
-    /// Bare → `TypeId` aliases. Same role as `bare_fn_aliases`
-    /// for the type-name dimension; consumed by `resolve_type_id`
-    /// and `canonical_type_name`.
+    /// Bare → `TypeId` aliases for the type-name dimension; consumed by
+    /// ambiguity diagnostics and canonical display. Functions have no
+    /// equivalent: cross-module calls are always `Module.fn`, and own bare
+    /// calls resolve directly through `SymbolTable`.
     bare_type_aliases: HashMap<String, Resolution<TypeId>>,
     /// `FnId`s the current checker may legitimately resolve to.
     /// Populated from `build_signatures` (the current module's own
@@ -568,16 +553,6 @@ struct TypeChecker {
     /// map is resolver context; only entries whose module is in
     /// `visible_module_names` are visible to ordinary importer lookups.
     module_type_exports: crate::visibility::ModuleTypeExports,
-    /// Per-module `depends` list, keyed by the dep module's
-    /// `dep_name`. Populated by `prepare_loaded_modules` so the
-    /// per-owner type resolver (`canonicalize_named_in_module`) can
-    /// walk an owner module's *own* depends when canonicalising its
-    /// exported signatures — not the entry module's or arbitrary
-    /// loaded siblings'. Round-6 peer review caught the leak: B
-    /// depends on A; Main depends on B, C; B's bare `Shape` was
-    /// resolving against `[A, C]` (Main's loaded tree) instead of
-    /// `[A]` (B's own depends), and `Shape` came back ambiguous.
-    module_depends: HashMap<String, Vec<String>>,
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
@@ -668,13 +643,11 @@ impl TypeChecker {
             symbol_table,
             fn_sigs: HashMap::new(),
             extra_sigs: HashMap::new(),
-            bare_fn_aliases: HashMap::new(),
             bare_type_aliases: HashMap::new(),
             visible_fn_ids: HashSet::new(),
             visible_type_ids: HashSet::new(),
             visible_module_names: HashSet::new(),
             module_type_exports: crate::visibility::ModuleTypeExports::new(),
-            module_depends: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
             type_variants,
@@ -756,50 +729,16 @@ impl TypeChecker {
     // -- Identity resolution (phase B) -------------------------------------
 
     /// Resolve a source-faithful function reference (`"foo"`,
-    /// `"Module.foo"`, `"Tcp.send"`) to a `FnId` via the symbol table.
-    /// Tries, in order: literal-as-qualified (split `"Module.foo"`
-    /// into `(Module, foo)`), current-module-scoped bare name, then
-    /// entry-scope bare name, then the typed bare-alias map.
+    /// `"Module.foo"`, `"Tcp.send"`) through the symbol table's shared
+    /// module visibility relation.
     ///
     /// Misses for builtin namespace methods and constructors — those
     /// don't live in the program symbol table; callers fall back to
     /// the `extra_sigs` string-keyed half.
     pub(crate) fn resolve_fn_id(&self, name: &str) -> Option<FnId> {
-        // Phase B (peer review round 4): every `SymbolTable`
-        // resolution path filters through `visible_fn_ids` so a
-        // qualified `C.helper()` reference can't reach into a dep
-        // module's private fn just because the symbol table
-        // unconditionally stores every dep entry. Bare-name lookup
-        // already went through `bare_fn_aliases`, which is itself
-        // populated only from visibility-exposed entries — that
-        // branch stays as-is.
-        if let Some((prefix, n)) = name.rsplit_once('.') {
-            if let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, n))
-                && self.visible_fn_ids.contains(&id)
-            {
-                return Some(id);
-            }
-            if self.current_module_prefix.as_deref() == Some(prefix)
-                && let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(n))
-                && self.visible_fn_ids.contains(&id)
-            {
-                return Some(id);
-            }
-        }
-        if let Some(prefix) = self.current_module_prefix.as_deref()
-            && let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, name))
-            && self.visible_fn_ids.contains(&id)
-        {
-            return Some(id);
-        }
-        if let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(name))
-            && self.visible_fn_ids.contains(&id)
-        {
-            return Some(id);
-        }
-        self.bare_fn_aliases
-            .get(name)
-            .and_then(Resolution::unambiguous)
+        self.symbol_table
+            .resolve_fn_id_in(name, self.current_module_prefix.as_deref())
+            .filter(|id| self.visible_fn_ids.contains(id))
     }
 
     /// `true` when the bare alias map has recorded multiple distinct
@@ -1302,18 +1241,6 @@ impl TypeChecker {
         }
     }
 
-    /// Register a bare → `FnId` alias, marking it `Ambiguous` if a
-    /// different identity is already registered under the same bare
-    /// name. Duplicate registration of the same identity (e.g. an
-    /// item walked twice by `integrate_registry` + `build_signatures`)
-    /// is a no-op.
-    pub(super) fn merge_bare_fn_alias(&mut self, alias: String, id: FnId) {
-        self.bare_fn_aliases
-            .entry(alias)
-            .and_modify(|r| r.merge(id))
-            .or_insert(Resolution::Single(id));
-    }
-
     pub(super) fn merge_bare_type_alias(&mut self, alias: String, id: TypeId) {
         self.bare_type_aliases
             .entry(alias)
@@ -1327,46 +1254,14 @@ impl TypeChecker {
     /// resolve to a private (non-exposed) type even though the symbol
     /// table holds every dep type unconditionally.
     pub(crate) fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
-        if let Some((prefix, n)) = name.rsplit_once('.') {
-            if self.current_module_prefix.as_deref() == Some(prefix) {
-                if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
-                    && self.visible_type_ids.contains(&id)
-                {
-                    return Some(id);
-                }
-                if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
-                    && self.visible_type_ids.contains(&id)
-                {
-                    return Some(id);
-                }
-            }
-            if self.visible_module_names.contains(prefix) {
-                if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
-                    && self.visible_type_ids.contains(&id)
-                {
-                    return Some(id);
-                }
-                if let Some(id) = self.type_export_id(prefix, n) {
-                    return Some(id);
-                }
-            }
-        }
-        if let Some(prefix) = self.current_module_prefix.as_deref()
-            && let Some(id) = self
-                .symbol_table
-                .type_id_of(&TypeKey::in_module(prefix, name))
-            && self.visible_type_ids.contains(&id)
-        {
-            return Some(id);
-        }
-        if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(name))
-            && self.visible_type_ids.contains(&id)
-        {
-            return Some(id);
-        }
-        self.bare_type_aliases
-            .get(name)
-            .and_then(Resolution::unambiguous)
+        self.symbol_table
+            .resolve_type_id_in(name, self.current_module_prefix.as_deref())
+            .filter(|id| self.visible_type_ids.contains(id))
+            .or_else(|| {
+                self.bare_type_aliases
+                    .get(name)
+                    .and_then(Resolution::unambiguous)
+            })
     }
 
     /// Resolve `module.alias` through that module's public type surface. The
@@ -1480,7 +1375,7 @@ impl TypeChecker {
     /// declaring module can be named (an entry-scope type in a file
     /// with no `module` declaration).
     fn declaring_module_name(&self, id: TypeId) -> Option<String> {
-        let entry = self.symbol_table.types.get(id.0 as usize)?;
+        let entry = self.symbol_table.type_entry_if_present(id)?;
         let scope = entry
             .key
             .scope_str()

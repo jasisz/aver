@@ -51,7 +51,9 @@ pub struct ModuleInfo {
     pub exposes_opaque: Vec<String>,
     /// Type definitions from the module.
     pub type_defs: Vec<TypeDef>,
-    /// Function definitions from the module (excluding `main`).
+    /// Function definitions from the module. A dependency's `main` is an
+    /// ordinary module-owned function; only the entry module's `main` has
+    /// entry-point semantics.
     pub fn_defs: Vec<FnDef>,
     /// Provider-bound declarations retained for name resolution and VM
     /// fail-closed dispatch. They have signatures but no Aver bodies.
@@ -102,7 +104,7 @@ impl ModuleInfo {
         let fn_defs = items
             .iter()
             .filter_map(|i| match i {
-                TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                TopLevel::FnDef(fd) => Some(fd.clone()),
                 _ => None,
             })
             .collect();

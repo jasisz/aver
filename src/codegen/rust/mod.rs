@@ -903,7 +903,20 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     // per module, DAG invariant keeps them unambiguous) when the
     // analyze stage ran. Fall back to projecting `ctx.mutual_tco_members`
     // (FnId set) back to bare names for this module's scope.
-    let fn_refs: Vec<&FnDef> = module.fn_defs.iter().collect();
+    // Capability hostile profiles are executable specifications, not runtime
+    // implementation.  Drop their full model-only closure here, at the
+    // runtime-backend boundary.  The capability registry preserves helpers
+    // that are also reachable from an exported ordinary function.
+    let verification_only_fns = ctx.capabilities.verification_only_function_names(
+        &module.prefix,
+        &module.fn_defs,
+        &module.exposes,
+    );
+    let fn_refs: Vec<&FnDef> = module
+        .fn_defs
+        .iter()
+        .filter(|fd| !verification_only_fns.contains(&fd.name))
+        .collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&fn_refs);
     let module_mutual_owned: HashSet<String> = match module.analysis.as_ref() {
         Some(a) => a.mutual_tco_members.clone(),
@@ -935,7 +948,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     }
 
     for fd in &module.fn_defs {
-        if module_mutual.contains(&fd.name) {
+        if verification_only_fns.contains(&fd.name) || module_mutual.contains(&fd.name) {
             continue;
         }
         // Same pair-API as the entry loop above. Module fns route
@@ -1160,7 +1173,7 @@ mod tests {
                     .items
                     .iter()
                     .filter_map(|i| match i {
-                        crate::ast::TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                        crate::ast::TopLevel::FnDef(fd) => Some(fd.clone()),
                         _ => None,
                     })
                     .collect();
@@ -1218,6 +1231,59 @@ mod tests {
             .iter()
             .find_map(|(name, content)| (name == path).then_some(content.as_str()))
             .unwrap_or_else(|| panic!("expected generated file '{}'", path))
+    }
+
+    #[test]
+    fn capability_model_closure_is_omitted_from_runtime_rust() {
+        let mut ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Clock]
+
+fn main() -> Int
+    Clock.visible()
+
+verify main
+    main() => 2
+"#,
+            &[(
+                "Clock",
+                r#"
+module Clock
+    kind = capability
+    semantics = effectful
+    exposes [now, visible]
+
+operation now() -> Int
+    oracle = generative
+    replay = recorded
+    hostile = [normal]
+
+fn modelOnly() -> Int
+    40
+
+fn shared() -> Int
+    2
+
+fn normal(branch: BranchPath, call: Int) -> Int
+    modelOnly() + shared()
+
+fn visible() -> Int
+    shared()
+"#,
+            )],
+            "capability-model-runtime-boundary",
+        );
+
+        let out = transpile(&mut ctx);
+        let clock = generated_file(&out, "src/aver_generated/clock/mod.rs");
+        let verify = generated_file(&out, "src/verify.rs");
+
+        assert!(clock.contains("pub fn visible("), "{clock}");
+        assert!(clock.contains("pub fn shared("), "{clock}");
+        assert!(!clock.contains("fn normal("), "{clock}");
+        assert!(!clock.contains("fn modelOnly("), "{clock}");
+        assert!(verify.contains("fn test_main_case_1()"), "{verify}");
     }
 
     #[test]

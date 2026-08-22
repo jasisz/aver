@@ -79,7 +79,16 @@ fn run_wasm_gc_with_mode(
     // This harness flattens multi-module input, so it must thread the
     // REAL alias map the flattener derived — the same production path
     // `src/main/run_wasm_gc.rs` takes.
-    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+        &mut items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("typecheck requested")
+            .capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    );
     aver::ir::pipeline::resolve(&mut items);
 
     let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {

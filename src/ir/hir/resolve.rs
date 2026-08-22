@@ -58,7 +58,7 @@ use crate::ir::hir::{
     ResolvedFnDef, ResolvedMatchArm, ResolvedPattern, ResolvedStmt, ResolvedStrPart,
     ResolvedTopLevel,
 };
-use crate::ir::identity::{FnId, FnKey, TypeId, TypeKey};
+use crate::ir::identity::{FnId, TypeId, TypeKey};
 use crate::ir::symbol_table::SymbolTable;
 
 /// Resolver state. Carries the symbol table the pass resolves
@@ -81,100 +81,25 @@ impl<'a> ResolveCtx<'a> {
         }
     }
 
-    /// Resolve a fn reference to a `FnId`. Tries (in order):
-    ///   1. Qualified: `Module.fn` → `FnKey::in_module(Module, fn)`.
-    ///   2. Current module: `fn` → `FnKey::in_module(current, fn)`.
-    ///   3. Current-as-entry: when the qualified prefix matches the
-    ///      current module, also probe `FnKey::entry(fn)` (entry
-    ///      items live under entry scope in the symbol table even
-    ///      when they declare `module X`).
-    ///   4. Entry: `fn` → `FnKey::entry(fn)`.
+    /// Resolve a function reference through the symbol table's single module
+    /// visibility relation. `current_module` is always the canonical import
+    /// path for dependencies; only the entry may use its declared header alias.
     pub fn resolve_fn_id(&self, name: &str) -> Option<FnId> {
-        if let Some((prefix, n)) = name.rsplit_once('.') {
-            if let Some(id) = self.symbols.fn_id_of(&FnKey::in_module(prefix, n)) {
-                return Some(id);
-            }
-            if self.current_module.as_deref() == Some(prefix)
-                && let Some(id) = self.symbols.fn_id_of(&FnKey::entry(n))
-            {
-                return Some(id);
-            }
-        }
-        if let Some(prefix) = self.current_module.as_deref()
-            && let Some(id) = self.symbols.fn_id_of(&FnKey::in_module(prefix, name))
-        {
-            return Some(id);
-        }
-        self.symbols.fn_id_of(&FnKey::entry(name))
+        self.symbols
+            .resolve_fn_id_in(name, self.current_module.as_deref())
     }
 
     /// Type-side equivalent of [`Self::resolve_fn_id`].
     ///
-    /// Resolution order (first match wins):
-    /// 1. `prefix.name` matches `TypeKey::in_module(prefix, name)`.
-    /// 2. `prefix.name` written INSIDE the entry, with `prefix ==
-    ///    current_module`, matches the entry-scope `TypeKey::entry(name)`
-    ///    (Aver lets a self-referencing module spell its own type with the
-    ///    qualified form, and the entry's items are keyed under entry scope
-    ///    whatever its `module` header says).
-    /// 3. Bare `name` in `current_module` (`TypeKey::in_module(current, name)`).
-    /// 4. Bare `name` in entry scope (`TypeKey::entry(name)`) — again only
-    ///    when the asking module IS the entry.
-    /// 5. Bare `name` searched across the scopes `current_module` can see
-    ///    via [`crate::ir::SymbolTable::type_id_by_bare_name_in`] — handles
-    ///    the cross-module case where module `A` references type `Val`
-    ///    declared in a module `A` depends on, without qualification.
-    ///    Returns `None` when two visible scopes share the name (caller
-    ///    must qualify); a module `A` never imported is not consulted.
-    ///
-    /// Steps 2 and 4 are the entry's own scope, so they are gated on the
-    /// asking module being the entry. The entry is another module from a
-    /// dependency's point of view: it names its dependencies and they never
-    /// name it, so nothing it declares is in scope for the code it pulls
-    /// in. Ungated, the answer to "what does this bare name mean inside
-    /// this dependency" changed with which file the command was pointed at.
+    /// Qualified and bare names use the same precomputed export surface as
+    /// typechecking and codegen, including declaration-owner-preserving
+    /// re-exports and ambiguity handling.
     pub fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
-        let in_entry = self
-            .symbols
-            .names_entry_scope(self.current_module.as_deref());
-        if let Some((prefix, n)) = name.rsplit_once('.') {
-            if let Some(id) = self.symbols.type_id_of(&TypeKey::in_module(prefix, n)) {
-                return Some(id);
-            }
-            if in_entry
-                && self.current_module.as_deref() == Some(prefix)
-                && let Some(id) = self.symbols.type_id_of(&TypeKey::entry(n))
-            {
-                return Some(id);
-            }
-        }
-        if let Some(prefix) = self.current_module.as_deref()
-            && let Some(id) = self.symbols.type_id_of(&TypeKey::in_module(prefix, name))
-        {
-            return Some(id);
-        }
-        if in_entry && let Some(id) = self.symbols.type_id_of(&TypeKey::entry(name)) {
-            return Some(id);
-        }
-        // Cross-module bare-name fallback. Phase-E ctor resolution
-        // for `Val.ValOk(x)` written from a module that doesn't host
-        // `Val` (e.g. `Domain.Eval.Core` referencing
-        // `Domain.Value.Val`).
-        //
-        // Scoped to what the asking module can actually see: its own
-        // `depends [...]`, the standard modules, and the entry. A module
-        // nobody imported must not participate — otherwise declaring a
-        // type there makes the bare name ambiguous for everyone, the
-        // lookup answers `None`, and `None` reads downstream as "not a
-        // user type" rather than as an error. Two VISIBLE scopes sharing
-        // the name still need a qualified reference, and the type checker
-        // reports that as `Ambiguous type name`.
         self.symbols
-            .type_id_by_bare_name_in(name, self.current_module.as_deref())
+            .resolve_type_id_in(name, self.current_module.as_deref())
     }
 
-    /// Re-home a type that ALREADY carried a `TypeId` into this symbol
-    /// table, by its source name.
+    /// Re-home a type that ALREADY carried a `TypeId` into this symbol table.
     ///
     /// The distinction from [`Self::resolve_type_id`] is where the name was
     /// written. A type annotation that arrives already identified was
@@ -184,22 +109,26 @@ impl<'a> ResolveCtx<'a> {
     /// only projects `.policy` off a `Rules` value carries the type without
     /// ever naming it or its owner. Answering that with the visibility rule
     /// for a bare name the programmer wrote asks the wrong question, and
-    /// answering it with the incoming id asks nothing at all — the id is
-    /// from another table.
+    /// answering it with a source-order index asks nothing at all. `TypeId`
+    /// is now derived from `TypeKey`, so an imported declaration keeps the
+    /// same identity across tables and can be retained directly.
     ///
-    /// So: the ordinary scoped resolution first, then the one declaration
-    /// of that name in the program. Two declarations leave it `None`, which
-    /// is what every consumer treats as "identity unknown".
-    fn rehome_type_id(&self, name: &str) -> Option<TypeId> {
-        if let Some(id) = self.resolve_type_id(name) {
-            return Some(id);
+    /// A dependency checked on its own temporarily keys its own declarations
+    /// as entry types. Those are the one exception: re-resolve them in the
+    /// dependency's canonical current scope. No program-wide bare-name search
+    /// is needed.
+    fn rehome_type_id(&self, incoming: TypeId, name: &str) -> Option<TypeId> {
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        let temporary_entry_id = TypeId::for_key(&TypeKey::entry(bare));
+        if incoming != temporary_entry_id
+            && self
+                .symbols
+                .type_entry_if_present(incoming)
+                .is_some_and(|entry| entry.key.name == bare)
+        {
+            return Some(incoming);
         }
-        if name.contains('.') {
-            // A qualified name that did not resolve names a module this
-            // program does not have; there is nothing to fall back to.
-            return None;
-        }
-        self.symbols.unique_type_id_by_bare_name(name)
+        self.resolve_type_id(name)
     }
 
     /// Resolve a `"Type.Variant"` constructor reference to a
@@ -773,18 +702,15 @@ fn parse_builtin_ctor(name: &str) -> Option<BuiltinCtor> {
 fn canonicalise_type(ctx: &ResolveCtx<'_>, ty: crate::ast::Type) -> crate::ast::Type {
     use crate::ast::Type;
     match ty {
-        // A `TypeId` is stable only within the SymbolTable build that
-        // created it. Dependency modules are typechecked independently
-        // before codegen assembles the final whole-program table, so a
-        // correct local id can point at a different declaration here.
-        // Re-resolve by the source name; the incoming id is never kept,
-        // because in THIS table it indexes whatever declaration happens to
-        // sit at that position. `Type::Named { id, name }` where `id` names
-        // something other than `name` is not a weaker answer than `None` —
-        // it is a wrong one, and every consumer that reads a representation
-        // or a path off the id then reads it off the wrong type.
-        Type::Named { id: Some(_), name } => Type::Named {
-            id: ctx.rehome_type_id(&name),
+        // `TypeId` is the canonical TypeKey fingerprint, not a vector index,
+        // so imported declarations survive per-module → whole-program table
+        // boundaries. A module's temporary entry-scoped key still needs the
+        // canonical current-module rehome described above.
+        Type::Named {
+            id: Some(incoming),
+            name,
+        } => Type::Named {
+            id: ctx.rehome_type_id(incoming, &name),
             name,
         },
         Type::Named { id: None, name } => match ctx.resolve_type_id(&name) {
@@ -916,7 +842,7 @@ fn make() -> Shape
         match &call.node {
             ResolvedExpr::Ctor(ResolvedCtor::User { type_id, name, .. }, args) => {
                 assert_eq!(name, "Circle");
-                assert!(*type_id != crate::ir::identity::TypeId(u32::MAX));
+                assert!(*type_id != crate::ir::identity::TypeId(u64::MAX));
                 assert_eq!(args.len(), 1);
             }
             other => panic!("expected Ctor(User, _), got {:?}", other),
