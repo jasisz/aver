@@ -523,20 +523,8 @@ fn emit_fn_call(
             }
         }
         ResolvedCallee::Fn(fn_id) => {
-            let entry = ctx.symbol_table.fn_entry(*fn_id);
-            let bare = entry.key.name.as_str();
-            let module_prefix = entry.key.scope_str();
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-            let func = match module_prefix {
-                Some(prefix) if !ctx.modules.is_empty() => {
-                    format!(
-                        "{}.{}",
-                        super::syntax::aver_path_to_lean(prefix),
-                        aver_name_to_lean(bare)
-                    )
-                }
-                _ => aver_name_to_lean(bare),
-            };
+            let func = user_fn_path(*fn_id, ctx);
             if arg_strs.is_empty() {
                 func
             } else {
@@ -566,6 +554,20 @@ fn emit_fn_call(
                 format!("{} {}", func, arg_strs.join(" "))
             }
         }
+    }
+}
+
+/// Canonical Lean spelling for a resolved user function. Every renderer with
+/// an `FnId` (ordinary expressions and ProofIR support declarations alike)
+/// uses this path instead of reconstructing module qualification locally.
+pub(crate) fn user_fn_path(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> String {
+    let entry = ctx.symbol_table.fn_entry(fn_id);
+    let bare = aver_name_to_lean(&entry.key.name);
+    match entry.key.scope_str() {
+        Some(prefix) if !ctx.modules.is_empty() => {
+            format!("{}.{}", super::syntax::aver_path_to_lean(prefix), bare)
+        }
+        _ => bare,
     }
 }
 

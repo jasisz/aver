@@ -1653,17 +1653,15 @@ fn comparison_lean_names(
 ) -> (String, String) {
     let key = &ctx.symbol_table.fn_entry(comparison.fn_id).key;
     let bare = aver_name_to_lean(&key.name);
-    let active_scope = ctx.active_module_scope();
-    match key.scope_str() {
-        Some(prefix) if active_scope.as_deref() != Some(prefix) && !ctx.modules.is_empty() => {
+    let call = super::super::expr::user_fn_path(comparison.fn_id, ctx);
+    let tag = match key.scope_str() {
+        Some(prefix) if !ctx.modules.is_empty() => {
             let path = super::super::syntax::aver_path_to_lean(prefix);
-            (
-                format!("{path}.{bare}"),
-                format!("{}_{}", path.replace('.', "_"), bare),
-            )
+            format!("{}_{}", path.replace('.', "_"), bare)
         }
-        _ => (bare.clone(), bare),
-    }
+        _ => bare,
+    };
+    (call, tag)
 }
 
 fn comparison_lean_shape(

@@ -1203,6 +1203,33 @@ verify le law leSucc
 }
 
 #[test]
+fn transpile_renders_bounded_int_domain_from_proof_ir_plan() {
+    let mut ctx = ctx_from_source(
+        r#"
+module BoundedInt
+    intent = "finite guarded integer law"
+
+fn inRange(i: Int) -> Bool
+    i >= 0
+
+verify inRange law seedTable
+    given i: Int = [0, 1, 2, 3]
+    when Bool.and(i >= 0, i < 4)
+    inRange(i) => true
+"#,
+        "bounded_int",
+    );
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+
+    assert!(lean.contains("-- aver:law-class inRange_law_seedTable universal inRange.seedTable"));
+    assert!(lean.contains(
+        "theorem inRange_law_seedTable : ∀ (i : Int), 0 ≤ i → i < 4 → inRange i = true := by"
+    ));
+    assert!(lean.contains("exact (by decide : ∀ m : Nat, m < 4 → inRange (0 + (m : Int)) = true)"));
+}
+
+#[test]
 fn transpile_proves_conditional_inductive_membership_law_as_universal() {
     // `prop_36 elemConcat`: `when elem(x,y) -> elem(x, y ++ z) => true` (append
     // monotonicity). The GENERIC conditional-inductive driver (no bespoke

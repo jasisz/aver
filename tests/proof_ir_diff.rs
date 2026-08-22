@@ -1439,6 +1439,64 @@ fn compound_peano_premise_stays_out_of_comparison_bridge_strategy() {
 }
 
 #[test]
+fn bounded_int_domain_plan_is_pinned_before_lean_enumeration() {
+    let src = "module Bounded\n\
+         \x20   intent = \"finite guarded integer law\"\n\
+         \n\
+         fn inRange(i: Int) -> Bool\n\
+         \x20   i >= 0\n\
+         \n\
+         verify inRange law seedTable\n\
+         \x20   given i: Int = [0, 1, 2, 3]\n\
+         \x20   when Bool.and(i >= 0, i < 4)\n\
+         \x20   inRange(i) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "inRange", "seedTable").expect("law theorem");
+    let subject_id = ctx
+        .symbol_table
+        .fn_id_of(&aver::ir::FnKey::entry("inRange"))
+        .expect("inRange id");
+    assert!(
+        matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::BoundedIntDomain {
+                ref var,
+                lo: 0,
+                hi: 4,
+                subject,
+            } if var == "i" && subject == subject_id
+        ),
+        "proof lowering must pin bounds and exact subject identity, got {:?}",
+        theorem.strategy,
+    );
+}
+
+#[test]
+fn recursive_bounded_int_subject_stays_out_of_enumeration_strategy() {
+    let src = "module Bounded\n\
+         \x20   intent = \"recursive near miss\"\n\
+         \n\
+         fn eventually(n: Int) -> Bool\n\
+         \x20   match n <= 0\n\
+         \x20       true -> true\n\
+         \x20       false -> eventually(n - 1)\n\
+         \n\
+         verify eventually law sampledOnly\n\
+         \x20   given n: Int = [0, 1, 2, 3]\n\
+         \x20   when Bool.and(n >= 0, n < 4)\n\
+         \x20   eventually(n) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "eventually", "sampledOnly").expect("law theorem");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::BoundedIntDomain { .. }
+        ),
+        "recursive cones must retain the bounded/backend fallback",
+    );
+}
+
+#[test]
 fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
     // `add(add(a,b),c) => add(a,add(b,c))` over `fn add(a,b) -> a+b`
     // — Step 25 pins `Associative { op: Add }`.

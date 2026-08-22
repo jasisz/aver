@@ -626,6 +626,16 @@ pub enum ProofStrategy {
         /// and also identifies the exact declaration that bridge belongs to.
         negated_premise: Option<PeanoComparison>,
     },
+    /// A single `Int` given guarded into the finite half-open interval
+    /// `[lo, hi)`, with conclusion `subject(var) = true`. Proof lowering pins
+    /// the exact non-recursive subject identity and validated bounds; a backend
+    /// may enumerate the interval without re-reading guard/call syntax.
+    BoundedIntDomain {
+        var: String,
+        lo: i64,
+        hi: i64,
+        subject: FnId,
+    },
     /// "Linear arithmetic over an unfold chain" — the law's two
     /// sides reduce to a flat linear equation on Int once every
     /// reachable user fn is unfolded. Generic catch-all for Int

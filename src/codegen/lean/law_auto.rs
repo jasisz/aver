@@ -168,9 +168,9 @@ pub(in crate::codegen::lean) use triangle_sum::triangle_sum_cited_deps;
 /// statement driver, kept in lockstep with `emit_transparent_chain_law`.
 pub(in crate::codegen::lean) use transparent_chain::recognize_transparent_chain;
 
-// (Defined in this module.) The finite bounded-Int-domain recognizer — see
-// `recognize_finite_int_domain` — feeds the `omit_domain` statement driver so
-// the universal statement and the enumerate-then-`decide` proof stay in lockstep.
+// The finite bounded-Int-domain ProofIR strategy feeds the `omit_domain`
+// statement driver so the universal statement and the enumerate-then-`decide`
+// proof stay in lockstep.
 
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
 /// source lines into a normalization-only twin so Lean reports its residual
@@ -462,151 +462,20 @@ fn maybe_wrap_with_grind_rung(
     }
 }
 
-/// A finite bounded-Int-domain law: a SINGLE `Int` given quantified by a
-/// `when LO <= var` + `when var < HI` guard pair (constant literal bounds,
-/// `LO < HI`) whose conclusion is an atomic `holds` claim `subject(var) =>
-/// true` for a pure NON-RECURSIVE `Bool` fn. The closed integer interval
-/// `[LO, HI)` IS the finite domain — the guards are load-bearing, not
-/// decoration: drop them and the claim quantifies over all of `ℤ`, where a
-/// table `lookup` outside its range returns the out-of-domain default and the
-/// bound is false. Name-blind: the recognizer keys on the guard/claim SHAPE,
-/// never on a table-specific fn name.
-struct FiniteIntDomain {
-    /// The single given variable (source name).
-    var: String,
-    /// Inclusive lower bound from `when LO <= var` / `when var >= LO`.
-    lo: i64,
-    /// Exclusive upper bound from `when var < HI` / `when HI > var`.
-    hi: i64,
-    /// The `holds` subject fn, already mapped to its Lean name.
-    subject_lean: String,
-}
-
-/// Read an integer literal `Expr`, accepting a unary-negated literal (`-7`).
-fn finite_domain_int_literal(expr: &crate::ast::Spanned<crate::ast::Expr>) -> Option<i64> {
-    use crate::ast::{Expr, Literal};
-    match &expr.node {
-        Expr::Literal(Literal::Int(n)) => Some(*n),
-        Expr::Neg(inner) => match &inner.node {
-            Expr::Literal(Literal::Int(n)) => Some(-*n),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Classify one conjunct of the `when` guard as a lower or upper bound on
-/// `var`, returning `(is_upper, bound)`. Lower: `LO <= var` / `var >= LO`.
-/// Upper: `var < HI` / `HI > var`.
-fn finite_domain_bound(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
-    var: &str,
-) -> Option<(bool, i64)> {
-    use crate::ast::{BinOp, Expr};
-    let Expr::BinOp(op, l, r) = &expr.node else {
-        return None;
-    };
-    let l_is_var = shared::expr_dotted_name(l).as_deref() == Some(var);
-    let r_is_var = shared::expr_dotted_name(r).as_deref() == Some(var);
-    match op {
-        // LO <= var
-        BinOp::Lte if r_is_var => finite_domain_int_literal(l).map(|n| (false, n)),
-        // var >= LO
-        BinOp::Gte if l_is_var => finite_domain_int_literal(r).map(|n| (false, n)),
-        // var < HI
-        BinOp::Lt if l_is_var => finite_domain_int_literal(r).map(|n| (true, n)),
-        // HI > var
-        BinOp::Gt if r_is_var => finite_domain_int_literal(l).map(|n| (true, n)),
-        _ => None,
-    }
-}
-
-/// Recognize the finite bounded-Int-domain shape. Pure / name-blind — see
-/// [`FiniteIntDomain`]. Declines (so the law keeps its bounded sampled-domain
-/// fallback) unless EVERY structural gate holds: one `Int` given, a
-/// `Bool.and(lower, upper)` guard with constant literal bounds `LO < HI`, a
-/// `subject(var) => true` conclusion over a non-recursive cone, and a domain
-/// size within the kernel `decide` budget.
-fn recognize_finite_int_domain_shape(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-) -> Option<FiniteIntDomain> {
-    use crate::ast::{Expr, Literal};
-    // Exactly one given, of carrier type `Int`.
-    if law.givens.len() != 1 {
-        return None;
-    }
-    let given = &law.givens[0];
-    if given.type_name.trim() != "Int" {
-        return None;
-    }
-    let var = given.name.clone();
-    // Conclusion: `subject(var) => true` (the `holds` surface lowers `holds`
-    // to `lhs = true`). The subject takes the given as its only argument.
-    if !matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))) {
-        return None;
-    }
-    let Expr::FnCall(callee, args) = &law.lhs.node else {
-        return None;
-    };
-    if args.len() != 1 || shared::expr_dotted_name(&args[0]).as_deref() != Some(var.as_str()) {
-        return None;
-    }
-    let subject_src = shared::expr_dotted_name(callee)?;
-    // Guard: `Bool.and(<bound>, <bound>)` — one lower, one upper, both on `var`.
-    let when = law.when.as_ref()?;
-    let Expr::FnCall(wcallee, wargs) = &when.node else {
-        return None;
-    };
-    if shared::expr_dotted_name(wcallee).as_deref() != Some("Bool.and") || wargs.len() != 2 {
-        return None;
-    }
-    let mut lo: Option<i64> = None;
-    let mut hi: Option<i64> = None;
-    for conjunct in wargs {
-        match finite_domain_bound(conjunct, &var)? {
-            (false, n) => lo = Some(n),
-            (true, n) => hi = Some(n),
-        }
-    }
-    let (lo, hi) = (lo?, hi?);
-    if hi <= lo {
-        return None;
-    }
-    // Domain-size budget: the kernel `decide` enumerates `HI - LO` ground
-    // cases. 128 (the K5 reciprocal table) is comfortable; cap generously so a
-    // pathological range can never wedge the build (it keeps its fallback).
-    if hi - lo > 4096 {
-        return None;
-    }
-    // Reduction gate: the subject's whole unfold cone must be NON-RECURSIVE, so
-    // each ground case computes out under kernel `decide` (a recursive fn would
-    // stay stuck on an opaque fuel/`partial` term). Same cone ∩ recursion test
-    // the grind rung uses.
-    let cone = shared::law_simp_source_names(ctx, vb, law);
-    let recursive = recursive_pure_fn_names(ctx);
-    if cone.iter().any(|name| recursive.contains(name)) {
-        return None;
-    }
-    Some(FiniteIntDomain {
-        var,
-        lo,
-        hi,
-        subject_lean: aver_name_to_lean(&subject_src),
-    })
-}
-
 /// Whether the finite bounded-Int-domain emit will close this law UNIVERSALLY.
 /// The statement builder reads this (alongside the other conditional
 /// recognizers) to drop the sampled-domain disjunctions (`omit_domain`) and
-/// class the law `universal`, keeping statement and proof in lockstep.
+/// class the law `universal`. This is a ProofIR strategy lookup; shape
+/// recognition and the non-recursive-cone gate already ran in `proof_lower`.
 pub(in crate::codegen::lean) fn recognize_finite_int_domain(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    recognize_finite_int_domain_shape(vb, law, ctx).is_some()
+    matches!(
+        law_strategy_for(ctx, &vb.fn_name, &law.name),
+        Some(crate::ir::ProofStrategy::BoundedIntDomain { .. })
+    )
 }
 
 /// Close a finite bounded-Int-domain law by pure-kernel enumeration: lower the
@@ -630,12 +499,16 @@ fn emit_finite_int_domain_law(
     ctx: &CodegenContext,
     theorem_base: &str,
 ) -> Option<AutoProof> {
-    let FiniteIntDomain {
+    let crate::ir::ProofStrategy::BoundedIntDomain {
         var,
         lo,
         hi,
-        subject_lean,
-    } = recognize_finite_int_domain_shape(vb, law, ctx)?;
+        subject,
+    } = law_strategy_for(ctx, &vb.fn_name, &law.name)?
+    else {
+        return None;
+    };
+    let subject_lean = super::expr::user_fn_path(subject, ctx);
     let v = aver_name_to_lean(&var);
     let count = hi - lo;
     let text = format!(
@@ -686,9 +559,9 @@ fn emit_verify_law_forall_auto_proof_inner(
 
     // Finite bounded-Int-domain laws (the K5 reciprocal seed table): a single
     // `Int` given guarded into a closed interval `[LO, HI)`, closed by pure-
-    // kernel enumeration (`decide` over a bounded-`Nat` forall). Tried first
-    // among the `when`-arms — its guard shape (`LO <= var && var < HI`) is
-    // disjoint from the Peano comparison-bridge / inductive shapes below.
+    // kernel enumeration (`decide` over a bounded-`Nat` forall). ProofIR already
+    // validated its guard/call/cone shape; this first `when` arm only renders
+    // the pinned plan.
     if law.when.is_some()
         && let Some(proof) = emit_finite_int_domain_law(vb, law, ctx, theorem_base)
     {
@@ -715,10 +588,9 @@ fn emit_verify_law_forall_auto_proof_inner(
 
     // Conditional comparison-bridge laws (the `prop_70 leSucc` family):
     // `when <R1(..)> -> <R2(..)> = true` over canonical Peano relations
-    // (`≤`/`<`/`=`). Tried BEFORE the pinned-strategy dispatch because
-    // `classify_law_strategy` never pins `Induction` on a `when`-law (it routes
-    // them to `LinearArithmetic` / `BackendDispatch`), so this is the only point
-    // a conditional law reaches a genuine universal closer. For exactly this
+    // (`≤`/`<`/`=`). Proof lowering pins the comparison plan; this early arm
+    // keeps the specialized bridge stack ahead of generic proof dispatch. For
+    // exactly this
     // recognized shape `emit_verify_law_block` emits the unbounded
     // `∀ givens, when = true -> claim` statement (see
     // `recognize_conditional_comparison_bridge`); every other conditional shape

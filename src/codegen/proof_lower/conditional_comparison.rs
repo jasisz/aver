@@ -47,7 +47,7 @@ fn comparison_call_plan(
     }
     let name = expr_to_dotted_name(&callee.node)?;
     let fn_id = inputs.symbol_table.resolve_fn_id_in(&name, scope)?;
-    let fd = inputs.find_fn_def_in_scope(&name, scope)?;
+    let fd = inputs.find_fn_def_by_id(fn_id)?;
     let (_, operand_type) = fd.params.first()?;
     let owner_scope = inputs.fn_owning_scope(fd);
     let type_def = inputs.find_type_def_in_scope(operand_type, owner_scope)?;
