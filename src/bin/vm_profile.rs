@@ -3,7 +3,7 @@ use std::path::Path;
 
 use aver::ir::{PipelineConfig, TypecheckMode, pipeline};
 use aver::nan_value::Arena;
-use aver::source::{parse_source, require_module_declaration};
+use aver::source::{parse_project_source, require_module_declaration};
 use aver::vm::{self, VM, VmProfileReport};
 
 const WORKFLOW_MODULE_ROOT: &str = "projects/workflow_engine";
@@ -231,7 +231,7 @@ fn run_vm_command(
     let file = app.entry_file();
     let source =
         fs::read_to_string(file).map_err(|e| format!("Cannot open file '{}': {}", file, e))?;
-    let mut items = parse_source(&source).map_err(|e| e.to_string())?;
+    let mut items = parse_project_source(&source, module_root, file).map_err(|e| e.to_string())?;
     require_module_declaration(&items, file).map_err(|e| e.to_string())?;
 
     // Preload dep modules so the entry's `SymbolTable` knows about

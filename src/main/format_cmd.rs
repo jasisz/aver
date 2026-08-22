@@ -6,8 +6,6 @@ use std::process;
 use aver::ast::TopLevel;
 use aver::diagnostics::model::AnalysisReport;
 use aver::diagnostics::needs_format_diagnostic;
-use aver::lexer::Lexer;
-use aver::parser::Parser;
 use aver::types::{Type, parse_type_str_strict};
 use colored::Colorize;
 
@@ -15,6 +13,12 @@ use colored::Colorize;
 pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
     // JSON mode implies --check: it's a report of diffs, never writes.
     let check = check || json;
+
+    // `format` takes no `--module-root`, so the project is the one every
+    // other command assumes without the flag: the working directory. The
+    // formatter has to parse, and parsing a project file means parsing it
+    // under that project's verify-case ceiling.
+    let module_root = aver::source::working_module_root();
 
     let root = Path::new(path);
     let mut files = Vec::new();
@@ -60,18 +64,19 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
                 process::exit(1);
             }
         };
-        let (formatted, violations) = match try_format_source(&src) {
-            Ok(pair) => pair,
-            Err(e) => {
-                let msg = format!("Cannot format '{}': {}", file.display(), e);
-                if json {
-                    emit_fatal_json("format-failed", &msg);
-                } else {
-                    eprintln!("{}", msg.red());
+        let (formatted, violations) =
+            match try_format_project_source(&src, &module_root, &file.to_string_lossy()) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    let msg = format!("Cannot format '{}': {}", file.display(), e);
+                    if json {
+                        emit_fatal_json("format-failed", &msg);
+                    } else {
+                        eprintln!("{}", msg.red());
+                    }
+                    process::exit(1);
                 }
-                process::exit(1);
-            }
-        };
+            };
         if formatted != src {
             if !check && let Err(e) = fs::write(file, &formatted) {
                 eprintln!(
@@ -822,11 +827,11 @@ fn reorder_verify_blocks_tracked(
     out
 }
 
-fn parse_ast_info_checked(source: &str) -> Result<FormatAstInfo, String> {
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
-    let mut parser = Parser::new(tokens);
-    let items = parser.parse().map_err(|e| e.to_string())?;
+fn parse_ast_info_checked(
+    source: &str,
+    ceiling: aver::config::VerifyCaseCeiling,
+) -> Result<FormatAstInfo, String> {
+    let items = aver::source::parse_source_with_verify_ceiling(source, ceiling)?;
 
     let mut info = FormatAstInfo::default();
     for item in items {
@@ -1297,8 +1302,31 @@ fn normalize_inline_decision_fields_impl(lines: Vec<String>) -> Vec<String> {
 /// populate it; callers must not claim precise line ranges.
 /// Subsequent commits migrate each `normalize_*` rule to push to this
 /// vec as they rewrite.
+/// [`try_format_source`] for one of the user's own project files: the parse
+/// the formatter needs honours the verify-case ceiling that project declared,
+/// so a file the project made legal formats as readily as it verifies.
+pub fn try_format_project_source(
+    source: &str,
+    module_root: &str,
+    file: &str,
+) -> Result<(String, Vec<aver::diagnostics::model::FormatViolation>), String> {
+    try_format_source_under(
+        source,
+        aver::source::project_verify_ceiling(module_root, file),
+    )
+}
+
+/// Format source that belongs to no project — the playground's buffers and
+/// the formatter's own fixtures — under the built-in ceiling.
 pub fn try_format_source(
     source: &str,
+) -> Result<(String, Vec<aver::diagnostics::model::FormatViolation>), String> {
+    try_format_source_under(source, aver::config::VerifyCaseCeiling::compiled_default())
+}
+
+fn try_format_source_under(
+    source: &str,
+    ceiling: aver::config::VerifyCaseCeiling,
 ) -> Result<(String, Vec<aver::diagnostics::model::FormatViolation>), String> {
     let mut violations: Vec<aver::diagnostics::model::FormatViolation> = Vec::new();
 
@@ -1316,7 +1344,7 @@ pub fn try_format_source(
 
     let lines = normalize_source_lines_tracked(source, &mut violations);
     let normalized = lines.join("\n");
-    let ast_info = parse_ast_info_checked(&normalized)?;
+    let ast_info = parse_ast_info_checked(&normalized, ceiling)?;
 
     // 3) Split into top-level blocks and co-locate verify blocks under their functions.
     let blocks = split_top_level_blocks(&lines, Some(&ast_info));

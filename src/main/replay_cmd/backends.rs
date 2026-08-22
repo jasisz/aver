@@ -284,8 +284,13 @@ pub(super) fn run_wasm_gc_replay(
 /// the function isn't found at module level — same fallback the VM
 /// path uses through its already-parsed AST.
 #[cfg(feature = "wasm")]
-pub(super) fn find_fn_line_in_file(program_file: &str, name: &str) -> usize {
-    match read_file(program_file).and_then(|src| parse_file(&src)) {
+pub(super) fn find_fn_line_in_file(
+    program_file: &str,
+    replay_module_root: &str,
+    name: &str,
+) -> usize {
+    match read_file(program_file).and_then(|src| parse_file(&src, replay_module_root, program_file))
+    {
         Ok(items) => find_fn_line(&items, name),
         Err(_) => 1,
     }
@@ -311,7 +316,8 @@ pub(super) fn run_self_host_replay(
     // discharged literal smart-constructor call means the guest resolver
     // would build a `Result` the host-checked source no longer expects.
     if let Ok(source) = super::super::shared::read_file(&replay_program_file)
-        && let Ok(items) = super::super::shared::parse_file(&source)
+        && let Ok(items) =
+            super::super::shared::parse_file(&source, replay_module_root, &replay_program_file)
     {
         super::super::commands::reject_literal_refinement_discharge(
             &items,

@@ -20,8 +20,6 @@ struct ExpandedLawCases {
 }
 
 impl Parser {
-    const VERIFY_LAW_MAX_CASES: usize = 10_000;
-
     fn current_ident_is(&self, expected: &str) -> bool {
         matches!(&self.current().kind, TokenKind::Ident(name) if name == expected)
     }
@@ -154,11 +152,13 @@ impl Parser {
 
     fn expand_law_cases(
         &self,
+        fn_name: &str,
         givens: &[VerifyGiven],
         when: Option<&Spanned<Expr>>,
         left: &Spanned<Expr>,
         right: &Spanned<Expr>,
     ) -> Result<ExpandedLawCases, ParseError> {
+        let max_cases = self.verify_max_cases_for(fn_name);
         let mut total = 1usize;
         for given in givens {
             let len = Self::domain_len(&given.domain);
@@ -171,14 +171,13 @@ impl Parser {
             total = total.checked_mul(len).ok_or_else(|| {
                 self.error(format!(
                     "Law verify expands to too many cases (> {})",
-                    Self::VERIFY_LAW_MAX_CASES
+                    max_cases
                 ))
             })?;
-            if total > Self::VERIFY_LAW_MAX_CASES {
+            if total > max_cases {
                 return Err(self.error(format!(
                     "Law verify expands to {} cases (max {})",
-                    total,
-                    Self::VERIFY_LAW_MAX_CASES
+                    total, max_cases
                 )));
             }
         }
@@ -451,7 +450,7 @@ impl Parser {
                     cases: expanded_cases,
                     sample_guards,
                     case_givens: expanded_givens,
-                } = self.expand_law_cases(&givens, when.as_ref(), &left, &right)?;
+                } = self.expand_law_cases(&fn_name, &givens, when.as_ref(), &left, &right)?;
                 // All generated cases share the law assertion's span
                 let law_span = SourceSpan {
                     line: law_start_line,
@@ -595,6 +594,7 @@ impl Parser {
                             | crate::ast::VerifyGivenDomain::IntRange { .. }
                     )
                 }) {
+                    let max_cases = self.verify_max_cases_for(&fn_name);
                     let mut total = cases.len();
                     for g in &cases_givens {
                         let len = Self::domain_len(&g.domain);
@@ -604,15 +604,20 @@ impl Parser {
                                 g.name
                             )));
                         }
+                        // A product that overflows `usize` is past the ceiling
+                        // by any reading, and the ceiling it is past is this
+                        // block's own — never the compiled-in one.
                         total = total.checked_mul(len).ok_or_else(|| {
-                            self.error("verify block expands to too many cases".to_string())
+                            self.error(format!(
+                                "verify block expands to too many cases (> {})",
+                                max_cases
+                            ))
                         })?;
                     }
-                    if total > Self::VERIFY_LAW_MAX_CASES {
+                    if total > max_cases {
                         return Err(self.error(format!(
                             "verify block expands to {} cases (max {})",
-                            total,
-                            Self::VERIFY_LAW_MAX_CASES
+                            total, max_cases
                         )));
                     }
 

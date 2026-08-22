@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use aver::diagnostics::context::build_context_for_items;
-use aver::source::{parse_source, require_module_declaration, resolve_module_source};
+use aver::source::{parse_project_source, require_module_declaration, resolve_module_source};
 
 pub(super) use aver::diagnostics::context::FileContext;
 
@@ -54,7 +54,7 @@ fn collect_contexts_with_source(
         },
     };
 
-    let items = match parse_source(&source) {
+    let items = match parse_project_source(&source, module_root, file) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("Parse error in '{}': {}", file, e);

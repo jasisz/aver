@@ -21,7 +21,7 @@ use crate::bench::manifest::{BenchTarget, Manifest};
 use crate::bench::report::{BackendInfo, BenchReport, HostInfo, IterationStats, ScenarioMetadata};
 use crate::ir::{PipelineConfig, PipelineStage, TypecheckMode};
 use crate::nan_value::Arena;
-use crate::source::parse_source;
+use crate::source::parse_project_source;
 use crate::vm;
 
 #[derive(Debug)]
@@ -68,7 +68,8 @@ fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
 
     let source = std::fs::read_to_string(&manifest.entry)
         .map_err(|e| RunError::Read(format!("{}: {}", entry_str, e)))?;
-    let mut items: Vec<TopLevel> = parse_source(&source).map_err(RunError::Parse)?;
+    let mut items: Vec<TopLevel> =
+        parse_project_source(&source, &module_root, &entry_str).map_err(RunError::Parse)?;
 
     // Pre-load dep modules so the entry pipeline's `SymbolTable` knows
     // about every cross-module fn. Mirrors what `aver run` / `aver
@@ -731,8 +732,9 @@ fn build_report(
 /// so in practice the field is always populated for successful runs.
 fn compute_visible_allocs(manifest: &Manifest) -> Option<usize> {
     let source = std::fs::read_to_string(&manifest.entry).ok()?;
-    let mut items: Vec<TopLevel> = parse_source(&source).ok()?;
     let module_root = manifest.module_root.to_string_lossy().into_owned();
+    let mut items: Vec<TopLevel> =
+        parse_project_source(&source, &module_root, &manifest.entry.to_string_lossy()).ok()?;
     let res = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {

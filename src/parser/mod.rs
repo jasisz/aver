@@ -32,6 +32,12 @@ pub struct Parser {
     /// the practical "no human writes a 1000-deep expression and
     /// fuzz keeps finding them".
     recursion_depth: u32,
+    /// Ceiling on the number of cases one verify block may expand into,
+    /// resolved per function because `[[verify.costly]]` scopes itself by
+    /// function name. Defaults to
+    /// [`crate::config::VerifyCaseCeiling::compiled_default`]; the project
+    /// loader installs the one its `aver.toml` asks for.
+    verify_ceiling: crate::config::VerifyCaseCeiling,
 }
 
 /// Iron — B4: hard cap on parser recursion depth. 128 is comfortably

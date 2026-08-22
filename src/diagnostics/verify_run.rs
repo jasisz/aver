@@ -15,7 +15,8 @@ use crate::ast::TopLevel;
 use crate::checker::{VerifyCaseOutcome, VerifyResult};
 
 use super::factories::{
-    verify_mismatch_diagnostic, verify_runtime_error_diagnostic, verify_unexpected_err_diagnostic,
+    verify_declined_diagnostic, verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
+    verify_unexpected_err_diagnostic,
 };
 use super::model::{Diagnostic, VerifyBlockResult, VerifySummary};
 use super::vm_verify;
@@ -196,7 +197,9 @@ fn map_results_to_diagnostics(
             passed: result.passed,
             failed: result.failed,
             skipped: result.skipped,
-            total: result.passed + result.failed + result.skipped,
+            declined: result.declined,
+            total: result.passed + result.failed + result.skipped + result.declined,
+            costly_cases: costly_cases_of(&result),
             declared_passed,
             declared_failed,
             hostile_passed,
@@ -292,6 +295,25 @@ fn map_results_to_diagnostics(
                 | VerifyCaseOutcome::Skipped
                 | VerifyCaseOutcome::SkippedAfterBaseFail
                 | VerifyCaseOutcome::Mismatch { .. } => {}
+                VerifyCaseOutcome::Declined {
+                    reason,
+                    steps,
+                    limit,
+                    raised_by,
+                } => {
+                    diagnostics.push(verify_declined_diagnostic(
+                        file_label,
+                        source,
+                        &result.fn_name,
+                        &case.case_expr,
+                        reason,
+                        *steps,
+                        *limit,
+                        raised_by.as_deref(),
+                        line,
+                        col,
+                    ));
+                }
                 VerifyCaseOutcome::UnexpectedErr { err_repr } => {
                     diagnostics.push(verify_unexpected_err_diagnostic(
                         file_label,
@@ -321,6 +343,32 @@ fn map_results_to_diagnostics(
     (diagnostics, VerifySummary { blocks })
 }
 
+/// The cases of `result` that needed more than the project's default budget:
+/// exactly the ones a `[[verify.costly]]` entry bought.
+///
+/// A declined case is excluded — it did not run, so it bought nothing; it is
+/// reported as a decline instead.
+pub fn costly_cases_of(
+    result: &crate::checker::VerifyResult,
+) -> Vec<crate::diagnostics::model::VerifyCostlyCase> {
+    let Some(raised_by) = result.budget.raised_by.as_ref() else {
+        return Vec::new();
+    };
+    result
+        .case_results
+        .iter()
+        .filter(|case| !matches!(case.outcome, VerifyCaseOutcome::Declined { .. }))
+        .filter(|case| case.steps > result.budget.default_limit)
+        .map(|case| crate::diagnostics::model::VerifyCostlyCase {
+            case_index: case.case_index,
+            case: case.case_expr.clone(),
+            steps: case.steps,
+            limit: result.budget.limit,
+            raised_by: raised_by.clone(),
+        })
+        .collect()
+}
+
 /// Bucket case outcomes by `from_hostile` so the per-block summary can
 /// report declared-vs-hostile pass/fail breakdown. Skipped cases (when
 /// guard returned false) are not counted in either bucket — they're in
@@ -335,11 +383,17 @@ fn split_hostile_counts(
     let mut hostile_passed = 0usize;
     let mut hostile_failed = 0usize;
     for case in cases {
-        let passed = matches!(case.outcome, VerifyCaseOutcome::Pass);
-        let skipped = matches!(case.outcome, VerifyCaseOutcome::Skipped);
-        if skipped {
-            continue;
-        }
+        // Exhaustive on purpose: a declined case is neither a pass nor a
+        // failure, and must not be bucketed as either.
+        let passed = match &case.outcome {
+            VerifyCaseOutcome::Pass => true,
+            VerifyCaseOutcome::Mismatch { .. }
+            | VerifyCaseOutcome::RuntimeError { .. }
+            | VerifyCaseOutcome::UnexpectedErr { .. } => false,
+            VerifyCaseOutcome::Skipped
+            | VerifyCaseOutcome::SkippedAfterBaseFail
+            | VerifyCaseOutcome::Declined { .. } => continue,
+        };
         match (case.from_hostile, passed) {
             (false, true) => declared_passed += 1,
             (false, false) => declared_failed += 1,

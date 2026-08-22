@@ -4,7 +4,6 @@ use std::io::Read;
 use colored::Colorize;
 
 use aver::ast::TopLevel;
-use aver::source::parse_source;
 use aver::types::checker::TypeError;
 use aver::value::Value;
 use aver::vm;
@@ -13,18 +12,26 @@ pub(super) fn read_file(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Cannot open file '{}': {}", path, e))
 }
 
-pub(super) fn parse_file(source: &str) -> Result<Vec<TopLevel>, String> {
-    parse_source(source)
+/// Parse one of the user's own project files, under the verify-case ceiling
+/// that project declared for it.
+///
+/// Every command that reads a `.av` off disk comes through here, so the
+/// ceiling is the same one `aver verify`'s loader applies. A command with its
+/// own opinion would accept or refuse files the others do not — which is the
+/// disagreement `[verify] max-cases` exists to settle, not to create.
+pub(super) fn parse_file(
+    source: &str,
+    module_root: &str,
+    file: &str,
+) -> Result<Vec<TopLevel>, String> {
+    aver::source::parse_project_source(source, module_root, file)
 }
 
 pub(super) fn resolve_module_root(module_root: Option<&str>) -> String {
-    if let Some(root) = module_root {
-        return root.to_string();
+    match module_root {
+        Some(root) => root.to_string(),
+        None => aver::source::working_module_root(),
     }
-    std::env::current_dir()
-        .ok()
-        .and_then(|p| p.into_os_string().into_string().ok())
-        .unwrap_or_else(|| ".".to_string())
 }
 
 pub(super) fn load_runtime_policy(

@@ -1,0 +1,19 @@
+module Costly
+    intent =
+        "A cheap case and an expensive one, so a file exists whose answer"
+        "depends on the budget the project grants it rather than on anything"
+        "the source says. The expensive case is honest work — a countdown of"
+        "400,000 steps — not a loop that never ends, which is what the"
+        "per-case cap is there to stop."
+    exposes [countdown]
+    effects []
+
+fn countdown(n: Int, acc: Int) -> Int
+    ? "Counts n down to zero, counting acc up; the loop is the whole cost."
+    match n < 1
+        true  -> acc
+        false -> countdown(n - 1, acc + 1)
+
+verify countdown
+    countdown(10, 0) => 10
+    countdown(400000, 0) => 400000

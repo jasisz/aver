@@ -25,7 +25,7 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
 
     for file in &inputs {
         let shown_path = display_check_path(file, &module_root);
-        match analyze_file(file, &shown_path) {
+        match analyze_file(file, &module_root, &shown_path) {
             Ok(summary) => {
                 if json {
                     let mut report = AnalysisReport::new(summary.file_label.clone());
@@ -100,9 +100,9 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
     }
 }
 
-fn analyze_file(path: &str, shown_path: &str) -> Result<WhySummary, String> {
+fn analyze_file(path: &str, module_root: &str, shown_path: &str) -> Result<WhySummary, String> {
     let source = read_file(path)?;
-    let items = parse_file(&source)?;
+    let items = parse_file(&source, module_root, path)?;
     Ok(summarize(&items, &source, shown_path))
 }
 

@@ -628,6 +628,78 @@ pub fn verify_runtime_error_diagnostic(
     }
 }
 
+/// A verify case that ran out of its step budget.
+///
+/// Deliberately its own slug rather than a `verify-runtime-error`: the case
+/// did not crash and did not disagree, it was not answered. The repair is a
+/// project decision (`aver.toml`), not a source fix, so the two must not
+/// share a diagnostic.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_declined_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    reason: &str,
+    steps: u64,
+    limit: u64,
+    raised_by: Option<&str>,
+    line: usize,
+    col: usize,
+) -> Diagnostic {
+    let mut fields = vec![
+        ("block", block_name.to_string()),
+        ("case", case_expr.to_string()),
+        ("reason", reason.to_string()),
+        ("steps", steps.to_string()),
+        ("budget", limit.to_string()),
+    ];
+    if let Some(entry) = raised_by {
+        fields.push((
+            "budget-raised-by",
+            format!("aver.toml [[verify.costly]] fn = \"{}\"", entry),
+        ));
+    }
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-declined",
+        summary: "case not answered".to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields,
+        conflict: None,
+        repair: Repair {
+            primary: Some(format!(
+                "raise the budget for this fn in aver.toml: [[verify.costly]] fn = \"{}\", step-limit = {}, reason = \"why this case is expensive\"",
+                block_name.split_whitespace().next().unwrap_or(block_name),
+                limit.saturating_mul(4)
+            )),
+            alternatives: Vec::new(),
+            example: None,
+        },
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-declined".to_string(),
+            }),
+        ),
+        related: Vec::new(),
+        from_hostile: false,
+    }
+}
+
 pub fn verify_unexpected_err_diagnostic(
     file: &str,
     source: &str,

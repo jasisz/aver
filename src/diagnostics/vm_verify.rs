@@ -15,8 +15,8 @@ use crate::ast::{
     Expr, FnBody, FnDef, SourceSpan, Spanned, TopLevel, VerifyBlock, VerifyGiven, VerifyKind,
 };
 use crate::checker::{
-    VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult, expr_to_str,
-    merge_verify_blocks,
+    VerifyBudgetInfo, VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult,
+    expr_to_str, merge_verify_blocks,
 };
 use crate::config::ProjectConfig;
 use crate::nan_value::{Arena, NanValueConvert};
@@ -27,16 +27,6 @@ use crate::types::checker::hostile_effects::hostile_profiles_for;
 use crate::value::{Value, aver_repr, list_from_vec};
 use crate::verify_law::expand::{ExpandedCase, ExpansionMode, expand_law_cases};
 use crate::vm;
-
-/// Mirror of the parser's declared-side cap (`Parser::VERIFY_LAW_MAX_CASES`).
-/// Hostile expansion is unbounded *in principle* — value-side boundary
-/// sets multiply with the per-method profile cartesian — so a fn with
-/// 3 classified effects (5 × 4 × 3 = 60 worlds) and a `given x: Int = 0..100`
-/// would balloon to 6_000 cases per declared case. We cap at the same
-/// 10_000 the parser uses for declared expansion; over-budget blocks
-/// fail with a runtime error pointing at the law's source line so the
-/// user can either tighten the `given` domain or drop a `when` guard.
-pub const VERIFY_HOSTILE_MAX_CASES: usize = 10_000;
 
 /// Replace `block.cases` with the hostile expansion of its law template,
 /// then layer effect-side hostile on top: each case is multiplied by the
@@ -51,10 +41,15 @@ pub const VERIFY_HOSTILE_MAX_CASES: usize = 10_000;
 /// applies to both forms since classified effects are independent of
 /// `given` shape.
 ///
-/// Returns `Err` when the cartesian would exceed
-/// `VERIFY_HOSTILE_MAX_CASES`; mirrors the parser's declared-side cap so
-/// `--hostile` can't accidentally produce a multi-hour run from a small
-/// source.
+/// Returns `Err` when the cartesian would exceed `max_cases` — the same
+/// ceiling the parser applies to declared expansion (`[verify] max-cases`,
+/// default [`crate::config::DEFAULT_VERIFY_MAX_CASES`]), because hostile
+/// expansion is unbounded *in principle*: value-side boundary sets multiply
+/// with the per-method profile cartesian, so a fn with 3 classified effects
+/// (5 × 4 × 3 = 60 worlds) and a `given x: Int = 0..100` would balloon to
+/// 6_000 cases per declared case. Over-budget blocks fail with a runtime
+/// error pointing at the law's source line so the user can tighten the
+/// `given` domain, drop a `when` guard, or raise `max-cases` deliberately.
 type HostileCaseTuple = (
     Spanned<Expr>,
     Spanned<Expr>,
@@ -72,6 +67,7 @@ pub(crate) fn apply_hostile_expansion(
         block,
         items,
         &crate::capability::CapabilityRegistry::default(),
+        crate::config::DEFAULT_VERIFY_MAX_CASES,
     )
 }
 
@@ -79,6 +75,7 @@ pub(crate) fn apply_hostile_expansion_with_registry(
     block: &mut VerifyBlock,
     items: &[TopLevel],
     capabilities: &crate::capability::CapabilityRegistry,
+    max_cases: usize,
 ) -> Result<(), String> {
     let value_expanded: Vec<HostileCaseTuple> = match &block.kind {
         VerifyKind::Law(law) => expand_law_cases(law, ExpansionMode::Hostile)
@@ -122,14 +119,11 @@ pub(crate) fn apply_hostile_expansion_with_registry(
         .len()
         .checked_mul(per_value)
         .and_then(|n| n.checked_mul(order_factor));
-    if projected
-        .map(|n| n > VERIFY_HOSTILE_MAX_CASES)
-        .unwrap_or(true)
-    {
+    if projected.map(|n| n > max_cases).unwrap_or(true) {
         return Err(format!(
             "verify '{}' under --hostile expands to more than {} cases ({} declared/boundary cases × {} adversarial worlds × {} eval orders). Tighten the `given` domain, add a `when` precondition, or drop hostile mode for this law.",
             block.fn_name,
-            VERIFY_HOSTILE_MAX_CASES,
+            max_cases,
             value_expanded.len(),
             per_value,
             order_factor,
@@ -736,8 +730,19 @@ pub fn run_verify_for_items_vm_with_mode_and_bindings(
     }
 
     if mode == ExpansionMode::Hostile {
+        // The ceiling bounds the `--hostile` cartesian exactly as it bounds
+        // the parser's declared expansion — one ceiling, two expanders — and
+        // it is resolved per block for the same reason the parser resolves
+        // it per block: `[[verify.costly]]` names one function.
+        let key = costly_glob_key(source_file, base_dir);
         for block in &mut verify_blocks {
-            apply_hostile_expansion_with_registry(block, &items, &tc_result.capabilities)?;
+            let max_cases = max_cases_for(config.as_ref(), &block.fn_name, &key);
+            apply_hostile_expansion_with_registry(
+                block,
+                &items,
+                &tc_result.capabilities,
+                max_cases,
+            )?;
         }
     }
 
@@ -767,32 +772,164 @@ pub fn run_verify_for_items_vm_with_mode_and_bindings(
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
-    machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
     configure_verify_capabilities(&mut machine, &tc_result.capabilities, provider_bindings)?;
+    // One budget per block, resolved before the config is handed to the VM's
+    // runtime policy. `run_verify_vm` installs it per block, so two fns in
+    // one file can be expensive on different terms.
+    let budgets = budgets_for_plans(&plans, config.as_ref(), source_file, base_dir);
+    let raised_by: Vec<Option<String>> = budgets
+        .iter()
+        .map(|budget| budget.raised_by_fn(config.as_ref()))
+        .collect();
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }
 
     let mut results = Vec::new();
-    for plan in &plans {
-        results.push(run_verify_vm(plan, &mut machine, &tc_result.capabilities));
+    for ((plan, budget), raised) in plans.iter().zip(&budgets).zip(&raised_by) {
+        results.push(run_verify_vm(
+            plan,
+            &mut machine,
+            &tc_result.capabilities,
+            budget,
+            raised.as_deref(),
+        ));
     }
     Ok(results)
 }
 
-/// Per-`run_named_function` opcode cap installed before evaluating
-/// verify cases. AFL nightly found tail-recursive shapes
-/// (`fn id(x) -> Int = id(-7)` and friends — byte-havoc dropping the
-/// terminating arm) where Aver's TCO turns infinite recursion into a
-/// goto-loop with no stack growth, so without this cap the VM
-/// dispatch loop never terminates. 1M opcodes is 100× above what
-/// real verify cases need (per-case eval is normally <10k steps on
-/// the bench suite) and short enough that an unconverging case bails
-/// in ~5-50ms even on a slow shared CI runner — well under AFL's
-/// default `AFL_HANG_TMOUT=1000ms`, so fuzz-discovered infinite loops
-/// surface as proper `VmError::StepLimit` instead of AFL hangs. The
-/// cap resets per `run_named_function`, so cases don't share budget.
-const VERIFY_VM_STEP_LIMIT: u64 = 1_000_000;
+/// The step budget one verify block's cases run under, and where it came
+/// from.
+///
+/// One number decides both lanes: the VM installs `limit` as its per-call
+/// opcode cap, and the wasm-gc lane multiplies the same number by
+/// [`crate::diagnostics::wasm_gc_verify::WASM_FUEL_PER_VM_STEP`] to get its
+/// per-case fuel. A case is runnable on both lanes or on neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaseBudget {
+    /// The budget in force.
+    pub limit: u64,
+    /// The project default, so a report can say which cases needed more than
+    /// it — the ones a raised budget actually bought.
+    pub default_limit: u64,
+    /// Index of the `[[verify.costly]]` entry that raised `limit`, if any.
+    pub raised_by: Option<usize>,
+}
+
+impl CaseBudget {
+    /// The budget with no project configuration at all — what the fuzz
+    /// targets and every embedder that passes `config: None` get.
+    pub fn compiled_default() -> Self {
+        CaseBudget {
+            limit: crate::config::DEFAULT_VERIFY_STEP_LIMIT,
+            default_limit: crate::config::DEFAULT_VERIFY_STEP_LIMIT,
+            raised_by: None,
+        }
+    }
+
+    /// The budget for one function's verify block in one file.
+    pub fn resolve(config: Option<&ProjectConfig>, fn_name: &str, file_key: &str) -> Self {
+        let Some(config) = config else {
+            return Self::compiled_default();
+        };
+        let (limit, raised_by) = config.verify_budget_for(fn_name, file_key);
+        CaseBudget {
+            limit,
+            default_limit: config.verify_step_limit(),
+            raised_by,
+        }
+    }
+
+    /// Name of the `[[verify.costly]]` entry that raised this budget.
+    pub fn raised_by_fn(&self, config: Option<&ProjectConfig>) -> Option<String> {
+        let idx = self.raised_by?;
+        Some(config?.verify.costly.get(idx)?.fn_name.clone())
+    }
+}
+
+/// The ceiling on one function's verify-case expansion in one file — the
+/// project's, or the compiled-in default for an embedder that passes no
+/// config at all.
+pub fn max_cases_for(config: Option<&ProjectConfig>, fn_name: &str, file_key: &str) -> usize {
+    match config {
+        Some(config) => config.verify_max_cases_for(fn_name, file_key),
+        None => crate::config::DEFAULT_VERIFY_MAX_CASES,
+    }
+}
+
+/// The path `[[verify.costly]].files` globs are matched against: the source
+/// file relative to the module root when it lives under it, else the path as
+/// given. Same anchored form `[[check.suppress]].files` matches against, so
+/// one project writes one kind of glob.
+pub fn costly_glob_key(source_file: &str, base_dir: Option<&str>) -> String {
+    let path = std::path::Path::new(source_file);
+    if let Some(base) = base_dir
+        && let Ok(rel) = path.strip_prefix(base)
+    {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
+    source_file.replace('\\', "/")
+}
+
+/// Resolve one budget per verify block, in `plans` order.
+fn budgets_for_plans(
+    plans: &[VmVerifyPlan],
+    config: Option<&ProjectConfig>,
+    source_file: &str,
+    base_dir: Option<&str>,
+) -> Vec<CaseBudget> {
+    let key = costly_glob_key(source_file, base_dir);
+    plans
+        .iter()
+        .map(|plan| CaseBudget::resolve(config, &plan.block.fn_name, &key))
+        .collect()
+}
+
+/// Why a verify helper call produced no value.
+enum VerifyCallFailure {
+    /// The VM stopped the call at its step budget. Distinct from every other
+    /// error because it is the one that means "we did not answer" rather
+    /// than "the answer is wrong".
+    StepLimit { limit: u64 },
+    /// Anything else, already rendered for the user.
+    Error(String),
+}
+
+impl VerifyCallFailure {
+    fn message(&self) -> String {
+        match self {
+            VerifyCallFailure::StepLimit { limit } => {
+                format!("VM step limit exceeded ({} steps)", limit)
+            }
+            VerifyCallFailure::Error(message) => message.clone(),
+        }
+    }
+}
+
+impl From<crate::vm::VmError> for VerifyCallFailure {
+    fn from(error: crate::vm::VmError) -> Self {
+        match error {
+            crate::vm::VmError::StepLimit { limit, .. } => VerifyCallFailure::StepLimit { limit },
+            other => VerifyCallFailure::Error(other.to_string()),
+        }
+    }
+}
+
+/// The sentence a declined case carries. Names the budget and, when the
+/// project raised it, the entry that did — so the reader knows whether the
+/// answer is "raise it" or "it was already raised and is still not enough".
+pub fn decline_reason(budget: &CaseBudget, raised_by_fn: Option<&str>) -> String {
+    match raised_by_fn {
+        Some(name) => format!(
+            "the verify case exceeded its step budget of {} steps, raised by aver.toml [[verify.costly]] fn = \"{}\", so there is no observed value to pin",
+            budget.limit, name
+        ),
+        None => format!(
+            "the verify case exceeded its step budget of {} steps, so there is no observed value to pin; raise it for this fn with an aver.toml [[verify.costly]] entry",
+            budget.limit
+        ),
+    }
+}
 
 fn configure_verify_capabilities(
     machine: &mut vm::VM,
@@ -887,8 +1024,17 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
     }
 
     if mode == ExpansionMode::Hostile {
+        // See the disk-loader path: one ceiling for both expanders, resolved
+        // per block.
+        let key = costly_glob_key(source_file, None);
         for block in &mut verify_blocks {
-            apply_hostile_expansion_with_registry(block, &items, &tc_result.capabilities)?;
+            let max_cases = max_cases_for(config.as_ref(), &block.fn_name, &key);
+            apply_hostile_expansion_with_registry(
+                block,
+                &items,
+                &tc_result.capabilities,
+                max_cases,
+            )?;
         }
     }
 
@@ -917,15 +1063,28 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
-    machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
     configure_verify_capabilities(&mut machine, &tc_result.capabilities, provider_bindings)?;
+    // One budget per block, resolved before the config is handed to the VM's
+    // runtime policy. `run_verify_vm` installs it per block, so two fns in
+    // one file can be expensive on different terms.
+    let budgets = budgets_for_plans(&plans, config.as_ref(), source_file, None);
+    let raised_by: Vec<Option<String>> = budgets
+        .iter()
+        .map(|budget| budget.raised_by_fn(config.as_ref()))
+        .collect();
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }
 
     let mut results = Vec::new();
-    for plan in &plans {
-        results.push(run_verify_vm(plan, &mut machine, &tc_result.capabilities));
+    for ((plan, budget), raised) in plans.iter().zip(&budgets).zip(&raised_by) {
+        results.push(run_verify_vm(
+            plan,
+            &mut machine,
+            &tc_result.capabilities,
+            budget,
+            raised.as_deref(),
+        ));
     }
     Ok(results)
 }
@@ -1147,16 +1306,28 @@ fn find_trace_underlying_fn_call(node: &Expr) -> Option<Spanned<Expr>> {
 }
 
 fn apply_trace_projection(
-    helper_result: Result<VmVerifyEval, String>,
+    helper_result: Result<VmVerifyEval, VerifyCallFailure>,
     original_lhs: &Spanned<Expr>,
     collected: &[Value],
     coords: &[crate::vm::runtime::TraceCoord],
     trace_mode: bool,
-) -> Result<VmVerifyEval, String> {
+) -> Result<VmVerifyEval, VerifyCallFailure> {
     if !trace_mode {
         return helper_result;
     }
     let helper_result = helper_result?;
+    project_trace_shape(helper_result, original_lhs, collected, coords)
+        .map_err(VerifyCallFailure::Error)
+}
+
+/// The projection itself, once the helper has produced a value. Its errors
+/// are all "this trace shape is not projectable", never a budget outcome.
+fn project_trace_shape(
+    helper_result: VmVerifyEval,
+    original_lhs: &Spanned<Expr>,
+    collected: &[Value],
+    coords: &[crate::vm::runtime::TraceCoord],
+) -> Result<VmVerifyEval, String> {
     if matches!(&original_lhs.node, Expr::Attr(_, f) if f == "result") {
         return Ok(helper_result);
     }
@@ -1498,27 +1669,29 @@ fn interp_value_to_str(value: &Value) -> Option<String> {
 
 // ─── VM helpers + oracle stubs ────────────────────────────────────────────────
 
-fn vm_call_verify_helper(machine: &mut vm::VM, fn_name: &str) -> Result<VmVerifyEval, String> {
+fn vm_call_verify_helper(
+    machine: &mut vm::VM,
+    fn_name: &str,
+) -> Result<VmVerifyEval, VerifyCallFailure> {
     let value = machine
-        .run_named_function(fn_name, &[])
-        .map_err(|e| e.to_string())?
+        .run_named_function(fn_name, &[])?
         .to_value(&machine.arena);
 
     match value {
         Value::Ok(inner) => Ok(VmVerifyEval::Value(*inner)),
         Value::Err(inner) => Ok(VmVerifyEval::ErrProp(*inner)),
-        other => Err(format!(
+        other => Err(VerifyCallFailure::Error(format!(
             "verify helper '{}' returned unexpected shape: {}",
             fn_name,
             aver_repr(&other)
-        )),
+        ))),
     }
 }
 
-fn vm_call_guard_helper(machine: &mut vm::VM, fn_name: &str) -> Result<Value, String> {
+fn vm_call_guard_helper(machine: &mut vm::VM, fn_name: &str) -> Result<Value, VerifyCallFailure> {
     machine
         .run_named_function(fn_name, &[])
-        .map_err(|e| e.to_string())
+        .map_err(VerifyCallFailure::from)
         .map(|value| value.to_value(&machine.arena))
 }
 
@@ -1634,11 +1807,17 @@ fn run_verify_vm(
     plan: &VmVerifyPlan,
     machine: &mut vm::VM,
     capabilities: &crate::capability::CapabilityRegistry,
+    budget: &CaseBudget,
+    raised_by: Option<&str>,
 ) -> VerifyResult {
     let block = &plan.block;
+    // Per-case cap, installed per block: the VM resets the counter at the top
+    // of every `run_named_function`, so cases never share it.
+    machine.set_step_limit(Some(budget.limit));
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
+    let mut declined = 0;
     let mut failures = Vec::new();
     let mut case_results = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
@@ -1671,6 +1850,12 @@ fn run_verify_vm(
     {
         let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
         let span = block.case_spans.get(idx).cloned();
+        // The largest single evaluation this case needed — guard, left or
+        // right. The budget is a per-call cap, so this is the number it is
+        // measured against, and the one that answers "would the default have
+        // declined this case?". Read back off the VM after each call,
+        // because the counter resets on the next one.
+        let mut case_steps: u64 = 0;
         let from_hostile = block
             .case_hostile_origins
             .get(idx)
@@ -1732,6 +1917,7 @@ fn run_verify_vm(
                 from_hostile,
                 hostile_profile,
                 expected_value: None,
+                steps: case_steps,
             });
             continue;
         }
@@ -1778,6 +1964,7 @@ fn run_verify_vm(
 
         if let Some(guard_name) = &case_fns.guard {
             let guard_result = vm_call_guard_helper(machine, guard_name);
+            case_steps = case_steps.max(machine.last_step_count());
             // Drain any trace events emitted while the guard ran so
             // they don't bleed into the case's trace assertions. The
             // public wrapper also stops trace collection as a side
@@ -1810,6 +1997,7 @@ fn run_verify_vm(
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
                         expected_value: None,
+                        steps: case_steps,
                     });
                     continue;
                 }
@@ -1828,6 +2016,7 @@ fn run_verify_vm(
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
                         expected_value: None,
+                        steps: case_steps,
                     });
                     continue;
                 }
@@ -1846,13 +2035,36 @@ fn run_verify_vm(
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
                         expected_value: None,
+                        steps: case_steps,
+                    });
+                    continue;
+                }
+                Err(VerifyCallFailure::StepLimit { .. }) => {
+                    cleanup(machine);
+                    declined += 1;
+                    case_results.push(VerifyCaseResult {
+                        outcome: VerifyCaseOutcome::Declined {
+                            reason: decline_reason(budget, raised_by),
+                            steps: case_steps,
+                            limit: budget.limit,
+                            raised_by: raised_by.map(str::to_string),
+                        },
+                        span,
+                        case_expr: case_str,
+                        case_index: idx,
+                        case_total,
+                        law_context,
+                        from_hostile,
+                        hostile_profile: hostile_profile.clone(),
+                        expected_value: None,
+                        steps: case_steps,
                     });
                     continue;
                 }
                 Err(e) => {
                     cleanup(machine);
                     failed += 1;
-                    let error = format!("guard error: {}", e);
+                    let error = format!("guard error: {}", e.message());
                     failures.push((failure_case, String::new(), error.clone()));
                     case_results.push(VerifyCaseResult {
                         outcome: VerifyCaseOutcome::RuntimeError { error },
@@ -1864,6 +2076,7 @@ fn run_verify_vm(
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
                         expected_value: None,
+                        steps: case_steps,
                     });
                     continue;
                 }
@@ -1887,6 +2100,7 @@ fn run_verify_vm(
         // non-trace blocks — they're only consumed by the trace
         // projection path below.
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
+        case_steps = case_steps.max(machine.last_step_count());
         let (lhs_trace_events, lhs_trace_coords): (
             Vec<Value>,
             Vec<crate::vm::runtime::TraceCoord>,
@@ -1908,6 +2122,7 @@ fn run_verify_vm(
         );
 
         let right_result = vm_call_verify_helper(machine, &case_fns.right);
+        case_steps = case_steps.max(machine.last_step_count());
 
         if has_stubs {
             machine.clear_oracle_stubs();
@@ -1915,6 +2130,31 @@ fn run_verify_vm(
         machine.set_reverse_independent_eval(false);
 
         match (left_result, right_result) {
+            // First arm on purpose: a case that ran out of budget was not
+            // answered, whatever the other side happened to return. Letting
+            // an `Err`-propagating sibling classify it would record a
+            // failure Aver never observed.
+            (Err(VerifyCallFailure::StepLimit { .. }), _)
+            | (_, Err(VerifyCallFailure::StepLimit { .. })) => {
+                declined += 1;
+                case_results.push(VerifyCaseResult {
+                    outcome: VerifyCaseOutcome::Declined {
+                        reason: decline_reason(budget, raised_by),
+                        steps: case_steps,
+                        limit: budget.limit,
+                        raised_by: raised_by.map(str::to_string),
+                    },
+                    span,
+                    case_expr: case_str,
+                    case_index: idx,
+                    case_total,
+                    law_context,
+                    from_hostile,
+                    hostile_profile: hostile_profile.clone(),
+                    expected_value: None,
+                    steps: case_steps,
+                });
+            }
             (Ok(VmVerifyEval::Value(left_val)), Ok(VmVerifyEval::Value(right_val))) => {
                 if left_val == right_val {
                     passed += 1;
@@ -1933,6 +2173,7 @@ fn run_verify_vm(
                         // literalizes the expected side from it so bounded
                         // sample checks compare model vs program result.
                         expected_value: Some(right_val),
+                        steps: case_steps,
                     });
                 } else {
                     failed += 1;
@@ -1952,6 +2193,7 @@ fn run_verify_vm(
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
                         expected_value: None,
+                        steps: case_steps,
                     });
                 }
             }
@@ -1969,11 +2211,12 @@ fn run_verify_vm(
                     from_hostile,
                     hostile_profile: hostile_profile.clone(),
                     expected_value: None,
+                    steps: case_steps,
                 });
             }
             (Err(e), _) | (_, Err(e)) => {
                 failed += 1;
-                let error = e.to_string();
+                let error = e.message();
                 failures.push((failure_case, String::new(), error.clone()));
                 case_results.push(VerifyCaseResult {
                     outcome: VerifyCaseOutcome::RuntimeError { error },
@@ -1985,6 +2228,7 @@ fn run_verify_vm(
                     from_hostile,
                     hostile_profile: hostile_profile.clone(),
                     expected_value: None,
+                    steps: case_steps,
                 });
             }
         }
@@ -2013,6 +2257,12 @@ fn run_verify_vm(
         passed,
         failed,
         skipped,
+        declined,
+        budget: VerifyBudgetInfo {
+            limit: budget.limit,
+            default_limit: budget.default_limit,
+            raised_by: raised_by.map(str::to_string),
+        },
         case_results,
         failures,
     }
@@ -2300,6 +2550,40 @@ verify currentYear trace
         );
     }
 
+    /// The fuzz guard, asserted rather than assumed.
+    ///
+    /// `fuzz/fuzz_targets/verify_runner.rs` calls the runner with
+    /// `config: None` and never reads an `aver.toml`, so the budget it runs
+    /// under is whatever `CaseBudget::resolve` returns for no config. If that
+    /// ever stops being 1M, AFL's hang detector — not the step limit — becomes
+    /// the thing that stops a tail-recursive goto-loop, and the corpus turns
+    /// into a wall of timeouts.
+    #[test]
+    fn no_config_runs_at_exactly_the_compiled_default() {
+        let budget = CaseBudget::resolve(None, "anyFn", "any/file.av");
+        assert_eq!(budget.limit, 1_000_000);
+        assert_eq!(budget.default_limit, 1_000_000);
+        assert_eq!(budget.raised_by, None);
+        assert_eq!(budget, CaseBudget::compiled_default());
+    }
+
+    /// The fuzz targets build their parser with `Parser::new`, which never
+    /// consults `aver.toml`, so their case-count ceiling is the compiled
+    /// default whatever any project says.
+    #[test]
+    fn a_parser_built_without_a_project_keeps_the_default_ceiling() {
+        let src = "module M\n    effects []\n\nfn f(x: Int) -> Int\n    ? \"toy\"\n    x\n\nverify f law big\n    given x: Int = 1..10001\n    f(x) => x\n";
+        let error = crate::source::parse_source(src)
+            .expect_err("10_001 cases is over the compiled ceiling");
+        assert!(error.contains("10001"), "{error}");
+        assert!(error.contains("max 10000"), "{error}");
+
+        // And the same source parses once a project raises the ceiling —
+        // which is the difference the fuzz path must not inherit.
+        crate::source::parse_source_with_verify_max_cases(src, 40_000)
+            .expect("a raised ceiling accepts the same source");
+    }
+
     #[test]
     fn apply_hostile_expansion_rejects_over_budget_cartesian() {
         // Stress: pick a `given x: Int` range big enough to clear the
@@ -2307,7 +2591,7 @@ verify currentYear trace
         // enough that the parser still accepts it. Effect-side hostile
         // doesn't apply to law form, so this test exercises just the
         // value-side cap path.
-        let big_range = VERIFY_HOSTILE_MAX_CASES + 50;
+        let big_range = crate::config::DEFAULT_VERIFY_MAX_CASES + 50;
         let src = format!(
             "module M\n    effects []\n\nfn f(x: Int) -> Int\n    ? \"toy\"\n    x\n\nverify f law big\n    given x: Int = 1..{}\n    f(x) => x\n",
             big_range
