@@ -118,11 +118,12 @@ impl<'a> ResolveCtx<'a> {
     ///    qualified form).
     /// 3. Bare `name` in `current_module` (`TypeKey::in_module(current, name)`).
     /// 4. Bare `name` in entry scope (`TypeKey::entry(name)`).
-    /// 5. Bare `name` searched across every scope via
-    ///    [`crate::ir::SymbolTable::type_id_by_bare_name`] — handles
-    ///    the cross-module case where module `A` references type
-    ///    `Val` declared in module `B` without qualification. Returns
-    ///    `None` when ambiguous (caller must qualify).
+    /// 5. Bare `name` searched across the scopes `current_module` can see
+    ///    via [`crate::ir::SymbolTable::type_id_by_bare_name_in`] — handles
+    ///    the cross-module case where module `A` references type `Val`
+    ///    declared in a module `A` depends on, without qualification.
+    ///    Returns `None` when two visible scopes share the name (caller
+    ///    must qualify); a module `A` never imported is not consulted.
     pub fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
         if let Some((prefix, n)) = name.rsplit_once('.') {
             if let Some(id) = self.symbols.type_id_of(&TypeKey::in_module(prefix, n)) {
@@ -145,10 +146,47 @@ impl<'a> ResolveCtx<'a> {
         // Cross-module bare-name fallback. Phase-E ctor resolution
         // for `Val.ValOk(x)` written from a module that doesn't host
         // `Val` (e.g. `Domain.Eval.Core` referencing
-        // `Domain.Value.Val`). `type_id_by_bare_name` returns `None`
-        // on ambiguity, so two scopes that share a type name still
-        // need a qualified reference.
-        self.symbols.type_id_by_bare_name(name)
+        // `Domain.Value.Val`).
+        //
+        // Scoped to what the asking module can actually see: its own
+        // `depends [...]`, the standard modules, and the entry. A module
+        // nobody imported must not participate — otherwise declaring a
+        // type there makes the bare name ambiguous for everyone, the
+        // lookup answers `None`, and `None` reads downstream as "not a
+        // user type" rather than as an error. Two VISIBLE scopes sharing
+        // the name still need a qualified reference, and the type checker
+        // reports that as `Ambiguous type name`.
+        self.symbols
+            .type_id_by_bare_name_in(name, self.current_module.as_deref())
+    }
+
+    /// Re-home a type that ALREADY carried a `TypeId` into this symbol
+    /// table, by its source name.
+    ///
+    /// The distinction from [`Self::resolve_type_id`] is where the name was
+    /// written. A type annotation that arrives already identified was
+    /// accepted by a correctly-scoped resolver in the module that wrote it,
+    /// which need not be the module being lowered: `record Rules { policy:
+    /// Policy }` names `Policy` in its own module, and a third module that
+    /// only projects `.policy` off a `Rules` value carries the type without
+    /// ever naming it or its owner. Answering that with the visibility rule
+    /// for a bare name the programmer wrote asks the wrong question, and
+    /// answering it with the incoming id asks nothing at all — the id is
+    /// from another table.
+    ///
+    /// So: the ordinary scoped resolution first, then the one declaration
+    /// of that name in the program. Two declarations leave it `None`, which
+    /// is what every consumer treats as "identity unknown".
+    fn rehome_type_id(&self, name: &str) -> Option<TypeId> {
+        if let Some(id) = self.resolve_type_id(name) {
+            return Some(id);
+        }
+        if name.contains('.') {
+            // A qualified name that did not resolve names a module this
+            // program does not have; there is nothing to fall back to.
+            return None;
+        }
+        self.symbols.unique_type_id_by_bare_name(name)
     }
 
     /// Resolve a `"Type.Variant"` constructor reference to a
@@ -726,18 +764,15 @@ fn canonicalise_type(ctx: &ResolveCtx<'_>, ty: crate::ast::Type) -> crate::ast::
         // created it. Dependency modules are typechecked independently
         // before codegen assembles the final whole-program table, so a
         // correct local id can point at a different declaration here.
-        // Re-resolve by the source name in the owning module's context;
-        // keep the existing id only for synthetic fragments whose name
-        // is absent from this table.
-        Type::Named {
-            id: Some(existing),
+        // Re-resolve by the source name; the incoming id is never kept,
+        // because in THIS table it indexes whatever declaration happens to
+        // sit at that position. `Type::Named { id, name }` where `id` names
+        // something other than `name` is not a weaker answer than `None` —
+        // it is a wrong one, and every consumer that reads a representation
+        // or a path off the id then reads it off the wrong type.
+        Type::Named { id: Some(_), name } => Type::Named {
+            id: ctx.rehome_type_id(&name),
             name,
-        } => match ctx.resolve_type_id(&name) {
-            Some(id) => Type::Named { id: Some(id), name },
-            None => Type::Named {
-                id: Some(existing),
-                name,
-            },
         },
         Type::Named { id: None, name } => match ctx.resolve_type_id(&name) {
             Some(id) => Type::Named { id: Some(id), name },

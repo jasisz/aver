@@ -12,71 +12,54 @@ use super::{
     toplevel, verify_counter_key,
 };
 
-/// Oracle v1: for each effectful FnDef whose effects are all classified,
-/// run effect_lifting::lift_fn_def to produce a pure (lifted) FnDef and
-/// emit it via the standard pure-fn path. Effectful functions that use
-/// unclassified (stateful / interactive / higher-order-callback) effects
-/// are still skipped entirely — matches the pre-Oracle behavior.
+/// Oracle v1: for each effectful FnDef of one scope — the entry or a
+/// dependency module — whose effects are all classified and that some proof
+/// cone reaches, run effect_lifting::lift_fn_def to produce a pure (lifted)
+/// FnDef and emit it via the standard pure-fn path, inside that scope's
+/// namespace. Effectful functions that use unclassified (stateful /
+/// interactive / higher-order-callback) effects are still skipped entirely —
+/// matches the pre-Oracle behavior.
 ///
-/// Mutual recursion among effectful fns is out of scope for v0: this
-/// emits each lifted fn independently.
+/// `reachable` is the scope's root set: the entry's verify-reachable names,
+/// or for a dependency what any consumer's cone reaches
+/// (`dependency_reachable_fn_names`). `foreign_helpers` keys every other
+/// module's lifted function by its qualified name (`Infra.Store.get`) so a
+/// dotted call site receives the callee's `(path, oracle...)` prefix; this
+/// scope's own lifted functions join the map under their bare names.
+///
+/// Lifted functions that call each other are grouped by the same SCC
+/// analysis pure components use and emitted in one `mutual … end` block, so
+/// no member is a forward reference Lean rejects. An effectful function has
+/// no recursion contract (those are planned for pure functions), so a group
+/// takes the contract-less path a pure group takes: `partial` members, and
+/// the component is kernel-opaque for the sampled-claim classifier.
+#[allow(clippy::too_many_arguments)]
 fn emit_lifted_effectful_functions(
     ctx: &CodegenContext,
+    fn_defs: &[&crate::ast::FnDef],
+    scope: Option<&str>,
+    reachable: &HashSet<String>,
+    foreign_helpers: &HashMap<String, Vec<String>>,
     recursive_fns: &HashSet<String>,
+    sampled_fns: &mut SampledFnClassification,
     sections: &mut Vec<String>,
 ) {
-    use crate::types::checker::effect_classification::classify_with_registry;
-
-    // Oracle v1: only emit effectful fns reachable from some verify
-    // block. Non-terminating effectful fns (e.g. REPL loops that loop
-    // forever on `Console.readLine`) would otherwise make Lean reject
-    // the whole module — and if nobody is proving anything about them,
-    // that's dead code in the proof output.
-    let reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
-
     // Oracle v1: collect the effect list for every eligible
     // effectful fn *first* — call sites to these helpers in any
     // lifted body get `(path, oracle...)` injected so the arity
     // matches the helper's lifted form.
-    let mut helpers: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for item in &ctx.items {
-        let TopLevel::FnDef(fd) = item else { continue };
-        if fd.effects.is_empty() || fd.name == "main" {
-            continue;
-        }
-        if !fd
-            .effects
-            .iter()
-            .all(|e| classify_with_registry(&ctx.capabilities, &e.node).is_some())
-        {
-            continue;
-        }
-        if !reachable.contains(&fd.name) {
-            continue;
-        }
-        helpers.insert(
-            fd.name.clone(),
-            fd.effects.iter().map(|e| e.node.clone()).collect(),
-        );
+    let eligible: Vec<&crate::ast::FnDef> = fn_defs
+        .iter()
+        .copied()
+        .filter(|fd| is_liftable_effectful_fn(ctx, fd, reachable))
+        .collect();
+    let mut helpers = foreign_helpers.clone();
+    for fd in &eligible {
+        helpers.insert(fd.name.clone(), declared_effect_names(fd));
     }
 
     let mut lifted_fns: Vec<(String, crate::ast::FnDef)> = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::FnDef(fd) = item else { continue };
-        if fd.effects.is_empty() || fd.name == "main" {
-            continue;
-        }
-        if !fd
-            .effects
-            .iter()
-            .all(|e| classify_with_registry(&ctx.capabilities, &e.node).is_some())
-        {
-            continue;
-        }
-        if !reachable.contains(&fd.name) {
-            continue;
-        }
+    for fd in &eligible {
         let Ok(Some(lifted)) =
             crate::types::checker::effect_lifting::lift_fn_def_with_helpers_and_registry(
                 fd,
@@ -89,53 +72,147 @@ fn emit_lifted_effectful_functions(
         lifted_fns.push((fd.name.clone(), lifted));
     }
 
+    // Units of emission: one per strongly connected component of the lifted
+    // call graph, in source order of their first member. A cycle becomes one
+    // `mutual` unit; everything else stays a single definition.
+    let lifted_refs: Vec<&crate::ast::FnDef> = lifted_fns.iter().map(|(_, fd)| fd).collect();
+    let index_of: HashMap<&str, usize> = lifted_fns
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| (name.as_str(), index))
+        .collect();
+    let mut units: Vec<Vec<usize>> =
+        crate::call_graph::ordered_fn_components(&lifted_refs, &ctx.module_prefixes)
+            .iter()
+            .map(|component| {
+                let mut unit: Vec<usize> = component
+                    .iter()
+                    .map(|fd| index_of[fd.name.as_str()])
+                    .collect();
+                unit.sort_unstable();
+                unit
+            })
+            .collect();
+    units.sort_by_key(|unit| unit[0]);
+
     // Oracle v1: topologically sort so callees are emitted before
     // callers. Without this, a lifted effectful fn that calls another
     // lifted effectful helper (e.g. `handle(msg) -> printErr(msg)`)
     // can land before the helper and Lean complains about an unknown
-    // identifier. The pure-fn emission goes through SCC analysis for
-    // the same reason — this is a cheap approximation good enough
-    // for non-mutual effectful chains.
-    let eligible_names: std::collections::HashSet<String> =
-        lifted_fns.iter().map(|(n, _)| n.clone()).collect();
-    let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut order: Vec<usize> = Vec::new();
-    let mut remaining: Vec<usize> = (0..lifted_fns.len()).collect();
+    // identifier. Units that are ready at the same time keep their source
+    // order; a call within a unit is never a dependency on another unit.
+    let eligible_names: HashSet<String> = lifted_fns.iter().map(|(n, _)| n.clone()).collect();
+    let mut emitted: HashSet<String> = HashSet::new();
+    let mut order: Vec<Vec<usize>> = Vec::new();
+    let mut remaining = units;
     while !remaining.is_empty() {
         let before = remaining.len();
-        remaining.retain(|&idx| {
-            let own_name = &lifted_fns[idx].0;
-            let body_calls = collect_called_idents_in_body(&lifted_fns[idx].1.body);
-            // A self call (a tail-recursive loop) is not a dependency on
-            // another lifted fn; without this a recursive helper could never
-            // become ready and the whole tail of the list would fall back to
-            // source order.
-            let ready = body_calls.iter().all(|name| {
-                name == own_name || !eligible_names.contains(name) || emitted.contains(name)
+        remaining.retain(|unit| {
+            let members: HashSet<&str> = unit.iter().map(|&i| lifted_fns[i].0.as_str()).collect();
+            let ready = unit.iter().all(|&i| {
+                collect_called_idents_in_body(&lifted_fns[i].1.body)
+                    .iter()
+                    .all(|name| {
+                        members.contains(name.as_str())
+                            || !eligible_names.contains(name)
+                            || emitted.contains(name)
+                    })
             });
             if ready {
-                emitted.insert(lifted_fns[idx].0.clone());
-                order.push(idx);
+                emitted.extend(members.iter().map(|name| name.to_string()));
+                order.push(unit.clone());
                 false
             } else {
                 true
             }
         });
         if remaining.len() == before {
-            // Cycle or deadlock — fall back to source order for what's
-            // left rather than looping forever. Lean will complain at
-            // build time, which is the right signal for users.
+            // Unreachable once every cycle is one unit: the unit graph is
+            // acyclic. Kept as the fail-visible fallback — Lean names the
+            // forward reference rather than the compiler dropping a fn.
             order.append(&mut remaining);
         }
     }
 
-    for idx in order {
-        let (_, lifted) = &lifted_fns[idx];
-        if let Some(code) = toplevel::emit_fn_def(lifted, recursive_fns, ctx) {
+    ctx.with_module_scope(scope, || {
+        for unit in order {
+            let component: Vec<&crate::ast::FnDef> =
+                unit.iter().map(|&i| &lifted_fns[i].1).collect();
+            let code = if component.len() > 1 {
+                Some(toplevel::emit_mutual_group(&component, ctx))
+            } else {
+                let fd = component[0];
+                // A self call (a tail-recursive loop) has no termination
+                // story the backend can state for a lifted fn: it is emitted
+                // `partial`, as an uncontracted recursive pure fn is.
+                let self_recursive = !recursive_fns.contains(&fd.name)
+                    && collect_called_idents_in_body(&fd.body).contains(&fd.name);
+                if self_recursive {
+                    toplevel::emit_fn_def(fd, &HashSet::from([fd.name.clone()]), ctx)
+                } else {
+                    toplevel::emit_fn_def(fd, recursive_fns, ctx)
+                }
+            };
+            let Some(code) = code else { continue };
+            if component_is_kernel_opaque(&component, std::slice::from_ref(&code)) {
+                sampled_fns.opaque.extend(
+                    component
+                        .iter()
+                        .filter_map(|fd| crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)),
+                );
+            }
             sections.push(code);
             sections.push(String::new());
         }
+    });
+}
+
+/// An effectful fn the Oracle lift exports: not `main`, every declared
+/// effect classified, and reached by some proof cone. Non-terminating
+/// effectful fns (e.g. REPL loops that loop forever on `Console.readLine`)
+/// would otherwise make Lean reject the whole module — and if nobody is
+/// proving anything about them, that's dead code in the proof output.
+fn is_liftable_effectful_fn(
+    ctx: &CodegenContext,
+    fd: &crate::ast::FnDef,
+    reachable: &HashSet<String>,
+) -> bool {
+    use crate::types::checker::effect_classification::classify_with_registry;
+    !fd.effects.is_empty()
+        && fd.name != "main"
+        && fd
+            .effects
+            .iter()
+            .all(|e| classify_with_registry(&ctx.capabilities, &e.node).is_some())
+        && reachable.contains(&fd.name)
+}
+
+fn declared_effect_names(fd: &crate::ast::FnDef) -> Vec<String> {
+    fd.effects.iter().map(|e| e.node.clone()).collect()
+}
+
+/// Every dependency module's liftable effectful fn, keyed by the qualified
+/// name a consumer spells (`Infra.Store.get`), with its declared effects —
+/// the `effectful_helpers` entries a caller in any other scope injects
+/// `(path, oracle...)` for.
+fn lifted_dependency_helpers(
+    ctx: &CodegenContext,
+    reachable_by_module: &HashMap<String, HashSet<String>>,
+) -> HashMap<String, Vec<String>> {
+    let empty = HashSet::new();
+    let mut helpers = HashMap::new();
+    for module in &ctx.modules {
+        let reachable = reachable_by_module.get(&module.prefix).unwrap_or(&empty);
+        for fd in &module.fn_defs {
+            if is_liftable_effectful_fn(ctx, fd, reachable) {
+                helpers.insert(
+                    format!("{}.{}", module.prefix, fd.name),
+                    declared_effect_names(fd),
+                );
+            }
+        }
     }
+    helpers
 }
 
 /// Names of the fns a lifted body calls, tail calls included: after TCO a
@@ -590,6 +667,100 @@ fn declared_constant_name(line: &str) -> Option<&str> {
     Some(words.next()?.trim_end_matches([':', '(']))
 }
 
+/// An emitted body with every Lean comment blanked out: `--` to end of line,
+/// and `/- … -/` blocks (which nest, and which include the `/-- … -/` doc
+/// comments that carry an Aver `?` intent). String literals are NOT blanked:
+/// an interpolation carries real code, and a module path inside plain text
+/// costs at most an import of a file the project compiles anyway.
+///
+/// Every blanked character becomes a space and every newline stays, so the
+/// result lines up with the input.
+fn code_only(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut in_line_comment = false;
+    while let Some(c) = chars.next() {
+        if in_line_comment {
+            in_line_comment = c != '\n';
+            out.push(if c == '\n' { '\n' } else { ' ' });
+        } else if depth > 0 {
+            match (c, chars.peek().copied()) {
+                ('/', Some('-')) => {
+                    chars.next();
+                    depth += 1;
+                    out.push_str("  ");
+                }
+                ('-', Some('/')) => {
+                    chars.next();
+                    depth -= 1;
+                    out.push_str("  ");
+                }
+                ('\n', _) => out.push('\n'),
+                _ => out.push(' '),
+            }
+        } else if in_string {
+            out.push(c);
+            match c {
+                '\\' => {
+                    if let Some(escaped) = chars.next() {
+                        out.push(escaped);
+                    }
+                }
+                '"' => in_string = false,
+                _ => {}
+            }
+        } else {
+            match (c, chars.peek().copied()) {
+                ('/', Some('-')) => {
+                    chars.next();
+                    depth = 1;
+                    out.push_str("  ");
+                }
+                ('-', Some('-')) => {
+                    chars.next();
+                    in_line_comment = true;
+                    out.push_str("  ");
+                }
+                _ => {
+                    in_string = c == '"';
+                    out.push(c);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether emitted code spells a constant that belongs to the Lean module
+/// `lean_prefix` — `Tcp.Connection`, `Bytes.Bytes` — as opposed to merely
+/// carrying those characters inside a longer name (`Tcp` in `TcpPort.x`) or
+/// a longer module path (`Tcp` in `Net.Tcp.Connection`). Takes the
+/// comment-free text [`code_only`] returns: a module path in an intent's
+/// prose is not a reference and must not add an import.
+fn code_names_module(code: &str, lean_prefix: &str) -> bool {
+    let bytes = code.as_bytes();
+    let mut from = 0;
+    while let Some(offset) = code[from..].find(lean_prefix) {
+        let start = from + offset;
+        let end = start + lean_prefix.len();
+        from = end;
+        // `Prefix` must open a dotted name, and must not continue one.
+        let opens_a_name = bytes.get(end) == Some(&b'.')
+            && bytes
+                .get(end + 1)
+                .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_');
+        let stands_alone = start == 0
+            || !matches!(bytes[start - 1], b'.' | b'_' | b'\'')
+                && !bytes[start - 1].is_ascii_alphanumeric();
+        if opens_a_name && stands_alone {
+            return true;
+        }
+    }
+    false
+}
+
 /// `open` lines for a file's direct dependencies — the same rule for a
 /// dependency file and for the entry. A function name that two or more
 /// of those modules declare is hidden from each of them: the emitter
@@ -706,13 +877,44 @@ pub(super) fn transpile_unified(
         )
         .collect();
 
-    // Lifted effectful fns + decisions + verifies remain entry-only.
-    let mut entry_lifted_sections: Vec<String> = Vec::new();
+    // Fns whose emission the kernel cannot see through, accumulated by every
+    // `emit_pure_component` call and every lifted effectful component below.
+    // The sampled-`verify` classifier reads it AFTER both declaration passes
+    // have run — which is why the entry verify blocks are emitted at the end
+    // of this fn rather than here (their position in the output is unchanged).
+    let mut sampled_fns = SampledFnClassification::default();
+
+    // Lifted effectful fns: the entry's here, each dependency module's inside
+    // the module loop below, through the same scope-parametric pass. A
+    // dependency's root set is what any consumer's cone reaches; its lifted
+    // fns are keyed by qualified name so a consumer's call site threads the
+    // callee's `(path, oracle...)`. Decisions + verifies remain entry-only.
     let lifted_recursive_names = match emit_mode {
         LeanEmitMode::Proof => &recursive_names,
         LeanEmitMode::Standard => &recursive_fns,
     };
-    emit_lifted_effectful_functions(ctx, lifted_recursive_names, &mut entry_lifted_sections);
+    let entry_reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
+    let dependency_reachable = crate::codegen::common::dependency_reachable_fn_names(ctx);
+    let dependency_helpers = lifted_dependency_helpers(ctx, &dependency_reachable);
+    let mut entry_lifted_sections: Vec<String> = Vec::new();
+    let entry_fn_defs: Vec<&crate::ast::FnDef> = ctx
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    emit_lifted_effectful_functions(
+        ctx,
+        &entry_fn_defs,
+        None,
+        &entry_reachable,
+        &dependency_helpers,
+        lifted_recursive_names,
+        &mut sampled_fns,
+        &mut entry_lifted_sections,
+    );
 
     let mut entry_decision_sections: Vec<String> = Vec::new();
     for item in &ctx.items {
@@ -721,13 +923,6 @@ pub(super) fn transpile_unified(
             entry_decision_sections.push(String::new());
         }
     }
-
-    // Fns whose emission the kernel cannot see through, accumulated by every
-    // `emit_pure_component` call below. The sampled-`verify` classifier reads
-    // it AFTER both declaration passes have run — which is why the entry
-    // verify blocks are emitted at the end of this fn rather than here (their
-    // position in the output is unchanged).
-    let mut sampled_fns = SampledFnClassification::default();
 
     // ---- Per-module file bodies ----
     let mut module_files: Vec<(String, String)> = Vec::new();
@@ -752,7 +947,7 @@ pub(super) fn transpile_unified(
     #[cfg(debug_assertions)]
     let dep_theorem_order_keys = super::law_auto::dep_theorem_order_keys(ctx);
 
-    for module in &ctx.modules {
+    for (module_index, module) in ctx.modules.iter().enumerate() {
         let _emitting_guard = crate::codegen::lean::types::scope_emitting_module(&module.prefix);
         let mut body_sections = emit_capability_resource_types(ctx, Some(&module.prefix));
         let scope = Some(module.prefix.as_str());
@@ -800,6 +995,23 @@ pub(super) fn transpile_unified(
                 }
             }
         }
+        // This module's effectful fns, lifted with the same oracle threading
+        // the entry's get, after its pure declarations (a lifted body may call
+        // them; nothing pure calls an effectful fn) and before its laws.
+        let module_fn_defs: Vec<&crate::ast::FnDef> = module.fn_defs.iter().collect();
+        let no_reachable = HashSet::new();
+        emit_lifted_effectful_functions(
+            ctx,
+            &module_fn_defs,
+            scope,
+            dependency_reachable
+                .get(&module.prefix)
+                .unwrap_or(&no_reachable),
+            &dependency_helpers,
+            lifted_recursive_names,
+            &mut sampled_fns,
+            &mut body_sections,
+        );
         // Cross-file law pool — EMIT side: a dependency module's proven
         // `verify … law` blocks become `<fn>_law_<name>` theorems INSIDE
         // `namespace M`, so a consumer that imports + opens this module can
@@ -895,8 +1107,32 @@ pub(super) fn transpile_unified(
         if body.contains("Crypto.sha256") {
             imports.push("import Crypto".to_string());
         }
+        let mut imported: HashSet<String> = HashSet::new();
         for d in &module.depends {
-            imports.push(format!("import {}", super::syntax::aver_path_to_lean(d)));
+            let dep = super::syntax::aver_path_to_lean(d);
+            imports.push(format!("import {dep}"));
+            imported.insert(dep);
+        }
+        // Oracle threading spells the types an effect carries by their owner
+        // module — `Tcp.Connection`, `Bytes.Bytes` — and that owner is a
+        // standard module the source never writes in `depends`: the loader
+        // pulls it in because some call needs it. While only the entry lifted
+        // effectful functions this cost nothing, the entry imports every
+        // module of the project. A dependency file that lifts one names those
+        // constants too, so it has to import their owners itself, the way the
+        // `Crypto.sha256` line above imports the crypto model. Derived from
+        // the emitted code, so a module that lifts nothing keeps the imports
+        // it had. Only the modules ahead of this one are candidates:
+        // `ctx.modules` arrives dependencies-first, so those are exactly the
+        // ones this file can name, and no import added here closes a cycle.
+        let code = code_only(&body);
+        for candidate in &ctx.modules[..module_index] {
+            let name = super::syntax::aver_path_to_lean(&candidate.prefix);
+            if imported.contains(&name) || !code_names_module(&code, &name) {
+                continue;
+            }
+            imports.push(format!("import {name}"));
+            imported.insert(name);
         }
         // AverCommon has no surrounding namespace (top-level helpers / instances),
         // so `import` already brings them into scope. We `open` only the
@@ -1122,7 +1358,7 @@ pub(super) fn transpile_unified(
     }
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
-    ProjectOutput { files }
+    ProjectOutput::of(files)
 }
 
 #[cfg(test)]
@@ -1152,5 +1388,62 @@ fn loopy(n: Int) -> Unit\n    ? \"Prints then loops.\"\n    ! [Console.print]\n 
         assert!(has_tail_call, "TCO should have rewritten the self call");
         let called = collect_called_idents_in_body(&fd.body);
         assert!(called.contains("loopy"), "{called:?}");
+    }
+}
+
+#[cfg(test)]
+mod module_reference_tests {
+    use super::{code_names_module, code_only};
+
+    #[test]
+    fn a_qualified_constant_names_its_module_and_a_longer_name_does_not() {
+        let body = "def greet (rnd : Int \u{2192} Tcp.Connection) : Unit := ()";
+        assert!(code_names_module(body, "Tcp"));
+        // Same characters, not a reference: a longer identifier, a longer
+        // module path, a bare mention, and a field selector.
+        for other in [
+            "def f (x : TcpPort.Handle) : Unit := ()",
+            "def f (x : Net.Tcp.Connection) : Unit := ()",
+            "def f (x : Tcp) : Unit := ()",
+            "def f (x : Int) : Unit := connection.Tcp.id",
+        ] {
+            assert!(!code_names_module(other, "Tcp"), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_module_path_in_an_intents_prose_is_not_a_reference() {
+        // The `?` intent of the first external project's `Domain.Interp`
+        // mentions `Domain.Policy.none()` in prose; the body never calls it.
+        let body = "/-- The flag is Policy: Domain.Rules.at can only build \
+                    Domain.Policy.none(). -/\ndef refuses (x : Int) : Bool := true\n\
+                    -- Domain.Policy.none again\n";
+        let code = code_only(body);
+        assert!(!code_names_module(&code, "Domain.Policy"), "{code}");
+        // Blanking keeps the line structure, and code outside the comment
+        // still reads normally.
+        assert_eq!(code.lines().count(), body.lines().count());
+        assert!(
+            code.contains("def refuses (x : Int) : Bool := true"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn a_string_literal_keeps_its_contents_so_an_interpolation_still_counts() {
+        // `--` and `/-` inside a string must not open a comment, or the code
+        // after them — an interpolated call included — would be blanked and
+        // its module would lose its import.
+        let body = "def label (x : Int) : String := s!\"a--b {Domain.Hash.hex x}\"\n";
+        let code = code_only(body);
+        assert_eq!(code, body);
+        assert!(code_names_module(&code, "Domain.Hash"), "{code}");
+    }
+
+    #[test]
+    fn nested_block_comments_close_at_the_right_depth() {
+        let code = code_only("/- outer /- inner -/ still comment -/ def f := Tcp.x\n");
+        assert!(code.trim_start().starts_with("def f := Tcp.x"), "{code:?}");
+        assert!(code_names_module(&code, "Tcp"));
     }
 }

@@ -657,7 +657,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             crypto::CORE_SOURCE.to_string(),
         ));
     }
-    ProjectOutput { files }
+    ProjectOutput::of(files)
 }
 
 fn build_common_dafny(union_body: &str) -> String {

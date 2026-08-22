@@ -681,10 +681,10 @@ fn emit_fn_def_with_visibility(
             .unwrap_or_else(|| {
                 format!(
                     "    {}",
-                    emit_codegen_error_expr(format!(
-                        "MIR walker could not render guest-entry fn `{}`",
-                        fd.name
-                    ))
+                    emit_codegen_error_expr(
+                        ctx,
+                        format!("MIR walker could not render guest-entry fn `{}`", fd.name),
+                    )
                 )
             });
         if let Some((prog_name, module_fns_name)) = &self_host_state {
@@ -797,10 +797,10 @@ fn emit_fn_def_with_visibility(
                     fn_name,
                     params,
                     ret_type,
-                    emit_codegen_error_expr(format!(
-                        "MIR walker could not render self-TCO fn `{}`",
-                        fd.name
-                    ))
+                    emit_codegen_error_expr(
+                        ctx,
+                        format!("MIR walker could not render self-TCO fn `{}`", fd.name),
+                    )
                 )
             });
         lines.push(code);
@@ -822,10 +822,10 @@ fn emit_fn_def_with_visibility(
             .unwrap_or_else(|| {
                 format!(
                     "    {}",
-                    emit_codegen_error_expr(format!(
-                        "MIR walker could not render fn `{}`",
-                        fd.name
-                    ))
+                    emit_codegen_error_expr(
+                        ctx,
+                        format!("MIR walker could not render fn `{}`", fd.name),
+                    )
                 )
             });
         lines.push(body);
@@ -1425,6 +1425,7 @@ fn emit_main_with_visibility(
                 .iter()
                 .map(|_| {
                     emit_codegen_error_expr(
+                        ctx,
                         "MIR walker could not render a top-level statement".to_string(),
                     )
                 })
@@ -1457,7 +1458,8 @@ fn emit_main_with_visibility(
                 format!(
                     "    {}",
                     emit_codegen_error_expr(
-                        "MIR walker could not render the `main` fn body".to_string()
+                        ctx,
+                        "MIR walker could not render the `main` fn body".to_string(),
                     )
                 )
             });
@@ -1495,34 +1497,38 @@ fn emit_main_with_visibility(
 /// Render one `verify`-case expression (the `left` / `right` of an
 /// `assert_eq!`). The HIR walker is gone (rust-on-MIR W6/Stage-3): the
 /// expression is resolved on demand, lowered to MIR, and rendered by the
-/// MIR walker. When the walker can't render it (the verify-only Oracle /
-/// trace shapes that never built on Rust on either walker), emit a hard
-/// `compile_error!` diagnostic — those examples are non-buildable on Rust
-/// and trapping here is the documented W6/Stage-3 behaviour.
-fn emit_verify_case_expr(expr: &Spanned<Expr>, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+/// MIR walker. `None` when the walker can't render it — the verify-only
+/// Oracle / trace shapes that never built on Rust on either walker. The
+/// caller omits such a case from the generated `#[cfg(test)]` module and
+/// records that it did; no `compile_error!` is written for it, so nothing
+/// downstream has to tell the backend's placeholder apart from a string the
+/// program itself carries.
+fn emit_verify_case_expr(
+    expr: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<String> {
     // Keep the typechecker's outer expression stamp. Re-wrapping only the
     // node in `Spanned::bare` erased `List<Int>` here, which made verify RHS
     // literals fall back to the generic AverList representation even though
     // the generated function returned AverIntList.
     let resolved = ctx.resolve_expr(expr, ectx.current_module_scope.as_deref());
-    match super::from_mir::emit_mir_verify_expr(&resolved, ctx) {
-        Some(code) => code,
-        None => emit_codegen_error_expr(
-            "MIR walker could not render a verify-case expression (verify-only \
-             Oracle/trace shape — not buildable on the Rust backend)"
-                .to_string(),
-        ),
-    }
+    super::from_mir::emit_mir_verify_expr(&resolved, ctx)
 }
 
 /// Emit a hard `compile_error!` diagnostic in expression position — used
 /// when the MIR walker returns `None` for a construct that the Rust
-/// backend cannot render (the verify-only Oracle/trace residual). Never a
-/// panic and never a silent drop: the generated crate fails to compile
-/// with the message, which is the intended W6/Stage-3 behaviour for the
-/// non-buildable Oracle examples.
-fn emit_codegen_error_expr(message: String) -> String {
+/// backend cannot render. Never a panic and never a silent drop: the
+/// generated crate fails to compile with the message.
+///
+/// The substitution is recorded on the context as it is made, which is the
+/// only place that knows it happened. `aver compile --target rust` reads
+/// the record and refuses to report success; it does not go looking for the
+/// macro in the files it just wrote, because a program is free to carry the
+/// text `compile_error!` in a string of its own.
+pub(super) fn emit_codegen_error_expr(ctx: &CodegenContext, message: String) -> String {
     let message_lit = format!("{:?}", message);
+    ctx.substituted_compile_errors.borrow_mut().push(message);
     format!(
         "{{ compile_error!({}); unreachable!(\"unreachable after compile_error\") }}",
         message_lit
@@ -1649,18 +1655,25 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
-            let left_str = emit_verify_case_expr(left, ctx, &ectx);
-            let right_str = emit_verify_case_expr(right, ctx, &ectx);
-
-            // Defensive backstop: if the MIR walker still produced a
-            // `compile_error!` placeholder for a case the source-level
-            // detector didn't classify as Oracle/trace-only, omit it
-            // rather than poison `cargo test`. Keeps the verify module
-            // clean even if a new untranslatable shape appears.
-            if left_str.contains("compile_error!") || right_str.contains("compile_error!") {
+            // Defensive backstop: a case the source-level detector didn't
+            // classify as Oracle/trace-only can still defeat the MIR
+            // walker. Omit it rather than poison `cargo test` — but say so.
+            // The walker's own refusal is the signal; the emitted text is
+            // not, because a program is free to put `compile_error!` in a
+            // string and used to lose its verify block for saying it.
+            let (Some(left_str), Some(right_str)) = (
+                emit_verify_case_expr(left, ctx, &ectx),
+                emit_verify_case_expr(right, ctx, &ectx),
+            ) else {
                 *counter -= 1;
+                ctx.omitted_verify_cases.borrow_mut().push(format!(
+                    "{} case {}: the Rust backend cannot render this shape (verify-only \
+                     Oracle/trace); `aver verify` still runs it",
+                    vb.fn_name,
+                    idx + 1
+                ));
                 continue;
-            }
+            };
 
             // Check if either side uses `?` operator
             let uses_error_prop =
@@ -1719,6 +1732,8 @@ mod tests {
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
+            omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,
@@ -1729,6 +1744,21 @@ mod tests {
             allow_mathlib: false,
             hand_proofs: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_substituted_compile_error_is_recorded_where_it_is_made() {
+        // The emitter is the only thing that knows it refused. `compile
+        // --target rust` reads THIS, not the files it just wrote: a program
+        // is free to carry the text `compile_error!` in a string, and a scan
+        // of the output cannot tell that apart from a refusal.
+        let ctx = empty_ctx();
+        let emitted = emit_codegen_error_expr(&ctx, "could not render fn `f`".to_string());
+        assert!(emitted.contains("compile_error!"));
+        assert_eq!(
+            *ctx.substituted_compile_errors.borrow(),
+            vec!["could not render fn `f`".to_string()]
+        );
     }
 
     #[test]

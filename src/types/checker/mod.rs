@@ -131,9 +131,12 @@ fn symbols_dep_modules_from_loaded(
         .map(|m| {
             let (capability_items, capability_semantics) =
                 crate::codegen::capability_metadata(&m.items);
+            let decl = crate::visibility::module_decl(&m.items);
             crate::codegen::ModuleInfo {
                 prefix: m.dep_name.clone(),
-                depends: Vec::new(),
+                depends: decl.map(|d| d.depends.clone()).unwrap_or_default(),
+                exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),
+                exposes_opaque: decl.map(|d| d.exposes_opaque.clone()).unwrap_or_default(),
                 type_defs: m
                     .items
                     .iter()

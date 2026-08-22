@@ -1,0 +1,27 @@
+module User
+    intent =
+        "Spells `Step` bare across a module boundary. It depends on"
+        "`Domain.State` and never on `Domain.Tally`, so the bare name has"
+        "exactly one meaning here."
+    depends [Domain.State]
+    effects []
+
+fn added(n: Int) -> Step
+    ? "Builds a Step in a module that does not declare it."
+    match n > 0
+        true -> Step.Continue(n)
+        false -> Step.Stop("none")
+
+verify added
+    added(1) => Step.Continue(1)
+    added(0) => Step.Stop("none")
+
+fn size(n: Int) -> Int
+    ? "Reads back the payload of the Step this module built."
+    match added(n)
+        Step.Continue(v) -> v
+        _ -> 0
+
+verify size
+    size(7) => 7
+    size(0) => 0
