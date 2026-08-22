@@ -621,10 +621,12 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
         .expect("read generated Crypto/Digest32.lean");
     let crypto_lean =
         std::fs::read_to_string(lean_out.join("Crypto.lean")).expect("read generated Crypto.lean");
+    // `Bytes` keeps its bare name inside its own module and is spelled by
+    // its owner (`Bytes.Bytes`) in `Crypto.Digest32`, like every foreign type.
     assert!(
         bytes_lean.contains("abbrev Bytes := { xs : List Int // Bytes.allInRange xs }")
             && digest_lean.contains(
-                "abbrev Digest32 := { bytes : Bytes // Crypto.Digest32.hasLength32 bytes }"
+                "abbrev Digest32 := { bytes : Bytes.Bytes // Crypto.Digest32.hasLength32 bytes }"
             ),
         "embedded standard refinements degraded in Lean:\n{bytes_lean}\n{digest_lean}"
     );

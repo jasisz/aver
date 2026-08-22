@@ -1,6 +1,8 @@
 import Bytes
 import Crypto.Digest32
 
+set_option autoImplicit false
+
 namespace AverCrypto
 
 def rotr (x : UInt32) (n : Nat) : UInt32 :=

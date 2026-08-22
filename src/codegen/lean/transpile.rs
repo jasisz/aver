@@ -539,6 +539,90 @@ fn emit_pure_capability_operation(
     )
 }
 
+/// Lean names of the Aver functions (and capability operations) a module's
+/// emitted body actually declares. Read off the emitted text rather than
+/// `fn_defs`: a function the emitter skipped (an effectful dependency
+/// function, an unsupported shape) declares no constant, and `open … hiding`
+/// may only name constants that exist.
+fn declared_fn_names(body: &str, module: &crate::codegen::ModuleInfo) -> HashSet<String> {
+    let fn_names: HashSet<String> = module
+        .fn_defs
+        .iter()
+        .map(|fd| fd.name.as_str())
+        .chain(
+            module
+                .capability_items
+                .iter()
+                .filter_map(|item| match item {
+                    crate::ast::CapabilityItem::Operation(op) => Some(op.name.as_str()),
+                    crate::ast::CapabilityItem::Resource { .. } => None,
+                }),
+        )
+        .map(super::syntax::aver_name_to_lean)
+        .collect();
+    body.lines()
+        .filter_map(declared_constant_name)
+        .filter(|name| fn_names.contains(*name))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The constant a declaration line introduces, if any. An indented line
+/// counts too: the members of a `mutual … end` block are declared indented,
+/// and the intersection with the module's function names keeps a body line
+/// from passing as one.
+fn declared_constant_name(line: &str) -> Option<&str> {
+    let line = line.trim_start();
+    let line = match line.strip_prefix("@[") {
+        Some(rest) => &rest[rest.find(']')? + 1..],
+        None => line,
+    };
+    let mut words = line.split_whitespace();
+    let head = words.find(|word| {
+        !matches!(
+            *word,
+            "private" | "protected" | "noncomputable" | "partial" | "unsafe"
+        )
+    })?;
+    if !matches!(head, "def" | "theorem" | "abbrev" | "opaque" | "axiom") {
+        return None;
+    }
+    Some(words.next()?.trim_end_matches([':', '(']))
+}
+
+/// `open` lines for a file's direct dependencies — the same rule for a
+/// dependency file and for the entry. A function name that two or more
+/// of those modules declare is hidden from each of them: the emitter
+/// spells every cross-module function with its module path, so no
+/// reference is lost, while a match binder of that name stays a plain
+/// pattern variable instead of Lean's "ambiguous pattern, use fully
+/// qualified name".
+fn open_lines(depends: &[String], declared: &HashMap<String, HashSet<String>>) -> Vec<String> {
+    let empty = HashSet::new();
+    let names = |dep: &String| declared.get(dep).unwrap_or(&empty);
+    depends
+        .iter()
+        .map(|dep| {
+            let mut hidden: Vec<&str> = names(dep)
+                .iter()
+                .filter(|name| {
+                    depends
+                        .iter()
+                        .any(|other| other != dep && names(other).contains(*name))
+                })
+                .map(String::as_str)
+                .collect();
+            hidden.sort_unstable();
+            let module = super::syntax::aver_path_to_lean(dep);
+            if hidden.is_empty() {
+                format!("open {module}")
+            } else {
+                format!("open {module} hiding {}", hidden.join(" "))
+            }
+        })
+        .collect()
+}
+
 /// Multi-file Lean output for multi-module Aver projects:
 /// - `AverCommon.lean` carries built-in helpers + records (UNION decision
 ///   over every module + entry body, so a helper is included only if
@@ -586,6 +670,14 @@ pub(super) fn transpile_unified(
     );
     let _resource_guard = crate::codegen::lean::types::scope_capability_resources(
         ctx.capabilities.resource_types().cloned().collect(),
+    );
+    // A user type declared in another module is spelled with that module's
+    // path (`A.Fraction`), so a signature, a field or a constructor resolves
+    // without an `open` of the owner; the module loop below names the module
+    // being emitted so its own types keep their bare spelling.
+    let _type_owner_guard = crate::codegen::lean::types::scope_type_owners(
+        ctx.symbol_table.clone(),
+        ctx.entry_module_name(),
     );
     let capability_opacity = super::capability_opaque::CapabilityOpacity::analyze(ctx);
     // Pure-fn param types + every type def's field types feed the
@@ -640,6 +732,10 @@ pub(super) fn transpile_unified(
     // ---- Per-module file bodies ----
     let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
+    // Function names each emitted module file declares, by module prefix.
+    // Modules arrive in dependency order, so a file's direct dependencies
+    // are recorded before its `open` lines are written.
+    let mut declared_fns: HashMap<String, HashSet<String>> = HashMap::new();
 
     // Cross-file law pool: the dep-law theorems some consumer law admits.
     // Empty for single-file files (no dep modules) → the dep-law emit loop
@@ -657,6 +753,7 @@ pub(super) fn transpile_unified(
     let dep_theorem_order_keys = super::law_auto::dep_theorem_order_keys(ctx);
 
     for module in &ctx.modules {
+        let _emitting_guard = crate::codegen::lean::types::scope_emitting_module(&module.prefix);
         let mut body_sections = emit_capability_resource_types(ctx, Some(&module.prefix));
         let scope = Some(module.prefix.as_str());
         let decl_plan = super::decl_order::plan_scoped_declarations(
@@ -803,20 +900,20 @@ pub(super) fn transpile_unified(
         }
         // AverCommon has no surrounding namespace (top-level helpers / instances),
         // so `import` already brings them into scope. We `open` only the
-        // user-defined dependent modules.
-        let opens: Vec<String> = module
-            .depends
-            .iter()
-            .map(|d| format!("open {}", super::syntax::aver_path_to_lean(d)))
-            .collect();
+        // user-defined direct dependencies.
+        let opens = open_lines(&module.depends, &declared_fns);
+        declared_fns.insert(module.prefix.clone(), declared_fn_names(&body, module));
 
         let opens_str = if opens.is_empty() {
             String::new()
         } else {
             format!("\n{}\n", opens.join("\n"))
         };
+        // `autoImplicit false` in every emitted file: a type name the emitter
+        // left unresolved is a build error, not an implicit type variable
+        // Lean binds silently (see the entry's header below).
         let content = format!(
-            "{}\n\nset_option linter.unusedVariables false\nset_option maxRecDepth 1000000\n{}\nnamespace {}\n\n{}\nend {}\n",
+            "{}\n\nset_option linter.unusedVariables false\nset_option maxRecDepth 1000000\nset_option autoImplicit false\n{}\nnamespace {}\n\n{}\nend {}\n",
             imports.join("\n"),
             opens_str,
             lean_prefix,
@@ -934,11 +1031,12 @@ pub(super) fn transpile_unified(
             super::syntax::aver_path_to_lean(&m.prefix)
         ));
     }
-    let entry_opens: Vec<String> = ctx
-        .modules
-        .iter()
-        .map(|m| format!("open {}", super::syntax::aver_path_to_lean(&m.prefix)))
-        .collect();
+    // The entry imports the transitive closure (every file has to compile)
+    // but opens exactly what a dependency file opens: its own direct
+    // `depends`. Opening the closure made a match binder spelled like a
+    // function two transitive modules export an "ambiguous pattern", and
+    // let a user function named `none` collide with `Option.none`.
+    let entry_opens = open_lines(&ctx.entry_depends(), &declared_fns);
     let mut entry_parts = vec![entry_imports.join("\n")];
     if !entry_opens.is_empty() {
         entry_parts.push(entry_opens.join("\n"));
@@ -956,6 +1054,15 @@ pub(super) fn transpile_unified(
     // elaboration-depth limit (no runtime / soundness effect), raised
     // per-file so the big auto-generated simp blocks elaborate.
     entry_parts.push("set_option maxRecDepth 1000000".to_string());
+    // Fail closed on an unresolved type name. Under Lean's default
+    // `autoImplicit`, a bare `Handle` in a signature whose module is not
+    // open is not an error: Lean binds it as an implicit type variable and
+    // the theorem quietly changes its statement. Measured on the first
+    // external project: an entry threading a transitive capability's
+    // operation (`! [Infra.Kv.get]` with the capability two modules away)
+    // emitted `rnd_Infra_Kv_get : BranchPath → Int → Handle → …` and built.
+    // With the option off, the same line is `Unknown identifier Handle`.
+    entry_parts.push("set_option autoImplicit false".to_string());
     let declared = crate::codegen::common::collect_declared_effects(ctx);
     let has_ip = union_body.contains("BranchPath");
     let has_classified =

@@ -1141,6 +1141,21 @@ impl CodegenContext {
         })
     }
 
+    /// Entry module's direct `depends [...]` list in source order — the
+    /// same projection [`ModuleInfo::from_items`] keeps for a dependency.
+    /// Empty for ad-hoc programs without a module decl; `modules` may
+    /// still hold the transitive closure (and implicitly loaded standard
+    /// modules), which is deliberately not the same set.
+    pub(crate) fn entry_depends(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .find_map(|i| match i {
+                TopLevel::Module(m) => Some(m.depends.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
     /// Resolve a source-shape `Spanned<Expr>` on demand using the
     /// entry's resolver context. Used by emit helpers that still walk
     /// `Expr` (TCO hoisting, mutual TCO, verify blocks, follow-up

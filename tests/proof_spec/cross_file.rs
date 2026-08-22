@@ -339,7 +339,7 @@ fn cross_file_out_of_cone_dep_law_not_admitted() {
 /// --module-root <root> --check --check-json`. Returns the parsed JSON
 /// summary, the raw `Output`, AND the generated `.lean` source for each
 /// requested file name (so a test can assert on what was emitted).
-fn run_multi(
+pub(super) fn run_multi(
     files: &[(&str, &str)],
     entry: &str,
     read_back: &[&str],
@@ -352,7 +352,11 @@ fn run_multi(
     let src = temp_output_dir("aver-crossfile-multi-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     for (name, source) in files {
-        std::fs::write(src.join(name), source).unwrap_or_else(|e| panic!("write {name}: {e}"));
+        let path = src.join(name);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("create module dir");
+        }
+        std::fs::write(&path, source).unwrap_or_else(|e| panic!("write {name}: {e}"));
     }
     let out = temp_output_dir("aver-crossfile-multi-out");
     let run = Command::new(aver_bin)

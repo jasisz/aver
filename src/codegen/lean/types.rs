@@ -19,6 +19,99 @@ thread_local! {
     /// `Tcp.Connection`); in that case it must keep its capability namespace
     /// instead of being flattened to the legacy `Tcp_Connection` record.
     static CAPABILITY_RESOURCES: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// The program's type table and the module whose file is being emitted,
+    /// so a user type is spelled by its owner: a type declared in the module
+    /// being emitted keeps the name the source wrote, a type declared in any
+    /// other module is spelled with that module's path (`A.Fraction`). The
+    /// path resolves on its own, so a type a direct dependency only re-exposes
+    /// and a type two opened modules both declare need no `open`. Populated
+    /// once per `transpile_unified`; empty outside it, so a stray
+    /// `type_to_lean` keeps the bare spelling.
+    static TYPE_OWNERS: RefCell<Option<TypeOwners>> = const { RefCell::new(None) };
+}
+
+struct TypeOwners {
+    symbols: crate::ir::SymbolTable,
+    /// The entry's `module` name: a bare name written in the entry resolves
+    /// against it, the way the resolver does.
+    entry_module: Option<String>,
+    /// Prefix of the dependency module being emitted; `None` for the entry.
+    emitting: Option<String>,
+}
+
+/// Make `symbols` the type table user types are spelled against for the
+/// lifetime of the returned guard, with the entry as the module being emitted.
+pub(crate) fn scope_type_owners(
+    symbols: crate::ir::SymbolTable,
+    entry_module: Option<String>,
+) -> TypeOwnersGuard {
+    TYPE_OWNERS.with(|s| {
+        *s.borrow_mut() = Some(TypeOwners {
+            symbols,
+            entry_module,
+            emitting: None,
+        })
+    });
+    TypeOwnersGuard
+}
+
+pub(crate) struct TypeOwnersGuard;
+
+impl Drop for TypeOwnersGuard {
+    fn drop(&mut self) {
+        TYPE_OWNERS.with(|s| *s.borrow_mut() = None);
+    }
+}
+
+/// Mark `prefix` as the dependency module being emitted for the lifetime of
+/// the returned guard; the entry is being emitted again once it drops.
+pub(crate) fn scope_emitting_module(prefix: &str) -> EmittingModuleGuard {
+    TYPE_OWNERS.with(|s| {
+        if let Some(owners) = s.borrow_mut().as_mut() {
+            owners.emitting = Some(prefix.to_string());
+        }
+    });
+    EmittingModuleGuard
+}
+
+pub(crate) struct EmittingModuleGuard;
+
+impl Drop for EmittingModuleGuard {
+    fn drop(&mut self) {
+        TYPE_OWNERS.with(|s| {
+            if let Some(owners) = s.borrow_mut().as_mut() {
+                owners.emitting = None;
+            }
+        });
+    }
+}
+
+/// The owner-qualified Lean spelling of a user type declared in a module
+/// other than the one being emitted; `None` keeps the spelling the source
+/// wrote (a type of the module being emitted, a builtin carrier, or a name
+/// the resolver does not know). A capability resource is a user type like
+/// any other: `Kv.Handle` outside the capability module, bare inside it. The
+/// entry reaches a resource without opening its module whenever it threads a
+/// transitive capability's operation (`! [Kv.count]` with `depends [Box]`),
+/// and a bare `Handle` there is not an error under Lean's default
+/// `autoImplicit` but a silently bound type variable.
+fn owner_qualified_type_name(name: &str) -> Option<String> {
+    TYPE_OWNERS.with(|s| {
+        let owners = s.borrow();
+        let owners = owners.as_ref()?;
+        let resolver = crate::ir::hir::ResolveCtx {
+            symbols: &owners.symbols,
+            current_module: owners
+                .emitting
+                .clone()
+                .or_else(|| owners.entry_module.clone()),
+        };
+        let entry = owners.symbols.type_entry(resolver.resolve_type_id(name)?);
+        if entry.key.scope_str() == owners.emitting.as_deref() {
+            return None;
+        }
+        Some(super::syntax::aver_path_to_lean(&entry.key.canonical()))
+    })
 }
 
 pub(crate) fn scope_capability_resources(names: HashSet<String>) -> CapabilityResourceGuard {
@@ -112,7 +205,7 @@ pub fn type_to_lean(ty: &Type) -> String {
                 // proof machinery (`omega`, `Nat.*`).
                 "Nat".to_string()
             } else {
-                lean_named_type_name(name)
+                owner_qualified_type_name(name).unwrap_or_else(|| lean_named_type_name(name))
             }
         }
     }
