@@ -4062,6 +4062,8 @@ mod tests {
         let make_module = |prefix: &str| ModuleInfo {
             prefix: prefix.to_string(),
             depends: Vec::new(),
+            exposes: Vec::new(),
+            exposes_opaque: Vec::new(),
             type_defs: vec![TypeDef::Product {
                 name: "Natural".to_string(),
                 fields: vec![("value".to_string(), "Int".to_string())],
@@ -4152,6 +4154,8 @@ mod tests {
         let module = ModuleInfo {
             prefix: "Mod".to_string(),
             depends: Vec::new(),
+            exposes: Vec::new(),
+            exposes_opaque: Vec::new(),
             type_defs: vec![TypeDef::Product {
                 name: "Natural".to_string(),
                 fields: vec![("value".to_string(), "Int".to_string())],

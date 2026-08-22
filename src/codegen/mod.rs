@@ -42,6 +42,13 @@ pub struct ModuleInfo {
     pub prefix: String,
     /// Direct `depends [...]` entries from the source module.
     pub depends: Vec<String>,
+    /// The module header's `exposes [...]` list, verbatim (empty = the default
+    /// rule). Together with `exposes_opaque` and `depends` this is what
+    /// [`crate::visibility::collect_type_exports`] needs to say which types the
+    /// module hands on to its importers, including ones it only re-exposes.
+    pub exposes: Vec<String>,
+    /// The module header's `exposes opaque [...]` list, verbatim.
+    pub exposes_opaque: Vec<String>,
     /// Type definitions from the module.
     pub type_defs: Vec<TypeDef>,
     /// Function definitions from the module (excluding `main`).
@@ -81,13 +88,10 @@ impl ModuleInfo {
         items: &[TopLevel],
         analysis: Option<crate::ir::AnalysisResult>,
     ) -> Self {
-        let depends = items
-            .iter()
-            .find_map(|i| match i {
-                TopLevel::Module(m) => Some(m.depends.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let decl = crate::visibility::module_decl(items);
+        let depends = decl.map(|m| m.depends.clone()).unwrap_or_default();
+        let exposes = decl.map(|m| m.exposes.clone()).unwrap_or_default();
+        let exposes_opaque = decl.map(|m| m.exposes_opaque.clone()).unwrap_or_default();
         let type_defs = items
             .iter()
             .filter_map(|i| match i {
@@ -106,6 +110,8 @@ impl ModuleInfo {
         Self {
             prefix,
             depends,
+            exposes,
+            exposes_opaque,
             type_defs,
             fn_defs,
             capability_items,

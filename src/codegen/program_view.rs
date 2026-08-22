@@ -302,6 +302,8 @@ mod tests {
         ModuleInfo {
             prefix: prefix.to_string(),
             depends: vec![],
+            exposes: vec![],
+            exposes_opaque: vec![],
             type_defs: vec![],
             fn_defs: fn_names.iter().map(|n| mk_fn(n)).collect(),
             capability_items: vec![],

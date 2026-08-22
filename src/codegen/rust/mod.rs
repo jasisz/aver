@@ -1142,9 +1142,12 @@ mod tests {
                     .collect();
                 let (capability_items, capability_semantics) =
                     crate::codegen::capability_metadata(&lm.items);
+                let decl = crate::visibility::module_decl(&lm.items);
                 crate::codegen::ModuleInfo {
                     prefix: lm.dep_name.clone(),
                     depends,
+                    exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),
+                    exposes_opaque: decl.map(|d| d.exposes_opaque.clone()).unwrap_or_default(),
                     type_defs,
                     fn_defs,
                     capability_items,

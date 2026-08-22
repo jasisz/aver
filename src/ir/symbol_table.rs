@@ -145,6 +145,13 @@ pub struct SymbolTable {
     /// but a resolver context still spells its scope with the declared name.
     entry_depends: Vec<String>,
     entry_module_name: Option<String>,
+    /// Each dependency module's public type surface after explicit re-exports,
+    /// from [`crate::visibility::collect_type_exports`] — the same relation the
+    /// type checker resolves an owner-context bare name through
+    /// (`TypeChecker::resolve_in_owner_context`). A type is not only visible to
+    /// the module that declares it: whoever depends on a module that re-exposes
+    /// it sees it too, under the declaration owner's identity.
+    module_type_exports: crate::visibility::ModuleTypeExports,
     /// Canonical provider-bound operation name → whether the call establishes
     /// an effect. These have no `FnId` because there is no Aver body.
     capability_operations: HashMap<String, CapabilityOperationInfo>,
@@ -222,6 +229,26 @@ impl SymbolTable {
             table.entry_depends = module.depends.clone();
             table.entry_module_name = Some(module.name.clone());
         }
+        // One relation, computed once: which types does each module hand on to
+        // its importers? The type checker asks the same question of the same
+        // function over its own parsed items.
+        let surfaces: Vec<crate::visibility::ModuleTypeSurface<'_>> = dep_modules
+            .iter()
+            .map(|m| crate::visibility::ModuleTypeSurface {
+                name: &m.prefix,
+                depends: &m.depends,
+                exposes: crate::visibility::declared_exposes(&m.exposes),
+                exposes_opaque: &m.exposes_opaque,
+                declared_types: m
+                    .type_defs
+                    .iter()
+                    .map(|td| match td {
+                        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name.as_str(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        table.module_type_exports = crate::visibility::collect_type_exports(&surfaces);
 
         // Helpful pre-traversal: gather (scope, fns, types) tuples
         // so the actual indexing pass is uniform across entry vs
@@ -554,10 +581,11 @@ impl SymbolTable {
 
     /// Resolve a *bare* type name (no module prefix) against the scopes
     /// visible to the module named by `asking` — its own scope, the modules
-    /// it names in `depends [...]`, the embedded standard modules, and the
-    /// entry scope — and return the unique match. Returns `None` when the
-    /// name doesn't resolve there OR when two visible scopes legitimately
-    /// share it (ambiguous reference; caller must qualify).
+    /// it names in `depends [...]` (including the types those modules only
+    /// re-expose), the embedded standard modules, and the entry scope — and
+    /// return the unique match. Returns `None` when the name doesn't resolve
+    /// there OR when two visible scopes legitimately share it (ambiguous
+    /// reference; caller must qualify).
     ///
     /// Phase-E cross-module ctor resolution: an Aver expression like
     /// `Val.ValOk(x)` written from a module that doesn't host the
@@ -571,7 +599,7 @@ impl SymbolTable {
     pub fn type_id_by_bare_name_in(&self, name: &str, asking: Option<&str>) -> Option<TypeId> {
         let mut found: Option<TypeId> = None;
         for (key, id) in &self.type_index {
-            if key.name != name || !self.scope_is_visible_to(key.scope_str(), asking) {
+            if key.name != name || !self.type_is_visible_to(key, *id, asking) {
                 continue;
             }
             if found.is_some() {
@@ -586,29 +614,60 @@ impl SymbolTable {
         found
     }
 
-    /// Can a bare type reference written in `asking` see a type declared in
-    /// `scope`?
+    /// Can a bare type reference written in `asking` see the type `key`
+    /// declares?
     ///
-    /// Visible: the asking module's own scope, the modules it names in
-    /// `depends [...]`, the embedded standard modules (reserved names a
-    /// project file cannot shadow, and a builtin's signature may cross one
-    /// without the module naming it), and the entry scope — which the
-    /// resolver's earlier `TypeKey::entry` step normally claims first.
+    /// This is the type checker's own relation, read off the same
+    /// re-export map: `TypeChecker::resolve_in_owner_context` answers a bare
+    /// name from the owner's scope, then from each module in the owner's
+    /// `depends [...]` through `type_export_id` — that module's public type
+    /// surface, which carries the types it only re-exposes under their
+    /// declaring module's identity. So a type is visible when it comes from:
+    ///
+    /// - the asking module's own scope;
+    /// - a module the asking one names in `depends [...]`;
+    /// - a module such a dependency re-exposes this name from — the rule
+    ///   composes, so a chain of facades each naming the type in `exposes`
+    ///   carries it the whole way, while a module that merely depends on a
+    ///   facade without re-exposing does not pass it on;
+    /// - the embedded standard modules (reserved names a project file cannot
+    ///   shadow, and a builtin's signature may cross one without the module
+    ///   naming it);
+    /// - the entry scope — which the resolver's earlier `TypeKey::entry` step
+    ///   normally claims first;
+    /// - any capability, when the type is one of its resources. The type
+    ///   checker marks every resource visible unconditionally
+    ///   (`register_capability_sigs`) because an operation is nameable in
+    ///   `! [Kv.count]` without `depends [Kv]`, and threading that operation
+    ///   puts the resource in the caller's own lifted signature.
     ///
     /// A module the asking one never imported is NOT visible. Letting it in
     /// is how a type nobody imported could make a bare name ambiguous
     /// everywhere: the lookup then answered `None`, and `None` reads
     /// downstream as "not a user type" rather than as an error.
-    fn scope_is_visible_to(&self, scope: Option<&str>, asking: Option<&str>) -> bool {
-        let Some(scope) = scope else {
+    fn type_is_visible_to(&self, key: &TypeKey, id: TypeId, asking: Option<&str>) -> bool {
+        let Some(scope) = key.scope_str() else {
             return true;
         };
         if asking.is_some_and(|asking| module_names_match(scope, asking))
             || crate::stdlib::find(scope).is_some()
+            || self.type_entry(id).is_capability_resource
         {
             return true;
         }
-        self.depends_of(asking).iter().any(|dep| dep == scope)
+        self.depends_of(asking)
+            .iter()
+            .any(|dep| dep == scope || self.dependency_re_exposes(dep, &key.name, scope))
+    }
+
+    /// Does `dep` hand `scope`'s type `name` on to its own importers? True for
+    /// a type `dep` declares itself and for one it re-exposes from further
+    /// down, since the export surface keeps the declaration owner's identity.
+    fn dependency_re_exposes(&self, dep: &str, name: &str, scope: &str) -> bool {
+        self.module_type_exports
+            .get(dep)
+            .and_then(|exports| exports.get(name))
+            .is_some_and(|target| target.module == scope && target.name == name)
     }
 
     /// The direct `depends [...]` of the module a resolver context calls
@@ -758,15 +817,49 @@ mod tests {
         fns: Vec<FnDef>,
         types: Vec<TypeDef>,
     ) -> ModuleInfo {
+        module_exposing(prefix, depends, &[], fns, types)
+    }
+
+    /// A module with an explicit `exposes [...]` list — the only way a name
+    /// declared elsewhere crosses this module's boundary.
+    fn module_exposing(
+        prefix: &str,
+        depends: &[&str],
+        exposes: &[&str],
+        fns: Vec<FnDef>,
+        types: Vec<TypeDef>,
+    ) -> ModuleInfo {
         ModuleInfo {
             prefix: prefix.to_string(),
             depends: depends.iter().map(|d| (*d).to_string()).collect(),
+            exposes: exposes.iter().map(|e| (*e).to_string()).collect(),
+            exposes_opaque: Vec::new(),
             type_defs: types,
             fn_defs: fns,
             capability_items: Vec::new(),
             capability_semantics: None,
             verify_laws: Vec::new(),
             analysis: None,
+        }
+    }
+
+    /// The `module` header of an entry file, which is what the table reads
+    /// the entry scope's own `depends [...]` from.
+    fn entry_module(name: &str, depends: &[&str]) -> crate::ast::Module {
+        crate::ast::Module {
+            name: name.to_string(),
+            line: 1,
+            depends: depends.iter().map(|d| (*d).to_string()).collect(),
+            exposes: Vec::new(),
+            exposes_opaque: Vec::new(),
+            exposes_line: None,
+            intent: String::new(),
+            effects: Some(Vec::new()),
+            effects_line: None,
+            kind: None,
+            kind_line: None,
+            semantics: None,
+            semantics_line: None,
         }
     }
 
@@ -973,6 +1066,78 @@ mod tests {
         assert_eq!(
             table.type_id_by_bare_name_in("Val", Some("C")),
             table.type_id_of(&TypeKey::in_module("C", "Val"))
+        );
+    }
+
+    #[test]
+    fn a_type_a_dependency_re_exposes_is_visible_under_its_owner() {
+        // `A` owns `Fraction`; `B` re-exposes it; `C` re-exposes it again.
+        // Everyone downstream sees the ONE declaration in `A` — a facade
+        // never mints a `B.Fraction` of its own. The chain composes: each
+        // hop names it in `exposes [...]`, so `E`, two facades away, still
+        // resolves the bare name.
+        let mod_a = module("A", vec![], vec![product("Fraction", 1)]);
+        let mod_b = module_exposing("B", &["A"], &["Fraction"], vec![], vec![]);
+        let mod_c = module_exposing("C", &["B"], &["Fraction"], vec![], vec![]);
+        let mod_d = module_depending_on("D", &["B"], vec![], vec![]);
+        let mod_e = module_depending_on("E", &["C"], vec![], vec![]);
+        let table = SymbolTable::build(&[], &[mod_a, mod_b, mod_c, mod_d, mod_e]);
+        table.assert_consistent();
+
+        let owner = table.type_id_of(&TypeKey::in_module("A", "Fraction"));
+        assert!(owner.is_some());
+        assert_eq!(
+            table.type_id_by_bare_name_in("Fraction", Some("D")),
+            owner,
+            "a type a direct dependency re-exposes must resolve to its owner"
+        );
+        assert_eq!(
+            table.type_id_by_bare_name_in("Fraction", Some("E")),
+            owner,
+            "re-export chains compose while every hop names the type"
+        );
+    }
+
+    #[test]
+    fn a_dependency_that_does_not_re_expose_does_not_pass_the_name_on() {
+        // `B` depends on `A` but its `exposes [...]` names only its own
+        // function, so `A.Widget` stops at `B`'s boundary: `C`, which only
+        // depends on `B`, cannot spell the bare name. Visibility follows the
+        // export surface, not reachability through the dependency graph.
+        let mod_a = module("A", vec![], vec![product("Widget", 1)]);
+        let mod_b = module_exposing("B", &["A"], &["wrap"], vec![fn_def("wrap")], vec![]);
+        let mod_c = module_depending_on("C", &["B"], vec![], vec![]);
+        let table = SymbolTable::build(&[], &[mod_a, mod_b, mod_c]);
+        table.assert_consistent();
+
+        assert_eq!(
+            table.type_id_by_bare_name_in("Widget", Some("B")),
+            table.type_id_of(&TypeKey::in_module("A", "Widget")),
+            "B depends on A directly, so B itself still sees the type"
+        );
+        assert_eq!(
+            table.type_id_by_bare_name_in("Widget", Some("C")),
+            None,
+            "a name B never re-exposed must not reach C"
+        );
+    }
+
+    #[test]
+    fn the_entry_sees_what_its_dependency_re_exposes() {
+        // Same rule from the entry scope, which carries no module prefix of
+        // its own and reads its `depends [...]` off the entry's header.
+        let mod_a = module("A", vec![], vec![product("Fraction", 1)]);
+        let mod_b = module_exposing("B", &["A"], &["Fraction"], vec![], vec![]);
+        let entry_items = vec![TopLevel::Module(entry_module("Main", &["B"]))];
+        let table = SymbolTable::build(&entry_items, &[mod_a, mod_b]);
+        table.assert_consistent();
+
+        let owner = table.type_id_of(&TypeKey::in_module("A", "Fraction"));
+        assert_eq!(table.type_id_by_bare_name_in("Fraction", None), owner);
+        assert_eq!(
+            table.type_id_by_bare_name_in("Fraction", Some("Main")),
+            owner,
+            "the entry spelled by its own header name resolves the same way"
         );
     }
 

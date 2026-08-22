@@ -147,6 +147,92 @@ fn a_collision_the_asking_module_can_actually_see_is_named() {
 }
 
 #[test]
+fn a_type_a_dependency_only_re_exposes_still_resolves_bare() {
+    // The other half of the scope rule. Cutting the lookup down to the
+    // asking module's direct `depends [...]` is not enough on its own: a
+    // module that re-exposes another's type hands it on to its own
+    // importers, so the entry here sees `Fraction` through `Domain.Facade`
+    // even though it never names `Domain.Rational`. Restricting to direct
+    // dependencies alone left the bare name unresolved, which downstream
+    // reads as "not a user type" — the same silence this whole spec is
+    // about, only from the opposite side.
+    let dir = temp_dir("reexport");
+    write(
+        &dir.join("domain/rational.av"),
+        "module Rational\n    intent =\n        \"Owns the record the facade re-exposes.\"\n    depends []\n    effects []\n\nrecord Fraction\n    top: Int\n    bottom: Int\n\nfn top(f: Fraction) -> Int\n    ? \"Reads the numerator.\"\n    f.top\n",
+    );
+    write(
+        &dir.join("domain/facade.av"),
+        "module Facade\n    intent =\n        \"Re-exposes another module's record without declaring one.\"\n    exposes [Fraction, make, topOf]\n    depends [Domain.Rational]\n    effects []\n\nfn make(n: Int) -> Fraction\n    ? \"Builds the re-exposed record.\"\n    Fraction(top = n, bottom = 1)\n\nfn topOf(f: Fraction) -> Int\n    ? \"Reads it back.\"\n    Domain.Rational.top(f)\n",
+    );
+    write(
+        &dir.join("app/entry.av"),
+        "module Entry\n    intent =\n        \"Names a type its only dependency merely re-exposes, bare.\"\n    depends [Domain.Facade]\n    effects [Console.print]\n\nfn widen(n: Int) -> Fraction\n    ? \"Both the signature and the constructor spell the re-exposed name bare.\"\n    Fraction(top = n + 1, bottom = 1)\n\nfn main() -> Unit\n    ? \"Prints the numerator that came back through the facade.\"\n    ! [Console.print]\n    Console.print(\"{Domain.Facade.topOf(widen(6))}\")\n",
+    );
+
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["compile", "app/entry.av", "--target", "rust"])
+        .args(["--module-root", ".", "-o", "out"])
+        .output()
+        .expect("run aver compile --target rust");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let carrying: Vec<String> = rust_sources(&dir.join("out"))
+        .into_iter()
+        .filter(|(_, content)| content.contains("compile_error!"))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(
+        carrying.is_empty(),
+        "a re-exposed type must resolve in the importer, found compile errors in:\n  {}",
+        carrying.join("\n  ")
+    );
+
+    let run = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["run", "app/entry.av", "--module-root", "."])
+        .output()
+        .expect("run aver run");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "7");
+
+    // The proof export is where an unresolved bare name is loudest: it has
+    // to spell the type by the module that DECLARES it, never by the facade
+    // and never bare. A facade does not mint a type of its own.
+    let proof = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["proof", "app/entry.av", "--backend", "lean"])
+        .args(["--module-root", ".", "-o", "lean"])
+        .output()
+        .expect("run aver proof --backend lean");
+    assert_eq!(
+        proof.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&proof.stdout),
+        String::from_utf8_lossy(&proof.stderr),
+    );
+    let entry_lean = fs::read_to_string(dir.join("lean/Entry.lean")).expect("read Entry.lean");
+    assert!(
+        entry_lean.contains("def widen (n : Int) : Domain.Rational.Fraction :="),
+        "the entry's signature must carry the owner of the re-exposed record:\n{entry_lean}"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn the_vm_and_the_checker_agree_with_the_generated_code() {
     // The same program, run three ways. Before the fix `check` and `verify`
     // were green and only the generated crate was broken, so keeping all
