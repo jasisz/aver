@@ -105,9 +105,11 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 };
             }
             if let ResolvedExpr::Ident(type_name) = &obj.node {
-                // Option.None → none
+                // Option.None → Option.none. Spelled in full so a user
+                // function named `none` in an opened module never makes the
+                // bare alias ambiguous (patterns use the leading-dot form).
                 if type_name == "Option" && field == "None" {
-                    return "none".to_string();
+                    return "Option.none".to_string();
                 }
                 // Oracle v1: `BranchPath.Root` is a nullary value
                 // constructor defined in the Lean prelude — emit
@@ -238,7 +240,9 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             }
         }
         ResolvedExpr::RecordCreate {
-            type_name, fields, ..
+            type_id,
+            type_name,
+            fields,
         } => {
             // Refinement-via-opaque types emit as Lean `Subtype`,
             // so construction is `⟨value, proof⟩`. The proof
@@ -296,10 +300,12 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 .collect();
             // Builtin HOST carrier records (`Terminal.Size`,
             // `Tcp.Connection`, …) map to underscored Lean structure
-            // names; a USER dep-module record keeps its dotted
-            // namespaced path (it is emitted inside `namespace M`).
-            // Same translation as `lean::types`'s `Type::Named`.
-            let lean_type_name = super::types::lean_named_type_name(type_name);
+            // names; a USER record is spelled by its owner module, bare
+            // inside that module and path-qualified anywhere else.
+            let lean_type_name = match type_id {
+                Some(type_id) => user_type_path(*type_id, ctx),
+                None => super::types::lean_named_type_name(type_name),
+            };
             format!("{{ {} : {} }}", parts.join(", "), lean_type_name)
         }
         ResolvedExpr::RecordUpdate {
@@ -563,6 +569,18 @@ fn emit_fn_call(
     }
 }
 
+/// Lean path of a user type at the emit site: the bare name inside the
+/// module that declares it, the owner-qualified path (`A.Shape`) anywhere
+/// else. Same rule as `types::type_to_lean` applies to type annotations.
+fn user_type_path(type_id: crate::ir::TypeId, ctx: &CodegenContext) -> String {
+    let key = &ctx.symbol_table.type_entry(type_id).key;
+    if key.scope_str() == ctx.active_module_scope().as_deref() {
+        super::syntax::aver_path_to_lean(&key.name)
+    } else {
+        super::syntax::aver_path_to_lean(&key.canonical())
+    }
+}
+
 fn emit_constructor(
     ctor: &ResolvedCtor,
     args: &[Spanned<ResolvedExpr>],
@@ -578,8 +596,13 @@ fn emit_constructor(
         ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => {
             format!("Except.error {}", inner_str())
         }
-        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => format!("some {}", inner_str()),
-        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "none".to_string(),
+        // Option constructors are spelled in full: `some` / `none` are
+        // root aliases, and an opened user module that declares a function
+        // of either name turns the bare alias into an ambiguous term.
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => {
+            format!("Option.some {}", inner_str())
+        }
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "Option.none".to_string(),
         ResolvedCtor::User { type_id, name, .. } => {
             let type_name = ctx.symbol_table.type_entry(*type_id).key.name.clone();
             // Canonical Peano type lifted to builtin `Nat`: `Z` → `0`, `S(e)` → `(e + 1)`.
@@ -593,10 +616,13 @@ fn emit_constructor(
                     }
                 };
             }
-            // User ctor: `Type.variant` in Lean. Lean convention is
-            // lowercase variant names; both segments pass through the
-            // reserved-token guard (`Type` / `Match` are legal Aver names).
-            let type_name = super::syntax::aver_path_to_lean(&type_name);
+            // User ctor: `Type.variant` in Lean, the type spelled by its
+            // owner module so the constructor resolves without an `open`
+            // and never to a same-named type of another module. Lean
+            // convention is lowercase variant names; every segment passes
+            // through the reserved-token guard (`Type` / `Match` are legal
+            // Aver names).
+            let type_name = user_type_path(*type_id, ctx);
             let variant = super::syntax::lean_ctor_name(name);
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             if arg_strs.is_empty() {

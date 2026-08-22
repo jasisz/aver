@@ -47,7 +47,7 @@ pub fn emit_builtin_call(
         ResultWithDefault => format!("Except.withDefault {} {}", p(&a[0]), p(&a[1])),
 
         // ---- Option ----
-        OptionSome => format!("some {}", p(&a[0])),
+        OptionSome => format!("Option.some {}", p(&a[0])),
         OptionWithDefault => format!("({}.getD {})", p(&a[0]), p(&a[1])),
         OptionToResult => format!("Option.toExcept {} {}", p(&a[0]), p(&a[1])),
 
@@ -195,7 +195,7 @@ pub fn emit_builtin_call(
         // (so a finite-domain table law over a `Vector` enumerates cleanly).
         VectorGet => format!("{}[Int.toNat {}]?", p(&a[0]), p(&a[1])),
         VectorSet => format!(
-            "if {} < {}.size then some ({}.set! (Int.toNat {}) {}) else none",
+            "if {} < {}.size then Option.some ({}.set! (Int.toNat {}) {}) else Option.none",
             p(&a[1]),
             p(&a[0]),
             p(&a[0]),

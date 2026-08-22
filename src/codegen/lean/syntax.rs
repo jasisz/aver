@@ -218,14 +218,19 @@ const LEAN_RESERVED: &[&str] = &[
     "without_expected_type",
     // Global Lean declarations that make a bare user function ambiguous or
     // break simp/unfold references even though they are not syntax tokens.
+    // `some` / `none` are the root aliases of the Option constructors: a
+    // user function of either name in an opened module makes a match binder
+    // spelled like it an ambiguous pattern.
     "and",
     "id",
     "insert",
     "max",
     "min",
+    "none",
     "not",
     "or",
     "priority",
+    "some",
     "toString",
     "xor",
 ];

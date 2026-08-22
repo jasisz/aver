@@ -8,6 +8,12 @@ set_option linter.unusedVariables false
 set_option linter.unusedSimpArgs false
 set_option linter.deprecated false
 set_option maxRecDepth 1000000
+set_option autoImplicit false
+
+-- The prelude's own type variables, bound here once: with `autoImplicit`
+-- off nothing in a generated file is a type variable unless declared.
+universe u
+variable {α β ε : Type u}
 
 -- Prelude: helper definitions for Aver builtins"#;
 

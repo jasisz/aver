@@ -16,6 +16,8 @@ mod container_induction;
 mod cross_file;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
+#[path = "proof_spec/entry_opens.rs"]
+mod entry_opens;
 #[path = "proof_spec/export_structure.rs"]
 mod export_structure;
 #[path = "proof_spec/floor_window.rs"]

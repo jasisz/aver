@@ -138,8 +138,10 @@ verify twice law doubling
     );
 
     let capability = std::fs::read_to_string(output_dir.join("Cap.lean")).expect("read Cap.lean");
+    // `Bytes` is declared in module `Bytes`, so outside that module it is
+    // spelled by its owner like every other foreign type (`Bytes.Bytes`).
     assert!(
-        capability.contains("\nnoncomputable opaque hash : Bytes → Bytes\n"),
+        capability.contains("\nnoncomputable opaque hash : Bytes.Bytes → Bytes.Bytes\n"),
         "the provider operation must be an explicitly noncomputable opaque:\n{capability}"
     );
     assert!(

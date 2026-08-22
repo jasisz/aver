@@ -37,6 +37,29 @@ its corresponding Lean namespace. A function `decode` in module `Packet` is
 therefore exposed as `Packet.decode`; theorem-skeleton declarations follow the
 same rule, for example `Packet.decode_verify_1`.
 
+Every file, the entry included, imports the whole dependency closure (each
+file has to compile) but `open`s only the module's own direct `depends`.
+The emitter spells every cross-module name it produces with its module
+path: a function with the module that declares it, and a user type declared
+in another module with its owner's path wherever it appears — signatures,
+record fields, constructor expressions (`A.Fraction`, `X.Shape.circle`), and
+a capability resource the same way (`Kv.Handle`) — while a module's own
+types keep their bare names. That is what lets a type a direct dependency
+merely re-exposes, two opened modules declaring the same type name, a user
+type spelled like a Lean root type (`Sum`), and the resource of a capability
+the entry only threads an operation of all resolve, and what lets a match
+binder share a name with a function some distant module exports. A function
+name that two direct dependencies both declare is hidden from both `open`s
+(`open Script hiding named`), members of a `mutual` block included; the
+Option constructors are spelled `Option.some` / `Option.none`, and a user
+function or binder called `some` or `none` is renamed `some'` / `none'`
+(like `id`, `max` and `min`) so neither ever meets the root alias.
+
+Every emitted file, `AverCommon.lean` and the SHA-256 model included, sets
+`autoImplicit false`: a type name the export leaves unresolved is a build
+error (`Unknown identifier`), never an implicit type variable Lean binds on
+its own and a theorem that quietly says something else.
+
 ## Scope
 
 - exports pure core logic: types, pure functions, and decisions

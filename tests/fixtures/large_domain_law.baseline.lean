@@ -4,6 +4,8 @@ set_option linter.unusedVariables false
 
 set_option maxRecDepth 1000000
 
+set_option autoImplicit false
+
 namespace LargeDomainLaw
 
 /-- Sum of the three arguments. -/
