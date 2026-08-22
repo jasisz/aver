@@ -64,7 +64,7 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
 | `unknown-impact` | warning | A `decision`'s impact symbol doesn't resolve in scope. | Check spelling; remove if intentional. |
-| `unused-expose` | warning | Module `exposes` a name nobody imports. | Drop from `exposes` or start using it. |
+| `unused-expose` | warning | Module `exposes` a name nothing in the checked program(s) imports; a directory input judges every program in it. | Drop from `exposes` or start using it. |
 | `stdlib-shadow` | warning | A `depends` entry names an embedded standard module while a same-named project file exists; the project file is silently ignored because the standard library wins resolution. | Rename the project module and its `depends [...]` entries to use the project file. |
 
 `stdlib-shadow` reaches you on two channels and only one of them is suppressible: the structured finding honours `[[check.suppress]]` like every other warning, while the module loader's stderr `warning:` line is emitted at resolution time on every command (`run`, `verify`, `compile`, …) and deliberately ignores suppression — silently loading different code than the project file on disk is a change of program meaning, not a style opinion. The stderr line is printed once per process per shadowed module name.

@@ -293,15 +293,15 @@ pub(super) enum Commands {
         #[arg(long = "wasm-gc")]
         wasm_gc: bool,
     },
-    /// Run check + verify + format-check in one pass
+    /// Run check + verify + format-check in one pass over every module of the program
     Audit {
-        /// File or directory to audit (default: current directory)
+        /// File or directory to audit (default: current directory); a file names its whole program
         #[arg(default_value = ".")]
         path: String,
         /// Project module root for dependency resolution
         #[arg(long)]
         module_root: Option<String>,
-        /// Emit NDJSON AnalysisReport bundles — one per file, trailing summary
+        /// Emit NDJSON AnalysisReport bundles — one per module, trailing summary
         #[arg(long)]
         json: bool,
         /// Forward `--hostile` to the verify step. See `aver verify --hostile`.
