@@ -34,6 +34,13 @@
 //!   declaration instead — a module the dependency never imported. The
 //!   function then failed to lower and shipped as a trap stub.
 //!
+//! Both rules apply to a **constructor reference** — `Dep.Status.Open` in an
+//! expression or as a `match` arm's head — exactly as they apply to a type
+//! reference, because the name a constructor is written with is the name of
+//! its type plus the variant. A qualified one loses its module path when the
+//! declaration kept the bare spelling and keeps it when the declaration was
+//! renamed.
+//!
 //! Treating collision as the trigger keeps the migration narrow: the legacy
 //! strip path and bare-name lookups continue to work for every existing
 //! single-declarer dep type, and only the genuinely-ambiguous slot pair gets
@@ -482,9 +489,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
         Expr::Match { subject, arms } => {
             rewrite_expr(&mut subject.node, ctx);
             for arm in arms.iter_mut() {
-                if !ctx.dep_prefix.is_empty() {
-                    canonicalise_pattern(&mut arm.pattern, ctx.colliding_owner);
-                }
+                rewrite_pattern(&mut arm.pattern, ctx);
                 rewrite_expr(&mut arm.body.node, ctx);
             }
         }
@@ -509,9 +514,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             }
         }
         Expr::Constructor(name, payload) => {
-            if !ctx.dep_prefix.is_empty() {
-                canonicalise_constructor_name(name, ctx.colliding_owner);
-            }
+            rewrite_constructor_name(name, ctx);
             if let Some(payload) = payload.as_deref_mut() {
                 rewrite_expr(&mut payload.node, ctx);
             }
@@ -600,14 +603,89 @@ fn canonicalise_attr_head_for_own_colliding(
     walk(expr, colliding_owner, 0);
 }
 
-fn canonicalise_pattern(pat: &mut Pattern, colliding_owner: &HashMap<String, String>) {
-    if let Pattern::Constructor(name, _bindings) = pat {
-        let head = name.split('.').next().unwrap_or(name);
-        if let Some(owner) = colliding_owner.get(head) {
-            let rest = &name[head.len()..];
-            *name = format!("{owner}.{head}{rest}");
+/// Every constructor reference a pattern holds, rewritten the way the
+/// module being walked reads it: the module path a qualified reference
+/// carries is replaced by the post-flatten spelling of the type it names,
+/// and a bare ambiguous name is canonicalised to its owner.
+///
+/// Expression position gets the first of those through
+/// [`rewrite_dotted_module_ref`], since the parser leaves
+/// `Dep.Type.Variant` as an `Attr` chain. A pattern head is one string no
+/// other pass touches, so `match` over an imported type's variants kept
+/// naming `Dep.Type.Variant` after flattening had renamed the declaration
+/// to `Type` — nothing resolved it, and the whole function shipped as a
+/// trap stub that only traps once the caller reaches it.
+fn rewrite_pattern(pat: &mut Pattern, ctx: &RewriteCtx<'_>) {
+    match pat {
+        Pattern::Tuple(inner) => {
+            for pat in inner.iter_mut() {
+                rewrite_pattern(pat, ctx);
+            }
         }
+        Pattern::Constructor(name, _bindings) => {
+            rewrite_constructor_name(name, ctx);
+        }
+        _ => {}
     }
+}
+
+/// One constructor reference, in expression or in pattern position.
+/// Qualified references lose the module path first — a name that still
+/// carries one has nothing for the colliding-name pass to read.
+fn rewrite_constructor_name(name: &mut String, ctx: &RewriteCtx<'_>) {
+    if let Some(flattened) = flattened_qualified_ctor(name, ctx.prefixes, ctx.colliding_bare_names)
+    {
+        *name = flattened;
+        return;
+    }
+    if !ctx.dep_prefix.is_empty() {
+        canonicalise_constructor_name(name, ctx.colliding_owner);
+    }
+}
+
+/// The post-flatten spelling of a constructor written with the module path
+/// of the type that declares it: `TmpReviewB.Status.Open` → `Status.Open`,
+/// and `Left.Box.Full` unchanged when `Box` is ambiguous and its
+/// declaration therefore keeps the canonical `Left.Box` name. `None` when
+/// nothing before the variant names a dependency module — which is every
+/// reference already written in the post-flatten form.
+fn flattened_qualified_ctor(
+    name: &str,
+    prefixes: &HashSet<String>,
+    colliding_bare_names: &HashSet<String>,
+) -> Option<String> {
+    let segments: Vec<&str> = name.split('.').collect();
+    let split = dep_prefix_split(&segments, prefixes)?;
+    if segments.len() - split < 2 {
+        return None;
+    }
+    let type_name = flattened_type_name(&segments, split, colliding_bare_names);
+    Some(format!("{type_name}.{}", segments[segments.len() - 1]))
+}
+
+/// How many leading segments of `segments` name a dependency module, taking
+/// the longest such run — `Domain.Value` wins over `Domain` when both are
+/// module paths. `None` when no leading run names one.
+fn dep_prefix_split(segments: &[&str], prefixes: &HashSet<String>) -> Option<usize> {
+    (1..segments.len())
+        .rev()
+        .find(|split| prefixes.contains(&segments[..*split].join(".")))
+}
+
+/// The post-flatten name of the type `segments[split..len - 1]` spells.
+/// A colliding dep type keeps its canonical `Prefix.Name` spelling
+/// post-flatten, so the qualified reference must not collapse to the bare
+/// name — that name denotes another module's declaration.
+fn flattened_type_name(
+    segments: &[&str],
+    split: usize,
+    colliding_bare_names: &HashSet<String>,
+) -> String {
+    let type_name = segments[split..segments.len() - 1].join("_");
+    if colliding_bare_names.contains(&type_name) {
+        return format!("{}.{type_name}", segments[..split].join("."));
+    }
+    type_name
 }
 
 fn rewrite_dotted_module_ref(
@@ -616,32 +694,13 @@ fn rewrite_dotted_module_ref(
     colliding_bare_names: &HashSet<String>,
 ) -> Option<Expr> {
     let segments: Vec<&str> = dotted.split('.').collect();
-    if segments.len() < 2 {
-        return None;
-    }
-
-    let mut best: Option<usize> = None;
-    for split in (1..segments.len()).rev() {
-        let candidate = segments[..split].join(".");
-        if prefixes.contains(&candidate) {
-            best = Some(split);
-            break;
-        }
-    }
-    let split = best?;
-    let prefix_dotted = segments[..split].join(".");
+    let split = dep_prefix_split(&segments, prefixes)?;
 
     Some(match segments.len() - split {
         0 => return None,
-        1 => Expr::Ident(prefixed(&prefix_dotted, segments[split])),
+        1 => Expr::Ident(prefixed(&segments[..split].join("."), segments[split])),
         _ => {
-            let mut type_name = segments[split..segments.len() - 1].join("_");
-            // A colliding dep type keeps its canonical `Prefix.Name` spelling
-            // post-flatten, so the qualified reference must not collapse to
-            // the bare name — that name denotes another module's declaration.
-            if colliding_bare_names.contains(&type_name) {
-                type_name = format!("{prefix_dotted}.{type_name}");
-            }
+            let type_name = flattened_type_name(&segments, split, colliding_bare_names);
             let last = segments[segments.len() - 1].to_string();
             Expr::Attr(Box::new(Spanned::bare(Expr::Ident(type_name))), last)
         }

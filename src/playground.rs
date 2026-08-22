@@ -1343,6 +1343,93 @@ fn main() -> Int
             "playground project compile should use wasm-gc, got:\n{}",
             wat
         );
+        assert_real_body(&wat, "main");
+    }
+
+    /// The same imported type, its variants carrying a payload the entry
+    /// reads back out.
+    ///
+    /// `paired` holds its arm heads inside a tuple pattern, which the walk
+    /// has to reach as well — the whole module is refused when it does not.
+    /// Its own body is not asserted: a constructor inside a tuple pattern is
+    /// a shape the emitter does not lower yet, so a stub is the honest
+    /// answer for it, and nothing calls it.
+    #[test]
+    fn compiles_multi_file_wasm_gc_matching_an_imported_constructor_payload() {
+        let mut files = HashMap::new();
+        files.insert(
+            "tmpreviewc.av".to_string(),
+            r#"module TmpReviewC
+    intent = "dependency with a payload-carrying sum type"
+    exposes [Step, start]
+
+type Step
+    Continue(Int)
+    Stop(String)
+
+fn start(n: Int) -> Step
+    Step.Continue(n)
+"#
+            .to_string(),
+        );
+        files.insert(
+            "main.av".to_string(),
+            r#"module Main
+    intent = "entry writes and matches an imported constructor by its module path"
+    depends [TmpReviewC]
+
+fn made(n: Int) -> Step
+    TmpReviewC.Step.Continue(n)
+
+fn paired(n: Int) -> Int
+    match (made(n), 1)
+        (TmpReviewC.Step.Continue(v), k) -> v + k
+        (TmpReviewC.Step.Stop(text), k) -> k
+
+fn main() -> Int
+    match made(7)
+        TmpReviewC.Step.Continue(v) -> v
+        TmpReviewC.Step.Stop(text) -> 0
+"#
+            .to_string(),
+        );
+
+        let bytes = compile_project_to_wasm(&files, "main.av")
+            .expect("multi-file wasm-gc project should compile");
+        let wat = wasmprinter::print_bytes(&bytes).expect("wasm-gc bytes should print");
+        for exported in ["main", "made"] {
+            assert_real_body(&wat, exported);
+        }
+    }
+
+    /// A function the emitter could not lower still ships — as a body that
+    /// does nothing but `unreachable`, which traps the first time anything
+    /// calls it. Nothing in a compile-only assertion notices, so a project
+    /// whose entry never lowered looked exactly like one that did. Read the
+    /// exported function's own body and say so.
+    fn assert_real_body(wat: &str, export: &str) {
+        let marker = format!("(export \"{export}\" (func ");
+        let index: String = wat
+            .split_once(&marker)
+            .unwrap_or_else(|| panic!("wasm module exports no `{export}`:\n{wat}"))
+            .1
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let header = format!("(func (;{index};)");
+        let body: String = wat
+            .split_once(header.as_str())
+            .unwrap_or_else(|| panic!("no definition for exported func {index}:\n{wat}"))
+            .1
+            .lines()
+            .take_while(|line| *line != "  )")
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !body.contains("unreachable"),
+            "`{export}` shipped as a trap stub — a name inside it did not \
+             resolve and the emitter dropped the body:\n{body}"
+        );
     }
 
     #[test]
