@@ -298,13 +298,15 @@ Source: `src/services/http.rs`
 | Function | Signature | Notes |
 |---|---|---|
 | `Http.get` | `String -> Result<HttpResponse, String>` | |
-| `Http.head` | `String -> Result<HttpResponse, String>` | |
+| `Http.head` | `String -> Result<HttpResponse, String>` | headers only, `body` is `""`; requests the identity encoding so `content-length` describes the resource |
 | `Http.delete` | `String -> Result<HttpResponse, String>` | |
 | `Http.post` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | url, body, content-type, headers |
 | `Http.put` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | |
 | `Http.patch` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | |
 
 `HttpResponse` record: `{ status: Int, body: String, headers: Map<String, List<String>> }`. Headers are a multimap — a single name can carry multiple values (Set-Cookie, Vary, …).
+
+A response that by definition carries no body — any `Http.head` response, a `204 No Content`, a `304 Not Modified` — arrives with `body: ""` and its header fields intact. Every other response is read to the end, so a server that closes before sending the `Content-Length` it announced is an error, not a short body.
 
 ### `HttpServer` namespace — use `! [HttpServer.listen]` or `! [HttpServer.listenWith]`
 
