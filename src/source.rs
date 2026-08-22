@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{TopLevel, VerifyKind};
+use crate::ast::TopLevel;
 use crate::config::VerifyCaseCeiling;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -486,30 +486,6 @@ impl Program {
     /// own `verify` blocks are checked per release, not per program.
     pub fn report_units(&self) -> impl Iterator<Item = &ProgramModule> {
         self.modules.iter().filter(|module| !module.is_stdlib)
-    }
-
-    /// Non-law verify cases declared by project dependencies, with the
-    /// number of dependency modules declaring any: what a per-program export
-    /// that only samples the entry leaves unsampled.
-    pub fn unsampled_dependency_cases(&self) -> (usize, usize) {
-        self.report_units()
-            .filter(|module| !module.is_entry)
-            .map(|module| {
-                module
-                    .items
-                    .iter()
-                    .filter_map(|item| match item {
-                        TopLevel::Verify(block) if !matches!(block.kind, VerifyKind::Law(_)) => {
-                            Some(block.cases.len())
-                        }
-                        _ => None,
-                    })
-                    .sum::<usize>()
-            })
-            .filter(|&cases| cases > 0)
-            .fold((0, 0), |(cases, modules), module_cases| {
-                (cases + module_cases, modules + 1)
-            })
     }
 }
 

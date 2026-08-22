@@ -307,6 +307,7 @@ fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
             .collect(),
         capability_items: vec![],
         capability_semantics: None,
+        verify_blocks: aver::codegen::collect_verify_blocks(&dep_items),
         verify_laws: aver::codegen::collect_verify_laws(&dep_items),
         analysis: dep_result.analysis,
     }];
@@ -436,6 +437,7 @@ fn the_vm_bytecode_collects_bytes_at_the_cursor() {
             .collect(),
         capability_items: vec![],
         capability_semantics: None,
+        verify_blocks: aver::codegen::collect_verify_blocks(&dep_items),
         verify_laws: aver::codegen::collect_verify_laws(&dep_items),
         analysis: dep_result.analysis,
     }];

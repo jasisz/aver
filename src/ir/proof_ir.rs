@@ -47,10 +47,10 @@
 //!   law/function's owning scope before recovering an AST declaration.
 //!   Builtin matchers (`"Bool.and"`, `"Map.set"`, …) still compare
 //!   global namespace methods that have no per-scope identity.
-//! - **Full `ResolvedProofLowerView` + semantic matcher API is
-//!   deferred** until a real trigger lands: module-scoped verify
-//!   targets, LSP rename, or inliner / monomorphizer transforms that
-//!   erase the source shapes discovery intentionally consumes. When
+//! - **Full `ResolvedProofLowerView` + semantic matcher API is now
+//!   triggered by module-scoped verify export.** Dependency-owned verify
+//!   blocks ship as first-class proof obligations, so #1087 owns replacing
+//!   the remaining entry-only helper index and source-shape adapters. When
 //!   it ships, the right architecture is a typed
 //!   `ProofLowerInputs::resolved_fn_view(fd)` + matcher helpers
 //!   (`callee_is_builtin`, `callee_is_fn(fn_id)`, `ctor_is`,

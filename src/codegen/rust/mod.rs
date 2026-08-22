@@ -1153,6 +1153,7 @@ mod tests {
                     fn_defs,
                     capability_items,
                     capability_semantics,
+                    verify_blocks: crate::codegen::collect_verify_blocks(&lm.items),
                     verify_laws: crate::codegen::collect_verify_laws(&lm.items),
                     analysis: None,
                 }

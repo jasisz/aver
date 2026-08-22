@@ -59,16 +59,14 @@
 //! Builtin matchers (`callee_is X for X ∈ {"Bool.and", "Map.set",
 //! …}`) compare against the canonical builtin namespace, which is
 //! global by spec — no per-scope identity to leak. Verify-law
-//! callsites all walk `vb.fn_name` (entry-only by parser grammar);
-//! the `EntryFnIndex` newtype in `verify_law.rs` pins the
-//! entry-only contract at the type level (PR 177).
+//! lowering now covers entry and dependency module blocks and resolves
+//! each subject under its owning module scope. The remaining
+//! `EntryFnIndex` helper-hint callsites are migration debt tracked by #1087.
 //!
 //! Full `ResolvedProofLowerView` + semantic matcher API
 //! (`callee_is_builtin`, `callee_is_fn(FnId)`, `ctor_is`,
-//! `ident_name`, `int_lit`) deferred per
-//! `project_phase_e_scope_b_deferred` memory until a real trigger
-//! lands (module-scoped verify, dotted law targets, LSP rename,
-//! cross-scope inliner).
+//! `ident_name`, `int_lit`) is now triggered by module-scoped verify;
+//! completing that resolved-view migration is tracked by #1087.
 
 use std::collections::{HashMap, HashSet};
 
@@ -2337,18 +2335,18 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 
     // Verify-law blocks to lower, each tagged with the prefix of the
     // dep module that owns it (`None` = entry). The entry's own verify
-    // blocks come from `entry_items`; dependency modules' proven laws
-    // come from `ModuleInfo.verify_laws` (the cross-file law pool — a
-    // dep law is lowered with the SAME strategy classification an entry
-    // law of that shape gets, so it auto-proves and can be cited by a
-    // consumer). The DAG invariant keeps the bare fn name unambiguous
-    // within each scope.
+    // blocks come from `entry_items`; dependency modules' laws come from
+    // their complete module-owned `ModuleInfo.verify_blocks` surface. The
+    // separately visibility-filtered `verify_laws` pool controls what a
+    // consumer may cite, not whether the declaring module must prove its own
+    // obligation. The DAG invariant keeps the bare fn name unambiguous within
+    // each scope.
     let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::Verify(vb) => Some((None, vb)),
         _ => None,
     });
     let dep_verifies = inputs.dep_modules.iter().flat_map(|m| {
-        m.verify_laws
+        m.verify_blocks
             .iter()
             .map(move |vb| (Some(m.prefix.as_str()), vb))
     });
@@ -2616,7 +2614,7 @@ fn induction_demanded_countdown_fns(inputs: &ProofLowerInputs) -> Vec<(Option<St
         _ => None,
     });
     let dep_verifies = inputs.dep_modules.iter().flat_map(|m| {
-        m.verify_laws
+        m.verify_blocks
             .iter()
             .map(move |vb| (Some(m.prefix.clone()), vb))
     });

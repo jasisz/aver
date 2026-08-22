@@ -336,6 +336,16 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         },
     );
 
+    // One identity-pinned recursion view for every module's laws and the
+    // entry's laws. Computing it once also prevents module-scoped proof emit
+    // from accidentally using a different opaque/fuel boundary than entry
+    // emit for the same program.
+    let direct_opaque: HashSet<crate::ir::FnId> =
+        axiom_fn_ids.union(&fuel_emitted).copied().collect();
+    let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
+    let native_transitive = toplevel::transitive_opaque_closure(ctx, &native_emitted);
+    let termination_opaque = toplevel::transitive_opaque_closure(ctx, &termination_axiom_ids);
+
     let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
 
@@ -355,6 +365,50 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         if let Some(fuel) = fuel_per_scope.get(&module.prefix) {
             sections.extend(fuel.clone());
         }
+        // Dafny does not evaluate concrete `verify f` blocks (the same
+        // limitation applies to the entry), but every dependency LAW belongs
+        // to the whole-program proof and is emitted in its declaring module.
+        // Active module scope makes every bare target/callee resolve through
+        // that module's `FnId`, never through an entry function sharing the
+        // same bare name.
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            let mut law_counter: HashMap<String, usize> = HashMap::new();
+            for vb in &module.verify_blocks {
+                let VerifyKind::Law(law) = &vb.kind else {
+                    continue;
+                };
+                let count = law_counter.entry(vb.fn_name.clone()).or_insert(0);
+                *count += 1;
+                let suffix = if *count > 1 {
+                    format!("_{}", count)
+                } else {
+                    String::new()
+                };
+                if !vb.cases.is_empty()
+                    && let Some(code) = toplevel::emit_law_samples(
+                        vb,
+                        law,
+                        ctx,
+                        &suffix,
+                        &opaque_fns,
+                        &fuel_emitted,
+                        &native_transitive,
+                        &termination_opaque,
+                    )
+                {
+                    sections.push(code);
+                }
+                sections.push(toplevel::emit_verify_law(
+                    vb,
+                    law,
+                    ctx,
+                    &opaque_fns,
+                    &native_transitive,
+                    &termination_opaque,
+                    &suffix,
+                ));
+            }
+        });
         let body = sections.join("\n");
         let module_uses_crypto_sha256 = body.contains("Aver_Crypto.sha256");
         union_body.push_str(&body);
@@ -520,21 +574,6 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             } else {
                 String::new()
             };
-            let direct_opaque: HashSet<crate::ir::FnId> =
-                axiom_fn_ids.union(&fuel_emitted).copied().collect();
-            let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
-            // Native mutual-rec members + their transitive callers
-            // also need bounded-∀ universal (true ∀ over int doesn't
-            // close even with native decreases) — but stays separate
-            // from opaque so per-sample bodies on the native path
-            // skip the fuel-magnitude cutoff.
-            let native_transitive = toplevel::transitive_opaque_closure(ctx, &native_emitted);
-            // Truly opaque `{:axiom}` fns from the termination-decline
-            // path (and their transitive callers): nothing about their
-            // value is provable, so sample asserts/lemmas over them
-            // could only fail. Suppressed with a marker comment below.
-            let termination_opaque =
-                toplevel::transitive_opaque_closure(ctx, &termination_axiom_ids);
             if !vb.cases.is_empty()
                 && let Some(code) = toplevel::emit_law_samples(
                     vb,

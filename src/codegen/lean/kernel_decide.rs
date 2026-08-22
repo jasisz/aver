@@ -238,6 +238,38 @@ impl CaseDecidability {
         hits.into_iter().collect()
     }
 
+    /// Canonical names of kernel-opaque user functions called directly by
+    /// `root`.
+    ///
+    /// A ground case may still be evaluated through a `partial def` by
+    /// `native_decide`. A case with a theorem-local symbolic capability
+    /// oracle cannot: Lean rejects native evaluation of the free function,
+    /// while reverting it produces a universally quantified proposition with
+    /// no `Decidable` instance. The caller uses this narrower query only for
+    /// that symbolic-oracle shape, so ordinary executable samples keep their
+    /// existing native-evaluation path.
+    pub(super) fn direct_opaque_dependencies(
+        &self,
+        root: &Spanned<crate::ast::Expr>,
+        ctx: &CodegenContext,
+    ) -> Vec<String> {
+        if !self.enabled || self.opaque_fns.is_empty() {
+            return Vec::new();
+        }
+
+        let scope = ctx.active_module_scope();
+        let resolved = ctx.resolve_expr(root, scope.as_deref());
+        let mut direct = HashSet::new();
+        super::decl_order::collect_resolved_fn_refs(&resolved, &mut direct);
+        let mut hits = std::collections::BTreeSet::new();
+        for fn_id in direct {
+            if self.opaque_fns.contains(&fn_id) {
+                hits.insert(ctx.symbol_table.fn_entry(fn_id).key.canonical());
+            }
+        }
+        hits.into_iter().collect()
+    }
+
     /// Tactic for one sampled case.
     ///
     /// `lhs` is the case's left side (the side that routes through the model)

@@ -399,7 +399,8 @@ pub(super) fn run_multi(
 // `qrev`/`rev` mentions would be a subset of the (bare) cone and the
 // unrelated module's law would be wrongly admitted. The qualified-identity
 // gate compares `Other.qrev` against a cone holding `Lib.qrev`, so the
-// unrelated dep law is REJECTED — never cited, never emitted.
+// unrelated dep law is REJECTED as a citation. It is still emitted and checked
+// as `Other`'s own obligation.
 // ---------------------------------------------------------------------------
 
 /// `Other` coincidentally exposes the SAME bare fn names + law identity as
@@ -438,9 +439,9 @@ fn cross_file_bare_name_collision_dep_law_not_admitted() {
     // A law from an UNRELATED module that merely shares a bare fn name with a
     // fn in the consumer's cone must NOT be admitted. The qualified-identity
     // gate keys on `Module.fn`, so `Other.qrev` ≠ the cone's `Lib.qrev`:
-    // `Other.qrev_law_qrevSpec` is never cited in the consumer's proof, and
-    // (being un-admitted) is never emitted into `Other.lean` at all. Only the
-    // GENUINELY in-cone `Lib.qrev_law_qrevSpec` is admitted + emitted.
+    // `Other.qrev_law_qrevSpec` is never cited in the consumer's proof. Both
+    // dependency laws are nevertheless emitted in their declaring modules;
+    // admission controls proof reuse, not whether a module is checked.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping cross-file bare-name-collision test: `lake` not available");
         return;
@@ -464,12 +465,12 @@ fn cross_file_bare_name_collision_dep_law_not_admitted() {
         "an UNRELATED module's same-bare-name law must NOT be admitted via a \
          bare-name collision — qualified `Module.fn` identity rejects it\nConsumer.lean:\n{consumer}"
     );
-    // Un-admitted ⇒ not emitted into the build at all (no sorry contribution).
+    // The unrelated law remains `Other`'s own proof obligation.
     let other = &leans["Other.lean"];
     assert!(
-        !other.contains("theorem qrev_law_qrevSpec"),
-        "the unrelated `Other` law is admitted by no consumer, so it must not be \
-         emitted into the build\nOther.lean:\n{other}"
+        other.contains("theorem qrev_law_qrevSpec"),
+        "an unrelated dependency law must still be emitted and checked in its \
+         declaring module\nOther.lean:\n{other}"
     );
     // The genuinely-cited dep law IS emitted in its own module file.
     let lib = &leans["Lib.lean"];
@@ -531,8 +532,8 @@ fn cross_file_private_dep_law_not_admitted() {
     // it is filtered at collection (`collect_verify_laws` honours the same
     // `exposes` rule as `collect_module_exports`). Even though the consumer's
     // cone reaches `revAcc` transitively (through the exposed `rev`), the
-    // private law never reaches the pool: not cited in the consumer's proof,
-    // not emitted as a theorem in `Lib.lean`.
+    // private law never reaches the consumer citation pool. It is still emitted
+    // and checked as a declaration owned by `Lib`.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping cross-file visibility test: `lake` not available");
         return;
@@ -553,9 +554,9 @@ fn cross_file_private_dep_law_not_admitted() {
     );
     let lib = &leans["Lib.lean"];
     assert!(
-        !lib.contains("theorem revAcc_law_revAccSpec"),
-        "a private dependency law is admitted by no consumer, so it must not be \
-         emitted as a theorem in the dependency's file\nLib.lean:\n{lib}"
+        lib.contains("theorem revAcc_law_revAccSpec"),
+        "a private dependency law must still be checked inside its declaring \
+         module even though consumers cannot cite it\nLib.lean:\n{lib}"
     );
 }
 
@@ -573,9 +574,9 @@ const CONSUMER_OWN_LADDER: &str = "module Consumer\n\
     \x20   myRev(x) => List.concat(Lib.rev(x), [])\n";
 
 // ---------------------------------------------------------------------------
-// MAJOR 4 — an UNPROVEN dependency law the consumer does NOT cite must not
-// inflate the consumer's file-wide `sorry` count. An un-admitted dep law is a
-// complete no-op for the consumer: it is never emitted into the build.
+// MAJOR 4 — every dependency law is an obligation of the project that declares
+// it, even when no consumer cites it. A false law must fail its own module
+// instead of disappearing from the whole-program proof export.
 // ---------------------------------------------------------------------------
 
 /// `Lib` exposes a FALSE law (`bogus(n) = n` for `bogus(n) = n + 1`) about a
@@ -595,14 +596,13 @@ const LIB_WITH_UNCITED_FALSE_LAW: &str = "module Lib\n\
     \x20   bogus(n) => n\n";
 
 #[test]
-fn cross_file_uncited_unproven_dep_law_no_sorry_inflation() {
+fn cross_file_uncited_unproven_dep_law_fails_its_own_module() {
     // The consumer proves a clean own law (rev-append-nil) and never mentions
-    // `Lib.bogus`. `Lib.bogus law bogusBad` is FALSE and would fall to `sorry`
-    // if emitted. Because no consumer law ADMITS it, it is not emitted into
-    // the build at all — so it contributes ZERO to the consumer's file-wide
-    // sorry count. The consumer therefore still passes universally. (Contrast
-    // `cross_file_unproven_dep_law_grants_no_false_credit`, where the consumer
-    // DOES cite the unproven law and correctly inherits its gap.)
+    // `Lib.bogus`. That does not erase `Lib.bogus law bogusBad`: proof export
+    // covers every module's own verify declarations, so the false dependency
+    // law is emitted, falls to `sorry`, and is charged to its qualified
+    // identity. Consumer citation still controls which law may help another
+    // proof; it no longer controls whether the declaring module is checked.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping cross-file uncited-unproven test: `lake` not available");
         return;
@@ -617,20 +617,31 @@ fn cross_file_uncited_unproven_dep_law_no_sorry_inflation() {
     );
     let lib = &leans["Lib.lean"];
     assert!(
-        !lib.contains("bogus_law_bogusBad"),
-        "an unproven dep law no consumer cites must not be emitted into the \
-         build (else its `sorry` inflates the consumer's count)\nLib.lean:\n{lib}"
+        lib.contains("bogus_law_bogusBad"),
+        "every dependency law must be emitted in its declaring module even \
+         when no consumer cites it\nLib.lean:\n{lib}"
     );
     assert_eq!(
-        (
-            summary["passed"].as_bool(),
-            summary["universal"].as_bool(),
-            summary["sorries"].as_u64(),
-        ),
-        (Some(true), Some(true), Some(0)),
-        "an un-cited unproven dep law must not inflate the consumer's sorry \
-         count — the consumer's own clean law still passes universally\n{}",
+        summary["passed"].as_bool(),
+        Some(false),
+        "{}",
         format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(false),
+        "{}",
+        format_output(&run)
+    );
+    assert!(
+        summary["build_errors"].as_u64().unwrap_or(0) > 0,
+        "the false dependency samples must fail Lean's checked-domain/sample \
+         theorems\n{}",
+        format_output(&run)
+    );
+    assert!(
+        lib.contains("universal Lib.bogus.bogusBad"),
+        "the emitted obligation must carry its module-qualified identity\nLib.lean:\n{lib}"
     );
 }
 
@@ -996,8 +1007,8 @@ fn cross_file_reserved_module_name_dep_law_is_admitted_and_cited() {
     let dep_lean = &leans["Type'.lean"];
     assert!(
         dep_lean.contains("theorem qrev_law_qrevSpec :"),
-        "the reserved-name dep module's cited law must be ADMITTED and therefore \
-         emitted as a theorem; empty mentions drop it silently\nType'.lean:\n{dep_lean}"
+        "the reserved-name dep module's own law must be emitted as a theorem; \
+         citation admission is checked separately\nType'.lean:\n{dep_lean}"
     );
     let consumer_lean = &leans["Consumer.lean"];
     assert!(
@@ -1017,9 +1028,9 @@ fn cross_file_reserved_module_name_dep_law_is_admitted_and_cited() {
             summary["universal_laws"].as_u64(),
             summary["sorries"].as_u64(),
         ),
-        (Some(true), Some(true), Some(1), Some(0)),
-        "the reserved-name dep must give the consumer the SAME universal credit \
-         the `Lib`-named split probe gets\n{}",
+        (Some(true), Some(true), Some(2), Some(0)),
+        "both the dependency's own law and the consumer law must receive \
+         universal credit under the escaped module identity\n{}",
         format_output(&run)
     );
 }

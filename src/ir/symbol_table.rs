@@ -1024,6 +1024,7 @@ mod tests {
             fn_defs: fns,
             capability_items: Vec::new(),
             capability_semantics: None,
+            verify_blocks: Vec::new(),
             verify_laws: Vec::new(),
             analysis: None,
         }

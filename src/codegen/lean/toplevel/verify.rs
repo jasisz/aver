@@ -174,13 +174,14 @@ pub fn emit_verify_block(
         None
     };
     if let Some(reason) = refusal {
-        let (kind, claim) = match &vb.kind {
+        let (kind, bare_claim) = match &vb.kind {
             VerifyKind::Law(law) => (
                 crate::codegen::DeclineKind::Law,
                 format!("{}.{}", vb.fn_name, law.name),
             ),
             VerifyKind::Cases => (crate::codegen::DeclineKind::Cases, vb.fn_name.clone()),
         };
+        let claim = scoped_claim(ctx, bare_claim);
         ctx.declined_claims
             .borrow_mut()
             .entry(format!("{}:{claim}", kind.as_str()))
@@ -269,6 +270,21 @@ pub fn emit_verify_block(
             agree_monads(left_str, propagates_error, right_str, right_propagates);
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
+                if !theorem_params.is_empty() {
+                    let opaque = decidability.direct_opaque_dependencies(&left, ctx);
+                    if !opaque.is_empty() {
+                        lines.push(record_declined_case(
+                            vb,
+                            ctx,
+                            case_index_start + idx + 1,
+                            &format!(
+                                "the case has a symbolic capability oracle and reaches kernel-opaque Lean function(s) {}; native_decide cannot faithfully evaluate a free oracle through partial or mutual recursion",
+                                opaque.join(", ")
+                            ),
+                        ));
+                        continue;
+                    }
+                }
                 let tactic = if theorem_params.is_empty() {
                     decidability
                         .tactic_for(&left, &left_str, &right_str, has_ground_truth, ctx)
@@ -279,9 +295,18 @@ pub fn emit_verify_block(
                     // it before native evaluation; if a future case actually
                     // depends on the oracle, the remaining free variable makes
                     // `native_decide` fail closed.
+                    let unfolds = super::verify_cases::plain_case_unfold_names(&left, ctx)
+                        .into_iter()
+                        .map(|name| aver_name_to_lean(&name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     format!(
                         "simp [{}] <;> native_decide",
-                        aver_name_to_lean(&vb.fn_name)
+                        if unfolds.is_empty() {
+                            aver_name_to_lean(&vb.fn_name)
+                        } else {
+                            unfolds
+                        }
                     )
                 };
                 lines.push(format!(
@@ -324,13 +349,14 @@ fn record_declined_case(
     case_number: usize,
     reason: &str,
 ) -> String {
-    let (kind, claim) = match &vb.kind {
+    let (kind, bare_claim) = match &vb.kind {
         VerifyKind::Law(law) => (
             crate::codegen::DeclineKind::Law,
             format!("{}.{}", vb.fn_name, law.name),
         ),
         VerifyKind::Cases => (crate::codegen::DeclineKind::Cases, vb.fn_name.clone()),
     };
+    let claim = scoped_claim(ctx, bare_claim);
     let full_reason = format!("case {}: {}", case_number, reason);
     ctx.declined_claims
         .borrow_mut()
@@ -346,6 +372,13 @@ fn record_declined_case(
         case_number,
         reason
     )
+}
+
+fn scoped_claim(ctx: &CodegenContext, claim: String) -> String {
+    match ctx.active_module_scope() {
+        Some(prefix) => format!("{prefix}.{claim}"),
+        None => claim,
+    }
 }
 
 /// Emit the left side of a verify case or a law statement, and report whether
@@ -390,15 +423,32 @@ fn emit_statement_rhs(
     ctx: &CodegenContext,
 ) -> (String, bool) {
     if let Some(literal) = ground_truth {
-        return (literal, false);
+        return (ascribe_refined_record_rhs(right, literal), false);
     }
     let scope = ctx.active_module_scope();
     let resolved = ctx.resolve_expr(right, scope.as_deref());
     if !super::expr::resolved_expr_contains_error_prop(&resolved) {
-        return (super::expr::emit_expr(&resolved, ctx), false);
+        return (
+            ascribe_refined_record_rhs(right, super::expr::emit_expr(&resolved, ctx)),
+            false,
+        );
     }
     let body = ctx.with_lean_do_block(true, || super::expr::emit_expr(&resolved, ctx));
     (format!("(do pure ({}))", body), true)
+}
+
+/// Give Lean an expected type for direct refinement-record RHS literals.
+/// These lower to subtype notation `⟨value, proof⟩`; in an equality where the
+/// LHS also reduces to that notation, neither side otherwise constrains the
+/// metavariable and elaboration fails before the proof tactic runs.
+fn ascribe_refined_record_rhs(right: &Spanned<Expr>, emitted: String) -> String {
+    match &right.node {
+        Expr::RecordCreate { type_name, .. } if emitted.trim_start().starts_with('⟨') => format!(
+            "({emitted} : {})",
+            super::types::type_annotation_to_lean(type_name)
+        ),
+        _ => emitted,
+    }
 }
 
 /// Put both sides of the equation in the same monad: whichever side is a bare
@@ -1098,8 +1148,9 @@ fn emit_verify_law_block(
         // of reverse-parsing the (mangled, `_law_`-ambiguous) theorem name.
         // Additive: the marker parser consumes only the first two fields, so
         // an older reader ignores it.
+        let law_label = scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name));
         lines.push(format!(
-            "{}{} {} {}.{}",
+            "{}{} {} {}",
             super::LAW_CLASS_MARKER_PREFIX,
             theorem_base,
             if theorem_parts.iter().any(|part| part.bounded_domain) && !floor_window_universal {
@@ -1107,8 +1158,7 @@ fn emit_verify_law_block(
             } else {
                 super::LAW_CLASS_UNIVERSAL
             },
-            vb.fn_name,
-            law.name,
+            law_label,
         ));
         // (Removed: refinement_auto_proof — Aver-specific bypass.
         // Refinement-lifted laws now flow through law_auto via the
