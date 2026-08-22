@@ -43,17 +43,15 @@
 //!   `Map.set` axiom detection, spec-equivalence comparison); a
 //!   resolved walker would be the same logic spelled in a different
 //!   enum. Identity-sensitive sites that COULD leak across scope
-//!   were audited and are bounded today by:
-//!     1. `vb.fn_name` parses as a single `Ident` (verify blocks
-//!        target entry-only fns by current grammar)
-//!     2. Builtin matchers (`"Bool.and"`, `"Map.set"`, …) compare
-//!        global namespace methods that have no per-scope identity.
+//!   resolve their source spelling through `SymbolTable` under the
+//!   law/function's owning scope before recovering an AST declaration.
+//!   Builtin matchers (`"Bool.and"`, `"Map.set"`, …) still compare
+//!   global namespace methods that have no per-scope identity.
 //! - **Full `ResolvedProofLowerView` + semantic matcher API is
 //!   deferred** until a real trigger lands: module-scoped verify
-//!   blocks, dotted verify targets / laws over dep-module fns, LSP
-//!   rename, inliner / monomorphizer / cross-scope transforms. Each
-//!   of those unbounds the "entry-only" assumption above. When it
-//!   ships, the right architecture is a typed
+//!   targets, LSP rename, or inliner / monomorphizer transforms that
+//!   erase the source shapes discovery intentionally consumes. When
+//!   it ships, the right architecture is a typed
 //!   `ProofLowerInputs::resolved_fn_view(fd)` + matcher helpers
 //!   (`callee_is_builtin`, `callee_is_fn(fn_id)`, `ctor_is`,
 //!   `ident_name`, `int_lit`) — not a mechanical
@@ -545,6 +543,22 @@ pub enum WrapperDriver {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeanoComparisonKind {
+    Le,
+    Lt,
+    Eq,
+}
+
+/// One canonical Peano comparison declaration selected by proof lowering.
+/// `FnId` preserves module identity; the backend derives its target spelling
+/// from the symbol table instead of accepting a bare-name hint from the AST.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeanoComparison {
+    pub fn_id: FnId,
+    pub kind: PeanoComparisonKind,
+}
+
 /// `LinearArithmetic` is named for the semantic, not the tactic.
 #[derive(Debug, Clone)]
 pub enum ProofStrategy {
@@ -595,6 +609,22 @@ pub enum ProofStrategy {
     UnaryEqualsBinary {
         /// Source-level name of the binary fn the unary one equals.
         inner_fn: String,
+    },
+    /// Conditional implication between canonical Peano comparisons:
+    /// `when R1(a, b); R2(c, d) => true`, with every argument a linear
+    /// constructor term. Proof lowering validates both relation definitions
+    /// against the canonical Peano recursion and pins this strategy once;
+    /// backends render their own comparison bridges without re-running the
+    /// source-shape decision.
+    ConditionalComparisonBridge {
+        /// Every distinct relation used by the premise/conclusion, in stable
+        /// claim-then-premise order. Backends render bridge declarations from
+        /// these exact identities and kinds; they do not rescan function bodies.
+        comparisons: Vec<PeanoComparison>,
+        /// The premise relation when the source premise is
+        /// `Bool.not(R1(...))`. Its presence selects the false/complement bridge
+        /// and also identifies the exact declaration that bridge belongs to.
+        negated_premise: Option<PeanoComparison>,
     },
     /// "Linear arithmetic over an unfold chain" — the law's two
     /// sides reduce to a flat linear equation on Int once every

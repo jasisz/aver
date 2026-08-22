@@ -87,7 +87,7 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
         return false;
     }
     // Exclusive with the comparison-bridge arm (it runs first).
-    if recognize_conditional_comparison_bridge(law, ctx) {
+    if recognize_conditional_comparison_bridge(vb, law, ctx) {
         return false;
     }
     // Decline a law the DETERMINISTIC interval-monotonicity rung already closes:

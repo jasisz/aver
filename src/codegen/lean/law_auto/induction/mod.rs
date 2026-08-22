@@ -1647,124 +1647,60 @@ fn premise_intro_names(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {
     names
 }
 
-/// A linear `Nat` argument `omega` can reason about after the comparison
-/// bridges fire: a bare given/identifier, a Peano successor `Nat.S(x)` over
-/// another such term, the zero constructor `Nat.Z`, or a numeral. A non-`S`/`Z`
-/// CALL or any other term shape is rejected, so the conditional-bridge
-/// recognizer only matches goals that genuinely lower to linear arithmetic. A
-/// bare identifier is accepted regardless of its bound type — soundness rests on
-/// the SOLE caller, [`is_peano_compare_call`], gating these as the arguments of a
-/// recognized 2-arg Peano comparison fn (so they are `Nat` by that fn's
-/// signature); a misuse outside that gate would over-accept, but the proof's
-/// `sorry` floor + the `#print axioms` credit gate keep even that fail-closed.
-fn is_linear_nat_arg(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
-    use crate::ast::{Expr, Literal};
-    match &expr.node {
-        Expr::Ident(_) | Expr::Resolved { .. } => true,
-        Expr::Literal(Literal::Int(_)) => true,
-        Expr::FnCall(callee, args) => match super::shared::expr_dotted_name(callee) {
-            Some(name) => match name.rsplit('.').next().unwrap_or(name.as_str()) {
-                "S" => args.len() == 1 && is_linear_nat_arg(&args[0]),
-                "Z" => args.is_empty(),
-                _ => false,
-            },
-            None => false,
-        },
-        _ => false,
-    }
-}
-
-/// A 2-arg call to a recognized canonical Peano comparison fn (`≤` / `<` / `=`)
-/// whose arguments are both linear `Nat` terms. Returns `true` when the
-/// expression is exactly that shape — the building block of the
-/// conditional-comparison-bridge recognizer.
-fn is_peano_compare_call(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
+fn comparison_lean_names(
+    comparison: &crate::ir::proof_ir::PeanoComparison,
     ctx: &CodegenContext,
-) -> bool {
-    use crate::ast::Expr;
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return false;
-    };
-    if args.len() != 2 {
-        return false;
+) -> (String, String) {
+    let key = &ctx.symbol_table.fn_entry(comparison.fn_id).key;
+    let bare = aver_name_to_lean(&key.name);
+    let active_scope = ctx.active_module_scope();
+    match key.scope_str() {
+        Some(prefix) if active_scope.as_deref() != Some(prefix) && !ctx.modules.is_empty() => {
+            let path = super::super::syntax::aver_path_to_lean(prefix);
+            (
+                format!("{path}.{bare}"),
+                format!("{}_{}", path.replace('.', "_"), bare),
+            )
+        }
+        _ => (bare.clone(), bare),
     }
-    let Some(name) = super::shared::expr_dotted_name(callee) else {
-        return false;
-    };
-    let mut names = BTreeSet::new();
-    names.insert(name);
-    if crate::codegen::proof_recognize::collect_nat_compare_ops_for_names(&names, ctx).is_empty() {
-        return false;
-    }
-    is_linear_nat_arg(&args[0]) && is_linear_nat_arg(&args[1])
 }
 
-/// The EASY conditional-comparison shape (`prop_70 leSucc`): a `when` premise
-/// that is a canonical Peano Bool relation over linear `Nat` terms, and an
-/// atomic conclusion `<relation>(..) => true` that is another such relation.
-/// Bridging both sides to their Prop forms turns the law into a linear-`Nat`
-/// implication, which `omega` discharges. Deliberately narrow: a negated /
-/// compound premise, or a conclusion that is not a single comparison `= true`,
-/// is rejected so the law keeps the bounded guarded-domain fallback (the HARD
-/// conditional-inductive family — sortedness/insertion — is out of scope here).
-/// The inner comparison call of a NEGATED premise `Bool.not(<compare>)`, if the
-/// premise has that shape. `Bool.not` is the dotted builtin (not a prefix `not`).
-fn negated_compare_inner(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
-) -> Option<&crate::ast::Spanned<crate::ast::Expr>> {
-    use crate::ast::Expr;
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    if super::shared::expr_dotted_name(callee).as_deref() != Some("Bool.not") || args.len() != 1 {
-        return None;
-    }
-    Some(&args[0])
-}
-
-fn conditional_comparison_bridge_shape(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
-    use crate::ast::{Expr, Literal};
-    let Some(when) = &law.when else {
-        return false;
-    };
-    // Conclusion is `<peano-compare>(..) => true` (the `=> true` / `holds`
-    // surface): rhs is the literal `true`, lhs a recognized comparison call.
-    if !matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))) {
-        return false;
-    }
-    if !is_peano_compare_call(&law.lhs, ctx) {
-        return false;
-    }
-    // Premise is a recognized comparison call, bare OR negated `Bool.not(...)`.
-    // The negated form (`le-totality`: `not(le a b) -> le b a`) bridges the
-    // premise via the FALSE bridge `(f a b = false) = (complement)`.
-    match negated_compare_inner(when) {
-        Some(inner) => is_peano_compare_call(inner, ctx),
-        None => is_peano_compare_call(when, ctx),
+fn comparison_lean_shape(
+    kind: crate::ir::proof_ir::PeanoComparisonKind,
+) -> (&'static str, &'static str, &'static str, bool) {
+    use crate::ir::proof_ir::PeanoComparisonKind;
+    match kind {
+        PeanoComparisonKind::Le => ("isNatLe", "≤", "b < a", false),
+        PeanoComparisonKind::Lt => ("isNatLt", "<", "b ≤ a", true),
+        PeanoComparisonKind::Eq => ("isNatEq", "=", "a ≠ b", false),
     }
 }
 
 /// Whether [`emit_conditional_comparison_bridge_law`] will close this law as a
 /// TRUE-universal conditional. The caller (`emit_verify_law_block`) reads this
 /// to decide whether to drop the sampled-domain disjunctions from the theorem
-/// statement (`omit_domain`), so the predicate must agree with the emit: it is
-/// exactly the recognizer, and the shape guarantees a comparison bridge exists
-/// (so the emit never declines for lack of one).
+/// statement (`omit_domain`). Proof lowering owns the shape decision; this
+/// helper is only a typed strategy lookup, so statement and proof consume the
+/// same `ProofIR` fact.
 pub(in crate::codegen::lean) fn recognize_conditional_comparison_bridge(
+    vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    conditional_comparison_bridge_shape(law, ctx)
+    matches!(
+        super::law_strategy_for(ctx, &vb.fn_name, &law.name),
+        Some(crate::ir::ProofStrategy::ConditionalComparisonBridge { .. })
+    )
 }
 
 /// Close an EASY conditional comparison law (`prop_70 leSucc`) as the
 /// TRUE-universal `∀ givens, <when> = true -> <claim>`. Emits the canonical
 /// Peano comparison bridges (`(f a b = true) = (a R b)`) for every relation the
-/// law mentions — seeding the scan with the premise's fns, which
-/// `lean_nat_lift_support` (lhs/rhs only) would otherwise miss — then proves
-/// the goal by rewriting the premise hypothesis and the goal through those
-/// bridges and discharging the linear-`Nat` residual with `omega`.
+/// ProofIR plan names, then proves the goal by rewriting the premise hypothesis
+/// and goal through those bridges and discharging the linear-`Nat` residual
+/// with `omega`. This renderer does not inspect relation definitions or decide
+/// whether a call is a canonical comparison; `proof_lower` already pinned both.
 ///
 /// FAIL-CLOSED on two axes: (1) any shape that is not the recognized
 /// pure-comparison conditional returns `None`, so the caller falls back to the
@@ -1781,9 +1717,14 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
     ctx: &CodegenContext,
     intro_names: &[String],
 ) -> Option<AutoProof> {
-    if !conditional_comparison_bridge_shape(law, ctx) {
-        return None;
-    }
+    let (comparisons, negated_premise) = match super::law_strategy_for(ctx, &vb.fn_name, &law.name)?
+    {
+        crate::ir::ProofStrategy::ConditionalComparisonBridge {
+            comparisons,
+            negated_premise,
+        } => (comparisons, negated_premise),
+        _ => return None,
+    };
     // Law-scoped bridge name prefix, matching the other induction emits
     // (`{fn}_{law}`). Deliberately NOT the `{fn}_law_{law}` theorem base: a
     // `_law_` substring would make the audit's `is_main_law_theorem` mistake a
@@ -1793,18 +1734,23 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
         aver_name_to_lean(&vb.fn_name),
         aver_name_to_lean(&law.name)
     );
-    // `lean_nat_lift_support` scans `lhs`/`rhs` for ops; seed `extra_fns` with
-    // the premise's fns so a premise-only relation still gets a bridge.
-    let mut extra: BTreeSet<String> = BTreeSet::new();
-    if let Some(when) = &law.when {
-        crate::codegen::proof_recognize::collect_called_fns(when, &mut extra);
+    let mut support = Vec::new();
+    let mut bridge_names = Vec::new();
+    for comparison in &comparisons {
+        let (f, f_tag) = comparison_lean_names(comparison, ctx);
+        let (suffix, prop, _false_prop, induct_on_second) = comparison_lean_shape(comparison.kind);
+        let name = format!("{law_uid}_{f_tag}_{suffix}");
+        let (driver, passenger) = if induct_on_second {
+            ("b", "a")
+        } else {
+            ("a", "b")
+        };
+        support.push(format!(
+            "theorem {name} : ∀ a b, ({f} a b = true) = (a {prop} b) := by\n  intro a b\n  induction {driver} generalizing {passenger} with\n  | zero => cases {passenger} <;> first | (simp [{f}]) | sorry\n  | succ k ih => cases {passenger} <;> first | (simp [{f}, ih]) | sorry"
+        ));
+        bridge_names.push(name);
     }
-    let (bridge_support, bridge_names, _bridged) =
-        lean_nat_lift_support(law, ctx, &law_uid, &extra);
-    let has_compare_bridge = bridge_names
-        .iter()
-        .any(|n| n.ends_with("_isNatLe") || n.ends_with("_isNatLt") || n.ends_with("_isNatEq"));
-    if !has_compare_bridge {
+    if bridge_names.is_empty() {
         return None;
     }
     let bridges = bridge_names.join(", ");
@@ -1817,32 +1763,20 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
     // bridge the goal + premise and discharge with `omega`. The false bridge is
     // sound-by-floor like the true one (a misrecognized op fails its own induction
     // and lands on `sorry`, never a false theorem).
-    let mut support = bridge_support;
-    let close = if let Some(inner) = law.when.as_ref().and_then(negated_compare_inner) {
-        let mut premise_fns: BTreeSet<String> = BTreeSet::new();
-        crate::codegen::proof_recognize::collect_called_fns(inner, &mut premise_fns);
-        let false_bridges: Vec<String> = crate::codegen::proof_recognize::collect_nat_compare_ops_for_names(
-            &premise_fns, ctx,
-        )
-        .into_iter()
-        .map(|op| {
-            let f = aver_name_to_lean(&op.fn_name);
-            let name = format!("{law_uid}_{f}_{}False", op.kind.bridge_suffix());
-            let false_prop = op.kind.false_prop();
-            let (driver, passenger) = if op.kind.induct_on_second() {
-                ("b", "a")
-            } else {
-                ("a", "b")
-            };
-            support.push(format!(
-                "theorem {name} : ∀ a b, ({f} a b = false) = ({false_prop}) := by\n  intro a b\n  induction {driver} generalizing {passenger} with\n  | zero => cases {passenger} <;> first | (simp [{f}]) | (simp [{f}]; omega) | sorry\n  | succ k ih => cases {passenger} <;> first | (simp [{f}, ih]) | (simp [{f}, ih]; omega) | sorry"
-            ));
-            name
-        })
-        .collect();
-        let false_set = false_bridges.join(", ");
+    let close = if let Some(premise) = &negated_premise {
+        let (f, f_tag) = comparison_lean_names(premise, ctx);
+        let (suffix, _prop, false_prop, induct_on_second) = comparison_lean_shape(premise.kind);
+        let name = format!("{law_uid}_{f_tag}_{suffix}False");
+        let (driver, passenger) = if induct_on_second {
+            ("b", "a")
+        } else {
+            ("a", "b")
+        };
+        support.push(format!(
+            "theorem {name} : ∀ a b, ({f} a b = false) = ({false_prop}) := by\n  intro a b\n  induction {driver} generalizing {passenger} with\n  | zero => cases {passenger} <;> first | (simp [{f}]) | (simp [{f}]; omega) | sorry\n  | succ k ih => cases {passenger} <;> first | (simp [{f}, ih]) | (simp [{f}, ih]; omega) | sorry"
+        ));
         format!(
-            "  first | (simp only [{bridges}] at ⊢; simp only [Bool.not_eq_true', {false_set}, {bridges}] at h_when; omega) | sorry"
+            "  first | (simp only [{bridges}] at ⊢; simp only [Bool.not_eq_true', {name}, {bridges}] at h_when; omega) | sorry"
         )
     } else {
         // Un-negated premise: rewrite the premise hypothesis AND the goal through
@@ -2086,7 +2020,7 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
     // `omit_domain` gate single-valued so the statement driver and the emit
     // agree). The membership family is now subsumed by this generic driver
     // (probe-decided, no helper-pool gate), so it flows straight through.
-    if recognize_conditional_comparison_bridge(law, ctx) {
+    if recognize_conditional_comparison_bridge(vb, law, ctx) {
         return false;
     }
     // Class-1 recursion-incompatibility (single-list only): a cone fn that

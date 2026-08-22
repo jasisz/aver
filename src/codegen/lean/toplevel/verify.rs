@@ -906,7 +906,11 @@ fn emit_verify_law_block(
             // with the universal form, so dropping the sampled domain keeps
             // statement and proof aligned.
             || super::law_auto::recognize_clique_position_monotonicity(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_conditional_comparison_bridge(&law_for_auto_proof, ctx)
+            || super::law_auto::recognize_conditional_comparison_bridge(
+                vb,
+                &law_for_auto_proof,
+                ctx,
+            )
             || super::law_auto::recognize_conditional_inductive_generic(
                 vb,
                 &law_for_auto_proof,
@@ -1568,7 +1572,7 @@ pub(crate) fn law_as_lemma_statement(
         )
     );
     if law.when.is_some()
-        && !(super::law_auto::recognize_conditional_comparison_bridge(law, ctx)
+        && !(super::law_auto::recognize_conditional_comparison_bridge(vb, law, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx)
             // The exact-rational at-least-one (`F(k) >= 1` for `k >= 0`) and
             // monotonicity (`F(LO) <= F(HI)` for `LO <= HI`) conditional laws are
