@@ -48,6 +48,7 @@ pub(super) fn decline_reason<'a>(
     global_case_idx: usize,
 ) -> Option<&'a String> {
     let key = (
+        ctx.active_module_scope(),
         crate::codegen::common::verify_block_counter_key(vb),
         global_case_idx,
     );
@@ -63,6 +64,7 @@ pub(super) fn ground_truth_rhs(
     global_case_idx: usize,
 ) -> Option<String> {
     let key = (
+        ctx.active_module_scope(),
         crate::codegen::common::verify_block_counter_key(vb),
         global_case_idx,
     );

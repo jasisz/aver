@@ -250,26 +250,30 @@ fn proof_dependency_law_verify_is_carried_not_warned() {
          pool, not dropped — the unsampled-cases warning must not fire for it:\n{}",
         format_output(&run)
     );
+    let dep = std::fs::read_to_string(out.join("Dep.dfy")).expect("read Dep.dfy");
+    assert!(
+        dep.contains("// Law: ident.refl") && dep.contains(" ident_refl(n: int)"),
+        "the dependency's own law must be emitted in its Dafny module even when \
+         no entry law cites it:\n{dep}"
+    );
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
 
 #[test]
-fn proof_warns_once_per_program_about_unsampled_dependency_cases() {
-    // A NON-law (example / cases-form) `verify` block in a dependency
-    // module is still not sampled by the proof export — that is the one
-    // command which has not caught up with `aver verify`, which checks
-    // every module of the program. The export says so once, for the whole
-    // program (not once per module, and not on `run`/`compile`), counting
-    // cases and naming the command that does check them. Pure codegen, no
-    // verifier binary needed.
+fn proof_carries_dependency_cases_into_their_lean_modules() {
+    // Whole-program proof export owns every reached module's claims. Concrete
+    // dependency cases are emitted inside the declaring module's namespace;
+    // no `--deps` replacement and no "unsampled" warning remain. Pure codegen,
+    // no Lean binary needed.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let src = temp_output_dir("aver-dep-verify-warn-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     std::fs::write(
         src.join("dep.av"),
         "module Dep\n    depends []\n\nfn ident(n: Int) -> Int\n    ? \"id\"\n    n\n\n\
-         verify ident\n    ident(1) => 1\n    ident(2) => 2\n",
+         verify ident\n    ident(1) => 1\n    ident(2) => 2\n\n\
+         verify ident law refl\n    given n: Int = -1..1\n    ident(n) => n\n",
     )
     .expect("write dep.av");
     std::fs::write(
@@ -291,7 +295,7 @@ fn proof_warns_once_per_program_about_unsampled_dependency_cases() {
         .arg("proof")
         .arg(&entry)
         .arg("--backend")
-        .arg("dafny")
+        .arg("lean")
         .arg("--module-root")
         .arg(&src)
         .arg("-o")
@@ -299,23 +303,27 @@ fn proof_warns_once_per_program_about_unsampled_dependency_cases() {
         .output()
         .expect("expected `aver proof` to run");
     let stderr = String::from_utf8_lossy(&run.stderr);
-    let expected = format!(
-        "warning: 3 non-law verify cases across 2 dependency modules are not sampled by `aver proof` yet; `aver verify {}` checks them",
-        entry.display()
+    assert!(
+        run.status.success() && !stderr.contains("not sampled") && !stderr.contains("NOT checked"),
+        "dependency cases should be exported without an unsampled warning:\n{}",
+        format_output(&run)
+    );
+    let dep = std::fs::read_to_string(out.join("Dep.lean")).expect("read Dep.lean");
+    let other = std::fs::read_to_string(out.join("Other.lean")).expect("read Other.lean");
+    assert_eq!(
+        dep.matches("example :").count(),
+        2,
+        "Dep.lean must carry both of Dep's concrete cases:\n{dep}"
     );
     assert_eq!(
-        stderr
-            .lines()
-            .filter(|line| line.contains(&expected))
-            .count(),
+        other.matches("example :").count(),
         1,
-        "expected exactly one program-level warning about unsampled dependency cases, got:\n{}",
-        format_output(&run)
+        "Other.lean must carry Other's concrete case:\n{other}"
     );
     assert!(
-        !stderr.contains("NOT checked"),
-        "the old per-module warning must be gone:\n{}",
-        format_output(&run)
+        dep.contains("theorem ident_law_refl"),
+        "Dep.lean must carry Dep's law even though the entry declares no law \
+         that cites it:\n{dep}"
     );
 
     // `aver run` samples nothing, so it has nothing to warn about.
@@ -331,6 +339,132 @@ fn proof_warns_once_per_program_about_unsampled_dependency_cases() {
         !run_stderr.contains("not sampled") && !run_stderr.contains("NOT checked"),
         "`aver run` must not warn about dependency verify cases:\n{}",
         format_output(&run_cmd)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_dependency_case_ground_truth_is_module_scoped() {
+    // Same bare verify key in entry and dependency must never share the VM
+    // literalization slot. Both RHS expressions deliberately call a helper so
+    // the generated constants prove which module's runtime result was used.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-dep-ground-truth-scope-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("dep.av"),
+        "module Dep\n    depends []\n    exposes [ident]\n\n\
+         fn expected(n: Int) -> Int\n    ? \"Dependency expectation.\"\n    n\n\n\
+         fn ident(n: Int) -> Int\n    ? \"Dependency identity.\"\n    n\n\n\
+         verify ident\n    ident(1) => expected(1)\n",
+    )
+    .expect("write dep.av");
+    std::fs::write(
+        src.join("entry.av"),
+        "module Entry\n    depends [Dep]\n\n\
+         fn expected(n: Int) -> Int\n    ? \"Entry expectation.\"\n    n + 100\n\n\
+         fn ident(n: Int) -> Int\n    ? \"Entry function sharing the dependency name.\"\n    n + 100\n\n\
+         verify ident\n    ident(1) => expected(1)\n",
+    )
+    .expect("write entry.av");
+    let out = temp_output_dir("aver-dep-ground-truth-scope-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("entry.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("--module-root")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let dep = std::fs::read_to_string(out.join("Dep.lean")).expect("read Dep.lean");
+    let entry = std::fs::read_to_string(out.join("Entry.lean")).expect("read Entry.lean");
+    assert!(
+        dep.contains("example : Dep.ident 1 = 1 := by")
+            && !dep.contains("example : Dep.ident 1 = 101 := by"),
+        "Dep's case must use Dep's VM result, not Entry's same-key result:\n{dep}"
+    );
+    assert!(
+        entry.contains("example : ident 1 = 101 := by"),
+        "Entry's case must keep Entry's own VM result:\n{entry}"
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_check_covers_dependency_cases_and_law_as_one_program() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping dependency whole-proof check: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-dep-whole-proof-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("lib.av"),
+        "module Lib\n    intent = \"Owns cases and a law.\"\n    exposes [double]\n    effects []\n\n\
+         fn double(n: Int) -> Int\n    ? \"Doubles n.\"\n    n * 2\n\n\
+         verify double\n    double(3) => 6\n    double(0) => 0\n    double(-4) => -8\n\n\
+         verify double law doubleAdditive\n    given a: Int = [0, 1, 7]\n    given b: Int = [0, 2, 5]\n    double(a + b) => double(a) + double(b)\n",
+    )
+    .expect("write lib.av");
+    std::fs::write(
+        src.join("entry.av"),
+        "module Entry\n    intent = \"Thin entry.\"\n    depends [Lib]\n    exposes [quad]\n    effects []\n\n\
+         fn quad(n: Int) -> Int\n    ? \"Quadruples n.\"\n    Lib.double(Lib.double(n))\n\n\
+         verify quad\n    quad(2) => 8\n",
+    )
+    .expect("write entry.av");
+    let out = temp_output_dir("aver-dep-whole-proof-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("entry.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("--module-root")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected whole-program proof check");
+    let json_line = run
+        .stdout
+        .split(|&byte| byte == b'\n')
+        .rev()
+        .find_map(|line| {
+            std::str::from_utf8(line)
+                .ok()
+                .filter(|s| s.starts_with('{'))
+        })
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json_line)
+        .unwrap_or_else(|error| panic!("bad JSON ({error}):\n{json_line}"));
+    assert_eq!(
+        (
+            run.status.success(),
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["build_errors"].as_u64(),
+        ),
+        (true, Some(true), Some(0), Some(0)),
+        "the thin entry must check every dependency claim:\n{}",
+        format_output(&run)
+    );
+    let lib = std::fs::read_to_string(out.join("Lib.lean")).expect("read Lib.lean");
+    assert_eq!(lib.matches("example :").count(), 3, "{lib}");
+    assert!(lib.contains("theorem double_law_doubleAdditive"), "{lib}");
+    let manifest =
+        std::fs::read_to_string(out.join("proof_manifest.json")).expect("read proof manifest");
+    assert!(
+        manifest.contains("Lib.double.doubleAdditive"),
+        "dependency law identity must be module-qualified in the manifest:\n{manifest}"
     );
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);

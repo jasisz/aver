@@ -1580,6 +1580,7 @@ pub(super) fn reject_literal_refinement_discharge(
                     .collect(),
                 capability_items,
                 capability_semantics,
+                verify_blocks: Vec::new(),
                 verify_laws: Vec::new(),
                 analysis: None,
             }
@@ -3610,7 +3611,6 @@ fn build_codegen_context(
     run_refinement_lower: bool,
     run_contract_lower: bool,
     run_law_lower: bool,
-    dependency_cases: DependencyCases<'_>,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -3674,11 +3674,10 @@ fn build_codegen_context(
     // module-spanning call graphs). load_compile_deps only reads
     // `TopLevel::Module(m).depends`, which TCO never touches, so it's
     // safe to run pre-pipeline.
-    let modules = load_compile_deps_reporting(
+    let modules = load_compile_deps(
         &items,
         &module_root,
         DepLowering::fully_lowered(dep_lowering, with_self_host_support),
-        dependency_cases,
     );
 
     let mut pipeline_result = aver::ir::pipeline::run(
@@ -6175,7 +6174,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         false, // run_refinement_lower — runtime backend, doesn't need ProofIR
         false, // run_contract_lower — same
         false, // run_law_lower — same
-        DependencyCases::Silent,
     );
     reject_unsupported_capability_targets(
         &ctx.items,
@@ -6459,7 +6457,6 @@ fn emit_artifact_certificate(
         true,  // run_refinement_lower
         true,  // run_contract_lower
         true,  // run_law_lower
-        DependencyCases::Silent,
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
@@ -7170,7 +7167,6 @@ pub(super) fn cmd_proof(
         true,  // run_refinement_lower — proof backends need ProofIR
         true,  // run_contract_lower — same
         true,  // run_law_lower — same
-        DependencyCases::UnsampledByProof { entry: file },
     );
 
     // `--allow-mathlib` is Lean-only. On Dafny it is a no-op (Z3 already carries
@@ -7424,7 +7420,7 @@ pub(super) fn cmd_proof(
         // parsed items are in hand) and handed to the ratchet so it can fail
         // CLOSED rather than collapse two distinct law blocks into one manifest
         // entry — see `duplicate_law_identities`.
-        let duplicate_laws = duplicate_law_identities(&ctx.items);
+        let duplicate_laws = duplicate_program_law_identities(&ctx);
         // `fn.law` identities that had a hand-proof sidecar spliced for this
         // backend — the credit channel (a spliced law that reaches Universal
         // tier is credited `hand`, else `open`; fail-closed). Derived from the
@@ -7456,11 +7452,12 @@ pub(super) fn cmd_proof(
     }
 }
 
-/// Run the Declared-mode VM verify pass over `file`'s entry items and build
+/// Run the Declared-mode VM verify pass over every project module reached by
+/// `file` and build
 /// the ground-truth table for `CodegenContext::sample_expected`: for every
 /// case that PASSES, the VM-computed expected (right-side) value, rendered
 /// with `aver_repr_literal`, keyed by
-/// `(verify_block_counter_key, global_case_index)`.
+/// `(module_scope, verify_block_counter_key, module_local_case_index)`.
 ///
 /// The index space mirrors the Lean emitter exactly: per-key running
 /// counters over the merged blocks (plain `verify <fn>` blocks coalesce per
@@ -7478,82 +7475,79 @@ pub(super) fn cmd_proof(
 /// - values whose strings contain characters the lexer would misread when
 ///   parsed back (`"`, `\`, interpolation braces, control chars).
 ///
-/// Any failure (unreadable file, parse/typecheck error, VM error) returns an
-/// empty table — emission then behaves exactly as before this feature.
+/// A module that cannot run contributes no entries; successfully verified
+/// modules still keep their ground truth. Emission falls back to the source
+/// RHS for every miss, as before.
 fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTruth {
     use aver::checker::{VerifyCaseOutcome, merge_verify_blocks};
 
     let mut out = VerifyGroundTruth::default();
-    let Ok(source) = read_file(file) else {
+    let mut reported = HashSet::new();
+    let Ok(units) = collect_program_units(file, module_root, &mut reported) else {
         return out;
     };
-    let Ok(items) = aver::source::parse_project_source(&source, module_root, file) else {
-        return out;
-    };
-    let merged = merge_verify_blocks(&items);
-    if merged.is_empty() {
-        return out;
-    }
     let config = match load_runtime_policy(module_root) {
         Ok(c) => c,
         Err(_) => return out,
     };
-    let results = match aver::diagnostics::vm_verify::run_verify_for_items_vm(
-        items,
-        config,
-        Some(module_root),
-        file,
-    ) {
-        Ok(r) => r,
-        Err(_) => return out,
-    };
-    // One result per merged block, in order — the runner builds its plans
-    // from the same `merge_verify_blocks` output. Anything else means the
-    // pairing below would be guesswork; return empty (fall back to source).
-    if results.len() != merged.len() {
-        return out;
-    }
-
-    let mut counters: HashMap<String, usize> = HashMap::new();
-    for (block, result) in merged.iter().zip(&results) {
-        let key = aver::codegen::common::verify_block_counter_key(block);
-        let base = *counters.get(&key).unwrap_or(&0);
-        counters.insert(key.clone(), base + block.cases.len());
-        if block.trace {
+    let unit_count = units.len();
+    for (unit_index, (path, _source, items)) in units.into_iter().enumerate() {
+        let merged = merge_verify_blocks(&items);
+        if merged.is_empty() {
             continue;
         }
-        for cr in &result.case_results {
-            // Exhaustive on purpose. The `Pass` filter this used to be
-            // silently dropped a declined case into the "no entry" bucket,
-            // whose documented fallback is the source RHS — turning "we did
-            // not check this" into a theorem stating the author's own
-            // expected expression.
-            match &cr.outcome {
-                VerifyCaseOutcome::Pass => {}
-                VerifyCaseOutcome::Declined { reason, .. } => {
-                    out.declined
-                        .insert((key.clone(), base + cr.case_index), reason.clone());
+        let scope = if unit_index + 1 == unit_count {
+            None
+        } else {
+            aver::visibility::module_decl(&items).map(|module| module.name.clone())
+        };
+        let results = match aver::diagnostics::vm_verify::run_verify_for_items_vm(
+            items,
+            config.clone(),
+            Some(module_root),
+            &path,
+        ) {
+            Ok(results) if results.len() == merged.len() => results,
+            _ => continue,
+        };
+
+        let mut counters: HashMap<String, usize> = HashMap::new();
+        for (block, result) in merged.iter().zip(&results) {
+            let block_key = aver::codegen::common::verify_block_counter_key(block);
+            let base = *counters.get(&block_key).unwrap_or(&0);
+            counters.insert(block_key.clone(), base + block.cases.len());
+            if block.trace {
+                continue;
+            }
+            for cr in &result.case_results {
+                let key = (scope.clone(), block_key.clone(), base + cr.case_index);
+                // Exhaustive on purpose. A decline is not an absent value: the
+                // emitter must refuse the theorem rather than fall back to the
+                // author's expected expression.
+                match &cr.outcome {
+                    VerifyCaseOutcome::Pass => {}
+                    VerifyCaseOutcome::Declined { reason, .. } => {
+                        out.declined.insert(key, reason.clone());
+                        continue;
+                    }
+                    VerifyCaseOutcome::Skipped
+                    | VerifyCaseOutcome::SkippedAfterBaseFail
+                    | VerifyCaseOutcome::Mismatch { .. }
+                    | VerifyCaseOutcome::RuntimeError { .. }
+                    | VerifyCaseOutcome::UnexpectedErr { .. } => continue,
+                }
+                let Some(value) = &cr.expected_value else {
+                    continue;
+                };
+                if value_contains_float(value)
+                    || value_contains_map(value)
+                    || !value_strings_are_literal_safe(value)
+                {
                     continue;
                 }
-                VerifyCaseOutcome::Skipped
-                | VerifyCaseOutcome::SkippedAfterBaseFail
-                | VerifyCaseOutcome::Mismatch { .. }
-                | VerifyCaseOutcome::RuntimeError { .. }
-                | VerifyCaseOutcome::UnexpectedErr { .. } => continue,
+                out.expected
+                    .insert(key, aver::value::aver_repr_literal(value));
             }
-            let Some(value) = &cr.expected_value else {
-                continue;
-            };
-            if value_contains_float(value)
-                || value_contains_map(value)
-                || !value_strings_are_literal_safe(value)
-            {
-                continue;
-            }
-            out.expected.insert(
-                (key.clone(), base + cr.case_index),
-                aver::value::aver_repr_literal(value),
-            );
         }
     }
     out
@@ -7564,9 +7558,9 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTru
 #[derive(Default)]
 struct VerifyGroundTruth {
     /// Cases that passed, with their VM-computed expected value.
-    expected: std::collections::HashMap<(String, usize), String>,
+    expected: std::collections::HashMap<aver::codegen::VerifyCaseKey, String>,
     /// Cases that were declined, with the reason.
-    declined: std::collections::HashMap<(String, usize), String>,
+    declined: std::collections::HashMap<aver::codegen::VerifyCaseKey, String>,
 }
 
 /// Structural Float scan for ground-truth literalization: any embedded
@@ -8521,6 +8515,7 @@ fn verify_law_source_line(
 /// originates, rather than after the manifest has already deduped by identity.
 /// Returns the colliding identities sorted, so the harness-error message is
 /// deterministic.
+#[cfg(test)]
 fn duplicate_law_identities(items: &[TopLevel]) -> Vec<String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut dups: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -8533,6 +8528,39 @@ fn duplicate_law_identities(items: &[TopLevel]) -> Vec<String> {
                 dups.insert(identity);
             }
         }
+    }
+    dups.into_iter().collect()
+}
+
+/// Whole-program form of [`duplicate_law_identities`]. Dependency identities
+/// are module-qualified, so `A.f.refl` and `B.f.refl` remain distinct while
+/// two declarations inside `A` still fail closed.
+fn duplicate_program_law_identities(ctx: &codegen::CodegenContext) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut dups: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut collect = |scope: Option<&str>, blocks: &[aver::ast::VerifyBlock]| {
+        for vb in blocks {
+            let VerifyKind::Law(law) = &vb.kind else {
+                continue;
+            };
+            let bare = format!("{}.{}", vb.fn_name, law.name);
+            let identity = scope.map_or(bare.clone(), |prefix| format!("{prefix}.{bare}"));
+            if !seen.insert(identity.clone()) {
+                dups.insert(identity);
+            }
+        }
+    };
+    let entry_blocks: Vec<_> = ctx
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(vb) => Some(vb.clone()),
+            _ => None,
+        })
+        .collect();
+    collect(None, &entry_blocks);
+    for module in &ctx.modules {
+        collect(Some(&module.prefix), &module.verify_blocks);
     }
     dups.into_iter().collect()
 }
@@ -8864,18 +8892,7 @@ fn parse_dafny_error_count(stdout: &str) -> Option<usize> {
 /// modules count too. (Opaque `function {:axiom}` declarations are not
 /// counted; see the note at the pass-decision site.)
 fn count_dafny_axioms(dir: &str) -> usize {
-    let mut total = 0;
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let name = entry.file_name();
-            if name.to_string_lossy().ends_with(".dfy")
-                && let Ok(contents) = std::fs::read_to_string(entry.path())
-            {
-                total += contents.matches("assume {:axiom}").count();
-            }
-        }
-    }
-    total
+    count_marker_in_generated_files(std::path::Path::new(dir), "dfy", "assume {:axiom}")
 }
 
 /// Count laws whose universal `∀` lemma was DROPPED to sample-only across
@@ -8890,14 +8907,28 @@ fn count_dafny_axioms(dir: &str) -> usize {
 /// too. (The deliberate trace-projection `runtime-only` gate is NOT a
 /// coverage claim and carries a different marker, so it is not counted.)
 fn count_dafny_omitted_universals(dir: &str) -> usize {
+    count_marker_in_generated_files(
+        std::path::Path::new(dir),
+        "dfy",
+        "(universal lemma omitted)",
+    )
+}
+
+/// Count a marker in generated files recursively. Dotted Aver module names are
+/// emitted under matching directories (`Infra.Store` -> `Infra/Store.dfy`), so
+/// a top-level `read_dir` would miss exactly the dependency obligations these
+/// gates are meant to charge.
+fn count_marker_in_generated_files(dir: &std::path::Path, extension: &str, marker: &str) -> usize {
     let mut total = 0;
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
-            let name = entry.file_name();
-            if name.to_string_lossy().ends_with(".dfy")
-                && let Ok(contents) = std::fs::read_to_string(entry.path())
+            let path = entry.path();
+            if path.is_dir() {
+                total += count_marker_in_generated_files(&path, extension, marker);
+            } else if path.extension().and_then(|e| e.to_str()) == Some(extension)
+                && let Ok(contents) = std::fs::read_to_string(path)
             {
-                total += contents.matches("(universal lemma omitted)").count();
+                total += contents.matches(marker).count();
             }
         }
     }
@@ -9148,14 +9179,14 @@ impl LeanLawAudit {
 /// before the counts existed.
 fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     use std::process::Command;
-    // The first lakefile root is the entry module. Its law theorem source names
-    // stay stable, while Lean declarations are qualified by that root.
+    // Every lakefile root is part of the program proof. The first is the entry;
+    // later roots include dependency modules (plus shared support roots, which
+    // simply carry no law markers). The audit keys declarations by their full
+    // root-qualified name so same-bare-name laws in two modules cannot collide.
     let roots = lean_lakefile_roots(dir);
     if roots.is_empty() {
         return LeanLawAudit::FAIL_CLOSED;
     }
-    let entry_root = &roots[0];
-    let entry_file_name = format!("{entry_root}.lean");
     // Collect the main universal law theorems across the emitted sources,
     // plus the emitter's per-theorem statement-class markers.
     let mut law_thms: Vec<String> = Vec::new();
@@ -9163,65 +9194,68 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     // `theorem -> fn.law` identity, read off the marker's third field — the
     // stable key the proof manifest is keyed on.
     let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name != entry_file_name {
+    for root in &roots {
+        let relative = format!("{}.lean", root.replace('.', "/"));
+        let path = std::path::Path::new(dir).join(&relative);
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            // `DiscoveredLemmas.lean` WITH a cone-hash header is the
+            // committed `--discover` ARTIFACT, not an emitted proof file:
+            // lake doesn't build it (it's not a lakefile root), so
+            // theorems scanned from it wouldn't resolve in the
+            // axiom-checker environment — the lemmas that actually joined
+            // a proof are embedded in the entry root and scanned there.
+            // The header check keeps an entry MODULE legitimately named
+            // `DiscoveredLemmas` (whose emitted root has no such header)
+            // in the scan instead of silently zeroing its universal
+            // metric.
+            if relative == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
                 continue;
             }
-            if let Ok(contents) = std::fs::read_to_string(entry.path()) {
-                // `DiscoveredLemmas.lean` WITH a cone-hash header is the
-                // committed `--discover` ARTIFACT, not an emitted proof file:
-                // lake doesn't build it (it's not a lakefile root), so
-                // theorems scanned from it wouldn't resolve in the
-                // axiom-checker environment — the lemmas that actually joined
-                // a proof are embedded in the entry root and scanned there.
-                // The header check keeps an entry MODULE legitimately named
-                // `DiscoveredLemmas` (whose emitted root has no such header)
-                // in the scan instead of silently zeroing its universal
-                // metric.
-                if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
+            // User declarations live one level below their file namespace.
+            // Ignore any deeper helper namespace while retaining those laws.
+            let mut namespace_depth = 0usize;
+            for line in contents.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("namespace ") {
+                    namespace_depth += 1;
+                } else if trimmed == "end" || trimmed.starts_with("end ") {
+                    namespace_depth = namespace_depth.saturating_sub(1);
+                }
+                if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
+                    let mut parts = rest.split_whitespace();
+                    if let (Some(thm), Some(class)) = (parts.next(), parts.next()) {
+                        let qualified = format!("{root}.{thm}");
+                        classes.insert(qualified.clone(), class.to_string());
+                        // Third field (optional on older emissions): the
+                        // `fn.law` identity label for the manifest.
+                        if let Some(label) = parts.next() {
+                            labels.insert(qualified, label.to_string());
+                        }
+                    }
                     continue;
                 }
-                // Entry declarations live one level below the entry namespace.
-                // Ignore any deeper helper namespace while retaining those laws.
-                let mut namespace_depth = 0usize;
-                for line in contents.lines() {
-                    let trimmed = line.trim_start();
-                    if trimmed.starts_with("namespace ") {
-                        namespace_depth += 1;
-                    } else if trimmed == "end" || trimmed.starts_with("end ") {
-                        namespace_depth = namespace_depth.saturating_sub(1);
-                    }
-                    if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
-                        let mut parts = rest.split_whitespace();
-                        if let (Some(thm), Some(class)) = (parts.next(), parts.next()) {
-                            classes.insert(thm.to_string(), class.to_string());
-                            // Third field (optional on older emissions): the
-                            // `fn.law` identity label for the manifest.
-                            if let Some(label) = parts.next() {
-                                labels.insert(thm.to_string(), label.to_string());
-                            }
-                        }
-                        continue;
-                    }
-                    if namespace_depth > 1 {
-                        continue;
-                    }
-                    if let Some(rest) = line.strip_prefix("theorem ") {
-                        let thm = rest
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("")
-                            .trim_end_matches(':');
-                        if is_main_law_theorem(thm) {
-                            law_thms.push(thm.to_string());
-                        }
+                if namespace_depth > 1 {
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("theorem ") {
+                    let thm = rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches(':');
+                    if is_main_law_theorem(thm) {
+                        law_thms.push(format!("{root}.{thm}"));
                     }
                 }
             }
         }
     }
+    // Every law theorem emitted by this compiler has a class marker (chunked
+    // parts inherit their base marker). Roots such as `AverCommon` also contain
+    // helper theorems whose ordinary names happen to include `_eq_`; importing
+    // those roots into the whole-program audit must not promote support lemmas
+    // into user law obligations.
+    law_thms.retain(|thm| law_class_for_theorem(thm, &classes).is_some());
     if law_thms.is_empty() {
         return LeanLawAudit::FAIL_CLOSED;
     }
@@ -9316,11 +9350,9 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
         src.push_str(r);
         src.push('\n');
     }
-    for t in &law_thms {
+    for theorem in &law_thms {
         src.push_str("#print axioms ");
-        src.push_str(entry_root);
-        src.push('.');
-        src.push_str(t);
+        src.push_str(theorem);
         src.push('\n');
     }
     let checker = std::path::Path::new(dir).join("_aver_axcheck.lean");
@@ -9371,7 +9403,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             let universal_laws = if o.status.success() {
                 universal_classed
                     .iter()
-                    .filter(|t| theorem_credit_from_axioms(&combined, &format!("{entry_root}.{t}")))
+                    .filter(|theorem| theorem_credit_from_axioms(&combined, theorem))
                     .count()
             } else {
                 0
@@ -9388,15 +9420,13 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             for thm in &universal_classed {
                 let key = law_dedup_key(thm, &classes);
                 let label = manifest_label_for(key, &labels);
-                let qualified = format!("{entry_root}.{thm}");
-                let credited =
-                    o.status.success() && theorem_credit_from_axioms(&combined, &qualified);
+                let credited = o.status.success() && theorem_credit_from_axioms(&combined, thm);
                 let tier = if credited {
                     LawTier::Universal
                 } else {
                     LawTier::Failed
                 };
-                let axioms = axioms_for_theorem(&combined, &qualified).unwrap_or_default();
+                let axioms = axioms_for_theorem(&combined, thm).unwrap_or_default();
                 let record = ManifestLaw {
                     law: label.clone(),
                     backend: "lean".to_string(),
@@ -9429,17 +9459,19 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
 }
 
 /// Parse `<path>.lean:<line>` out of a Lean/lake diagnostic line, returning the
-/// file BASENAME and the 1-based line number. Tolerant of a leading `warning:`
-/// and a `././` / directory prefix on the path (`lake build` and `lake env lean`
-/// render the path differently). `None` if the line carries no `.lean:<digits>`.
+/// normalized project-relative file path and the 1-based line number. Tolerant
+/// of a leading `warning:` and repeated `./` prefixes (`lake build` and
+/// `lake env lean` render paths differently). Keeping subdirectories is
+/// identity-relevant: `A/Foo.lean` and `B/Foo.lean` are different modules.
+/// `None` if the line carries no `.lean:<digits>`.
 fn parse_lean_decl_location(line: &str) -> Option<(String, usize)> {
     let idx = line.find(".lean:")?;
     let before = &line[..idx];
     let start = before
-        .rfind(|c: char| c == '/' || c.is_whitespace())
+        .rfind(char::is_whitespace)
         .map(|p| p + 1)
         .unwrap_or(0);
-    let stem = &before[start..];
+    let stem = before[start..].trim_start_matches("./");
     if stem.is_empty() {
         return None;
     }
@@ -9468,25 +9500,20 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
     if locations.is_empty() {
         return Vec::new();
     }
-    let Some(entry_root) = lean_lakefile_roots(dir).into_iter().next() else {
+    let roots = lean_lakefile_roots(dir);
+    if roots.is_empty() {
         return Vec::new();
-    };
-    let entry_file_name = format!("{entry_root}.lean");
-    // In the entry file: its `theorem <name>` declarations as
-    // `(1-based line, name)`, plus the global `theorem -> fn.law` label map read
-    // off the class markers (same shape `emitted_main_law_theorems` reads).
+    }
+    // In every program root: its `theorem <name>` declarations as
+    // `(1-based line, root-qualified name)`, plus the global qualified-theorem
+    // → `fn.law` label map read off the class markers.
     let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut file_thms: std::collections::HashMap<String, Vec<(usize, String)>> =
         std::collections::HashMap::new();
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name != entry_file_name {
-                continue;
-            }
-            let Ok(contents) = std::fs::read_to_string(entry.path()) else {
-                continue;
-            };
+    for root in &roots {
+        let relative = format!("{}.lean", root.replace('.', "/"));
+        let path = std::path::Path::new(dir).join(&relative);
+        if let Ok(contents) = std::fs::read_to_string(path) {
             let mut thms: Vec<(usize, String)> = Vec::new();
             for (idx, line) in contents.lines().enumerate() {
                 if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
@@ -9494,7 +9521,7 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
                     if let (Some(thm), Some(_class)) = (parts.next(), parts.next())
                         && let Some(label) = parts.next()
                     {
-                        labels.insert(thm.to_string(), label.to_string());
+                        labels.insert(format!("{root}.{thm}"), label.to_string());
                     }
                     continue;
                 }
@@ -9505,11 +9532,11 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
                         .unwrap_or("")
                         .trim_end_matches(':');
                     if !thm.is_empty() {
-                        thms.push((idx + 1, thm.to_string())); // Lean lines are 1-based
+                        thms.push((idx + 1, format!("{root}.{thm}"))); // Lean lines are 1-based
                     }
                 }
             }
-            file_thms.insert(name, thms);
+            file_thms.insert(relative, thms);
         }
     }
     let mut out: Vec<String> = Vec::new();
@@ -11253,18 +11280,42 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
     // case-form verify and only proves law-form `verify`. Warn so the
     // silence isn't mistaken for a Dafny-verified pass (law blocks ARE
     // proven; the Lean backend and `aver verify` cover the examples).
-    let unchecked_case_blocks = ctx
+    let entry_case_blocks = ctx
         .items
         .iter()
         .filter(|i| matches!(i, TopLevel::Verify(vb) if matches!(vb.kind, VerifyKind::Cases)))
         .count();
+    let dependency_case_blocks: usize = ctx
+        .modules
+        .iter()
+        .map(|module| {
+            module
+                .verify_blocks
+                .iter()
+                .filter(|vb| matches!(vb.kind, VerifyKind::Cases))
+                .count()
+        })
+        .sum();
+    let unchecked_case_blocks = entry_case_blocks + dependency_case_blocks;
+    let unchecked_modules = usize::from(entry_case_blocks > 0)
+        + ctx
+            .modules
+            .iter()
+            .filter(|module| {
+                module
+                    .verify_blocks
+                    .iter()
+                    .any(|vb| matches!(vb.kind, VerifyKind::Cases))
+            })
+            .count();
     if unchecked_case_blocks > 0 {
         eprintln!(
             "{}",
             format!(
-                "warning: {unchecked_case_blocks} example-based `verify` block(s) are NOT \
-                 checked by the Dafny backend (Dafny proves laws, not concrete examples) — \
-                 they are verified by `aver proof --backend lean` and `aver verify`"
+                "warning: {unchecked_case_blocks} example-based `verify` block(s) across \
+                 {unchecked_modules} module(s) are NOT checked by the Dafny backend \
+                 (Dafny proves laws, not concrete examples) — they are verified by \
+                 `aver proof --backend lean` and `aver verify {file}`"
             )
             .yellow()
         );
@@ -11357,21 +11408,6 @@ impl DepLowering {
     }
 }
 
-/// Whether the loader should say how many dependency verify cases the
-/// caller leaves unsampled. Only `aver proof` has that gap: its export
-/// samples the entry module's cases and carries dependency laws, but
-/// dependency cases are not sampled yet. Every other command either
-/// samples them (`verify`) or samples nothing at all (`run`, `compile`).
-#[derive(Clone, Copy)]
-pub(super) enum DependencyCases<'a> {
-    Silent,
-    /// Warn once per program, naming the `aver verify` invocation that
-    /// does check them.
-    UnsampledByProof {
-        entry: &'a str,
-    },
-}
-
 /// Load dependent modules for codegen: every module of the program behind
 /// `items`, typechecked and lowered with the target's matrix. Any problem is
 /// fatal here — printed in red, exit 1 — exactly as it always was.
@@ -11379,16 +11415,6 @@ pub(super) fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
     lowering: DepLowering,
-) -> Vec<ModuleInfo> {
-    load_compile_deps_reporting(items, module_root, lowering, DependencyCases::Silent)
-}
-
-/// [`load_compile_deps`] with an explicit say on unsampled dependency cases.
-pub(super) fn load_compile_deps_reporting(
-    items: &[TopLevel],
-    module_root: &str,
-    lowering: DepLowering,
-    dependency_cases: DependencyCases<'_>,
 ) -> Vec<ModuleInfo> {
     fn fail(message: String) -> ! {
         eprintln!("{}", message.red());
@@ -11407,20 +11433,6 @@ pub(super) fn load_compile_deps_reporting(
         )),
         Err(error) => fail(error.to_string()),
     };
-    if let DependencyCases::UnsampledByProof { entry } = dependency_cases {
-        let (cases, modules) = program.unsampled_dependency_cases();
-        if cases > 0 {
-            eprintln!(
-                "{}",
-                format!(
-                    "warning: {cases} non-law verify case{} across {modules} dependency module{} are not sampled by `aver proof` yet; `aver verify {entry}` checks them",
-                    if cases == 1 { "" } else { "s" },
-                    if modules == 1 { "" } else { "s" },
-                )
-                .yellow()
-            );
-        }
-    }
     let mut lowered = BTreeMap::new();
 
     // Parent before child, the order the walk met the modules in: the first
@@ -12261,10 +12273,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_lean_decl_location_extracts_basename_and_line() {
-        // The gate-build sorry warning `lean_sorry_laws` keys on. Basename + line
-        // must survive a `warning:` prefix, a `././` build path prefix, and the
-        // backtick glyph — the line is mapped to the enclosing theorem by number.
+    fn parse_lean_decl_location_extracts_relative_path_and_line() {
+        // The gate-build sorry warning `lean_sorry_laws` keys on. Relative path
+        // + line must survive a `warning:` prefix, a `././` build path prefix,
+        // and the backtick glyph — the line is mapped to the enclosing theorem.
         assert_eq!(
             super::parse_lean_decl_location(
                 "warning: Warehouse.lean:105:8: declaration uses `sorry`"
@@ -12277,8 +12289,41 @@ mod tests {
             ),
             Some(("Warehouse.lean".to_string(), 105))
         );
+        assert_eq!(
+            super::parse_lean_decl_location(
+                "warning: ././Infra/Store.lean:27:8: declaration uses 'sorry'"
+            ),
+            Some(("Infra/Store.lean".to_string(), 27))
+        );
         // A line with no `.lean:<digits>` is not a location.
         assert_eq!(super::parse_lean_decl_location("error: build failed"), None);
+    }
+
+    #[test]
+    fn dafny_trust_escape_counts_recurse_into_module_directories() {
+        let root =
+            std::env::temp_dir().join(format!("aver-dafny-recursive-count-{}", std::process::id()));
+        let nested = root.join("Infra");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            root.join("Main.dfy"),
+            "assume {:axiom} true;\n// sample-only (universal lemma omitted)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            nested.join("Store.dfy"),
+            "assume {:axiom} true;\nassume {:axiom} true;\n\
+             // sample-only (universal lemma omitted)\n",
+        )
+        .unwrap();
+        std::fs::write(nested.join("Ignored.txt"), "assume {:axiom}").unwrap();
+
+        assert_eq!(super::count_dafny_axioms(root.to_str().unwrap()), 3);
+        assert_eq!(
+            super::count_dafny_omitted_universals(root.to_str().unwrap()),
+            2
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

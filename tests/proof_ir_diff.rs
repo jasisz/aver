@@ -1407,6 +1407,46 @@ fn comparison_shape_lookup_is_scoped_across_same_bare_names() {
 }
 
 #[test]
+fn private_dependency_law_is_lowered_for_its_own_module() {
+    let entry = "module Entry\n\
+         \x20   intent = \"load a module with a private obligation\"\n\
+         \x20   depends [Secret]\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   Secret.public(0)\n";
+    let secret = "module Secret\n\
+         \x20   intent = \"prove private helpers without exporting them\"\n\
+         \x20   exposes [public]\n\
+         \n\
+         fn hidden(n: Int) -> Int\n\
+         \x20   n\n\
+         \n\
+         fn public(n: Int) -> Int\n\
+         \x20   hidden(n)\n\
+         \n\
+         verify hidden law reflexive\n\
+         \x20   given n: Int = -1..1\n\
+         \x20   hidden(n) => hidden(n)\n";
+    let ctx = build_ctx_with_modules(entry, &[("Secret", secret)]);
+    let theorem = module_law_theorem(&ctx, "Secret", "hidden", "reflexive")
+        .expect("the declaring module must lower its private law");
+    assert!(matches!(
+        theorem.strategy,
+        aver::ir::ProofStrategy::Reflexive
+    ));
+    let secret_module = ctx
+        .modules
+        .iter()
+        .find(|module| module.prefix == "Secret")
+        .expect("Secret module");
+    assert_eq!(secret_module.verify_blocks.len(), 1);
+    assert!(
+        secret_module.verify_laws.is_empty(),
+        "private law must be proved locally but remain absent from the consumer citation pool"
+    );
+}
+
+#[test]
 fn compound_peano_premise_stays_out_of_comparison_bridge_strategy() {
     let src = "module CmpBridge\n\
          \x20   intent = \"comparison implication\"\n\

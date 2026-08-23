@@ -3731,8 +3731,9 @@ pub(crate) fn verify_reachable_fn_names(items: &[TopLevel]) -> HashSet<String> {
 /// bodies of the entry functions those blocks reach, plus each module's own
 /// exposed laws; the closure then follows every call inside the module
 /// (bare names stay in the module, qualified names cross into the module
-/// they name). The purpose of the entry filter is kept: an effectful loop
-/// nobody proves anything about is not lifted in a dependency either.
+/// they name), plus every claim the dependency itself declares. The purpose
+/// of the entry filter is kept: an effectful loop nobody proves anything
+/// about is not lifted in a dependency either.
 pub(crate) fn dependency_reachable_fn_names(
     ctx: &CodegenContext,
 ) -> std::collections::HashMap<String, HashSet<String>> {
@@ -3761,7 +3762,7 @@ pub(crate) fn dependency_reachable_fn_names(
         }
     }
     for module in &ctx.modules {
-        for vb in &module.verify_laws {
+        for vb in &module.verify_blocks {
             let mut refs = HashSet::new();
             collect_verify_block_refs(vb, &mut refs);
             for name in refs {
@@ -4171,6 +4172,7 @@ mod tests {
             fn_defs: Vec::new(),
             capability_items: Vec::new(),
             capability_semantics: None,
+            verify_blocks: Vec::new(),
             verify_laws: Vec::new(),
             analysis: None,
         };
@@ -4263,6 +4265,7 @@ mod tests {
             fn_defs: Vec::new(),
             capability_items: Vec::new(),
             capability_semantics: None,
+            verify_blocks: Vec::new(),
             verify_laws: Vec::new(),
             analysis: None,
         };
@@ -4392,6 +4395,7 @@ mod tests {
             fn_defs: vec![make_get(ret)],
             capability_items: Vec::new(),
             capability_semantics: None,
+            verify_blocks: Vec::new(),
             verify_laws: Vec::new(),
             analysis: None,
         };

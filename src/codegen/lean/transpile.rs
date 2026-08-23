@@ -933,20 +933,20 @@ pub(super) fn transpile_unified(
     // are recorded before its `open` lines are written.
     let mut declared_fns: HashMap<String, HashSet<String>> = HashMap::new();
 
-    // Cross-file law pool: the dep-law theorems some consumer law admits.
-    // Empty for single-file files (no dep modules) → the dep-law emit loop
-    // below is a no-op → byte-identical output. Computed once for every
-    // module's emit pass.
-    let admitted_dep_laws = if matches!(emit_mode, LeanEmitMode::Proof) {
-        super::law_auto::admitted_dep_law_theorems(ctx)
-    } else {
-        std::collections::HashSet::new()
-    };
-    // Subset-invariant tripwire (see `topology_admits`): every dep-module law's
-    // emit key must be a key the citation-closure's topology order tracks — the
-    // premise that keeps its `None`-is-trusted branch fail-closed. Debug-only.
+    // Cross-file citation remains visibility/topology gated even though every
+    // declaring module now emits all of its own claims. Keep the producer and
+    // consumer key spaces tied together: an admitted citation must name a law
+    // known to the dependency theorem order. This is a debug-only integrity
+    // check; it never filters the module-owned proof surface.
     #[cfg(debug_assertions)]
-    let dep_theorem_order_keys = super::law_auto::dep_theorem_order_keys(ctx);
+    if matches!(emit_mode, LeanEmitMode::Proof) {
+        let admitted = super::law_auto::admitted_dep_law_theorems(ctx);
+        let ordered = super::law_auto::dep_theorem_order_keys(ctx);
+        debug_assert!(
+            admitted.iter().all(|key| ordered.contains(key)),
+            "cross-file citation admitted a dependency law absent from the theorem order"
+        );
+    }
 
     for (module_index, module) in ctx.modules.iter().enumerate() {
         let _emitting_guard = crate::codegen::lean::types::scope_emitting_module(&module.prefix);
@@ -1013,82 +1013,27 @@ pub(super) fn transpile_unified(
             &mut sampled_fns,
             &mut body_sections,
         );
-        // Cross-file law pool — EMIT side: a dependency module's proven
-        // `verify … law` blocks become `<fn>_law_<name>` theorems INSIDE
-        // `namespace M`, so a consumer that imports + opens this module can
-        // cite `M.<fn>_law_<name>` as a lemma. Same emit path the entry uses
-        // (`emit_verify_block`), under this module's scope so the law's
-        // expressions resolve in the dep's namespace.
-        //
-        // FAIL-CLOSED (MAJOR 4): emit a dep law's theorem ONLY when some
-        // consumer law ADMITS it (`admitted_dep_law_theorems`, the SAME gate
-        // the CONSUME side runs). A dep law no consumer can cite is a
-        // complete no-op for the consumer — emitting it would add its
-        // `first | … | sorry` proof to the consumer's file-wide `sorry`
-        // count for zero benefit. The dep's OWN standalone export
-        // (`aver proof Lib.av`) still emits + proves all its laws, charging
-        // any sorry to the dep, not to a consumer that never leaned on it.
-        // Proof mode only; runtime/standard emits skip laws.
-        if matches!(emit_mode, LeanEmitMode::Proof) {
+        // Whole-program proof surface: every dependency module emits every
+        // `verify` block it owns inside its own namespace. Visibility affects
+        // cross-file CITATION (`module.verify_laws`), never whether a module's
+        // private obligation is checked. This is the same emit path the entry
+        // uses and the active module scope pins bare names to this module's
+        // `FnId`s. Certificate model files omit verify declarations just like
+        // the entry certificate model does.
+        if matches!(emit_mode, LeanEmitMode::Proof) && !cert_model {
             ctx.with_module_scope(Some(module.prefix.as_str()), || {
                 let mut dep_verify_counters: HashMap<String, usize> = HashMap::new();
-                for vb in &module.verify_laws {
-                    // Compute this law's theorem base under the dep scope and
-                    // emit only if it is in the admitted set. The base is the
-                    // one `law_as_lemma_statement` reports when it states the law
-                    // as a plain rewrite; otherwise the canonical
-                    // `<fn>_law_<name>` the block emits anyway. The second case
-                    // covers a `when`-premised universal a consumer cites by name
-                    // (the rounded-step triangle rung's rounding bounds) — the
-                    // law-as-lemma rewrite gate declines a conditional law, but
-                    // the keystone still emits its universal theorem, so the
-                    // citation must reach it. A law no consumer admits stays
-                    // out of the set and is skipped regardless.
-                    let law_ref = match &vb.kind {
-                        crate::ast::VerifyKind::Law(l) => l,
-                        _ => continue,
-                    };
-                    let base = toplevel::law_as_lemma_statement(vb, law_ref, ctx)
-                        .map(|(base, _)| base)
-                        .unwrap_or_else(|| toplevel::law_theorem_base(vb, law_ref, ctx));
-                    // This emit key is computed from the SAME two fns under the
-                    // SAME scope as the topology order map — so it must be one of
-                    // that map's keys. If it is not, the emit-key and order-key
-                    // computations have drifted and `topology_admits`' `None`
-                    // branch could silently fail open.
-                    // A cfg block, not a bare `debug_assert!`: the macro's body is
-                    // type-checked in release builds too, where the cfg-gated
-                    // `dep_theorem_order_keys` binding above does not exist.
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_assert!(
-                            dep_theorem_order_keys.contains(&(module.prefix.clone(), base.clone())),
-                            "dep-law emit key {:?} is absent from the citation-closure \
-                             topology order map; the fail-closed forward-reference guard \
-                             would degrade to fail-open",
-                            (module.prefix.clone(), base.clone())
-                        );
-                    }
-                    if !admitted_dep_laws.contains(&(module.prefix.clone(), base)) {
-                        continue;
-                    }
+                let decidability = super::kernel_decide::CaseDecidability::new(
+                    sampled_fns.opaque.clone(),
+                    sampled_fns.unbounded_fuel.clone(),
+                    recursive_types.clone(),
+                    capability_opacity.clone(),
+                );
+                for vb in &module.verify_blocks {
                     let key = verify_counter_key(vb);
                     let start_idx = *dep_verify_counters.get(&key).unwrap_or(&0);
-                    // Law blocks also need the actual unbounded-fuel set: their
-                    // sampled theorems use `native_decide`, and an exhausted
-                    // helper returns `default` just as it does in a plain case.
-                    let (emitted, next_idx) = toplevel::emit_verify_block(
-                        vb,
-                        ctx,
-                        verify_mode,
-                        start_idx,
-                        &super::kernel_decide::CaseDecidability::new(
-                            sampled_fns.opaque.clone(),
-                            sampled_fns.unbounded_fuel.clone(),
-                            recursive_types.clone(),
-                            capability_opacity.clone(),
-                        ),
-                    );
+                    let (emitted, next_idx) =
+                        toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx, &decidability);
                     dep_verify_counters.insert(key, next_idx);
                     body_sections.push(emitted);
                     body_sections.push(String::new());

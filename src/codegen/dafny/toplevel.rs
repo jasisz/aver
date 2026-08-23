@@ -1361,12 +1361,18 @@ fn sample_within_closable_range(bindings: &[(String, Spanned<Expr>)]) -> bool {
 /// - no refinement-lifted given (lemma param is the refined subset
 ///   type; sample values are carrier literals),
 /// - no oracle-bounded given (lemma adds `requires Is…(oracle)`).
+fn verify_subject_fn_id(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<crate::ir::FnId> {
+    let key = match ctx.active_module_scope() {
+        Some(prefix) => crate::ir::FnKey::in_module(prefix, &vb.fn_name),
+        None => crate::ir::FnKey::entry(&vb.fn_name),
+    };
+    ctx.symbol_table.fn_id_of(&key)
+}
+
 fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
     // Mirror of the issue-#128 "universal lemma omitted" gate in
     // `emit_verify_law` — keep in sync.
-    let vb_fn_id = ctx
-        .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name));
+    let vb_fn_id = verify_subject_fn_id(vb, ctx);
     let pinned_strategy = vb_fn_id.and_then(|fn_id| {
         ctx.proof_ir
             .law_theorems
@@ -1388,6 +1394,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
                 | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
                 | crate::ir::ProofStrategy::ConditionalComparisonBridge { .. }
+                | crate::ir::ProofStrategy::BoundedIntDomain { .. }
         )
     });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs
@@ -2983,9 +2990,7 @@ pub fn emit_verify_law(
     // BackendDispatch / Sorry don't close constant-RHS shapes;
     // anything else (Reflexive, Associative, MapUpdatePostcondition,
     // …) does and stays. Mirror of the Lean gate.
-    let vb_fn_id = ctx
-        .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name));
+    let vb_fn_id = verify_subject_fn_id(vb, ctx);
     let ir_strategy_closes_const_rhs = vb_fn_id
         .and_then(|fn_id| {
             ctx.proof_ir
@@ -3050,6 +3055,7 @@ pub fn emit_verify_law(
                     // existing default/fallback gates until it consumes this
                     // ProofIR strategy explicitly.
                     | crate::ir::ProofStrategy::ConditionalComparisonBridge { .. }
+                    | crate::ir::ProofStrategy::BoundedIntDomain { .. }
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

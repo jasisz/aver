@@ -37,9 +37,8 @@
 //! - **`verify_law` helper walkers** ([`crate::verify_law`]). The
 //!   helper-law / contextual-helper hint walkers operate on
 //!   entry-only AST `FnDef`s through [`crate::verify_law::EntryFnIndex`].
-//!   The parser invariant (`verify <name>` only accepts a single
-//!   `Ident`) keeps the identity-safe contract; migration to FnId
-//!   keying is gated on module-scoped verify shipping.
+//!   Module-scoped verify export now ships, so this is active migration
+//!   debt tracked by #1087 rather than a deferred boundary.
 //! - **Lean / Dafny proof + law spec emitters**. Several recognisers
 //!   (`emit_*_spec_equivalence_law`, `direct_call` AST shape match)
 //!   keep walking `Spanned<Expr>` source-shape because the proof IR
@@ -63,10 +62,9 @@
 //!   surface (`view.fn_by_id(id).body_expr_type(span)` or similar)
 //!   would tighten the contract but adds no semantic value today —
 //!   wait for a real consumer.
-//! - **Module-scoped verify → FnId keyed `verify_law`**. The
-//!   `EntryFnIndex` newtype is the tripwire that forces the
-//!   contributor to address keying when the parser starts accepting
-//!   dotted verify targets.
+//! - **FnId-keyed `verify_law` helpers**. Dependency-owned verify blocks
+//!   are now exported under module scope; remove `EntryFnIndex` and resolve
+//!   helper-hint subjects through the canonical program view (#1087).
 //!
 //! ## Construction
 //!
@@ -308,6 +306,7 @@ mod tests {
             fn_defs: fn_names.iter().map(|n| mk_fn(n)).collect(),
             capability_items: vec![],
             capability_semantics: None,
+            verify_blocks: vec![],
             verify_laws: vec![],
             analysis: None,
         }

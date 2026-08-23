@@ -156,7 +156,8 @@ fn symbols_dep_modules_from_loaded(
                 capability_items,
                 capability_semantics,
                 // Symbol-table build only — the typechecker never reads
-                // verify_laws (it is a proof-emit-only field).
+                // verify blocks (they are proof-emit-only fields).
+                verify_blocks: Vec::new(),
                 verify_laws: Vec::new(),
                 analysis: None,
             }

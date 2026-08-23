@@ -2,6 +2,41 @@
 
 use crate::ast::{Expr, Spanned, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyLaw};
 use crate::codegen::CodegenContext;
+use crate::codegen::lean::decl_order;
+
+/// Fully-qualified user functions in a plain case's transitive call cone.
+/// Symbolic-oracle cases must simplify the concrete branch far enough to
+/// eliminate the otherwise free oracle before `native_decide`; unfolding only
+/// the subject function is insufficient when branch selection happens through
+/// a helper argument such as `get(fixture(...))`.
+pub(super) fn plain_case_unfold_names(expr: &Spanned<Expr>, ctx: &CodegenContext) -> Vec<String> {
+    let scope = ctx.active_module_scope();
+    let resolved = ctx.resolve_expr(expr, scope.as_deref());
+    let mut direct = std::collections::HashSet::new();
+    decl_order::collect_resolved_fn_refs(&resolved, &mut direct);
+    let mut pending: Vec<_> = direct.into_iter().collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    while let Some(fn_id) = pending.pop() {
+        if !seen.insert(fn_id) {
+            continue;
+        }
+        let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
+            continue;
+        };
+        names.insert(ctx.symbol_table.fn_entry(fn_id).key.canonical());
+        for stmt in rfd.body.stmts() {
+            let expr = match stmt {
+                crate::ir::hir::ResolvedStmt::Expr(expr) => expr,
+                crate::ir::hir::ResolvedStmt::Binding { value, .. } => value,
+            };
+            let mut callees = std::collections::HashSet::new();
+            decl_order::collect_resolved_fn_refs(expr, &mut callees);
+            pending.extend(callees);
+        }
+    }
+    names.into_iter().collect()
+}
 
 /// Rewrite a cases-form assertion against an Oracle-lifted function.
 ///

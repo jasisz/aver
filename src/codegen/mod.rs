@@ -61,16 +61,21 @@ pub struct ModuleInfo {
     /// Raw module-header semantics (`pure` / `effectful`) for the retained
     /// capability items. Validation belongs to `capability::CapabilityRegistry`.
     pub capability_semantics: Option<String>,
+    /// Every `verify` block declared by this module, in source order.
+    ///
+    /// This is the module's own proof surface. Lean emits it inside the
+    /// module-scoped proof file; Dafny uses the law subset and reports the
+    /// concrete-case subset with the same whole-program accounting as the
+    /// entry module. Unlike [`Self::verify_laws`], this field is deliberately
+    /// not visibility-filtered: private claims still belong to the module that
+    /// declares them even though consumers may not cite them.
+    pub verify_blocks: Vec<crate::ast::VerifyBlock>,
     /// `verify … law` blocks of this dep module, in source order.
     ///
-    /// Carried so the Lean proof backend can (a) emit each proven dep
-    /// law as a `<fn>_law_<name>` theorem inside `namespace M`, and
-    /// (b) admit it into a consumer law's lemma pool under the same
-    /// cone ∪ subject admissibility gate as in-file sibling laws — the
-    /// cross-file law pool. Only `VerifyKind::Law` blocks are kept;
-    /// plain example-style `verify` blocks in a dep are still dropped
-    /// (module-scoped sampling is a separate feature). Read ONLY by the
-    /// Lean proof emit / pool; inert for every other backend.
+    /// This is the visibility-filtered cross-file citation pool, not the
+    /// module's own claim set: only exposed `VerifyKind::Law` blocks are kept
+    /// so a consumer may cite exactly the laws whose subject it may call.
+    /// Module-owned emission uses [`Self::verify_blocks`] instead.
     pub verify_laws: Vec<crate::ast::VerifyBlock>,
     /// IR-level analysis facts produced by the dep module's pipeline run
     /// (`analyze` stage). `None` for modules loaded via paths that skip
@@ -80,6 +85,14 @@ pub struct ModuleInfo {
     /// `src/ir/analyze.rs` for why cross-module SCCs are impossible.
     pub analysis: Option<crate::ir::AnalysisResult>,
 }
+
+/// Identity of one emitted verify case in the whole program.
+///
+/// `None` owns the entry module; `Some(prefix)` owns a dependency module.
+/// The textual counter key preserves the existing merge semantics within one
+/// module, while the scope prevents same-bare-name blocks in two modules from
+/// sharing VM ground truth or decline state.
+pub type VerifyCaseKey = (Option<String>, String, usize);
 
 impl ModuleInfo {
     /// Build the shared projection from parsed module items. Target-specific
@@ -118,6 +131,7 @@ impl ModuleInfo {
             fn_defs,
             capability_items,
             capability_semantics,
+            verify_blocks: collect_verify_blocks(items),
             verify_laws: collect_verify_laws(items),
             analysis,
         }
@@ -151,6 +165,22 @@ pub fn capability_metadata(items: &[TopLevel]) -> (Vec<CapabilityItem>, Option<S
         _ => None,
     });
     (declarations, semantics)
+}
+
+/// Every `verify` block from a module's top-level items, in source order.
+///
+/// This is the module-owned claim set used by whole-program proof export.
+/// Visibility is irrelevant here: a private function's claim is still an
+/// obligation of its own module. Cross-module citation continues to use the
+/// separately filtered [`collect_verify_laws`] pool.
+pub fn collect_verify_blocks(items: &[TopLevel]) -> Vec<crate::ast::VerifyBlock> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(block) => Some(block.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `verify … law` blocks from a module's top-level items, in source
@@ -489,18 +519,18 @@ pub struct CodegenContext {
     /// the CLI wired it — discovery feedback is strictly opt-in.
     pub discovered_lemmas: Vec<crate::codegen::lemma_discovery::CommittedLemma>,
     /// VM-computed ground-truth values for verify cases, keyed by
-    /// `(common::verify_block_counter_key(vb), global_case_index)` →
+    /// `(module_scope, common::verify_block_counter_key(vb), case_index)` →
     /// `aver_repr_literal` rendering of the case's expected (right-side)
     /// value. Set by the CLI on `aver proof --backend lean` from a Declared-
-    /// mode `aver verify` run over the entry items; empty everywhere else.
+    /// mode `aver verify` run over every project module; empty everywhere else.
     /// The Lean emitter literalizes the expected side of bounded sample
     /// checks from this table (model-vs-ground-truth) so that fuel
     /// exhaustion — where `panic!` returns `default` and a model-vs-model
     /// equation becomes vacuously true under `native_decide` — cannot
     /// kernel-certify a false equation. Entries exist only for cases that
     /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
-    pub sample_expected: std::collections::HashMap<(String, usize), String>,
-    /// `(common::verify_block_counter_key(vb), global_case_index)` → the
+    pub sample_expected: std::collections::HashMap<VerifyCaseKey, String>,
+    /// `(module_scope, common::verify_block_counter_key(vb), case_index)` → the
     /// reason `aver verify` gave for not answering that case.
     ///
     /// The counterpart to [`Self::sample_expected`], and the reason it is a
@@ -510,7 +540,7 @@ pub struct CodegenContext {
     /// checked, in exactly the shape literalization exists to prevent, and
     /// precisely on the big inputs where the model is likeliest to exhaust
     /// fuel too. A case listed here is declined as a claim instead.
-    pub declined_cases: std::collections::HashMap<(String, usize), String>,
+    pub declined_cases: std::collections::HashMap<VerifyCaseKey, String>,
     /// `aver proof --allow-mathlib` (Lean only, opt-in): permit a generic
     /// Mathlib break-glass closing arm on laws the core strategies cannot
     /// claim. When `false` (the default) the Lean backend is BYTE-IDENTICAL to

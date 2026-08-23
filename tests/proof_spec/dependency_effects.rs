@@ -226,6 +226,58 @@ fn dependency_effectful_fn_is_exported_with_the_entrys_oracle_threading() {
     );
 }
 
+#[test]
+fn dependency_own_verify_case_roots_its_effectful_proof_cone() {
+    // The entry deliberately cites no function from DepClaim. Its own verify
+    // block is the only reachability root, so dropping dependency cases would
+    // omit `named` and leave the generated example with no lifted callee.
+    let dep_claim = r#"module DepClaim
+    intent = "Owns an effectful example independently of the entry."
+    exposes [named]
+    depends [Infra.Kv, Infra.Store]
+    effects [Infra.Kv.get]
+
+fn named(store: Store, key: String) -> Result<Option<String>, String>
+    ? "Reads one name."
+    ! [Infra.Kv.get]
+    Infra.Store.get(store, key)
+
+verify named
+    given stub: Infra.Kv.get = [fixedGet]
+    named(Infra.Store.fixture([("k", "v")]), "k") => Result.Ok(Option.Some("v"))
+
+fn fixedGet(path: BranchPath, n: Int, key: String) -> Result<Option<String>, String>
+    ? "Proof-side database stub."
+    Result.Ok(Option.None)
+"#;
+    let entry = r#"module Main
+    intent = "Loads DepClaim without adding an entry claim."
+    depends [DepClaim, Infra.Kv, Infra.Store]
+    effects []
+
+fn main() -> Unit
+    ? "No-op entry."
+    Unit
+"#;
+    let leans = emit_multi(
+        &[
+            ("infra/kv.av", KV),
+            ("infra/store.av", STORE),
+            ("depclaim.av", dep_claim),
+            ("main.av", entry),
+        ],
+        "main.av",
+        &["DepClaim.lean"],
+    );
+    let dep = &leans["DepClaim.lean"];
+    assert!(
+        dep.contains("def named (path : BranchPath)")
+            && dep.contains("example")
+            && dep.contains("DepClaim.named"),
+        "a dependency's own case must root lifting and emission in that module:\n{dep}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // (b) A dependency helper no `verify` block reaches, but the entry's cone
 // ---------------------------------------------------------------------------
@@ -449,6 +501,66 @@ fn entry_effectful_loop_over_a_dependency_read_forwards_path_and_oracles() {
     assert!(
         prune.contains("heightsHeld path rnd_Infra_Kv_get store (height + 1)"),
         "the entry's tail call must forward `path` and the oracles:\n{prune}"
+    );
+}
+
+#[test]
+fn symbolic_oracle_case_over_partial_recursion_is_explicitly_declined() {
+    // A symbolic oracle can be simplified away from a concrete non-recursive
+    // branch, but `partial def` exposes no equation theorem for the simplifier
+    // to use. Native evaluation rejects the remaining free function, and
+    // reverting it leaves a function-quantified proposition without a
+    // Decidable instance. This shape came from btc-listener's Chain module:
+    // keep it an attributed decline instead of a generated Lean build error.
+    let capability = r#"module Probe
+    intent = "A capability whose unreachable branch is enough to lift the subject."
+    kind = capability
+    semantics = effectful
+    exposes [get]
+
+operation get(key: String) -> Result<String, String>
+    ? "Read a value."
+    oracle = generative
+    replay = recorded
+"#;
+    let entry = r#"module Main
+    intent = "Exercises a base case of an intentionally non-terminating shape."
+    exposes [main, climb]
+    depends [Probe]
+    effects [Probe.get]
+
+fn climb(n: Int) -> Result<Int, String>
+    ? "Return at zero; the other branch grows forever."
+    ! [Probe.get]
+    match n
+        0 -> Result.Ok(0)
+        _ -> climbOne(n)
+
+fn climbOne(n: Int) -> Result<Int, String>
+    ? "Read once and return to the growing loop."
+    ! [Probe.get]
+    seen = Probe.get("x")?
+    climb(n + 1)
+
+verify climb
+    climb(0) => Result.Ok(0)
+
+fn main() -> Unit
+    ? "Entry point."
+    Unit
+"#;
+
+    let leans = emit_multi(
+        &[("probe.av", capability), ("main.av", entry)],
+        "main.av",
+        &["Main.lean"],
+    );
+    let main = &leans["Main.lean"];
+    assert!(
+        main.contains("verify climb case 1: the case has a symbolic capability oracle")
+            && main.contains("kernel-opaque Lean function(s) climb")
+            && main.contains("no theorem emitted"),
+        "the unprovable symbolic-oracle/partial-recursion case must be an explicit decline:\n{main}"
     );
 }
 
