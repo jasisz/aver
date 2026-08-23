@@ -292,6 +292,9 @@ pub(super) enum Commands {
         /// back to plain `aver verify` (VM).
         #[arg(long = "wasm-gc")]
         wasm_gc: bool,
+        /// Maximum verify worker threads (default: available CPU parallelism)
+        #[arg(short = 'j', long)]
+        jobs: Option<std::num::NonZeroUsize>,
     },
     /// Run check + verify + format-check in one pass over every module of the program
     Audit {
@@ -840,6 +843,18 @@ mod tests {
             Commands::Verify { file, .. } => assert_eq!(file, "examples/modules/app.av"),
             _ => panic!("expected verify command"),
         }
+    }
+
+    #[test]
+    fn verify_accepts_positive_jobs_and_rejects_zero() {
+        let cli = Cli::parse_from(["aver", "verify", "examples/core/lists.av", "-j", "4"]);
+        match cli.command {
+            Commands::Verify { jobs, .. } => assert_eq!(jobs.map(|jobs| jobs.get()), Some(4)),
+            _ => panic!("expected verify command"),
+        }
+        assert!(
+            Cli::try_parse_from(["aver", "verify", "examples/core/lists.av", "-j", "0"]).is_err()
+        );
     }
 
     #[test]

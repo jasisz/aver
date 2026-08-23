@@ -8,9 +8,12 @@
 //! exposes, config suppression, dependency resolution) stay in CLI / LSP
 //! callers.
 
+use super::classify::SourceIndex;
 #[cfg(feature = "runtime")]
 use super::factories::verify_provider_setup_diagnostic;
-use super::factories::{from_check_finding, from_type_error, unused_binding_diagnostic};
+use super::factories::{
+    from_check_finding_with_index, from_type_error_with_index, unused_binding_diagnostic_with_index,
+};
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
@@ -194,9 +197,15 @@ fn analyze_source_impl(
     let tc_result = crate::ir::pipeline::typecheck_gate(&items, &mode, &items);
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let source_index = SourceIndex::new(source);
 
     for te in &tc_result.errors {
-        diagnostics.push(from_type_error(te, source, &options.file_label));
+        diagnostics.push(from_type_error_with_index(
+            te,
+            &source_index,
+            source,
+            &options.file_label,
+        ));
     }
 
     let findings = if options.include_intent_warnings {
@@ -211,10 +220,10 @@ fn analyze_source_impl(
 
     if let Some(ref findings) = findings {
         for e in &findings.errors {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Error,
                 e,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -222,11 +231,11 @@ fn analyze_source_impl(
 
     if options.include_unused_bindings {
         for (binding, fn_name, line) in &tc_result.unused_bindings {
-            diagnostics.push(unused_binding_diagnostic(
+            diagnostics.push(unused_binding_diagnostic_with_index(
                 binding,
                 fn_name,
                 *line,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -234,10 +243,10 @@ fn analyze_source_impl(
 
     if let Some(ref findings) = findings {
         for w in &findings.warnings {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -245,10 +254,10 @@ fn analyze_source_impl(
 
     if options.include_coverage_warnings {
         for w in collect_verify_coverage_warnings_in(&items, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -272,10 +281,10 @@ fn analyze_source_impl(
                 message: crate::source::stdlib_shadow_message(dep_name, shadowed_path),
                 extra_spans: vec![],
             };
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &finding,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -287,10 +296,10 @@ fn analyze_source_impl(
     // effects no fn uses) is a softer hint — still worth surfacing so
     // the module header documents what the code actually does.
     for w in collect_module_effects_warnings_in(&items, None) {
-        diagnostics.push(from_check_finding(
+        diagnostics.push(from_check_finding_with_index(
             Severity::Warning,
             &w,
-            source,
+            &source_index,
             &options.file_label,
         ));
     }
@@ -298,10 +307,10 @@ fn analyze_source_impl(
     #[cfg(feature = "runtime")]
     if options.include_law_dependency_warnings {
         for w in collect_verify_law_dependency_warnings_in(&items, &tc_result.fn_sigs, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -309,10 +318,10 @@ fn analyze_source_impl(
 
     if options.include_cse_warnings {
         for w in collect_cse_warnings_in(&transformed, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -320,10 +329,10 @@ fn analyze_source_impl(
 
     if options.include_perf_warnings {
         for w in collect_perf_warnings_in(&transformed, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -331,10 +340,10 @@ fn analyze_source_impl(
 
     if options.include_traversal_warnings {
         for w in collect_traversal_warnings_in(&transformed, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -342,10 +351,10 @@ fn analyze_source_impl(
 
     if options.include_independence_warnings {
         for w in collect_independence_warnings_in(&transformed, &tc_result.fn_sigs, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -353,10 +362,10 @@ fn analyze_source_impl(
 
     if options.include_naming_warnings {
         for w in collect_naming_warnings_in(&items, None) {
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }
@@ -453,10 +462,10 @@ fn analyze_source_impl(
                 message: w.message.clone(),
                 extra_spans,
             };
-            diagnostics.push(from_check_finding(
+            diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &finding,
-                source,
+                &source_index,
                 &options.file_label,
             ));
         }

@@ -4,9 +4,8 @@
 //! return a `Diagnostic`. No IO, no globals, wasm-safe.
 
 use super::classify::{
-    classify_finding, classify_type_error, estimate_span_len, extract_fn_name_from_finding,
-    extract_return_type, extract_source_lines, extract_source_lines_range, fill_small_region_gaps,
-    find_block_header_line, find_preamble_end, find_precise_span,
+    SourceIndex, classify_finding, classify_type_error, estimate_span_len,
+    extract_fn_name_from_finding, extract_return_type, extract_source_lines, find_precise_span,
 };
 use super::model::{AnnotatedRegion, Diagnostic, Repair, Severity, Span, Underline};
 use crate::checker::{CheckFinding, VerifyLawContext};
@@ -39,6 +38,16 @@ pub fn verify_provider_setup_diagnostic(file: &str, error: &str) -> Diagnostic {
 
 /// Build a `Diagnostic` from a `TypeError` (from the typechecker).
 pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
+    let source_index = SourceIndex::new(source);
+    from_type_error_with_index(te, &source_index, source, file)
+}
+
+pub(crate) fn from_type_error_with_index(
+    te: &TypeError,
+    source_index: &SourceIndex<'_>,
+    source: &str,
+    file: &str,
+) -> Diagnostic {
     let (source, file) = match &te.origin {
         Some(origin) => (
             origin.source.as_deref().unwrap_or_default(),
@@ -46,16 +55,25 @@ pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
         ),
         None => (source, file),
     };
+    if te.origin.is_some() {
+        let origin_index = SourceIndex::new(source);
+        return from_type_error_indexed(te, &origin_index, file);
+    }
+    from_type_error_indexed(te, source_index, file)
+}
+
+fn from_type_error_indexed(
+    te: &TypeError,
+    source_index: &SourceIndex<'_>,
+    file: &str,
+) -> Diagnostic {
     let msg = &te.message;
     let line = te.line;
     let col = te.col;
 
     let (slug, conflict, fields, repair_text) = classify_type_error(msg);
 
-    let source_line_text = source
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or_default();
+    let source_line_text = source_index.line(line);
     let (ul_col, ul_len) = if col > 0 {
         (col, estimate_span_len(source_line_text, col))
     } else {
@@ -101,17 +119,14 @@ pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
     };
 
     let mut regions = vec![AnnotatedRegion {
-        source_lines: extract_source_lines(source, line, 0),
+        source_lines: source_index.extract(line, 0),
         underline: primary_underline,
     }];
 
     if let Some(ref sec) = te.secondary
         && sec.line != line
     {
-        let sec_source_text = source
-            .lines()
-            .nth(sec.line.saturating_sub(1))
-            .unwrap_or_default();
+        let sec_source_text = source_index.line(sec.line);
         let (sec_col, sec_len) = if sec.col > 0 {
             (sec.col, estimate_span_len(sec_source_text, sec.col))
         } else {
@@ -119,7 +134,7 @@ pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
             (indent + 1, sec_source_text.trim().len())
         };
         regions.push(AnnotatedRegion {
-            source_lines: extract_source_lines(source, sec.line, 0),
+            source_lines: source_index.extract(sec.line, 0),
             underline: Some(Underline {
                 col: sec_col,
                 len: sec_len,
@@ -129,7 +144,7 @@ pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
     }
 
     regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
-    fill_small_region_gaps(&mut regions, source);
+    source_index.fill_small_region_gaps(&mut regions);
 
     Diagnostic {
         severity: Severity::Error,
@@ -159,6 +174,17 @@ pub fn unused_binding_diagnostic(
     source: &str,
     file: &str,
 ) -> Diagnostic {
+    let source_index = SourceIndex::new(source);
+    unused_binding_diagnostic_with_index(binding, fn_name, line, &source_index, file)
+}
+
+pub(crate) fn unused_binding_diagnostic_with_index(
+    binding: &str,
+    fn_name: &str,
+    line: usize,
+    source_index: &SourceIndex<'_>,
+    file: &str,
+) -> Diagnostic {
     Diagnostic {
         severity: Severity::Warning,
         slug: "unused-binding",
@@ -173,7 +199,7 @@ pub fn unused_binding_diagnostic(
         fields: vec![("binding", binding.to_string())],
         conflict: None,
         repair: Repair::primary(format!("Remove the binding or prefix with _: _{}", binding)),
-        regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
+        regions: AnnotatedRegion::single(source_index.extract(line, 0), None),
         related: Vec::new(),
         from_hostile: false,
     }
@@ -294,6 +320,16 @@ pub fn from_check_finding(
     source: &str,
     file: &str,
 ) -> Diagnostic {
+    let source_index = SourceIndex::new(source);
+    from_check_finding_with_index(severity, finding, &source_index, file)
+}
+
+pub(crate) fn from_check_finding_with_index(
+    severity: Severity,
+    finding: &CheckFinding,
+    source_index: &SourceIndex<'_>,
+    file: &str,
+) -> Diagnostic {
     let (slug, repair_text) = classify_finding(&finding.message);
     let fn_name = finding
         .fn_name
@@ -311,10 +347,7 @@ pub fn from_check_finding(
         finding.message.clone()
     };
 
-    let source_line_text = source
-        .lines()
-        .nth(finding.line.saturating_sub(1))
-        .unwrap_or_default();
+    let source_line_text = source_index.line(finding.line);
     let (col, span_len) = find_precise_span(source_line_text, &summary).unwrap_or_else(|| {
         let indent = source_line_text.len() - source_line_text.trim_start().len();
         (indent + 1, source_line_text.trim().len())
@@ -330,15 +363,12 @@ pub fn from_check_finding(
         None
     };
     let mut regions = vec![AnnotatedRegion {
-        source_lines: extract_source_lines(source, finding.line, 0),
+        source_lines: source_index.extract(finding.line, 0),
         underline: primary_underline,
     }];
 
     for extra in &finding.extra_spans {
-        let extra_source_line = source
-            .lines()
-            .nth(extra.line.saturating_sub(1))
-            .unwrap_or_default();
+        let extra_source_line = source_index.line(extra.line);
         let (extra_col, extra_len) = if extra.col > 0 && extra.len > 0 {
             (extra.col, extra.len)
         } else {
@@ -348,7 +378,7 @@ pub fn from_check_finding(
             })
         };
         regions.push(AnnotatedRegion {
-            source_lines: extract_source_lines(source, extra.line, 0),
+            source_lines: source_index.extract(extra.line, 0),
             underline: Some(Underline {
                 col: extra_col,
                 len: extra_len,
@@ -362,12 +392,12 @@ pub fn from_check_finding(
         || source_line_text.trim_start().starts_with("decision ");
     if !finding_is_header
         && let Some(ref name) = fn_name
-        && let Some(header_line) = find_block_header_line(source, name, finding.line)
+        && let Some(header_line) = source_index.find_block_header_line(name, finding.line)
         && header_line < finding.line
     {
-        let preamble_end = find_preamble_end(source, header_line, finding.line);
+        let preamble_end = source_index.find_preamble_end(header_line, finding.line);
         let capped_end = preamble_end.min(header_line + 3);
-        let header_lines = extract_source_lines_range(source, header_line, capped_end);
+        let header_lines = source_index.extract_range(header_line, capped_end);
         if !header_lines.is_empty() {
             regions.insert(
                 0,
@@ -380,7 +410,7 @@ pub fn from_check_finding(
     }
 
     regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
-    fill_small_region_gaps(&mut regions, source);
+    source_index.fill_small_region_gaps(&mut regions);
 
     Diagnostic {
         severity,

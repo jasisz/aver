@@ -6,31 +6,147 @@ use super::model::{AnnotatedRegion, SourceLine};
 
 // ─── Source extraction ───────────────────────────────────────────────────────
 
+/// One line table shared by every diagnostic produced for a source file.
+/// Building it once keeps a file with `F` findings and `L` lines at O(L + F)
+/// source lookup cost instead of collecting or scanning all `L` lines for
+/// every finding.
+pub(crate) struct SourceIndex<'a> {
+    lines: Vec<&'a str>,
+}
+
+impl<'a> SourceIndex<'a> {
+    pub(crate) fn new(source: &'a str) -> Self {
+        Self {
+            lines: source.lines().collect(),
+        }
+    }
+
+    pub(crate) fn line(&self, line: usize) -> &'a str {
+        self.lines
+            .get(line.saturating_sub(1))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn extract(&self, line: usize, context: usize) -> Vec<SourceLine> {
+        let start = line.saturating_sub(context + 1);
+        let end = (line + context).min(self.lines.len());
+        (start..end)
+            .map(|i| SourceLine {
+                line_num: i + 1,
+                text: self.lines[i].to_string(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn extract_range(&self, from: usize, to: usize) -> Vec<SourceLine> {
+        let start = from.saturating_sub(1);
+        let end = to.min(self.lines.len());
+        (start..end)
+            .map(|i| SourceLine {
+                line_num: i + 1,
+                text: self.lines[i].to_string(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn fill_small_region_gaps(&self, regions: &mut Vec<AnnotatedRegion>) {
+        if regions.len() < 2 {
+            return;
+        }
+        let mut i = 0;
+        while i + 1 < regions.len() {
+            let last_of_prev = regions[i]
+                .source_lines
+                .last()
+                .map(|sl| sl.line_num)
+                .unwrap_or(0);
+            let first_of_next = regions[i + 1]
+                .source_lines
+                .first()
+                .map(|sl| sl.line_num)
+                .unwrap_or(0);
+            if first_of_next > last_of_prev + 1 && first_of_next <= last_of_prev + 3 {
+                let bridge: Vec<SourceLine> = ((last_of_prev + 1)..first_of_next)
+                    .filter_map(|ln| {
+                        self.lines.get(ln.saturating_sub(1)).map(|text| SourceLine {
+                            line_num: ln,
+                            text: (*text).to_string(),
+                        })
+                    })
+                    .collect();
+                if !bridge.is_empty() {
+                    regions.insert(
+                        i + 1,
+                        AnnotatedRegion {
+                            source_lines: bridge,
+                            underline: None,
+                        },
+                    );
+                    i += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    pub(crate) fn find_block_header_line(&self, name: &str, before_line: usize) -> Option<usize> {
+        let needles = [
+            format!("fn {}", name),
+            format!("verify {}", name),
+            format!("decision {}", name),
+        ];
+        let mut best = None;
+        for (i, line) in self
+            .lines
+            .iter()
+            .enumerate()
+            .take(before_line.saturating_sub(1))
+        {
+            let trimmed = line.trim_start();
+            if needles.iter().any(|needle| trimmed.starts_with(needle)) {
+                best = Some(i + 1);
+            }
+        }
+        best
+    }
+
+    pub(crate) fn find_preamble_end(&self, header_line: usize, before_line: usize) -> usize {
+        let mut end = header_line;
+        for (i, line) in self.lines.iter().enumerate() {
+            let line_num = i + 1;
+            if line_num <= header_line {
+                continue;
+            }
+            if line_num >= before_line {
+                break;
+            }
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('?')
+                || trimmed.starts_with('!')
+                || trimmed.starts_with('"')
+                || trimmed.starts_with('[')
+                || trimmed.is_empty()
+                || (line.starts_with("    ") && trimmed.contains(" = "))
+            {
+                end = line_num;
+            } else {
+                break;
+            }
+        }
+        end
+    }
+}
+
 /// Extract source lines around `line` (1-based) with `context` lines of
 /// surrounding context on each side.
 pub(crate) fn extract_source_lines(source: &str, line: usize, context: usize) -> Vec<SourceLine> {
-    let lines: Vec<&str> = source.lines().collect();
-    let start = line.saturating_sub(context + 1);
-    let end = (line + context).min(lines.len());
-    (start..end)
-        .map(|i| SourceLine {
-            line_num: i + 1,
-            text: lines[i].to_string(),
-        })
-        .collect()
+    SourceIndex::new(source).extract(line, context)
 }
 
 /// Extract source lines for an inclusive range [from..to] (1-based).
 pub(crate) fn extract_source_lines_range(source: &str, from: usize, to: usize) -> Vec<SourceLine> {
-    let lines: Vec<&str> = source.lines().collect();
-    let start = from.saturating_sub(1);
-    let end = to.min(lines.len());
-    (start..end)
-        .map(|i| SourceLine {
-            line_num: i + 1,
-            text: lines[i].to_string(),
-        })
-        .collect()
+    SourceIndex::new(source).extract_range(from, to)
 }
 
 /// Extract the declared return type from a "declared return type is X" message.
@@ -53,106 +169,6 @@ pub(crate) fn estimate_span_len(line: &str, col: usize) -> usize {
         .take_while(|c| !c.is_whitespace() && !matches!(c, '(' | ')' | '[' | ']' | ',' | ':'))
         .count();
     if len == 0 { 1 } else { len }
-}
-
-/// Fill small gaps (≤2 lines) between sorted regions with bridging source
-/// lines. Avoids a `...` separator for tiny jumps.
-pub(crate) fn fill_small_region_gaps(regions: &mut Vec<AnnotatedRegion>, source: &str) {
-    if regions.len() < 2 {
-        return;
-    }
-    let lines: Vec<&str> = source.lines().collect();
-    let mut i = 0;
-    while i + 1 < regions.len() {
-        let last_of_prev = regions[i]
-            .source_lines
-            .last()
-            .map(|sl| sl.line_num)
-            .unwrap_or(0);
-        let first_of_next = regions[i + 1]
-            .source_lines
-            .first()
-            .map(|sl| sl.line_num)
-            .unwrap_or(0);
-        if first_of_next > last_of_prev + 1 && first_of_next <= last_of_prev + 3 {
-            let bridge: Vec<SourceLine> = ((last_of_prev + 1)..first_of_next)
-                .filter_map(|ln| {
-                    lines.get(ln.saturating_sub(1)).map(|t| SourceLine {
-                        line_num: ln,
-                        text: t.to_string(),
-                    })
-                })
-                .collect();
-            if !bridge.is_empty() {
-                regions.insert(
-                    i + 1,
-                    AnnotatedRegion {
-                        source_lines: bridge,
-                        underline: None,
-                    },
-                );
-                i += 1;
-            }
-        }
-        i += 1;
-    }
-}
-
-/// Find the line number of the block header (`fn`, `verify`, `decision`) for
-/// `name`, searching forward from the start up to (but not including)
-/// `before_line`.
-pub(crate) fn find_block_header_line(
-    source: &str,
-    name: &str,
-    before_line: usize,
-) -> Option<usize> {
-    let needles = [
-        format!("fn {}", name),
-        format!("verify {}", name),
-        format!("decision {}", name),
-    ];
-    let mut best: Option<usize> = None;
-    for (i, line) in source.lines().enumerate() {
-        let line_num = i + 1;
-        if line_num >= before_line {
-            break;
-        }
-        let trimmed = line.trim_start();
-        for needle in &needles {
-            if trimmed.starts_with(needle.as_str()) {
-                best = Some(line_num);
-            }
-        }
-    }
-    best
-}
-
-/// Find where the block preamble ends. Returns the last preamble line
-/// number (1-based), capped before `before_line`.
-pub(crate) fn find_preamble_end(source: &str, header_line: usize, before_line: usize) -> usize {
-    let mut end = header_line;
-    for (i, line) in source.lines().enumerate() {
-        let line_num = i + 1;
-        if line_num <= header_line {
-            continue;
-        }
-        if line_num >= before_line {
-            break;
-        }
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('?')
-            || trimmed.starts_with('!')
-            || trimmed.starts_with('"')
-            || trimmed.starts_with('[')
-            || trimmed.is_empty()
-            || (line.starts_with("    ") && trimmed.contains(" = "))
-        {
-            end = line_num;
-        } else {
-            break;
-        }
-    }
-    end
 }
 
 /// Try to find a precise (col, len) span by extracting the first quoted
@@ -412,7 +428,7 @@ pub(crate) fn extract_fn_name_from_finding(msg: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_finding;
+    use super::{SourceIndex, classify_finding};
 
     #[test]
     fn classifies_independence_hazard_warning() {
@@ -421,5 +437,22 @@ mod tests {
         );
         assert_eq!(slug, "independence-hazard");
         assert!(repair.is_some());
+    }
+
+    #[test]
+    fn source_index_serves_lines_ranges_and_block_preambles() {
+        let source = "module Demo\n\nfn work(x: Int) -> Int\n    ? \"Does work.\"\n    value = x + 1\n    value\n";
+        let index = SourceIndex::new(source);
+        assert_eq!(index.line(5), "    value = x + 1");
+        assert_eq!(
+            index
+                .extract_range(3, 5)
+                .into_iter()
+                .map(|line| line.line_num)
+                .collect::<Vec<_>>(),
+            vec![3, 4, 5]
+        );
+        assert_eq!(index.find_block_header_line("work", 6), Some(3));
+        assert_eq!(index.find_preamble_end(3, 6), 5);
     }
 }

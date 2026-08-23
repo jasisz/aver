@@ -178,6 +178,22 @@ pub fn run_type_check_with_loaded(
     finalize_check_result(checker, items)
 }
 
+/// Type-check `items` against dependency modules whose bodies have already
+/// passed type checking in a leaves-first command preparation.
+///
+/// Dependency signatures, capabilities and visibility remain part of this
+/// check. Only their bodies are not walked again. This is an internal
+/// performance seam for whole-program reporting; ordinary embedders should
+/// continue to use [`run_type_check_with_loaded`].
+pub(crate) fn run_type_check_with_checked_loaded(
+    items: &[TopLevel],
+    loaded: &[crate::source::LoadedModule],
+) -> TypeCheckResult {
+    let mut checker = TypeChecker::new_with_symbols(build_symbols_with_loaded(items, loaded));
+    checker.check_with_checked_loaded(items, loaded);
+    finalize_check_result(checker, items)
+}
+
 /// Self-host variant of [`run_type_check_full`]: bypasses the
 /// opaque-type checks (construction, field access, pattern match).
 /// Used exclusively by `aver compile --with-self-host-support` so

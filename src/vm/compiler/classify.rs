@@ -387,4 +387,28 @@ mod tests {
         let leaf = chunk_with_code(vec![LIST_LEN, RETURN]);
         assert!(classify_leaf_chunk(&leaf).unwrap());
     }
+
+    #[test]
+    fn bytecode_walk_skips_all_tail_call_operands() {
+        // The owned-mask bytes deliberately spell dispatch opcodes. A walker
+        // that undercounts either tail-call shape would interpret them as
+        // instructions and lose the real RETURN boundary.
+        let chunk = chunk_with_code(vec![
+            TAIL_CALL_SELF,
+            0x01,
+            MATCH_DISPATCH,
+            TAIL_CALL_KNOWN,
+            0x00,
+            0x02,
+            0x01,
+            MATCH_DISPATCH_CONST,
+            RETURN,
+        ]);
+
+        assert_eq!(opcode_operand_width(TAIL_CALL_SELF, &chunk.code, 1), 2);
+        assert_eq!(opcode_operand_width(TAIL_CALL_KNOWN, &chunk.code, 4), 4);
+        assert_eq!(find_opcode_positions(&chunk, RETURN), vec![8]);
+        assert!(find_opcode_positions(&chunk, MATCH_DISPATCH).is_empty());
+        assert!(find_opcode_positions(&chunk, MATCH_DISPATCH_CONST).is_empty());
+    }
 }
