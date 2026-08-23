@@ -292,7 +292,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

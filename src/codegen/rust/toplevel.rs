@@ -14,9 +14,8 @@ use std::fmt::Write as _;
 // (`from_mir`); this module keeps the structural emitters (type defs,
 // fn signatures, mutual-TCO discovery, verify scaffolding) plus the
 // borrow/rc helpers the MIR TCO synthesis reuses. The resolved-form
-// lookup helpers still live as methods on [`CodegenContext`]
-// (`ctx.resolve_fn_def` / `resolve_expr`) for the on-demand verify-case
-// + main lift.
+// lookup helpers still live on [`CodegenContext`] for non-Rust migration
+// consumers; production Rust emission never resolves a function on demand.
 
 fn visibility_prefix(public: bool) -> &'static str {
     if public { "pub " } else { "" }
@@ -535,12 +534,10 @@ fn build_fn_ectx_no_borrow_from_resolved(
 
 /// Emit a Rust function from an Aver FnDef.
 ///
-/// `scope` is the owning module prefix when `fd` came from a
-/// dependency module (`module.fn_defs`), `None` when `fd` is part of
-/// the entry's `ctx.fn_defs`. Threaded into `ctx.resolve_fn_def` so
-/// the resolved lookup keys by `FnKey` instead of bare name — two
-/// modules that share a fn name (`Util.format` vs `Other.format`)
-/// pick up their own `FnId` without collision.
+/// `scope` is the owning module prefix when `fd` came from a dependency
+/// module (`module.fn_defs`), `None` for the entry module. The caller has
+/// already selected `resolved_fd` by `FnId`, so scope is emission metadata,
+/// never resolver input.
 #[allow(dead_code)]
 pub fn emit_fn_def(
     fd: &FnDef,
@@ -568,9 +565,8 @@ pub fn emit_public_fn_def(
 /// `ResolvedFnDef` carries the resolved-HIR body the expr/stmt
 /// emitters walk. Epic #170 Phase 4: callers pre-resolve via
 /// `ctx.resolved_program.fn_by_id(fn_id)` and pass both halves so
-/// no on-demand resolve happens here. `ctx.resolve_fn_def` survives
-/// for the test-only synthetic-FnDef path; production codegen goes
-/// through this pair API exclusively.
+/// no on-demand resolve happens here. Synthetic declarations must enter the
+/// resolved program view before this pair API can emit them.
 fn emit_fn_def_with_visibility(
     fd: &FnDef,
     resolved_fd: &crate::ir::hir::ResolvedFnDef,
@@ -586,7 +582,7 @@ fn emit_fn_def_with_visibility(
     }
 
     // Check if function uses self-TCO (has TailCall to itself in body)
-    let has_tco = body_has_self_tailcall(&fd.body, &fd.name);
+    let has_tco = resolved_fn_has_self_tailcall(resolved_fd);
 
     // own_param-proven owned collection params (cleared `aliased_slots`
     // bit) graduate from `&T` borrow-by-default to `mut p: T`
@@ -964,22 +960,25 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
     }
 }
 
-pub(super) fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
-    body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_self_tailcall(&e.node, fn_name),
-        Stmt::Binding(_, _, e) => expr_has_self_tailcall(&e.node, fn_name),
+pub(super) fn resolved_fn_has_self_tailcall(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    fd.body.stmts().iter().any(|stmt| {
+        let expr = match stmt {
+            crate::ir::hir::ResolvedStmt::Expr(expr)
+            | crate::ir::hir::ResolvedStmt::Binding { value: expr, .. } => expr,
+        };
+        resolved_expr_has_tailcall_to(&expr.node, fd.fn_id)
     })
 }
 
-fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
+fn resolved_expr_has_tailcall_to(
+    expr: &crate::ir::hir::ResolvedExpr,
+    target_id: crate::ir::FnId,
+) -> bool {
     match expr {
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, .. } = boxed.as_ref();
-            target == fn_name
-        }
-        Expr::Match { arms, .. } => arms
+        crate::ir::hir::ResolvedExpr::TailCall { target, .. } => *target == target_id,
+        crate::ir::hir::ResolvedExpr::Match { arms, .. } => arms
             .iter()
-            .any(|arm| expr_has_self_tailcall(&arm.body.node, fn_name)),
+            .any(|arm| resolved_expr_has_tailcall_to(&arm.body.node, target_id)),
         _ => false,
     }
 }
@@ -992,25 +991,6 @@ fn is_expensive_clone_type(ty: &crate::types::Type) -> bool {
         Type::Str => false, // AverStr is Rc<str>, clone is O(1)
         _ => true,
     }
-}
-
-/// For a group of mutually-recursive functions (or a single self-recursive fn),
-/// find param indices that are "pass-through" — never rebound in tail calls.
-/// These can safely be passed as `&T` borrows to avoid deep cloning.
-pub(super) fn compute_rc_params(group_fns: &[&FnDef], _ctx: &CodegenContext) -> HashSet<usize> {
-    if group_fns.is_empty() {
-        return HashSet::new();
-    }
-
-    // Try index-based first (works when all fns have same arity)
-    let arity = group_fns[0].params.len();
-    if group_fns.iter().all(|fd| fd.params.len() == arity) {
-        return compute_rc_params_by_index(group_fns);
-    }
-
-    // Different arities: use name+type-based detection.
-    // Find params (name, type) that appear in ALL functions and are pass-through.
-    compute_rc_params_by_name(group_fns)
 }
 
 /// Resolved-HIR equivalent used by mutual-TCO emission. Tail-call membership
@@ -1029,6 +1009,18 @@ pub(super) fn compute_resolved_rc_params(
     }
 
     compute_resolved_rc_params_by_name(group_fns)
+}
+
+/// Parameter positions a self-tail call passes through unchanged. Unlike the
+/// rc set, this includes cheap scalar parameters because the MIR loop uses the
+/// result to avoid redundant snapshots/rebinds for every parameter kind.
+pub(super) fn compute_resolved_self_passthrough_params(
+    fd: &crate::ir::hir::ResolvedFnDef,
+) -> HashSet<usize> {
+    let mut candidates: HashSet<usize> = (0..fd.params.len()).collect();
+    let member_ids = HashSet::from([fd.fn_id]);
+    check_resolved_tailcalls_for_rc(&fd.body, &member_ids, &fd.params, &mut candidates);
+    candidates
 }
 
 fn compute_resolved_rc_params_by_index(
@@ -1197,222 +1189,6 @@ fn check_resolved_expr_passthrough_by_name(
     }
 }
 
-/// Index-based Rc detection: all fns have same arity, check same position.
-fn compute_rc_params_by_index(group_fns: &[&FnDef]) -> HashSet<usize> {
-    let arity = group_fns[0].params.len();
-    let member_names: HashSet<&str> = group_fns.iter().map(|fd| fd.name.as_str()).collect();
-
-    let mut candidates: HashSet<usize> = (0..arity)
-        .filter(|&i| {
-            let type_ann = &group_fns[0].params[i].1;
-            let ty = crate::types::parse_type_str(type_ann);
-            group_fns.iter().all(|fd| fd.params[i].1 == *type_ann) && is_expensive_clone_type(&ty)
-        })
-        .collect();
-
-    if candidates.is_empty() {
-        return candidates;
-    }
-
-    for fd in group_fns {
-        check_tailcalls_for_rc(&fd.body, &member_names, &fd.params, &mut candidates);
-        if candidates.is_empty() {
-            break;
-        }
-    }
-    candidates
-}
-
-/// Name+type-based Rc detection for groups with varying arities.
-/// Finds params that share the same name AND type across all functions,
-/// and are always passed through unchanged in tail calls.
-/// Returns indices into the FIRST function's param list.
-fn compute_rc_params_by_name(group_fns: &[&FnDef]) -> HashSet<usize> {
-    // Build a map: fn_name → {param_name → (index, type)}
-    let fn_param_map: HashMap<&str, HashMap<&str, (usize, &str)>> = group_fns
-        .iter()
-        .map(|fd| {
-            let params: HashMap<&str, (usize, &str)> = fd
-                .params
-                .iter()
-                .enumerate()
-                .map(|(i, (name, ty))| (name.as_str(), (i, ty.as_str())))
-                .collect();
-            (fd.name.as_str(), params)
-        })
-        .collect();
-
-    let member_names: HashSet<&str> = group_fns.iter().map(|fd| fd.name.as_str()).collect();
-
-    // Find param names that exist in ALL functions with same type and expensive to clone
-    let mut shared_params: Vec<(&str, &str)> = Vec::new(); // (name, type)
-    if let Some(first) = group_fns.first() {
-        for (name, ty) in &first.params {
-            let parsed = crate::types::parse_type_str(ty);
-            if !is_expensive_clone_type(&parsed) {
-                continue;
-            }
-            // Check if ALL other fns have a param with same name and type
-            let all_have_it = group_fns
-                .iter()
-                .all(|fd| fd.params.iter().any(|(n, t)| n == name && t == ty));
-            if all_have_it {
-                shared_params.push((name.as_str(), ty.as_str()));
-            }
-        }
-    }
-
-    if shared_params.is_empty() {
-        return HashSet::new();
-    }
-
-    // For each shared param, check pass-through in ALL tail calls across ALL fns
-    let valid_params: HashSet<&str> = shared_params
-        .iter()
-        .filter(|(param_name, _)| {
-            group_fns.iter().all(|fd| {
-                check_param_passthrough_by_name(&fd.body, &member_names, param_name, &fn_param_map)
-            })
-        })
-        .map(|(name, _)| *name)
-        .collect();
-
-    // Convert back to indices into the first function's param list
-    if let Some(first) = group_fns.first() {
-        first
-            .params
-            .iter()
-            .enumerate()
-            .filter(|(_, (name, _))| valid_params.contains(name.as_str()))
-            .map(|(i, _)| i)
-            .collect()
-    } else {
-        HashSet::new()
-    }
-}
-
-/// Check that every TailCall in `body` to a group member passes `param_name`
-/// at the correct position in the TARGET function's param list.
-fn check_param_passthrough_by_name(
-    body: &FnBody,
-    member_names: &HashSet<&str>,
-    param_name: &str,
-    fn_param_map: &HashMap<&str, HashMap<&str, (usize, &str)>>,
-) -> bool {
-    for stmt in body.stmts() {
-        match stmt {
-            Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
-                if !check_expr_passthrough_by_name(&e.node, member_names, param_name, fn_param_map)
-                {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
-
-fn check_expr_passthrough_by_name(
-    expr: &Expr,
-    member_names: &HashSet<&str>,
-    param_name: &str,
-    fn_param_map: &HashMap<&str, HashMap<&str, (usize, &str)>>,
-) -> bool {
-    match expr {
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            if !member_names.contains(target.as_str()) {
-                return true; // call to non-member, irrelevant
-            }
-            // Find the index of param_name in the TARGET function
-            if let Some(target_params) = fn_param_map.get(target.as_str())
-                && let Some(&(target_idx, _)) = target_params.get(param_name)
-            {
-                // arg at target_idx must be Ident(param_name) from the caller
-                target_idx < args.len()
-                    && matches!(&args[target_idx].node, Expr::Ident(name) if name == param_name)
-            } else {
-                false
-            }
-        }
-        Expr::Match { arms, .. } => arms.iter().all(|arm| {
-            check_expr_passthrough_by_name(&arm.body.node, member_names, param_name, fn_param_map)
-        }),
-        _ => true,
-    }
-}
-
-/// Walk the AST and verify that every TailCall to a group member passes
-/// param[i] as Ident(param_name[i]) for all candidate indices.
-/// Removes candidates that fail the check.
-fn check_tailcalls_for_rc(
-    body: &FnBody,
-    member_names: &HashSet<&str>,
-    params: &[(String, String)],
-    candidates: &mut HashSet<usize>,
-) {
-    for stmt in body.stmts() {
-        match stmt {
-            Stmt::Expr(e) | Stmt::Binding(_, _, e) => {
-                check_expr_tailcalls_for_rc(&e.node, member_names, params, candidates);
-            }
-        }
-    }
-}
-
-fn check_expr_tailcalls_for_rc(
-    expr: &Expr,
-    member_names: &HashSet<&str>,
-    params: &[(String, String)],
-    candidates: &mut HashSet<usize>,
-) {
-    if candidates.is_empty() {
-        return;
-    }
-    match expr {
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            if member_names.contains(target.as_str()) && args.len() == params.len() {
-                // For each candidate index, check if arg[i] == Ident(param_name[i])
-                let to_remove: Vec<usize> = candidates
-                    .iter()
-                    .copied()
-                    .filter(
-                        |&i| !matches!(&args[i].node, Expr::Ident(name) if *name == params[i].0),
-                    )
-                    .collect();
-                for idx in to_remove {
-                    candidates.remove(&idx);
-                }
-            }
-        }
-        Expr::Match { arms, .. } => {
-            for arm in arms {
-                check_expr_tailcalls_for_rc(&arm.body.node, member_names, params, candidates);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Build a set of param names that should be borrowed (`&T`), given rc_indices.
-pub(super) fn rc_param_names(
-    params: &[(String, String)],
-    rc_indices: &HashSet<usize>,
-) -> HashSet<String> {
-    rc_indices
-        .iter()
-        .filter_map(|&i| params.get(i).map(|(name, _)| name.clone()))
-        .collect()
-}
-
-pub(super) fn compute_self_passthrough_params(fd: &FnDef) -> HashSet<usize> {
-    let mut candidates: HashSet<usize> = (0..fd.params.len()).collect();
-    let member_names = HashSet::from([fd.name.as_str()]);
-    check_tailcalls_for_rc(&fd.body, &member_names, &fd.params, &mut candidates);
-    candidates
-}
-
 // --- Mutual TCO (trampoline) support ---
 
 /// Find groups of mutually tail-calling functions (SCCs of size > 1) from
@@ -1480,36 +1256,19 @@ pub(super) fn fn_name_to_variant(name: &str) -> String {
     variant
 }
 
-/// Emit the main function, incorporating top-level statements.
-///
-/// `main_fn_id` is the resolved-main `FnId` (the caller computes it via
-/// `fn_id_for_decl`); it lets the body route through the MIR walker under
-/// `AVER_RUST_MIR_MAIN`. `None` when there is no `main` fn (top-stmts-only
-/// entry) or the decl has no resolved twin.
-#[allow(dead_code)]
-pub fn emit_main(
-    main_fn: Option<&FnDef>,
-    top_stmts: &[&Stmt],
-    ctx: &CodegenContext,
-    main_fn_id: Option<crate::ir::FnId>,
-) -> String {
-    emit_main_with_visibility(main_fn, top_stmts, ctx, main_fn_id, false)
-}
-
+/// Emit the generated entry module's `main` from the resolved declaration.
 pub fn emit_public_main(
-    main_fn: Option<&FnDef>,
+    main_fn: Option<&crate::ir::hir::ResolvedFnDef>,
     top_stmts: &[&Stmt],
     ctx: &CodegenContext,
-    main_fn_id: Option<crate::ir::FnId>,
 ) -> String {
-    emit_main_with_visibility(main_fn, top_stmts, ctx, main_fn_id, true)
+    emit_main_with_visibility(main_fn, top_stmts, ctx, true)
 }
 
 fn emit_main_with_visibility(
-    main_fn: Option<&FnDef>,
+    main_fn: Option<&crate::ir::hir::ResolvedFnDef>,
     top_stmts: &[&Stmt],
     ctx: &CodegenContext,
-    main_fn_id: Option<crate::ir::FnId>,
     public: bool,
 ) -> String {
     let mut out = String::new();
@@ -1517,7 +1276,7 @@ fn emit_main_with_visibility(
     let visibility = visibility_prefix(public);
 
     // Check if main returns a Result (needed for ? operator support)
-    let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
+    let returns_result = main_fn.is_some_and(|fd| matches!(fd.return_type, Type::Result(_, _)));
 
     // A `main` whose declared return type is neither Unit nor `Result<…>`
     // (e.g. the bench `fn main() -> Int … fib(15)`) lowers to a Rust `fn
@@ -1529,14 +1288,11 @@ fn emit_main_with_visibility(
     // expression into a value-dropping statement. Unit mains already end in
     // `()` / a statement (no-op), and `Result<…>` mains keep their tail (it
     // flows into the `-> Result<…>` return), so neither needs the discard.
-    let discard_main_tail = main_fn.is_some_and(|fd| {
-        !fd.return_type.is_empty()
-            && fd.return_type != "Unit"
-            && !fd.return_type.starts_with("Result<")
-    });
+    let discard_main_tail =
+        main_fn.is_some_and(|fd| !matches!(fd.return_type, Type::Unit | Type::Result(_, _)));
 
     if returns_result {
-        let ret_type = type_annotation_to_rust_scoped(&main_fn.unwrap().return_type, ctx, None);
+        let ret_type = super::types::type_to_rust_scoped(&main_fn.unwrap().return_type, ctx, None);
         writeln!(out, "{}fn main() -> {} {{", visibility, ret_type).unwrap();
     } else {
         writeln!(out, "{}fn main() {{", visibility).unwrap();
@@ -1620,6 +1376,7 @@ fn emit_main_with_visibility(
     // guest-scope wrapper). A `None` from the walker is a hard codegen
     // error, never a silent drop.
     if main_fn.is_some() {
+        let main_fn_id = main_fn.map(|fd| fd.fn_id);
         let body = main_fn_id
             .and_then(|fn_id| super::from_mir::emit_mir_main_body(fn_id, ctx))
             .unwrap_or_else(|| {
@@ -1917,7 +1674,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

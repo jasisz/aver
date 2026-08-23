@@ -1274,8 +1274,8 @@ pub fn fn_contract_exists_scoped(ctx: &CodegenContext, name: &str, scope: Option
 
 /// Round-7: build a [`crate::ir::FnKey`] from a borrowed `&FnDef`.
 /// The owning module is resolved by pointer-comparison against
-/// `ctx.modules[*].fn_defs` (entry items / synthesized variants /
-/// `extra_fn_defs` fall through to `FnKey::entry`). This is the
+/// `ctx.modules[*].fn_defs` (entry items and synthesized variants fall
+/// through to `FnKey::entry`). This is the
 /// single resolver consumers should reach for from emit code with
 /// a `&FnDef` in hand — produces the typed key the IR maps store
 /// instead of leaving the bare-name collision risk in place.
@@ -1340,8 +1340,8 @@ pub fn type_key_for_name(
 /// `fd.name = "countdown"` in both.
 ///
 /// Returns `None` when the `fd` is not in any dep module — entry
-/// items, synthesized buffered variants, and `extra_fn_defs` all
-/// fall through. Callers treat `None` as "entry scope".
+/// items and synthesized buffered variants fall through. Callers treat
+/// `None` as "entry scope".
 pub fn fn_owning_scope_for<'a>(ctx: &'a CodegenContext, fd: &FnDef) -> Option<&'a str> {
     for m in &ctx.modules {
         for f in &m.fn_defs {
@@ -4310,7 +4310,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),
@@ -4436,7 +4435,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

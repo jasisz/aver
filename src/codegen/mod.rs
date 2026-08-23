@@ -332,10 +332,6 @@ pub struct CodegenContext {
     pub guest_entry: Option<String>,
     /// Emit extra generated helpers needed only by the cached self-host helper.
     pub emit_self_host_support: bool,
-    /// Extra fn_defs visible during current module emission (not in `fn_defs` or `modules`).
-    /// Set temporarily by the Rust backend when emitting a dependent module so that
-    /// `find_fn_def_by_name` can resolve same-module calls.
-    pub extra_fn_defs: Vec<FnDef>,
     /// Functions that are part of a mutual-TCO SCC group (emitted as
     /// trampoline + wrappers). Functions NOT in this set but with
     /// TailCalls are emitted as plain self-TCO loops. Keyed by opaque
@@ -869,7 +865,6 @@ pub fn build_context(
         runtime_policy_from_env: false,
         guest_entry: None,
         emit_self_host_support: false,
-        extra_fn_defs: Vec::new(),
         mutual_tco_members,
         recursive_fns,
         buffer_build_sinks,
@@ -993,9 +988,9 @@ impl CodegenContext {
     ///
     /// Returns `None` when the symbol table doesn't know the name
     /// under the given scope, or when the resolved `FnId` doesn't
-    /// match any `&FnDef` in that scope (synthetic FnDefs added
-    /// post-pipeline fall through here — callers can fallback to a
-    /// bare-name walk over `extra_fn_defs` etc. when that matters).
+    /// match any `&FnDef` in that scope. Synthetic declarations added after
+    /// the pipeline intentionally return `None`; emitters must register their
+    /// resolved identity before consuming them.
     pub fn fn_def_by_name(&self, name: &str, scope: Option<&str>) -> Option<&FnDef> {
         use crate::ir::FnKey;
         let key = match scope {
