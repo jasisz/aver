@@ -89,6 +89,7 @@ use super::syntax::aver_name_to_rust;
 /// - **production parity gate** (`for_fn`): carries the full
 ///   `&CodegenContext` plus the per-fn borrow policy
 ///   (`local_types` / `rc_wrapped` / `borrowed_params` /
+///   `loop_carried_params` /
 ///   `current_module_scope`), recomputed from the `ResolvedFnDef`
 ///   the HIR walker uses. This is the slice of
 ///   [`super::emit_ctx::EmitCtx`] the covered arms need so their
@@ -107,9 +108,21 @@ pub struct MirEmitCtx<'a> {
     pub local_types: &'a HashMap<String, Type>,
     /// Params passed as `Rc<T>` (self-TCO) / `&T` (mutual-TCO).
     pub rc_wrapped: &'a HashSet<String>,
+    /// Whether `rc_wrapped` params are represented as `&T`. This is true
+    /// only while emitting mutual-TCO trampoline arms; self-TCO wraps the
+    /// same policy class in `Arc<T>` instead. Equality uses this distinction
+    /// to align an owned operand with a borrowed invariant without changing
+    /// clone policy for either TCO shape.
+    pub rc_wrapped_are_borrowed_refs: bool,
     /// Params emitted as `&T` (borrow-by-default for non-Copy,
     /// non-Str params).
     pub borrowed_params: &'a HashSet<String>,
+    /// Self-TCO params whose identity rebind is elided for the tail call
+    /// currently being emitted. Their source value remains live in the next
+    /// loop iteration, so a syntactic `last_use` inside another tail-call
+    /// argument is not a real move point. Owning positions clone these
+    /// params; non-owning reads remain allocation-free.
+    pub loop_carried_params: &'a HashSet<String>,
     /// Collection (`Vector`/`Map`) params that the `own_param` MIR pass
     /// PROVED uniquely owned (cleared their `aliased_slots` bit). These
     /// are emitted owned-by-value (`mut p: T`, NOT `&T`) and, at a
@@ -166,7 +179,9 @@ impl<'a> MirEmitCtx<'a> {
             codegen: None,
             local_types: EMPTY_TYPES.get_or_init(HashMap::new),
             rc_wrapped: EMPTY_SET.get_or_init(HashSet::new),
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
+            loop_carried_params: EMPTY_SET.get_or_init(HashSet::new),
             owned_params: EMPTY_SET.get_or_init(HashSet::new),
             current_module_scope: None,
             // No builtin table on the coverage path: `Call(Builtin)`
@@ -212,7 +227,9 @@ impl<'a> MirEmitCtx<'a> {
             codegen: Some(ctx),
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins,
@@ -233,7 +250,9 @@ impl<'a> MirEmitCtx<'a> {
             codegen: Some(ctx),
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             // The builtin table the parity gate already built into the
@@ -264,9 +283,18 @@ impl<'a> MirEmitCtx<'a> {
         self.borrowed_params.contains(name)
     }
 
+    fn is_loop_carried_param(&self, name: &str) -> bool {
+        self.loop_carried_params.contains(name)
+    }
+
     fn is_owned_param(&self, name: &str) -> bool {
         self.owned_params.contains(name)
     }
+}
+
+fn empty_string_set() -> &'static HashSet<String> {
+    static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
 }
 
 /// A shared empty `FnBareFacts` (all-`Boxed`) for the coverage / test /
@@ -3098,12 +3126,12 @@ fn mir_emit_equality(
     {
         return format!("({:?} {} &*{})", s, op_str, r);
     }
-    // Borrow-by-default makes collection / wrapper / named-type parameters
-    // `&T`, while calls and constructors still produce an owned `T`. Rust
-    // does not provide `PartialEq<&T> for T`, so compare two references
-    // whenever exactly one side is a borrowed parameter. Borrowing the owned
-    // expression is temporary, allocation-free, and preserves evaluation
-    // order.
+    // Borrow-by-default and mutual-TCO invariant hoisting make collection /
+    // wrapper / named-type parameters `&T`, while calls and constructors still
+    // produce an owned `T`. Rust does not provide `PartialEq<&T> for T`, so
+    // compare two references whenever exactly one side is a borrowed
+    // parameter. Borrowing the owned expression is temporary, allocation-free,
+    // and preserves evaluation order.
     let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
     let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
     match (lhs_borrowed, rhs_borrowed) {
@@ -3113,13 +3141,17 @@ fn mir_emit_equality(
     }
 }
 
-/// Is this expression a direct read of a borrowed-param local?
+/// Is this expression a direct read whose emitted Rust representation is `&T`?
 ///
-/// A direct read emits as `name`, whose Rust type is `&T`. Projections and
-/// compound expressions have their own ownership rules and deliberately do
-/// not count as borrowed-param reads here.
+/// This includes both ordinary borrow-by-default params and mutual-TCO
+/// invariants hoisted out of the state enum. A direct read emits as `name`,
+/// whose Rust type is `&T`. Projections and compound expressions have their own
+/// ownership rules and deliberately do not count as borrowed-param reads here.
 fn mir_expr_is_borrowed_param_read(expr: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
-    local_of(expr).is_some_and(|local| emit_ctx.is_borrowed_param(&local.name))
+    local_of(expr).is_some_and(|local| {
+        emit_ctx.is_borrowed_param(&local.name)
+            || (emit_ctx.rc_wrapped_are_borrowed_refs && emit_ctx.is_rc_wrapped(&local.name))
+    })
 }
 
 /// Emit the FULL function body the MIR walker produces, in the
@@ -3732,8 +3764,33 @@ fn emit_mir_self_tco_continue(
     passthrough: &std::collections::HashSet<usize>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    let mut arg_strs = Vec::with_capacity(args.len());
+    // An identity arg is not emitted at all: the loop keeps the current
+    // binding. That binding is nevertheless live into the next iteration.
+    // Make that hidden loop-edge liveness visible to the ordinary owning-
+    // position clone policy while rendering the other args. This matters
+    // when a later arg moves the same param into a helper call.
+    let identity: Vec<bool> = params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| {
+            passthrough.contains(&i)
+                || local_of(&args[i].node).is_some_and(|local| local.name == *name)
+        })
+        .collect();
+    let loop_carried_params: HashSet<String> = params
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| identity[*i])
+        .map(|(_, (name, _))| name.clone())
+        .collect();
+    let mut tail_ctx = *ctx;
+    tail_ctx.loop_carried_params = &loop_carried_params;
+
+    let mut arg_strs = vec![None; args.len()];
     for (i, a) in args.iter().enumerate() {
+        if identity[i] {
+            continue;
+        }
         // ETAP-2 SLICE 1: the rebind-value representation boundary is now
         // EXPLICIT — the `bare_i64_rewrite` pass already wrapped each
         // self-tail-call arg for the self-fn's i-th param representation
@@ -3745,37 +3802,25 @@ fn emit_mir_self_tco_continue(
         //   - boxed param: `emit_mir_expr` (lowering any `Box` node), then
         //     the clone policy.
         if ctx.bare.param_is_bare(i) {
-            let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, ctx));
-            arg_strs.push(rendered?);
+            let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, &tail_ctx));
+            arg_strs[i] = Some(rendered?);
         } else {
-            let code = emit_mir_expr(a, ctx)?;
-            arg_strs.push(mir_clone_arg(code, &a.node, ctx));
+            let code = emit_mir_expr(a, &tail_ctx)?;
+            arg_strs[i] = Some(mir_clone_arg(code, &a.node, &tail_ctx));
         }
-    }
-
-    // Which positions are actually rebound (non-passthrough, non-identity)?
-    let mut rebind: Vec<bool> = vec![false; params.len()];
-    for (i, (name, _)) in params.iter().enumerate() {
-        if passthrough.contains(&i) {
-            continue;
-        }
-        if arg_strs[i] == aver_name_to_rust(name) {
-            continue; // identity — no-op
-        }
-        rebind[i] = true;
     }
 
     let mut lines = Vec::new();
     lines.push("{".to_string());
     // Phase 1: snapshot ALL rebound args into temps (always-snapshot).
     for (i, arg_str) in arg_strs.iter().enumerate() {
-        if rebind[i] {
+        if let Some(arg_str) = arg_str {
             lines.push(format!("            let __tco{} = {};", i, arg_str));
         }
     }
     // Phase 2: assign temps back to params, in order.
     for (i, (name, _)) in params.iter().enumerate() {
-        if rebind[i] {
+        if arg_strs[i].is_some() {
             lines.push(format!(
                 "            {} = __tco{};",
                 aver_name_to_rust(name),
@@ -3897,7 +3942,12 @@ pub(super) fn emit_mir_mutual_tco_block(
         // skips a clone.
         let mut policy = MirFnEmitPolicy::from_resolved(group_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
-        let arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
+        let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
+        // Mutual invariants are `rc_wrapped` for owning reads, but unlike
+        // self-TCO's `Arc<T>` representation they are extra `&T` trampoline
+        // parameters. Tell equality's operand-shape classifier about that
+        // representation; no general clone policy changes.
+        arm_ctx.rc_wrapped_are_borrowed_refs = true;
         let body = emit_mir_trampoline_body(
             &mir_fn.body,
             &member_fn_ids,
@@ -4223,6 +4273,16 @@ fn mir_expr_skip_clone(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
         Some(local) => {
             let name = local.name.as_str();
             if ctx.is_rc_wrapped(name) || ctx.is_borrowed_param(name) {
+                return false;
+            }
+            // A self-TCO identity arg is absent from the emitted Rust, so
+            // MIR's syntactic `last_use` does not include the next loop
+            // iteration. Preserve that hidden use only at owning positions;
+            // bare i64 and genuinely Copy params still need no clone.
+            if ctx.is_loop_carried_param(name)
+                && !ctx.is_copy(name)
+                && !ctx.bare.is_bare(local.slot)
+            {
                 return false;
             }
             local.last_use || ctx.is_copy(name)
@@ -5558,7 +5618,9 @@ mod tests {
             codegen: None,
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins: BUILTINS.get_or_init(Vec::new),
@@ -6607,7 +6669,9 @@ mod tests {
             codegen: None,
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins: BUILTINS.get_or_init(Vec::new),
