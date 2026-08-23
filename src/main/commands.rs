@@ -186,33 +186,6 @@ fn materialize_codegen_output(
     Ok(())
 }
 
-fn with_local_runtime_override<T>(run: impl FnOnce() -> T) -> T {
-    let key = "AVER_RUNTIME_PATH";
-    let previous = std::env::var_os(key);
-    let local_runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt");
-    let use_local = local_runtime.exists();
-
-    if use_local {
-        // CLI is single-threaded here; we scope the override tightly around one transpile call.
-        unsafe {
-            std::env::set_var(key, &local_runtime);
-        }
-    }
-
-    let result = run();
-
-    match previous {
-        Some(value) => unsafe {
-            std::env::set_var(key, value);
-        },
-        None => unsafe {
-            std::env::remove_var(key);
-        },
-    }
-
-    result
-}
-
 /// Find the pre-compiled self-host binary next to the current executable.
 /// The binary is built as a `[[bin]]` target in the same Cargo package,
 /// so `cargo build` / `cargo install` places it alongside `aver`.
@@ -6208,13 +6181,11 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         &ctx.capabilities,
         provider_manifest,
     );
-    let output = match with_local_runtime_override(|| {
-        rust_codegen::transpile_with_provider_manifest_for_project(
-            &mut ctx,
-            provider_manifest,
-            &known_provider_capabilities,
-        )
-    }) {
+    let output = match rust_codegen::transpile_with_provider_manifest_for_project(
+        &mut ctx,
+        provider_manifest,
+        &known_provider_capabilities,
+    ) {
         Ok(output) => output,
         Err(error) => {
             eprintln!("{}", error.red());

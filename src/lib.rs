@@ -50,6 +50,7 @@ pub mod source;
 pub mod stdlib;
 pub mod tail_check;
 pub mod tco;
+mod toolchain_source;
 #[cfg(feature = "tty-render")]
 pub mod tty_render;
 pub mod types;

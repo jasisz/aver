@@ -13,8 +13,9 @@ use std::process::{Command, ExitStatus};
 use sha2::{Digest, Sha256};
 
 use crate::codegen::rust::composition::{ProviderComposition, ProviderCompositionSource};
+use crate::toolchain_source::ToolchainSource;
 
-const HOST_SCHEMA: &str = "aver-provider-vm-host-v3";
+const HOST_SCHEMA: &str = "aver-provider-vm-host-v4";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderHostBackend {
@@ -161,8 +162,9 @@ fn display_relative(path: &Path, base: &Path) -> PathBuf {
 /// skip Cargo entirely only while the relevant source trees are unchanged.
 fn build_input_state(composition: &ProviderComposition) -> Result<String, String> {
     let mut roots = Vec::new();
-    let aver_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    if aver_root.join("Cargo.toml").is_file() {
+    if let Some(aver_root) = ToolchainSource::current().local_root()
+        && aver_root.join("Cargo.toml").is_file()
+    {
         let aver_root = aver_root.canonicalize().map_err(|error| {
             format!(
                 "cannot resolve local aver-lang path '{}': {error}",
@@ -292,36 +294,11 @@ fn render_dependency_lines(
 
 fn aver_dependency_line(backend: ProviderHostBackend) -> Result<String, String> {
     let version = format!("={}", env!("CARGO_PKG_VERSION"));
-    let features = match backend {
-        ProviderHostBackend::Vm => String::new(),
-        ProviderHostBackend::Wasip2 => ", features = [\"wasip2\"]".to_string(),
+    let features: &[&str] = match backend {
+        ProviderHostBackend::Vm => &[],
+        ProviderHostBackend::Wasip2 => &["wasip2"],
     };
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let local_manifest = source_root.join("Cargo.toml");
-    if local_manifest.is_file() {
-        let canonical = source_root.canonicalize().map_err(|error| {
-            format!(
-                "cannot resolve local aver-lang path '{}': {error}",
-                source_root.display()
-            )
-        })?;
-        let path = canonical
-            .to_str()
-            .ok_or_else(|| "local aver-lang path is not valid UTF-8".to_string())?
-            .replace('\\', "/");
-        Ok(format!(
-            "aver = {{ package = \"aver-lang\", version = {}, path = {}{} }}",
-            toml_string(&version),
-            toml_string(&path),
-            features
-        ))
-    } else {
-        Ok(format!(
-            "aver = {{ package = \"aver-lang\", version = {}{} }}",
-            toml_string(&version),
-            features
-        ))
-    }
+    Ok(ToolchainSource::current().aver_lang_dependency(&version, features))
 }
 
 fn render_cargo_toml(binary_name: &str, dependencies: &[String]) -> String {

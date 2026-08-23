@@ -2,8 +2,10 @@
 use std::collections::HashSet;
 
 use super::composition::ProviderComposition;
+use crate::toolchain_source::ToolchainSource;
 
-/// aver-rt version embedded at compile time from build.rs.
+/// Exact aver-rt version embedded alongside the toolchain's Cargo source
+/// provenance by build.rs.
 const RUNTIME_VERSION: &str = env!("AVER_RT_VERSION");
 
 fn runtime_override_path() -> Option<String> {
@@ -19,22 +21,11 @@ fn runtime_dependency_line(
     features: &[&str],
     local_path: Option<&str>,
 ) -> String {
-    let features_str = if features.is_empty() {
-        String::new()
-    } else {
-        let quoted: Vec<String> = features.iter().map(|f| format!("\"{}\"", f)).collect();
-        format!(", features = [{}]", quoted.join(", "))
-    };
-
     match local_path {
-        Some(path) => format!(
-            "aver-rt = {{ path = {:?}, version = {:?}{} }}",
-            path, runtime_version, features_str
-        ),
-        None => format!(
-            "aver-rt = {{ version = {:?}{} }}",
-            runtime_version, features_str
-        ),
+        Some(path) => {
+            ToolchainSource::exact_path_dependency("aver-rt", None, runtime_version, features, path)
+        }
+        None => ToolchainSource::current().aver_rt_dependency(runtime_version, features),
     }
 }
 
@@ -143,30 +134,6 @@ fn toml_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{runtime_dependency_line, toml_string};
-
-    #[test]
-    fn runtime_dependency_defaults_to_registry_pin() {
-        let dep = runtime_dependency_line("=0.3.0", &[], None);
-        assert_eq!(dep, "aver-rt = { version = \"=0.3.0\" }");
-    }
-
-    #[test]
-    fn runtime_dependency_enables_http_feature_when_needed() {
-        let dep = runtime_dependency_line("=0.3.0", &["http"], None);
-        assert_eq!(
-            dep,
-            "aver-rt = { version = \"=0.3.0\", features = [\"http\"] }"
-        );
-    }
-
-    #[test]
-    fn runtime_dependency_enables_multiple_features() {
-        let dep = runtime_dependency_line("=0.3.0", &["http", "random"], None);
-        assert_eq!(
-            dep,
-            "aver-rt = { version = \"=0.3.0\", features = [\"http\", \"random\"] }"
-        );
-    }
 
     #[test]
     fn runtime_dependency_can_use_local_override_path() {
