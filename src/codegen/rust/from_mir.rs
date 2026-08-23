@@ -89,6 +89,7 @@ use super::syntax::aver_name_to_rust;
 /// - **production parity gate** (`for_fn`): carries the full
 ///   `&CodegenContext` plus the per-fn borrow policy
 ///   (`local_types` / `rc_wrapped` / `borrowed_params` /
+///   `loop_carried_params` /
 ///   `current_module_scope`), recomputed from the `ResolvedFnDef`
 ///   the HIR walker uses. This is the slice of
 ///   [`super::emit_ctx::EmitCtx`] the covered arms need so their
@@ -110,6 +111,12 @@ pub struct MirEmitCtx<'a> {
     /// Params emitted as `&T` (borrow-by-default for non-Copy,
     /// non-Str params).
     pub borrowed_params: &'a HashSet<String>,
+    /// Self-TCO params whose identity rebind is elided for the tail call
+    /// currently being emitted. Their source value remains live in the next
+    /// loop iteration, so a syntactic `last_use` inside another tail-call
+    /// argument is not a real move point. Owning positions clone these
+    /// params; non-owning reads remain allocation-free.
+    pub loop_carried_params: &'a HashSet<String>,
     /// Collection (`Vector`/`Map`) params that the `own_param` MIR pass
     /// PROVED uniquely owned (cleared their `aliased_slots` bit). These
     /// are emitted owned-by-value (`mut p: T`, NOT `&T`) and, at a
@@ -167,6 +174,7 @@ impl<'a> MirEmitCtx<'a> {
             local_types: EMPTY_TYPES.get_or_init(HashMap::new),
             rc_wrapped: EMPTY_SET.get_or_init(HashSet::new),
             borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
+            loop_carried_params: EMPTY_SET.get_or_init(HashSet::new),
             owned_params: EMPTY_SET.get_or_init(HashSet::new),
             current_module_scope: None,
             // No builtin table on the coverage path: `Call(Builtin)`
@@ -213,6 +221,7 @@ impl<'a> MirEmitCtx<'a> {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins,
@@ -234,6 +243,7 @@ impl<'a> MirEmitCtx<'a> {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             // The builtin table the parity gate already built into the
@@ -264,9 +274,18 @@ impl<'a> MirEmitCtx<'a> {
         self.borrowed_params.contains(name)
     }
 
+    fn is_loop_carried_param(&self, name: &str) -> bool {
+        self.loop_carried_params.contains(name)
+    }
+
     fn is_owned_param(&self, name: &str) -> bool {
         self.owned_params.contains(name)
     }
+}
+
+fn empty_string_set() -> &'static HashSet<String> {
+    static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
 }
 
 /// A shared empty `FnBareFacts` (all-`Boxed`) for the coverage / test /
@@ -3732,8 +3751,33 @@ fn emit_mir_self_tco_continue(
     passthrough: &std::collections::HashSet<usize>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    let mut arg_strs = Vec::with_capacity(args.len());
+    // An identity arg is not emitted at all: the loop keeps the current
+    // binding. That binding is nevertheless live into the next iteration.
+    // Make that hidden loop-edge liveness visible to the ordinary owning-
+    // position clone policy while rendering the other args. This matters
+    // when a later arg moves the same param into a helper call.
+    let identity: Vec<bool> = params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| {
+            passthrough.contains(&i)
+                || local_of(&args[i].node).is_some_and(|local| local.name == *name)
+        })
+        .collect();
+    let loop_carried_params: HashSet<String> = params
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| identity[*i])
+        .map(|(_, (name, _))| name.clone())
+        .collect();
+    let mut tail_ctx = *ctx;
+    tail_ctx.loop_carried_params = &loop_carried_params;
+
+    let mut arg_strs = vec![None; args.len()];
     for (i, a) in args.iter().enumerate() {
+        if identity[i] {
+            continue;
+        }
         // ETAP-2 SLICE 1: the rebind-value representation boundary is now
         // EXPLICIT — the `bare_i64_rewrite` pass already wrapped each
         // self-tail-call arg for the self-fn's i-th param representation
@@ -3745,37 +3789,25 @@ fn emit_mir_self_tco_continue(
         //   - boxed param: `emit_mir_expr` (lowering any `Box` node), then
         //     the clone policy.
         if ctx.bare.param_is_bare(i) {
-            let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, ctx));
-            arg_strs.push(rendered?);
+            let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, &tail_ctx));
+            arg_strs[i] = Some(rendered?);
         } else {
-            let code = emit_mir_expr(a, ctx)?;
-            arg_strs.push(mir_clone_arg(code, &a.node, ctx));
+            let code = emit_mir_expr(a, &tail_ctx)?;
+            arg_strs[i] = Some(mir_clone_arg(code, &a.node, &tail_ctx));
         }
-    }
-
-    // Which positions are actually rebound (non-passthrough, non-identity)?
-    let mut rebind: Vec<bool> = vec![false; params.len()];
-    for (i, (name, _)) in params.iter().enumerate() {
-        if passthrough.contains(&i) {
-            continue;
-        }
-        if arg_strs[i] == aver_name_to_rust(name) {
-            continue; // identity — no-op
-        }
-        rebind[i] = true;
     }
 
     let mut lines = Vec::new();
     lines.push("{".to_string());
     // Phase 1: snapshot ALL rebound args into temps (always-snapshot).
     for (i, arg_str) in arg_strs.iter().enumerate() {
-        if rebind[i] {
+        if let Some(arg_str) = arg_str {
             lines.push(format!("            let __tco{} = {};", i, arg_str));
         }
     }
     // Phase 2: assign temps back to params, in order.
     for (i, (name, _)) in params.iter().enumerate() {
-        if rebind[i] {
+        if arg_strs[i].is_some() {
             lines.push(format!(
                 "            {} = __tco{};",
                 aver_name_to_rust(name),
@@ -4223,6 +4255,16 @@ fn mir_expr_skip_clone(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
         Some(local) => {
             let name = local.name.as_str();
             if ctx.is_rc_wrapped(name) || ctx.is_borrowed_param(name) {
+                return false;
+            }
+            // A self-TCO identity arg is absent from the emitted Rust, so
+            // MIR's syntactic `last_use` does not include the next loop
+            // iteration. Preserve that hidden use only at owning positions;
+            // bare i64 and genuinely Copy params still need no clone.
+            if ctx.is_loop_carried_param(name)
+                && !ctx.is_copy(name)
+                && !ctx.bare.is_bare(local.slot)
+            {
                 return false;
             }
             local.last_use || ctx.is_copy(name)
@@ -5559,6 +5601,7 @@ mod tests {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins: BUILTINS.get_or_init(Vec::new),
@@ -6608,6 +6651,7 @@ mod tests {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins: BUILTINS.get_or_init(Vec::new),
