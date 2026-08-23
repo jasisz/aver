@@ -144,7 +144,16 @@ fn main() {
             analysis,
             base_dir,
         );
-        let wasm_outcome = run_wasm_gc(&items, analysis, base_dir);
+        let wasm_outcome = run_wasm_gc(
+            &items,
+            analysis,
+            base_dir,
+            &pipeline
+                .typecheck
+                .as_ref()
+                .expect("parity fuzz pipeline requested typechecking")
+                .capabilities,
+        );
 
         match (vm_outcome, wasm_outcome) {
             (Some(vm), Some(wasm)) => {
@@ -237,6 +246,7 @@ fn run_wasm_gc(
     items: &[TopLevel],
     analysis: Option<&aver::ir::AnalysisResult>,
     module_root: Option<&str>,
+    capabilities: &aver::capability::CapabilityRegistry,
 ) -> Option<BackendOutcome> {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         // Multi-module support mirrors VM's compile_program_with_modules
@@ -247,8 +257,12 @@ fn run_wasm_gc(
         let mut type_aliases = std::collections::HashMap::new();
         if let Some(root) = module_root {
             if let Ok(dep_modules) = aver::source::load_compile_deps(items, root) {
-                type_aliases =
-                    aver::codegen::wasm_gc::flatten_multimodule(&mut items_flat, &dep_modules);
+                type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+                    &mut items_flat,
+                    &dep_modules,
+                    capabilities,
+                    aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+                );
             }
         }
         let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {
