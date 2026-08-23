@@ -108,6 +108,12 @@ pub struct MirEmitCtx<'a> {
     pub local_types: &'a HashMap<String, Type>,
     /// Params passed as `Rc<T>` (self-TCO) / `&T` (mutual-TCO).
     pub rc_wrapped: &'a HashSet<String>,
+    /// Whether `rc_wrapped` params are represented as `&T`. This is true
+    /// only while emitting mutual-TCO trampoline arms; self-TCO wraps the
+    /// same policy class in `Arc<T>` instead. Equality uses this distinction
+    /// to align an owned operand with a borrowed invariant without changing
+    /// clone policy for either TCO shape.
+    pub rc_wrapped_are_borrowed_refs: bool,
     /// Params emitted as `&T` (borrow-by-default for non-Copy,
     /// non-Str params).
     pub borrowed_params: &'a HashSet<String>,
@@ -173,6 +179,7 @@ impl<'a> MirEmitCtx<'a> {
             codegen: None,
             local_types: EMPTY_TYPES.get_or_init(HashMap::new),
             rc_wrapped: EMPTY_SET.get_or_init(HashSet::new),
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
             loop_carried_params: EMPTY_SET.get_or_init(HashSet::new),
             owned_params: EMPTY_SET.get_or_init(HashSet::new),
@@ -220,6 +227,7 @@ impl<'a> MirEmitCtx<'a> {
             codegen: Some(ctx),
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
@@ -242,6 +250,7 @@ impl<'a> MirEmitCtx<'a> {
             codegen: Some(ctx),
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
@@ -3117,12 +3126,12 @@ fn mir_emit_equality(
     {
         return format!("({:?} {} &*{})", s, op_str, r);
     }
-    // Borrow-by-default makes collection / wrapper / named-type parameters
-    // `&T`, while calls and constructors still produce an owned `T`. Rust
-    // does not provide `PartialEq<&T> for T`, so compare two references
-    // whenever exactly one side is a borrowed parameter. Borrowing the owned
-    // expression is temporary, allocation-free, and preserves evaluation
-    // order.
+    // Borrow-by-default and mutual-TCO invariant hoisting make collection /
+    // wrapper / named-type parameters `&T`, while calls and constructors still
+    // produce an owned `T`. Rust does not provide `PartialEq<&T> for T`, so
+    // compare two references whenever exactly one side is a borrowed
+    // parameter. Borrowing the owned expression is temporary, allocation-free,
+    // and preserves evaluation order.
     let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
     let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
     match (lhs_borrowed, rhs_borrowed) {
@@ -3132,13 +3141,17 @@ fn mir_emit_equality(
     }
 }
 
-/// Is this expression a direct read of a borrowed-param local?
+/// Is this expression a direct read whose emitted Rust representation is `&T`?
 ///
-/// A direct read emits as `name`, whose Rust type is `&T`. Projections and
-/// compound expressions have their own ownership rules and deliberately do
-/// not count as borrowed-param reads here.
+/// This includes both ordinary borrow-by-default params and mutual-TCO
+/// invariants hoisted out of the state enum. A direct read emits as `name`,
+/// whose Rust type is `&T`. Projections and compound expressions have their own
+/// ownership rules and deliberately do not count as borrowed-param reads here.
 fn mir_expr_is_borrowed_param_read(expr: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
-    local_of(expr).is_some_and(|local| emit_ctx.is_borrowed_param(&local.name))
+    local_of(expr).is_some_and(|local| {
+        emit_ctx.is_borrowed_param(&local.name)
+            || (emit_ctx.rc_wrapped_are_borrowed_refs && emit_ctx.is_rc_wrapped(&local.name))
+    })
 }
 
 /// Emit the FULL function body the MIR walker produces, in the
@@ -3929,7 +3942,12 @@ pub(super) fn emit_mir_mutual_tco_block(
         // skips a clone.
         let mut policy = MirFnEmitPolicy::from_resolved(group_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
-        let arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
+        let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
+        // Mutual invariants are `rc_wrapped` for owning reads, but unlike
+        // self-TCO's `Arc<T>` representation they are extra `&T` trampoline
+        // parameters. Tell equality's operand-shape classifier about that
+        // representation; no general clone policy changes.
+        arm_ctx.rc_wrapped_are_borrowed_refs = true;
         let body = emit_mir_trampoline_body(
             &mir_fn.body,
             &member_fn_ids,
@@ -5600,6 +5618,7 @@ mod tests {
             codegen: None,
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
@@ -6650,6 +6669,7 @@ mod tests {
             codegen: None,
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
+            rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,

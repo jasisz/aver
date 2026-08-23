@@ -4617,6 +4617,91 @@ verify entriesFor
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A mutual-TCO invariant is removed from the state enum and passed to the
+/// trampoline as `&T`. Equality must still recognize that Rust representation
+/// and borrow the computed owned operand, just as it does for an ordinary
+/// borrow-by-default parameter.
+#[test]
+fn mutual_tco_aligns_owned_equality_with_borrowed_invariant() {
+    let ws = temp_dir("mutual_tco_borrowed_equality");
+    let source = ws.join("main.av");
+    fs::write(
+        &source,
+        r#"module Repro
+    exposes [without, kept]
+    intent = "Mutual tail recursion compares an owned temporary with a shared invariant."
+    effects []
+
+fn without(items: List<List<Int>>, target: List<Int>, acc: List<List<Int>>) -> List<List<Int>>
+    ? "Walk the outer list, handing each element to the partner."
+    match items
+        [] -> List.reverse(acc)
+        [head, ..tail] -> kept(head, tail, target, acc)
+
+fn kept(item: List<Int>, rest: List<List<Int>>, target: List<Int>, acc: List<List<Int>>) -> List<List<Int>>
+    ? "Compare an owned reversed item with the invariant target."
+    match List.reverse(item) == target
+        true -> without(rest, target, acc)
+        false -> without(rest, target, List.prepend(item, acc))
+
+verify without
+    without([[1], [2]], [1], []) => [[2]]
+
+verify kept
+    kept([1], [], [1], []) => []
+"#,
+    )
+    .expect("write mutual-TCO borrowed-equality probe source");
+
+    let verify = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("verify")
+        .arg(&source)
+        .output()
+        .expect("expected `aver verify` to execute");
+    assert!(
+        verify.status.success(),
+        "VM verify failed:\n{}",
+        format_output(&verify)
+    );
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "mutual_tco_borrowed_equality", None, &[])?;
+
+        // Load-bearing assertion: before the fix this build failed E0308
+        // because `item.reverse()` was owned while `target` was `&T`.
+        let _bin = cargo_build(&project, "mutual_tco_borrowed_equality")?;
+
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if !emitted.contains("enum __MutualTco") || !emitted.contains("fn __mutual_tco_trampoline_")
+        {
+            return Err(format!(
+                "probe did not exercise the mutual-TCO trampoline:\n{emitted}"
+            ));
+        }
+        if !emitted.contains("&(item.reverse()) == target") {
+            return Err(format!(
+                "owned comparison operand was not aligned with borrowed invariant target:\n{emitted}"
+            ));
+        }
+
+        cargo_test_in(&project, &shared_target_dir())?;
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Second half of #1037: the same owned-versus-borrowed comparison as the
 /// subject of a boolean `match`, which the Rust backend lowers to an `if`
 /// through its own comparison emitter. That path skipped the borrow
