@@ -1,7 +1,7 @@
 //! Shared recognition helpers for the law_auto proof arms.
 //!
 //! These live in the Lean codegen layer (not `analysis::shape`) because they
-//! render through `emit_expr_legacy`/`aver_name_to_lean` and take a
+//! resolve through `resolve_rewrite_output`, render through `emit_expr`, and take a
 //! `CodegenContext` — they are recognition-plus-rendering, not pre-codegen
 //! analysis. Contract: every walker here is TailCall-aware (the TCO pass
 //! rewrites peer calls before law_auto runs), so arms built on this module
@@ -21,7 +21,10 @@ use crate::codegen::CodegenContext;
 /// Render an Aver expression to its Lean surface form (the same emitter the
 /// theorem statements use), so recognizers can compare atoms structurally.
 pub(super) fn render(e: &Spanned<Expr>, ctx: &CodegenContext) -> String {
-    super::super::expr::emit_expr_legacy(e, ctx, None)
+    super::super::expr::emit_expr(
+        &super::super::expr::resolve_rewrite_output(e, ctx, None),
+        ctx,
+    )
 }
 
 /// Whether two Aver expressions render to the same Lean surface form.

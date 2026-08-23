@@ -31,6 +31,12 @@ fn populate_proof_ir(ctx: &mut CodegenContext) {
     // hard prerequisite for FnId-keyed fn_contracts), so synthetic-
     // ctx tests have to build it the same way `refresh_facts` does.
     ctx.symbol_table = crate::ir::SymbolTable::build(&ctx.items, &ctx.modules);
+    let resolved_items = crate::ir::hir::resolve_program(&ctx.symbol_table, &ctx.items);
+    ctx.resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
+        resolved_items,
+        &ctx.modules,
+        &ctx.symbol_table,
+    );
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
 }
@@ -57,8 +63,6 @@ fn empty_ctx() -> CodegenContext {
         packed_sequence_layouts: HashMap::new(),
         proof_ir: crate::ir::ProofIR::default(),
         symbol_table: crate::ir::SymbolTable::default(),
-        resolved_fn_defs: Vec::new(),
-        resolved_module_fn_defs: Vec::new(),
         current_module_scope: std::cell::RefCell::new(None),
         lean_do_block: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
@@ -2528,6 +2532,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
         trace: false,
         cases_givens: vec![],
     }));
+    populate_proof_ir(&mut ctx);
     let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
     let lean = out
         .files

@@ -975,39 +975,17 @@ fn emit_interpolated_str(parts: &[ResolvedStrPart], ctx: &CodegenContext) -> Str
     }
 }
 
-/// Source-shape adapter for callers that still hold a raw
-/// `Spanned<crate::ast::Expr>`. Resolves the expression on demand
-/// against the codegen context's symbol table; `scope` carries the
-/// owning module prefix when known, with `ctx.active_module_scope()`
-/// as the fallback when callers pass `None`.
-pub fn emit_expr_legacy(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
+/// Emit a resolved function-result expression with its declared result type.
+/// Rewritten capability/proof bodies can lack typechecker stamps on synthesized
+/// result-position nodes; the rewrite boundary resolves identity first, and
+/// this function only fills the already-known expected type.
+pub(super) fn emit_expr_with_expected(
+    expr: &Spanned<ResolvedExpr>,
     ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    let active = ctx.active_module_scope();
-    let effective = scope.or(active.as_deref());
-    let resolved = ctx.resolve_expr(expr, effective);
-    emit_expr(&resolved, ctx)
-}
-
-/// Source-shape adapter for a function's result expression. Capability model
-/// functions are loaded independently from the entry program, so their raw AST
-/// bodies do not always retain typechecker stamps. Carrying the declared return
-/// type through result-position matches gives Dafny enough information to pick
-/// refinement-bearing `Result` / `Option` constructor parameters without doing
-/// another name lookup in the backend.
-pub(super) fn emit_expr_legacy_with_expected(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
     expected: &crate::types::Type,
 ) -> String {
-    let active = ctx.active_module_scope();
-    let effective = scope.or(active.as_deref());
-    let resolved = ctx.resolve_expr(expr, effective);
-    stamp_result_position_type(&resolved, expected);
-    emit_expr(&resolved, ctx)
+    stamp_result_position_type(expr, expected);
+    emit_expr(expr, ctx)
 }
 
 fn stamp_result_position_type(expr: &Spanned<ResolvedExpr>, expected: &crate::types::Type) {
@@ -1019,18 +997,4 @@ fn stamp_result_position_type(expr: &Spanned<ResolvedExpr>, expected: &crate::ty
             stamp_result_position_type(&arm.body, expected);
         }
     }
-}
-
-/// Source-shape adapter for [`emit_pattern`]. See [`emit_expr_legacy`]
-/// for the scope-fallback rule.
-#[allow(dead_code)]
-pub fn emit_pattern_legacy(
-    pat: &crate::ast::Pattern,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    let active = ctx.active_module_scope();
-    let effective = scope.or(active.as_deref());
-    let resolved = ctx.resolve_pattern(pat, effective);
-    emit_pattern(&resolved)
 }

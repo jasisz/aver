@@ -1428,8 +1428,10 @@ fn emit_main_with_visibility(
 
 /// Render one `verify`-case expression (the `left` / `right` of an
 /// `assert_eq!`). The HIR walker is gone (rust-on-MIR W6/Stage-3): the
-/// expression is resolved on demand, lowered to MIR, and rendered by the
-/// MIR walker. `None` when the walker can't render it — the verify-only
+/// source-preserving `ResolvedTopLevel::Passthrough` payload crosses one
+/// explicit scoped-resolution boundary here, then is lowered to MIR and
+/// rendered by the MIR walker. This is not a function-emission fallback.
+/// `None` when the walker can't render it — the verify-only
 /// Oracle / trace shapes that never built on Rust on either walker. The
 /// caller omits such a case from the generated `#[cfg(test)]` module and
 /// records that it did; no `compile_error!` is written for it, so nothing
@@ -1682,8 +1684,6 @@ mod tests {
             packed_sequence_layouts: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
-            resolved_fn_defs: Vec::new(),
-            resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),

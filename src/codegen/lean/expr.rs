@@ -7,7 +7,7 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::{is_user_type, resolve_module_call};
 use crate::ir::hir::{
     BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
-    ResolvedStmt, ResolvedStrPart,
+    ResolvedStrPart,
 };
 
 /// Put a map literal's entries into the order the map model iterates, or
@@ -868,75 +868,17 @@ fn extract_bool_arms(
     Some((true_body?, false_body?))
 }
 
-/// Emit a statement as Lean 4 code.
-///
-/// **Currently unused** after epic #170 Phase 5 PR E2 dropped
-/// `emit_stmt_legacy` from the toplevel hot path (`emit_fn_body` /
-/// `emit_do_stmt` now inline the resolve + emit pair). Retained as
-/// the public resolved-stmt API for future callers (proof rewriters,
-/// LSP-mode renderers).
-#[allow(dead_code)]
-pub fn emit_stmt(stmt: &ResolvedStmt, ctx: &CodegenContext) -> String {
-    match stmt {
-        ResolvedStmt::Binding {
-            name,
-            ty_ann: _,
-            value,
-        } => {
-            let val = emit_expr(value, ctx);
-            format!("let {} := {}", aver_name_to_lean(name), val)
-        }
-        ResolvedStmt::Expr(expr) => emit_expr(expr, ctx),
-    }
-}
-
-/// Source-shape adapter for callers that still hold a raw
-/// `Spanned<crate::ast::Expr>` (TCO / mutual-TCO bodies, law_auto
-/// proof generation, recursion fuel emit, the various AST walks in
-/// `toplevel.rs`). Resolves the expression on demand against the
-/// codegen context's symbol table — `scope` carries the owning
-/// module prefix when known (`None` for entry-scope code), same
-/// shape as PR 9.4's `EmitCtx::current_module_scope` in rust
-/// codegen. The migrated `emit_expr` core stays
-/// `ResolvedExpr`-only.
-pub fn emit_expr_legacy(
+/// Resolve the completed output of a proof/source-shape rewrite before it
+/// crosses into the Lean renderer. Syntax discovery may stay on AST, but the
+/// renderer receives only the returned resolved HIR expression.
+pub fn resolve_rewrite_output(
     expr: &crate::ast::Spanned<crate::ast::Expr>,
     ctx: &CodegenContext,
     scope: Option<&str>,
-) -> String {
+) -> Spanned<ResolvedExpr> {
     let active = ctx.active_module_scope();
     let effective = scope.or(active.as_deref());
-    let resolved = ctx.resolve_expr(expr, effective);
-    emit_expr(&resolved, ctx)
-}
-
-/// Source-shape adapter for [`emit_stmt`]. See [`emit_expr_legacy`] for
-/// the scope-fallback rule. **Currently unused** post-PR-E2 — see
-/// [`emit_stmt`] doc.
-#[allow(dead_code)]
-pub fn emit_stmt_legacy(
-    stmt: &crate::ast::Stmt,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    let active = ctx.active_module_scope();
-    let effective = scope.or(active.as_deref());
-    let resolved = ctx.resolve_stmt(stmt, effective);
-    emit_stmt(&resolved, ctx)
-}
-
-/// Source-shape adapter for [`emit_pattern`]. See [`emit_expr_legacy`]
-/// for the scope-fallback rule.
-#[allow(dead_code)]
-pub fn emit_pattern_legacy(
-    pat: &crate::ast::Pattern,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    let active = ctx.active_module_scope();
-    let effective = scope.or(active.as_deref());
-    let resolved = ctx.resolve_pattern(pat, effective);
-    super::pattern::emit_pattern(&resolved, ctx)
+    ctx.resolve_expr(expr, effective)
 }
 
 #[cfg(test)]

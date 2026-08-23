@@ -12417,8 +12417,6 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             packed_sequence_layouts: HashMap::new(),
             proof_ir: aver::ir::ProofIR::default(),
             symbol_table: aver::ir::SymbolTable::default(),
-            resolved_fn_defs: Vec::new(),
-            resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),

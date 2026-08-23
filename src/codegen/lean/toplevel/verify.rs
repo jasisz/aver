@@ -1,5 +1,5 @@
 use super::VerifyEmitMode;
-use super::expr::{aver_name_to_lean, emit_expr_legacy};
+use super::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
 use super::kernel_decide::CaseDecidability;
 use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
 use super::types::type_annotation_to_lean;
@@ -513,7 +513,7 @@ fn emit_verify_trace_block_proofs(
         };
 
         let Some(fn_call) = result_fn_call else {
-            let lhs_summary = emit_expr_legacy(left, ctx, None);
+            let lhs_summary = emit_expr(&resolve_rewrite_output(left, ctx, None), ctx);
             lines.push(format!(
                 "-- verify {} trace case {}/{}: `{}` is runtime-only (see docs/oracle.md)",
                 vb.fn_name,
@@ -543,8 +543,8 @@ fn emit_verify_trace_block_proofs(
             &ctx.capabilities,
         );
 
-        let lhs_str = emit_expr_legacy(&lhs_rw, ctx, None);
-        let rhs_str = emit_expr_legacy(&rhs_rw, ctx, None);
+        let lhs_str = emit_expr(&resolve_rewrite_output(&lhs_rw, ctx, None), ctx);
+        let rhs_str = emit_expr(&resolve_rewrite_output(&rhs_rw, ctx, None), ctx);
 
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
@@ -711,7 +711,7 @@ fn emit_verify_law_block(
         // `LE Natural` / `OfNat Natural 10` in Lean.
         let val_projected =
             crate::codegen::common::project_lifted_idents_to_val(&oracle_projected, &lifted_vars);
-        emit_expr_legacy(&val_projected, ctx, None)
+        emit_expr(&resolve_rewrite_output(&val_projected, ctx, None), ctx)
     });
     let fresh_resource_params =
         crate::codegen::common::law_fresh_resource_params(law, &ctx.capabilities);
@@ -809,7 +809,8 @@ fn emit_verify_law_block(
         // match lowering to a multi-line `if/then/else`) would leak its
         // continuation lines out as stray Lean commands ("unexpected
         // token 'else'").
-        let when_comment = emit_expr_legacy(when_expr, ctx, None).replace('\n', " ");
+        let when_comment =
+            emit_expr(&resolve_rewrite_output(when_expr, ctx, None), ctx).replace('\n', " ");
         lines.push(format!("-- when {when_comment}"));
     }
     // Issue #128: singleton-domain givens + RHS that references no
@@ -1749,13 +1750,13 @@ pub(crate) fn law_as_lemma_statement(
     {
         return None;
     }
-    let lhs = emit_expr_legacy(&law_lhs, ctx, None);
-    let rhs = emit_expr_legacy(&law_rhs, ctx, None);
+    let lhs = emit_expr(&resolve_rewrite_output(&law_lhs, ctx, None), ctx);
+    let rhs = emit_expr(&resolve_rewrite_output(&law_rhs, ctx, None), ctx);
     // A `when`-law is cited as the conditional rewrite the auto-prover proved:
     // `<premise> = true -> lhs = rhs`, matching the `omit_domain` theorem.
     match &law.when {
         Some(when) => {
-            let premise = emit_expr_legacy(when, ctx, None);
+            let premise = emit_expr(&resolve_rewrite_output(when, ctx, None), ctx);
             Some((theorem_base, format!("{premise} = true -> {lhs} = {rhs}")))
         }
         None => Some((theorem_base, format!("{lhs} = {rhs}"))),
@@ -1984,7 +1985,7 @@ fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) ->
             "[{}]",
             values
                 .iter()
-                .map(|v| emit_expr_legacy(v, ctx, None))
+                .map(|v| emit_expr(&resolve_rewrite_output(v, ctx, None), ctx))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -2005,10 +2006,18 @@ fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
     let values = law_given_domain_values(&given.domain);
     match values.as_slice() {
         [] => "False".to_string(),
-        [value] => format!("{given_name} = {}", emit_expr_legacy(value, ctx, None)),
+        [value] => format!(
+            "{given_name} = {}",
+            emit_expr(&resolve_rewrite_output(value, ctx, None), ctx)
+        ),
         _ => values
             .iter()
-            .map(|value| format!("{given_name} = {}", emit_expr_legacy(value, ctx, None)))
+            .map(|value| {
+                format!(
+                    "{given_name} = {}",
+                    emit_expr(&resolve_rewrite_output(value, ctx, None), ctx)
+                )
+            })
             .collect::<Vec<_>>()
             .join(" ∨ "),
     }

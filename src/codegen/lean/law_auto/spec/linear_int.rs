@@ -4,7 +4,7 @@ use crate::ast::{BinOp, Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
-use super::super::super::expr::emit_expr_legacy;
+use super::super::super::expr::{emit_expr, resolve_rewrite_output};
 use super::super::shared::{body_terminal_expr, callee_matches_name, find_fn_def, substitute_expr};
 use super::super::{AutoProof, intro_then};
 
@@ -85,8 +85,8 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
                 vec![
                     format!(
                         "change {} = {}",
-                        emit_expr_legacy(&unfolded_impl, ctx, None),
-                        emit_expr_legacy(&unfolded_spec, ctx, None)
+                        emit_expr(&resolve_rewrite_output(&unfolded_impl, ctx, None), ctx),
+                        emit_expr(&resolve_rewrite_output(&unfolded_spec, ctx, None), ctx)
                     ),
                     "omega".to_string(),
                 ],

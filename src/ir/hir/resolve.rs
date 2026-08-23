@@ -160,9 +160,8 @@ pub fn resolve_program(symbols: &SymbolTable, items: &[TopLevel]) -> Vec<Resolve
 
 /// Resolve a single `FnDef` against an existing [`ResolveCtx`]. Mirror
 /// of [`resolve_stmt_external`] for callers that need to lift a free-
-/// standing fn def into resolved HIR — used by `CodegenContext` to
-/// populate `resolved_fn_defs` per-scope (entry + each dep) without
-/// re-running the whole program-level resolver.
+/// standing fn def into resolved HIR — used by the resolved program view for
+/// dependency modules and by explicit synthetic-function producer boundaries.
 pub fn resolve_fn_def_external(ctx: &ResolveCtx<'_>, fd: &FnDef) -> Option<ResolvedFnDef> {
     resolve_fn_def(ctx, fd)
 }

@@ -402,49 +402,6 @@ pub(super) fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
         .flatten()
 }
 
-fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::ErrorProp(_) => true,
-        Expr::FnCall(callee, args) => {
-            expr_uses_error_prop(callee) || args.iter().any(expr_uses_error_prop)
-        }
-        Expr::Attr(obj, _) => expr_uses_error_prop(obj),
-        Expr::BinOp(_, left, right) => expr_uses_error_prop(left) || expr_uses_error_prop(right),
-        Expr::Neg(inner) => expr_uses_error_prop(inner),
-        Expr::Match { subject, arms, .. } => {
-            expr_uses_error_prop(subject) || arms.iter().any(|arm| expr_uses_error_prop(&arm.body))
-        }
-        Expr::Constructor(_, Some(inner)) => expr_uses_error_prop(inner),
-        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
-            StrPart::Parsed(expr) => expr_uses_error_prop(expr),
-            StrPart::Literal(_) => false,
-        }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(expr_uses_error_prop)
-        }
-        Expr::MapLiteral(entries) => entries
-            .iter()
-            .any(|(key, value)| expr_uses_error_prop(key) || expr_uses_error_prop(value)),
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, value)| expr_uses_error_prop(value))
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_uses_error_prop(base)
-                || updates.iter().any(|(_, value)| expr_uses_error_prop(value))
-        }
-        Expr::TailCall(boxed) => boxed.args.iter().any(expr_uses_error_prop),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
-            false
-        }
-    }
-}
-
-fn body_uses_error_prop(body: &FnBody) -> bool {
-    body.stmts().iter().any(|stmt| match stmt {
-        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_uses_error_prop(expr),
-    })
-}
-
 /// Typed-HIR query: does this fn return `Result<_, _>`?
 ///
 /// Epic #180 Phase 4 — reads the canonical type stamped on the
@@ -458,74 +415,48 @@ fn fn_returns_result_typed(rfd: &crate::ir::hir::ResolvedFnDef) -> bool {
 /// Emit one statement inside a Lean `do` block (used when the fn
 /// body must thread `ErrorProp` through Lean's monadic chain).
 ///
-/// **Epic #170 Phase 5 PR E2**: resolves each stmt once at the
-/// boundary through `ctx.resolve_stmt` (scope-aware) and routes the
-/// inner expression through `emit_expr` (resolved) instead of the
-/// `temporary-migration-bridge` `emit_expr_legacy` adapter. Keeps the
-/// fn-body emit path off the legacy resolve-on-demand surface in the
-/// hot path; the remaining `emit_expr_legacy` callsites in this
-/// module are all in proof-mode law/verify rewriters where the
-/// upstream rewriter still produces raw AST.
-fn emit_do_stmt(stmt: &Stmt, ctx: &CodegenContext, is_last: bool) -> String {
+/// The rewrite boundary feeding this renderer has already resolved the whole
+/// body; this helper only unwraps the resolved `ErrorProp` node needed for Lean
+/// `do` notation.
+fn emit_do_stmt(
+    stmt: &crate::ir::hir::ResolvedStmt,
+    ctx: &CodegenContext,
+    is_last: bool,
+) -> String {
     use crate::ir::hir::ResolvedStmt;
-    let scope = ctx.active_module_scope();
-    let scope_ref = scope.as_deref();
-    // Detect `ErrorProp(inner)` BEFORE resolve so we can route the
-    // unwrapped inner through the monadic-bind / direct-emit branches
-    // the same way the legacy path did.
-    let (is_err_prop, target_for_resolve): (bool, std::borrow::Cow<'_, Spanned<Expr>>) = match stmt
-    {
-        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-            if let Expr::ErrorProp(inner) = &expr.node {
-                (true, std::borrow::Cow::Owned((**inner).clone()))
+    let (is_err_prop, target) = match stmt {
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            if let crate::ir::hir::ResolvedExpr::ErrorProp(inner) = &value.node {
+                (true, inner.as_ref())
             } else {
-                (false, std::borrow::Cow::Borrowed(expr))
+                (false, value)
             }
         }
     };
-    let resolved_expr = ctx.resolve_expr(target_for_resolve.as_ref(), scope_ref);
-    let expr_str = super::expr::emit_expr(&resolved_expr, ctx);
+    let expr_str = super::expr::emit_expr(target, ctx);
     match (stmt, is_err_prop, is_last) {
-        (Stmt::Binding(name, _, _), true, _) => {
+        (ResolvedStmt::Binding { name, .. }, true, _) => {
             format!("  let {} <- {}", aver_name_to_lean(name), expr_str)
         }
-        (Stmt::Binding(name, _, _), false, _) => {
-            // Re-resolve the full stmt so the inner expression keeps
-            // its proper `ResolvedStmt::Binding` shape (preserves
-            // the type annotation if it was present).
-            let resolved_stmt = ctx.resolve_stmt(stmt, scope_ref);
-            if let ResolvedStmt::Binding { name: n, value, .. } = &resolved_stmt {
-                format!(
-                    "  let {} := {}",
-                    aver_name_to_lean(n),
-                    super::expr::emit_expr(value, ctx)
-                )
-            } else {
-                format!("  let {} := {}", aver_name_to_lean(name), expr_str)
-            }
+        (ResolvedStmt::Binding { name, .. }, false, _) => {
+            format!("  let {} := {}", aver_name_to_lean(name), expr_str)
         }
-        (Stmt::Expr(_), true, true) => format!("  {}", expr_str),
-        (Stmt::Expr(_), true, false) => format!("  let _ <- {}", expr_str),
-        (Stmt::Expr(_), false, true) => format!("  {}", expr_str),
-        (Stmt::Expr(_), false, false) => format!("  let _ := {}", expr_str),
+        (ResolvedStmt::Expr(_), true, true) => format!("  {}", expr_str),
+        (ResolvedStmt::Expr(_), true, false) => format!("  let _ <- {}", expr_str),
+        (ResolvedStmt::Expr(_), false, true) => format!("  {}", expr_str),
+        (ResolvedStmt::Expr(_), false, false) => format!("  let _ := {}", expr_str),
     }
 }
 
 /// Emit a Lean fn body (plain — no `do` notation).
 ///
-/// **Epic #170 Phase 5 PR E2**: resolves each top-level stmt once at
-/// the boundary instead of calling the legacy adapter per expression.
-/// Same migration shape as [`emit_do_stmt`].
-fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
+fn emit_fn_body(body: &crate::ir::hir::ResolvedFnBody, ctx: &CodegenContext) -> String {
     use crate::ir::hir::ResolvedStmt;
-    let scope = ctx.active_module_scope();
-    let scope_ref = scope.as_deref();
     let stmts = body.stmts();
     let mut lines = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
-        let resolved_stmt = ctx.resolve_stmt(stmt, scope_ref);
-        match &resolved_stmt {
+        match stmt {
             ResolvedStmt::Binding { name, value, .. } => {
                 lines.push(format!(
                     "  let {} := {}",
@@ -545,7 +476,7 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
     lines.join("\n")
 }
 
-fn emit_fn_body_result_do(body: &FnBody, ctx: &CodegenContext) -> String {
+fn emit_fn_body_result_do(body: &crate::ir::hir::ResolvedFnBody, ctx: &CodegenContext) -> String {
     let stmts = body.stmts();
     let mut lines = vec!["  do".to_string()];
     ctx.with_lean_do_block(true, || {
@@ -557,23 +488,37 @@ fn emit_fn_body_result_do(body: &FnBody, ctx: &CodegenContext) -> String {
 }
 
 pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) -> String {
-    // Pointer-eq scope (`fn_id_for_decl`) → resolved view by `FnId`
-    // so a same-bare-name entry/dep twin never accidentally
-    // provides this fn's return type. Synthetic FnDefs (TCO hoists,
-    // mid-rewrite fns) the resolver never saw fall through to
-    // `ctx.resolve_fn_def`'s on-demand lift.
-    let resolved_fd = crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)
-        .and_then(|id| ctx.resolved_program.fn_by_id(id));
-    let resolved_owned = match resolved_fd {
-        Some(_) => None,
-        None => Some(ctx.resolve_fn_def(fd, None)),
-    };
-    let rfd: &crate::ir::hir::ResolvedFnDef =
-        resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
-    if fn_returns_result_typed(rfd) && body_uses_error_prop(body) {
-        emit_fn_body_result_do(body, ctx)
+    let fn_id = crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)
+        .expect("Lean function emission requires a registered FnId");
+    let rfd = ctx
+        .resolved_program
+        .fn_by_id(fn_id)
+        .expect("Lean source declaration requires a resolved-program twin");
+
+    let is_canonical_source = ctx
+        .fn_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|module| module.fn_defs.iter()))
+        .any(|source| std::ptr::eq(source, fd) && std::ptr::eq(source.body.as_ref(), body));
+    let rewritten_body;
+    let resolved_body = if is_canonical_source {
+        rfd.body.as_ref()
     } else {
-        emit_fn_body(body, ctx)
+        let active = ctx.active_module_scope();
+        rewritten_body = ctx.resolve_rewritten_fn_body(body, active.as_deref());
+        &rewritten_body
+    };
+    let uses_error_prop = resolved_body.stmts().iter().any(|stmt| {
+        let expr = match stmt {
+            crate::ir::hir::ResolvedStmt::Binding { value, .. }
+            | crate::ir::hir::ResolvedStmt::Expr(value) => value,
+        };
+        super::expr::resolved_expr_contains_error_prop(expr)
+    });
+    if fn_returns_result_typed(rfd) && uses_error_prop {
+        emit_fn_body_result_do(resolved_body, ctx)
+    } else {
+        emit_fn_body(resolved_body, ctx)
     }
 }
 

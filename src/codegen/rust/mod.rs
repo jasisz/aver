@@ -1321,6 +1321,58 @@ fn walk(n: Int) -> Int
     }
 
     #[test]
+    fn cross_module_same_bare_name_types_keep_distinct_rust_records() {
+        let mut ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Worker]
+    intent = "Entry and dependency own distinct Packet records."
+    effects []
+
+record Packet
+    value: Int
+
+fn entryValue(packet: Packet) -> Int
+    packet.value
+
+fn main() -> Int
+    entryValue(Packet(value = 7)) + Worker.read(Worker.Packet(label = "abcd"))
+"#,
+            &[(
+                "Worker",
+                r#"
+module Worker
+    exposes [Packet, read]
+    intent = "Dependency Packet deliberately shares the entry bare name."
+    effects []
+
+record Packet
+    label: String
+
+fn read(packet: Packet) -> Int
+    String.len(packet.label)
+"#,
+            )],
+            "cross_module_packet",
+        );
+
+        let out = transpile(&mut ctx);
+        let worker = generated_file(&out, "src/aver_generated/worker/mod.rs");
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("struct Packet"), "{entry}");
+        assert!(entry.contains("value:"), "{entry}");
+        assert!(!entry.contains("pub label:"), "{entry}");
+        assert!(worker.contains("struct Packet"), "{worker}");
+        assert!(worker.contains("label:"), "{worker}");
+        assert!(!worker.contains("pub value:"), "{worker}");
+        assert!(
+            entry.contains("crate::aver_generated::worker::Packet"),
+            "dependency Packet construction must use its TypeId-owned module path:\n{entry}"
+        );
+    }
+
+    #[test]
     fn emission_banner_appears_in_root_main() {
         let mut ctx = ctx_from_source(
             r#"

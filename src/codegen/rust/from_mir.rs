@@ -1997,8 +1997,7 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
 }
 
 /// Render one free-standing `verify`-case expression through the MIR
-/// walker. `resolved` is the already-lifted `ResolvedExpr` (the caller
-/// does the on-demand `ctx.resolve_expr`). Lowers it via
+/// walker. `resolved` is the already-lifted `ResolvedExpr`. Lowers it via
 /// `lower_top_level_value` against a clone of the entry `MirProgram` (the
 /// same isolation the VM uses for top-level statements: builtin /
 /// instantiation table growth stays local to the clone), then emits it

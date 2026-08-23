@@ -219,13 +219,10 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             .and_then(|fd| crate::codegen::common::fn_owning_scope_for(ctx, fd))
             .map(|s| s.to_string())
             .unwrap_or_default();
-        // Mutual SCC emit resolves fn bodies through `emit_fn_body` →
-        // `emit_expr_legacy`, which falls back to
-        // `ctx.active_module_scope()` when no explicit scope is passed.
-        // Wrap the fuel/native dispatch in `with_module_scope` so a
-        // module-owned mutual group doesn't resolve as if it were
-        // entry-scope (same shape as the pure-fn path in
-        // `route_pure_components_per_scope` below).
+        // Mutual SCC rewrites produce fresh source bodies, then resolve them
+        // once before `emit_fn_body`. Wrap the rewrite/resolve boundary in the
+        // declaring module scope so bare peer calls receive that module's
+        // `FnId` (same shape as the pure-fn router below).
         let scope_opt = if scope.is_empty() {
             None
         } else {
@@ -304,14 +301,17 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         crate::codegen::common::fn_id_for_decl(ctx, fd).is_some_and(|id| set.contains(&id))
     };
     let emit_pure_or_axiom = |fd: &FnDef| -> String {
+        let rfd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+            .and_then(|id| ctx.resolved_program.fn_by_id(id))
+            .expect("Dafny source declaration must have a resolved-program twin");
         if body_keeps_error_prop_after_lowering(fd) {
-            toplevel::emit_fn_def_axiom(fd, ctx)
+            toplevel::emit_fn_def_axiom(fd, rfd, ctx)
         } else if id_in(&fuel_emitted, fd) || id_in(&native_emitted, fd) {
             String::new()
         } else if id_in(&axiom_fn_ids, fd) || id_in(&termination_axiom_ids, fd) {
-            toplevel::emit_fn_def_axiom(fd, ctx)
+            toplevel::emit_fn_def_axiom(fd, rfd, ctx)
         } else {
-            toplevel::emit_fn_def(fd, ctx)
+            toplevel::emit_fn_def(fd, rfd, ctx)
         }
     };
 
@@ -515,14 +515,15 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
 
     // Lifted effectful fns (entry only — modules don't host effectful fns
     // in the v1 emitter).
-    let reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
+    let reachable = crate::codegen::common::proof_reachable_fn_ids(ctx);
     let mut helpers: HashMap<String, Vec<String>> = HashMap::new();
     for item in &ctx.items {
         if let TopLevel::FnDef(fd) = item
             && !fd.effects.is_empty()
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
-            && reachable.contains(&fd.name)
+            && crate::codegen::common::fn_id_for_decl(ctx, fd)
+                .is_some_and(|fn_id| reachable.contains(&fn_id))
             && fd.effects.iter().all(|e| {
                 crate::types::checker::effect_classification::classify_with_registry(
                     &ctx.capabilities,
@@ -542,7 +543,8 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             && !fd.effects.is_empty()
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
-            && reachable.contains(&fd.name)
+            && crate::codegen::common::fn_id_for_decl(ctx, fd)
+                .is_some_and(|fn_id| reachable.contains(&fn_id))
             && fd.effects.iter().all(|e| {
                 crate::types::checker::effect_classification::classify_with_registry(
                     &ctx.capabilities,
@@ -557,7 +559,11 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                     &ctx.capabilities,
                 )
         {
-            entry_sections.push(toplevel::emit_fn_def(&lifted, ctx));
+            let mut resolve_ctx = crate::ir::hir::ResolveCtx::new(&ctx.symbol_table);
+            resolve_ctx.current_module = ctx.entry_module_name();
+            let resolved_lifted = crate::ir::hir::resolve_fn_def_external(&resolve_ctx, &lifted)
+                .expect("effect-lifted Dafny function must resolve before emission");
+            entry_sections.push(toplevel::emit_fn_def(&lifted, &resolved_lifted, ctx));
         }
     }
 

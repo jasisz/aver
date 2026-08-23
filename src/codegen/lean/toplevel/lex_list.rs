@@ -85,14 +85,8 @@ struct LexListMemberPlan<'a> {
 /// than one `List<_>` param (the synthesiser only reasons about a single
 /// list measure) or any non-`List` sizeOf-relevant param.
 fn lex_list_measure_param(fd: &FnDef, ctx: &CodegenContext) -> Option<(usize, String)> {
-    let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
-        .and_then(|id| ctx.resolved_program.fn_by_id(id));
-    let resolved_owned = match resolved_fd {
-        Some(_) => None,
-        None => Some(ctx.resolve_fn_def(fd, None)),
-    };
-    let rfd: &crate::ir::hir::ResolvedFnDef =
-        resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
+    let rfd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id))?;
     let mut found: Option<(usize, String)> = None;
     for (idx, (name, ty)) in rfd.params.iter().enumerate() {
         match ty {
@@ -121,14 +115,8 @@ fn lex_list_measure_param(fd: &FnDef, ctx: &CodegenContext) -> Option<(usize, St
 /// `(g xs …).length ≤ xs.length`. Anything else returns `None`.
 fn lex_list_filter_helper<'a>(helper: &'a FnDef, ctx: &CodegenContext) -> Option<&'a FnDef> {
     // First param must be `List<_>`, and the fn must return `List<_>`.
-    let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, helper)
-        .and_then(|id| ctx.resolved_program.fn_by_id(id));
-    let resolved_owned = match resolved_fd {
-        Some(_) => None,
-        None => Some(ctx.resolve_fn_def(helper, None)),
-    };
-    let rfd: &crate::ir::hir::ResolvedFnDef =
-        resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
+    let rfd = crate::codegen::common::fn_id_for_decl(ctx, helper)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id))?;
     let first_param = rfd.params.first()?;
     if !matches!(first_param.1, crate::types::Type::List(_)) {
         return None;
@@ -276,7 +264,9 @@ fn classify_lex_list_arg(
         // synthesised `<g>_len_le` lemma in `decreasing_by`.
         let lemma_args = args
             .iter()
-            .map(|a| super::expr::emit_expr_legacy(a, ctx, None))
+            .map(|a| {
+                super::expr::emit_expr(&super::expr::resolve_rewrite_output(a, ctx, None), ctx)
+            })
             .collect::<Vec<_>>()
             .join(" ");
         return Some(LexListArg::Filtered {

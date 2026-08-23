@@ -38,11 +38,10 @@
 //!   helper-law / contextual-helper hint walkers inspect AST syntax through a
 //!   per-module [`crate::verify_law::FnIdFnIndex`]. Source names are resolved
 //!   once at the boundary and never serve as storage identity.
-//! - **Lean / Dafny proof + law spec emitters**. Several recognisers
-//!   (`emit_*_spec_equivalence_law`, `direct_call` AST shape match)
-//!   keep walking `Spanned<Expr>` source-shape because the proof IR
-//!   is keyed on syntactic surfaces the user wrote, not the resolver-
-//!   canonicalised form. `emit_expr_legacy` is the explicit adapter.
+//! - **Lean / Dafny proof + law spec recognisers**. Several recognisers
+//!   (`emit_*_spec_equivalence_law`, `direct_call` AST shape match) inspect
+//!   `Spanned<Expr>` source syntax, then resolve the completed rewrite exactly
+//!   once before passing it to the resolved-only renderer.
 //! - **wasm-gc post-link view** ([`crate::codegen::wasm_gc::view`]).
 //!   The wasm-gc backend collapses N modules into one emit unit via
 //!   `flatten_multimodule`, then rebuilds its own
@@ -70,9 +69,7 @@
 //!   resolved fn defs out of them. No re-resolve.
 //! - **Module slice** resolves each dep module's `&[FnDef]` through
 //!   `resolve_fn_def_external` under a `ResolveCtx` pinned to that
-//!   module's prefix. This is the only producer of resolved module
-//!   bodies — `CodegenContext.resolved_module_fn_defs` is a
-//!   projection / cache of this view, not an independent source.
+//!   module's prefix. This is the only producer of resolved module bodies.
 //!
 //! ## Lookups
 //!
@@ -196,9 +193,7 @@ impl ResolvedProgramView {
         }
     }
 
-    /// Resolved entry-scope fn defs in source order — the same set
-    /// `CodegenContext.resolved_fn_defs` projected today, just
-    /// reached through the canonical view.
+    /// Resolved entry-scope fn defs in source order.
     pub fn entry_fns(&self) -> impl Iterator<Item = &ResolvedFnDef> + '_ {
         self.entry_items.iter().filter_map(|item| match item {
             ResolvedTopLevel::FnDef(rfd) => Some(rfd),

@@ -96,8 +96,13 @@ fn same_short(dotted: &str, short: &str) -> bool {
 }
 
 fn same_expr(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
-    super::super::expr::emit_expr_legacy(a, ctx, None)
-        == super::super::expr::emit_expr_legacy(b, ctx, None)
+    super::super::expr::emit_expr(
+        &super::super::expr::resolve_rewrite_output(a, ctx, None),
+        ctx,
+    ) == super::super::expr::emit_expr(
+        &super::super::expr::resolve_rewrite_output(b, ctx, None),
+        ctx,
+    )
 }
 
 fn is_int_literal(expr: &Spanned<Expr>) -> bool {
@@ -296,7 +301,12 @@ pub(super) fn emit_denom_positive_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize_denom_positive_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let arg = render(&shape.arg);
@@ -396,7 +406,12 @@ fn monotone_law_shape(
     }
     let big = substitute_expr(&big_args[0], &map);
     let small = substitute_expr(&small_args[0], &map);
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let small_lean = render(&small);
     let big_lean = render(&big);
     let premise_ok = match &when.node {
@@ -838,7 +853,12 @@ fn recognize_reflect_shape(
     if !is_unary_fraction_fn(f_fd) {
         return None;
     }
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     if render(&left_args[0]) != render(&left) || render(&right_args[0]) != render(&right) {
         return None;
     }
@@ -1060,7 +1080,12 @@ pub(super) fn emit_monotone_reflect_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize_reflect_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = render(law.when.as_ref()?);
@@ -1132,7 +1157,12 @@ pub(super) fn emit_magnitude_bracket_reflect_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize_magnitude_bracket_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = render(law.when.as_ref()?);

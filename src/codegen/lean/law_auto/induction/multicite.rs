@@ -35,7 +35,7 @@
 //! statement — credit stays fail-closed behind the `#print axioms` whitelist.
 
 use super::super::super::expr::aver_name_to_lean;
-use super::super::super::expr::emit_expr_legacy;
+use super::super::super::expr::{emit_expr, resolve_rewrite_output};
 use super::super::super::tactic_ir::Tactic;
 use super::super::AutoProof;
 use super::super::shared::law_simp_defs;
@@ -317,7 +317,7 @@ fn law_theorem_name(prev: &VerifyBlock, prev_law: &VerifyLaw) -> String {
 fn render_applied(fn_lean: &str, args: &[Spanned<Expr>], ctx: &CodegenContext) -> String {
     let mut s = fn_lean.to_string();
     for a in args {
-        let rendered = emit_expr_legacy(a, ctx, None);
+        let rendered = emit_expr(&resolve_rewrite_output(a, ctx, None), ctx);
         s.push_str(&format!(" ({rendered})"));
     }
     s

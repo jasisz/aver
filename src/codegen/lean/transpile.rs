@@ -20,9 +20,8 @@ use super::{
 /// interactive / higher-order-callback) effects are still skipped entirely —
 /// matches the pre-Oracle behavior.
 ///
-/// `reachable` is the scope's root set: the entry's verify-reachable names,
-/// or for a dependency what any consumer's cone reaches
-/// (`dependency_reachable_fn_names`). `foreign_helpers` keys every other
+/// `reachable` is the whole-program verify cone keyed by `FnId`.
+/// `foreign_helpers` keys every other
 /// module's lifted function by its qualified name (`Infra.Store.get`) so a
 /// dotted call site receives the callee's `(path, oracle...)` prefix; this
 /// scope's own lifted functions join the map under their bare names.
@@ -38,7 +37,7 @@ fn emit_lifted_effectful_functions(
     ctx: &CodegenContext,
     fn_defs: &[&crate::ast::FnDef],
     scope: Option<&str>,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<crate::ir::FnId>,
     foreign_helpers: &HashMap<String, Vec<String>>,
     recursive_fns: &HashSet<String>,
     sampled_fns: &mut SampledFnClassification,
@@ -175,7 +174,7 @@ fn emit_lifted_effectful_functions(
 fn is_liftable_effectful_fn(
     ctx: &CodegenContext,
     fd: &crate::ast::FnDef,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<crate::ir::FnId>,
 ) -> bool {
     use crate::types::checker::effect_classification::classify_with_registry;
     !fd.effects.is_empty()
@@ -184,7 +183,8 @@ fn is_liftable_effectful_fn(
             .effects
             .iter()
             .all(|e| classify_with_registry(&ctx.capabilities, &e.node).is_some())
-        && reachable.contains(&fd.name)
+        && crate::codegen::common::fn_id_for_decl(ctx, fd)
+            .is_some_and(|fn_id| reachable.contains(&fn_id))
 }
 
 fn declared_effect_names(fd: &crate::ast::FnDef) -> Vec<String> {
@@ -197,12 +197,10 @@ fn declared_effect_names(fd: &crate::ast::FnDef) -> Vec<String> {
 /// `(path, oracle...)` for.
 fn lifted_dependency_helpers(
     ctx: &CodegenContext,
-    reachable_by_module: &HashMap<String, HashSet<String>>,
+    reachable: &HashSet<crate::ir::FnId>,
 ) -> HashMap<String, Vec<String>> {
-    let empty = HashSet::new();
     let mut helpers = HashMap::new();
     for module in &ctx.modules {
-        let reachable = reachable_by_module.get(&module.prefix).unwrap_or(&empty);
         for fd in &module.fn_defs {
             if is_liftable_effectful_fn(ctx, fd, reachable) {
                 helpers.insert(
@@ -894,9 +892,8 @@ pub(super) fn transpile_unified(
         LeanEmitMode::Proof => &recursive_names,
         LeanEmitMode::Standard => &recursive_fns,
     };
-    let entry_reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
-    let dependency_reachable = crate::codegen::common::dependency_reachable_fn_names(ctx);
-    let dependency_helpers = lifted_dependency_helpers(ctx, &dependency_reachable);
+    let proof_reachable = crate::codegen::common::proof_reachable_fn_ids(ctx);
+    let dependency_helpers = lifted_dependency_helpers(ctx, &proof_reachable);
     let mut entry_lifted_sections: Vec<String> = Vec::new();
     let entry_fn_defs: Vec<&crate::ast::FnDef> = ctx
         .items
@@ -910,7 +907,7 @@ pub(super) fn transpile_unified(
         ctx,
         &entry_fn_defs,
         None,
-        &entry_reachable,
+        &proof_reachable,
         &dependency_helpers,
         lifted_recursive_names,
         &mut sampled_fns,
@@ -1000,14 +997,11 @@ pub(super) fn transpile_unified(
         // the entry's get, after its pure declarations (a lifted body may call
         // them; nothing pure calls an effectful fn) and before its laws.
         let module_fn_defs: Vec<&crate::ast::FnDef> = module.fn_defs.iter().collect();
-        let no_reachable = HashSet::new();
         emit_lifted_effectful_functions(
             ctx,
             &module_fn_defs,
             scope,
-            dependency_reachable
-                .get(&module.prefix)
-                .unwrap_or(&no_reachable),
+            &proof_reachable,
             &dependency_helpers,
             lifted_recursive_names,
             &mut sampled_fns,

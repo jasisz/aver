@@ -4,9 +4,9 @@
 //! ## Why this exists as a named view, not a transitional hack
 //!
 //! The pipeline (`parse → tco → typecheck → resolve → CodegenContext`)
-//! is module-aware: `CodegenContext.resolved_fn_defs` holds the
-//! entry's fns and `resolved_module_fn_defs` holds each dep's fns
-//! separately, both keyed against the pre-flatten `SymbolTable`.
+//! is module-aware: `CodegenContext.resolved_program` holds entry and
+//! dependency functions separately, keyed against the pre-flatten
+//! `SymbolTable`.
 //! That structure is correct for backends that emit per-module
 //! artifacts (Rust → one Rust crate per Aver module, VM → per-
 //! module bytecode, Lean → namespaces, Dafny → modules).

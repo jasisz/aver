@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::expr::{aver_name_to_lean, emit_expr_legacy};
+use super::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
 use super::fn_def::{emit_fn_body_for, lower_pure_question_bang_for_emit};
 use super::recurrence::{recurrence_nat_helper_name, render_affine_pair_expr};
 use super::render::{
@@ -263,15 +263,24 @@ pub(super) fn emit_nat_linear_recurrence_fn(
         emit_doc_comment(&fd.desc),
         vec![
             format!("private def {} : Nat -> {}", nat_helper_name, ret_type),
-            format!("  | 0 => {}", emit_expr_legacy(&shape.base0, ctx, None)),
-            format!("  | 1 => {}", emit_expr_legacy(&shape.base1, ctx, None)),
+            format!(
+                "  | 0 => {}",
+                emit_expr(&resolve_rewrite_output(&shape.base0, ctx, None), ctx)
+            ),
+            format!(
+                "  | 1 => {}",
+                emit_expr(&resolve_rewrite_output(&shape.base1, ctx, None), ctx)
+            ),
             format!("  | n + 2 => {}", nat_step),
             String::new(),
             format!("def {} ({} : Int) : {} :=", fn_name, lean_param, ret_type),
             format!(
                 "  if {} < 0 then {} else {} {}.toNat",
                 lean_param,
-                emit_expr_legacy(&shape.negative_branch, ctx, None),
+                emit_expr(
+                    &resolve_rewrite_output(&shape.negative_branch, ctx, None),
+                    ctx
+                ),
                 nat_helper_name,
                 lean_param
             ),
@@ -460,7 +469,7 @@ fn emit_string_pos_scan_lemma(
     }
     let exit_subst =
         crate::codegen::proof_recognize::substitute_idents_in_expr(&shape.exit_expr, &subst);
-    let exit = emit_expr_legacy(&exit_subst, ctx, None)
+    let exit = emit_expr(&resolve_rewrite_output(&exit_subst, ctx, None), ctx)
         .replace('\n', " ")
         .replace(LEN_MARKER, &format!("(({s}.toList.length : Int))"));
 
@@ -1216,17 +1225,12 @@ pub(super) fn emit_fuelized_mutual_int_countdown_group(
 ///
 /// Param types come from the resolved fn def (already typed by the
 /// typechecker) rather than the AST annotation string. Pointer-eq scope so a
-/// same-bare-name twin never provides them; synthetic / mid-rewrite fns fall
-/// back to on-demand resolve.
+/// same-bare-name twin never provides them. SCC classification only accepts
+/// source declarations already present in the resolved program view.
 fn native_measure_candidates(fd: &FnDef, ctx: &CodegenContext) -> Vec<(Candidate, bool)> {
-    let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
-        .and_then(|id| ctx.resolved_program.fn_by_id(id));
-    let resolved_owned = match resolved_fd {
-        Some(_) => None,
-        None => Some(ctx.resolve_fn_def(fd, None)),
-    };
-    let rfd: &crate::ir::hir::ResolvedFnDef =
-        resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
+    let rfd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id))
+        .expect("Lean native measure candidate must be a resolved source declaration");
     let candidate = |index, kind| Candidate { index, kind };
     rfd.params
         .iter()

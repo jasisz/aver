@@ -1228,11 +1228,20 @@ fn keystone_order_bridge_citations(
             .join(" ");
         let l_span: &Spanned<Expr> = l_box;
         let r_span: &Spanned<Expr> = r_box;
-        let l_lean = super::super::super::expr::emit_expr_legacy(l_span, ctx, None);
-        let r_lean = super::super::super::expr::emit_expr_legacy(r_span, ctx, None);
+        let l_lean = super::super::super::expr::emit_expr(
+            &super::super::super::expr::resolve_rewrite_output(l_span, ctx, None),
+            ctx,
+        );
+        let r_lean = super::super::super::expr::emit_expr(
+            &super::super::super::expr::resolve_rewrite_output(r_span, ctx, None),
+            ctx,
+        );
         let (premise_clause, intro, apply_args) = match &prev_law.when {
             Some(when) => {
-                let p = super::super::super::expr::emit_expr_legacy(when, ctx, None);
+                let p = super::super::super::expr::emit_expr(
+                    &super::super::super::expr::resolve_rewrite_output(when, ctx, None),
+                    ctx,
+                );
                 (
                     format!("{p} = true -> "),
                     format!("  intro {names_csv} hp"),

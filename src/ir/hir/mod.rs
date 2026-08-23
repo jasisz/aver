@@ -864,18 +864,16 @@ pub struct ResolvedFnDef {
 
 /// Resolved top-level item — mirror of [`crate::ast::TopLevel`].
 /// `Verify`, `Decision`, `TypeDef` items pass through with their
-/// original AST representation: they aren't on the runtime hot
-/// path, and their internal expressions get resolved lazily by
-/// proof-export passes that already consume `Expr`. Future PRs may
-/// promote them.
+/// original AST representation because they aren't runtime declarations.
+/// Consumers resolve verify expressions once at the producer boundary under
+/// the declaring module's scope before handing them to an IR renderer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedTopLevel {
     Module(Module),
     FnDef(ResolvedFnDef),
-    /// Verify / Decision / TypeDef items: passthrough for now.
-    /// Each carries its original AST node — the resolver lifts only
-    /// what runtime backends consume. See module doc for the
-    /// rationale + the future PR that promotes these.
+    /// Verify / Decision / TypeDef items retain their source representation.
+    /// Any expression-bearing consumer owns one explicit scoped-resolution
+    /// boundary; backend renderers never infer identity from this payload.
     Passthrough(crate::ast::TopLevel),
 }
 

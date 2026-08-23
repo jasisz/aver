@@ -111,7 +111,10 @@ fn recursive_decrement_arm_info(fd: &FnDef, ctx: &CodegenContext) -> Option<RecA
     map.insert(p.as_str(), &n_ident);
     let render = |e: &Spanned<Expr>| {
         let subbed = substitute_expr(e, &map);
-        super::super::expr::emit_expr_legacy(&subbed, ctx, None)
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(&subbed, ctx, None),
+            ctx,
+        )
     };
     Some(RecArms {
         base_int: *base_int,
@@ -280,7 +283,12 @@ pub(super) fn emit_recursive_positive_law(
     let kit_base = aver_name_to_lean(shape.f_src.rsplit('.').next().unwrap_or(&shape.f_src));
     let kit = render_recursive_mono_kit(&kit_base, &f_lean, &arms.base_arm, &arms.step_arm);
 
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let arg = render(&shape.arg);
@@ -423,7 +431,12 @@ pub(super) fn recognize_recursive_monotone_shape(
     // exponents through the SAME emitter, so a structurally equal premise
     // matches and a reversed / unrelated one is declined.
     let when = law.when.as_ref()?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let (lo_lean, hi_lean) = (render(&lo), render(&hi));
     let premise_ok = match &when.node {
         Expr::BinOp(BinOp::Lte, l, r) => render(l) == lo_lean && render(r) == hi_lean,
@@ -470,7 +483,12 @@ pub(super) fn emit_recursive_monotone_law(
     let f_lean = aver_name_to_lean(&shape.f_src);
     let kit = render_recursive_mono_kit(theorem_base, &f_lean, &base_arm, &step_arm);
 
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = render(law.when.as_ref()?);

@@ -19,14 +19,9 @@ pub struct EmitCtx {
     pub borrowed_params: HashSet<String>,
     /// Owning module prefix for the function whose body this context
     /// is emitting (`Some("Domain.Eval.Core")` inside a dep module's
-    /// fn body, `None` for entry-scope fns). Threaded into
-    /// `ctx.resolve_expr` / `ctx.resolve_stmt` / `ctx.resolve_pattern`
-    /// from the on-demand legacy emit helpers so cross-module ctor /
-    /// fn classification uses the right resolver `current_module`
-    /// instead of falling back to the entry's. Pre-PR-9.4 the legacy
-    /// helpers used the entry-module name uniformly, which silently
-    /// mis-resolved cross-module `Type.Variant(...)` calls inside
-    /// trampoline arms (self-host regen exposure).
+    /// fn body, `None` for entry-scope fns). Used by free-standing top-level /
+    /// verify rewrite boundaries; ordinary function bodies already carry
+    /// resolved identity.
     pub current_module_scope: Option<String>,
 }
 

@@ -1667,7 +1667,12 @@ pub(super) fn emit_clique_position_monotonicity_law(
     // projection binders passed to the conjunct: s pos <extras> v p, using the
     // law-role names (target has no extras for the supported witness/json case).
     let target_lean = aver_name_to_lean(&vb.fn_name);
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let when_render = law.when.as_ref().map(&render)?;
     let lhs_render = render(&law.lhs);
     let rhs_render = render(&law.rhs);
