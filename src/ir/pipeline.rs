@@ -44,7 +44,8 @@ use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
 use crate::types::checker::{
     TypeCheckResult, run_type_check_full, run_type_check_full_self_host,
-    run_type_check_with_loaded, run_type_check_with_loaded_self_host,
+    run_type_check_with_checked_loaded, run_type_check_with_loaded,
+    run_type_check_with_loaded_self_host,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -160,6 +161,9 @@ pub enum TypecheckMode<'a> {
     /// `run_type_check_with_loaded(items, loaded)` for in-memory module trees
     /// (playground virtual fs, multi-file ad-hoc compiles).
     WithLoaded(&'a [LoadedModule]),
+    /// Whole-program report preparation already checked every dependency body
+    /// leaves-first. Rebuild importer-visible surfaces but check only `items`.
+    WithCheckedLoaded(&'a [LoadedModule]),
     /// Self-host variant of [`Full`] — bypasses opaque-type checks
     /// (construct, field access, pattern match). Used exclusively by
     /// `aver compile --with-self-host-support` so `domain/builtins.av`
@@ -695,6 +699,9 @@ pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResul
     match mode {
         TypecheckMode::Full { base_dir } => run_type_check_full(items, *base_dir),
         TypecheckMode::WithLoaded(loaded) => run_type_check_with_loaded(items, loaded),
+        TypecheckMode::WithCheckedLoaded(loaded) => {
+            run_type_check_with_checked_loaded(items, loaded)
+        }
         TypecheckMode::FullSelfHost { base_dir } => run_type_check_full_self_host(items, *base_dir),
         TypecheckMode::WithLoadedSelfHost(loaded) => {
             run_type_check_with_loaded_self_host(items, loaded)

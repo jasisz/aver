@@ -41,7 +41,7 @@ required-features = ["runtime"]
 
 [features]
 default = ["runtime", "runtime-net", "terminal", "tty-render"]
-runtime = ["dep:aver-rt", "aver-memory/runtime", "aver-rt/random", "dep:clap", "dep:toml"]
+runtime = ["dep:aver-rt", "aver-memory/runtime", "aver-rt/random", "dep:clap", "dep:rayon", "dep:toml"]
 runtime-net = ["runtime", "aver-rt/http"]
 terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
@@ -74,6 +74,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
 num-bigint = "0.4"
 num-traits = "0.2"
+rayon = { version = "1", optional = true }
 thiserror = "1"
 toml = { version = "0.8", optional = true }
 url = "2"

@@ -235,6 +235,7 @@ fn main_impl(
             json,
             hostile,
             wasm_gc,
+            jobs,
         } => {
             commands::cmd_verify(
                 file,
@@ -243,6 +244,7 @@ fn main_impl(
                 *json,
                 *hostile,
                 *wasm_gc,
+                jobs.as_ref().map(|jobs| jobs.get()),
                 provider_bindings,
             );
         }

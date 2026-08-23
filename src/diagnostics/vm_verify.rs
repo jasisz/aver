@@ -664,12 +664,185 @@ pub fn run_verify_for_items_vm_with_mode(
 /// `given` stubs remain per-case overrides because dispatch checks the oracle
 /// map before consulting this registry.
 pub fn run_verify_for_items_vm_with_mode_and_bindings(
+    items: Vec<TopLevel>,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_impl(
+        items,
+        config,
+        base_dir,
+        source_file,
+        mode,
+        provider_bindings,
+        false,
+    )
+}
+
+/// Parallel VM verify used by the CLI's bounded Rayon pool.
+///
+/// File jobs and case jobs run in the same pool, so nested case expansion
+/// cannot create more threads than `aver verify -j` allowed. Hostile runs
+/// retain their sequential base/profile dependency; declared cases are
+/// independent and may use separate VM execution states.
+#[cfg(feature = "runtime")]
+pub fn run_verify_for_items_vm_parallel_with_mode_and_bindings(
+    items: Vec<TopLevel>,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_impl(
+        items,
+        config,
+        base_dir,
+        source_file,
+        mode,
+        provider_bindings,
+        true,
+    )
+}
+
+/// Immutable setup shared by all declared verify cases of one module.
+///
+/// Directory verification constructs this once, leaves-first, before the
+/// Rayon phase. Dependency bodies have therefore already passed their own
+/// checks; this module's preparation rebuilds their visible surfaces but does
+/// not recursively type-check them again.
+pub struct PreparedVmVerify {
+    machine: Option<vm::VM>,
+    capabilities: crate::capability::CapabilityRegistry,
+    plans: Vec<VmVerifyPlan>,
+}
+
+/// Prepare one module after every project dependency in `loaded` has already
+/// passed preparation. Embedded standard modules are release-validated and
+/// participate as signatures/capabilities without a per-command body rerun.
+#[cfg(feature = "runtime")]
+pub fn prepare_verify_for_items_vm_with_checked_loaded(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    source_file: &str,
+) -> Result<PreparedVmVerify, String> {
+    prepare_verify_for_items_vm_with_loaded(items, loaded, source_file)
+}
+
+#[cfg(feature = "runtime")]
+fn prepare_verify_for_items_vm_with_loaded(
+    mut items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    source_file: &str,
+) -> Result<PreparedVmVerify, String> {
+    crate::ir::pipeline::tco(&mut items);
+    let mode = crate::ir::TypecheckMode::WithCheckedLoaded(&loaded);
+    let typecheck = crate::ir::pipeline::typecheck_gate(&items, &mode, &items);
+    if !typecheck.errors.is_empty() {
+        return Err(format_type_errors(&typecheck.errors));
+    }
+
+    let verify_blocks = merge_verify_blocks(&items);
+    let plans = build_verify_vm_plans(&mut items, &verify_blocks);
+    crate::ir::pipeline::resolve(&mut items);
+    if plans.is_empty() {
+        return Ok(PreparedVmVerify {
+            machine: None,
+            capabilities: typecheck.capabilities,
+            plans,
+        });
+    }
+
+    // Finish the module-owned work while preparation is independently
+    // schedulable. The resulting VM is an immutable base for case forks, and
+    // retaining it lets us drop the otherwise quadratic collection of cloned
+    // dependency ASTs before case execution starts.
+    let dep_modules = loaded
+        .iter()
+        .map(crate::codegen::ModuleInfo::from_loaded)
+        .collect::<Vec<_>>();
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
+    symbol_table.merge_capability_registry(&typecheck.capabilities);
+    let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
+    let (code, globals) = vm::compile_program_with_loaded_modules(
+        &resolved_items,
+        &symbol_table,
+        &mut arena,
+        loaded,
+        source_file,
+        None,
+    )
+    .map_err(|error| format!("VM compile error: {error}"))?;
+    Ok(PreparedVmVerify {
+        machine: Some(vm::VM::new(code, globals, arena)),
+        capabilities: typecheck.capabilities,
+        plans,
+    })
+}
+
+/// Compile and execute a module whose graph and type information were prepared
+/// once by [`prepare_verify_for_items_vm_with_checked_loaded`].
+#[cfg(feature = "runtime")]
+pub fn run_prepared_verify_vm_with_bindings(
+    prepared: PreparedVmVerify,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+    provider_bindings: &[crate::provider::ProviderBinding],
+    parallel_cases: bool,
+) -> Result<Vec<VerifyResult>, String> {
+    let PreparedVmVerify {
+        machine,
+        capabilities,
+        plans,
+    } = prepared;
+    if plans.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut machine = machine.expect("non-empty prepared plans own a VM");
+    configure_verify_capabilities(&mut machine, &capabilities, provider_bindings)?;
+    let budgets = budgets_for_plans(&plans, config.as_ref(), source_file, base_dir);
+    let raised_by = budgets
+        .iter()
+        .map(|budget| budget.raised_by_fn(config.as_ref()))
+        .collect::<Vec<_>>();
+    if let Some(config) = config {
+        machine.set_runtime_policy(config);
+    }
+
+    let case_count = plans.iter().map(|plan| plan.cases.len()).sum::<usize>();
+    if parallel_cases && case_count > 1 {
+        return Ok(run_verify_vm_plans_parallel(
+            &plans,
+            &machine,
+            &capabilities,
+            &budgets,
+            &raised_by,
+        ));
+    }
+    Ok(plans
+        .iter()
+        .zip(&budgets)
+        .zip(&raised_by)
+        .map(|((plan, budget), raised)| {
+            run_verify_vm(plan, &mut machine, &capabilities, budget, raised.as_deref())
+        })
+        .collect())
+}
+
+fn run_verify_for_items_vm_impl(
     mut items: Vec<TopLevel>,
     config: Option<ProjectConfig>,
     base_dir: Option<&str>,
     source_file: &str,
     mode: ExpansionMode,
     provider_bindings: &[crate::provider::ProviderBinding],
+    parallel_cases: bool,
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
@@ -785,7 +958,18 @@ pub fn run_verify_for_items_vm_with_mode_and_bindings(
         machine.set_runtime_policy(cfg);
     }
 
-    let mut results = Vec::new();
+    let case_count: usize = plans.iter().map(|plan| plan.cases.len()).sum();
+    if parallel_cases && mode == ExpansionMode::Declared && case_count > 1 {
+        return Ok(run_verify_vm_plans_parallel(
+            &plans,
+            &machine,
+            &tc_result.capabilities,
+            &budgets,
+            &raised_by,
+        ));
+    }
+
+    let mut results = Vec::with_capacity(plans.len());
     for ((plan, budget), raised) in plans.iter().zip(&budgets).zip(&raised_by) {
         results.push(run_verify_vm(
             plan,
@@ -1099,12 +1283,14 @@ pub(crate) fn format_type_errors(errors: &[crate::types::checker::TypeError]) ->
 
 // ─── Plan synthesis ───────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 struct VmVerifyCaseFns {
     left: String,
     right: String,
     guard: Option<String>,
 }
 
+#[derive(Clone)]
 struct VmVerifyPlan {
     block: VerifyBlock,
     cases: Vec<VmVerifyCaseFns>,
@@ -1802,6 +1988,141 @@ fn build_case_oracle_stubs(
 }
 
 // ─── Case runner ──────────────────────────────────────────────────────────────
+
+#[cfg(feature = "runtime")]
+fn single_case_plan(plan: &VmVerifyPlan, index: usize) -> VmVerifyPlan {
+    let mut block = plan.block.clone();
+    block.cases = vec![block.cases[index].clone()];
+    block.case_spans = block.case_spans.get(index).cloned().into_iter().collect();
+    block.case_givens = block.case_givens.get(index).cloned().into_iter().collect();
+    block.case_hostile_origins = block
+        .case_hostile_origins
+        .get(index)
+        .copied()
+        .into_iter()
+        .collect();
+    block.case_hostile_profiles = block
+        .case_hostile_profiles
+        .get(index)
+        .cloned()
+        .into_iter()
+        .collect();
+    block.case_reverse_order = block
+        .case_reverse_order
+        .get(index)
+        .copied()
+        .into_iter()
+        .collect();
+    VmVerifyPlan {
+        block,
+        cases: vec![plan.cases[index].clone()],
+    }
+}
+
+#[cfg(feature = "runtime")]
+fn empty_verify_result(
+    plan: &VmVerifyPlan,
+    budget: &CaseBudget,
+    raised_by: Option<&str>,
+) -> VerifyResult {
+    let block = &plan.block;
+    let block_label = match &block.kind {
+        VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
+        VerifyKind::Cases => block.fn_name.clone(),
+    };
+    VerifyResult {
+        fn_name: block.fn_name.clone(),
+        is_law: matches!(&block.kind, VerifyKind::Law(_)),
+        block_label,
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        declined: 0,
+        budget: VerifyBudgetInfo {
+            limit: budget.limit,
+            default_limit: budget.default_limit,
+            raised_by: raised_by.map(str::to_string),
+        },
+        case_results: Vec::with_capacity(plan.cases.len()),
+        failures: Vec::new(),
+    }
+}
+
+#[cfg(feature = "runtime")]
+fn merge_verify_result(target: &mut VerifyResult, mut case: VerifyResult) {
+    target.passed += case.passed;
+    target.failed += case.failed;
+    target.skipped += case.skipped;
+    target.declined += case.declined;
+    target.case_results.append(&mut case.case_results);
+    target.failures.append(&mut case.failures);
+}
+
+#[cfg(feature = "runtime")]
+fn run_verify_vm_plans_parallel(
+    plans: &[VmVerifyPlan],
+    machine: &vm::VM,
+    capabilities: &crate::capability::CapabilityRegistry,
+    budgets: &[CaseBudget],
+    raised_by: &[Option<String>],
+) -> Vec<VerifyResult> {
+    use rayon::prelude::*;
+
+    // One indexed queue for the whole module. Besides allowing one-case
+    // blocks to share workers, this creates each worker VM once per module
+    // instead of once per block. Collection preserves (block, case) order.
+    let tasks = plans
+        .iter()
+        .enumerate()
+        .flat_map(|(plan_index, plan)| {
+            (0..plan.cases.len()).map(move |case_index| (plan_index, case_index))
+        })
+        .collect::<Vec<_>>();
+    let per_case: Vec<(usize, VerifyResult)> = tasks
+        .into_par_iter()
+        .map_init(
+            || machine.fork_for_verify(),
+            |case_machine, (plan_index, case_index)| {
+                let plan = &plans[plan_index];
+                let case_total = plan.cases.len();
+                let single = single_case_plan(plan, case_index);
+                let mut result = run_verify_vm(
+                    &single,
+                    case_machine,
+                    capabilities,
+                    &budgets[plan_index],
+                    raised_by[plan_index].as_deref(),
+                );
+                for case in &mut result.case_results {
+                    case.case_index = case_index;
+                    case.case_total = case_total;
+                }
+                if result.is_law {
+                    for (case, _, _) in &mut result.failures {
+                        let expr = result
+                            .case_results
+                            .first()
+                            .map(|result| result.case_expr.as_str())
+                            .unwrap_or_default();
+                        *case = format!("case {}/{} [{}]", case_index + 1, case_total, expr);
+                    }
+                }
+                (plan_index, result)
+            },
+        )
+        .collect();
+
+    let mut merged = plans
+        .iter()
+        .zip(budgets)
+        .zip(raised_by)
+        .map(|((plan, budget), raised)| empty_verify_result(plan, budget, raised.as_deref()))
+        .collect::<Vec<_>>();
+    for (plan_index, result) in per_case {
+        merge_verify_result(&mut merged[plan_index], result);
+    }
+    merged
+}
 
 fn run_verify_vm(
     plan: &VmVerifyPlan,

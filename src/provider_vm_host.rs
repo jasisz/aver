@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::codegen::rust::composition::{ProviderComposition, ProviderCompositionSource};
 use crate::toolchain_source::ToolchainSource;
 
-const HOST_SCHEMA: &str = "aver-provider-vm-host-v4";
+const HOST_SCHEMA: &str = "aver-provider-vm-host-v5";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderHostBackend {
@@ -303,7 +303,7 @@ fn aver_dependency_line(backend: ProviderHostBackend) -> Result<String, String> 
 
 fn render_cargo_toml(binary_name: &str, dependencies: &[String]) -> String {
     format!(
-        "[package]\nname = {}\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\n{}\n\n[profile.dev]\ndebug = 0\n",
+        "[package]\nname = {}\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\n{}\n\n[profile.dev]\ndebug = 0\n\n[profile.dev.package.\"*\"]\nopt-level = 2\n",
         toml_string(binary_name),
         dependencies.join("\n")
     )
@@ -488,5 +488,14 @@ mod tests {
         hash_source_tree(root.path(), root.path(), &mut after).unwrap();
         let after = format!("{:x}", after.finalize());
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn provider_host_optimizes_linked_runtime_dependencies() {
+        let manifest = render_cargo_toml(
+            "aver-provider-host-test",
+            &["aver = { version = \"=1.2.3\" }".to_string()],
+        );
+        assert!(manifest.contains("[profile.dev.package.\"*\"]\nopt-level = 2"));
     }
 }

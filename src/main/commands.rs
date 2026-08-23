@@ -222,6 +222,36 @@ pub(super) fn collect_program_units(
     module_root: &str,
     reported: &mut HashSet<PathBuf>,
 ) -> Result<Vec<ReportUnit>, String> {
+    let mut cache = aver::source::ProgramLoadCache::default();
+    collect_program_units_with_cache(file, module_root, reported, &mut cache)
+}
+
+fn collect_program_units_with_cache(
+    file: &str,
+    module_root: &str,
+    reported: &mut HashSet<PathBuf>,
+    cache: &mut aver::source::ProgramLoadCache,
+) -> Result<Vec<ReportUnit>, String> {
+    let program = load_report_program_with_cache(file, module_root, cache)?;
+    Ok(program
+        .report_units()
+        .filter(|module| reported.insert(aver::source::canonicalize_path(&module.path)))
+        .map(|module| {
+            let path = if module.is_entry {
+                file.to_string()
+            } else {
+                module.path.to_string_lossy().to_string()
+            };
+            (path, module.source.clone(), module.items.clone())
+        })
+        .collect())
+}
+
+pub(super) fn load_report_program_with_cache(
+    file: &str,
+    module_root: &str,
+    cache: &mut aver::source::ProgramLoadCache,
+) -> Result<aver::source::Program, String> {
     let source = read_file(file)?;
     // Parse failure shouldn't abort `check`: its analysis pass owns the
     // canonical line/column diagnostic. `verify` re-parses an empty item set
@@ -235,12 +265,13 @@ pub(super) fn collect_program_units(
     // The tolerant walk keeps a dependency that fails to parse or lacks its
     // declaration as a unit of its own, so each file reports its diagnostics
     // in place; only an unresolvable dependency stops the walk.
-    let program = aver::source::load_program(
+    aver::source::load_program_with_cache(
         Path::new(file),
         &source,
         &items,
         module_root,
         LoadMode::Tolerant,
+        cache,
     )
     .map_err(|error| match error {
         LoadError::Missing {
@@ -254,19 +285,7 @@ pub(super) fn collect_program_units(
             required_by.unwrap_or_default().display()
         ),
         other => other.to_string(),
-    })?;
-    Ok(program
-        .report_units()
-        .filter(|module| reported.insert(aver::source::canonicalize_path(&module.path)))
-        .map(|module| {
-            let path = if module.is_entry {
-                file.to_string()
-            } else {
-                module.path.to_string_lossy().to_string()
-            };
-            (path, module.source.clone(), module.items.clone())
-        })
-        .collect())
+    })
 }
 
 /// Canonical key of the file a diagnostic span names, resolved against the
@@ -1918,12 +1937,18 @@ pub(super) fn cmd_audit(
     // Every module of every input's program, each collected once: a module
     // reached from an earlier input is not a unit of a later one.
     let mut reported = HashSet::new();
+    let mut load_cache = aver::source::ProgramLoadCache::default();
     let programs = inputs
         .iter()
         .map(|file| {
             (
                 file,
-                collect_program_units(file, &module_root, &mut reported),
+                collect_program_units_with_cache(
+                    file,
+                    &module_root,
+                    &mut reported,
+                    &mut load_cache,
+                ),
             )
         })
         .collect::<Vec<_>>();
@@ -2291,12 +2316,18 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
     // Every module of every input's program, each collected once: a module
     // reached from an earlier input is not a unit of a later one.
     let mut reported = HashSet::new();
+    let mut load_cache = aver::source::ProgramLoadCache::default();
     let programs = inputs
         .iter()
         .map(|file| {
             (
                 file,
-                collect_program_units(file, &module_root, &mut reported),
+                collect_program_units_with_cache(
+                    file,
+                    &module_root,
+                    &mut reported,
+                    &mut load_cache,
+                ),
             )
         })
         .collect::<Vec<_>>();
@@ -2548,6 +2579,21 @@ struct VerifyRun {
     stop: Option<VerifyStop>,
 }
 
+struct PlannedVerifyInput {
+    file: String,
+    units: Result<Vec<VerifyReportUnit>, String>,
+}
+
+struct VerifyReportUnit {
+    path: String,
+    source: String,
+    items: Vec<TopLevel>,
+    loaded: Vec<aver::source::LoadedModule>,
+    project_dependencies: Vec<(PathBuf, String)>,
+    fault: Option<String>,
+    prepared: Option<Result<aver::diagnostics::vm_verify::PreparedVmVerify, String>>,
+}
+
 /// Bucket a message `verify` could not get past. `Engine` is the bucket that
 /// makes a claim — that `aver check` passes on the file and has nothing to
 /// add — so it is only ever chosen for a message verify itself is known to
@@ -2612,29 +2658,29 @@ fn verify_stopped_before_any_module(
 
 /// Verify every not-yet-reported module of the program named by `file`,
 /// leaves-first.
-fn run_verify_for_file(
-    file: &str,
-    module_root: &str,
+struct VerifyRunOptions<'a> {
+    module_root: &'a str,
     hostile: bool,
     wasm_gc: bool,
-    provider_bindings: &[aver::provider::ProviderBinding],
-    reported: &mut HashSet<PathBuf>,
+    parallel_cases: bool,
+    provider_bindings: &'a [aver::provider::ProviderBinding],
+    config: &'a Result<Option<aver::config::ProjectConfig>, String>,
+}
+
+fn run_verify_for_units(
+    file: &str,
+    units: Vec<VerifyReportUnit>,
+    options: VerifyRunOptions<'_>,
 ) -> VerifyRun {
     use aver::verify_law::expand::ExpansionMode;
-
-    let units = match collect_program_units(file, module_root, reported) {
-        Ok(units) => units,
-        // A module that cannot be found or read is a project error, and
-        // `aver check` reports it the same way.
-        Err(e) => {
-            return verify_stopped_before_any_module(
-                file,
-                module_root,
-                VerifySkipReason::Source,
-                e,
-            );
-        }
-    };
+    let VerifyRunOptions {
+        module_root,
+        hostile,
+        wasm_gc,
+        parallel_cases,
+        provider_bindings,
+        config,
+    } = options;
     // Counted before anything runs — and before anything else can fail: once a
     // module stops the walk, the modules from that one on carry blocks nobody
     // checked, and the summary has to say how many. A stop that happens here,
@@ -2642,9 +2688,9 @@ fn run_verify_for_file(
     // unchecked.
     let mut unchecked: Vec<VerifyUncheckedFile> = units
         .iter()
-        .map(|(path, _, items)| VerifyUncheckedFile {
-            path: path.clone(),
-            blocks: aver::checker::merge_verify_blocks(items).len(),
+        .map(|unit| VerifyUncheckedFile {
+            path: unit.path.clone(),
+            blocks: aver::checker::merge_verify_blocks(&unit.items).len(),
         })
         .collect();
 
@@ -2664,15 +2710,15 @@ fn run_verify_for_file(
     // what the loader parsed these units under, and the re-parse below has to
     // agree with it. An unreadable `aver.toml` is a project error like any
     // other, so it stops the walk and leaves every module above unchecked.
-    let config = match load_runtime_policy(module_root) {
-        Ok(config) => config,
+    let config = match config {
+        Ok(config) => config.clone(),
         Err(e) => {
             return VerifyRun {
                 results: Vec::new(),
                 stop: Some(VerifyStop {
                     at: file.to_string(),
                     reason: VerifySkipReason::Source,
-                    message: e,
+                    message: e.clone(),
                     unchecked,
                 }),
             };
@@ -2685,7 +2731,16 @@ fn run_verify_for_file(
     } else {
         ExpansionMode::Declared
     };
-    for (index, (path, source, items)) in units.into_iter().enumerate() {
+    for (index, unit) in units.into_iter().enumerate() {
+        let VerifyReportUnit {
+            path,
+            source,
+            items,
+            loaded: _,
+            project_dependencies: _,
+            fault: _,
+            prepared,
+        } = unit;
         // `collect_program_units` swallows a parse error into empty `items` so
         // that `aver check` can surface it as a canonical line/col diagnostic
         // via its own analysis pass. `verify` has no such pass, so an
@@ -2732,14 +2787,36 @@ fn run_verify_for_file(
                 Err("verify --wasm-gc requires building with --features wasm".to_string())
             }
         } else {
-            aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode_and_bindings(
-                items,
-                config.clone(),
-                Some(module_root),
-                &path,
-                mode,
-                provider_bindings,
-            )
+            if let Some(prepared) = prepared {
+                prepared.and_then(|prepared| {
+                    aver::diagnostics::vm_verify::run_prepared_verify_vm_with_bindings(
+                        prepared,
+                        config.clone(),
+                        Some(module_root),
+                        &path,
+                        provider_bindings,
+                        parallel_cases,
+                    )
+                })
+            } else if parallel_cases {
+                aver::diagnostics::vm_verify::run_verify_for_items_vm_parallel_with_mode_and_bindings(
+                    items,
+                    config.clone(),
+                    Some(module_root),
+                    &path,
+                    mode,
+                    provider_bindings,
+                )
+            } else {
+                aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode_and_bindings(
+                    items,
+                    config.clone(),
+                    Some(module_root),
+                    &path,
+                    mode,
+                    provider_bindings,
+                )
+            }
         };
         match outcome {
             Ok(blocks) => results.push(VerifyFileResult {
@@ -2767,6 +2844,47 @@ fn run_verify_for_file(
         results,
         stop: None,
     }
+}
+
+fn collect_verify_program_units_with_cache(
+    file: &str,
+    module_root: &str,
+    reported: &mut HashSet<PathBuf>,
+    cache: &mut aver::source::ProgramLoadCache,
+) -> Result<Vec<VerifyReportUnit>, String> {
+    let program = load_report_program_with_cache(file, module_root, cache)?;
+    Ok(program
+        .report_units()
+        .filter(|module| reported.insert(aver::source::canonicalize_path(&module.path)))
+        .map(|module| {
+            let (loaded, graph_fault) = match program.loaded_dependencies_for(module) {
+                Ok(loaded) => (loaded, None),
+                Err(error) => (Vec::new(), Some(error.to_string())),
+            };
+            let project_dependencies = loaded
+                .iter()
+                .filter(|dependency| !dependency.path.starts_with("<aver-stdlib>"))
+                .map(|dependency| (dependency.path.clone(), dependency.dep_name.clone()))
+                .collect();
+            VerifyReportUnit {
+                path: if module.is_entry {
+                    file.to_string()
+                } else {
+                    module.path.to_string_lossy().to_string()
+                },
+                source: module.source.clone(),
+                items: module.items.clone(),
+                loaded,
+                project_dependencies,
+                fault: module
+                    .fault
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .or(graph_fault),
+                prepared: None,
+            }
+        })
+        .collect())
 }
 
 /// Bucket case outcomes by `from_hostile` for the per-block summary
@@ -3266,6 +3384,7 @@ pub(super) fn cmd_verify(
     json: bool,
     hostile: bool,
     wasm_gc: bool,
+    jobs: Option<usize>,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
@@ -3280,25 +3399,163 @@ pub(super) fn cmd_verify(
             process::exit(1);
         }
     };
+    let input_count = inputs.len();
+    let jobs = jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1)
+    });
+
+    // Ownership is decided once, in sorted input order, before any worker
+    // starts. The shared loader cache makes overlapping dependency cones pay
+    // for filesystem IO and parsing once while preserving each walk's own
+    // cycle detection and leaves-first order.
+    let mut reported = HashSet::new();
+    let mut load_cache = aver::source::ProgramLoadCache::default();
+    let mut plans: Vec<PlannedVerifyInput> = inputs
+        .into_iter()
+        .map(|file| PlannedVerifyInput {
+            units: collect_verify_program_units_with_cache(
+                &file,
+                &module_root,
+                &mut reported,
+                &mut load_cache,
+            ),
+            file,
+        })
+        .collect();
+    let config = load_runtime_policy(&module_root);
+    let pool = if jobs > 1 {
+        match rayon::ThreadPoolBuilder::new().num_threads(jobs).build() {
+            Ok(pool) => Some(pool),
+            Err(error) => {
+                eprintln!("{}", format!("Cannot start verify workers: {error}").red());
+                process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    // Declared VM verification prepares each unique project module once in
+    // the same bounded pool used by its cases. Every job checks only its own
+    // body against immutable surfaces from the one graph walk above. Once all
+    // jobs join, dependency errors are propagated through the transitive
+    // closure before any report runs, retaining leaves-first fail-closed
+    // semantics without serializing otherwise independent preparation.
+    if !hostile && !wasm_gc {
+        let prepare_unit = |unit: &mut VerifyReportUnit| {
+            let prepared = if let Some(fault) = &unit.fault {
+                Err(fault.clone())
+            } else {
+                aver::diagnostics::vm_verify::prepare_verify_for_items_vm_with_checked_loaded(
+                    unit.items.clone(),
+                    std::mem::take(&mut unit.loaded),
+                    &unit.path,
+                )
+            };
+            unit.prepared = Some(prepared);
+        };
+        if let Some(pool) = &pool {
+            use rayon::prelude::*;
+            pool.install(|| {
+                plans.par_iter_mut().for_each(|plan| {
+                    if let Ok(units) = &mut plan.units {
+                        units.par_iter_mut().for_each(prepare_unit);
+                    }
+                })
+            });
+        } else {
+            for plan in &mut plans {
+                if let Ok(units) = &mut plan.units {
+                    units.iter_mut().for_each(&prepare_unit);
+                }
+            }
+        }
+
+        let own_errors = plans
+            .iter()
+            .filter_map(|plan| plan.units.as_ref().ok())
+            .flatten()
+            .filter_map(|unit| {
+                unit.prepared
+                    .as_ref()
+                    .and_then(|prepared| prepared.as_ref().err())
+                    .map(|error| {
+                        (
+                            aver::source::canonicalize_path(Path::new(&unit.path)),
+                            error.clone(),
+                        )
+                    })
+            })
+            .collect::<HashMap<_, _>>();
+        for unit in plans
+            .iter_mut()
+            .filter_map(|plan| plan.units.as_mut().ok())
+            .flatten()
+        {
+            let failed_dependency =
+                unit.project_dependencies
+                    .iter()
+                    .find_map(|(dependency_path, dependency_name)| {
+                        own_errors
+                            .get(&aver::source::canonicalize_path(dependency_path))
+                            .map(|error| (dependency_name, error))
+                    });
+            if let Some((dependency, error)) = failed_dependency {
+                unit.prepared = Some(Err(format!(
+                    "Type errors in dependency module '{dependency}':\n{error}"
+                )));
+            }
+        }
+    }
+
+    let execute = |plan: PlannedVerifyInput, parallel_cases: bool| {
+        let file = plan.file;
+        let run = match plan.units {
+            Ok(units) => run_verify_for_units(
+                &file,
+                units,
+                VerifyRunOptions {
+                    module_root: &module_root,
+                    hostile,
+                    wasm_gc,
+                    parallel_cases,
+                    provider_bindings,
+                    config: &config,
+                },
+            ),
+            Err(error) => verify_stopped_before_any_module(
+                &file,
+                &module_root,
+                VerifySkipReason::Source,
+                error,
+            ),
+        };
+        (file, run)
+    };
+
+    let runs: Vec<(String, VerifyRun)> = if let Some(pool) = &pool {
+        use rayon::prelude::*;
+        pool.install(|| {
+            plans
+                .into_par_iter()
+                .map(|plan| execute(plan, !wasm_gc))
+                .collect()
+        })
+    } else {
+        plans.into_iter().map(|plan| execute(plan, false)).collect()
+    };
 
     let mut all_file_results: Vec<VerifyFileResult> = Vec::new();
     let mut failed_files = Vec::new();
     let mut stops: Vec<VerifyStop> = Vec::new();
     let mut printed_any = false;
-    // Every module of every input's program, each verified once.
-    let mut reported = HashSet::new();
-
-    for file in &inputs {
-        let run = run_verify_for_file(
-            file,
-            &module_root,
-            hostile,
-            wasm_gc,
-            provider_bindings,
-            &mut reported,
-        );
-        // Render immediately — streaming output. Modules verified before a
-        // stop are reported like any other: their cases really ran.
+    for (file, run) in runs {
+        // Rayon preserves indexed-iterator collection order. Rendering only
+        // here makes `-jN` byte-identical to `-j1` even when a later input
+        // finishes first. Modules completed before a per-program stop remain
+        // reportable: their cases really ran.
         let has_blocks = run.results.iter().any(|fr| !fr.blocks.is_empty());
         if has_blocks && printed_any && !json {
             println!();
@@ -3321,7 +3578,7 @@ pub(super) fn cmd_verify(
                 display_check_path(&stop.at, &module_root).red(),
                 stop.message
             );
-            failed_files.push(file.clone());
+            failed_files.push(file);
             stops.push(stop);
         }
     }
@@ -3450,7 +3707,7 @@ pub(super) fn cmd_verify(
         };
         println!(
             "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"modules\":{},\"blocks\":{},\"cases_passed\":{},\"cases_failed\":{}{},\"files_skipped\":{},\"blocks_unchecked\":{}}}",
-            inputs.len(),
+            input_count,
             total_modules,
             total_blocks,
             total_passed,

@@ -487,6 +487,103 @@ impl Program {
     pub fn report_units(&self) -> impl Iterator<Item = &ProgramModule> {
         self.modules.iter().filter(|module| !module.is_stdlib)
     }
+
+    /// Parsed dependency closure of one module already present in this
+    /// program, in the program's canonical leaves-first order.
+    ///
+    /// Whole-program reports use this after their single graph walk so each
+    /// module can be type-checked and compiled without asking the filesystem
+    /// loader to rediscover its dependency cone. `module` may be the entry or
+    /// any project dependency returned by [`Self::report_units`].
+    pub fn loaded_dependencies_for(
+        &self,
+        module: &ProgramModule,
+    ) -> Result<Vec<LoadedModule>, LoadError> {
+        let by_name = self
+            .modules
+            .iter()
+            .map(|candidate| (candidate.dep_name.as_str(), candidate))
+            .collect::<HashMap<_, _>>();
+        let target_key = canonicalize_path(&module.path);
+        let mut reachable = HashSet::new();
+        let mut loading = vec![target_key];
+        validate_program_module_name(module, &module.dep_name)?;
+        collect_dependency_keys(module, &by_name, &mut reachable, &mut loading)?;
+        Ok(self
+            .modules
+            .iter()
+            .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
+            .map(ProgramModule::as_loaded)
+            .collect())
+    }
+}
+
+fn validate_program_module_name(module: &ProgramModule, dep_name: &str) -> Result<(), LoadError> {
+    let Some(declaration) = visibility::module_decl(&module.items) else {
+        return Ok(());
+    };
+    let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
+    if declaration.name == expected {
+        return Ok(());
+    }
+    Err(LoadError::NameMismatch {
+        expected: expected.to_string(),
+        dep_name: dep_name.to_string(),
+        found: declaration.name.clone(),
+        path: module.path.clone(),
+    })
+}
+
+fn collect_dependency_keys(
+    module: &ProgramModule,
+    by_name: &HashMap<&str, &ProgramModule>,
+    reachable: &mut HashSet<PathBuf>,
+    loading: &mut Vec<PathBuf>,
+) -> Result<(), LoadError> {
+    let Some(declaration) = visibility::module_decl(&module.items) else {
+        return Ok(());
+    };
+    let explicit = declaration.depends.iter().cloned().collect::<HashSet<_>>();
+    let mut names = declaration.depends.clone();
+    for implied in crate::stdlib::implicit_stdlib_deps(&module.items) {
+        if !explicit.contains(&implied) {
+            names.push(implied);
+        }
+    }
+
+    let module_key = canonicalize_path(&module.path);
+    for name in names {
+        let Some(dependency) = by_name.get(name.as_str()).copied() else {
+            // A tolerant walk still resolves every edge before constructing a
+            // Program. A missing node here therefore means the graph itself
+            // is inconsistent, rather than another filesystem miss.
+            return Err(LoadError::Missing {
+                name,
+                root: "<loaded program>".to_string(),
+                required_by: Some(module.path.clone()),
+            });
+        };
+        let key = canonicalize_path(&dependency.path);
+        // Source-typed standard modules may imply themselves through their
+        // own builtins. The disk walk excludes that ownership edge too; an
+        // explicitly written `depends [Self]` remains a real cycle.
+        if key == module_key && !explicit.contains(&name) {
+            continue;
+        }
+        validate_program_module_name(dependency, &name)?;
+        if let Some(start) = loading.iter().position(|candidate| candidate == &key) {
+            let mut chain = loading[start..].to_vec();
+            chain.push(key);
+            return Err(LoadError::Cycle { chain });
+        }
+        if !reachable.insert(key.clone()) {
+            continue;
+        }
+        loading.push(key);
+        collect_dependency_keys(dependency, by_name, reachable, loading)?;
+        loading.pop();
+    }
+    Ok(())
 }
 
 /// Load the program named by an already parsed entry module.
@@ -500,7 +597,63 @@ pub fn load_program(
     module_root: &str,
     mode: LoadMode,
 ) -> Result<Program, LoadError> {
-    let mut walk = Walk::new(module_root, mode);
+    let mut cache = ProgramLoadCache::default();
+    load_program_with_cache(
+        entry_path,
+        entry_source,
+        entry_items,
+        module_root,
+        mode,
+        &mut cache,
+    )
+}
+
+/// Sources and parsed dependency modules shared by several program walks.
+///
+/// Directory reports often name every project file as an entry. Their
+/// dependency cones overlap heavily, so rebuilding each cone from disk turns
+/// a linear project walk into repeated IO and parsing. A command creates one
+/// cache for one module root and passes it to [`load_program_with_cache`];
+/// individual walks still own discovery order, and each whole-program graph
+/// view explicitly validates dependency names and cycles before reuse.
+#[derive(Default)]
+pub struct ProgramLoadCache {
+    resolved: HashMap<String, Result<Option<ModuleSource>, String>>,
+    parsed: HashMap<PathBuf, CachedProgramModule>,
+    verify_config: Option<Option<crate::config::ProjectConfig>>,
+}
+
+#[derive(Clone)]
+struct CachedProgramModule {
+    source: String,
+    items: Vec<TopLevel>,
+    path: PathBuf,
+    is_stdlib: bool,
+    fault: Option<CachedModuleFault>,
+}
+
+#[derive(Clone)]
+enum CachedModuleFault {
+    Parse(String),
+    Declaration(String),
+}
+
+/// [`load_program`] with a command-scoped dependency cache.
+///
+/// The cache is deliberately only the immutable input layer. Each call still
+/// performs its own graph walk, while [`Program::loaded_dependencies_for`]
+/// validates names and cycles before a report reuses the resulting graph.
+/// Sharing the cache therefore cannot make ownership depend on execution
+/// order.
+pub fn load_program_with_cache(
+    entry_path: &Path,
+    entry_source: &str,
+    entry_items: &[TopLevel],
+    module_root: &str,
+    mode: LoadMode,
+    cache: &mut ProgramLoadCache,
+) -> Result<Program, LoadError> {
+    let mut walk = Walk::new(module_root, mode, cache);
     walk.follow_edges(entry_path, entry_items)?;
     let mut modules = walk.modules;
     let entry_name = visibility::module_decl(entry_items)
@@ -538,20 +691,28 @@ struct Walk<'a> {
     loading: Vec<PathBuf>,
     modules: Vec<ProgramModule>,
     next_discovery_index: usize,
+    cache: &'a mut ProgramLoadCache,
 }
 
 impl<'a> Walk<'a> {
-    fn new(module_root: &'a str, mode: LoadMode) -> Self {
+    fn new(module_root: &'a str, mode: LoadMode, cache: &'a mut ProgramLoadCache) -> Self {
+        let verify_config = cache
+            .verify_config
+            .get_or_insert_with(|| {
+                crate::config::ProjectConfig::load_from_dir(Path::new(module_root))
+                    .ok()
+                    .flatten()
+            })
+            .clone();
         Self {
             module_root,
             mode,
-            verify_config: crate::config::ProjectConfig::load_from_dir(Path::new(module_root))
-                .ok()
-                .flatten(),
+            verify_config,
             loaded: HashSet::new(),
             loading: Vec::new(),
             modules: Vec::new(),
             next_discovery_index: 1,
+            cache,
         }
     }
 
@@ -563,8 +724,18 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn resolve(&self, name: &str, required_by: Option<&Path>) -> Result<ModuleSource, LoadError> {
-        resolve_module_source(name, self.module_root)
+    fn resolve(
+        &mut self,
+        name: &str,
+        required_by: Option<&Path>,
+    ) -> Result<ModuleSource, LoadError> {
+        let resolved = self
+            .cache
+            .resolved
+            .entry(name.to_string())
+            .or_insert_with(|| resolve_module_source(name, self.module_root))
+            .clone();
+        resolved
             .map_err(LoadError::Read)?
             .ok_or_else(|| LoadError::Missing {
                 name: name.to_string(),
@@ -623,29 +794,39 @@ impl<'a> Walk<'a> {
         let discovery_index = self.next_discovery_index;
         self.next_discovery_index += 1;
         let ModuleSource { path, source } = resolved;
-        let is_stdlib = path.starts_with("<aver-stdlib>");
-
-        let (items, fault) =
-            match parse_source_with_verify_ceiling(&source, self.verify_ceiling(&path)) {
+        let ceiling = self.verify_ceiling(&path);
+        let cached = self.cache.parsed.entry(key.clone()).or_insert_with(|| {
+            let is_stdlib = path.starts_with("<aver-stdlib>");
+            let (items, fault) = match parse_source_with_verify_ceiling(&source, ceiling) {
                 Ok(items) => match require_module_declaration(&items, &path.to_string_lossy()) {
                     Ok(()) => (items, None),
-                    Err(message) => (
-                        items,
-                        Some(LoadError::Declaration {
-                            path: path.clone(),
-                            message,
-                        }),
-                    ),
+                    Err(message) => (items, Some(CachedModuleFault::Declaration(message))),
                 },
-                Err(error) => (
-                    Vec::new(),
-                    Some(LoadError::Parse {
-                        name: dep_name.to_string(),
-                        path: path.clone(),
-                        error,
-                    }),
-                ),
+                Err(error) => (Vec::new(), Some(CachedModuleFault::Parse(error))),
             };
+            CachedProgramModule {
+                source,
+                items,
+                path,
+                is_stdlib,
+                fault,
+            }
+        });
+        let source = cached.source.clone();
+        let items = cached.items.clone();
+        let path = cached.path.clone();
+        let is_stdlib = cached.is_stdlib;
+        let fault = cached.fault.as_ref().map(|fault| match fault {
+            CachedModuleFault::Parse(error) => LoadError::Parse {
+                name: dep_name.to_string(),
+                path: path.clone(),
+                error: error.clone(),
+            },
+            CachedModuleFault::Declaration(message) => LoadError::Declaration {
+                path: path.clone(),
+                message: message.clone(),
+            },
+        });
         if self.mode == LoadMode::Strict {
             if let Some(fault) = fault {
                 return Err(fault);
@@ -790,7 +971,8 @@ pub fn load_module_tree(
     root_deps: &[String],
     module_root: &str,
 ) -> Result<Vec<LoadedModule>, String> {
-    let mut walk = Walk::new(module_root, LoadMode::Strict);
+    let mut cache = ProgramLoadCache::default();
+    let mut walk = Walk::new(module_root, LoadMode::Strict, &mut cache);
     for name in root_deps {
         let resolved = walk.resolve(name, None)?;
         walk.load(name, resolved)?;
@@ -940,9 +1122,9 @@ pub fn load_compile_deps(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_stdlib_shadowed, collect_stdlib_shadowed_in_map, load_module_tree,
-        load_module_tree_from_map, parse_source, require_module_declaration, resolve_module_source,
-        stdlib_shadowed_project_file,
+        LoadMode, ProgramLoadCache, collect_stdlib_shadowed, collect_stdlib_shadowed_in_map,
+        load_module_tree, load_module_tree_from_map, load_program_with_cache, parse_source,
+        require_module_declaration, resolve_module_source, stdlib_shadowed_project_file,
     };
 
     #[test]
@@ -995,6 +1177,50 @@ mod tests {
         let resolved =
             resolve_module_source("DefinitelyNotARealModule", ".").expect("resolve unknown module");
         assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn program_cache_reuses_dependency_source_and_parse_across_entries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dep_path = dir.path().join("shared.av");
+        std::fs::write(
+            &dep_path,
+            "module Shared\n    intent = \"shared\"\nfn value() -> Int\n    1\n",
+        )
+        .expect("write dependency");
+        let root = dir.path().to_str().expect("utf8 root");
+        let first_source = "module First\n    intent = \"first\"\n    depends [Shared]\n";
+        let second_source = "module Second\n    intent = \"second\"\n    depends [Shared]\n";
+        let first_items = parse_source(first_source).expect("parse first");
+        let second_items = parse_source(second_source).expect("parse second");
+        let mut cache = ProgramLoadCache::default();
+
+        let first = load_program_with_cache(
+            &dir.path().join("first.av"),
+            first_source,
+            &first_items,
+            root,
+            LoadMode::Tolerant,
+            &mut cache,
+        )
+        .expect("first program");
+        assert_eq!(first.dependencies().len(), 1);
+
+        // A command sees one immutable project snapshot. Changing the file
+        // after its first walk must not make a later entry parse it again.
+        std::fs::write(&dep_path, "this is no longer Aver").expect("replace dependency");
+        let second = load_program_with_cache(
+            &dir.path().join("second.av"),
+            second_source,
+            &second_items,
+            root,
+            LoadMode::Tolerant,
+            &mut cache,
+        )
+        .expect("second program");
+        assert_eq!(second.dependencies().len(), 1);
+        assert!(second.dependencies()[0].fault.is_none());
+        assert!(second.dependencies()[0].source.contains("fn value"));
     }
 
     #[test]

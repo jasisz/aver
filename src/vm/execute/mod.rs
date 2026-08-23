@@ -260,6 +260,24 @@ impl VM {
         self.runtime.provider_registry()
     }
 
+    /// Fresh execution state over this VM's compiled, immutable program.
+    ///
+    /// Verify cases are independent observations. Parallel verify workers use
+    /// a private stack, arena and runtime scratch state while sharing only the
+    /// thread-safe provider registry and cloning the project policy.
+    pub(crate) fn fork_for_verify(&self) -> Self {
+        let (code, globals, arena) = self.build_parallel_base_context();
+        let mut child = Self::new(code, globals, arena);
+        child.set_provider_registry(self.provider_registry());
+        if let Some(config) = self.runtime.runtime_policy().cloned() {
+            child.set_runtime_policy(config);
+        }
+        child.defer_missing_capability_providers_to_dispatch(
+            self.defer_missing_capability_providers_to_dispatch,
+        );
+        child
+    }
+
     /// Start recording effectful calls.
     pub fn start_recording(&mut self) {
         self.runtime.start_recording();

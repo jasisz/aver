@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- **`aver verify` now uses the machine instead of repeatedly rebuilding the same program.** The command resolves and parses one deterministic project graph, checks and prepares each project module once, and runs independent files and declared cases in one bounded Rayon pool. `-j N` / `--jobs N` selects the worker count, the default is the machine's available parallelism, and `-j 1` keeps the same graph-reuse path without concurrency. Module ownership, summaries, failures, and JSON remain collected in input/case order, so `-j 1` and `-j N` are byte-identical. On btc-listener's public 98-file corpus (6,016 cases), the full provider-backed command fell from 307.17 s to 7.17 s at `-j 1`, then to 3.98 s at `-j 8`; most of the win was eliminating repeated compiler/provider preflight work, not parallel execution. The same graph input cache now serves whole-directory `check` and `audit`, and provider-host planning no longer performs a second full pipeline per entry. Reported by Robin Owens ([@n1bor](https://github.com/n1bor)).
+
 - **Generated Cargo projects now inherit the toolchain's actual source.** A path-built Aver emits path dependencies, a git-installed Aver pins both `aver-lang` and `aver-rt` to the build repository and exact revision, and a registry installation emits exact registry versions. The generated Rust project and cached provider host share this one build-time provenance, so a git development build no longer pairs its generated code with an older same-version runtime from crates.io.
 
 - **Code generation now keeps stable identities all the way to backend rendering.** Rust root-main and tail-call paths consume resolved functions directly; Lean and Dafny resolve proof rewrites once at their producer boundary and no longer carry source-expression rendering adapters. Module-scoped verify reachability is a single transitive `FnId` walk over `ResolvedProgram`, so same-bare-name functions and types in entry and dependency modules cannot cross-wire through a backend cache or name lookup.
@@ -236,6 +238,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
   This is breaking for one shape: a top-level binding written *indented*, directly under the header, used to be accepted and now is not. The fix is to unindent it — bindings belong at column 0, outside the header — and the error says so.
 
 ### Fixed
+
+- **A source file with many diagnostics is linear to render again.** Diagnostic construction now indexes the file's lines once and shares that table across every finding instead of splitting and rescanning the complete source for every error. A half-written large module no longer turns `aver check` diagnostics into quadratic work.
 
 - **The nightly wasm-gc/wasip2 fuzz lanes build again.** The production multi-module flattener gained capability-registry and runtime/verification-surface arguments, but its three fuzz callers kept the old two-argument call and failed during compilation before AFL started. The codegen and VM↔wasm-gc parity targets now pass the typechecked program registry and runtime surface, matching the production compile path they exercise.
 

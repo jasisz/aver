@@ -184,10 +184,10 @@ pub const CALL_BUILTIN_OWNED: u8 = 0x46; // symbol_id:u32, argc:u8, owned:u8
 pub const CALL_KNOWN_OWNED: u8 = 0x47; // fn_id:u16, argc:u8, owned:u8
 
 /// Self tail-call: reuse current frame with new args.
-pub const TAIL_CALL_SELF: u8 = 0x43; // argc:u8
+pub const TAIL_CALL_SELF: u8 = 0x43; // argc:u8, owned:u8
 
 /// Mutual tail-call to a known function: reuse frame, switch target.
-pub const TAIL_CALL_KNOWN: u8 = 0x44; // fn_id:u16, argc:u8
+pub const TAIL_CALL_KNOWN: u8 = 0x44; // fn_id:u16, argc:u8, owned:u8
 
 /// Return top of stack to caller.
 pub const RETURN: u8 = 0x50;
@@ -753,11 +753,11 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
 
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
-        | EXTRACT_TUPLE_ITEM | WRAP | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 1,
+        | EXTRACT_TUPLE_ITEM | WRAP => 1,
 
         // 2-byte (u16 or u8+u8)
         LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL
-        | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR => 2,
+        | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 2,
 
         // owned:u8 + target_slot:u8. The slot is the target's own local cell,
         // which the runtime fence must exempt: the fusion deletes the
@@ -771,7 +771,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | LOAD_LOCAL_CONST => 3,
 
         // 4-byte
-        CALL_KNOWN_OWNED => 4, // fn_id:u16 + argc:u8 + owned:u8
+        CALL_KNOWN_OWNED | TAIL_CALL_KNOWN => 4, // fn_id:u16 + argc:u8 + owned:u8
 
         // 4-byte
         MATCH_VARIANT | RECORD_GET_NAMED | LIST_NEW | TUPLE_NEW => 4,

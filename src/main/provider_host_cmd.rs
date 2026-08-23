@@ -6,15 +6,15 @@
 //! capability; a backend that cannot host a Rust provider refuses instead of
 //! running without it.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
 use aver::codegen::rust as rust_codegen;
 
 use super::cli::Commands;
-use super::commands::{collect_program_units, resolve_av_inputs};
+use super::commands::{load_report_program_with_cache, resolve_av_inputs};
 
 /// Where a command executes the program, seen from the provider host.
 enum HostBackend {
@@ -198,31 +198,69 @@ fn plan_for_programs(
     let mut capabilities = aver::capability::CapabilityRegistry::default();
     let mut required = BTreeSet::new();
     let mut planned = HashSet::new();
+    let mut load_cache = aver::source::ProgramLoadCache::default();
+    let mut checked: HashMap<PathBuf, Result<(), String>> = HashMap::new();
     for input in inputs {
-        let Ok(units) = collect_program_units(input, module_root, &mut planned) else {
+        let Ok(program) = load_report_program_with_cache(input, module_root, &mut load_cache)
+        else {
             continue;
         };
-        for (_path, _source, mut items) in units {
-            aver::ir::pipeline::tco(&mut items);
-            let Ok(modules) = aver::source::load_compile_deps(&items, module_root) else {
+        for module in program
+            .report_units()
+            .filter(|module| planned.insert(aver::source::canonicalize_path(&module.path)))
+        {
+            let key = aver::source::canonicalize_path(&module.path);
+            if let Some(fault) = &module.fault {
+                checked.insert(key, Err(fault.to_string()));
                 continue;
+            }
+            let loaded = match program.loaded_dependencies_for(module) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    checked.insert(key, Err(error.to_string()));
+                    continue;
+                }
             };
+            let failed_dependency = loaded.iter().find_map(|dependency| {
+                checked
+                    .get(&aver::source::canonicalize_path(&dependency.path))
+                    .and_then(|status| status.as_ref().err())
+            });
+            if let Some(error) = failed_dependency {
+                checked.insert(key, Err(error.clone()));
+                continue;
+            }
+
+            let mut items = module.items.clone();
+            aver::ir::pipeline::tco(&mut items);
             let tc = aver::ir::pipeline::typecheck_gate(
                 &items,
-                &aver::ir::TypecheckMode::Full {
-                    base_dir: Some(module_root),
-                },
+                &aver::ir::TypecheckMode::WithCheckedLoaded(&loaded),
                 &items,
             );
             if !tc.errors.is_empty() {
+                checked.insert(
+                    key,
+                    Err(tc
+                        .errors
+                        .iter()
+                        .map(|error| error.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")),
+                );
                 continue;
             }
+            let modules = loaded
+                .iter()
+                .map(aver::codegen::ModuleInfo::from_loaded)
+                .collect::<Vec<_>>();
             required.extend(aver::provider::required_capability_operations(
                 &items,
                 &modules,
                 &tc.capabilities,
             ));
             capabilities.merge(tc.capabilities);
+            checked.insert(key, Ok(()));
         }
     }
 

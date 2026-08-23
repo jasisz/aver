@@ -181,6 +181,140 @@ fn directory_verify_reports_each_module_once() {
 }
 
 #[test]
+fn parallel_verify_matches_j1_bytes_and_keeps_shared_module_ownership() {
+    let project = Project::new("verify-parallel-deterministic");
+    project
+        .write("lib.av", SHARED_LIB_AV)
+        .write("entry.av", ENTRY_AV)
+        .write("other.av", OTHER_AV);
+
+    let sequential = project.run(&["verify", ".", "--json", "-j", "1"]);
+    let parallel = project.run(&["verify", ".", "--json", "-j", "4"]);
+    assert!(sequential.status.success(), "{}", report(&sequential));
+    assert!(parallel.status.success(), "{}", report(&parallel));
+    assert_eq!(parallel.status.code(), sequential.status.code());
+    assert_eq!(
+        parallel.stdout, sequential.stdout,
+        "parallel stdout drifted"
+    );
+    assert_eq!(
+        parallel.stderr, sequential.stderr,
+        "parallel stderr drifted"
+    );
+
+    let stdout = String::from_utf8_lossy(&parallel.stdout);
+    assert_eq!(
+        stdout.matches("\"kind\":\"analysis\"").count(),
+        3,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("\"file_label\":\"./lib.av\"").count(),
+        1,
+        "{stdout}"
+    );
+}
+
+#[test]
+fn parallel_verify_preserves_failure_coordinates_and_rendering() {
+    let project = Project::new("verify-parallel-failure");
+    project
+        .write(
+            "lib.av",
+            &LIB_AV.replace("double(-4) => -8", "double(-4) => -7"),
+        )
+        .write("entry.av", ENTRY_AV);
+
+    let sequential = project.run(&["verify", ".", "--json", "-j", "1"]);
+    let parallel = project.run(&["verify", ".", "--json", "-j", "4"]);
+    assert!(
+        !sequential.status.success(),
+        "sequential unexpectedly passed"
+    );
+    assert!(!parallel.status.success(), "parallel unexpectedly passed");
+    assert_eq!(parallel.status.code(), sequential.status.code());
+    assert_eq!(
+        parallel.stdout, sequential.stdout,
+        "parallel stdout drifted"
+    );
+    assert_eq!(
+        parallel.stderr, sequential.stderr,
+        "parallel stderr drifted"
+    );
+    assert!(
+        String::from_utf8_lossy(&parallel.stdout).contains("\"slug\":\"verify-mismatch\""),
+        "{}",
+        report(&parallel)
+    );
+}
+
+#[test]
+fn reused_verify_graph_still_rejects_a_dependency_name_mismatch() {
+    let project = Project::new("verify-name-mismatch");
+    project
+        .write("lib.av", &LIB_AV.replace("module Lib", "module Wrong"))
+        .write("entry.av", ENTRY_AV);
+
+    let sequential = project.run(&["verify", "entry.av", "-j", "1"]);
+    let parallel = project.run(&["verify", "entry.av", "-j", "4"]);
+    assert!(!sequential.status.success(), "{}", report(&sequential));
+    assert!(!parallel.status.success(), "{}", report(&parallel));
+    assert_eq!(parallel.stdout, sequential.stdout);
+    assert_eq!(parallel.stderr, sequential.stderr);
+    assert!(
+        String::from_utf8_lossy(&sequential.stderr).contains("Module name mismatch"),
+        "{}",
+        report(&sequential)
+    );
+}
+
+#[test]
+fn reused_verify_graph_propagates_dependency_type_errors_deterministically() {
+    let project = Project::new("verify-dependency-type-error");
+    project
+        .write("lib.av", &LIB_AV.replace("n * 2", "n * \"two\""))
+        .write("entry.av", ENTRY_AV);
+
+    let sequential = project.run(&["verify", "entry.av", "-j", "1"]);
+    let parallel = project.run(&["verify", "entry.av", "-j", "4"]);
+    assert!(!sequential.status.success(), "{}", report(&sequential));
+    assert!(!parallel.status.success(), "{}", report(&parallel));
+    assert_eq!(parallel.stdout, sequential.stdout);
+    assert_eq!(parallel.stderr, sequential.stderr);
+    assert!(
+        String::from_utf8_lossy(&sequential.stderr).contains("Arithmetic operator requires"),
+        "{}",
+        report(&sequential)
+    );
+}
+
+#[test]
+fn reused_verify_graph_still_rejects_a_dependency_cycle() {
+    let project = Project::new("verify-cycle");
+    project
+        .write(
+            "a.av",
+            "module A\n    intent = \"First half of an invalid dependency cycle.\"\n    depends [B]\n    exposes [a]\n    effects []\n\nfn a(n: Int) -> Int\n    ? \"Returns the input.\"\n    n\n\nverify a\n    a(1) => 1\n",
+        )
+        .write(
+            "b.av",
+            "module B\n    intent = \"Second half of an invalid dependency cycle.\"\n    depends [A]\n    exposes [b]\n    effects []\n\nfn b(n: Int) -> Int\n    ? \"Returns the input.\"\n    n\n",
+        );
+
+    let sequential = project.run(&["verify", "a.av", "-j", "1"]);
+    let parallel = project.run(&["verify", "a.av", "-j", "4"]);
+    assert!(!sequential.status.success(), "{}", report(&sequential));
+    assert!(!parallel.status.success(), "{}", report(&parallel));
+    assert_eq!(parallel.stdout, sequential.stdout);
+    assert_eq!(parallel.stderr, sequential.stderr);
+    assert!(
+        String::from_utf8_lossy(&sequential.stderr).contains("Circular import"),
+        "{}",
+        report(&sequential)
+    );
+}
+
+#[test]
 fn directory_check_reports_each_module_once() {
     let project = Project::new("check-dir");
     project.write("lib.av", LIB_AV).write("entry.av", ENTRY_AV);

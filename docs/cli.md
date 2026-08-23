@@ -75,6 +75,7 @@ reason code.
 
 ```bash
 aver verify file-or-dir --module-root .
+aver verify file-or-dir -j 8
 aver verify file-or-dir --wasm-gc
 ```
 
@@ -86,6 +87,17 @@ rooted at each file, each module verified once. Embedded standard modules
 are not sampled (their blocks are verified per release). A failing case in
 any module fails the command; pointing at a single module is still the fast
 way to iterate on it.
+
+VM verification resolves one project graph and prepares each project module
+once, then runs independent files and declared cases in a bounded worker pool.
+`-j N` / `--jobs N` sets that pool's maximum size; it defaults to the machine's
+available parallelism. `-j 1` disables concurrency without giving up graph
+reuse, which makes it the useful comparison/debugging mode. Reports are always
+collected in input, module, block, and case order, so sequential and parallel
+runs emit identical text/JSON and failure coordinates. `--hostile` keeps the
+base/profile cases of a block sequential, and `--wasm-gc` keeps cases within a
+module sequential; independent input files may still share the bounded pool.
+
 It fails on:
 - mismatched examples
 - parse/type errors

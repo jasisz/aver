@@ -166,6 +166,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "proptest",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",

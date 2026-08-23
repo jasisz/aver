@@ -54,6 +54,30 @@ impl TypeChecker {
         items: &[TopLevel],
         loaded: &[crate::source::LoadedModule],
     ) {
+        self.check_with_loaded_mode(items, loaded, true);
+    }
+
+    /// Type-check an entry against dependency surfaces whose bodies were
+    /// already checked by the command's leaves-first program preparation.
+    ///
+    /// This is deliberately narrower than `check_with_loaded`: capabilities,
+    /// exported types, signatures and visibility are still rebuilt for this
+    /// importer. Only the recursive body walk is omitted. Callers must never
+    /// use this as a trust boundary for arbitrary preloaded modules.
+    pub(super) fn check_with_checked_loaded(
+        &mut self,
+        items: &[TopLevel],
+        loaded: &[crate::source::LoadedModule],
+    ) {
+        self.check_with_loaded_mode(items, loaded, false);
+    }
+
+    fn check_with_loaded_mode(
+        &mut self,
+        items: &[TopLevel],
+        loaded: &[crate::source::LoadedModule],
+        check_dependency_bodies: bool,
+    ) {
         // Phase B: track the entry module's prefix (see `check`).
         self.current_module_prefix = Self::module_decl(items).map(|m| m.name.clone());
         // Dependency aliases come in before local signatures so
@@ -67,7 +91,9 @@ impl TypeChecker {
         let visible_roots = Self::visible_module_roots(items);
         self.integrate_loaded_modules(&loaded, &visible_roots);
         self.build_signatures(items);
-        self.check_loaded_module_bodies(&loaded, None);
+        if check_dependency_bodies {
+            self.check_loaded_module_bodies(&loaded, None);
+        }
         self.check_body(items);
     }
 
