@@ -89,7 +89,7 @@ fn main() {
         // `Spanned::ty` slots), resolve, last_use, analyse.
         // Anything beyond Resolve is what `compile_to_wasm_gc`
         // assumes is in place.
-        let _result = aver::ir::pipeline::run(
+        let result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
                 typecheck: Some(TypecheckMode::Full { base_dir }),
@@ -103,8 +103,16 @@ fn main() {
         let mut type_aliases = std::collections::HashMap::new();
         if let Some(root) = base_dir {
             if let Ok(dep_modules) = aver::source::load_compile_deps(&items, root) {
-                type_aliases =
-                    aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+                type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+                    &mut items,
+                    &dep_modules,
+                    &result
+                        .typecheck
+                        .as_ref()
+                        .expect("wasm-gc fuzz pipeline requested typechecking")
+                        .capabilities,
+                    aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+                );
             }
         }
 
