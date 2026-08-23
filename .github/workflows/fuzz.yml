@@ -78,7 +78,7 @@ env:
 jobs:
   nightly:
     name: Fuzz nightly (${{ matrix.target }})
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'schedule' && github.repository == 'jasisz/aver') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # 90 min (was 60, before that 45). The "Fuzz (30 min)" step is
     # `-V 1800` of fuzzing time, but AFL first calibrates every seed

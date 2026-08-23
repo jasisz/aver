@@ -24,6 +24,11 @@ jobs:
   decide:
     name: Decide lanes
     runs-on: ubuntu-latest
+    # Scheduled runs belong to this repository. A fork with Actions enabled
+    # otherwise runs our cron on its owner's account and mails them about any
+    # failure. Every other trigger still works in a fork, so a contributor can
+    # run this workflow on their own branch.
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
     outputs:
       lanes: ${{ steps.pick.outputs.lanes }}
     steps:

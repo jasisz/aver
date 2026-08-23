@@ -21,6 +21,11 @@ jobs:
   check:
     name: Check & Test
     runs-on: ubuntu-latest
+    # Scheduled runs belong to this repository. A fork with Actions enabled
+    # otherwise runs our cron on its owner's account and mails them about any
+    # failure. Every other trigger still works in a fork, so a contributor can
+    # run this workflow on their own branch.
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
     steps:
       - uses: actions/checkout@v5
 
@@ -111,6 +116,11 @@ jobs:
   wasm:
     name: WASM
     runs-on: ubuntu-latest
+    # Scheduled runs belong to this repository. A fork with Actions enabled
+    # otherwise runs our cron on its owner's account and mails them about any
+    # failure. Every other trigger still works in a fork, so a contributor can
+    # run this workflow on their own branch.
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
     env:
       # The wasm/wasip2 feature set pulls in wasmtime + component-model
       # crates and several large integration-test binaries. Keep this job's
