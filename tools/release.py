@@ -1746,6 +1746,11 @@ def main() -> int:
     )
     print()
 
+    # 9. Move main off the versions just published. A released number is
+    #    immutable on the registry; main must not keep claiming it.
+    carry_dev_versions(new_versions, dry_run)
+    print()
+
     # 9. Optional: rebuild + deploy `tools/edge` (Cloudflare Workers
     #    Mandelbrot demo). Live deploy of a public endpoint, so opt-in.
     if args.deploy_edge:
@@ -1762,6 +1767,64 @@ def main() -> int:
 
     print(f"{'[dry-run] ' if dry_run else ''}Done! Released {new_version}")
     return 0
+
+
+def next_dev_version(crate: str, released: str) -> str:
+    """The version main carries after `released` ships.
+
+    A published version is immutable on the registry, so a repository that
+    keeps that same number describes code the registry cannot serve: cargo
+    resolves it happily and hands the consumer older sources under a matching
+    name. Main therefore carries the next unreleased number with a `-dev`
+    suffix, which no registry can satisfy — a mismatch fails loudly at resolve
+    time instead of silently compiling against the wrong tree.
+
+    `aver-lang` carries the next minor, matching how the language is versioned;
+    the runtime crates carry the next patch.
+    """
+    core = released.split("-", 1)[0]
+    parts = core.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ReleaseError(f"cannot derive a dev version from {released!r} for {crate}")
+    major, minor, patch = (int(part) for part in parts)
+    if crate == "aver-lang":
+        return f"{major}.{minor + 1}.0-dev"
+    return f"{major}.{minor}.{patch + 1}-dev"
+
+
+def carry_dev_versions(new_versions: dict[str, str], dry_run: bool) -> None:
+    """Move main onto `-dev` versions after a release is tagged.
+
+    Runs after tagging, so the tag still points at the exact published
+    versions. Without this, every commit between two releases claims a version
+    that is already on the registry under different code.
+    """
+    dev_versions = {
+        crate: next_dev_version(crate, version)
+        for crate, version in new_versions.items()
+    }
+    for crate in CRATE_ORDER:
+        released = new_versions[crate]
+        dev = dev_versions[crate]
+        prefix = "  [dry-run] " if dry_run else "  "
+        print(f"{prefix}{crate}: {released} -> {dev}")
+        if not dry_run:
+            bump_toml_version(VERSION_FILES[crate], released, dev)
+
+    if dry_run:
+        print("  [dry-run] git commit + push (carry dev versions)")
+        return
+
+    main_toml = VERSION_FILES["aver-lang"]
+    set_dep_pin(main_toml, "aver-cert", dev_versions["aver-cert"])
+    set_dep_pin(main_toml, "aver-rt", dev_versions["aver-rt"])
+    set_dep_pin(main_toml, "aver-memory", dev_versions["aver-memory"])
+    set_dep_pin(VERSION_FILES["aver-memory"], "aver-rt", dev_versions["aver-rt"])
+    set_dep_pin(VERSION_FILES["aver-lsp"], "aver-lang", dev_versions["aver-lang"])
+    run(["cargo", "metadata", "--format-version", "1"], capture=True)
+    run(["git", "add", "-A"])
+    run(["git", "commit", "-m", "Carry dev versions on main"])
+    run(["git", "push", "origin", "main"])
 
 
 def deploy_edge(dry_run: bool) -> None:

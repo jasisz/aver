@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "aver-memory"
-version = "0.2.14"
+version = "0.2.15-dev"
 dependencies = [
  "aver-rt",
  "num-bigint",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "aver-rt"
-version = "0.4.10"
+version = "0.4.11-dev"
 dependencies = [
  "criterion",
  "crossterm",
