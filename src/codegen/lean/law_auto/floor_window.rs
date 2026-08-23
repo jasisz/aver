@@ -49,7 +49,10 @@ pub(super) fn emit_floor_window_law(
         return None;
     };
     let render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-        super::super::expr::emit_expr_legacy(e, ctx, None)
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
     };
     // The recursive power-of-two positivity (`pow(k) >= BASE`) is SUBSUMED by
     // the content-blind recursive-positivity rung, and the recursive

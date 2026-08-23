@@ -1959,14 +1959,8 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
     // item already has the canonical value-taking ABI. Mutual-TCO members have
     // borrow-by-default public wrappers and therefore still need this adapter.
     let is_mutual_tco = cg.mutual_tco_members.contains(&fn_id);
-    let is_lone_self_tco = !is_mutual_tco
-        && cg
-            .fn_defs
-            .iter()
-            .chain(cg.extra_fn_defs.iter())
-            .chain(cg.modules.iter().flat_map(|m| m.fn_defs.iter()))
-            .find(|fd| crate::codegen::common::fn_id_for_decl(cg, fd) == Some(fn_id))
-            .is_some_and(|fd| super::toplevel::body_has_self_tailcall(&fd.body, &fd.name));
+    let is_lone_self_tco =
+        !is_mutual_tco && super::toplevel::resolved_fn_has_self_tailcall(resolved);
     if is_lone_self_tco {
         return static_ref;
     }
@@ -2003,8 +1997,7 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
 }
 
 /// Render one free-standing `verify`-case expression through the MIR
-/// walker. `resolved` is the already-lifted `ResolvedExpr` (the caller
-/// does the on-demand `ctx.resolve_expr`). Lowers it via
+/// walker. `resolved` is the already-lifted `ResolvedExpr`. Lowers it via
 /// `lower_top_level_value` against a clone of the entry `MirProgram` (the
 /// same isolation the VM uses for top-level statements: builtin /
 /// instantiation table growth stays local to the clone), then emits it
@@ -3458,9 +3451,8 @@ fn ty_is_int(ty: Option<&Type>) -> bool {
 //
 // The ownership / borrow facts (rc pass-through params Arc-wrapped on
 // the self-loop / `&T` extra trampoline args; non-rc owned params `mut`
-// with NO borrow-by-default) come from the matching function substrate:
-// self-TCO still uses its AST metadata helper, while mutual-TCO derives
-// membership, types, and pass-through parameters from resolved HIR.
+// with NO borrow-by-default) come from resolved HIR for both self- and
+// mutual-TCO. Tail-call membership is therefore always an `FnId` decision.
 // Get the ownership wrong → rustc rejects, which the build gate catches.
 
 /// Emit a self-TCO fn entirely from MIR: the public signature
@@ -3469,10 +3461,10 @@ fn ty_is_int(ty: Option<&Type>) -> bool {
 /// renders self-`TailCall` arms as `{ rebind; continue }` and value arms
 /// as `return <expr>;`.
 ///
-/// `fd` supplies param names/types + drives the AST-based rc /
-/// pass-through computation (mirroring `emit_tco_fn`); `mir_fn.body` is
-/// the MIR body walked in tail position. Returns `None` (→ HIR fallback)
-/// when any sub-expression can't render.
+/// `resolved_fd` supplies identity and typed parameters for rc/pass-through
+/// computation; `fd` is retained only for source metadata used by the emitted
+/// signature. `mir_fn.body` is walked in tail position. Returns `None` when a
+/// sub-expression cannot render.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_mir_tco_fn(
     fd: &crate::ast::FnDef,
@@ -3484,11 +3476,14 @@ pub(super) fn emit_mir_tco_fn(
     scope: Option<&str>,
     ctx: &CodegenContext,
 ) -> Option<String> {
-    use super::toplevel::{compute_rc_params, compute_self_passthrough_params, rc_param_names};
+    use super::toplevel::{compute_resolved_rc_params, compute_resolved_self_passthrough_params};
 
-    let passthrough_indices = compute_self_passthrough_params(fd);
-    let rc_indices = compute_rc_params(std::slice::from_ref(&fd), ctx);
-    let rc_names = rc_param_names(&fd.params, &rc_indices);
+    let passthrough_indices = compute_resolved_self_passthrough_params(resolved_fd);
+    let rc_indices = compute_resolved_rc_params(std::slice::from_ref(&resolved_fd));
+    let rc_names: HashSet<String> = rc_indices
+        .iter()
+        .filter_map(|&i| resolved_fd.params.get(i).map(|(name, _)| name.clone()))
+        .collect();
 
     // Borrow policy: no borrow-by-default (owned `mut` params), rc
     // params wrapped (`(*x).clone()` on read). Mirror of

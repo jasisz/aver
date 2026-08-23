@@ -60,8 +60,8 @@
 //! …}`) compare against the canonical builtin namespace, which is
 //! global by spec — no per-scope identity to leak. Verify-law
 //! lowering now covers entry and dependency module blocks and resolves
-//! each subject under its owning module scope. The remaining
-//! `EntryFnIndex` helper-hint callsites are migration debt tracked by #1087.
+//! each subject under its owning module scope. Helper-hint syntax walkers use
+//! a per-module `FnId` view, so same-bare-name declarations cannot collide.
 //!
 //! Full `ResolvedProofLowerView` + semantic matcher API
 //! (`callee_is_builtin`, `callee_is_fn(FnId)`, `ctor_is`,

@@ -20,7 +20,7 @@
 //! Chosen path (documented per the design sketch): the VM value is rendered
 //! with `aver_repr_literal`, parsed back into a source `Expr` with the
 //! ordinary parser, validated against a strict literal whitelist, and emitted
-//! through `emit_expr_legacy` — reusing the exact emission pipeline the
+//! through resolved HIR — reusing the exact emission pipeline the
 //! source RHS would take (string escaping, `Except`/`Option` mapping, list
 //! and map lowering) instead of duplicating a Value→Lean printer.
 //!
@@ -31,7 +31,7 @@
 use crate::ast::{Expr, Literal, Spanned, VerifyBlock};
 use crate::codegen::CodegenContext;
 
-use super::expr::emit_expr_legacy;
+use super::expr::{emit_expr, resolve_rewrite_output};
 
 /// The reason `aver verify` gave for not answering case `global_case_idx`,
 /// when it declined it.
@@ -73,7 +73,7 @@ pub(super) fn ground_truth_rhs(
     if !is_safe_literal_expr(&expr) {
         return None;
     }
-    Some(emit_expr_legacy(&expr, ctx, None))
+    Some(emit_expr(&resolve_rewrite_output(&expr, ctx, None), ctx))
 }
 
 /// Parse a value repr back into a single expression. The repr is rendered by

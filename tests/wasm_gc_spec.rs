@@ -404,11 +404,7 @@ fn main() -> Int
 // bigger scope than fits a single PR alongside the Phase 6
 // follow-ups.
 //
-// Pinned here as a RED test so the regression has a name and
-// the canonical-key migration has a clear acceptance gate.
-// Three `temporary-migration-bridge` tagged sites in
-// `wasm_gc/{module,body/emit}.rs` (PR #191) are the entry
-// points that flip together with the registry storage.
+// Pinned here as a regression for the canonical-key migration.
 #[test]
 fn cross_module_same_bare_name_types_resolve_to_distinct_records() {
     // Two dep modules each declare `record Box { value: Int }`
@@ -461,8 +457,8 @@ record Box
 
 // Cross-module same-bare-name `==`/`!=` dispatch — exercises the
 // canonical-key routing through `named_type_registry_key` at the three
-// `temporary-migration-bridge` eq-helper sites (`register_nominal_in_
-// type`, the `BinOp Eq/Neq` arm of `discover_builtins_in_expr`,
+// eq-helper sites (`register_nominal_in_type`, the `BinOp Eq/Neq` arm of
+// `discover_builtins_in_expr`,
 // `sum_or_record_eq_fn`). Pre-#180-Phase-6-PR-3 these resolved the
 // per-type `__eq_<Box>` slot by the bare `Type::Named.name` of the
 // operand's stamped type — fine for non-colliding dep types, but in

@@ -318,7 +318,12 @@ pub(super) fn recognize_frac_order_chain_shape(
     let big_e = substitute(&hi_args[0], &map);
     let a_e = substitute(&m[1], &map);
 
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let a_lean = render(&a_e);
     let big_lean = render(&big_e);
     let lessthan = format!("{rat_prefix}.lessThan");
@@ -456,7 +461,12 @@ pub(super) fn emit_frac_order_chain_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let c = recognize_frac_order_chain_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let when = render(law.when.as_ref()?);
     // The conclusion subject call, exactly as the law writes it (its own args —
     // NOT every quantified given), and the subject fn's qualified Lean name.

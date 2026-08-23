@@ -121,7 +121,12 @@ struct HomShape {
 /// Structural identity of two atom expressions (the law's givens) by rendered
 /// Lean text — robust to `Ident` vs `Resolved`.
 fn same_atom(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     render(a) == render(b)
 }
 
@@ -410,7 +415,12 @@ pub(super) fn emit_homomorphism_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let subj = aver_name_to_lean(&shape.subject_src);
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);

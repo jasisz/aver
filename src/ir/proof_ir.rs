@@ -27,8 +27,8 @@
 //!   `proof_lower::populate_*` resolves at the producer site through
 //!   the symbol table under the correct scope (entry / dep-module
 //!   prefix); backends walk the resolved form directly via
-//!   `emit_expr`, no `emit_expr_legacy` adapter for IR-sourced
-//!   expressions.
+//!   the resolved renderer, with no source-expression adapter for
+//!   IR-sourced expressions.
 //! - **Identity-sensitive decisions use typed IDs.**
 //!   `fn_contracts` is keyed by [`FnId`] (not bare name);
 //!   `refined_types` is keyed by [`TypeId`]; `law_theorems` carry
@@ -47,15 +47,13 @@
 //!   law/function's owning scope before recovering an AST declaration.
 //!   Builtin matchers (`"Bool.and"`, `"Map.set"`, …) still compare
 //!   global namespace methods that have no per-scope identity.
-//! - **Full `ResolvedProofLowerView` + semantic matcher API is now
-//!   triggered by module-scoped verify export.** Dependency-owned verify
-//!   blocks ship as first-class proof obligations, so #1087 owns replacing
-//!   the remaining entry-only helper index and source-shape adapters. When
-//!   it ships, the right architecture is a typed
-//!   `ProofLowerInputs::resolved_fn_view(fd)` + matcher helpers
-//!   (`callee_is_builtin`, `callee_is_fn(fn_id)`, `ctor_is`,
-//!   `ident_name`, `int_lit`) — not a mechanical
-//!   `Expr -> ResolvedExpr` rewrite of the discovery walkers.
+//! - **Module-scoped verify uses stable function identity.** Dependency-
+//!   owned verify blocks are first-class proof obligations. Reachability
+//!   starts from each block in its declaring scope and follows
+//!   `ResolvedCallee::Fn` edges through the canonical `ResolvedProgram`;
+//!   backend emitters consume the resulting `FnId` set. Source-shape
+//!   discovery remains confined to `proof_lower` and explicitly documented
+//!   syntax-only helpers.
 
 use std::collections::HashMap;
 
@@ -76,8 +74,10 @@ pub use crate::ir::identity::{CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, Typ
 ///
 /// `ProofIR` is intentionally NOT a closed superset of the AST — it
 /// only carries facts that proof export needs. Source-faithful
-/// emission of plain fns / verify cases still flows through the
-/// untyped AST path, same as runtime backends (VM, Rust, WASM).
+/// emission of verify cases may still begin at their source AST node because
+/// `ResolvedTopLevel` deliberately preserves non-runtime declarations, but
+/// the producer resolves each expression under its declaring scope before a
+/// backend renderer sees it. Function bodies come from `ResolvedProgram`.
 #[derive(Debug, Clone, Default)]
 pub struct ProofIR {
     /// Every refinement-lifted user type, keyed by opaque [`TypeId`]

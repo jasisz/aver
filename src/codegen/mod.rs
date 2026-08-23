@@ -231,25 +231,18 @@ pub fn collect_verify_laws(items: &[TopLevel]) -> Vec<crate::ast::VerifyBlock> {
 /// dispatch, mutual-SCC analysis) belongs to that view; the
 /// pipeline produced it once and `build_context` projects it through.
 ///
-/// The legacy AST-shape fields below — `items`, `fn_defs`,
-/// `type_defs`, `resolved_fn_defs`, `resolved_module_fn_defs` — are
-/// **source metadata / migration caches**, not independent sources
-/// of truth:
+/// The AST-shape fields below — `items`, `fn_defs`, and `type_defs` — are
+/// **source metadata**, not independent sources of truth:
 ///
 /// - `items`, `fn_defs`, `type_defs` retain source-shape spans and
-///   diagnostics; backends mid-migration still walk them. They are
-///   NOT the place to add new identity-sensitive logic.
-/// - `resolved_fn_defs` / `resolved_module_fn_defs` are projections
-///   of `resolved_program` kept for callsites that don't yet route
-///   through the `FnId` index. New code should reach
-///   `resolved_program.fn_by_id(fn_id)` instead.
+///   diagnostics and explicit syntax-discovery input. They are NOT the place
+///   to add identity-sensitive logic.
 ///
-/// Subsequent epic phases migrate backends (Rust, Lean, Dafny,
-/// wasm-gc) to iterate the view directly. New code in backends
-/// should default to the view. AST consumption requires a clear
+/// Backends iterate the resolved view for emission. AST consumption requires a clear
 /// category in a code comment: `diagnostic-only`,
 /// `syntax-discovery-only`, `backend-link-stage`, `display-only`,
-/// or `temporary-migration-bridge`.
+/// or another reviewed, permanent identity boundary.
+///
 /// Whether a declined claim was a `verify … law` block or a plain
 /// `verify` block's sampled cases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -304,12 +297,9 @@ pub struct CodegenContext {
     pub type_defs: Vec<TypeDef>,
     /// User-defined function definitions.
     ///
-    /// **Source metadata.** Backends mid-migration walk this for
-    /// fn-signature shape; new identity-sensitive code reaches
-    /// `resolved_program.entry_fns()` / `fn_by_id(fn_id)` instead.
-    /// Synthesized FnDefs (TCO hoists) appended after
-    /// the pipeline ran live here too; the on-demand resolver
-    /// (`Self::resolve_fn_def`) lifts them through the symbol table.
+    /// **Source metadata.** Syntax recognisers and documentation emission may
+    /// inspect this list. Function identities, typed signatures, and emitted
+    /// bodies come from `resolved_program.entry_fns()` / `fn_by_id(fn_id)`.
     pub fn_defs: Vec<FnDef>,
     /// Project/binary name.
     pub project_name: String,
@@ -332,10 +322,6 @@ pub struct CodegenContext {
     pub guest_entry: Option<String>,
     /// Emit extra generated helpers needed only by the cached self-host helper.
     pub emit_self_host_support: bool,
-    /// Extra fn_defs visible during current module emission (not in `fn_defs` or `modules`).
-    /// Set temporarily by the Rust backend when emitting a dependent module so that
-    /// `find_fn_def_by_name` can resolve same-module calls.
-    pub extra_fn_defs: Vec<FnDef>,
     /// Functions that are part of a mutual-TCO SCC group (emitted as
     /// trampoline + wrappers). Functions NOT in this set but with
     /// TailCalls are emitted as plain self-TCO loops. Keyed by opaque
@@ -377,11 +363,8 @@ pub struct CodegenContext {
     /// Proof-export decision IR populated by `proof_lower::lower`
     /// during `build_context`. Backends (Lean, Dafny) read from
     /// here to decide refinement-record lift, recursion contracts,
-    /// law-theorem shape, etc. Single source of truth — both
-    /// backends see the same decisions so cross-backend drift
-    /// becomes impossible at the shape level. Step 2: only
-    /// `refined_types` is populated; backends still consume legacy
-    /// `refinement_info_for` for now. Step 3+ migrates backends.
+    /// law-theorem shape, etc. Single source of truth — both backends see the
+    /// same identity-sensitive decisions.
     #[cfg(feature = "runtime")]
     pub proof_ir: crate::ir::ProofIR,
     /// Resolved-identity table (#138 phase E). Always populated:
@@ -390,22 +373,10 @@ pub struct CodegenContext {
     /// backend FnId/TypeId resolution) read it directly — no
     /// `Option` wrapper to unwrap at each callsite.
     pub symbol_table: crate::ir::SymbolTable,
-    /// Resolved-HIR forms of every entry-scope fn in `fn_defs`,
-    /// in the same source order.
-    ///
-    /// **Compatibility projection of `resolved_program.entry_fns()`**
-    /// (epic #170 Phase 1). Position-aligned with the entry slice of
-    /// `resolved_program.entry_items`. New code should prefer
-    /// `resolved_program.entry_fns()` / `fn_by_id(fn_id)` so the
-    /// `FnId` index is the lookup mechanism. This vec stays for
-    /// callsites that haven't yet been migrated to the view; it will
-    /// be retired once Phase 3-6 migrate all backends.
-    pub resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef>,
     /// Module scope currently active for name resolution. Set by a
-    /// backend dispatcher before emitting a dep-module's fns so that
-    /// legacy resolve-on-demand adapters (e.g. Lean's
-    /// `emit_expr_legacy`) thread the right scope into
-    /// `resolve_expr` / `resolve_stmt` instead of defaulting to entry.
+    /// backend dispatcher before resolving the completed output of a
+    /// module-owned source-shape rewrite, so bare names bind in the declaring
+    /// module instead of defaulting to entry.
     /// Empty by default. Set with [`Self::with_module_scope`] in a
     /// scoped manner.
     pub current_module_scope: std::cell::RefCell<Option<String>>,
@@ -459,30 +430,13 @@ pub struct CodegenContext {
     /// run as `cargo test` — but it must not be a secret either: `compile`
     /// reports what it left behind.
     pub omitted_verify_cases: std::cell::RefCell<Vec<String>>,
-    /// Per-dep resolved fn defs, parallel to `modules`.
-    ///
-    /// **Compatibility projection of `resolved_program.modules[i].fn_defs`**
-    /// (epic #170 Phase 1). Position-aligned with `modules` for
-    /// callsites that index by `modules[i]`. New code should prefer
-    /// `resolved_program.module_fns(prefix)` or the global
-    /// `fn_by_id(fn_id)` index — that's where cross-module bare-name
-    /// disambiguation happens for free. Retired alongside
-    /// `resolved_fn_defs` once Phase 3-6 migrate the remaining
-    /// backends.
-    pub resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>>,
     /// Canonical resolved-program view of the whole codegen input —
     /// entry items (post-pipeline `NameResolve`) + per-dep-module
     /// resolved fn defs + `FnId`-keyed lookup.
     ///
     /// **Epic #170 Phase 1 invariant.** `resolved_program` is the
-    /// primary source of truth for backend codegen — `fn_defs`,
-    /// `type_defs`, `items`, `resolved_fn_defs`, and
-    /// `resolved_module_fn_defs` remain available as projection /
-    /// source metadata / migration cache, but consumers should reach
-    /// the view first when an `FnId` / `TypeId` is in hand. Subsequent
-    /// phases (#170 Phase 3+) migrate backends to iterate the view as
-    /// their primary input; this field is the foundation those PRs
-    /// build on.
+    /// primary source of truth for backend codegen; `fn_defs`, `type_defs`,
+    /// and `items` remain only as source metadata / syntax-discovery input.
     pub resolved_program: crate::codegen::program_view::ResolvedProgramView,
     /// Whole-program shape facts — typed Archetype labels + call-graph
     /// SCC per `FnId`. Computed once per compilation by
@@ -789,16 +743,6 @@ pub fn build_context(
         .cloned()
         .collect();
 
-    // Legacy projection fields remain for consumers still migrating, but
-    // both project from the one resolved view built above.
-    let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> =
-        resolved_program.entry_fns().cloned().collect();
-    let resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>> = resolved_program
-        .modules
-        .iter()
-        .map(|m| m.fn_defs.clone())
-        .collect();
-
     // Compute program shape before moving items / modules into ctx.
     // Once-per-compilation analysis substrate (#232 stage 4+); ad-hoc
     // detectors in codegen (e.g. dafny's `is_directly_recursive`,
@@ -869,7 +813,6 @@ pub fn build_context(
         runtime_policy_from_env: false,
         guest_entry: None,
         emit_self_host_support: false,
-        extra_fn_defs: Vec::new(),
         mutual_tco_members,
         recursive_fns,
         buffer_build_sinks,
@@ -885,8 +828,6 @@ pub fn build_context(
         // (proof_lower / Lean / Rust / Dafny) read it directly off
         // ctx for opaque-ID lookups.
         symbol_table,
-        resolved_fn_defs,
-        resolved_module_fn_defs,
         current_module_scope: std::cell::RefCell::new(None),
         lean_do_block: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
@@ -930,9 +871,9 @@ pub fn build_context(
 }
 
 impl CodegenContext {
-    /// Set `current_module_scope` for the duration of `f`. Backends
-    /// wrap their per-module emit calls with this so legacy
-    /// resolve-on-demand adapters see the correct prefix.
+    /// Set `current_module_scope` for the duration of `f`. Proof/fuel
+    /// transformations wrap their module-owned rewrite boundary with this so
+    /// the single resolve pass sees the declaring prefix.
     pub fn with_module_scope<R>(&self, scope: Option<&str>, f: impl FnOnce() -> R) -> R {
         let prev = self
             .current_module_scope
@@ -993,9 +934,9 @@ impl CodegenContext {
     ///
     /// Returns `None` when the symbol table doesn't know the name
     /// under the given scope, or when the resolved `FnId` doesn't
-    /// match any `&FnDef` in that scope (synthetic FnDefs added
-    /// post-pipeline fall through here — callers can fallback to a
-    /// bare-name walk over `extra_fn_defs` etc. when that matters).
+    /// match any `&FnDef` in that scope. Synthetic declarations added after
+    /// the pipeline intentionally return `None`; emitters must register their
+    /// resolved identity before consuming them.
     pub fn fn_def_by_name(&self, name: &str, scope: Option<&str>) -> Option<&FnDef> {
         use crate::ir::FnKey;
         let key = match scope {
@@ -1031,10 +972,8 @@ impl CodegenContext {
     /// that produces the same answer — leave it off the hot path.
     ///
     /// **Single-source-of-truth invariant** (epic #170 Phase 1+2):
-    /// rebuilds `resolved_program` once from the freshly-resolved
-    /// items, then derives `resolved_fn_defs` /
-    /// `resolved_module_fn_defs` as projections of that view. There
-    /// is no parallel resolve path here.
+    /// rebuilds `resolved_program` once from the freshly-resolved items. There
+    /// is no parallel projection or resolve path here.
     pub fn refresh_facts(&mut self) {
         // Synthetic-ctx path must own its symbol table too — FnId-
         // keyed sets below resolve through it, same shape as the
@@ -1096,16 +1035,8 @@ impl CodegenContext {
         // need for `recursive_fns` / `mutual_tco_members`.
         self.symbol_table = symbol_table;
 
-        // Publish the one view used for SCC discovery above. Projection
-        // fields remain for consumers still migrating.
+        // Publish the one view used for SCC discovery and backend lookup.
         self.resolved_program = resolved_program;
-        self.resolved_fn_defs = self.resolved_program.entry_fns().cloned().collect();
-        self.resolved_module_fn_defs = self
-            .resolved_program
-            .modules
-            .iter()
-            .map(|m| m.fn_defs.clone())
-            .collect();
 
         // ProofIR's `fn_contracts` / `refined_types` are derived from
         // the just-recomputed item set + the recursion classifier, so
@@ -1115,98 +1046,6 @@ impl CodegenContext {
         // the production pipeline would emit.
         let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(self);
         self.proof_ir = crate::codegen::proof_lower::lower(&inputs);
-    }
-
-    /// Look up the resolved-HIR mirror of a source-shape [`FnDef`]
-    /// previously stashed in [`resolved_fn_defs`] /
-    /// [`resolved_module_fn_defs`]. Falls back to a fresh per-call
-    /// resolver lift against the entry's [`crate::ir::SymbolTable`]
-    /// when neither path covers `fd` — this happens for synthetic
-    /// FnDefs inserted between `build_context` and emit (TCO hoist
-    /// rewrites, test fixtures) which the resolver hasn't lifted
-    /// upfront.
-    ///
-    /// `scope` is the owning module prefix when `fd` came from a
-    /// dependency module's `module.fn_defs`, `None` when `fd` is part
-    /// of the entry's `ctx.fn_defs`. Lookup keys by
-    /// [`crate::ir::FnKey`] through the [`crate::ir::SymbolTable`] so
-    /// two modules that share a bare fn name (e.g. `Util.format` and
-    /// `Other.format`) resolve to their own [`crate::ir::FnId`]
-    /// without bare-name collisions. Pre-PR-9.3a this matched by
-    /// `rfd.name == fd.name` against a flat search of every resolved
-    /// table — fragile the moment flatten changes (or doesn't run)
-    /// and two scopes share a name.
-    ///
-    /// Phase E shared lookup boundary — Rust codegen (PR 8) already
-    /// consumes this through `rust::toplevel::resolved_fn_def_for`;
-    /// wasm-gc / Lean / Dafny / self-host backends pick it up in
-    /// their follow-up PRs.
-    ///
-    /// [`resolved_fn_defs`]: Self::resolved_fn_defs
-    /// [`resolved_module_fn_defs`]: Self::resolved_module_fn_defs
-    pub fn resolve_fn_def<'a>(
-        &'a self,
-        fd: &'a FnDef,
-        scope: Option<&str>,
-    ) -> std::borrow::Cow<'a, crate::ir::hir::ResolvedFnDef> {
-        use crate::ir::FnKey;
-        use crate::ir::hir::{
-            ResolveCtx, ResolvedFnBody, ResolvedFnDef, ResolvedStmt, resolve_fn_def_external,
-        };
-        use std::borrow::Cow;
-
-        // Resolve identity via the symbol table — entry scope vs
-        // dependency module scope is the caller's stated context.
-        let key = match scope {
-            Some(prefix) => FnKey::in_module(prefix.to_string(), fd.name.clone()),
-            None => FnKey::entry(fd.name.clone()),
-        };
-        if let Some(fn_id) = self.symbol_table.fn_id_of(&key) {
-            // Canonical lookup goes through the resolved-program view —
-            // its `fn_by_id` index is the single FnId-keyed source for
-            // the resolved body, replacing the dual-walk over
-            // `resolved_fn_defs` + `resolved_module_fn_defs` that
-            // predated #170 Phase 1.
-            if let Some(rfd) = self.resolved_program.fn_by_id(fn_id) {
-                return Cow::Borrowed(rfd);
-            }
-            // Symbol table knew the key but the view didn't index it.
-            // Falls through to the synthetic-fallback path below; in
-            // production this shouldn't happen.
-        }
-
-        // Synthetic FnDef path — TCO hoist rewrites, test fixtures
-        // the resolver never saw. Lift on demand against the entry's
-        // resolver context.
-        let module_name = self.items.iter().find_map(|i| match i {
-            TopLevel::Module(m) => Some(m.name.clone()),
-            _ => None,
-        });
-        let mut rctx = ResolveCtx::new(&self.symbol_table);
-        rctx.current_module = scope.map(String::from).or(module_name);
-        let lifted = resolve_fn_def_external(&rctx, fd).unwrap_or_else(|| {
-            let stmts: Vec<ResolvedStmt> = match fd.body.as_ref() {
-                crate::ast::FnBody::Block(stmts) => {
-                    stmts.iter().map(|s| self.resolve_stmt(s, scope)).collect()
-                }
-            };
-            ResolvedFnDef {
-                fn_id: crate::ir::FnId(u32::MAX),
-                name: fd.name.clone(),
-                line: fd.line,
-                params: fd
-                    .params
-                    .iter()
-                    .map(|(n, ann)| (n.clone(), crate::types::parse_type_str(ann)))
-                    .collect(),
-                return_type: crate::types::parse_type_str(&fd.return_type),
-                effects: fd.effects.clone(),
-                desc: fd.desc.clone(),
-                body: std::sync::Arc::new(ResolvedFnBody::Block(stmts)),
-                resolution: fd.resolution.clone(),
-            }
-        });
-        Cow::Owned(lifted)
     }
 
     /// Entry module's name from `items` (the `module X` declaration's
@@ -1233,12 +1072,9 @@ impl CodegenContext {
             .unwrap_or_default()
     }
 
-    /// Resolve a source-shape `Spanned<Expr>` on demand using the
-    /// entry's resolver context. Used by emit helpers that still walk
-    /// `Expr` (TCO hoisting, mutual TCO, verify blocks, follow-up
-    /// backends pre-migration) and need to feed the resolved shape
-    /// into the migrated emitter. The returned `Spanned<ResolvedExpr>`
-    /// carries the same line + type stamp as the input.
+    /// Resolve the completed output of an explicit source-syntax rewrite. The
+    /// returned `Spanned<ResolvedExpr>` carries the same line + type stamp as
+    /// the input and must be produced before calling a resolved-only renderer.
     ///
     /// `scope` is the owning module prefix when the caller knows
     /// which dep module the expression lives in, `None` for entry-
@@ -1246,13 +1082,7 @@ impl CodegenContext {
     /// a call site in module `A` referring to `Val.ValOk` declared
     /// in module `B` only resolves to `ResolvedCtor::User` when the
     /// resolver's `current_module` matches the call site's owning
-    /// scope. Pre-PR-9.4 the helper used the *entry* module name
-    /// uniformly, which broke cross-module ctor / fn classification
-    /// for the legacy emit paths (mutual TCO trampolines, TCO hoist
-    /// — they walked dep-module fn bodies but the resolver context
-    /// said "you're in the entry module"; the self-host regen
-    /// surfaced the gap when same-name shadowing across modules was
-    /// no longer an option).
+    /// scope.
     pub fn resolve_expr(
         &self,
         expr: &crate::ast::Spanned<crate::ast::Expr>,
@@ -1281,37 +1111,23 @@ impl CodegenContext {
         crate::ir::hir::resolve::resolve_stmt_external(&rctx, stmt)
     }
 
-    /// Resolve a source-shape [`crate::ast::Pattern`] to its resolved
-    /// HIR form. Wraps the pattern in a synthetic match arm + drops
-    /// it through `resolve_stmt_external`, since the resolver doesn't
-    /// expose a standalone pattern lifter — same workaround
-    /// `rust/toplevel.rs` used pre-PR-9.
-    pub fn resolve_pattern(
+    /// Resolve the output of a source-shape function-body rewrite exactly
+    /// once, before handing it to a backend renderer. Ordinary declarations
+    /// come from [`Self::resolved_program`]; this boundary exists for
+    /// transformations such as `?!` lowering and proof/fuel call rewriting
+    /// that necessarily synthesize a fresh AST body after the main resolver
+    /// pass.
+    pub fn resolve_rewritten_fn_body(
         &self,
-        pat: &crate::ast::Pattern,
+        body: &crate::ast::FnBody,
         scope: Option<&str>,
-    ) -> crate::ir::hir::ResolvedPattern {
-        use crate::ast::{Expr, Literal, MatchArm, Spanned, Stmt};
-        use crate::ir::hir::{ResolveCtx, ResolvedExpr, ResolvedStmt};
-        let mut rctx = ResolveCtx::new(&self.symbol_table);
-        rctx.current_module = scope.map(String::from).or_else(|| self.entry_module_name());
-        let synthetic_arm = MatchArm {
-            pattern: pat.clone(),
-            body: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
-            binding_slots: std::sync::OnceLock::new(),
-        };
-        let stmt = Stmt::Expr(Spanned::bare(Expr::Match {
-            subject: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
-            arms: vec![synthetic_arm],
-        }));
-        let resolved_stmt = crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt);
-        let ResolvedStmt::Expr(spanned) = resolved_stmt else {
-            unreachable!()
-        };
-        let ResolvedExpr::Match { arms, .. } = spanned.node else {
-            unreachable!()
-        };
-        arms.into_iter().next().unwrap().pattern
+    ) -> crate::ir::hir::ResolvedFnBody {
+        crate::ir::hir::ResolvedFnBody::Block(
+            body.stmts()
+                .iter()
+                .map(|stmt| self.resolve_stmt(stmt, scope))
+                .collect(),
+        )
     }
 }
 

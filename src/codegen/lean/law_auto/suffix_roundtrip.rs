@@ -128,7 +128,12 @@ pub(super) fn emit_string_escape_roundtrip_law(
     theorem_base: &str,
     pin: &StringEscapeRoundtripPin,
 ) -> Option<AutoProof> {
-    let emit = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let emit = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
 
     // ---- law-side text (must byte-match the emitted statement) ------
     let Expr::FnCall(_, lhs_args) = &law.lhs.node else {

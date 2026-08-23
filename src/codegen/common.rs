@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart, TailCallData,
-    TopLevel, TypeDef, TypeVariant, VerifyBlock, VerifyGivenDomain, VerifyKind,
+    Expr, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef, TypeVariant,
+    VerifyBlock, VerifyGivenDomain, VerifyKind,
 };
 use crate::codegen::CodegenContext;
 use crate::types::Type;
@@ -1274,8 +1274,8 @@ pub fn fn_contract_exists_scoped(ctx: &CodegenContext, name: &str, scope: Option
 
 /// Round-7: build a [`crate::ir::FnKey`] from a borrowed `&FnDef`.
 /// The owning module is resolved by pointer-comparison against
-/// `ctx.modules[*].fn_defs` (entry items / synthesized variants /
-/// `extra_fn_defs` fall through to `FnKey::entry`). This is the
+/// `ctx.modules[*].fn_defs` (entry items and synthesized variants fall
+/// through to `FnKey::entry`). This is the
 /// single resolver consumers should reach for from emit code with
 /// a `&FnDef` in hand — produces the typed key the IR maps store
 /// instead of leaving the bare-name collision risk in place.
@@ -1340,8 +1340,8 @@ pub fn type_key_for_name(
 /// `fd.name = "countdown"` in both.
 ///
 /// Returns `None` when the `fd` is not in any dep module — entry
-/// items, synthesized buffered variants, and `extra_fn_defs` all
-/// fall through. Callers treat `None` as "entry scope".
+/// items and synthesized buffered variants fall through. Callers treat
+/// `None` as "entry scope".
 pub fn fn_owning_scope_for<'a>(ctx: &'a CodegenContext, fd: &FnDef) -> Option<&'a str> {
     for m in &ctx.modules {
         for f in &m.fn_defs {
@@ -3241,11 +3241,6 @@ pub(crate) fn is_set_type(ty: &Type) -> bool {
     matches!(ty, Type::Map(_, v) if matches!(v.as_ref(), Type::Unit))
 }
 
-/// Check if a type annotation string represents a set (`Map<T, Unit>`).
-pub(crate) fn is_set_annotation(ann: &str) -> bool {
-    is_set_type(&parse_type_annotation(ann))
-}
-
 /// Resolved-form mirror of the historical AST helper. Same Phase-E shape
 /// (`ResolvedExpr::Literal(Unit)`); used by migrated backends.
 pub(crate) fn is_unit_expr_resolved(expr: &crate::ir::hir::ResolvedExpr) -> bool {
@@ -3682,234 +3677,155 @@ where
     }
 }
 
-/// Oracle v1: set of user fn names that are reachable from any verify
-/// block — directly (`verify f ...`) or through the call graph (fn
-/// body of a reachable fn mentions them). Used by proof backends to
-/// skip emission of effectful fns that nobody verifies. Dead code in
-/// a proof output isn't just ugly — a non-terminating effectful fn
-/// (e.g. a REPL loop) will make Lean reject the whole module because
-/// it can't prove termination for a fn with no decreasing argument.
-/// If the user never asked for a proof about that fn, don't force
-/// the backend to invent one.
-pub(crate) fn verify_reachable_fn_names(items: &[TopLevel]) -> HashSet<String> {
-    let mut reachable: HashSet<String> = HashSet::new();
-    for item in items {
-        if let TopLevel::Verify(vb) = item {
-            collect_verify_block_refs(vb, &mut reachable);
-        }
-    }
-    // Fixed-point closure through the call graph.
-    loop {
-        let mut changed = false;
-        for item in items {
-            if let TopLevel::FnDef(fd) = item
-                && reachable.contains(&fd.name)
-            {
-                let mut called = HashSet::new();
-                collect_called_idents_in_body(&fd.body, &mut called);
-                for name in called {
-                    if reachable.insert(name) {
-                        changed = true;
-                    }
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    reachable
-}
-
-/// Oracle v1, dependency side: for each dependency module, the names of
-/// its functions some proof cone reaches, keyed by module prefix.
-///
-/// A dependency file carries no sampled `verify` blocks of its own, so the
-/// entry's rule ("lift an effectful function only when a claim reaches it")
-/// is applied through the consumers: the roots are the qualified calls
-/// (`Infra.Store.get(...)`) spelled in the entry's `verify` blocks and in the
-/// bodies of the entry functions those blocks reach, plus each module's own
-/// exposed laws; the closure then follows every call inside the module
-/// (bare names stay in the module, qualified names cross into the module
-/// they name), plus every claim the dependency itself declares. The purpose
-/// of the entry filter is kept: an effectful loop nobody proves anything
-/// about is not lifted in a dependency either.
-pub(crate) fn dependency_reachable_fn_names(
-    ctx: &CodegenContext,
-) -> std::collections::HashMap<String, HashSet<String>> {
-    let entry_reachable = verify_reachable_fn_names(&ctx.items);
-    let mut pending: Vec<(String, String)> = Vec::new();
-    let push = |scope: Option<&str>, name: &str, pending: &mut Vec<(String, String)>| {
-        if let Some((prefix, bare)) = name.rsplit_once('.') {
-            if ctx.modules.iter().any(|m| m.prefix == prefix) {
-                pending.push((prefix.to_string(), bare.to_string()));
-            }
-        } else if let Some(prefix) = scope {
-            pending.push((prefix.to_string(), name.to_string()));
-        }
-    };
+/// Whole-program proof cone keyed exclusively by resolved function identity.
+/// Verify expressions are resolved once in their declaring scope, roots become
+/// `FnId`s, and the transitive closure walks `ResolvedFnDef` bodies. Entry and
+/// dependency functions therefore share one key space without bare-name maps.
+pub(crate) fn proof_reachable_fn_ids(ctx: &CodegenContext) -> HashSet<crate::ir::FnId> {
+    let mut pending = Vec::new();
+    let entry_scope = ctx.entry_module_name();
     for item in &ctx.items {
-        let mut refs = HashSet::new();
-        match item {
-            TopLevel::Verify(vb) => collect_verify_block_refs(vb, &mut refs),
-            TopLevel::FnDef(fd) if entry_reachable.contains(&fd.name) => {
-                collect_called_idents_in_body(&fd.body, &mut refs)
-            }
-            _ => continue,
-        }
-        for name in refs {
-            push(None, &name, &mut pending);
+        if let TopLevel::Verify(vb) = item {
+            collect_verify_root_fn_ids(vb, entry_scope.as_deref(), ctx, &mut pending);
         }
     }
     for module in &ctx.modules {
         for vb in &module.verify_blocks {
-            let mut refs = HashSet::new();
-            collect_verify_block_refs(vb, &mut refs);
-            for name in refs {
-                push(Some(&module.prefix), &name, &mut pending);
-            }
+            collect_verify_root_fn_ids(vb, Some(&module.prefix), ctx, &mut pending);
         }
     }
-    let mut reachable: std::collections::HashMap<String, HashSet<String>> =
-        std::collections::HashMap::new();
-    while let Some((prefix, name)) = pending.pop() {
-        if !reachable
-            .entry(prefix.clone())
-            .or_default()
-            .insert(name.clone())
-        {
+
+    let mut reachable = HashSet::new();
+    while let Some(fn_id) = pending.pop() {
+        if !reachable.insert(fn_id) {
             continue;
         }
-        let Some(fd) = ctx
-            .modules
-            .iter()
-            .find(|m| m.prefix == prefix)
-            .and_then(|m| m.fn_defs.iter().find(|fd| fd.name == name))
-        else {
+        let Some(fd) = ctx.resolved_program.fn_by_id(fn_id) else {
             continue;
         };
-        let mut called = HashSet::new();
-        collect_called_idents_in_body(&fd.body, &mut called);
-        for callee in called {
-            push(Some(&prefix), &callee, &mut pending);
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                crate::ir::hir::ResolvedStmt::Binding { value, .. }
+                | crate::ir::hir::ResolvedStmt::Expr(value) => value,
+            };
+            collect_resolved_called_fn_ids(expr, &mut pending);
         }
     }
     reachable
 }
 
-fn collect_verify_block_refs(vb: &VerifyBlock, out: &mut HashSet<String>) {
-    out.insert(vb.fn_name.clone());
+fn collect_verify_root_fn_ids(
+    vb: &VerifyBlock,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+    out: &mut Vec<crate::ir::FnId>,
+) {
+    if let Some(fn_id) = ctx.symbol_table.resolve_fn_id_in(&vb.fn_name, scope) {
+        out.push(fn_id);
+    }
+    let mut collect_expr = |expr: &Spanned<Expr>| {
+        let resolved = ctx.resolve_expr(expr, scope);
+        collect_resolved_called_fn_ids(&resolved, out);
+    };
     for (lhs, rhs) in &vb.cases {
-        collect_called_idents(lhs, out);
-        collect_called_idents(rhs, out);
+        collect_expr(lhs);
+        collect_expr(rhs);
     }
     if let VerifyKind::Law(law) = &vb.kind {
-        collect_called_idents(&law.lhs, out);
-        collect_called_idents(&law.rhs, out);
+        collect_expr(&law.lhs);
+        collect_expr(&law.rhs);
         if let Some(when) = &law.when {
-            collect_called_idents(when, out);
+            collect_expr(when);
         }
         for given in &law.givens {
             if let VerifyGivenDomain::Explicit(values) = &given.domain {
-                for v in values {
-                    collect_called_idents(v, out);
+                for value in values {
+                    collect_expr(value);
                 }
             }
         }
     }
     for given in &vb.cases_givens {
         if let VerifyGivenDomain::Explicit(values) = &given.domain {
-            for v in values {
-                collect_called_idents(v, out);
+            for value in values {
+                collect_expr(value);
             }
         }
     }
 }
 
-fn collect_called_idents_in_body(body: &FnBody, out: &mut HashSet<String>) {
-    for stmt in body.stmts() {
-        match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => collect_called_idents(e, out),
-        }
-    }
-}
-
-fn collect_called_idents(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
+fn collect_resolved_called_fn_ids(
+    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
+    out: &mut Vec<crate::ir::FnId>,
+) {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
     match &expr.node {
-        Expr::FnCall(callee, args) => {
-            if let Expr::Ident(name) | Expr::Resolved { name, .. } = &callee.node {
-                out.insert(name.clone());
-            } else {
-                // A dotted callee (`Infra.Store.get(...)`) is recorded under
-                // the qualified name it spells, which is how a dependency
-                // module's function is reached from a consumer; the walk
-                // into the callee keeps every bare identifier it mentions.
-                if let Some(name) = crate::ir::expr_to_dotted_name(&callee.node) {
-                    out.insert(name);
+        ResolvedExpr::Call(callee, args) => {
+            match callee {
+                ResolvedCallee::Fn(fn_id) => out.push(*fn_id),
+                ResolvedCallee::Unresolved { callee } => {
+                    collect_resolved_called_fn_ids(callee, out)
                 }
-                collect_called_idents(callee, out);
+                ResolvedCallee::Builtin(_)
+                | ResolvedCallee::Intrinsic(_)
+                | ResolvedCallee::LocalSlot { .. } => {}
             }
-            for a in args {
-                collect_called_idents(a, out);
-            }
-        }
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            out.insert(target.clone());
-            for a in args {
-                collect_called_idents(a, out);
+            for arg in args {
+                collect_resolved_called_fn_ids(arg, out);
             }
         }
-        Expr::Ident(name) | Expr::Resolved { name, .. } => {
-            out.insert(name.clone());
+        ResolvedExpr::TailCall { target, args } => {
+            out.push(*target);
+            for arg in args {
+                collect_resolved_called_fn_ids(arg, out);
+            }
         }
-        Expr::BinOp(_, l, r) => {
-            collect_called_idents(l, out);
-            collect_called_idents(r, out);
+        ResolvedExpr::Attr(inner, _)
+        | ResolvedExpr::Neg(inner)
+        | ResolvedExpr::ErrorProp(inner) => collect_resolved_called_fn_ids(inner, out),
+        ResolvedExpr::BinOp(_, left, right) => {
+            collect_resolved_called_fn_ids(left, out);
+            collect_resolved_called_fn_ids(right, out);
         }
-        Expr::Neg(inner) => collect_called_idents(inner, out),
-        Expr::Match { subject, arms, .. } => {
-            collect_called_idents(subject, out);
+        ResolvedExpr::Match { subject, arms } => {
+            collect_resolved_called_fn_ids(subject, out);
             for arm in arms {
-                collect_called_idents(&arm.body, out);
+                collect_resolved_called_fn_ids(&arm.body, out);
             }
         }
-        Expr::ErrorProp(inner) | Expr::Attr(inner, _) => {
-            collect_called_idents(inner, out);
+        ResolvedExpr::Ctor(_, args)
+        | ResolvedExpr::List(args)
+        | ResolvedExpr::Tuple(args)
+        | ResolvedExpr::IndependentProduct(args, _) => {
+            for arg in args {
+                collect_resolved_called_fn_ids(arg, out);
+            }
         }
-        Expr::Constructor(_, Some(inner)) => {
-            collect_called_idents(inner, out);
-        }
-        Expr::InterpolatedStr(parts) => {
+        ResolvedExpr::InterpolatedStr(parts) => {
             for part in parts {
-                if let StrPart::Parsed(inner) = part {
-                    collect_called_idents(inner, out);
+                if let ResolvedStrPart::Parsed(inner) = part {
+                    collect_resolved_called_fn_ids(inner, out);
                 }
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for i in items {
-                collect_called_idents(i, out);
+        ResolvedExpr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_resolved_called_fn_ids(key, out);
+                collect_resolved_called_fn_ids(value, out);
             }
         }
-        Expr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                collect_called_idents(k, out);
-                collect_called_idents(v, out);
+        ResolvedExpr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                collect_resolved_called_fn_ids(value, out);
             }
         }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                collect_called_idents(v, out);
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            collect_resolved_called_fn_ids(base, out);
+            for (_, value) in updates {
+                collect_resolved_called_fn_ids(value, out);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_called_idents(base, out);
-            for (_, v) in updates {
-                collect_called_idents(v, out);
-            }
-        }
-        Expr::Literal(_) | Expr::Constructor(_, None) => {}
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
     }
 }
 
@@ -4310,7 +4226,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),
@@ -4319,8 +4234,6 @@ mod tests {
             packed_sequence_layouts: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table,
-            resolved_fn_defs: Vec::new(),
-            resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
@@ -4436,7 +4349,6 @@ mod tests {
             runtime_policy_from_env: false,
             guest_entry: None,
             emit_self_host_support: false,
-            extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),
@@ -4445,8 +4357,6 @@ mod tests {
             packed_sequence_layouts: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table,
-            resolved_fn_defs: Vec::new(),
-            resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),

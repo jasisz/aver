@@ -58,7 +58,12 @@ pub(super) fn emit_int_decimal_roundtrip_law(
     finish_int_fn: &str,
     serializer_fn: &str,
 ) -> Option<AutoProof> {
-    let emit = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let emit = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
 
     // The detector validated `lhs = parse(ser(C(n)), 0)`.
     let Expr::FnCall(_, lhs_args) = &law.lhs.node else {

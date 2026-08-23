@@ -401,7 +401,12 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     let lo_e = substitute(&lt[0], &map);
     let hi_e = substitute(&lt[1], &map);
 
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lo = render(&lo_e);
     let hi = render(&hi_e);
     if lo == hi {
@@ -522,7 +527,12 @@ pub(super) fn emit_frac_order_transitivity_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let c = recognize_frac_order_transitivity_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let when = render(law.when.as_ref()?);
     let lhs = render(&law.lhs);
     let intros: Vec<String> = law

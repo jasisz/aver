@@ -329,7 +329,12 @@ pub(super) fn emit_frac_positivity_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize_frac_positivity_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let subject = aver_name_to_lean(&expr_dotted_name(&{
@@ -453,7 +458,12 @@ pub(super) fn emit_frac_geone_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize_frac_geone_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = render(law.when.as_ref()?);
@@ -630,7 +640,12 @@ fn recognize_frac_monotone_shape(
     let [when] = clauses.as_slice() else {
         return None;
     };
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let (lo_lean, hi_lean) = (render(&lo), render(&hi));
     let premise_ok = match &when.node {
         Expr::BinOp(BinOp::Lte, l, r) => render(l) == lo_lean && render(r) == hi_lean,
@@ -779,7 +794,12 @@ pub(super) fn emit_frac_monotone_compose_law(
     quant_params: &str,
 ) -> Option<AutoProof> {
     let shape = recognize_frac_monotone_shape(vb, law, ctx)?;
-    let render = |e: &Spanned<Expr>| super::super::expr::emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| {
+        super::super::expr::emit_expr(
+            &super::super::expr::resolve_rewrite_output(e, ctx, None),
+            ctx,
+        )
+    };
     let hi = render(&shape.hi);
     let lo = render(&shape.lo);
     let lhs = render(&law.lhs);

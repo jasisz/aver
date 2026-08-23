@@ -82,7 +82,9 @@ pub fn emit_mutual_fuel_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<St
             .map(|lowered| lowered.body.as_ref().clone())
             .unwrap_or_else(|| fd.body.as_ref().clone());
         let rewritten_body = rewrite_recursive_calls_body(&lowered_body, &targets, "fuel'");
-        let body_str = super::toplevel::emit_fn_body(&rewritten_body, ctx);
+        let active = ctx.active_module_scope();
+        let resolved_body = ctx.resolve_rewritten_fn_body(&rewritten_body, active.as_deref());
+        let body_str = super::toplevel::emit_fn_body(&resolved_body, ctx);
 
         if let Some(desc) = &fd.desc {
             helper_lines.push(format!("// {}", desc));
@@ -200,7 +202,9 @@ pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) 
             .flatten()
             .map(|lowered| lowered.body.as_ref().clone())
             .unwrap_or_else(|| fd.body.as_ref().clone());
-        let body_str = super::toplevel::emit_fn_body(&lowered_body, ctx);
+        let active = ctx.active_module_scope();
+        let resolved_body = ctx.resolve_rewritten_fn_body(&lowered_body, active.as_deref());
+        let body_str = super::toplevel::emit_fn_body(&resolved_body, ctx);
 
         if let Some(desc) = &fd.desc {
             lines.push(format!("// {}", desc));

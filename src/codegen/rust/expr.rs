@@ -154,70 +154,26 @@ pub(super) fn emit_literal(lit: &Literal) -> String {
     }
 }
 
-/// Compute borrow mask from a FnDef, checking for TCO.
-/// Must mirror actual emitted signature:
-/// - Mutual-TCO SCC members → wrapper with borrow-by-default (`&T`)
-/// - Self-TCO only (not in SCC) → loop with `mut T`, all-false mask
-/// - Non-TCO → borrow-by-default
-fn borrow_mask_from_fn_def(
-    fd: &crate::ast::FnDef,
-    arg_count: usize,
-    ctx: &CodegenContext,
-) -> Vec<bool> {
-    // Mutual-TCO members are emitted as wrappers with borrow-by-default,
-    // even if they also have self-TailCalls. Don't skip borrow for them.
-    let is_mutual_tco = crate::codegen::common::fn_id_for_decl(ctx, fd)
-        .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
-    if !is_mutual_tco && super::toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
-        return vec![false; arg_count];
-    }
-    fd.params
-        .iter()
-        .take(arg_count)
-        .map(|(_, type_ann)| {
-            let ty = crate::types::parse_type_str(type_ann);
-            should_borrow_param(&ty)
-        })
-        .collect()
-}
-
 /// Look up whether the callee's i-th parameter is borrowed (`&T`).
 /// Returns a Vec of booleans, one per parameter, indicating borrow status.
-/// Uses the resolved-program view for typed param types; falls back to
-/// `FnDef` AST annotations when the callee isn't in the view (only TCO
-/// status reads from the AST `FnDef`).
-/// TCO functions (self or mutual) never use borrow-by-default.
+/// Uses the resolved-program view for identity, typed parameters, and TCO
+/// status. A missing resolved declaration is conservative (pass by value).
 pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
-    // First, try to find the FnDef to check for TCO (which overrides everything)
-    let fd = find_fn_def_by_name(name, ctx);
-    let mut mask = if let Some(fd) = fd {
-        borrow_mask_from_fn_def(fd, arg_count, ctx)
+    let Some((fn_id, resolved)) = resolved_callee(name, ctx) else {
+        return vec![false; arg_count];
+    };
+    // Mutual-TCO members expose borrow-by-default wrappers. A lone self-TCO
+    // function exposes its owned mutable loop signature.
+    let is_mutual_tco = ctx.mutual_tco_members.contains(&fn_id);
+    let mut mask = if !is_mutual_tco && super::toplevel::resolved_fn_has_self_tailcall(resolved) {
+        vec![false; arg_count]
     } else {
-        // No FnDef found — read param types from the resolved-program
-        // view. The qualified lookup hits cross-module callsites that
-        // arrive as bare dotted names; the bare-name fallback covers
-        // entry-scope synthesised wrappers.
-        let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-            crate::visibility::qualified_name(prefix, bare)
-        } else {
-            name.to_string()
-        };
-        let resolved = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
-            .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name))
-            .and_then(|id| ctx.resolved_program.fn_by_id(id));
-        match resolved {
-            // Self-TCO functions always resolve via `find_fn_def_by_name`
-            // above, so this path is safe for borrow-by-default on all
-            // non-scalar types including Named.
-            Some(rfd) => rfd
-                .params
-                .iter()
-                .take(arg_count)
-                .map(|(_, ty)| should_borrow_param(ty))
-                .collect(),
-            // Unknown function -- don't borrow (conservative)
-            None => vec![false; arg_count],
-        }
+        resolved
+            .params
+            .iter()
+            .take(arg_count)
+            .map(|(_, ty)| should_borrow_param(ty))
+            .collect()
     };
 
     // own_param graduation: a NON-TCO collection param the `own_param`
@@ -244,29 +200,19 @@ pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenCont
 /// because `apply_own_param` on those paths never populates the non-TCO
 /// signature's owned set, so this is a no-op for them.
 fn clear_owned_param_borrows(name: &str, mask: &mut [bool], ctx: &CodegenContext) {
-    let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-        crate::visibility::qualified_name(prefix, bare)
-    } else {
-        name.to_string()
+    let Some((fn_id, rfd)) = resolved_callee(name, ctx) else {
+        return;
     };
-    let fn_id = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
-        .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name));
-    let Some(fn_id) = fn_id else { return };
     // A self-/mutual-TCO callee never graduates a param on the path that
     // governs its call-site ABI, so skip it (its signature ABI is fixed
     // by the TCO wrapper, not by own_param). This mirrors the `has_tco`
     // guard in `emit_fn_def_with_visibility`.
-    if let Some(fd) = find_fn_def_by_name(name, ctx) {
-        let is_mutual_tco = crate::codegen::common::fn_id_for_decl(ctx, fd)
-            .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
-        if is_mutual_tco || super::toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
-            return;
-        }
+    if ctx.mutual_tco_members.contains(&fn_id)
+        || super::toplevel::resolved_fn_has_self_tailcall(rfd)
+    {
+        return;
     }
     let Some(mir_fn) = ctx.mir_program.as_ref().and_then(|p| p.fn_by_id(fn_id)) else {
-        return;
-    };
-    let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
         return;
     };
     let owned = super::from_mir::owned_collection_param_names(mir_fn, &rfd.params);
@@ -283,39 +229,18 @@ fn clear_owned_param_borrows(name: &str, mask: &mut [bool], ctx: &CodegenContext
     }
 }
 
-/// Find a FnDef by name, checking top-level, modules (qualified), and all modules (unqualified).
-///
-/// **syntax-discovery-only** (epic #170 invariant): used by
-/// `callee_borrow_mask` to read param-type annotations from the AST
-/// `FnDef` for borrow-by-default inference. Identity-sensitive call
-/// dispatch already happens upstream via `ResolvedCallee::Fn(FnId)`
-/// — this lookup only recovers the AST view for downstream
-/// annotation reads. A future PR can route through
-/// `symbol_table.fn_id_of` + `resolved_program.fn_by_id` once the
-/// borrow-mask inference consumes resolved param types directly.
-fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a crate::ast::FnDef> {
-    // Check top-level fn_defs
-    if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name) {
-        return Some(fd);
-    }
-
-    // Check extra fn_defs (current module being emitted)
-    if let Some(fd) = ctx.extra_fn_defs.iter().find(|fd| fd.name == name) {
-        return Some(fd);
-    }
-
-    // Check module fn_defs for qualified calls
-    if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-        for module in &ctx.modules {
-            if module.prefix == prefix
-                && let Some(fd) = module.fn_defs.iter().find(|fd| fd.name == bare)
-            {
-                return Some(fd);
-            }
-        }
-    }
-
-    None
+fn resolved_callee<'a>(
+    name: &str,
+    ctx: &'a CodegenContext,
+) -> Option<(crate::ir::FnId, &'a crate::ir::hir::ResolvedFnDef)> {
+    let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+        crate::visibility::qualified_name(prefix, bare)
+    } else {
+        name.to_string()
+    };
+    let fn_id = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
+        .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name))?;
+    Some((fn_id, ctx.resolved_program.fn_by_id(fn_id)?))
 }
 
 /// Given the record's `Type::Named` and a `field` name, look the field's

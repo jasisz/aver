@@ -4,7 +4,18 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
 use crate::types::Type;
 
-use super::expr::{aver_name_to_dafny, emit_expr_legacy, emit_expr_legacy_with_expected};
+use super::expr::{aver_name_to_dafny, emit_expr, emit_expr_with_expected};
+
+/// Identity boundary for proof/fuel transformations that still produce source
+/// syntax. Callers resolve the completed rewrite once and pass only the
+/// returned HIR expression to the Dafny renderer.
+pub(super) fn resolve_rewrite_output(
+    expr: &Spanned<Expr>,
+    ctx: &CodegenContext,
+) -> Spanned<crate::ir::hir::ResolvedExpr> {
+    let active = ctx.active_module_scope();
+    ctx.resolve_expr(expr, active.as_deref())
+}
 
 /// Emit a Dafny type from an Aver type annotation string.
 /// Ghost-predicate names emitted by `oracle_subtypes::dafny_subtype_predicates`
@@ -33,53 +44,6 @@ pub fn emit_type(type_str: &str) -> String {
 /// effect type names).
 pub fn emit_type_from(ty: &Type) -> String {
     type_to_dafny(ty)
-}
-
-/// Resolve a `&FnDef` to its canonical `ResolvedFnDef` for emit.
-///
-/// Tries the pointer-eq → `FnId` → resolved-program path first
-/// (canonical for source-declared fns). If the symbol-table key
-/// matches a DIFFERENT shape (effect-lifted synthetics share the
-/// bare name with the source fn but carry extra BranchPath /
-/// oracle params), the param-count gate trips and we fall back
-/// to `ctx.resolve_fn_def`'s synthetic-lift path which derives
-/// the typed surface from the given `fd` directly.
-///
-/// Same fallback pattern Rust (PR D, #185) and Lean (Phase 4,
-/// #186) established, plus the synthetic-shape guard the Dafny
-/// effect-lifting path needs.
-fn resolved_view_for_emit<'a>(
-    fd: &'a FnDef,
-    ctx: &'a CodegenContext,
-) -> std::borrow::Cow<'a, crate::ir::hir::ResolvedFnDef> {
-    // Canonical path: pointer-eq scope → `FnId` → resolved view.
-    // The param-count guard rejects a same-bare-name pre-lift twin
-    // for effect-lifted synthetic fns (which carry extra
-    // BranchPath / oracle params not present in the source fd).
-    let canonical = crate::codegen::common::fn_id_for_decl(ctx, fd)
-        .and_then(|id| ctx.resolved_program.fn_by_id(id))
-        .filter(|rfd| rfd.params.len() == fd.params.len());
-    if let Some(rfd) = canonical {
-        return std::borrow::Cow::Borrowed(rfd);
-    }
-    // Synthetic-shape fn — lift from `fd` directly through the
-    // resolver context. `ctx.resolve_fn_def` would re-hit the same
-    // symbol-table cache and return the pre-lift twin again, so
-    // bypass it and call the external lift path with the actual
-    // post-lift `fd`.
-    let module_name = ctx.items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m.name.clone()),
-        _ => None,
-    });
-    let mut rctx = crate::ir::hir::ResolveCtx::new(&ctx.symbol_table);
-    rctx.current_module = module_name;
-    if let Some(lifted) = crate::ir::hir::resolve_fn_def_external(&rctx, fd) {
-        return std::borrow::Cow::Owned(lifted);
-    }
-    // Last resort: `ctx.resolve_fn_def` carries its own
-    // hand-built fallback for fds the resolver can't lift at all
-    // (parse errors, unregistered names). Defer to it.
-    ctx.resolve_fn_def(fd, None)
 }
 
 /// Convert a fully-resolved Aver `Type` to a Dafny type string.
@@ -248,10 +212,12 @@ pub fn emit_type_def_in_scope(
 /// reference it, but the verifier won't unfold it, so soundness-
 /// sensitive downstream reasoning about its value becomes user-
 /// supplied lemmas. Mirrors Lean's `partial def` fallback.
-pub fn emit_fn_def_axiom(fd: &FnDef, ctx: &CodegenContext) -> String {
+pub fn emit_fn_def_axiom(
+    fd: &FnDef,
+    rfd: &crate::ir::hir::ResolvedFnDef,
+    _ctx: &CodegenContext,
+) -> String {
     let name = aver_name_to_dafny(&fd.name);
-    let rfd_holder = resolved_view_for_emit(fd, ctx);
-    let rfd: &crate::ir::hir::ResolvedFnDef = rfd_holder.as_ref();
     let params: Vec<String> = rfd
         .params
         .iter()
@@ -276,11 +242,12 @@ pub fn emit_fn_def_axiom(fd: &FnDef, ctx: &CodegenContext) -> String {
 }
 
 /// Emit a Dafny function from a FnDef.
-pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
+pub fn emit_fn_def(
+    fd: &FnDef,
+    rfd: &crate::ir::hir::ResolvedFnDef,
+    ctx: &CodegenContext,
+) -> String {
     let name = aver_name_to_dafny(&fd.name);
-
-    let rfd_holder = resolved_view_for_emit(fd, ctx);
-    let rfd: &crate::ir::hir::ResolvedFnDef = rfd_holder.as_ref();
 
     let params: Vec<String> = rfd
         .params
@@ -291,11 +258,18 @@ pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
     let ret_type = emit_type_from(&rfd.return_type);
 
     let lowered = lower_pure_question_bang_for_emit(fd);
+    let rewritten_body;
+    let body = if let Some(lowered_fd) = lowered.as_ref() {
+        let active = ctx.active_module_scope();
+        rewritten_body = ctx.resolve_rewritten_fn_body(&lowered_fd.body, active.as_deref());
+        emit_fn_body_with_expected(&rewritten_body, ctx, &rfd.return_type)
+    } else {
+        emit_fn_body_with_expected(&rfd.body, ctx, &rfd.return_type)
+    };
     let body_ast = lowered
         .as_ref()
         .map(|lowered_fd| lowered_fd.body.as_ref())
         .unwrap_or(fd.body.as_ref());
-    let body = emit_fn_body_with_expected(body_ast, ctx, &rfd.return_type);
 
     let needs_decreases = body_has_recursive_call(body_ast, &fd.name);
 
@@ -357,31 +331,41 @@ fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
 /// Emit the body of a function. Visible to sibling modules in the
 /// Dafny backend — the fuel emitter needs it to render the rewritten
 /// body inside a mutual SCC helper.
-pub(super) fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
+pub(super) fn emit_fn_body(body: &crate::ir::hir::ResolvedFnBody, ctx: &CodegenContext) -> String {
     match body {
-        FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx, None),
+        crate::ir::hir::ResolvedFnBody::Block(stmts) => emit_block_as_expr(stmts, ctx, None),
     }
 }
 
-fn emit_fn_body_with_expected(body: &FnBody, ctx: &CodegenContext, expected: &Type) -> String {
+fn emit_fn_body_with_expected(
+    body: &crate::ir::hir::ResolvedFnBody,
+    ctx: &CodegenContext,
+    expected: &Type,
+) -> String {
     match body {
-        FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx, Some(expected)),
+        crate::ir::hir::ResolvedFnBody::Block(stmts) => {
+            emit_block_as_expr(stmts, ctx, Some(expected))
+        }
     }
 }
 
 /// Convert a block of statements into a Dafny expression.
-fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext, expected: Option<&Type>) -> String {
+fn emit_block_as_expr(
+    stmts: &[crate::ir::hir::ResolvedStmt],
+    ctx: &CodegenContext,
+    expected: Option<&Type>,
+) -> String {
     if stmts.is_empty() {
         return "()".to_string();
     }
 
     // If single expression, return it directly
     if stmts.len() == 1
-        && let Stmt::Expr(expr) = &stmts[0]
+        && let crate::ir::hir::ResolvedStmt::Expr(expr) = &stmts[0]
     {
         return expected.map_or_else(
-            || emit_expr_legacy(expr, ctx, None),
-            |ty| emit_expr_legacy_with_expected(expr, ctx, None, ty),
+            || emit_expr(expr, ctx),
+            |ty| emit_expr_with_expected(expr, ctx, ty),
         );
     }
 
@@ -391,22 +375,26 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext, expected: Option<&Ty
 
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
-            Stmt::Binding(name, type_ann, expr) => {
-                let mut val = emit_expr_legacy(expr, ctx, None);
+            crate::ir::hir::ResolvedStmt::Binding {
+                name,
+                ty_ann,
+                value,
+            } => {
+                let mut val = emit_expr(value, ctx);
                 // Map<T, Unit> binding initialized with Map.empty → set literal
-                if let Some(ann) = type_ann
-                    && crate::codegen::common::is_set_annotation(ann)
+                if let Some(ann) = ty_ann
+                    && crate::codegen::common::is_set_type(ann)
                     && val == "map[]"
                 {
                     val = "{}".to_string();
                 }
                 parts.push((aver_name_to_dafny(name), val));
             }
-            Stmt::Expr(expr) => {
+            crate::ir::hir::ResolvedStmt::Expr(expr) => {
                 if i == stmts.len() - 1 {
                     final_expr = Some(expected.map_or_else(
-                        || emit_expr_legacy(expr, ctx, None),
-                        |ty| emit_expr_legacy_with_expected(expr, ctx, None, ty),
+                        || emit_expr(expr, ctx),
+                        |ty| emit_expr_with_expected(expr, ctx, ty),
                     ));
                 }
             }
@@ -877,14 +865,14 @@ fn dafny_threaded_accumulator_arg(
         Pattern::Cons(h, t) => Some((h.clone(), t.clone())),
         _ => None,
     })?;
-    // Substitute on the DAFNY-RENDERED binder names (`emit_expr_legacy` mangles
+    // Substitute on the DAFNY-RENDERED binder names (`emit_expr` mangles
     // a leading-underscore / reserved-word binder, so the source spelling would
     // miss), in ONE pass so the cons head/tail rewrites cannot cascade into each
     // other when a binder name collides with the list param. The list param, if
     // the accumulator arg mentions it, already renders as `list_dafny` (the fn's
     // list param shares the given's name — checked above), so no rewrite is
     // needed for it.
-    let rendered = emit_expr_legacy(acc_arg, ctx, None);
+    let rendered = emit_expr(&resolve_rewrite_output(acc_arg, ctx), ctx);
     let subs = vec![
         (aver_name_to_dafny(&head), format!("{list_dafny}[0]")),
         (aver_name_to_dafny(&tail), format!("{list_dafny}[1..]")),
@@ -995,7 +983,10 @@ fn dafny_datatype_inductive_hint(
             .filter_map(|(_, args)| {
                 let rendered: Vec<String> = given_to_fn_pos
                     .iter()
-                    .map(|&i| args.get(i).map(|x| emit_expr_legacy(x, ctx, None)))
+                    .map(|&i| {
+                        args.get(i)
+                            .map(|x| emit_expr(&resolve_rewrite_output(x, ctx), ctx))
+                    })
                     .collect::<Option<Vec<String>>>()?;
                 Some(format!("{}({});", lemma_name, rendered.join(", ")))
             })
@@ -1644,8 +1635,8 @@ pub fn emit_law_samples(
             }
         };
         for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
-            let l = emit_expr_legacy(lhs_rw, ctx, None);
-            let r = emit_expr_legacy(rhs_rw, ctx, None);
+            let l = emit_expr(&resolve_rewrite_output(lhs_rw, ctx), ctx);
+            let r = emit_expr(&resolve_rewrite_output(rhs_rw, ctx), ctx);
             let mut callees = std::collections::BTreeSet::new();
             crate::codegen::proof_recognize::collect_called_fns(lhs_rw, &mut callees);
             crate::codegen::proof_recognize::collect_called_fns(rhs_rw, &mut callees);
@@ -1737,7 +1728,12 @@ pub fn emit_law_samples(
             let requires_guard = law
                 .sample_guards
                 .get(idx)
-                .map(|g| format!("  requires {}\n", emit_expr_legacy(g, ctx, None)))
+                .map(|g| {
+                    format!(
+                        "  requires {}\n",
+                        emit_expr(&resolve_rewrite_output(g, ctx), ctx)
+                    )
+                })
                 .unwrap_or_default();
             lines.push(format!(
                 "lemma {} {}_{}{}__sample_{}({})\n{}  ensures {} == {}\n{}",
@@ -1805,8 +1801,8 @@ pub fn emit_law_samples(
         let seed_lemma =
             sample_seed_lemma_available(vb, law, ctx).then(|| format!("{}_{}", fn_name, law_name));
         for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
-            let l = emit_expr_legacy(lhs_rw, ctx, None);
-            let r = emit_expr_legacy(rhs_rw, ctx, None);
+            let l = emit_expr(&resolve_rewrite_output(lhs_rw, ctx), ctx);
+            let r = emit_expr(&resolve_rewrite_output(rhs_rw, ctx), ctx);
             let seed_call = seed_lemma.as_ref().and_then(|lemma| {
                 let bindings = vb.case_givens.get(idx)?;
                 let args = law
@@ -1816,7 +1812,7 @@ pub fn emit_law_samples(
                         bindings
                             .iter()
                             .find(|(n, _)| n == &g.name)
-                            .map(|(_, v)| emit_expr_legacy(v, ctx, None))
+                            .map(|(_, v)| emit_expr(&resolve_rewrite_output(v, ctx), ctx))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 let mut args = args;
@@ -1840,7 +1836,7 @@ pub fn emit_law_samples(
             // premise holds, vacuous where it doesn't.
             match law.sample_guards.get(idx) {
                 Some(guard) => {
-                    let g = emit_expr_legacy(guard, ctx, None);
+                    let g = emit_expr(&resolve_rewrite_output(guard, ctx), ctx);
                     lines.push(format!("  if {} {{", g));
                     if let Some(call) = &seed_call {
                         lines.push(format!("    {}", call));
@@ -2507,7 +2503,7 @@ fn emit_floor_window_support_stack(
             aver_name_to_dafny(name)
         }
     };
-    let render = |e: &Spanned<Expr>| emit_expr_legacy(e, ctx, None);
+    let render = |e: &Spanned<Expr>| emit_expr(&resolve_rewrite_output(e, ctx), ctx);
     let lhs = render(&law.lhs);
     let rhs = render(&law.rhs);
     let when = law.when.as_ref().map(render).unwrap_or_default();
@@ -2703,7 +2699,7 @@ fn floor_pow2_window_exponent_dafny(window_fn: &str, ctx: &CodegenContext) -> Op
         return None;
     };
     let e = pow_args.first()?;
-    Some(emit_expr_legacy(e, ctx, None))
+    Some(emit_expr(&resolve_rewrite_output(e, ctx), ctx))
 }
 
 /// Render a computed instantiation argument (from `cite_instantiate`) to Dafny:
@@ -2887,8 +2883,8 @@ fn eligible_cites<'a>(
 fn earlier_law_citations(cites: &[(String, &VerifyLaw)], ctx: &CodegenContext) -> Vec<String> {
     let mut out = Vec::new();
     for (dafny_name, prev_law) in cites {
-        let plhs = emit_expr_legacy(&prev_law.lhs, ctx, None);
-        let prhs = emit_expr_legacy(&prev_law.rhs, ctx, None);
+        let plhs = emit_expr(&resolve_rewrite_output(&prev_law.lhs, ctx), ctx);
+        let prhs = emit_expr(&resolve_rewrite_output(&prev_law.rhs, ctx), ctx);
         // Skip a sibling with an unused given (a binder absent from its own
         // statement): the `forall` would quantify a variable with no trigger,
         // which Dafny rejects under `--allow-warnings false`. Such a law is also
@@ -3393,8 +3389,8 @@ pub fn emit_verify_law(
         )
     };
 
-    let lhs = emit_expr_legacy(&law_lhs, ctx, None);
-    let rhs = emit_expr_legacy(&law_rhs, ctx, None);
+    let lhs = emit_expr(&resolve_rewrite_output(&law_lhs, ctx), ctx);
+    let rhs = emit_expr(&resolve_rewrite_output(&law_rhs, ctx), ctx);
 
     // Proof lemma library: per-shape recognizers contribute proved helper
     // lemmas (prepended) + `forall`-lifted facts (hoisted into the body), e.g.
@@ -3486,7 +3482,7 @@ pub fn emit_verify_law(
             ctx,
         );
         if !when_redundant {
-            let when_str = emit_expr_legacy(when_expr, ctx, None);
+            let when_str = emit_expr(&resolve_rewrite_output(when_expr, ctx), ctx);
             lines.push(format!("  requires {}", when_str));
         }
     }
@@ -3599,8 +3595,8 @@ pub fn emit_verify_law(
                 let guard = bindings
                     .iter()
                     .map(|(n, v)| {
-                        let val =
-                            literal_int_value(v).unwrap_or_else(|| emit_expr_legacy(v, ctx, None));
+                        let val = literal_int_value(v)
+                            .unwrap_or_else(|| emit_expr(&resolve_rewrite_output(v, ctx), ctx));
                         format!("{} == {}", aver_name_to_dafny(n), val)
                     })
                     .collect::<Vec<_>>()
@@ -3745,7 +3741,7 @@ pub fn emit_verify_law(
             // the guard is the premise — true in context — and the call fires
             // unconditionally exactly as before (no regression).
             if let Some(when_expr) = &law.when {
-                let when_str = emit_expr_legacy(when_expr, ctx, None);
+                let when_str = emit_expr(&resolve_rewrite_output(when_expr, ctx), ctx);
                 let when_tail =
                     replace_ident_word(&when_str, &list_param, &format!("{list_param}[1..]"));
                 lines.push(format!(

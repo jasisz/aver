@@ -502,7 +502,10 @@ fn rf_citations(
 /// float-format field accessors and the floor term from the recognized shape —
 /// produced from the SAME definitions the goal unfolds, so they parse-match).
 fn rf_emit(ctx: &CodegenContext, e: &crate::ast::Spanned<crate::ast::Expr>) -> String {
-    super::super::super::expr::emit_expr_legacy(e, ctx, None)
+    super::super::super::expr::emit_expr(
+        &super::super::super::expr::resolve_rewrite_output(e, ctx, None),
+        ctx,
+    )
 }
 
 /// One-level inline of a fn call, resolving the callee across the entry module

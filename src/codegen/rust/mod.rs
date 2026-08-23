@@ -188,10 +188,9 @@ fn transpile_project(
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
     let has_terminal_types = has_terminal_runtime || needs_terminal_types;
 
-    // The generated entry module still pairs the AST declaration with its
-    // resolved body for source metadata. Root dispatch only needs the return
-    // type, so resolve `main` once by its entry-scope identity and hand the
-    // typed declaration to `render_root_main`.
+    // Root dispatch consumes the canonical resolved declaration. Resolve
+    // `main` once by entry-scope identity and keep the AST lookup only for the
+    // construction invariant below; no emitter receives the raw declaration.
     let main_fn = ctx.fn_defs.iter().find(|fd| fd.name == "main");
     let resolved_main_fn = ctx
         .symbol_table
@@ -359,14 +358,11 @@ fn transpile_project(
         vec!["entry".to_string()],
         render_generated_module(
             codegen_depends(root_module_depends(&ctx.items), &ctx.items, None),
-            entry_module_sections(ctx, main_fn, &top_level_stmts),
+            entry_module_sections(ctx, resolved_main_fn, &top_level_stmts),
         ),
     ));
 
     for i in 0..ctx.modules.len() {
-        // Set extra_fn_defs so find_fn_def_by_name resolves intra-module
-        // bare-name calls (e.g. buildFibStats calling finalizeFibStats).
-        ctx.extra_fn_defs = ctx.modules[i].fn_defs.clone();
         let module = &ctx.modules[i];
         let segments = module_prefix_to_rust_segments(&module.prefix);
         let discovery_items = module
@@ -388,8 +384,6 @@ fn transpile_project(
             ),
         ));
     }
-    ctx.extra_fn_defs.clear();
-
     files.extend(synthesize_rust_module_cascade(
         "src/aver_generated",
         &rust_modules,
@@ -764,7 +758,7 @@ fn missing_resolved_fn_error(fd: &FnDef, scope: Option<&str>, ctx: &CodegenConte
 
 fn entry_module_sections(
     ctx: &CodegenContext,
-    main_fn: Option<&FnDef>,
+    main_fn: Option<&crate::ir::hir::ResolvedFnDef>,
     top_level_stmts: &[&crate::ast::Stmt],
 ) -> Vec<String> {
     let mut sections = Vec::new();
@@ -829,18 +823,7 @@ fn entry_module_sections(
     }
 
     if main_fn.is_some() || !top_level_stmts.is_empty() {
-        // rust-on-MIR W6/Stage-0: `main` carries a `ResolvedFnDef` (and so
-        // a lowered `MirFn`), reachable through the same identity-keyed
-        // `fn_id_for_decl` lookup the entry loop above runs for every
-        // other fn. Thread the FnId so the main-body emit can route the
-        // body through the MIR walker behind `AVER_RUST_MIR_MAIN`.
-        let main_fn_id = main_fn.and_then(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd));
-        sections.push(toplevel::emit_public_main(
-            main_fn,
-            top_level_stmts,
-            ctx,
-            main_fn_id,
-        ));
+        sections.push(toplevel::emit_public_main(main_fn, top_level_stmts, ctx));
     }
 
     sections
@@ -1334,6 +1317,58 @@ fn walk(n: Int) -> Int
             entry.contains("crate::aver_generated::worker::walk"),
             "main()'s Worker.walk(20) must qualify through the \
              canonical crate path:\n{entry}"
+        );
+    }
+
+    #[test]
+    fn cross_module_same_bare_name_types_keep_distinct_rust_records() {
+        let mut ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Worker]
+    intent = "Entry and dependency own distinct Packet records."
+    effects []
+
+record Packet
+    value: Int
+
+fn entryValue(packet: Packet) -> Int
+    packet.value
+
+fn main() -> Int
+    entryValue(Packet(value = 7)) + Worker.read(Worker.Packet(label = "abcd"))
+"#,
+            &[(
+                "Worker",
+                r#"
+module Worker
+    exposes [Packet, read]
+    intent = "Dependency Packet deliberately shares the entry bare name."
+    effects []
+
+record Packet
+    label: String
+
+fn read(packet: Packet) -> Int
+    String.len(packet.label)
+"#,
+            )],
+            "cross_module_packet",
+        );
+
+        let out = transpile(&mut ctx);
+        let worker = generated_file(&out, "src/aver_generated/worker/mod.rs");
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("struct Packet"), "{entry}");
+        assert!(entry.contains("value:"), "{entry}");
+        assert!(!entry.contains("pub label:"), "{entry}");
+        assert!(worker.contains("struct Packet"), "{worker}");
+        assert!(worker.contains("label:"), "{worker}");
+        assert!(!worker.contains("pub value:"), "{worker}");
+        assert!(
+            entry.contains("crate::aver_generated::worker::Packet"),
+            "dependency Packet construction must use its TypeId-owned module path:\n{entry}"
         );
     }
 

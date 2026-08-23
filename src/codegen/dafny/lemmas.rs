@@ -15,7 +15,7 @@
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 
-use super::expr::{aver_name_to_dafny, emit_expr_legacy};
+use super::expr::{aver_name_to_dafny, emit_expr};
 
 /// Conservative recognition of a left-concatenation `concat(<ind_var>, b)`
 /// whose first operand is the list-induction variable — either the
@@ -91,7 +91,7 @@ fn collect_concat_bridges(
             .is_some_and(|n| n == ind_var_src)
         && let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node)
     {
-        let second = emit_expr_legacy(&args[1], ctx, None);
+        let second = emit_expr(&super::toplevel::resolve_rewrite_output(&args[1], ctx), ctx);
         if let Some((c_full, c_tail)) = concat_left_fold_render(&name, &second, ind_var_dafny, ctx)
         {
             let entry = (c_full, c_tail, second);
@@ -328,7 +328,7 @@ pub(super) fn algebra_lemmas(
 }
 
 fn render(e: &Spanned<Expr>, ctx: &CodegenContext) -> String {
-    emit_expr_legacy(e, ctx, None)
+    emit_expr(&super::toplevel::resolve_rewrite_output(e, ctx), ctx)
 }
 
 fn same_atom(a: &Spanned<Expr>, b: &Spanned<Expr>, ctx: &CodegenContext) -> bool {

@@ -45,11 +45,6 @@
 //!   Lean / Dafny / Rust type-name emission, where `name` IS the
 //!   right surface and `id` carries no display information). Use
 //!   for renderers, never for routing / lookup decisions.
-//! - `temporary-migration-bridge` — pattern is acknowledged as
-//!   debt with a known follow-up scope. New code MUST NOT add this
-//!   category; existing tagged sites stay until their migration
-//!   trigger lands.
-//!
 //! ## When this test fails
 //!
 //! Either:
@@ -90,7 +85,6 @@ const ALLOWED_CATEGORIES: &[&str] = &[
     "syntax-discovery-only",
     "backend-link-stage",
     "display-only",
-    "temporary-migration-bridge",
 ];
 
 /// One banned pattern.
@@ -130,10 +124,10 @@ const BANNED_PATTERNS: &[BannedPattern] = &[
     BannedPattern {
         needle: "ctx.fn_sigs",
         label: "ctx.fn_sigs* — string-keyed fn signature side channel removed \
-                in Phase 7 of #180. Prefer ctx.resolve_fn_def(fd, scope) for \
-                ResolvedFnDef.params / return_type, ctx.resolved_program for \
-                the resolved-program view, or pass ctx directly to verify_law \
-                helpers (ctx impls FnSigOracle)",
+                in Phase 7 of #180. Resolve the declaration to FnId and read \
+                ctx.resolved_program.fn_by_id(id) for ResolvedFnDef params / \
+                return type, or pass ctx directly to verify_law helpers (ctx \
+                implements FnSigOracle)",
     },
 ];
 
