@@ -335,6 +335,8 @@ Flags worth knowing: `--dry-run`, `--skip-publish`, `--skip-playground`, `--skip
 
 **Don't bump versions or tag by hand.** The 0.19.0 "Echo" release was attempted manually first, which skipped the cascade bump, website badge, self-host regen, playground regen, the verify gates beyond unit tests, `cargo publish`, and `gh release create`. The lesson: even when individual steps feel obvious in isolation, the script's idempotent design + correct ordering is the only thing that catches the dependency chain at the right place.
 
+`python3 tools/regenerate_self_host.py` is the standalone, reviewable way to refresh only `src/self_host`; the release script delegates its regeneration step to the same helper. `python3 tools/regenerate_self_host.py --check` is read-only and is exercised by the ordinary test suite, while the ignored `rust_self_host_regen` canary separately builds the fresh compiler and runs corpus parity.
+
 ## Agreed direction: file size and splitting policy (2026-02-26)
 
 - Any Rust file above 500 lines must be reviewed for splitting during normal development.
