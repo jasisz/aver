@@ -379,7 +379,7 @@ accounting derive from that source contract.
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Provider-owned resource — see below. |
+| `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Provider-owned resource. Socket establishment has a 5-second default deadline on native and the in-process wasm-gc host; configure it with `[effects.Tcp].connect_timeout_secs`. wasip2 timing is host-controlled. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.writeBytes` | `(Tcp.Connection, Bytes) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
@@ -420,7 +420,8 @@ to persistent sessions. Both settings must be positive integers. Effect
 sections reject unknown or misplaced keys, so a typo cannot silently select a
 default. Native VM, generated Rust, and the in-process wasm-gc host honour the
 settings. wasip2 currently uses host-controlled WASI socket timing and emits a
-warning when explicit Tcp timeout settings cannot be honoured.
+warning whenever a required operation depends on a default or explicitly
+configured Tcp deadline that the target cannot honour.
 
 `Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program holding 256 live `Tcp.connect` handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
 

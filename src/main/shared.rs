@@ -1,6 +1,9 @@
 use std::fs;
 use std::io::Read;
 
+#[cfg(feature = "wasip2")]
+use std::collections::BTreeSet;
+
 use colored::Colorize;
 
 use aver::ast::TopLevel;
@@ -49,6 +52,52 @@ pub(super) fn apply_runtime_policy_to_vm(
         machine.set_runtime_policy(config);
     }
     Ok(())
+}
+
+/// Explain when wasip2 cannot preserve Aver's Tcp deployment deadlines.
+///
+/// Persistent-session reads and writes deliberately have no Aver deadline, so
+/// using only those operations must not produce this warning. Socket opening
+/// uses the connect deadline; the one-shot send operations additionally use
+/// the request-idle deadline.
+#[cfg(feature = "wasip2")]
+pub(super) fn wasip2_tcp_timeout_warning(
+    target: &str,
+    required: &BTreeSet<String>,
+    config: Option<&aver::config::ProjectConfig>,
+) -> Option<String> {
+    let uses_connect_deadline = required.iter().any(|operation| {
+        matches!(
+            operation.as_str(),
+            "Tcp.connect" | "Tcp.ping" | "Tcp.send" | "Tcp.sendBytes"
+        )
+    });
+    if !uses_connect_deadline {
+        return None;
+    }
+
+    let uses_request_idle_deadline = required
+        .iter()
+        .any(|operation| matches!(operation.as_str(), "Tcp.send" | "Tcp.sendBytes"));
+    let settings = config.map(|config| config.tcp_settings).unwrap_or_default();
+    let source = if config.is_some_and(|config| config.tcp_settings_configured) {
+        "configured"
+    } else {
+        "default"
+    };
+    let deadlines = if uses_request_idle_deadline {
+        format!(
+            "connect {} s, request idle {} s",
+            settings.connect_timeout_secs, settings.request_idle_timeout_secs
+        )
+    } else {
+        format!("connect {} s", settings.connect_timeout_secs)
+    };
+
+    Some(format!(
+        "warning[tcp-timeout-unsupported]: `{target}` cannot honour Aver's {source} Tcp timeout \
+         policy ({deadlines}); the component uses the host's WASI socket timing instead"
+    ))
 }
 
 pub(super) fn print_type_errors(errors: &[TypeError]) {
@@ -108,4 +157,45 @@ pub(super) fn encode_entry_args_json(args: &[Value]) -> Result<aver::replay::Jso
 /// Derive a readable filename stem from an entry call.
 pub(super) fn entry_recording_stem(fn_name: &str, args: &[Value]) -> String {
     aver::replay::recording_stem(fn_name, args)
+}
+
+#[cfg(all(test, feature = "wasip2"))]
+mod tests {
+    use super::*;
+
+    fn required(operations: &[&str]) -> BTreeSet<String> {
+        operations
+            .iter()
+            .map(|operation| (*operation).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn wasip2_warns_about_the_default_connect_deadline() {
+        let warning =
+            wasip2_tcp_timeout_warning("--target wasip2", &required(&["Tcp.connect"]), None)
+                .expect("connect uses the deadline");
+
+        assert!(warning.contains("default Tcp timeout policy (connect 5 s)"));
+    }
+
+    #[test]
+    fn wasip2_warning_names_configured_one_shot_deadlines() {
+        let config = aver::config::ProjectConfig::parse(
+            "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\n",
+        )
+        .expect("valid policy");
+        let warning =
+            wasip2_tcp_timeout_warning("--wasip2", &required(&["Tcp.sendBytes"]), Some(&config))
+                .expect("one-shot send uses both deadlines");
+
+        assert!(warning.contains("configured Tcp timeout policy (connect 7 s, request idle 45 s)"));
+    }
+
+    #[test]
+    fn wasip2_does_not_warn_for_persistent_session_io() {
+        assert!(
+            wasip2_tcp_timeout_warning("--wasip2", &required(&["Tcp.readLine"]), None).is_none()
+        );
+    }
 }
